@@ -156,7 +156,7 @@ def create_app(container: Container) -> FastAPI:
     protected.include_router(
         retrieval_http.build_library_retrieval_router(
             get_library_retrieval=container.retrieval.get_library_retrieval,
-            set_library_retrieval=container.retrieval.set_library_retrieval,
+            set_library_retrieval=container.set_library_retrieval,
         )
     )
     # Every signed-in account is an admin until library roles exist (E12-05).

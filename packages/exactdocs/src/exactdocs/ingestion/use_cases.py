@@ -33,10 +33,12 @@ from exactdocs.ingestion.constants import (
     EMBED_RETRY_SECONDS,
     IMPORT_JOB,
     IMPORT_KINDS,
+    INSTRUCTIONS_NOT_READ,
     KNOWN_BATCH,
     LIBRARY_KINDS,
     MAX_CONTROL_RATIO,
     MAX_IMAGES,
+    MAX_INSTRUCTION_FILE_BYTES,
     MAX_LISTED_REFS,
     MAX_PREVIEW_FILES,
     MAX_WANTED_IMAGES,
@@ -137,9 +139,11 @@ from exactdocs.ingestion.models import (
     GitRename,
     ImportedArticle,
     ImportedImage,
+    ImportedInstruction,
     ImportedRef,
     ImportedVersion,
     ImportSource,
+    InstructionPolicy,
     Job,
     JobId,
     JobState,
@@ -164,6 +168,7 @@ from exactdocs.ingestion.models import (
     check_credential_fits,
     compose_renames,
     git_blob_sha,
+    instruction_candidates,
     is_unordered,
     parse_article,
     parse_context7,
@@ -183,6 +188,7 @@ from exactdocs.ingestion.ports.driven import (
     CredentialVault,
     GitGateway,
     GitRemote,
+    GuidancePolicy,
     ImportedTagStore,
     JobHandler,
     JobProgress,
@@ -197,6 +203,7 @@ from exactdocs.ingestion.ports.driven import (
     RecoveryHook,
     Removals,
     RenameSource,
+    RepositoryFiles,
     RepositoryTree,
     ScheduleSwitch,
     StoredArticleSource,
@@ -1641,6 +1648,10 @@ class ImportVersionUseCase:
     """Files parsed and chunked per durable step."""
     tag_locks: LibraryLocks = field(default_factory=TagLocks)
     """Shared with ``TagArticleUseCase``: see there."""
+    guidance: GuidancePolicy | None = None
+    """Says whether the library keeps its instruction files (RET-08); without it none are kept."""
+    files: RepositoryFiles | None = None
+    """Reads the instruction files (RET-08); without it none are kept."""
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
         """Run the import, skipping the steps a run before a crash completed; raising fails it.
@@ -1713,6 +1724,8 @@ class ImportVersionUseCase:
                     renamed_from=renamed_from,
                     renames=renames,
                     origin=job.origin,
+                    # After "detect renames": a step of its own, run before "publish".
+                    instructions=await self._instructions(job, source, credential, paths, progress),
                 ),
             ),
         )
@@ -1916,6 +1929,90 @@ class ImportVersionUseCase:
                 skip.path.encode(errors="replace").decode(), skip.code, skip.reason
             )
         return (*taken.images, *outside.images)
+
+    async def _instructions(
+        self,
+        job: Job,
+        source: ImportSource,
+        credential: Credential | None,
+        paths: Sequence[str],
+        progress: JobProgress,
+    ) -> tuple[ImportedInstruction, ...]:
+        """Keep the commit's instruction files when the library's repo guidance is on (a step).
+
+        The root's and every selected file's folder's ``AGENTS.md`` / ``CLAUDE.md``, also
+        outside the selected paths, each read on its own (``RepositoryFiles``): one too big, not
+        text or not a regular file is listed as a problem and the others are kept, and a read
+        that fails altogether is listed too (``instruction_files``). Reading the setting is part
+        of the step, so a resumed import keeps what its first run decided.
+
+        Args:
+            job: The import.
+            source: The library's repository and selection.
+            credential: Its credential, if any.
+            paths: The selected files.
+            progress: Where problems are listed.
+
+        Returns:
+            The files kept; none with repo guidance off.
+        """
+        found = await self.checkpoints.step(
+            "fetch the instruction files",
+            lambda: self._fetch_instructions(job, source, credential, paths),
+        )
+        for skip in found.skipped:
+            await progress.problem(skip.path, skip.code, skip.reason)
+        if found.failure is not None:
+            await progress.problem("", ProblemCode.INSTRUCTION_FILES, found.failure)
+        return found.files
+
+    async def _fetch_instructions(
+        self,
+        job: Job,
+        source: ImportSource,
+        credential: Credential | None,
+        paths: Sequence[str],
+    ) -> _Instructions:
+        """Fetch and read the instruction files, if the library keeps them; never raises.
+
+        They are a nicety for agentic retrieval: a fetch that fails is logged (by class) and
+        the version is imported without them, never failed.
+
+        Args:
+            job: The import.
+            source: The library's repository and selection.
+            credential: Its credential, if any.
+            paths: The selected files.
+
+        Returns:
+            The files read and the ones turned away.
+        """
+        if (
+            self.guidance is None
+            or self.files is None
+            or job.commit_sha is None
+            or job.version is None
+        ):
+            return _Instructions()
+        if await self.guidance.instruction_policy(job.library) is not InstructionPolicy.KEEP:
+            return _Instructions()
+        wanted = instruction_candidates(paths)
+        try:
+            found = await self.files.read_files(
+                source.url,
+                job.commit_sha,
+                wanted,
+                max_bytes=MAX_INSTRUCTION_FILE_BYTES,
+                refs=_full_refs(job.ref_kind or RefKind.COMMIT, job.version),
+                credential=credential,
+            )
+        except DomainError as error:  # expected: unreachable, auth, ...
+            log.warning("no instruction files for %s: %s", job.library, type(error).__name__)
+            return _Instructions(failure=f"{INSTRUCTIONS_NOT_READ} ({type(error).__name__})")
+        except Exception:  # never a reason to fail an import
+            log.exception("no instruction files for %s", job.library)
+            return _Instructions(failure=INSTRUCTIONS_NOT_READ)
+        return _instructions_of(wanted, found)
 
     async def _outside_images(
         self,
@@ -2292,6 +2389,50 @@ class _ImageBudget:
     images: list[ImportedImage] = field(default_factory=list)
     skipped: list[Skip | _Missing] = field(default_factory=list)
     absent: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Instructions:
+    """What the instruction-file step found: the files kept, the ones turned away."""
+
+    files: tuple[ImportedInstruction, ...] = ()
+    """The files read, in the order looked for."""
+    skipped: tuple[Skip, ...] = ()
+    """The files that exist but cannot be kept, with why."""
+    failure: str | None = None
+    """Why none could be read at all (the error's class only), listed as a job problem."""
+
+
+def _instructions_of(paths: Sequence[str], found: Mapping[str, FetchedFile]) -> _Instructions:
+    """Decode the instruction files read; a missing one is not a problem.
+
+    One that could not be read (too big, not a regular file, a link that leads nowhere usable)
+    or is not text is turned away. The text is decoded as an article's is and kept verbatim: it
+    is untrusted, and retrieval frames it as such.
+
+    Args:
+        paths: The repository paths looked for, in order.
+        found: What the reader returned for them.
+
+    Returns:
+        What was kept and what was turned away.
+    """
+    files: list[ImportedInstruction] = []
+    skipped: list[Skip] = []
+    for path in paths:
+        read = found.get(path)
+        if read is None or (read.data is None and read.problem is None):
+            continue
+        if read.data is None:
+            code = read.code or ProblemCode.UNREADABLE
+            skipped.append(Skip(code=code, reason=read.problem or "unreadable", path=path))
+            continue
+        text = _decode(read.data)
+        if isinstance(text, Skip):
+            skipped.append(replace(text, path=path))
+        else:
+            files.append(ImportedInstruction(path=path, content=text))
+    return _Instructions(files=tuple(files), skipped=tuple(skipped))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -339,8 +339,16 @@ every caller of the library's version, so one caller can read the gist of anothe
 
 What leaves the instance when a role is set: **embedding** receives chunk text (in background
 jobs) and query text; **reranker** and **judge** receive query text and candidate chunk text;
-**llm** (HyDE, agentic) receives query text and the docs the agent opens. Library names, user
+**llm** (HyDE, agentic) receives query text and the docs the agent opens, and, for a library
+with repo guidance on (#101), the instruction files (`AGENTS.md` / `CLAUDE.md`) of the folders the
+agent opens (the root's in its system instructions for a `trusted` library). Library names, user
 identities and tokens are never sent.
+
+**Repo guidance and trust (#101).** `trusted` puts repository text into the agent's system
+instructions, so who may set it matters. Until library roles exist, it has the gate of every
+other per-library AI setting: any signed-in account (and any API token that reaches the protected
+API). When E12-05 lands, setting `trusted` (and turning `notes` into `trusted`) must become
+admin-only; `notes` and `off` may stay with the library's owner.
 
 ## Cost and budgets
 

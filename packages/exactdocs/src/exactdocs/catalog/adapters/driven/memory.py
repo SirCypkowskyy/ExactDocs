@@ -22,6 +22,7 @@ from exactdocs.catalog.models import (
     Manifest,
     ManifestEntry,
     ManifestId,
+    ManifestInstruction,
     ManifestRename,
     ManifestState,
     ManualTag,
@@ -419,7 +420,7 @@ class InMemoryManifestRepository:
 
 def _light(manifest: Manifest) -> Manifest:
     """Return the manifest as ``get`` does: without entries, renames and images."""
-    return replace(manifest, entries=(), renames=(), images=())
+    return replace(manifest, entries=(), renames=(), images=(), instructions=())
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -537,3 +538,23 @@ class InMemoryManifestCopier:
             )
             for e in copy.entries
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryInstructionFiles:
+    """Implements ``ports.driven.InstructionFileReader`` over an ``InMemoryManifestRepository``."""
+
+    repository: InMemoryManifestRepository
+    """Holds the manifests and the files kept with them."""
+
+    async def list_instructions(self, manifest_id: ManifestId) -> Sequence[ManifestInstruction]:
+        """Return the files kept with the manifest.
+
+        Args:
+            manifest_id: The manifest (any state).
+
+        Returns:
+            Its files, sorted by path; none for an unknown manifest.
+        """
+        found = self.repository.manifests.get(manifest_id)
+        return tuple(sorted(found.instructions, key=lambda i: i.path)) if found else ()

@@ -1,14 +1,14 @@
 """The agentic answer cache, per manifest, model, scope fingerprint and question hash (#100).
 
 Revision ID: e4b7c2d9a6f1
-Revises: c3a9e7d1f4b8
+Revises: d7f2a9c4e1b6
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "e4b7c2d9a6f1"
-down_revision = "c3a9e7d1f4b8"
+down_revision = "d7f2a9c4e1b6"
 branch_labels = None
 depends_on = None
 

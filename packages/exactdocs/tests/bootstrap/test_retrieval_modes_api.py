@@ -107,7 +107,26 @@ async def test_a_library_without_a_setting_uses_the_best_mode(plain: httpx.Async
         "effective_rerank_top_n": 32,
         "budgets": NO_BUDGETS,
         "budget_ceilings": NO_BUDGETS,
+        "repo_guidance": "off",
     }
+
+
+async def test_a_library_turns_repo_guidance_on_and_marks_itself_trusted(
+    plain: httpx.AsyncClient,
+) -> None:
+    notes = await plain.put(SETTING, json={"repo_guidance": "notes"})
+    stored_notes = (await plain.get(SETTING)).json()["repo_guidance"]
+    trusted = await plain.put(SETTING, json={"repo_guidance": "trusted"})
+    unknown = await plain.put(SETTING, json={"repo_guidance": "system"})
+    stored_trusted = (await plain.get(SETTING)).json()["repo_guidance"]
+    off = await plain.put(SETTING, json={})
+
+    assert notes.status_code == 200, notes.text
+    assert (notes.json()["repo_guidance"], stored_notes) == ("notes", "notes")
+    assert (trusted.json()["repo_guidance"], stored_trusted) == ("trusted", "trusted")
+    assert unknown.status_code == 422, unknown.text
+    assert off.json()["repo_guidance"] == "off"
+    assert (await plain.get(SETTING)).json()["repo_guidance"] == "off"
 
 
 async def test_a_library_sets_its_own_rerank_top_n_within_bounds(

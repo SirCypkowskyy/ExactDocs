@@ -26,6 +26,7 @@ from exactdocs.ingestion.use_cases import (
     _Batch,
     _Context7Read,
     _ImageBudget,
+    _Instructions,
     _Missing,
     _VersionOutcome,
 )
@@ -37,6 +38,7 @@ ROOTS = (
     _Batch,
     _ImageBudget,
     _Missing,
+    _Instructions,
     _Context7Read,
     ReadmeSummary,
     GitRename,
@@ -54,6 +56,7 @@ FINGERPRINTS = {
     "jobs-5": "7dc27c94e6f797e0a5c0cf1d186ad1d483bd4207894040d0ae06f6859ab70485",
     "jobs-6": "02834bb3cb61684b0c569b4c10679b893c7398991696bee42c14981b4fdebdfc",
     "jobs-7": "9ea99f71dd7520c04b54be867a7ae1d85ea2eff0580f0016358d730b36b2beec",
+    "jobs-8": "735ed31784ba667faeadaaadb839c68ea9104143ee5d310e895d07c75c7ee7c5",
 }
 
 

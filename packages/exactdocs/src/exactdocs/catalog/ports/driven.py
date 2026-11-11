@@ -13,6 +13,7 @@ from exactdocs.catalog.models import (
     Manifest,
     ManifestEntry,
     ManifestId,
+    ManifestInstruction,
     ManifestRename,
     ManualTag,
     ManualTags,
@@ -337,6 +338,25 @@ class StoredArticleFinder(Protocol):
         ...
 
 
+class InstructionFileReader(Protocol):
+    """Reads the instruction files kept with a manifest (RET-08).
+
+    Split from ``ManifestRepository`` for the same reason as ``ImportedTagWriter`` (PLR0904):
+    same tables; ``ManifestRepository.add`` stores them, ``ManifestCopier`` copies them.
+    """
+
+    async def list_instructions(self, manifest_id: ManifestId) -> Sequence[ManifestInstruction]:
+        """Return the instruction files kept with the manifest, sorted by path.
+
+        Args:
+            manifest_id: The manifest (any state).
+
+        Returns:
+            Its files; none for an unknown manifest.
+        """
+        ...
+
+
 class ManifestCopier(Protocol):
     """Copies a version's active manifest into a new pending one (re-chunking what it serves).
 
@@ -356,9 +376,9 @@ class ManifestCopier(Protocol):
         """Store a pending copy of the version's active manifest, in one transaction.
 
         The copy, ``new_id`` created ``at``, has the same commit, entries (tags, manual tags and
-        front matter included), images and renames. Returns it (without entries) with each
-        article as a reader gets it, by path; ``None`` when the version has no active
-        manifest. Raises ``StoredContentOutdatedError`` and copies nothing when an entry was
+        front matter included), images, renames and instruction files. Returns it (without
+        entries) with each article as a reader gets it, by path; ``None`` when the version has no
+        active manifest. Raises ``StoredContentOutdatedError`` and copies nothing when an entry was
         stored by another parser version than ``content_version``.
         """
         ...

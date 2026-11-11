@@ -303,7 +303,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 
 - **Retrieval mode and AI overrides** (RET-06): `PUT /libraries/{owner}/{repo}/retrieval` with
   `{"mode": "hybrid", "ai_enabled": true, "llm": "corp:small", "judge": null, "reranker": null,
-  "rerank_top_n": 16, "budgets": {"daily_usd": 1, "monthly_tokens": 500000}}` replaces the library's settings (every field is optional; an omitted one takes its default).
+  "rerank_top_n": 16, "budgets": {"daily_usd": 1, "monthly_tokens": 500000},
+  "repo_guidance": "notes"}` replaces the library's settings (every field is optional; an omitted one takes its default).
   `mode` is the mode its searches use when a call names none (`null`: the instance's
   `EXACTDOCS_AI__MODE` applies, else the best default mode configured, which is BM25 unless a
   mode the eval suite made a default can run, and none is yet); it must be available with the
@@ -318,6 +319,14 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `<profile>:<model>`); there is no `embedding` override (one vector space per instance).
   `rerank_top_n` (1 to 200) is how many of its best candidates the reranker reorders (`null`: the
   instance's `EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default).
+  `repo_guidance` is what the repository's `AGENTS.md` / `CLAUDE.md` do for agentic search (RET-08):
+  `off` (the default: imports keep none), `notes` (each version keeps the root's and the selected
+  folders' files, even outside the selected paths, and a folder's file reaches the agent as an
+  untrusted user-channel note when it opens that folder) or `trusted` (as `notes`, and the root's
+  file is also part of the agent's system instructions). 422 for any other value. Turning it on
+  (`off` to `notes` / `trusted`) queues a `reprocess` job of the library (see
+  `GET /libraries/{owner}/{repo}/jobs`), which re-imports every version at its commit so it keeps
+  its files; `notes` / `trusted` / `off` otherwise apply at the next search.
   `budgets` are the library's own spend limits per UTC day and month (`daily_usd`, `monthly_usd`,
   `daily_tokens`, `monthly_tokens`; `null`: not limited by the library). Each may be at most the
   instance's: the lowest of `[ai.budgets]`'s instance and `per_library_...` ceilings of that
@@ -328,7 +337,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `GET .../retrieval` returns the settings with `instance_mode`, the `effective_mode` a search
   without `mode` runs in now (with `fallback_reason` when a setting is skipped), the
   `available_modes`, the `configured_roles` of the library, the `effective_rerank_top_n`, its `budgets` and the
-  `budget_ceilings` they may not exceed (`null`: no ceiling). 404 for an unknown library. A
+  `budget_ceilings` they may not exceed (`null`: no ceiling), and its `repo_guidance`. 404 for an unknown library. A
   search's own `mode` (`GET /libraries/{owner}/{repo}/search?mode=`) always wins; an unavailable
   one is a 422 `mode_unavailable` as well. A `hybrid` search fuses the version's 50 best BM25
   chunks with its 50 nearest by vector (reciprocal rank fusion, `k` = 60); its `coverage.candidates`

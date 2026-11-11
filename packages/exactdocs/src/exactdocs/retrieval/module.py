@@ -33,6 +33,7 @@ from exactdocs.retrieval.ports.driven import (
     Explorer,
     HypotheticalAnswerCache,
     HypotheticalAnswers,
+    InstructionFiles,
     Libraries,
     LibraryModes,
     ModelFactory,
@@ -256,6 +257,7 @@ class RetrievalModule:
         agent_cache_threshold: float | None = None,
         agent_cache_scope: str = "library",
         agent_cache_ttl: timedelta = timedelta(days=DEFAULT_AGENT_CACHE_TTL_DAYS),
+        instruction_files: InstructionFiles | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -285,8 +287,10 @@ class RetrievalModule:
         caller (without it they are not rate limited).
         Agentic search: with an ``explorer``, ``agentic`` runs ``AgenticPipeline`` within
         ``agent_bounds``, its agent listing and reading articles through ``version_articles``,
-        each read recorded in ``agent_reads`` (the runs' trace; none by default); an ``agentic``
-        entry of ``pipelines`` replaces it (tests). With ``agent_answer_cache`` and
+        each read recorded in ``agent_reads`` (the runs' trace; none by default), and, for a
+        library with repo guidance on, given the ``AGENTS.md`` / ``CLAUDE.md`` files
+        ``instruction_files`` reads for the searched manifest (RET-08); an ``agentic`` entry of
+        ``pipelines`` replaces it (tests). With ``agent_answer_cache`` and
         ``agent_cache_key`` (the HMAC key of its questions), a question at least
         ``agent_cache_threshold`` similar to one answered before in the same scope is answered
         from the cache (``AgentAnswerCaching``): when ``agent_cache_enabled`` is true, or unset
@@ -389,6 +393,7 @@ class RetrievalModule:
                 articles=version_articles,
                 bounds=agent_bounds or AgentBounds(),
                 tracer=tracer,
+                instructions=instruction_files,
                 reads=agent_reads or UnrecordedAgentReads(),
                 cache=caching,
             )

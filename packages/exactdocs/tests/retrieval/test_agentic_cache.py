@@ -68,6 +68,7 @@ from exactdocs.retrieval.models import (
     ProfileOrigin,
     ProviderKind,
     ProviderProfile,
+    RepoGuidance,
     RetrievalMode,
     SearchableVersion,
     SourceHost,
@@ -653,6 +654,22 @@ async def test_another_llm_model_is_another_scope() -> None:
     assert world.models.chat_models == ["corp:explorer", "corp:other"]
 
 
+async def test_another_repo_guidance_is_another_scope() -> None:
+    world = await _world()
+    await _ask(world, FIRST)
+    store = world.cache
+    assert isinstance(store, InMemoryAgentAnswerCache)
+    kept = list(store.answers.values())
+    await world.modes.save(LIB, None, LibraryAi(repo_guidance=RepoGuidance.NOTES))
+    for answer in kept:  # as if a run in flight stored it after the settings were saved
+        await store.put(answer)
+
+    after = await _ask(world, SIMILAR)
+
+    assert after.cache_hit is False
+    assert _runs(world) == 2
+
+
 async def test_a_hit_rechecks_every_pick_against_the_manifest_and_the_tag_filter() -> None:
     world = await _world()
     first = await _ask(world, OTHER, tags=["security"])
@@ -910,6 +927,15 @@ def test_the_scope_fingerprint_covers_the_filter_and_the_limits() -> None:
     )
     assert scope(TagFilter(), AgentBounds(max_tool_calls=5)) != plain
     assert scope(TagFilter(), AgentBounds(), "local:m:auto:1") != plain
+    guided = AgentCacheScope.of(
+        version=version,
+        model=EXPLORER,
+        tag_filter=TagFilter(),
+        bounds=AgentBounds(),
+        similarity="bm25",
+        repo_guidance="notes",
+    )
+    assert guided.fingerprint != plain
 
 
 # ---------------------------------------------------------------- pruning and metrics

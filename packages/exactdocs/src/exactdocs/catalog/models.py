@@ -16,6 +16,8 @@ from exactdocs.catalog.constants import (
     _STABLE_SEMVER,
     IMAGE_TYPES,
     MAX_CLOSE_MATCHES,
+    MAX_INSTRUCTION_FILE_CHARS,
+    MAX_INSTRUCTION_FILES,
     MAX_SIMILARITY,
 )
 from exactdocs.catalog.errors import (
@@ -28,6 +30,7 @@ from exactdocs.catalog.errors import (
     InvalidCommitShaError,
     InvalidImageTypeError,
     InvalidImportTimeError,
+    InvalidInstructionFileError,
     InvalidLibraryIdError,
     InvalidManualTagsError,
     InvalidSettingsError,
@@ -467,6 +470,33 @@ class ManifestImage:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class ManifestInstruction:
+    """An instruction file (``AGENTS.md`` / ``CLAUDE.md``) the version's commit holds (RET-08).
+
+    Kept with the manifest, even outside the selected paths, only when the library's repo
+    guidance is on; untrusted repository text, never shown as an article.
+    """
+
+    path: str
+    """Repository-relative, e.g. ``AGENTS.md`` or ``docs/guide/CLAUDE.md``."""
+    content: str
+    """Its text, as the commit holds it (decoded, at most ``MAX_INSTRUCTION_FILE_CHARS``)."""
+
+    def __post_init__(self) -> None:
+        """Refuse a path that is not a plain repository path, or an oversized text.
+
+        Raises:
+            InvalidArticlePathError: An empty, ``.``, ``..`` or ``.git`` segment.
+            InvalidInstructionFileError: The text is longer than ``MAX_INSTRUCTION_FILE_CHARS``.
+        """
+        _check_path(self.path)
+        if any(part.lower() == ".git" for part in self.path.split("/")):
+            raise InvalidArticlePathError(self.path)
+        if len(self.content) > MAX_INSTRUCTION_FILE_CHARS:
+            raise InvalidInstructionFileError(self.path)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class StoredImage:
     """An image as a reader gets it (and as it is stored once per blob SHA)."""
 
@@ -497,8 +527,16 @@ class Manifest:
     """Files moved since an earlier version; not loaded with the manifest (``find_rename``)."""
     origin: VersionOrigin = VersionOrigin.MANUAL
     """What its activation gives the version when it creates it (an existing one keeps its own)."""
+    instructions: tuple[ManifestInstruction, ...] = ()
+    """The commit's instruction files kept for agentic retrieval (RET-08); not loaded with the
+    manifest (``list_instructions``)."""
 
     def __post_init__(self) -> None:
+        kept = [instruction.path for instruction in self.instructions]
+        if len(kept) > MAX_INSTRUCTION_FILES:
+            raise InvalidInstructionFileError(kept[MAX_INSTRUCTION_FILES])
+        if len(set(kept)) != len(kept):
+            raise InvalidInstructionFileError(next(p for p in kept if kept.count(p) > 1))
         if not _OBJECT_ID.fullmatch(self.commit_sha):
             raise InvalidCommitShaError(self.commit_sha)
         paths = [entry.path for entry in self.entries]

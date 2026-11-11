@@ -36,6 +36,10 @@ IMAGE_TYPES: Final[frozenset[str]] = frozenset(
     {"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"}
 )
 """The only types the catalog stores and serves (the importer sniffs, the catalog re-checks)."""
+MAX_INSTRUCTION_FILES: Final[int] = 64
+"""Instruction files (``AGENTS.md`` / ``CLAUDE.md``) a manifest may keep (RET-08)."""
+MAX_INSTRUCTION_FILE_CHARS: Final[int] = 32_768
+"""Characters of one kept instruction file."""
 MAX_CLOSE_MATCHES: Final[int] = 5
 """Paths suggested when an article does not exist."""
 
