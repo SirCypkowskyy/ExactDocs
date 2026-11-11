@@ -169,6 +169,14 @@ POSTGRES_DRIVER: Final[str] = "postgresql+psycopg"
 """The one PostgreSQL driver: psycopg 3, async. DBOS already depends on it."""
 POSTGRES_DRIVERS: Final[frozenset[str]] = frozenset({"postgresql", POSTGRES_DRIVER})
 """How `EXACTDOCS_DATABASE_URL` may name PostgreSQL; both mean psycopg 3."""
+SUPABASE_HOSTS: Final[tuple[str, ...]] = (".supabase.co", ".supabase.com")
+"""Host suffixes of Supabase's databases and poolers (``db.<ref>.supabase.co``,
+``aws-0-<region>.pooler.supabase.com``)."""
+SUPABASE_TRANSACTION_PORT: Final[int] = 6543
+"""The port of Supabase's poolers in transaction mode (Supavisor's and the dedicated PgBouncer's),
+which ExactDocs refuses: the session pooler and direct connections listen on 5432."""
+SECURE_SSLMODES: Final[frozenset[str]] = frozenset({"require", "verify-ca", "verify-full"})
+"""``sslmode`` values that never fall back to an unencrypted connection."""
 MIN_POSTGRES: Final[int] = 140000
 """`server_version_num` of PostgreSQL 14, the oldest supported (generated columns, `FORCE`)."""
 WRITE_LOCK: Final[int] = 0x45584443_00000001

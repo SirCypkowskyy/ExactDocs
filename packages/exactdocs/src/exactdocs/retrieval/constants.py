@@ -956,13 +956,24 @@ of being given up."""
 _PG_READ_ONLY: Final[str] = "SELECT current_setting('transaction_read_only')"
 """``on`` in a process that only reads (``serve --stdio``): it may not create the extension."""
 _PG_EXTENSION_SCHEMA: Final[str] = (
-    "SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace "
-    "WHERE e.extname = :name"
+    "SELECT n.nspname AS schema, has_schema_privilege(n.oid, 'USAGE') AS usable, "
+    "current_user AS role "
+    "FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = :name"
 )
 """The schema pgvector is installed in (``public``, or e.g. ``extensions`` on Supabase): its type
-and operator are named with it, whatever the role's ``search_path``."""
-_PG_EXTENSION_CREATE: Final[str] = "CREATE EXTENSION IF NOT EXISTS {extension}"
-"""Installs pgvector in the database (needs a superuser: it is not a trusted extension)."""
+and operator are named with it, whatever the role's ``search_path``; and whether this role may use
+it (Supabase grants ``extensions`` to its own roles only)."""
+EXTENSIONS_SCHEMA: Final[str] = "extensions"
+"""Where Supabase keeps extensions: pgvector is created there when the schema exists and this
+role may create in it, else in the role's first schema (``public``)."""
+_PG_EXTENSIONS_SCHEMA_WRITABLE: Final[str] = (
+    "SELECT CASE WHEN to_regnamespace(CAST(:schema AS text)) IS NULL THEN false "
+    "ELSE has_schema_privilege(CAST(:schema AS text), 'CREATE') END"
+)
+"""Whether ``EXTENSIONS_SCHEMA`` exists and this role may create objects in it."""
+_PG_EXTENSION_CREATE: Final[str] = "CREATE EXTENSION IF NOT EXISTS {extension}{schema}"
+"""Installs pgvector in the database (needs a superuser: it is not a trusted extension;
+Supabase lets its ``postgres`` role). ``{schema}`` is empty or `` WITH SCHEMA <schema>``."""
 _PG_VECTOR_CREATE: Final[str] = (
     "CREATE TABLE {table} ("
     "chunk_key INTEGER PRIMARY KEY REFERENCES retrieval_chunks (id) ON DELETE CASCADE, "
