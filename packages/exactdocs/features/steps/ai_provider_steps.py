@@ -2,8 +2,8 @@
 
 A fake gateway on loopback (``fake_llm``) stands in for every endpoint a scenario names, such as
 ``https://llm.example.com/v1``: the scenarios check what is sent and where, not a real model. The
-hybrid pipeline is a stand-in until #92: it sends the query to the embedding role's gateway, as
-the real one will, so a scenario can see whether anything of a library leaves the instance.
+hybrid pipeline is a stand-in that sends the query to the embedding role's gateway, as the real
+one does, so a scenario can see whether anything of a library leaves the instance.
 """
 
 import io
@@ -211,6 +211,7 @@ def step_every_role(context: Context, name: str) -> None:
     _serve(
         context,
         {
+            "mode": "hybrid",  # not a default (docs/evals.md): chosen, so AI is used with AI on
             "providers": {name: {"kind": "openai-compatible", "base_url": corp.v1}},
             **{role: {"model": f"{name}:m"} for role in roles},
         },

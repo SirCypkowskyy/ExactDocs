@@ -142,16 +142,21 @@ most recently imported version.
 
 ## Retrieval modes
 
-BM25 and reranking are built; the other modes are the design for the *Next: AI retrieval*
-milestone. Which
-mode answers is decided per call (RET-06): the call's `mode`, else the library's mode, else the
-instance's (`EXACTDOCS_AI__MODE`), else the best mode the configured model roles allow. A
+BM25, `hybrid` (BM25 and vectors fused with reciprocal rank fusion, #92) and reranking are
+built; the other
+modes are the design for the *Next: AI retrieval* milestone. Which mode answers is decided per
+call (RET-06): the call's `mode`, else the library's mode, else the instance's
+(`EXACTDOCS_AI__MODE`), else the best default the configured model roles allow. A mode becomes a
+default only once the eval suite shows it beats BM25 ([Retrieval evals](evals.md#gates)): `hybrid`
+is not one yet, so it runs when an operator, a library or a call chooses it. A
 mode is available when it has a pipeline and its roles are configured (`hybrid`: embedding;
 `hybrid_hyde`: embedding and LLM; `agentic`: LLM) and, for the hybrid modes, the vector store can
 load (sqlite-vec on SQLite, pgvector on PostgreSQL); reranking is a flag on top. A mode the call asks for that is not available is an
 error naming the missing role; a library or instance mode that is not available is skipped, and the
 result says so (`fallback_reason: mode_unavailable`, or `vector_store_unavailable` when only the
-vector store is missing).
+vector store is missing). A hybrid search never fails for its model either: a version its model has
+not embedded yet answers BM25 with `embedding_in_progress`, and a query the model fails or times
+out on answers BM25 with `embedding_unavailable`.
 
 With a reranker configured, the mode's pipeline is asked for the reranker's top N candidates (32,
 or the library's own number) when that is more than the call's `limit`; the reranker receives the
@@ -169,7 +174,7 @@ flowchart TD
     lib -->|yes| run
     lib -->|"none or not available"| inst{"instance mode<br/>available?"}
     inst -->|yes| run
-    inst -->|"none or not available"| best["best available<br/>(HyDE, hybrid, BM25)"]
+    inst -->|"none or not available"| best["best available default<br/>(BM25 until the eval suite makes another one)"]
     best --> run
     run["the mode's pipeline, on this one version"] --> rer{"reranker?"}
     rer -->|no| out["verbatim chunks + retrieval_mode + reranked<br/>+ coverage + fallback_reason"]

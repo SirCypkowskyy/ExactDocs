@@ -1,7 +1,7 @@
 """How the suite asks a mode: a ``Retriever`` answers one question with ranked hits."""
 
 import time
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -35,8 +35,8 @@ class SearchDocsRetriever:
     read back with ``ReadChunk``, which serves it from the version its ID was issued for. So a
     chunk of another version that a search lets through is caught even when the answer labels it
     with the version asked for. The pinned commit is taken from the repository. Latency is the
-    search alone, without those reads. Tokens and USD are 0 until the AI modes report their spend
-    (the spend ledger of the decision record).
+    search alone, without those reads. Tokens and USD are what the spend ledger grew by during the
+    search (the query's embedding in a hybrid mode), when ``spent`` is given; 0 otherwise.
     """
 
     search: SearchDocs
@@ -49,6 +49,9 @@ class SearchDocsRetriever:
     """The retrieval mode asked for."""
     commits: Mapping[str, str]
     """The commit SHA each version points at."""
+    spent: Callable[[], Awaitable[tuple[int, float]]] | None = None
+    """Reads what the instance's models have cost so far (tokens, USD), from the spend ledger;
+    the difference around a search is that search's cost (the query's embedding)."""
 
     async def answer(self, question: Question) -> Answer:
         """Search the question's version in ``mode``, then read every hit back by its ID.
@@ -59,6 +62,7 @@ class SearchDocsRetriever:
         Returns:
             The hits as the use case ranked them, each with the version and commit of its chunk.
         """
+        before = await self.spent() if self.spent is not None else (0, 0.0)
         started = time.perf_counter()
         result = await self.search(
             SearchDocsQuery(
@@ -72,6 +76,7 @@ class SearchDocsRetriever:
             )
         )
         elapsed_ms = (time.perf_counter() - started) * 1000
+        after = await self.spent() if self.spent is not None else (0, 0.0)
         hits = []
         for found in result.results:
             chunk = await self.read_chunk(ReadChunkQuery(chunk_id=found.chunk_id))
@@ -93,4 +98,6 @@ class SearchDocsRetriever:
             if result.fallback_reason is None
             else result.fallback_reason.value,
             search_ms=elapsed_ms,
+            tokens=after[0] - before[0],
+            usd=after[1] - before[1],
         )

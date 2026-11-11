@@ -233,14 +233,24 @@ def test_the_configured_roles_decide_which_modes_are_available(
     assert list(registry.available()) == available
 
 
+@pytest.mark.parametrize("roles", [set(), {LLM}, {EMBEDDING}, {EMBEDDING, LLM, RERANKER}])
+def test_the_default_is_bm25_until_the_eval_suite_makes_another_mode_one(
+    roles: set[ModelRole],
+) -> None:
+    registry = ModeRegistry(roles=frozenset(roles), pipelines=EVERY_PIPELINE)
+
+    assert registry.best() is BM25
+
+
 @pytest.mark.parametrize(
     ("roles", "best"),
     [(set(), BM25), ({LLM}, BM25), ({EMBEDDING}, HYBRID), ({EMBEDDING, LLM, RERANKER}, HYDE)],
 )
-def test_the_default_is_the_best_available_and_never_agentic(
+def test_the_default_is_the_first_eligible_mode_available_and_never_agentic(
     roles: set[ModelRole], best: RetrievalMode
 ) -> None:
-    registry = ModeRegistry(roles=frozenset(roles), pipelines=EVERY_PIPELINE)
+    eligible = (HYDE, HYBRID, BM25)  # as if the eval suite had made both hybrid modes defaults
+    registry = ModeRegistry(roles=frozenset(roles), pipelines=EVERY_PIPELINE, defaults=eligible)
 
     assert registry.best() is best
 
@@ -294,10 +304,17 @@ async def test_the_instance_wins_over_the_best_available() -> None:
     assert await _mode_of(world) == (BM25, None)
 
 
-async def test_with_nothing_set_the_best_available_mode_answers() -> None:
+async def test_with_nothing_set_bm25_answers_whatever_is_configured() -> None:
+    world = await _build(EMBEDDING, LLM)
+
+    assert await _mode_of(world) == (BM25, None)
+
+
+async def test_hybrid_is_not_a_default_until_the_eval_suite_makes_it_one() -> None:
     world = await _build(EMBEDDING)
 
-    assert await _mode_of(world) == (HYBRID, None)
+    assert await _mode_of(world) == (BM25, None)
+    assert await _mode_of(world, "hybrid") == (HYBRID, None)
 
 
 async def test_with_nothing_configured_it_is_bm25() -> None:
@@ -351,7 +368,7 @@ async def test_an_instance_mode_that_cannot_run_falls_back_to_the_best_and_says_
 
 
 async def test_a_pipeline_that_answers_with_a_cheaper_mode_says_why() -> None:
-    world = await _build(EMBEDDING)
+    world = await _build(EMBEDDING, instance=HYBRID)
     world.pipelines[HYBRID].falls_back = FallbackReason.EMBEDDING_IN_PROGRESS
 
     assert await _mode_of(world) == (BM25, FallbackReason.EMBEDDING_IN_PROGRESS)
@@ -361,7 +378,8 @@ async def test_a_pipeline_that_answers_with_a_cheaper_mode_says_why() -> None:
 
 
 async def test_a_reranker_role_that_builds_no_reranker_keeps_the_order_and_says_why() -> None:
-    world = await _build(EMBEDDING, RERANKER)  # the role is set, but resolves to no profile
+    # The role is set, but resolves to no profile; hybrid is chosen (it is no default).
+    world = await _build(EMBEDDING, RERANKER, instance=HYBRID)
 
     result = await world.module.search_docs(SearchDocsQuery(library=LIB, query="token"))
 
@@ -493,13 +511,13 @@ async def test_a_forgotten_library_has_no_mode(library_modes: LibraryModes) -> N
 
 
 async def test_forgetting_a_removed_library_drops_its_mode() -> None:
-    world = await _build(EMBEDDING)
+    world = await _build(EMBEDDING, LLM)
     await world.module.set_library_retrieval(SetLibraryRetrievalCommand(library=LIB, mode="bm25"))
 
     await world.module.forget_library(ForgetLibraryCommand(library=LIB))
 
     shown = await world.module.get_library_retrieval(GetLibraryRetrievalQuery(library=LIB))
-    assert (shown.mode, shown.effective_mode) == (None, HYBRID)
+    assert (shown.mode, shown.effective_mode) == (None, BM25)
 
 
 # ---------------------------------------------------------------- roles per library
@@ -552,16 +570,25 @@ async def test_a_hybrid_setting_falls_back_to_bm25_when_sqlite_vec_cannot_load()
     assert await _mode_of(down) == (BM25, FallbackReason.VECTOR_STORE_UNAVAILABLE)
 
 
-async def test_the_best_mode_says_when_the_vector_store_kept_hybrid_out() -> None:
-    world = await _build(EMBEDDING, vector_store=False)
-
-    assert await _mode_of(world) == (BM25, FallbackReason.VECTOR_STORE_UNAVAILABLE)
-    shown = await world.module.get_library_retrieval(GetLibraryRetrievalQuery(library=LIB))
-    assert (shown.effective_mode, shown.fallback_reason) == (
-        BM25,
-        FallbackReason.VECTOR_STORE_UNAVAILABLE,
+def test_the_best_mode_says_when_the_vector_store_kept_a_default_hybrid_out() -> None:
+    registry = ModeRegistry(
+        roles=frozenset({EMBEDDING}),
+        pipelines=EVERY_PIPELINE,
+        vector_store=False,
+        defaults=(HYBRID, BM25),  # as if the eval suite had made hybrid a default
     )
-    assert shown.available_modes == [BM25]
+
+    choice = registry.choose(asked=None, library=None, instance=None)
+
+    assert (choice.mode, choice.fallback_reason) == (BM25, FallbackReason.VECTOR_STORE_UNAVAILABLE)
+
+
+async def test_without_the_vector_store_bm25_answers_and_no_hybrid_mode_is_offered() -> None:
+    world = await _build(EMBEDDING, LLM, vector_store=False)
+
+    assert await _mode_of(world) == (BM25, None)  # BM25 is the only default: nothing was skipped
+    shown = await world.module.get_library_retrieval(GetLibraryRetrievalQuery(library=LIB))
+    assert shown.available_modes == [BM25, AGENTIC]
 
 
 async def test_asking_for_hybrid_without_the_vector_store_fails_clearly() -> None:
@@ -569,3 +596,11 @@ async def test_asking_for_hybrid_without_the_vector_store_fails_clearly() -> Non
 
     with pytest.raises(UnavailableModeError, match="extension, sqlite-vec or pgvector, cannot"):
         await _mode_of(world, "hybrid")
+
+
+def test_hyde_over_budget_falls_back_to_hybrid_although_hybrid_is_no_default() -> None:
+    registry = ModeRegistry(roles=frozenset({EMBEDDING, LLM}), pipelines=EVERY_PIPELINE)
+
+    assert registry.best() is BM25
+    assert registry.cheaper_than(HYDE) is HYBRID
+    assert registry.cheaper_than(AGENTIC) is BM25

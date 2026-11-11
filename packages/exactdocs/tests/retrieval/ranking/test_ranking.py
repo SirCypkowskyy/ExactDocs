@@ -41,6 +41,7 @@ def _id(entry: dict[str, Any], version: str) -> str:
 @pytest.mark.parametrize(("entry", "version", "expected"), load_cases())
 async def test_expected_section_ranks_first(
     search_docs: SearchDocs,
+    vector_half: bool,
     docs_repo: DocsRepo,
     entry: dict[str, Any],
     version: str,
@@ -62,10 +63,14 @@ async def test_expected_section_ranks_first(
     context = f"\n{entry['query']!r} in {version}; top {TOP}:\n  " + "\n  ".join(top or ["(none)"])
 
     assert result.version == version
+    assert result.fallback_reason is None, "the engine's own mode answered"
     commit = git("rev-parse", f"{version}^{{commit}}", cwd=docs_repo.path)
     assert {h.commit_sha for h in result.results} <= {commit}, "answered from another version"
     if expected is None:
-        assert not result.results, context
+        # No answer in this version. Lexical engines say so with no hit; an engine with a vector
+        # half returns the nearest chunks, which only have to be of this version (checked above).
+        if not vector_half:
+            assert not result.results, context
         return
     wanted = (expected["article"], expected["heading_path"])
     ranked = [(h.article_path, h.heading_path) for h in result.results]
