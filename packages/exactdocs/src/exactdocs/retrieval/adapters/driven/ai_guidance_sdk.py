@@ -390,10 +390,10 @@ class UsageFloor(WrapperModel):
     count it made up), so the run's ``UsageLimits`` and ``SpendLimits`` would count nothing for
     exactly the runs that carry the most untrusted text. Each side of a streamed response
     counts as the larger of what it reports and ``models.estimated_tokens`` (4 characters per
-    token for ASCII, a token per other character: input from the request's serialized messages,
-    output from the response's parts). The estimate can still undercount dense code, so an
-    honest report is kept. The
-    stream is read whole before it is handed on (nothing of it is shown to anyone meanwhile).
+    token for ASCII, 1.5 in long runs without whitespace, 4 tokens above U+FFFF, a token per other
+    character: input from the request's serialized messages, output from the response's parts).
+    The estimate can still undercount dense code, so an honest report is kept. The stream is read
+    whole before it is handed on (nothing of it is shown to anyone meanwhile).
     """
 
     @asynccontextmanager
