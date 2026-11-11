@@ -866,7 +866,8 @@ room for its 9 MB.)
   `input_value`), keeping the exception type; FastMCP's `enduser.id` and `enduser.scope` (who
   called) are dropped. Health and readiness probes (`PROBE_PATHS`) get no request span.
 - **Search:** retrieval declares a driven port, `SearchTracer`: each search use case opens a span
-  for the search and one per stage (`version`, `rank`, `chunks`), in its mode. The query text is a
+  for the search and one per stage (`version`, `rank`, `rerank` when a reranker is configured,
+  `chunks`), in its mode. The query text is a
   separate argument, so the adapter (`adapters/driven/opentelemetry.py`) can leave it out. Without
   a tracer the use cases get `UntracedSearches`, which records nothing.
 - **Jobs:** bootstrap wraps every job handler in `TracedJobHandler` (`ingestion.<kind>` spans);
@@ -891,7 +892,8 @@ room for its 9 MB.)
 ## AI retrieval (planned)
 
 Mostly not built yet; decided in [AI retrieval decisions](decisions/ai-retrieval.md) (#240) for the
-*Next: AI retrieval* milestone. Built: **mode selection** (#89) and **provider profiles** (#241).
+*Next: AI retrieval* milestone. Built: **mode selection** (#89), **provider profiles** (#241)
+and the **reranker** (#93).
 
 **Profiles and roles (#241).** Retrieval's models hold a `ProviderProfile` (a named endpoint with a
 `kind`, validated per kind, never a plaintext key: a stored key is sealed, a file is named, an
@@ -944,7 +946,34 @@ which the pgvector adapter (#243) runs too. `OpenEmbeddingSpace` finds the space
 creates a new one when the model, its dimensions or the input format changed, so two models never
 share one. `RetrievalModes` asks `VectorIndex.available()` once an embedding role is configured:
 when its extension cannot load (sqlite-vec, or pgvector's `vector`), the hybrid modes are unavailable and a setting that needs them falls
-back to BM25 with `fallback_reason: vector_store_unavailable`. Later modes plug in as pipelines; their models come through the ports below. The `[ai]`
+back to BM25 with `fallback_reason: vector_store_unavailable`.
+
+**Reranker (#93).** Reranking is a flag on top of any mode (`ModeChoice.rerank`, with the
+library's `rerank_top_n` or the instance's `[ai.reranker] top_n`). `RetrievalModes.run` asks the
+pipeline for the top N when that is more than the call's limit; the search use cases then open a
+`rerank` stage span (no query, no text) and call `RetrievalModes.rerank`, which hands the answer to
+`Reranking` (in `use_cases`): it reads the candidates' chunk text (handed back to the use case,
+which reads only the chunks it lacks; a candidate whose chunk is gone is dropped and no longer
+counted in `coverage.candidates`), then, under `asyncio.timeout` (`[ai.reranker] timeout`, 2 s),
+builds the library's reranker through `AiProviders.reranker_for` (the `ModelFactory`'s
+`reranker`, typed as the `Reranker` driven port: query and documents in, one score each out) from
+the library settings `RetrievalModes.choose` read once for the search, and calls it. Any build
+failure, and anything the call raises (a client closed under it, an `ExceptionGroup` of its
+batches), is re-raised as a `RerankerError` naming only the exception's class; cancellation passes
+through. The provider SDKs are loaded in a worker thread: at start when a profile other than `local`
+exists (a failed load is logged as a warning and never stops the start) (`Container.running`, `PydanticAiModels.warm`), else on first use, never on the event
+loop. `models.reorder` orders the scored head by score (ties keep the
+mode's order) and keeps the rest after it; the use case then cuts to the limit
+(`PipelineAnswer.cut`). A timeout, a `RerankerError` or a `ProviderUnsupportedError` keeps the
+mode's order with `fallback_reason` `reranker_timeout` / `reranker_failed` and is logged without
+the query. The HTTP adapter (`adapters/driven/http_reranker.py`, `HttpReranker`) speaks the
+Cohere-compatible `/rerank` (`openai-compatible`, `vllm`, `litellm` profiles; Voyage's `data`
+answer too) or TEI's (`tei` profiles), cuts the texts to `MAX_RERANK_*_CHARS`, sends batches the
+endpoint accepts concurrently (a `TaskGroup`: one failed batch cancels the rest), and turns every failure into a `RerankerError` without the URL, key
+or text. Bootstrap's `ai_sdk.reranker` builds it on the profile's one guarded `httpx2` client; the
+fastembed cross-encoder (#245) is another `Reranker` the factory returns for `local` profiles.
+
+Later modes plug in as pipelines; their models come through the ports below. The `[ai]`
 extra is declared and installed for development; the model-free test proves none of it is imported.
 How the rest fits the structure above:
 

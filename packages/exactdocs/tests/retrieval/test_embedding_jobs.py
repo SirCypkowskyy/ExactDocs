@@ -65,6 +65,7 @@ from exactdocs.retrieval.models import (
 )
 from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.ports import VectorIndex
+from exactdocs.retrieval.ports.driven import Reranker
 
 LIB = "/acme/payments"
 SECRET = "/acme/secret"
@@ -139,7 +140,7 @@ class Factory:
         self.built.append(f"{profile.name}:{model}")
         return object()
 
-    async def reranker(self, profile: ProviderProfile, model: str) -> object:
+    async def reranker(self, profile: ProviderProfile, model: str) -> Reranker:
         raise ProviderUnsupportedError(profile.name, model)
 
     async def release(self, name: str) -> None:

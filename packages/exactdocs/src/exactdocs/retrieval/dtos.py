@@ -24,6 +24,7 @@ from exactdocs.retrieval.constants import (
     MAX_MODEL_NAME,
     MAX_MODEL_REF,
     MAX_QUERY,
+    MAX_RERANK_TOP_N,
     MAX_TAG,
     MAX_TAGS,
     MAX_URL,
@@ -196,9 +197,10 @@ class CoverageOut(_Dto):
     """How much of the index the answer stands on."""
 
     candidates: int
-    """Lower bound: matching chunks the search looked at, at most `limit` + 1."""
+    """Lower bound: matching chunks the search looked at, at most `limit` + 1 (with a reranker, at
+    most its top N + 1 when that is more)."""
     reranked: int
-    """Of those, how many a reranker reordered."""
+    """Of those, how many a reranker reordered (0 when it failed or timed out)."""
     complete: bool
     """False when more matches exist than `limit` allowed."""
 
@@ -831,6 +833,8 @@ class SetLibraryRetrievalCommand(_Dto):
     """The library's own judge, `<profile>:<model>`; empty: the instance's (else the LLM)."""
     reranker: str | None = Field(default=None, max_length=MAX_MODEL_REF)
     """The library's own reranker, `<profile>:<model>`; empty: the instance's `reranker` role."""
+    rerank_top_n: int | None = Field(default=None, ge=1, le=MAX_RERANK_TOP_N)
+    """How many of its best candidates the reranker reorders; empty: the instance's (32)."""
 
     @field_validator("mode", "llm", "judge", "reranker", mode="before")
     @classmethod
@@ -874,6 +878,10 @@ class LibraryRetrievalOut(_Dto):
     """The library's own judge (`<profile>:<model>`); null: the instance's, else the LLM."""
     reranker: str | None = None
     """The library's own reranker (`<profile>:<model>`); null: the instance's."""
+    rerank_top_n: int | None = None
+    """How many of its best candidates the reranker reorders; null: the instance's."""
+    effective_rerank_top_n: int
+    """How many candidates its searches rerank now: its own number, else the instance's."""
 
 
 class ForgetLibraryCommand(_Dto):

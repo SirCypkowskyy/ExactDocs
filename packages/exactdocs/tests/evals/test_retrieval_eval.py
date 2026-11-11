@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 from exactdocs.bootstrap.container import Container
-from exactdocs.bootstrap.settings import Settings
+from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.retrieval.dtos import SearchDocsQuery, SearchDocsResult
 from exactdocs.retrieval.models import (
     ChunkId,
@@ -20,6 +20,7 @@ from exactdocs.retrieval.models import (
     RetrievalMode,
     SearchHit,
 )
+from fake_llm import gateway
 from fixture_import import LIBRARY, commits, import_fixture
 from fixture_repo import FIXTURE, DocsRepo, git_bytes, headings
 from retrieval_eval.cli import main
@@ -151,6 +152,30 @@ class Broken:
         del question
         message = "index unreadable"
         raise RuntimeError(message)
+
+
+@dataclass
+class ModeFellBackAndRerankerFailed:
+    """The mode fell back and the reranker failed: only the mode's reason is shown."""
+
+    async def answer(self, question: Question) -> Answer:
+        return Answer(
+            hits=_ideal(question),
+            answered_by="bm25",
+            reranked=False,
+            fallback_reason="embedding_in_progress",
+        )
+
+
+async def test_a_reranker_failure_counts_even_when_another_fallback_reason_is_shown() -> None:
+    dataset = with_evaluators(load_dataset())
+    answered = sum(1 for c in dataset.cases if c.expected_output and c.expected_output.hits)
+
+    expected = await evaluate_mode(dataset, BM25, ModeFellBackAndRerankerFailed(), rerank=True)
+    not_expected = await evaluate_mode(dataset, BM25, ModeFellBackAndRerankerFailed())
+
+    assert (expected.reranked, expected.rerank_fallbacks) == (0, answered)
+    assert not_expected.rerank_fallbacks == 0
 
 
 V2_HIT = Hit(version="v2.0.0", article="docs/guide/resilience.md", heading_path=["Resilience"])
@@ -451,6 +476,45 @@ async def test_a_local_tier_mode_on_a_hosted_model_is_skipped_without_permission
 
     allowed = await run_on_fixture(docs_repo, tmp_path / "again", build=build, allow_providers=True)
     assert next(o for o in allowed.modes if o.mode is RetrievalMode.HYBRID).status == "ran"
+
+
+async def test_a_configured_reranker_is_evaluated_only_with_permission(
+    docs_repo: DocsRepo, tmp_path: Path
+) -> None:
+    with gateway() as fake:
+        ai = AiSettings.model_validate(
+            {
+                "providers": {"rr": {"kind": "openai-compatible", "base_url": f"{fake.url}/v2"}},
+                "reranker": {"model": "rr:rerank-v3.5"},
+            }
+        )
+
+        def build(data_dir: Path) -> Container:
+            return Container.build(Settings(data_dir=data_dir, ai=ai))
+
+        modes = [m for m in MODES if m.mode is RetrievalMode.BM25]
+        held = await run_on_fixture(docs_repo, tmp_path / "data", build=build, modes=modes)
+        assert not fake.seen
+        allowed = await run_on_fixture(
+            docs_repo, tmp_path / "again", build=build, modes=modes, allow_providers=True
+        )
+
+    (skipped,) = held.modes
+    assert (skipped.status, skipped.reason) == (
+        "skipped",
+        (
+            "would call a hosted model (reranker): run by hand with --allow-providers, or pass "
+            "--local-roles reranker if it runs on this machine"
+        ),
+    )
+    (bm25,) = allowed.modes
+    assert bm25.metrics is not None
+    answered = sum(1 for c in load_dataset().cases if c.expected_output and c.expected_output.hits)
+    assert bm25.rerank_fallbacks == 0
+    assert answered <= bm25.reranked <= bm25.metrics.questions
+    assert bm25.metrics.wrong_version_rate == 0
+    assert f"`bm25` reranked {bm25.reranked} of {bm25.metrics.questions}" in markdown(allowed)
+    assert all(s.path == "/v2/rerank" for s in fake.seen)
 
 
 @dataclass(frozen=True)

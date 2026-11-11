@@ -114,7 +114,7 @@ from exactdocs.retrieval.adapters.driven.sqlite import (
 )
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
-from exactdocs.retrieval.models import RetrievalMode
+from exactdocs.retrieval.models import ProviderKind, RerankLimits, RetrievalMode
 from exactdocs.retrieval.ports.driven import ModelRoles, RetrievalPipeline
 from exactdocs.retrieval.ports.driving import SaveProvider
 from exactdocs_kernel import DomainError, SystemClock
@@ -145,6 +145,23 @@ def _ai_configuration(settings: Settings) -> ConfiguredAi:
             message = f"AI provider {profile.name!r}: {reason}"
             raise StartupError(message)
     return configured
+
+
+async def _warm_ai(retrieval: RetrievalModule) -> None:
+    """Load the provider SDKs in a worker thread at start when a model may be called.
+
+    That is when a provider profile other than ``local`` exists (configured, or stored over the
+    REST API): every role, the instance's or a library's own, names an existing profile, and
+    ``local`` models (#245) need none of these SDKs. The first search that calls a model would
+    otherwise import them (seconds) inside its reranker timeout. With no such profile nothing is
+    loaded (RUN-02). A failed load never stops the start (``PydanticAiModels.warm``).
+
+    Args:
+        retrieval: Lists the provider profiles (reading them imports no SDK).
+    """
+    profiles = (await retrieval.list_providers()).providers
+    if any(p.kind is not ProviderKind.LOCAL for p in profiles):
+        await PydanticAiModels().warm()
 
 
 def _secret_box(settings: Settings, purpose: bytes) -> FernetSecretBox:
@@ -272,6 +289,9 @@ def _build_read_side(
         models=PydanticAiModels(keys=ai.keys, box=ai_box),
         secret_box=ai_box,
         instance_mode=settings.ai.mode,
+        rerank_limits=RerankLimits(
+            top_n=settings.ai.reranker.top_n, timeout=settings.ai.reranker.timeout
+        ),
         pipelines=pipelines,
         suggestions=CatalogArticleSuggestions(get_article=catalog.get_article),
         query_docs_token_budget=settings.query_docs_token_budget,
@@ -393,6 +413,8 @@ class ReadOnlyContainer:
     No identity, ingestion, worker, secret key, ``known_hosts`` or ``git``: nothing here can write.
     """
 
+    settings: Settings
+    """The runtime configuration (which AI roles to load the SDKs for at start)."""
     engine: AsyncEngine
     catalog: CatalogModule
     retrieval: RetrievalModule
@@ -405,7 +427,7 @@ class ReadOnlyContainer:
         # Opens the provider keys stored over the REST API when a key exists; never creates one.
         ai_box = _existing_secret_box(settings, AI_KEYS_PURPOSE)
         catalog, retrieval = _build_read_side(engine, settings, ai_box=ai_box)
-        return cls(engine=engine, catalog=catalog, retrieval=retrieval)
+        return cls(settings=settings, engine=engine, catalog=catalog, retrieval=retrieval)
 
     @asynccontextmanager
     async def running(self) -> AsyncGenerator[None]:
@@ -418,6 +440,7 @@ class ReadOnlyContainer:
             raise RuntimeError(message)
         try:
             await check_schema_is_current(self.engine)
+            await _warm_ai(self.retrieval)
             yield
         finally:
             try:
@@ -664,6 +687,7 @@ class Container:
             raise RuntimeError(message)
         try:
             await migrate(self.engine)
+            await _warm_ai(self.retrieval)
             index = await self.retrieval.get_search_index_state()
             if index.needs_rebuild:
                 stored = (

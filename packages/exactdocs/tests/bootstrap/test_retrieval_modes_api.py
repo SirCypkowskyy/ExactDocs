@@ -101,7 +101,22 @@ async def test_a_library_without_a_setting_uses_the_best_mode(plain: httpx.Async
         "llm": None,
         "judge": None,
         "reranker": None,
+        "rerank_top_n": None,
+        "effective_rerank_top_n": 32,
     }
+
+
+async def test_a_library_sets_its_own_rerank_top_n_within_bounds(
+    plain: httpx.AsyncClient,
+) -> None:
+    stored = await plain.put(SETTING, json={"rerank_top_n": 8})
+    too_many = await plain.put(SETTING, json={"rerank_top_n": 201})
+    none = await plain.put(SETTING, json={"rerank_top_n": 0})
+
+    assert stored.status_code == 200, stored.text
+    assert (stored.json()["rerank_top_n"], stored.json()["effective_rerank_top_n"]) == (8, 8)
+    assert (too_many.status_code, none.status_code) == (422, 422)
+    assert (await plain.get(SETTING)).json()["rerank_top_n"] == 8
 
 
 async def test_setting_a_mode_whose_model_is_not_configured_is_refused(
