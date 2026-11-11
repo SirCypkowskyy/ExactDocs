@@ -9,6 +9,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from sqlalchemy.pool import QueuePool
 
 from exactdocs import __version__
 from exactdocs.bootstrap.constants import (
@@ -27,7 +28,11 @@ from exactdocs.retrieval.models import ModelRole
 LIVENESS = (LIVENESS_PATH, HEALTH_ALIAS_PATH)
 """The liveness probe and its alias."""
 FAST_SECONDS = 1.0
-"""Kubernetes' default probe timeout: liveness must answer well within it."""
+"""Kubernetes' default probe timeout: liveness must answer well within it.
+
+Liveness waits ``LIVENESS_DATABASE_SECONDS`` (0.3 s) for the database; the rest is margin for a
+loaded runner. The instance runs no background work meanwhile (see ``anonymous``), so the timing
+measures the probe alone (#291)."""
 MAX_POOL = 100
 """More connections than any pool here hands out."""
 CHECKOUT_SECONDS = 0.5
@@ -66,6 +71,12 @@ def container(tmp_path: Path, database_dir: Path) -> Container:
 async def anonymous(container: Container) -> AsyncIterator[httpx.AsyncClient]:
     """A client with no cookie and no token, like an orchestrator.
 
+    The instance runs without its job worker and nightly upkeep (#291): the probes need neither,
+    and that background work would share the database with the test. It holds pooled
+    connections while a test disposes the engine (stranding them in the old pool, finalized
+    unclosed during a later test), writes to a database file a test just deleted, and runs
+    during the liveness timing.
+
     Args:
         container: The instance to serve.
 
@@ -74,7 +85,7 @@ async def anonymous(container: Container) -> AsyncIterator[httpx.AsyncClient]:
     """
     transport = httpx.ASGITransport(app=create_app(container))
     async with (
-        container.running(),
+        container.running(jobs=False),
         httpx.AsyncClient(transport=transport, base_url="http://localhost") as client,
     ):
         yield client
@@ -128,6 +139,21 @@ async def _hold_every_connection(container: Container, stack: AsyncExitStack) ->
         except TimeoutError:
             return
     pytest.fail(f"the pool handed out more than {MAX_POOL} connections")
+
+
+async def _dispose_idle(container: Container) -> None:
+    """Close every pooled connection, as a lost database leaves none open (#291).
+
+    ``dispose()`` closes only the connections in the pool: one still checked out would go back
+    to the discarded pool and be finalized unclosed later, failing whichever test runs then.
+
+    Args:
+        container: The instance whose engine to dispose; nothing may hold a connection.
+    """
+    pool = container.engine.pool
+    assert isinstance(pool, QueuePool)
+    assert pool.checkedout() == 0, "a connection is still checked out"
+    await container.engine.dispose()
 
 
 def _assert_unknown(body: dict[str, object]) -> None:
@@ -193,7 +219,7 @@ async def test_an_unreachable_database_is_not_ready_but_alive(
     anonymous: httpx.AsyncClient, container: Container, database_dir: Path
 ) -> None:
     shutil.rmtree(database_dir)
-    await container.engine.dispose()
+    await _dispose_idle(container)
 
     readiness = await anonymous.get(READINESS_PATH)
 
@@ -210,7 +236,7 @@ async def test_an_unreachable_database_is_not_ready_but_alive(
 async def test_deleted_database_files_are_not_ready_and_not_recreated(
     anonymous: httpx.AsyncClient, container: Container, database_dir: Path
 ) -> None:
-    await container.engine.dispose()
+    await _dispose_idle(container)
     _remove_database_files(database_dir)
 
     readiness = await anonymous.get(READINESS_PATH)
@@ -314,7 +340,7 @@ def _broken_sqlite_vec() -> str:
 async def _health_of(container: Container) -> dict[str, object]:
     transport = httpx.ASGITransport(app=create_app(container))
     async with (
-        container.running(),
+        container.running(jobs=False),
         httpx.AsyncClient(transport=transport, base_url="http://localhost") as client,
     ):
         return (await client.get(LIVENESS_PATH)).json()
