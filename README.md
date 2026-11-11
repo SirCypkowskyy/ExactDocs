@@ -406,6 +406,7 @@ and instance modes are: their scores must compare across libraries.
 |---|---|---|
 | nothing | BM25 | **available** |
 | reranker | BM25 → rerank | planned |
+| LLM or judge model, judge chosen | any mode → the LLM judge rates the top candidates in one call and reorders them; unreranked with `fallback_reason` when it fails, times out, rates a chunk it was not given, or a budget is used up | **available** (opt-in: `EXACTDOCS_AI__RERANK_WITH=judge` or a library's `rerank_with`) |
 | embedding model | hybrid: BM25 and vector search fused with reciprocal rank fusion (`k` = 60, the top 50 of each), within the version; BM25 with `fallback_reason` while a version is not embedded yet (`embedding_in_progress`) or when the model fails on the query (`embedding_unavailable`) | **available** (opt-in: `EXACTDOCS_AI__MODE=hybrid`) |
 | embedding model + reranker | hybrid → rerank | planned |
 | embedding model + LLM (+ reranker) | HyDE (`hybrid_hyde`): the LLM writes a short hypothetical answer, whose embedding searches the vector half while BM25 keeps the query; cached per query, version and model; within the budgets, else hybrid with `fallback_reason` `llm_budget_reached`, `llm_rate_limited` or `llm_unavailable` (an LLM error or timeout) | **available** (opt-in: `EXACTDOCS_AI__MODE=hybrid_hyde`; a default only once the eval suite shows it beats BM25) |
@@ -590,8 +591,9 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   read-only there. A stored key is dropped, not reused, when the profile's endpoint changes.
 - **Per library** (`PUT /api/v1/libraries/{owner}/{repo}/retrieval`): AI on or off (off: nothing
   of the library is ever sent to a provider, searches are BM25), its own `llm`, `judge` and
-  `reranker`, its own `rerank_top_n`, its own spend limits per day and month (`budgets`), no
-  higher than the instance's, and its `repo_guidance` (see [Agentic search](#agentic-search)). The embedding model is instance-wide only. The library's settings
+  `reranker`, its own `rerank_top_n`, what reranks it (`rerank_with`: `cross_encoder` or `judge`),
+  its own spend limits per day and month (`budgets`), no higher than the instance's, and its
+  `repo_guidance` (see [Agentic search](#agentic-search)). The embedding model is instance-wide only. The library's settings
   page (*Retrieval and AI*) shows the pipeline its searches run now and edits all of these.
 - **Check:** `exactdocs ai check` (where the server runs) makes one minimal call per role and
   prints the latency, the model that answered and an embedding's dimensions, never a key;
@@ -697,6 +699,45 @@ provider profile other than `local` configured, the provider SDKs are loaded in 
 start, so the first search never waits for them; a load that fails is a warning, never a stop. Whatever the reranker raises (an HTTP client closed under the
 call because its profile was edited, a partly installed SDK) counts as `reranker_failed`. Traces show it as the `rerank` stage, without the query or any text. A hybrid search is
 reranked the same way, after the fusion.
+
+#### LLM judge
+
+Without a cross-encoder endpoint, or for better judgments than one gives, a small, fast LLM can
+rerank instead: the `judge` role (any chat profile; it defaults to the `llm` role) rates every
+candidate in **one** call, a whole score from 0 to 10 per candidate. It reranks only where it is
+chosen, since it costs an LLM call per search:
+
+```toml
+[ai.judge]
+model = "corp:gpt-4.1-mini"             # optional: the [ai.llm] model when unset
+timeout = 10.0                          # seconds for building the model and its one call
+
+[ai]
+rerank_with = "judge"                   # EXACTDOCS_AI__RERANK_WITH; default "cross_encoder"
+```
+
+A library chooses for itself with `rerank_with` (`cross_encoder` or `judge`) in its retrieval
+settings or the UI; unset, the instance's choice applies. When both a cross-encoder and a judge
+are configured, the cross-encoder (cheaper) reranks unless the judge is chosen; a library that
+chooses the judge without one configured is reranked by the cross-encoder, if there is one. The
+judge gets the best of the same top N as the cross-encoder that fit one bounded call: at most 64,
+and at most about 22,000 input tokens, estimated at 4 characters per token for ASCII text and a
+token per character for any other (CJK, Cyrillic...), on the high side of what tokenizers count.
+That keeps the call under the 60,000 tokens one LLM step may use, even for code full of escaped
+`<`, `>` and `&`, so a call is never stopped after it was paid for. With 2000 characters per
+candidate that is about 42 English or 10 CJK candidates; the candidates beyond them keep the mode's order
+after the judged ones, and `coverage.reranked` counts only the judged. It gets the query and each
+candidate's chunk text (cut to 2000 characters), named by position (`c1`, `c2`...), never by
+chunk ID, and never a library name, a version or a user; the prompt and the instructions mark
+them as untrusted, delimited text, and every `<`, `>` and `&` in them is escaped, so a candidate
+cannot close its delimiter. Its answer may only reorder the candidates it was given: ratings that
+name an ID it was not given (anything but exactly `c1` to `cN`), rate one twice, leave one
+out or go outside 0 to 10 are refused at once (no retry), and the search keeps its order with `fallback_reason` `reranker_failed`. A
+judge that does not answer within its timeout keeps the order with `reranker_timeout`. It is an
+LLM step: it counts against the budgets and the LLM search rate limit (above) (once
+per search, with HyDE's step), and once a budget is used up the search keeps its order with
+`fallback_reason` `llm_budget_reached`, without calling it. Traces show it as the `judge` stage,
+without the query, the candidates or the ratings.
 
 #### Agentic search
 

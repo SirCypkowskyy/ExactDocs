@@ -303,7 +303,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 
 - **Retrieval mode and AI overrides** (RET-06): `PUT /libraries/{owner}/{repo}/retrieval` with
   `{"mode": "hybrid", "ai_enabled": true, "llm": "corp:small", "judge": null, "reranker": null,
-  "rerank_top_n": 16, "budgets": {"daily_usd": 1, "monthly_tokens": 500000},
+  "rerank_top_n": 16, "rerank_with": "judge", "budgets": {"daily_usd": 1, "monthly_tokens": 500000},
   "repo_guidance": "notes"}` replaces the library's settings (every field is optional; an omitted one takes its default).
   `mode` is the mode its searches use when a call names none (`null`: the instance's
   `EXACTDOCS_AI__MODE` applies, else the best default mode configured, which is BM25 unless a
@@ -319,6 +319,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `<profile>:<model>`); there is no `embedding` override (one vector space per instance).
   `rerank_top_n` (1 to 200) is how many of its best candidates the reranker reorders (`null`: the
   instance's `EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default).
+  `rerank_with` chooses what reranks its searches: `cross_encoder` (the `reranker` role) or
+  `judge` (the `judge` role, else the `llm` role: an LLM rates every candidate in one call);
+  `null`: the instance's `EXACTDOCS_AI__RERANK_WITH` (`cross_encoder` by default). The judge
+  reranks only when chosen; chosen without a judge configured, the cross-encoder reranks.
   `repo_guidance` is what the repository's `AGENTS.md` / `CLAUDE.md` do for agentic search (RET-08):
   `off` (the default: imports keep none), `notes` (each version keeps the root's and the selected
   folders' files, even outside the selected paths, and a folder's file reaches the agent as an
@@ -336,7 +340,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   instance's per-library limit applies, to its LLM steps, paid reranks and embedding alike.
   `GET .../retrieval` returns the settings with `instance_mode`, the `effective_mode` a search
   without `mode` runs in now (with `fallback_reason` when a setting is skipped), the
-  `available_modes`, the `configured_roles` of the library, the `effective_rerank_top_n`, its `budgets` and the
+  `available_modes`, the `configured_roles` of the library, the `effective_rerank_top_n`,
+  `instance_rerank_with` and the `effective_reranker` (`cross_encoder`, `judge`, or `null` when
+  nothing reranks), its `budgets` and the
   `budget_ceilings` they may not exceed (`null`: no ceiling), and its `repo_guidance`. 404 for an unknown library. A
   search's own `mode` (`GET /libraries/{owner}/{repo}/search?mode=`) always wins; an unavailable
   one is a 422 `mode_unavailable` as well. A `hybrid` search fuses the version's 50 best BM25
@@ -380,7 +386,13 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   rest follow in the mode's order with the mode's scores, which are not comparable with the
   reranker's. A reranker that times out or fails never fails the search: results keep
   the mode's order with `reranked: false` and `fallback_reason` `reranker_timeout` or
-  `reranker_failed` (unless the mode itself fell back, whose reason is kept).
+  `reranker_failed` (unless the mode itself fell back, whose reason is kept). With
+  `rerank_with: judge` (#96), the LLM judge reorders them instead: each reranked result's `score`
+  is its rating over 10 (0 to 1). It rates only the best candidates that fit one bounded call
+  (at most 64, about 42 full-size English or 10 CJK chunks; `coverage.reranked` counts them), and the rest keep the
+  mode's order after them. Ratings that name an ID it was not given (it sees `c1` to `cN`, never
+  chunk IDs), or are not one score from 0 to 10 per candidate, are refused (`reranker_failed`); a used-up budget or the LLM
+  search rate limit skips it (`llm_budget_reached`, `llm_rate_limited`).
 
 ### AI providers
 

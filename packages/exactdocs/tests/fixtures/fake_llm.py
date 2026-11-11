@@ -13,11 +13,15 @@ event is set, so a test can look at an instance while an embedding run is in pro
 are one fixed small vector, or ``term_vector``'s hashed bag of words with ``by_terms`` (texts
 sharing terms are near, so hybrid search can be tested end to end); setting
 ``FakeGateway.broken`` makes every embedding request fail with 400, as a provider that refuses the
-call; ``FakeGateway.chat_broken`` does the same for chat completions.
+call; ``FakeGateway.chat_broken`` does the same for chat completions. A chat completion that offers
+an output tool (the LLM judge, #96) is answered with a call of it that rates each
+``<candidate id="...">`` of the prompt, the last one best (as the reranker does); with
+``FakeGateway.judge_rogue`` set, the ratings also name an ID the prompt did not hold.
 """
 
 import hashlib
 import json
+import re
 import threading
 import time
 from collections.abc import Callable, Generator
@@ -51,6 +55,56 @@ def term_vector(text: str) -> list[float]:
             digest = hashlib.blake2b(term.encode(), digest_size=8).digest()
             values[1 + int.from_bytes(digest) % (TERM_DIMENSIONS - 1)] += 1.0
     return values
+
+
+ROGUE_ID = "c999"
+"""The candidate ID a rogue judge rates although it was not given."""
+_CANDIDATE = re.compile(r'<candidate id="(c[0-9]+)">')
+
+
+def _judged(body: dict[str, Any], *, rogue: bool) -> dict[str, Any] | None:
+    """Answer a chat completion that offers an output tool with ratings of its candidates.
+
+    Args:
+        body: The chat completion request.
+        rogue: Also rate ``ROGUE_ID``, which the prompt did not hold.
+
+    Returns:
+        A completion whose one tool call rates the candidates (the last best), or ``None`` when
+        the request offers no tool.
+    """
+    tools = body.get("tools") or []
+    if not tools:
+        return None
+    prompt = " ".join(
+        str(m.get("content")) for m in body.get("messages", []) if m.get("role") == "user"
+    )
+    ids = _CANDIDATE.findall(prompt)
+    ratings = [{"id": i, "score": min(10, n)} for n, i in enumerate(ids)]
+    if rogue:
+        ratings.append({"id": ROGUE_ID, "score": 10})
+    call = {
+        "id": "call_1",
+        "type": "function",
+        "function": {
+            "name": tools[0]["function"]["name"],
+            "arguments": json.dumps({"response": ratings}),
+        },
+    }
+    return {
+        "id": "chatcmpl-1",
+        "object": "chat.completion",
+        "created": 0,
+        "model": body.get("model", "unknown"),
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": None, "tool_calls": [call]},
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": {"prompt_tokens": 50, "completion_tokens": 10, "total_tokens": 60},
+    }
 
 
 SLOW_SECONDS = 1.0
@@ -95,6 +149,8 @@ class FakeGateway:
     """Once set, every embedding request is refused with 400."""
     chat_broken: threading.Event = field(default_factory=threading.Event)
     """Once set, every chat completion is refused with 400."""
+    judge_rogue: threading.Event = field(default_factory=threading.Event)
+    """Once set, the judge's ratings also name ``ROGUE_ID``, an ID it was not given."""
 
     @property
     def v1(self) -> str:
@@ -123,27 +179,39 @@ def _rerank(body: dict[str, Any]) -> dict[str, Any] | list[Any]:
     return {"results": [{"index": i, "relevance_score": score} for i, score in ranked]}
 
 
+def _chat(model: str) -> dict[str, Any]:
+    """Answer a plain chat completion with ``OK``.
+
+    Args:
+        model: The model asked for.
+
+    Returns:
+        The completion.
+    """
+    return {
+        "id": "chatcmpl-1",
+        "object": "chat.completion",
+        "created": 0,
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "OK"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6},
+    }
+
+
 def _answer(
-    path: str, body: dict[str, Any], embed: Callable[[str], list[float]]
+    path: str, body: dict[str, Any], embed: Callable[[str], list[float]], *, rogue: bool = False
 ) -> dict[str, Any] | list[Any] | None:
     model = body.get("model", "unknown")
     if "/broken/" in path:
         return None
     if path.endswith("/chat/completions"):
-        return {
-            "id": "chatcmpl-1",
-            "object": "chat.completion",
-            "created": 0,
-            "model": model,
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": "OK"},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6},
-        }
+        return _judged(body, rogue=rogue) or _chat(model)
     if path.endswith("/embeddings"):
         inputs = body.get("input", [])
         texts = inputs if isinstance(inputs, list) else [inputs]
@@ -197,6 +265,7 @@ def gateway(
     seen: list[Seen] = []
     broken = threading.Event()
     chat_broken = threading.Event()
+    judge_rogue = threading.Event()
     embed = term_vector if by_terms else _fixed_vector
 
     class Handler(BaseHTTPRequestHandler):
@@ -221,7 +290,7 @@ def gateway(
             if (embedding and broken.is_set()) or (chat and chat_broken.is_set()):
                 answer, status = None, 400
             else:
-                answer = _answer(self.path.split("?")[0], body, embed)
+                answer = _answer(self.path.split("?")[0], body, embed, rogue=judge_rogue.is_set())
                 status = 200 if answer is not None else 404
             payload = json.dumps({"error": "not found"} if answer is None else answer).encode()
             self.send_response(status)
@@ -248,6 +317,7 @@ def gateway(
             seen=seen,
             broken=broken,
             chat_broken=chat_broken,
+            judge_rogue=judge_rogue,
         )
     finally:
         server.shutdown()

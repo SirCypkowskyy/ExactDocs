@@ -60,6 +60,7 @@ from exactdocs.retrieval.models import (
     ProfileOrigin,
     ProviderKind,
     ProviderProfile,
+    RerankWith,
     RetrievalMode,
     RoleSource,
     SpendWindow,
@@ -900,7 +901,11 @@ async def test_library_overrides_are_stored_and_forgotten(
 ) -> None:
     _, modes = stores
     ai = LibraryAi(
-        enabled=False, llm=CHAT, reranker=ModelRef(profile="tei", model="bge:v2"), rerank_top_n=8
+        enabled=False,
+        llm=CHAT,
+        reranker=ModelRef(profile="tei", model="bge:v2"),
+        rerank_top_n=8,
+        rerank_with=RerankWith.JUDGE,
     )
 
     await modes.save("/Acme/Payments", None, ai)

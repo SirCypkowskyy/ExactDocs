@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict
 from pydantic_evals.reporting import EvaluationReport, ReportCase
 
 from exactdocs.retrieval.dtos import GetLibraryRetrievalQuery, LibraryRetrievalOut
-from exactdocs.retrieval.models import ModelRole, RetrievalMode
+from exactdocs.retrieval.models import ModelRole, RerankWith, RetrievalMode
 from exactdocs.retrieval.ports.driving import GetLibraryRetrieval, ReadChunk, SearchDocs
 from retrieval_eval.dataset import Answer, CaseInfo, Question, RetrievalDataset
 from retrieval_eval.evaluators import (
@@ -147,6 +147,8 @@ class ModeOutcome(_Model):
     """Answerable cases whose section was not in the top 10."""
     fallbacks: int = 0
     """Cases a cheaper mode answered."""
+    reranker: RerankWith | None = None
+    """What reranked the mode's searches: the cross-encoder, the LLM judge, or nothing."""
     reranked: int = 0
     """Cases a reranker reordered (0 without a reranker role)."""
     rerank_fallbacks: int = 0
@@ -235,7 +237,12 @@ def metrics_of(report: EvaluationReport[Question, Answer, CaseInfo]) -> ModeMetr
 
 
 async def evaluate_mode(
-    dataset: RetrievalDataset, mode: EvalMode, retriever: Retriever, *, rerank: bool = False
+    dataset: RetrievalDataset,
+    mode: EvalMode,
+    retriever: Retriever,
+    *,
+    rerank: bool = False,
+    reranker: RerankWith | None = None,
 ) -> ModeOutcome:
     """Run every case through ``retriever`` and aggregate.
 
@@ -245,6 +252,8 @@ async def evaluate_mode(
         retriever: How to ask that mode.
         rerank: A reranker role is configured: every case with results should come back
             reranked, and one that does not counts in ``rerank_fallbacks``.
+        reranker: What reranks (the cross-encoder or the judge), for the report; implies
+            ``rerank``.
 
     Returns:
         The mode's metrics, the cases with a wrong version, the errors and the misses.
@@ -289,9 +298,10 @@ async def evaluate_mode(
         errors=sorted(failed),
         misses=sorted(misses),
         fallbacks=sum(1 for c in report.cases if c.output.answered_by not in {None, mode.mode}),
+        reranker=reranker,
         reranked=sum(1 for c in report.cases if c.output.reranked),
         rerank_fallbacks=sum(1 for c in report.cases if c.output.hits and not c.output.reranked)
-        if rerank
+        if rerank or reranker is not None
         else 0,
     )
 
@@ -312,9 +322,16 @@ def with_evaluators(dataset: RetrievalDataset) -> RetrievalDataset:
     return dataset
 
 
-def _roles_used(mode: EvalMode, configured: frozenset[ModelRole]) -> frozenset[ModelRole]:
-    """The model roles a search in ``mode`` calls: its own, and the reranker when one is set."""
-    rerank = {ModelRole.RERANKER} & configured
+_RERANK_ROLES: Final[dict[RerankWith, ModelRole]] = {
+    RerankWith.CROSS_ENCODER: ModelRole.RERANKER,
+    RerankWith.JUDGE: ModelRole.JUDGE,
+}
+"""The model role each reranker calls."""
+
+
+def _roles_used(mode: EvalMode, reranker: RerankWith | None) -> frozenset[ModelRole]:
+    """The model roles a search in ``mode`` calls: its own, and the one that reranks it, if any."""
+    rerank = set() if reranker is None else {_RERANK_ROLES[reranker]}
     return mode.mode.roles | rerank
 
 
@@ -328,8 +345,8 @@ def _not_running(
     """The outcome of a mode that will not run, or a ``ran`` placeholder for one that will.
 
     Whether a mode may run is decided per model role, not per tier: every role the search would
-    call (its own and the reranker) must be one that runs on this machine (``local_roles``),
-    unless ``allow_providers`` lets it call a hosted model.
+    call (its own, and the reranker or the judge that reranks it) must be one that runs on this
+    machine (``local_roles``), unless ``allow_providers`` lets it call a hosted model.
     """
     configured = frozenset(status.configured_roles)
     if mode.mode not in status.available_modes:
@@ -343,7 +360,8 @@ def _not_running(
         return ModeOutcome(
             mode=mode.mode, tier=mode.tier, gating=mode.gating, status="unavailable", reason=reason
         )
-    hosted = [r.value for r in ModelRole if r in _roles_used(mode, configured) - local_roles]
+    used = _roles_used(mode, status.effective_reranker)
+    hosted = [r.value for r in ModelRole if r in used - local_roles]
     if hosted and not allow_providers:
         roles = ", ".join(hosted)
         return ModeOutcome(
@@ -424,8 +442,9 @@ async def run_modes(
                 spent=spent,
                 reads=reads,
             )
-            rerank = ModelRole.RERANKER in status.configured_roles
-            outcome = await evaluate_mode(dataset, mode, retriever, rerank=rerank)
+            outcome = await evaluate_mode(
+                dataset, mode, retriever, reranker=status.effective_reranker
+            )
         outcomes.append(outcome)
     return outcomes
 
@@ -815,8 +834,9 @@ def markdown(report: SuiteReport, *, title: str = "Retrieval eval") -> str:
     for o in report.modes:
         if o.reranked or o.rerank_fallbacks:
             questions = o.metrics.questions if o.metrics else 0
+            by = "the LLM judge" if o.reranker is RerankWith.JUDGE else "the reranker"
             lines.append(
-                f"- `{o.mode}` reranked {o.reranked} of {questions} questions; the reranker "
+                f"- `{o.mode}` reranked {o.reranked} of {questions} questions; {by} "
                 f"failed or timed out on {o.rerank_fallbacks}"
             )
         lines.extend(f"- `{o.mode}` wrong version: {c}" for c in o.wrong_version_cases)

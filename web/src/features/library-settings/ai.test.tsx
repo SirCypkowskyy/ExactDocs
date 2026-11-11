@@ -47,6 +47,9 @@ const HYBRID: LibraryRetrieval = {
   reranker: null,
   rerank_top_n: null,
   effective_rerank_top_n: 32,
+  rerank_with: null,
+  instance_rerank_with: "cross_encoder",
+  effective_reranker: null,
   budgets: NO_BUDGETS,
   budget_ceilings: { ...NO_BUDGETS, daily_usd: 2 },
   repo_guidance: "off",
@@ -257,6 +260,42 @@ describe("library AI settings", () => {
   });
 });
 
+describe("choosing what reranks", () => {
+  it("lets an admin choose the LLM judge, then shows it in the pipeline", async () => {
+    const both = {
+      ...HYBRID,
+      configured_roles: ["embedding", "reranker", "llm", "judge"] as const,
+      effective_reranker: "cross_encoder" as const,
+    };
+    const calls = serve(both, (body) => ({
+      status: 200,
+      body: { ...both, ...body, effective_reranker: body.rerank_with ?? "cross_encoder" },
+    }));
+    renderPage();
+    const ai = await section();
+    await ai.findByTestId("effective-mode");
+    expect(ai.getByText("The reranker reorders the best 32")).toBeInTheDocument();
+
+    const choice = ai.getByLabelText("Rerank with");
+    expect(
+      within(choice)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual([
+      "The instance's choice (Cross-encoder (cheaper))",
+      "Cross-encoder (cheaper)",
+      "LLM judge",
+    ]);
+    await userEvent.selectOptions(choice, "judge");
+    await userEvent.click(ai.getByRole("button", { name: "Save AI settings" }));
+
+    expect(
+      await ai.findByText("The LLM judge rates the best 32 in one call and reorders them"),
+    ).toBeInTheDocument();
+    expect(calls.find((c) => c.method === "PUT")?.body).toMatchObject({ rerank_with: "judge" });
+  });
+});
+
 describe("repository guidance", () => {
   it("lets the owner take the instruction files as untrusted notes, and says what each does", async () => {
     const calls = serve(HYBRID);
@@ -352,7 +391,11 @@ describe("profiles while they load or fail", () => {
 
 describe("retrieval model", () => {
   it("lists only the roles the effective pipeline calls, the library's model first", () => {
-    const r = { ...HYBRID, configured_roles: ["embedding", "reranker", "llm", "judge"] as const };
+    const r = {
+      ...HYBRID,
+      configured_roles: ["embedding", "reranker", "llm", "judge"] as const,
+      effective_reranker: "cross_encoder" as const,
+    };
     expect(
       rolesInUse({ ...r, effective_mode: "hybrid_hyde", llm: "own:o3" }, ROLES as never),
     ).toEqual([
@@ -369,9 +412,30 @@ describe("retrieval model", () => {
 
   it("lists the reranker step only when one is configured", () => {
     expect(pipelineSteps(HYBRID)).not.toContain("The reranker reorders the best 32");
-    expect(pipelineSteps({ ...HYBRID, configured_roles: ["embedding", "reranker"] }).at(-1)).toBe(
-      "The reranker reorders the best 32",
+    expect(
+      pipelineSteps({
+        ...HYBRID,
+        configured_roles: ["embedding", "reranker"],
+        effective_reranker: "cross_encoder",
+      }).at(-1),
+    ).toBe("The reranker reorders the best 32");
+  });
+
+  it("shows the LLM judge as the last step and lists its model when it reranks", () => {
+    const judged = {
+      ...HYBRID,
+      configured_roles: ["embedding", "reranker", "llm", "judge"] as const,
+      rerank_with: "judge" as const,
+      effective_reranker: "judge" as const,
+    };
+    expect(pipelineSteps(judged).at(-1)).toBe(
+      "The LLM judge rates the best 32 in one call and reorders them",
     );
+    // The judge defaults to the LLM's model; the cross-encoder is configured but does not run.
+    expect(rolesInUse(judged, ROLES as never)).toEqual([
+      { role: "embedding", model: "corp:text-embedding-3-small", from: "instance" },
+      { role: "judge", model: "corp:gpt-4.1-mini", from: "instance" },
+    ]);
   });
 
   it("shows the agentic pipeline's steps and its single llm role", () => {
@@ -435,6 +499,7 @@ describe("retrieval model", () => {
       judge: null,
       reranker: "tei:bge:v2",
       rerank_top_n: 8,
+      rerank_with: null,
       repo_guidance: "off",
       budgets: { ...NO_BUDGETS, monthly_tokens: 1000 },
     });

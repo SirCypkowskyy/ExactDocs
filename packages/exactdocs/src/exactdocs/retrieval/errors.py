@@ -464,6 +464,7 @@ class LlmFailedError(DomainError):
         """
         super().__init__(f"the LLM {_data(model)} failed: {_data(reason)}")
         self.model = model
+        self.reason = reason
 
 
 class LlmBudgetReachedError(DomainError):
@@ -603,3 +604,23 @@ class InvalidAgentBoundsError(ValidationError):
             problem: A fixed text naming the limit and the rule it breaks.
         """
         super().__init__(f"invalid agentic limit: {problem}")
+
+
+class InvalidJudgmentError(DomainError):
+    """The judge's ratings are not exactly one bounded score per candidate it was given.
+
+    Searches never fail with it: they keep the order their mode found (``reranker_failed``).
+    The message names the fault only, never an ID or any text from the answer, which may carry
+    what a candidate injected.
+    """
+
+    code = "judge_invalid_output"
+
+    def __init__(self, fault: str) -> None:
+        """Say what is wrong with the ratings.
+
+        Args:
+            fault: A fixed text from the validator.
+        """
+        super().__init__(f"the judge's ratings were refused: {fault}")
+        self.fault = fault

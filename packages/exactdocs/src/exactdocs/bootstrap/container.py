@@ -122,6 +122,7 @@ from exactdocs.ingestion.ports.driven import (
 from exactdocs.retrieval import RetrievalModule
 from exactdocs.retrieval.adapters.driven.ai_explorer import PydanticAiExplorer
 from exactdocs.retrieval.adapters.driven.ai_hyde import PydanticAiHypotheticalAnswers
+from exactdocs.retrieval.adapters.driven.ai_judge import PydanticAiCandidateJudge
 from exactdocs.retrieval.adapters.driven.genai_prices import GenaiPrices
 from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryCallRates,
@@ -256,7 +257,11 @@ def _rerank_limits(settings: Settings, configured: ConfiguredAi) -> RerankLimits
             p.name == ref.profile and p.kind is ProviderKind.LOCAL for p in configured.profiles
         )
         timeout = LOCAL_RERANK_TIMEOUT if local else DEFAULT_RERANK_TIMEOUT
-    return RerankLimits(top_n=settings.ai.reranker.top_n, timeout=timeout)
+    return RerankLimits(
+        top_n=settings.ai.reranker.top_n,
+        timeout=timeout,
+        judge_timeout=settings.ai.judge.timeout,
+    )
 
 
 def _local_roles(configured: ConfiguredAi) -> LocalRoles:
@@ -521,6 +526,8 @@ def _build_read_side(
         secret_box=ai_box,
         instance_mode=settings.ai.mode,
         rerank_limits=_rerank_limits(settings, ai),
+        rerank_with=settings.ai.rerank_with,
+        judge=PydanticAiCandidateJudge(ledger=spend),
         pipelines=pipelines,
         suggestions=CatalogArticleSuggestions(get_article=catalog.get_article),
         query_docs_token_budget=settings.query_docs_token_budget,
