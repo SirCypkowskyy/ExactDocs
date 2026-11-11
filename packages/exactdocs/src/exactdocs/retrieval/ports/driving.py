@@ -542,7 +542,7 @@ class GetAiUsage(Protocol):
 
 
 class PruneHypotheses(Protocol):
-    """Delete HyDE's cached answers older than the TTL or of models no longer configured.
+    """Delete HyDE's and the agentic cache's answers past their TTL or of retired models.
 
     Run once a day by the server (one process on PostgreSQL), and by every collection.
     """

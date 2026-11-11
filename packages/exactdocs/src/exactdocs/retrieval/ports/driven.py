@@ -6,12 +6,14 @@ from datetime import date, datetime
 from typing import Protocol
 
 from exactdocs.retrieval.models import (
+    AgentCacheScope,
     AgentPick,
     AgentRead,
     AgentRun,
     ArticleEntry,
     ArticleText,
     BudgetLimit,
+    CachedAgentAnswer,
     CatalogLibrary,
     ChunkId,
     ChunkKey,
@@ -344,6 +346,15 @@ class SearchTracer(Protocol):
         Args:
             mode: The mode that answered.
             reason: Why it did (a ``FallbackReason`` value).
+        """
+        ...
+
+    def cache_hit(self, *, cache: str, mode: str) -> None:
+        """Count a search whose LLM step a cache answered (``exactdocs.ai.cache_hits``).
+
+        Args:
+            cache: Which cache (``agentic_answer``, ``hyde_answer``).
+            mode: The mode that answered.
         """
         ...
 
@@ -1283,6 +1294,73 @@ class HypotheticalAnswerCache(Protocol):
         Args:
             written_before: Answers written earlier are deleted (the TTL's cutoff).
             keep_models: The ``<profile>:<model>`` still configured; the others' are deleted.
+
+        Returns:
+            How many answers were deleted.
+        """
+        ...
+
+
+class AgentAnswerCache(Protocol):
+    """Agentic answers kept for similar questions (``retrieval_agentic_answers``, #100).
+
+    Entries are grouped by scope (``AgentCacheScope``: manifest, model and a fingerprint of the
+    filter and settings); a lookup reads one scope's entries and compares the questions itself.
+    Questions are kept as HMACs and, with an embedding model, an embedding; never as text.
+    """
+
+    async def scoped(self, scope: AgentCacheScope) -> Sequence[CachedAgentAnswer]:
+        """Read every answer of a scope.
+
+        Args:
+            scope: The scope.
+
+        Returns:
+            Its answers (at most ``AGENT_CACHE_PER_SCOPE``), newest first.
+        """
+        ...
+
+    async def put(self, answer: CachedAgentAnswer) -> None:
+        """Store an answer, replacing one of the same scope and question.
+
+        Past ``AGENT_CACHE_PER_SCOPE`` answers in the scope, the oldest go.
+
+        Args:
+            answer: The answer.
+        """
+        ...
+
+    async def forget(self, manifest_ids: Collection[str]) -> int:
+        """Delete the answers of manifests whose chunks were removed.
+
+        Args:
+            manifest_ids: The manifests.
+
+        Returns:
+            How many answers were deleted.
+        """
+        ...
+
+    async def forget_library(self, library: str) -> int:
+        """Delete a library's answers (its settings changed, or it was removed).
+
+        Args:
+            library: The library, any letter case.
+
+        Returns:
+            How many answers were deleted.
+        """
+        ...
+
+    async def prune(
+        self, written_before: datetime, keep_models: Collection[str], keep_similarity: str
+    ) -> int:
+        """Delete answers past the TTL, of models no longer configured, or of another space.
+
+        Args:
+            written_before: Answers written earlier are deleted (the TTL's cutoff).
+            keep_models: The ``<profile>:<model>`` still configured; the others' are deleted.
+            keep_similarity: The space questions are compared in now; the others' are deleted.
 
         Returns:
             How many answers were deleted.

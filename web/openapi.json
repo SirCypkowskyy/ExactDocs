@@ -11384,6 +11384,12 @@
             ],
             "description": "Set when a cheaper mode answered than the one that would have: says why."
           },
+          "cache_hit": {
+            "type": "boolean",
+            "title": "Cache Hit",
+            "description": "An agentic search answered from the agentic answer cache: a similar question of the same\nversion, filter and model was answered before, so no agent ran. Its results were checked\nagainst this version and filter again.",
+            "default": false
+          },
           "results": {
             "items": {
               "$ref": "#/components/schemas/SearchResultOut"
@@ -11403,6 +11409,7 @@
           "reranked",
           "coverage",
           "fallback_reason",
+          "cache_hit",
           "results"
         ],
         "title": "SearchDocsResult",

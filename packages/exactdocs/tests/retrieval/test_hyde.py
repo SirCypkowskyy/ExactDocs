@@ -155,6 +155,9 @@ class RecordingTracer:
     def fallback(self, *, mode: str, reason: str) -> None:
         del mode, reason
 
+    def cache_hit(self, *, cache: str, mode: str) -> None:
+        del cache, mode
+
 
 def _concept_vector(text: str) -> tuple[float, ...]:
     values = [0.0] * SIZE

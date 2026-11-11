@@ -27,6 +27,8 @@ from exactdocs.bootstrap.constants import (
     SETTINGS_FILE_VARIABLE,
 )
 from exactdocs.retrieval.constants import (
+    DEFAULT_AGENT_CACHE_THRESHOLD,
+    DEFAULT_AGENT_CACHE_TTL_DAYS,
     DEFAULT_AGENT_REPEATED_CALLS,
     DEFAULT_AGENT_REQUESTS,
     DEFAULT_AGENT_TIMEOUT,
@@ -292,6 +294,29 @@ class HydeSettings(BaseModel):
     `llm` model no longer configured."""
 
 
+class AgenticCacheSettings(BaseModel):
+    """The agentic answer cache (``EXACTDOCS_AI__AGENTIC_CACHE__<FIELD>``, ``[ai.agentic_cache]``).
+
+    A question similar enough to one answered agentically before, for the same version (manifest),
+    tag filter, `llm` model and agentic limits, is answered from the earlier answer (`cache_hit`),
+    re-checked against the version and the filter. Questions are compared with the embedding
+    model when one is configured (hybrid: embeddings and words), else by their words (#100).
+    """
+
+    model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
+
+    enabled: bool = True
+    """`EXACTDOCS_AI__AGENTIC_CACHE__ENABLED`: answer similar agentic questions from the cache."""
+    threshold: float = Field(default=DEFAULT_AGENT_CACHE_THRESHOLD, gt=0, le=1)
+    """`EXACTDOCS_AI__AGENTIC_CACHE__THRESHOLD`: how similar (0 to 1) a question must be to a cached
+    one; 1 reuses only the same question (case and spacing aside). With an embedding model the
+    score is the mean of the embeddings' cosine and the words' similarity, whose scale depends on
+    the model: tune it with real questions."""
+    ttl: timedelta = Field(default=timedelta(days=DEFAULT_AGENT_CACHE_TTL_DAYS), gt=timedelta(0))
+    """`EXACTDOCS_AI__AGENTIC_CACHE__TTL`: how long a cached answer is kept (seconds or an ISO 8601
+    duration such as `P7D`); the nightly upkeep deletes older ones."""
+
+
 class AiSettings(BaseModel):
     """The ``ai`` section: AI retrieval, read from ``EXACTDOCS_AI__<FIELD>`` variables."""
 
@@ -321,6 +346,8 @@ class AiSettings(BaseModel):
     """Spend limits and the LLM search rate limit (`EXACTDOCS_AI__BUDGETS__...`)."""
     agentic: AgenticSettings = Field(default_factory=AgenticSettings)
     """The agentic mode's limits per search (`EXACTDOCS_AI__AGENTIC__MAX_TOOL_CALLS`, ...)."""
+    agentic_cache: AgenticCacheSettings = Field(default_factory=AgenticCacheSettings)
+    """The agentic answer cache (`EXACTDOCS_AI__AGENTIC_CACHE__THRESHOLD`, `__TTL`, `__ENABLED`)."""
     prices: dict[str, PriceSettings] = Field(default_factory=dict)
     """Prices by `<profile>:<model>`, overriding the bundled list (`[ai.prices."corp:m"]`)."""
 

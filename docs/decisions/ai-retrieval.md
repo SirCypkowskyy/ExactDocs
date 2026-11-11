@@ -327,6 +327,12 @@ What stays on the instance: HyDE's hypothetical answers (#94), written from user
 cached in `retrieval_hyde_answers` per manifest, model and an HMAC of the normalized query (keyed
 from the instance's secret key, never the query text), and deleted after `[ai.hyde] cache_ttl`
 (30 days), with their manifest, or once their model is no longer configured.
+The agentic answer cache (#100, `retrieval_agentic_answers`) keeps agentic answers (chunk IDs,
+justifications, explored paths) per manifest, `llm` model and a fingerprint of the tag filter and
+agentic limits; the question is kept as HMACs of it and of each term (HKDF purpose `exactdocs
+agentic cache v1`) and, with an embedding model, as its embedding. Deleted after `[ai.agentic_cache]
+ttl` (7 days), with their manifest, with the library's settings, or once their model or embedding
+model is no longer configured.
 
 What leaves the instance when a role is set: **embedding** receives chunk text (in background
 jobs) and query text; **reranker** and **judge** receive query text and candidate chunk text;
@@ -384,7 +390,7 @@ identities and tokens are never sent.
   text of request spans only; it never turns prompts on.
 - **Metrics** (OTLP and `/metrics`): pydantic-ai's `gen_ai.client.token.usage`,
   `gen_ai.client.operation.duration` and `operation.cost`; ours: `exactdocs.ai.fallbacks` (by mode
-  and reason), `exactdocs.ai.cache_hits`, `exactdocs.embedding.backlog` (chunks waiting). Labels
+  and reason), `exactdocs.ai.cache_hits` (by cache and mode), `exactdocs.embedding.backlog` (chunks waiting). Labels
   are bounded: provider kind, model (from configuration), operation, role, token type. Never the
   library, version, user or query, as for the existing metrics.
 

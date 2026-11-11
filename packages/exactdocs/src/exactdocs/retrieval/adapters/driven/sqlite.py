@@ -1,5 +1,6 @@
 import json
 import logging
+import struct
 from collections.abc import Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
@@ -10,17 +11,20 @@ from typing import Any
 from sqlalchemy import (
     BigInteger,
     Column,
+    ColumnElement,
     Delete,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     Row,
     Select,
     Table,
     Text,
     UniqueConstraint,
+    and_,
     bindparam,
     delete,
     distinct,
@@ -39,6 +43,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from exactdocs.retrieval.constants import (
+    AGENT_CACHE_PER_SCOPE,
     BUDGET_WINDOW_PREFIX,
     SPEND_COUNTERS,
     SPEND_SCOPE_LIBRARY,
@@ -51,9 +56,13 @@ from exactdocs.retrieval.errors import (
     InvalidProviderError,
 )
 from exactdocs.retrieval.models import (
+    AgentCacheScope,
     AnthropicPlatform,
     AzureAuth,
     BudgetLimit,
+    CachedAgentAnswer,
+    CachedPick,
+    CachedQuestion,
     Chunk,
     ChunkHeading,
     ChunkId,
@@ -208,6 +217,29 @@ hyde_answers = Table(
     Column("answer", Text, nullable=False),
     Column("created_at", Text, nullable=False),  # ISO 8601, UTC: the TTL prunes by it
     Index("ix_retrieval_hyde_answers_created_at", "created_at"),
+)
+# The agentic answer cache (#100), by scope (the searched manifest, the `llm` model and a SHA-256
+# fingerprint of the tag filter, the agent's limits and the similarity space) and an HMAC of the
+# normalized question. The question is kept only as HMACs of it and of each term, and with an
+# embedding model as its embedding (float32, little-endian), never as text.
+agentic_answers = Table(
+    "retrieval_agentic_answers",
+    metadata,
+    Column("manifest_id", Text, primary_key=True),
+    Column("model", Text, primary_key=True),  # <profile>:<model>
+    Column("fingerprint", Text, primary_key=True),
+    Column("question_hash", Text, primary_key=True),
+    Column("library", Text, nullable=False),  # case folded: a library's settings forget it
+    Column("similarity", Text, nullable=False),  # bm25, or the embedding model's identity
+    Column("terms", Text, nullable=False),  # JSON list of the terms' HMACs
+    Column("vector", LargeBinary, nullable=True),
+    Column("picks", Text, nullable=False),  # JSON: chunk_id, justification, explored_path
+    Column("answer_limit", Integer, nullable=False),
+    Column("candidates", Integer, nullable=False),
+    Column("complete", Integer, nullable=False),
+    Column("created_at", Text, nullable=False),  # ISO 8601, UTC: the TTL prunes by it
+    Index("ix_retrieval_agentic_answers_created_at", "created_at"),
+    Index("ix_retrieval_agentic_answers_library", "library"),
 )
 # The replay tokens each row has taken (the harness's ``SpendEntry.token``): a response replayed
 # after a crash adds to a row once. Dropped once their window is over.
@@ -1235,3 +1267,225 @@ class SqliteHypothesisCache:
         )
         async with self.engine.begin() as connection:
             return (await connection.execute(delete(hyde_answers).where(stale))).rowcount
+
+
+def _packed(vector: Sequence[float] | None) -> bytes | None:
+    """Store a question's embedding as float32, little-endian.
+
+    Args:
+        vector: The embedding, if any.
+
+    Returns:
+        The bytes, or ``None``.
+    """
+    return None if vector is None else struct.pack(f"<{len(vector)}f", *vector)
+
+
+def _unpacked(blob: bytes | None) -> tuple[float, ...] | None:
+    """Read a question's embedding back.
+
+    Args:
+        blob: What ``_packed`` stored.
+
+    Returns:
+        The embedding, or ``None``.
+    """
+    return None if blob is None else struct.unpack(f"<{len(blob) // 4}f", blob)
+
+
+def _cached_answer(row: Row[Any]) -> CachedAgentAnswer:
+    """Read a cached agentic answer from its row.
+
+    Args:
+        row: A ``retrieval_agentic_answers`` row.
+
+    Returns:
+        The answer.
+    """
+    scope = AgentCacheScope(
+        library=row.library,
+        manifest_id=row.manifest_id,
+        model=row.model,
+        fingerprint=row.fingerprint,
+        similarity=row.similarity,
+    )
+    question = CachedQuestion(
+        question_hash=row.question_hash,
+        terms=tuple(json.loads(row.terms)),
+        vector=_unpacked(row.vector),
+    )
+    picks = tuple(
+        CachedPick(
+            chunk_id=ChunkId(p["chunk_id"]),
+            justification=p["justification"],
+            explored_path=tuple(p["explored_path"]),
+        )
+        for p in json.loads(row.picks)
+    )
+    return CachedAgentAnswer(
+        scope=scope,
+        question=question,
+        picks=picks,
+        limit=row.answer_limit,
+        candidates=row.candidates,
+        complete=bool(row.complete),
+        created_at=datetime.fromisoformat(row.created_at),
+    )
+
+
+def _in_scope(scope: AgentCacheScope) -> ColumnElement[bool]:
+    """Select a scope's rows.
+
+    Args:
+        scope: The scope.
+
+    Returns:
+        The condition.
+    """
+    return and_(
+        agentic_answers.c.manifest_id == scope.manifest_id,
+        agentic_answers.c.model == scope.model,
+        agentic_answers.c.fingerprint == scope.fingerprint,
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteAgentAnswerCache:
+    """Implements ``ports.driven.AgentAnswerCache`` in ``retrieval_agentic_answers``.
+
+    The same statements run on SQLite and PostgreSQL (an upsert of each dialect).
+    """
+
+    engine: AsyncEngine
+    """The application database."""
+    per_scope: int = AGENT_CACHE_PER_SCOPE
+    """The most answers kept per scope; the oldest go first."""
+
+    async def scoped(self, scope: AgentCacheScope) -> Sequence[CachedAgentAnswer]:
+        """Read every answer of a scope.
+
+        Args:
+            scope: The scope.
+
+        Returns:
+            Its answers, newest first.
+        """
+        statement = (
+            select(agentic_answers)
+            .where(_in_scope(scope))
+            .order_by(agentic_answers.c.created_at.desc())
+            .limit(self.per_scope)
+        )
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(statement)).all()
+        return [_cached_answer(row) for row in rows]
+
+    async def put(self, answer: CachedAgentAnswer) -> None:
+        """Store an answer, replacing one of the same scope and question; trim the scope.
+
+        Args:
+            answer: The answer.
+        """
+        scope = answer.scope
+        values = {
+            "manifest_id": scope.manifest_id,
+            "model": scope.model,
+            "fingerprint": scope.fingerprint,
+            "question_hash": answer.question.question_hash,
+            "library": scope.library,
+            "similarity": scope.similarity,
+            "terms": json.dumps(list(answer.question.terms)),
+            "vector": _packed(answer.question.vector),
+            "picks": json.dumps(
+                [
+                    {
+                        "chunk_id": p.chunk_id,
+                        "justification": p.justification,
+                        "explored_path": list(p.explored_path),
+                    }
+                    for p in answer.picks
+                ]
+            ),
+            "answer_limit": answer.limit,
+            "candidates": answer.candidates,
+            "complete": int(answer.complete),
+            "created_at": answer.created_at.astimezone(UTC).isoformat(),
+        }
+        upsert = (
+            postgres_insert(agentic_answers)
+            if self.engine.dialect.name == "postgresql"
+            else sqlite_insert(agentic_answers)
+        ).values(values)
+        keys = ("manifest_id", "model", "fingerprint", "question_hash")
+        upsert = upsert.on_conflict_do_update(
+            index_elements=[agentic_answers.c[k] for k in keys],
+            set_={k: upsert.excluded[k] for k in values if k not in keys},
+        )
+        newest = (
+            select(agentic_answers.c.question_hash)
+            .where(_in_scope(scope))
+            .order_by(agentic_answers.c.created_at.desc())
+            .limit(self.per_scope)
+        )
+        trim = delete(agentic_answers).where(
+            _in_scope(scope), agentic_answers.c.question_hash.not_in(newest.scalar_subquery())
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(upsert)
+            await connection.execute(trim)
+
+    async def forget(self, manifest_ids: Collection[str]) -> int:
+        """Delete the answers of these manifests.
+
+        Args:
+            manifest_ids: The manifests.
+
+        Returns:
+            How many answers were deleted.
+        """
+        if not manifest_ids:
+            return 0
+        deleted = 0
+        async with self.engine.begin() as connection:
+            for part in batched(sorted(set(manifest_ids)), VECTOR_BATCH, strict=False):
+                result = await connection.execute(
+                    delete(agentic_answers).where(agentic_answers.c.manifest_id.in_(part))
+                )
+                deleted += result.rowcount
+        return deleted
+
+    async def forget_library(self, library: str) -> int:
+        """Delete a library's answers.
+
+        Args:
+            library: The library, any letter case.
+
+        Returns:
+            How many answers were deleted.
+        """
+        statement = delete(agentic_answers).where(agentic_answers.c.library == library.casefold())
+        async with self.engine.begin() as connection:
+            return (await connection.execute(statement)).rowcount
+
+    async def prune(
+        self, written_before: datetime, keep_models: Collection[str], keep_similarity: str
+    ) -> int:
+        """Delete answers past the TTL, of models not kept, or of another similarity space.
+
+        Args:
+            written_before: The TTL's cutoff.
+            keep_models: The models still configured.
+            keep_similarity: The space questions are compared in now.
+
+        Returns:
+            How many answers were deleted.
+        """
+        cutoff = written_before.astimezone(UTC).isoformat()
+        # An empty list makes NOT IN true for every row: no model is configured, all go.
+        stale = or_(
+            agentic_answers.c.created_at < cutoff,
+            agentic_answers.c.model.not_in(sorted(set(keep_models))),
+            agentic_answers.c.similarity != keep_similarity,
+        )
+        async with self.engine.begin() as connection:
+            return (await connection.execute(delete(agentic_answers).where(stale))).rowcount

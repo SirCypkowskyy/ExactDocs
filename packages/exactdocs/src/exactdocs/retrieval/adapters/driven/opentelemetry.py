@@ -15,6 +15,8 @@ from exactdocs.retrieval.constants import (
     AGENT_SERVED_VERSIONS_ATTRIBUTE,
     AGENT_TOOL_ATTRIBUTE,
     ATTRIBUTE_PREFIX,
+    CACHE_ATTRIBUTE,
+    CACHE_HITS_METRIC,
     ERROR_TYPE_ATTRIBUTE,
     FALLBACK_REASON_ATTRIBUTE,
     FALLBACKS_METRIC,
@@ -72,9 +74,11 @@ class OpenTelemetrySearchTracer:
     """The histogram, created once: a proxy until ``start_telemetry`` sets the global provider."""
     _fallbacks: metrics.Counter = field(init=False, repr=False)
     """Searches answered by a cheaper mode, by mode and reason."""
+    _cache_hits: metrics.Counter = field(init=False, repr=False)
+    """Searches whose LLM step a cache answered, by cache and mode."""
 
     def __post_init__(self) -> None:
-        """Create the histogram and the counter."""
+        """Create the histogram and the counters."""
         meter = metrics.get_meter(TRACER_NAME, meter_provider=self.meter_provider)
         duration = meter.create_histogram(
             SEARCH_DURATION_METRIC,
@@ -87,8 +91,14 @@ class OpenTelemetrySearchTracer:
             unit="{search}",
             description="Searches answered by a cheaper retrieval mode, by mode and reason.",
         )
+        cache_hits = meter.create_counter(
+            CACHE_HITS_METRIC,
+            unit="{search}",
+            description="Searches whose LLM step a cache answered, by cache and mode.",
+        )
         object.__setattr__(self, "_duration", duration)  # frozen: set once, here
         object.__setattr__(self, "_fallbacks", fallbacks)
+        object.__setattr__(self, "_cache_hits", cache_hits)
 
     def fallback(self, *, mode: str, reason: str) -> None:
         """Count a search a cheaper mode answered; never with the library, user or query.
@@ -98,6 +108,15 @@ class OpenTelemetrySearchTracer:
             reason: Why it did.
         """
         self._fallbacks.add(1, {MODE_ATTRIBUTE: mode, FALLBACK_REASON_ATTRIBUTE: reason})
+
+    def cache_hit(self, *, cache: str, mode: str) -> None:
+        """Count a search whose LLM step a cache answered; never with the library, user or query.
+
+        Args:
+            cache: Which cache (``agentic_answer``, ``hyde_answer``).
+            mode: The mode that answered.
+        """
+        self._cache_hits.add(1, {MODE_ATTRIBUTE: mode, CACHE_ATTRIBUTE: cache})
 
     def span(
         self, name: str, *, mode: str, query: str | None = None, **attributes: str | None

@@ -530,6 +530,11 @@ FALLBACKS_METRIC: Final[str] = "exactdocs.ai.fallbacks"
 """Counter of searches a cheaper mode answered, by mode and reason (no library, user or query)."""
 FALLBACK_REASON_ATTRIBUTE: Final[str] = "exactdocs.fallback.reason"
 """The label of ``FALLBACKS_METRIC`` naming the reason (``llm_budget_reached``)."""
+CACHE_HITS_METRIC: Final[str] = "exactdocs.ai.cache_hits"
+"""Counter of searches whose LLM step a cache answered, by cache and mode (no library, user or
+query)."""
+CACHE_ATTRIBUTE: Final[str] = "exactdocs.cache"
+"""The label of ``CACHE_HITS_METRIC`` naming the cache (``agentic_answer``, ``hyde_answer``)."""
 SEARCH_ATTRIBUTE: Final[str] = "exactdocs.search"
 """The metric attribute naming the search (``search_docs``, ``query_docs``...)."""
 STAGE_ATTRIBUTE: Final[str] = "exactdocs.search.stage"
@@ -1087,6 +1092,54 @@ MAX_AGENT_REPEATED_CALLS: Final[int] = 50
 """The highest ``max_repeated_calls`` an operator may set."""
 REPEATED_CALLS_TOO_LOW: Final[str] = "max_repeated_calls must be at least 2"
 """Why ``AgentBounds`` refuses a loop threshold that would end a run at its first call."""
+
+# ---------------------------------------------------------------- models (agentic cache, #100)
+AGENT_CACHE_FORMAT: Final[int] = 1
+"""The format of a cached agentic answer and of what it was found with (the explorer's
+instructions and tools): part of every entry's scope, so changing it makes every entry a miss."""
+DEFAULT_AGENT_CACHE_THRESHOLD: Final[float] = 0.8
+"""How similar (0 to 1) a question must be to a cached one of the same scope for its answer to
+be reused (``[ai.agentic_cache] threshold``)."""
+DEFAULT_AGENT_CACHE_TTL_DAYS: Final[int] = 7
+"""Days a cached agentic answer is kept (``[ai.agentic_cache] ttl``); the nightly upkeep deletes
+older ones."""
+AGENT_CACHE_PER_SCOPE: Final[int] = 200
+"""The most answers kept per scope (manifest, model, filter and settings): the oldest go first,
+so a lookup compares a question with at most this many."""
+AGENT_CACHE_MEMORY_SIZE: Final[int] = 2_000
+"""The most answers an in-memory cache keeps (a stdio process's own); the oldest go first."""
+AGENT_CACHE_DENSE_WEIGHT: Final[float] = 0.5
+"""With an embedding model, a question's similarity is this share of the cosine of the two
+questions' embeddings plus the rest of their lexical similarity."""
+AGENT_CACHE_TERM_HASH_CHARS: Final[int] = 16
+"""Hex characters kept of each question term's HMAC (64 bits): enough that two terms of one
+scope never collide in practice."""
+QUESTION_STOP_WORDS: Final[frozenset[str]] = TERM_HASH_STOP_WORDS | frozenset(
+    {"about", "am", "be", "could", "get", "if", "me", "should", "there", "this", "we", "would"}
+)
+"""Words two questions may differ by and still ask the same: left out of their lexical
+similarity."""
+_QUESTION_SUFFIXES: Final[tuple[tuple[str, str, int], ...]] = (
+    ("ies", "y", 5),
+    ("ches", "ch", 6),
+    ("shes", "sh", 6),
+    ("sses", "ss", 6),
+    ("xes", "x", 5),
+    ("ing", "", 6),
+    ("ed", "", 5),
+    ("s", "", 4),
+)
+"""Light suffix folding: (suffix, replacement, shortest word it applies to), first match wins."""
+_SHORTEST_E_FOLD: Final[int] = 3
+"""A folded word longer than this loses a final ``e`` (``configure`` and ``configur`` match)."""
+BM25_K1: Final[float] = 1.2
+"""BM25's term-frequency saturation, as the question terms are weighed."""
+BM25_SIMILARITY: Final[str] = "bm25"
+"""What an entry's similarity space is called when no embedding model is configured."""
+AGENTIC_ANSWER_CACHE: Final[str] = "agentic_answer"
+"""The ``exactdocs.ai.cache_hits`` label of a search answered from the agentic answer cache."""
+HYDE_ANSWER_CACHE: Final[str] = "hyde_answer"
+"""The ``exactdocs.ai.cache_hits`` label of a HyDE search whose hypothetical answer was cached."""
 
 # ---------------------------------------------------------------- adapters/driven/ai_explorer
 EXPLORER_SDK_MODULE: Final[str] = "exactdocs.retrieval.adapters.driven.ai_explorer_sdk"

@@ -364,7 +364,11 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `agent_loop_detected`; a model that fails or answers nothing usable, or a read that fails on
   the server, gives `agent_failed`. The agent's reads are bound to the version and the call's
   tags (its `deps`, never a tool argument), and an output guardrail removes any pick outside
-  them before the answer is used.
+  them before the answer is used. A question similar enough (`[ai.agentic_cache] threshold`) to
+  one answered agentically before for the same version (manifest), tags, `llm` model and limits
+  is answered from that answer with `cache_hit: true` (every other search: `false`), its chunks
+  checked again against the version and the tags; it calls no LLM and uses no budget. `query-docs`
+  and the MCP tools carry `cache_hit` too.
 - **Reranking** (RET-02): with a `reranker` role, a search's best candidates are reordered by the
   reranker (`reranked: true`, `coverage.reranked` counts them, and each reranked result's `score`
   is the reranker's). When `limit` is more than the top N, the reranked results come first and the

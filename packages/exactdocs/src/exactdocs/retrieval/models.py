@@ -6,8 +6,9 @@ import json
 import math
 import re
 import unicodedata
+from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import UTC, date, datetime, timedelta
 from enum import IntEnum, StrEnum
 from itertools import groupby
@@ -20,8 +21,14 @@ from exactdocs.retrieval.constants import (
     _KIND_FIELDS,
     _LANGUAGE_ALIASES,
     _OPTIONAL_KIND_FIELDS,
+    _QUESTION_SUFFIXES,
     _SELF_HOSTED_KINDS,
+    _SHORTEST_E_FOLD,
     _WORD,
+    AGENT_CACHE_DENSE_WEIGHT,
+    AGENT_CACHE_FORMAT,
+    AGENT_CACHE_TERM_HASH_CHARS,
+    BM25_K1,
     BUDGET_NOT_POSITIVE,
     BUDGET_WITHOUT_CEILING,
     CHARS_PER_TOKEN,
@@ -58,6 +65,7 @@ from exactdocs.retrieval.constants import (
     MIN_AGENT_REPEATED_CALLS,
     MONTHS_PER_YEAR,
     PROFILE_NAME,
+    QUESTION_STOP_WORDS,
     RATE_LIMIT_BELOW_ONE,
     REPEATED_CALLS_TOO_LOW,
     REPLAY_RETAIN_DAYS,
@@ -796,6 +804,20 @@ class ModeChoice:
     hypothesis: str | None = None
     """HyDE's cached hypothetical answer, read once by ``within_budget``: the pipeline uses it
     instead of reading the cache again or calling the LLM."""
+    agent_cache: AgentCacheLookup | None = None
+    """What an agentic search found in the agentic answer cache, looked up once by
+    ``within_budget``: a hit answers without the agent; a miss is stored under it."""
+
+    def depth(self, limit: int) -> int:
+        """Say how many hits the pipeline is asked for.
+
+        Args:
+            limit: How many hits the caller shows at most.
+
+        Returns:
+            The reranker's top N when the search reranks and that is more, else ``limit``.
+        """
+        return max(limit, self.rerank_top_n) if self.rerank else limit
 
     def without_llm(self, reason: FallbackReason) -> ModeChoice:
         """Fall back to the cheaper mode, saying why.
@@ -1060,6 +1082,9 @@ class PipelineRequest:
     the pipeline reads them."""
     hypothesis: str | None = None
     """HyDE's cached hypothetical answer, when the search already read it (``ModeChoice``)."""
+    agent_cache: AgentCacheLookup | None = None
+    """The agentic answer cache's lookup for this search (``ModeChoice``); ``None``: nothing is
+    looked up or stored."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1078,6 +1103,8 @@ class PipelineAnswer:
     """False when more matches exist than the limit allowed."""
     fallback_reason: FallbackReason | None = None
     """Why a cheaper mode answered, if one did."""
+    cache_hit: bool = False
+    """The agentic answer cache answered: no agent ran for this search."""
 
     def cut(self, limit: int) -> PipelineAnswer:
         """Keep the best ``limit`` hits of an answer that holds more (the reranker's top N).
@@ -2084,6 +2111,16 @@ class EmbeddingTarget:
     input_format: int = EMBEDDING_INPUT_FORMAT
     """What chunks are embedded from."""
 
+    @property
+    def identity(self) -> str:
+        """Name the space this target's vectors are compared in, as the agentic cache keys it.
+
+        Returns:
+            ``<kind>:<model>:<dimensions or auto>:<input format>``.
+        """
+        dimensions = "auto" if self.dimensions is None else str(self.dimensions)
+        return f"{self.profile_kind}:{self.model}:{dimensions}:{self.input_format}"
+
     def matches(self, spec: EmbeddingSpec) -> bool:
         """Say whether a space's vectors were made by this target.
 
@@ -3087,3 +3124,272 @@ class LlmStep:
     """The model's price as the price book has it; ``None``: the bundled price list."""
     clock: Callable[[], datetime]
     """Decides the UTC windows its spend lands in."""
+
+
+# ---------------------------------------------------------------- agentic answer cache (#100)
+
+
+def _folded(word: str) -> str:
+    """Fold a word's plural or verb ending, so ``retries`` and ``retry`` count as one term.
+
+    Args:
+        word: A case-folded word.
+
+    Returns:
+        The word without its ending, and without a final ``e`` (``configure``, ``configured``
+        and ``configuring`` are one term).
+    """
+    for suffix, replacement, shortest in _QUESTION_SUFFIXES:
+        if len(word) >= shortest and word.endswith(suffix) and not word.endswith("ss"):
+            word = word[: -len(suffix)] + replacement
+            break
+    return word[:-1] if len(word) > _SHORTEST_E_FOLD and word.endswith("e") else word
+
+
+def question_terms(query: str) -> tuple[str, ...]:
+    """Split a question into the terms its lexical similarity compares, in order.
+
+    Args:
+        query: The question, as the caller sent it.
+
+    Returns:
+        Its words (``normalized_query``, split at anything but letters and digits, ``_``
+        included), without ``QUESTION_STOP_WORDS``, each folded (``_folded``); repeated ones
+        are kept, as a term frequency counts them.
+    """
+    words = re.findall(r"[^\W_]+", normalized_query(query))
+    return tuple(_folded(w) for w in words if w not in QUESTION_STOP_WORDS)
+
+
+def _bm25_weight(frequency: int) -> float:
+    """Weigh a term by its frequency in a question, saturated as BM25 does (``k1`` = 1.2).
+
+    Args:
+        frequency: How often the term occurs in the question.
+
+    Returns:
+        Its weight: 1 for a term that occurs once, approaching 2.2 for many.
+    """
+    return frequency * (BM25_K1 + 1) / (frequency + BM25_K1)
+
+
+def lexical_similarity(first: Sequence[str], second: Sequence[str]) -> float:
+    """Compare two questions by their terms: the cosine of their BM25 term weights.
+
+    No inverse document frequency: a scope holds at most a few hundred short questions, too few
+    for document frequencies to say which words matter (one rare filler word would outweigh
+    every shared one). Questions are short enough that no length normalization is needed.
+
+    Args:
+        first: One question's terms (``question_terms``, or their hashes).
+        second: The other's.
+
+    Returns:
+        0 (no term in common) to 1 (the same terms, as often).
+    """
+    if not first or not second:
+        return 0.0
+    one = {t: _bm25_weight(n) for t, n in Counter(first).items()}
+    two = {t: _bm25_weight(n) for t, n in Counter(second).items()}
+    dot = sum(w * two[t] for t, w in one.items() if t in two)
+    norms = math.sqrt(sum(w * w for w in one.values()))
+    norms *= math.sqrt(sum(w * w for w in two.values()))
+    return dot / norms if norms else 0.0
+
+
+def dense_similarity(first: Sequence[float], second: Sequence[float]) -> float:
+    """Compare two questions by their embeddings: their cosine, never below 0.
+
+    Args:
+        first: One question's embedding.
+        second: The other's, of the same space.
+
+    Returns:
+        0 to 1; 0 for vectors of different lengths or a zero vector.
+    """
+    if len(first) != len(second):
+        return 0.0
+    dot = sum(a * b for a, b in zip(first, second, strict=True))
+    norms = math.sqrt(sum(a * a for a in first)) * math.sqrt(sum(b * b for b in second))
+    return max(0.0, min(1.0, dot / norms)) if norms else 0.0
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AgentCacheScope:
+    """What a cached agentic answer belongs to: everything that decides which chunks it may hold.
+
+    An answer is reused only within its scope: the searched version's manifest (a re-sync is a
+    new manifest, so a new scope), the ``llm`` model that found it, and a fingerprint of the
+    search's tag filter, the agent's limits and the cache format. ``similarity`` names the space
+    questions are compared in (the embedding model's, or ``bm25``): a new embedding model is a
+    new scope, never a comparison across two models. ``library`` is kept to forget a library's
+    answers when its settings change.
+    """
+
+    library: str
+    """The library searched, case folded."""
+    manifest_id: str
+    """The searched version's manifest."""
+    model: str
+    """The ``llm`` role's ``<profile>:<model>``."""
+    fingerprint: str
+    """SHA-256 (hex) of the tag filter, the agent's limits, ``similarity`` and the format."""
+    similarity: str
+    """``bm25``, or the embedding model's identity (``<kind>:<model>:<dimensions>:<format>``)."""
+
+    @classmethod
+    def of(
+        cls,
+        *,
+        version: SearchableVersion,
+        model: ModelRef,
+        tag_filter: TagFilter,
+        bounds: AgentBounds,
+        similarity: str,
+    ) -> AgentCacheScope:
+        """Build the scope of an agentic search.
+
+        Args:
+            version: The version searched.
+            model: The ``llm`` role's model.
+            tag_filter: The search's tag filter.
+            bounds: The agent's limits.
+            similarity: The space questions are compared in.
+
+        Returns:
+            The scope.
+        """
+        tags = sorted(set(tag_filter.tags))
+        settled = {
+            "format": AGENT_CACHE_FORMAT,
+            "tags": tags,
+            "match": tag_filter.match.value if tags else TagMatch.ANY.value,
+            "bounds": {f.name: getattr(bounds, f.name) for f in fields(bounds)},
+            "similarity": similarity,
+        }
+        digest = hashlib.sha256(json.dumps(settled, sort_keys=True).encode()).hexdigest()
+        return cls(
+            library=version.library.casefold(),
+            manifest_id=version.manifest_id,
+            model=str(model),
+            fingerprint=digest,
+            similarity=similarity,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CachedQuestion:
+    """A question as the agentic answer cache keeps it: hashes and an embedding, never its text.
+
+    ``question_hash`` is an HMAC-SHA256 of the normalized question and each of ``terms`` an HMAC
+    of one term (``AGENT_CACHE_TERM_HASH_CHARS`` hex characters), under the instance's agentic
+    cache key, so neither can be checked against likely questions without that key. Equal terms
+    have equal hashes, so the lexical similarity of two questions is the same on their hashes.
+    """
+
+    question_hash: str
+    """HMAC-SHA256 (hex) of ``normalized_query``."""
+    terms: tuple[str, ...]
+    """The HMAC of each of ``question_terms``, in order."""
+    vector: tuple[float, ...] | None = None
+    """The question's embedding in the scope's space; ``None`` in a ``bm25`` scope."""
+
+    @classmethod
+    def of(cls, query: str, *, key: bytes, vector: Sequence[float] | None = None) -> CachedQuestion:
+        """Hash a question.
+
+        Args:
+            query: The question as the caller sent it.
+            key: The instance's agentic cache key.
+            vector: Its embedding, when the scope compares embeddings.
+
+        Returns:
+            The question.
+        """
+
+        def keyed(text: str) -> str:
+            """HMAC a text under the cache key.
+
+            Args:
+                text: The text.
+
+            Returns:
+                The HMAC-SHA256, in hex.
+            """
+            return hmac.new(key, text.encode(), hashlib.sha256).hexdigest()
+
+        return cls(
+            question_hash=keyed(normalized_query(query)),
+            terms=tuple(keyed(t)[:AGENT_CACHE_TERM_HASH_CHARS] for t in question_terms(query)),
+            vector=None if vector is None else tuple(vector),
+        )
+
+    def similarity(self, other: CachedQuestion) -> float:
+        """Say how alike two questions are (hybrid: embeddings and terms, else terms alone).
+
+        Args:
+            other: A cached question of the same scope.
+
+        Returns:
+            1 for the same normalized question; else ``AGENT_CACHE_DENSE_WEIGHT`` of their
+            embeddings' cosine plus the rest of their lexical similarity when both have one, or
+            their lexical similarity alone.
+        """
+        if self.question_hash == other.question_hash:
+            return 1.0
+        lexical = lexical_similarity(self.terms, other.terms)
+        if self.vector is None or other.vector is None:
+            return lexical
+        dense = dense_similarity(self.vector, other.vector)
+        return AGENT_CACHE_DENSE_WEIGHT * dense + (1 - AGENT_CACHE_DENSE_WEIGHT) * lexical
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CachedPick:
+    """A chunk a cached agentic answer holds, with what the agent said and did for it."""
+
+    chunk_id: ChunkId
+    """The chunk; looked up again in the pinned manifest, under the tag filter, at every hit."""
+    justification: str
+    """The agent's justification, already made safe (``model_text``)."""
+    explored_path: tuple[str, ...] = ()
+    """The read calls that reached its article."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CachedAgentAnswer:
+    """An agentic answer kept for similar questions of the same scope."""
+
+    scope: AgentCacheScope
+    """What it belongs to."""
+    question: CachedQuestion
+    """The question it answered."""
+    picks: tuple[CachedPick, ...]
+    """Its chunks, best first."""
+    limit: int
+    """How many chunks the agent was asked for: a search asking for more runs the agent."""
+    candidates: int
+    """How many chunks the agent looked at."""
+    complete: bool
+    """False when the agent picked more than ``limit``."""
+    created_at: datetime
+    """When it was found; the TTL counts from it."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AgentCacheLookup:
+    """What looking a question up in the agentic answer cache found, and what to store it under.
+
+    A miss is stored under ``scope`` and ``question`` once the agent answers, so the question is
+    embedded once per search.
+    """
+
+    scope: AgentCacheScope
+    """The search's scope."""
+    question: CachedQuestion
+    """The search's question."""
+    hit: CachedAgentAnswer | None = None
+    """The most similar cached answer at or above the threshold whose picks the pinned version
+    still holds; ``None``: the agent runs."""
+    similarity: float = 0.0
+    """How similar the hit's question is (0 without a hit)."""

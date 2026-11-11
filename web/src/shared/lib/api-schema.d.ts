@@ -3333,6 +3333,14 @@ export interface components {
             readonly coverage: components["schemas"]["CoverageOut"];
             /** @description Set when a cheaper mode answered than the one that would have: says why. */
             readonly fallback_reason: components["schemas"]["FallbackReason"] | null;
+            /**
+             * Cache Hit
+             * @description An agentic search answered from the agentic answer cache: a similar question of the same
+             *     version, filter and model was answered before, so no agent ran. Its results were checked
+             *     against this version and filter again.
+             * @default false
+             */
+            readonly cache_hit: boolean;
             /** Results */
             readonly results: readonly components["schemas"]["SearchResultOut"][];
         };

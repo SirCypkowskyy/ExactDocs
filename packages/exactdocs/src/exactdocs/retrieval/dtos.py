@@ -240,6 +240,10 @@ class SearchDocsResult(_Dto):
     coverage: CoverageOut
     fallback_reason: FallbackReason | None = Field(default=None)
     """Set when a cheaper mode answered than the one that would have: says why."""
+    cache_hit: bool = False
+    """An agentic search answered from the agentic answer cache: a similar question of the same
+    version, filter and model was answered before, so no agent ran. Its results were checked
+    against this version and filter again."""
     results: list[SearchResultOut]
 
 
@@ -821,6 +825,8 @@ class QueryDocsResult(_Dto):
     """A reranker reordered the candidates."""
     fallback_reason: FallbackReason | None = None
     """Set when a cheaper mode answered than the one that would have: says why."""
+    cache_hit: bool = False
+    """An agentic search answered from the agentic answer cache (no agent ran)."""
     sections: list[DocSectionOut]
     omitted: int
     """Matching chunks neither shown nor pointed to: the budget was used up."""
@@ -1607,3 +1613,6 @@ class PrunedHypothesesOut(_Dto):
 
     deleted: int
     """Answers older than the TTL, or of an ``llm`` model no longer configured."""
+    agentic_answers: int = 0
+    """Cached agentic answers older than their TTL, of an ``llm`` model no longer configured, or
+    compared in another embedding space than the configured one."""

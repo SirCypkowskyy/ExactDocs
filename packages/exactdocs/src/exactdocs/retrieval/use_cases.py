@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import math
-from collections.abc import Awaitable, Collection, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext, suppress
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
@@ -14,11 +14,16 @@ from exactdocs.retrieval.constants import (
     AGENT_SEARCH_LIMIT,
     AGENT_STAGE,
     AGENT_STEP_ARGUMENT_CHARS,
+    AGENTIC_ANSWER_CACHE,
+    BM25_SIMILARITY,
     CHARS_PER_TOKEN,
+    DEFAULT_AGENT_CACHE_THRESHOLD,
+    DEFAULT_AGENT_CACHE_TTL_DAYS,
     DEFAULT_EMBEDDING_BATCH,
     DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
     FOOTER_CHARS,
     FREE_PROFILE_KINDS,
+    HYDE_ANSWER_CACHE,
     HYDE_CACHE_TTL_DAYS,
     HYDE_TIMEOUT,
     MAX_EXPLORED_STEPS,
@@ -112,6 +117,7 @@ from exactdocs.retrieval.dtos import (
     VersionRefOut,
 )
 from exactdocs.retrieval.errors import (
+    AgentCacheError,
     AgentStoppedError,
     AiBudgetReachedError,
     ArticleNotFoundError,
@@ -141,6 +147,8 @@ from exactdocs.retrieval.errors import (
 )
 from exactdocs.retrieval.models import (
     AgentBounds,
+    AgentCacheLookup,
+    AgentCacheScope,
     AgentPick,
     AgentRead,
     AgentRun,
@@ -149,6 +157,9 @@ from exactdocs.retrieval.models import (
     ArticleText,
     BudgetLimit,
     Budgets,
+    CachedAgentAnswer,
+    CachedPick,
+    CachedQuestion,
     Candidate,
     CatalogLibrary,
     Chunk,
@@ -222,6 +233,7 @@ from exactdocs.retrieval.models import (
 )
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
+    AgentAnswerCache,
     AgentReads,
     ArticleSuggestions,
     ArticleTitles,
@@ -341,6 +353,15 @@ class UntracedSearches:
             reason: Why it did.
         """
         del mode, reason
+
+    def cache_hit(self, *, cache: str, mode: str) -> None:
+        """Count nothing.
+
+        Args:
+            cache: Which cache.
+            mode: The mode that answered.
+        """
+        del cache, mode
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -476,6 +497,71 @@ class NoHypothesisCache:
             0.
         """
         del written_before, keep_models
+        return 0
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NoAgentAnswerCache:
+    """Implements ``ports.driven.AgentAnswerCache`` for a build that keeps none."""
+
+    async def scoped(self, scope: AgentCacheScope) -> Sequence[CachedAgentAnswer]:
+        """Find nothing.
+
+        Args:
+            scope: The scope.
+
+        Returns:
+            Nothing.
+        """
+        del scope
+        return ()
+
+    async def put(self, answer: CachedAgentAnswer) -> None:
+        """Keep nothing.
+
+        Args:
+            answer: The answer.
+        """
+        del answer
+
+    async def forget(self, manifest_ids: Collection[str]) -> int:
+        """Delete nothing.
+
+        Args:
+            manifest_ids: The manifests.
+
+        Returns:
+            0.
+        """
+        del manifest_ids
+        return 0
+
+    async def forget_library(self, library: str) -> int:
+        """Delete nothing.
+
+        Args:
+            library: The library.
+
+        Returns:
+            0.
+        """
+        del library
+        return 0
+
+    async def prune(
+        self, written_before: datetime, keep_models: Collection[str], keep_similarity: str
+    ) -> int:
+        """Delete nothing.
+
+        Args:
+            written_before: The cutoff.
+            keep_models: The models kept.
+            keep_similarity: The space kept.
+
+        Returns:
+            0.
+        """
+        del written_before, keep_models, keep_similarity
         return 0
 
 
@@ -921,7 +1007,7 @@ class RetrievalModes:
             agentic run that stops (``AgentStoppedError``) is answered by the best mode without an
             LLM step, with the agent's reason (``agent_limit_reached``, ``agent_failed``...).
         """
-        depth = max(limit, choice.rerank_top_n) if choice.rerank else limit
+        depth = choice.depth(limit)
         request = PipelineRequest(
             version=version,
             query=query,
@@ -932,6 +1018,7 @@ class RetrievalModes:
             caller=choice.caller,
             library_ai=choice.library_ai,
             hypothesis=choice.hypothesis,
+            agent_cache=choice.agent_cache,
         )
         if choice.mode.needs_vectors and self.embedded is not None:
             found = await self.embedded.search_space(version.manifest_id)
@@ -961,32 +1048,43 @@ class RetrievalModes:
         caller: str | None,
         version: SearchableVersion | None = None,
         query: str | None = None,
+        tag_filter: TagFilter | None = None,
+        limit: int | None = None,
     ) -> ModeChoice:
         """Skip the LLM step or the paid rerank a budget or the rate limit does not allow now.
 
         Called by the search use cases once the version resolved (a search of an unknown
         library or ref uses up nothing), before every later stage (the pipeline, a rerank),
         which all see the same choice. A HyDE search whose hypothetical answer is cached makes no
-        LLM call: it is neither refused by a budget nor counted against the rate limit.
+        LLM call: it is neither refused by a budget nor counted against the rate limit. Nor is
+        an agentic search the agentic answer cache answers: it is looked up first, once.
 
         Args:
             choice: The mode picked by ``choose``.
             library: The library searched, any letter case.
             caller: The account searching; ``None`` for a stdio MCP process.
-            version: The version searched, to look for a cached hypothetical answer.
+            version: The version searched, to look for a cached hypothetical or agentic answer.
             query: The query text, likewise.
+            tag_filter: The search's tag filter, part of a cached agentic answer's scope.
+            limit: How many hits the caller shows at most (a cached agentic answer must hold
+                as many).
 
         Returns:
             The choice, or the cheaper one without the LLM step, or the same without reranking,
             with the reason.
         """
         choice = replace(choice, caller=caller)
+        lookup = await self._cached_agentic(choice, version, query, tag_filter, limit)
+        if lookup is not None:
+            choice = replace(choice, agent_cache=lookup)
         if self.spend is None:
             return choice
         who = AiCaller(library=library.casefold(), user=caller)
         own = None if choice.library_ai is None else choice.library_ai.budgets
         if (hypothesis := await self._cached_hypothesis(choice, version, query)) is not None:
             choice = replace(choice, hypothesis=hypothesis)  # no LLM call: no limit applies
+        elif lookup is not None and lookup.hit is not None:
+            pass  # answered from the agentic answer cache: no LLM call, no limit applies
         elif choice.mode.needs_llm and (reason := await self.spend.llm_step(who, own)) is not None:
             choice = choice.without_llm(reason)
         if (
@@ -998,6 +1096,47 @@ class RetrievalModes:
         ):
             choice = replace(choice, rerank=False, fallback_reason=choice.fallback_reason or reason)
         return choice
+
+    async def _cached_agentic(
+        self,
+        choice: ModeChoice,
+        version: SearchableVersion | None,
+        query: str | None,
+        tag_filter: TagFilter | None,
+        limit: int | None,
+    ) -> AgentCacheLookup | None:
+        """Look an agentic search up in the agentic answer cache (no LLM call).
+
+        Args:
+            choice: The mode picked.
+            version: The version searched, if known.
+            query: The query text, if known.
+            tag_filter: The search's tag filter, if known.
+            limit: How many hits the caller shows, if known.
+
+        Returns:
+            The lookup of an ``agentic`` search with a cache (a hit or a miss to store), else
+            ``None``.
+        """
+        if (
+            choice.mode is not RetrievalMode.AGENTIC
+            or version is None
+            or query is None
+            or tag_filter is None
+            or limit is None
+        ):
+            return None
+        agentic = self.pipelines.get(RetrievalMode.AGENTIC)
+        if not isinstance(agentic, AgenticPipeline):
+            return None
+        return await agentic.cached_answer(
+            version,
+            query,
+            tag_filter,
+            choice.depth(limit),
+            caller=choice.caller,
+            ai=choice.library_ai,
+        )
 
     async def _cached_hypothesis(
         self, choice: ModeChoice, version: SearchableVersion | None, query: str | None
@@ -1353,11 +1492,17 @@ class SearchDocsUseCase:
             raise VersionNotIndexedError(query.library, query.ref or "(default version)")
         # Only a search that will run counts against the caller's limits; every stage after this
         # one sees the same choice.
+        tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
         choice = await self.modes.within_budget(
-            choice, library=version.library, caller=caller, version=version, query=text.value
+            choice,
+            library=version.library,
+            caller=caller,
+            version=version,
+            query=text.value,
+            tag_filter=tag_filter,
+            limit=query.limit,
         )
         mode = choice.mode.value
-        tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
         with self.tracer.span(f"{SEARCH_DOCS}.rank", mode=mode) as rank:
             answer = await self.modes.run(choice, version, text.value, tag_filter, query.limit)
             rank.answered_by(answer.mode.value)
@@ -1391,6 +1536,7 @@ class SearchDocsUseCase:
                 complete=answer.complete,
             ),
             fallback_reason=answer.fallback_reason,
+            cache_hit=answer.cache_hit,
             results=results,
         )
 
@@ -1755,14 +1901,18 @@ class GetChunkSetsUseCase:
 
 
 async def _removed(
-    chunks: ChunkRepository, hypotheses: HypotheticalAnswerCache, doomed: Sequence[str]
+    chunks: ChunkRepository,
+    hypotheses: HypotheticalAnswerCache,
+    doomed: Sequence[str],
+    answers: AgentAnswerCache | None = None,
 ) -> RemovedChunks:
-    """Remove manifests' chunks, then HyDE's answers for them (a changed version invalidates).
+    """Remove manifests' chunks, then the cached answers for them (a changed version invalidates).
 
     Args:
         chunks: The chunk store.
         hypotheses: HyDE's cached answers.
         doomed: The manifests to remove.
+        answers: The agentic answer cache, if any.
 
     Returns:
         What was removed.
@@ -1770,6 +1920,8 @@ async def _removed(
     removed = await chunks.remove(doomed)
     if doomed:
         await hypotheses.forget(doomed)
+        if answers is not None:
+            await answers.forget(doomed)
     return RemovedChunks.from_model(removed)
 
 
@@ -1782,6 +1934,8 @@ class DiscardPendingChunksUseCase:
     clock: Clock
     hypotheses: HypotheticalAnswerCache = field(default_factory=NoHypothesisCache)
     """HyDE's cached answers: those of a removed manifest go with its chunks."""
+    answers: AgentAnswerCache = field(default_factory=NoAgentAnswerCache)
+    """The agentic answer cache: the answers of a removed manifest go with its chunks."""
 
     async def __call__(self, command: DiscardPendingChunksCommand) -> RemovedChunks:
         """Delete rows of matching manifests the catalog holds as pending, or dropped long ago."""
@@ -1793,7 +1947,7 @@ class DiscardPendingChunksUseCase:
             indexed_before=None if older is None else now - timedelta(seconds=older),
         )
         doomed = await _confirmed_removals(self.manifests, candidates, now=now, pending_too=True)
-        return await _removed(self.chunks, self.hypotheses, doomed)
+        return await _removed(self.chunks, self.hypotheses, doomed, self.answers)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1808,6 +1962,8 @@ class CollectChunksUseCase:
     clock: Clock
     hypotheses: HypotheticalAnswerCache = field(default_factory=NoHypothesisCache)
     """HyDE's cached answers: those of a removed manifest go with its chunks."""
+    answers: AgentAnswerCache = field(default_factory=NoAgentAnswerCache)
+    """The agentic answer cache: the answers of a removed manifest go with its chunks."""
     prune: PruneHypothesesUseCase | None = None
     """Prunes HyDE's cache by age and model; without it the cache is not pruned here."""
 
@@ -1819,7 +1975,7 @@ class CollectChunksUseCase:
             manifest_id=None, library=None, indexed_before=cutoff
         )
         doomed = await _confirmed_removals(self.manifests, candidates, now=now, pending_too=False)
-        removed = await _removed(self.chunks, self.hypotheses, doomed)
+        removed = await _removed(self.chunks, self.hypotheses, doomed, self.answers)
         if self.prune is not None:
             await self.prune()
         return removed
@@ -1831,6 +1987,9 @@ class PruneHypothesesUseCase:
 
     Deletes HyDE's answers older than ``ttl``, and those of an ``llm`` model no longer
     configured (neither the instance's nor any library's override, or its profile is gone).
+    Also the agentic answer cache's (``answers``): those older than ``answers_ttl``, of an
+    ``llm`` model no longer configured, or compared in another space than the configured
+    embedding model's (``caching.similarity_space``).
     """
 
     hypotheses: HypotheticalAnswerCache
@@ -1841,18 +2000,29 @@ class PruneHypothesesUseCase:
     """Decides the TTL's cutoff."""
     ttl: timedelta = timedelta(days=HYDE_CACHE_TTL_DAYS)
     """How long a cached hypothetical answer is kept (``[ai.hyde] cache_ttl``)."""
+    caching: AgentAnswerCaching | None = None
+    """The agentic answer cache; ``None``: there is none to prune."""
+    answers_ttl: timedelta = timedelta(days=DEFAULT_AGENT_CACHE_TTL_DAYS)
+    """How long a cached agentic answer is kept (``[ai.agentic_cache] ttl``)."""
 
     async def __call__(self) -> PrunedHypothesesOut:
-        """Prune the cache.
+        """Prune the caches.
 
         Returns:
-            How many answers were deleted.
+            How many answers were deleted, of each cache.
         """
         kept = await _llm_models(self.providers)
-        deleted = await self.hypotheses.prune(self.clock.now() - self.ttl, kept)
+        now = self.clock.now()
+        deleted = await self.hypotheses.prune(now - self.ttl, kept)
         if deleted:
             logger.info("pruned %d cached hypothetical answers", deleted)
-        return PrunedHypothesesOut(deleted=deleted)
+        answers = 0
+        if self.caching is not None:
+            space = await self.caching.similarity_space()
+            answers = await self.caching.cache.prune(now - self.answers_ttl, kept, space)
+            if answers:
+                logger.info("pruned %d cached agentic answers", answers)
+        return PrunedHypothesesOut(deleted=deleted, agentic_answers=answers)
 
 
 async def _llm_models(providers: AiProviders) -> set[str]:
@@ -1878,12 +2048,15 @@ class RemoveChunksUseCase:
     chunks: ChunkRepository
     hypotheses: HypotheticalAnswerCache = field(default_factory=NoHypothesisCache)
     """HyDE's cached answers: those of a removed manifest go with its chunks."""
+    answers: AgentAnswerCache = field(default_factory=NoAgentAnswerCache)
+    """The agentic answer cache: the answers of a removed manifest go with its chunks."""
 
     async def __call__(self, command: RemoveChunksCommand) -> RemovedChunks:
         """Remove what the catalog has forgotten; keep every manifest it still knows."""
         asked = list(dict.fromkeys(command.manifest_ids))
         known = await self.manifests.statuses(asked)
-        return await _removed(self.chunks, self.hypotheses, [i for i in asked if i not in known])
+        gone = [i for i in asked if i not in known]
+        return await _removed(self.chunks, self.hypotheses, gone, self.answers)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2147,18 +2320,20 @@ class QueryDocsUseCase:
         if version is None:
             raise VersionNotIndexedError(library, ref or "(default version)")
         # Only a request that will run counts against the caller's limits.
+        everything = TagFilter(tags=(), match=TagMatch.ANY)
         choice = await self.modes.within_budget(
-            choice, library=version.library, caller=caller, version=version, query=text.value
+            choice,
+            library=version.library,
+            caller=caller,
+            version=version,
+            query=text.value,
+            tag_filter=everything,
+            limit=QUERY_DOCS_CANDIDATES,
         )
         mode = choice.mode.value
         with self.tracer.span(f"{QUERY_DOCS}.rank", mode=mode) as rank:
             answer = await self.modes.run(
-                choice,
-                version,
-                text.value,
-                TagFilter(tags=(), match=TagMatch.ANY),
-                QUERY_DOCS_CANDIDATES,
-                search=QUERY_DOCS,
+                choice, version, text.value, everything, QUERY_DOCS_CANDIDATES, search=QUERY_DOCS
             )
             rank.answered_by(answer.mode.value)
         whole.answered_by(answer.mode.value)
@@ -2191,6 +2366,7 @@ class QueryDocsUseCase:
             retrieval_mode=answer.mode,
             reranked=answer.reranked > 0,
             fallback_reason=answer.fallback_reason,
+            cache_hit=answer.cache_hit,
             sections=kept,
             omitted=len(sections) - len(kept),
             budget_chars=budget,
@@ -2272,6 +2448,8 @@ class SetLibraryRetrievalUseCase:
     """The instance's modes and the libraries' settings."""
     providers: AiProviders
     """The profiles an override may name."""
+    answers: AgentAnswerCache = field(default_factory=NoAgentAnswerCache)
+    """The agentic answer cache: a library's answers go when its settings are saved."""
 
     async def __call__(self, command: SetLibraryRetrievalCommand) -> LibraryRetrievalOut:
         """Validate the settings against what can run with them, then store them.
@@ -2311,6 +2489,7 @@ class SetLibraryRetrievalUseCase:
         if command.mode is not None:
             mode = (await self.modes.registry(library, ai)).check(command.mode)
         await self.modes.library_modes.save(library, mode, ai)
+        await self.answers.forget_library(library)  # its settings may change what the agent finds
         return await _library_retrieval(self.modes, library, mode, ai)
 
 
@@ -2320,6 +2499,8 @@ class ForgetLibraryUseCase:
 
     library_modes: LibraryModes
     """Each library's own mode, dropped with the library."""
+    answers: AgentAnswerCache = field(default_factory=NoAgentAnswerCache)
+    """The agentic answer cache: the library's answers are dropped too."""
 
     async def __call__(self, command: ForgetLibraryCommand) -> None:
         """Drop what retrieval keeps per library, so a library re-added later starts clean.
@@ -2328,6 +2509,7 @@ class ForgetLibraryUseCase:
             command: The removed library.
         """
         await self.library_modes.forget(command.library)
+        await self.answers.forget_library(command.library)
 
 
 def _ref_text(ref: ModelRef | None) -> str | None:
@@ -3738,6 +3920,239 @@ class VersionBrowser:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class AgentAnswerCaching:
+    """Answers an agentic search from an earlier answer to a similar question (RET-05, #100).
+
+    Answers are kept per scope (``AgentCacheScope``): the pinned version's manifest, the ``llm``
+    model, and a fingerprint of the tag filter, the agent's limits, the cache format and the
+    space questions are compared in. A re-sync (a new manifest), another model, filter or
+    setting is another scope, so it never reuses an answer; the use cases also forget a removed
+    manifest's answers and a library's when its settings change, and the nightly upkeep prunes
+    them by age. Questions are compared by hybrid similarity (``CachedQuestion.similarity``):
+    the cosine of their embeddings with the instance's embedding model, averaged with their
+    lexical similarity, or the lexical similarity alone without an embedding model. The most
+    similar at or above ``threshold`` whose picks the version still holds is the hit; its
+    picks are checked again against the manifest and the filter before they are shown.
+
+    A cache that fails is a miss (logged by class only); a question embedding that fails or
+    that a budget refuses leaves the lexical similarity alone. The question is stored as
+    HMACs under ``key`` and, with an embedding model, its embedding; never its text.
+    """
+
+    cache: AgentAnswerCache
+    """The stored answers."""
+    key: bytes
+    """The instance's key for the HMACs of the questions (from its secret key)."""
+    clock: Clock
+    """Stamps the answers; the TTL counts from it."""
+    runs: EmbeddingRuns | None = None
+    """The instance's embedding model, which embeds the question; ``None``: lexical only."""
+    threshold: float = DEFAULT_AGENT_CACHE_THRESHOLD
+    """How similar (0 to 1) a question must be to a cached one to reuse its answer."""
+    timeout: float = QUERY_EMBEDDING_TIMEOUT
+    """Seconds to wait for the question's embedding before comparing words only."""
+
+    async def similarity_space(self) -> str:
+        """Name the space questions are compared in now.
+
+        Returns:
+            The embedding model's identity, or ``bm25`` without one.
+        """
+        configured = await self._configured()
+        return BM25_SIMILARITY if configured is None else configured.target.identity
+
+    async def _configured(self) -> _Configured | None:
+        """Resolve the embedding role, if questions are compared with it.
+
+        Returns:
+            The role, or ``None``.
+        """
+        return None if self.runs is None else await self.runs.configured()
+
+    async def lookup(
+        self,
+        version: SearchableVersion,
+        query: str,
+        tag_filter: TagFilter,
+        limit: int,
+        *,
+        model: ModelRef,
+        bounds: AgentBounds,
+        caller: str | None,
+        held: Callable[[Sequence[CachedPick]], Awaitable[Sequence[ChunkId]]],
+    ) -> AgentCacheLookup:
+        """Find the most similar cached question of the search's scope, if similar enough.
+
+        Args:
+            version: The version searched.
+            query: The query text.
+            tag_filter: The search's tag filter.
+            limit: How many chunks the pipeline is asked for: an answer asked for fewer is
+                not reused.
+            model: The ``llm`` role's model.
+            bounds: The agent's limits.
+            caller: The account searching (a paid question embedding counts to it).
+            held: Says which of an answer's picks the pinned version holds under the filter.
+
+        Returns:
+            The lookup: the hit, if any, and what a miss is stored under.
+        """
+        configured = await self._configured()
+        similarity = BM25_SIMILARITY if configured is None else configured.target.identity
+        scope = AgentCacheScope.of(
+            version=version,
+            model=model,
+            tag_filter=tag_filter,
+            bounds=bounds,
+            similarity=similarity,
+        )
+        vector = None
+        if configured is not None:
+            vector = await self._embedded(version, query, configured, caller)
+        question = CachedQuestion.of(query, key=self.key, vector=vector)
+        miss = AgentCacheLookup(scope=scope, question=question)
+        try:
+            entries = await self._cache_call(self.cache.scoped(scope))
+        except AgentCacheError:  # never a failed search: the agent answers
+            return miss
+        ranked = sorted(
+            ((question.similarity(e.question), e) for e in entries if e.limit >= limit),
+            key=lambda pair: -pair[0],  # stable: the newest of equally similar ones first
+        )
+        for score, entry in ranked:
+            if score < self.threshold:
+                break
+            if await held(entry.picks):
+                return replace(miss, hit=entry, similarity=score)
+        return miss
+
+    async def _embedded(
+        self,
+        version: SearchableVersion,
+        query: str,
+        configured: _Configured,
+        caller: str | None,
+    ) -> tuple[float, ...] | None:
+        """Embed the question with the instance's embedding model, as a query.
+
+        A paid model is checked against the budgets first and its use recorded, as a hybrid
+        search's query embedding is.
+
+        Args:
+            version: The version searched (its library's budgets apply).
+            query: The query text.
+            configured: The embedding role.
+            caller: The account searching.
+
+        Returns:
+            The embedding, or ``None`` when a budget refuses it, the model fails or it does not
+            answer within ``timeout`` (only the error's class is logged).
+        """
+        if self.runs is None:
+            return None
+        who = AiCaller(library=version.library.casefold(), user=caller)
+        scopes = tuple(dict.fromkeys([*who.embedding_scopes(), *who.scopes()]))
+        spend = self.runs.spend
+        paid = configured.target.profile_kind not in FREE_PROFILE_KINDS
+        if spend is not None and paid and await spend.reached(scopes) is not None:
+            return None
+        try:
+            async with asyncio.timeout(self.timeout):
+                embedded = await self._embed(query, configured)
+        except EmbeddingFailedError, ProviderUnsupportedError, TimeoutError:
+            return None  # never a failed search: words only
+        if spend is not None:
+            await spend.record(
+                scopes,
+                ref=configured.ref,
+                profile_kind=configured.target.profile_kind,
+                input_tokens=embedded.input_tokens,
+                requests=embedded.requests,
+            )
+        return embedded.vectors[0] if len(embedded.vectors) == 1 else None
+
+    async def store(
+        self,
+        lookup: AgentCacheLookup,
+        picks: Sequence[CachedPick],
+        *,
+        limit: int,
+        candidates: int,
+        complete: bool,
+    ) -> None:
+        """Keep an agent's answer for similar questions; a cache that fails keeps nothing.
+
+        Args:
+            lookup: The search's lookup (its scope and question).
+            picks: The picks the pinned version held, best first.
+            limit: How many chunks the agent was asked for.
+            candidates: How many chunks it looked at.
+            complete: False when it picked more than ``limit``.
+        """
+        answer = CachedAgentAnswer(
+            scope=lookup.scope,
+            question=lookup.question,
+            picks=tuple(picks),
+            limit=limit,
+            candidates=candidates,
+            complete=complete,
+            created_at=self.clock.now(),
+        )
+        with suppress(AgentCacheError):  # costs an agent run next time only
+            await self._cache_call(self.cache.put(answer))
+
+    async def _cache_call[T](self, call: Awaitable[T]) -> T:
+        """Await a call to the cache, turning any failure into ``AgentCacheError``.
+
+        Args:
+            call: The call.
+
+        Returns:
+            Its result.
+
+        Raises:
+            AgentCacheError: The call failed; only the error's class is logged, never its
+                message, which may hold stored text.
+        """
+        try:
+            return await call
+        except Exception as error:
+            logger.warning("the agentic answer cache failed: %s", type(error).__name__)
+            raise AgentCacheError(type(error).__name__) from error
+
+    async def _embed(self, query: str, configured: _Configured) -> EmbeddedTexts:
+        """Build the embedding model and embed the question.
+
+        Args:
+            query: The query text.
+            configured: The embedding role.
+
+        Returns:
+            The question's vector and usage.
+
+        Raises:
+            EmbeddingFailedError: The model failed, or anything else went wrong building or
+                calling it; only the error's type is logged, never its message, which may echo
+                a request, a key or the query. ``CancelledError`` is no ``Exception``, so
+                cancelling a search still propagates.
+            ProviderUnsupportedError: This process cannot call the model.
+        """
+        if self.runs is None:
+            raise ProviderUnsupportedError(configured.ref.profile, "this process embeds nothing")
+        try:
+            model = await self.runs.model(configured)
+            return await model.embed_query(query)
+        except EmbeddingFailedError, ProviderUnsupportedError:
+            raise
+        except Exception as error:
+            logger.warning(
+                "the agentic answer cache compares words only: the question embedding raised %s",
+                type(error).__name__,
+            )
+            raise EmbeddingFailedError(str(configured.ref), type(error).__name__) from error
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class AgenticPipeline:
     """Implements ``ports.driven.RetrievalPipeline`` for ``agentic`` (RET-04).
 
@@ -3772,9 +4187,80 @@ class AgenticPipeline:
     """Times the run (``<search>.agent``), without the query text."""
     reads: AgentReads = field(default_factory=UnrecordedAgentReads)
     """The runs' trace: every read the agent made."""
+    cache: AgentAnswerCaching | None = None
+    """Answers similar questions from earlier answers (#100); ``None``: every search runs the
+    agent."""
+
+    async def cached_answer(
+        self,
+        version: SearchableVersion,
+        query: str,
+        tag_filter: TagFilter,
+        limit: int,
+        *,
+        caller: str | None,
+        ai: LibraryAi | None = None,
+    ) -> AgentCacheLookup | None:
+        """Look a search up in the agentic answer cache (no LLM call).
+
+        A hit is the most similar cached question of the search's scope at or above the
+        threshold whose answer holds at least ``limit`` picks' worth (it was asked for as many)
+        and of whose picks the pinned version, under the tag filter, still holds one.
+
+        Args:
+            version: The version searched.
+            query: The query text.
+            tag_filter: The search's tag filter.
+            limit: How many chunks the pipeline is asked for.
+            caller: The account searching (a paid question embedding counts to it).
+            ai: The library's overrides as the search read them; ``None``: read them.
+
+        Returns:
+            The lookup (a hit, or a miss to store the agent's answer under); ``None`` without a
+            cache, with AI off for the library or without an ``llm`` role.
+        """
+        if self.cache is None:
+            return None
+        ai = ai or await self.providers.library_modes.ai_of(version.library)
+        if not ai.enabled:
+            return None  # nothing of the library is sent, its question embedding included
+        found = await self.providers.resolved(ModelRole.LLM, version.library, ai)
+        if found is None:
+            return None
+        return await self.cache.lookup(
+            version,
+            query,
+            tag_filter,
+            limit,
+            model=found[0],
+            bounds=self.bounds,
+            caller=caller,
+            held=lambda picks: self._held(version, tag_filter, picks),
+        )
+
+    async def _held(
+        self, version: SearchableVersion, tag_filter: TagFilter, picks: Sequence[CachedPick]
+    ) -> list[ChunkId]:
+        """Say which picks the pinned version holds and the tag filter keeps.
+
+        Args:
+            version: The version searched.
+            tag_filter: The search's tag filter.
+            picks: A cached answer's picks.
+
+        Returns:
+            Their chunk IDs that are still there, in order.
+        """
+        wanted = list(dict.fromkeys(p.chunk_id for p in picks))
+        stored = await self.chunks.get_many(version.manifest_id, wanted) if wanted else {}
+        return [c for c in wanted if c in stored and tag_filter.keeps(stored[c].row.tags)]
 
     async def run(self, request: PipelineRequest) -> PipelineAnswer:
         """Let the agent explore the version, then keep its picks that belong to it.
+
+        A search the agentic answer cache answers (``request.agent_cache.hit``) runs no agent:
+        its cached picks are looked up again in the pinned manifest, under the tag filter, as
+        the agent's own are. A fresh answer is stored for similar questions.
 
         Args:
             request: What to search; ``limit`` is how many chunks the agent may pick.
@@ -3783,6 +4269,16 @@ class AgenticPipeline:
             The ``agentic`` answer: the picks found in the version, in the agent's order. A run
             that ends without an answer raises ``AgentStoppedError`` (from ``_explore``).
         """
+        lookup = request.agent_cache
+        if lookup is not None and lookup.hit is not None:
+            answer = await self._answer(
+                request, lookup.hit.picks, candidates=lookup.hit.candidates, cache_hit=True
+            )
+            if answer.hits:
+                self.tracer.cache_hit(cache=AGENTIC_ANSWER_CACHE, mode=RetrievalMode.AGENTIC.value)
+                return answer
+            # Every pick went since the lookup (a re-sync or a retag): the agent answers. The
+            # budgets were not checked for it, as for a search between two budget checks.
         library = request.version.library
         browser = VersionBrowser(
             version=request.version,
@@ -3795,7 +4291,18 @@ class AgenticPipeline:
         )
         with self.tracer.span(f"{request.search}.{AGENT_STAGE}", mode=RetrievalMode.AGENTIC.value):
             picks = await self._explore(request, browser, library)
-        return await self._answer(request, browser, picks)
+        explained = await self._explained(request, browser, picks)
+        answer = await self._answer(request, explained, candidates=len(browser.seen))
+        if lookup is not None and self.cache is not None and answer.hits:
+            kept = {h.chunk_id for h in answer.hits}
+            await self.cache.store(
+                lookup,
+                [p for p in explained if p.chunk_id in kept],
+                limit=request.limit,
+                candidates=answer.candidates,
+                complete=answer.complete,
+            )
+        return answer
 
     async def _explore(
         self, request: PipelineRequest, browser: VersionBrowser, library: str
@@ -3864,10 +4371,10 @@ class AgenticPipeline:
             raise AgentStoppedError(FallbackReason.MODE_UNAVAILABLE.value, "no llm role")
         return model
 
-    async def _answer(
+    async def _explained(
         self, request: PipelineRequest, browser: VersionBrowser, picks: Sequence[AgentPick]
-    ) -> PipelineAnswer:
-        """Keep the picks the pinned version holds and the tag filter allows, as hits.
+    ) -> list[CachedPick]:
+        """Give each picked chunk its justification and how the agent reached it.
 
         Args:
             request: The search.
@@ -3875,12 +4382,46 @@ class AgenticPipeline:
             picks: The agent's picks, best first.
 
         Returns:
+            One pick per chunk, in order: its first justification, made safe to show, and the
+            calls up to the first that reached its article (every call for a chunk the pinned
+            version does not hold, which is dropped later).
+        """
+        first: dict[ChunkId, str] = {}
+        for pick in picks:
+            first.setdefault(ChunkId(pick.chunk_id), pick.justification)
+        rows = await self.chunks.get_many(request.version.manifest_id, list(first)) if first else {}
+        return [
+            CachedPick(
+                chunk_id=chunk_id,
+                justification=model_text(why, MAX_JUSTIFICATION_CHARS),
+                explored_path=browser.path_to(rows[chunk_id].row.article_path)
+                if chunk_id in rows
+                else (),
+            )
+            for chunk_id, why in first.items()
+        ]
+
+    async def _answer(
+        self,
+        request: PipelineRequest,
+        picks: Sequence[CachedPick],
+        *,
+        candidates: int,
+        cache_hit: bool = False,
+    ) -> PipelineAnswer:
+        """Keep the picks the pinned version holds and the tag filter allows, as hits.
+
+        Args:
+            request: The search.
+            picks: The agent's picks (or a cached answer's), best first, once each.
+            candidates: How many chunks the agent looked at.
+            cache_hit: The picks come from the agentic answer cache.
+
+        Returns:
             The ``agentic`` answer; each hit carries its justification and explored path.
         """
-        wanted = list(dict.fromkeys(ChunkId(p.chunk_id) for p in picks))
-        why = {}
-        for pick in picks:
-            why.setdefault(ChunkId(pick.chunk_id), pick.justification)
+        wanted = [p.chunk_id for p in picks]
+        why = {p.chunk_id: p for p in picks}
         stored = await self.chunks.get_many(request.version.manifest_id, wanted)
         kept = [
             stored[c]
@@ -3891,19 +4432,17 @@ class AgenticPipeline:
         hits = []
         for rank, chunk in enumerate(kept[: request.limit]):
             hit = leading_hit(chunk.row.chunk_id, 1.0 / (rank + 1), chunk.chunk.content, terms)
+            pick = why[chunk.row.chunk_id]
             hits.append(
-                replace(
-                    hit,
-                    justification=model_text(why[chunk.row.chunk_id], MAX_JUSTIFICATION_CHARS),
-                    explored_path=browser.path_to(chunk.row.article_path),
-                )
+                replace(hit, justification=pick.justification, explored_path=pick.explored_path)
             )
         return PipelineAnswer(
             mode=RetrievalMode.AGENTIC,
             hits=tuple(hits),
-            candidates=max(len(browser.seen), len(kept)),
+            candidates=max(candidates, len(kept)),
             reranked=0,
             complete=len(kept) <= request.limit,
+            cache_hit=cache_hit,
         )
 
 
@@ -3927,7 +4466,7 @@ class HydePipeline:
     hybrid's, as it names the mode that really answered (BM25). A timeout that strikes after the
     provider answered may cancel ``SpendLimits`` while it records the spend, which is then lost:
     as rare as the in-flight overshoot the decision record already accepts. Cache hits are not
-    counted as a metric yet (``exactdocs.ai.cache_hits`` comes with the answer cache, #100).
+    counted in ``exactdocs.ai.cache_hits`` (cache ``hyde_answer``).
     Nothing of a library with AI off is sent. Spans and logs never hold the query or the answer.
     """
 
@@ -3959,6 +4498,8 @@ class HydePipeline:
             with the reason the hypothetical answer was not used (hybrid's own when it has one).
         """
         hypothesis = request.hypothesis or await self._hypothesis(request)
+        if request.hypothesis is not None:
+            self.tracer.cache_hit(cache=HYDE_ANSWER_CACHE, mode=RetrievalMode.HYBRID_HYDE.value)
         if isinstance(hypothesis, FallbackReason):
             answer = await self.hybrid.run(request)
             return answer if answer.fallback_reason else replace(answer, fallback_reason=hypothesis)
@@ -4036,6 +4577,7 @@ class HydePipeline:
         ref, profile = found
         key = HydeKey.of(request.version.manifest_id, ref, request.query, key=self.cache_key)
         if (cached := await self._cached(key)) is not None:
+            self.tracer.cache_hit(cache=HYDE_ANSWER_CACHE, mode=RetrievalMode.HYBRID_HYDE.value)
             return cached
         step = LlmStep(
             caller=AiCaller(library=library.casefold(), user=request.caller),

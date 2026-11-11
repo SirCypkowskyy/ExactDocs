@@ -498,6 +498,20 @@ class HypothesisCacheError(DomainError):
         super().__init__(f"the HyDE cache failed: {_data(reason)}")
 
 
+class AgentCacheError(DomainError):
+    """The agentic answer cache could not be read or written; never fails a search."""
+
+    code = "agent_cache_failed"
+
+    def __init__(self, reason: str) -> None:
+        """Say what went wrong.
+
+        Args:
+            reason: The error's class name, never its message (it may hold stored text).
+        """
+        super().__init__(f"the agentic answer cache failed: {_data(reason)}")
+
+
 class AiBudgetReachedError(DomainError):
     """A spend limit is used up: nothing more is sent to a provider until its window resets."""
 
