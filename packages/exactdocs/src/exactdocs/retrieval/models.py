@@ -23,11 +23,8 @@ from exactdocs.retrieval.constants import (
     _PLURALS,
     _SELF_HOSTED_KINDS,
     _SHORTEST_PLURAL,
-    _SHORTEST_STEM,
-    _UNDOUBLED,
     _UNFOLDED_S_ENDINGS,
     _UNFOLDED_WORDS,
-    _VERB_ENDINGS,
     _WORD,
     AGENT_CACHE_FORMAT,
     AGENT_CACHE_TERM_HASH_CHARS,
@@ -90,11 +87,15 @@ from exactdocs.retrieval.constants import (
     MIN_AGENT_REPEATED_CALLS,
     MONTHS_PER_YEAR,
     PROFILE_NAME,
+    QUESTION_ARTICLES,
+    QUESTION_DIRECTIONS,
     QUESTION_INFINITIVE,
     QUESTION_NEGATIONS,
     QUESTION_NUMBER,
     QUESTION_POLARITY_WORDS,
     QUESTION_STOP_WORDS,
+    QUESTION_SYMBOL_SPELLINGS,
+    QUESTION_SYMBOLS,
     QUESTION_WORDS,
     RATE_LIMIT_BELOW_ONE,
     REPEATED_CALLS_TOO_LOW,
@@ -3525,72 +3526,91 @@ class LlmStep:
 
 
 def _folded(word: str) -> str:
-    """Fold a word's plural, and its ``-ing`` or ``-ed`` when enough of it remains.
+    """Fold a word's plural ending, and nothing else.
 
-    The fold is minimal on purpose: a wrong fold serves a wrong answer ("format" read as
-    "form"), a missing one only costs a miss.
+    The fold is minimal on purpose: a wrong fold serves a wrong answer ("meaning" read as
+    "mean"), a missing one only costs a miss.
 
     Args:
         word: A case-folded word.
 
     Returns:
         The word with its plural ending folded (``_PLURALS``, from ``_SHORTEST_PLURAL`` letters,
-        never after ``_UNFOLDED_S_ENDINGS``), then without ``-ing``/``-ed`` and a final doubled
-        consonant undoubled, if that leaves at least ``_SHORTEST_STEM`` letters.
-        ``_UNFOLDED_WORDS`` stay as they are.
+        never after ``_UNFOLDED_S_ENDINGS``); ``_UNFOLDED_WORDS`` stay as they are.
     """
-    if word in _UNFOLDED_WORDS:
+    if word in _UNFOLDED_WORDS or len(word) < _SHORTEST_PLURAL:
         return word
-    if len(word) >= _SHORTEST_PLURAL and not word.endswith(_UNFOLDED_S_ENDINGS):
-        for suffix, replacement in _PLURALS:
-            if word.endswith(suffix):
-                word = word[: -len(suffix)] + replacement
-                break
-    if word in _UNFOLDED_WORDS:
+    if word.endswith(_UNFOLDED_S_ENDINGS):
         return word
-    for ending in _VERB_ENDINGS:
-        if word.endswith(ending):
-            stem = word[: -len(ending)]
-            if len(stem) > 1 and stem[-1] == stem[-2] and stem[-1] in _UNDOUBLED:
-                stem = stem[:-1]
-            return stem if len(stem) >= _SHORTEST_STEM else word
+    for suffix, replacement in _PLURALS:
+        if word.endswith(suffix):
+            return word[: -len(suffix)] + replacement
     return word
 
 
 def _question_text(query: str) -> str:
-    """Normalize a question and spell its negations out (``can't`` and ``cannot`` are ``can not``).
+    """Normalize a question, write its symbols the ASCII way and spell its negations out.
 
     Args:
         query: The question, as the caller sent it.
 
     Returns:
-        ``normalized_query`` with every ``n't`` written as `` not``.
+        ``normalized_query`` with ``QUESTION_SYMBOL_SPELLINGS`` applied, ``can't`` and
+        ``cannot`` written as ``can not`` and every other ``n't`` as `` not``.
     """
     text = normalized_query(query).replace("\u2019", "'")
+    for symbol, spelling in QUESTION_SYMBOL_SPELLINGS.items():
+        text = text.replace(symbol, spelling)
     text = re.sub(r"\bcan'?t\b|\bcannot\b", "can not", text)
     text = re.sub(r"\bwon't\b", "will not", text)
     return re.sub(r"(\w)n't\b", r"\1 not", text)
 
 
-def _question_tokens(query: str) -> list[tuple[str, bool]]:
-    """Split a question into its tokens, in order: numbers and words.
+type _Token = tuple[str, str]
+"""A token of a question and its kind: ``number``, ``word`` or ``symbol``."""
+
+
+def _question_tokens(query: str) -> list[_Token]:
+    """Split a question into its tokens, in order: numbers, words and symbols.
 
     Args:
         query: The question, as the caller sent it.
 
     Returns:
-        Each token and whether it is a number (``QUESTION_NUMBER``: its operator and sign kept,
-        without a ``v``); words are split at anything but letters and digits (``_``
-        included), each of ``QUESTION_NEGATIONS`` read as ``not``.
+        Each token and its kind. A number (``QUESTION_NUMBER``) keeps its operator, its sign and
+        a trailing ``+``, without a ``v``; a word is a run of letters and digits (``_`` splits)
+        with a trailing ``+`` kept (``c++``), each of ``QUESTION_NEGATIONS`` read as ``not``; a
+        symbol is a run of ``QUESTION_SYMBOLS``, except a ``!`` that ends a sentence.
     """
-    tokens = []
-    for match in re.finditer(rf"{QUESTION_NUMBER}|[^\W_]+", _question_text(query)):
+    text = _question_text(query)
+    tokens: list[_Token] = []
+    pattern = rf"{QUESTION_NUMBER}|[^\W_]+\+*|{QUESTION_SYMBOLS}"
+    for match in re.finditer(pattern, text):
+        found = match.group(0)
         if match.group(3) is not None:
-            tokens.append(((match.group(1) or "") + match.group(2) + match.group(3), True))
+            number = (match.group(1) or "") + match.group(2) + match.group(3) + match.group(4)
+            tokens.append((number, "number"))
+        elif found[0].isalnum():
+            tokens.append(("not" if found in QUESTION_NEGATIONS else found, "word"))
+        elif set(found) == {"!"} and (match.end() == len(text) or text[match.end()].isspace()):
+            continue  # an exclamation mark, not "not"
         else:
-            word = match.group(0)
-            tokens.append(("not" if word in QUESTION_NEGATIONS else word, False))
+            tokens.append((found, "symbol"))
     return tokens
+
+
+def _is_name(tokens: Sequence[_Token], at: int) -> bool:
+    """Say whether ``a`` or ``i`` is a name here: next to a symbol or a direction word.
+
+    Args:
+        tokens: The question's tokens.
+        at: The position of the letter.
+
+    Returns:
+        True when the token before or after it is a symbol or one of ``QUESTION_DIRECTIONS``.
+    """
+    neighbours = [tokens[k] for k in (at - 1, at + 1) if 0 <= k < len(tokens)]
+    return any(kind == "symbol" or text in QUESTION_DIRECTIONS for text, kind in neighbours)
 
 
 def question_terms(query: str) -> tuple[str, ...]:
@@ -3604,14 +3624,21 @@ def question_terms(query: str) -> tuple[str, ...]:
 
     Returns:
         Its words without ``QUESTION_STOP_WORDS`` and polarity words (those are guards), each
-        folded (``_folded``), and its numbers, in their places. ``to`` after filler, a question
-        word, a negation or nothing is the infinitive and left out ("how to configure").
+        folded (``_folded``), and its numbers and symbols, in their places. ``to`` after
+        filler, a question word, a negation or nothing is the infinitive and left out ("how to
+        configure"); ``a`` and ``i`` are kept only as names (``_is_name``).
     """
+    tokens = _question_tokens(query)
     terms: list[str] = []
     previous = ""
-    for token, number in _question_tokens(query):
-        if number:
+    for at, (token, kind) in enumerate(tokens):
+        if kind == "number":
             terms.append(f"#{token}")
+        elif kind == "symbol":
+            terms.append(token)
+        elif token in QUESTION_ARTICLES:
+            if _is_name(tokens, at):
+                terms.append(token)
         elif token == QUESTION_INFINITIVE and (
             not previous
             or previous in QUESTION_STOP_WORDS
@@ -3637,9 +3664,9 @@ def question_guards(query: str) -> tuple[str, ...]:
         them); repeated ones kept.
     """
     tokens = _question_tokens(query)
-    numbers = [t for t, number in tokens if number]
-    digits = [t for t, number in tokens if not number and any(c.isdigit() for c in t)]
-    polarity = sorted(t for t, number in tokens if not number and t in QUESTION_POLARITY_WORDS)
+    numbers = [t for t, kind in tokens if kind == "number"]
+    digits = [t for t, kind in tokens if kind == "word" and any(c.isdigit() for c in t)]
+    polarity = sorted(t for t, kind in tokens if kind == "word" and t in QUESTION_POLARITY_WORDS)
     return (*numbers, *digits, *polarity)
 
 

@@ -341,17 +341,19 @@ ttl` (7 days), with their manifest, with the library's settings, once their mode
 model is no longer configured, or all of them once the cache is turned off. With `scope =
 "library"` (the default) a cached answer, its model-written justifications included, is served to
 every caller of the library's version, so one caller can read the gist of another's question;
-`scope = "caller"` keeps each caller's answers to themselves. The cache serves only re-asked
-questions: the same content words in the same order (plurals folded, `-ing`/`-ed` only when
-four letters remain, filler dropped), with the same numbers, versions, operators (`>=`, `~`...)
-and negations, so a swap ("replace requests with httpx" and the reverse) misses; an embedding
+`scope = "caller"` keeps each caller's answers to themselves. The cache is opt-in (`enabled =
+false` by default, with an embedding model too): it trades exactness for cost, and serves only
+near-verbatim re-asks: the same content words in the same order (only plurals folded, filler
+dropped, symbols and single-letter names kept as terms), with the same numbers, versions,
+operators (`>=`, `~`, a trailing `+`...) and negations, so a swap ("replace requests with httpx" and the reverse) misses; an embedding
 only confirms such a match and never makes two questions with different terms match (on the
 default local model, siblings such as enable/disable and client/server score as high as
 paraphrases). Correct answers come before hit rate; the accepted losses are re-asks in another
 word order ("retry configuration" for "configure retries", "E42 error" for "error E42": order is
 compared as is, never as a set, also when no relation word is present), a verb and its noun
 ("migration" / "migrate", "validation" / "validate"), synonyms ("set up" / "configure"), and
-`-ing` forms whose stem would be shorter than four letters ("logging" / "log").
+inflections other than plurals ("connecting" / "connect", "logging" / "log": `-ing` and `-ed`
+are never folded, since "meaning" / "mean" and "hosting" / "host" are other words).
 
 What leaves the instance when a role is set: **embedding** receives chunk text (in background
 jobs) and query text; **reranker** and **judge** receive query text and candidate chunk text;

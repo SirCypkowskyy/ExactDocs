@@ -4193,9 +4193,6 @@ class AgentAnswerCaching:
     """Stamps the answers; the TTL counts from it."""
     runs: EmbeddingRuns | None = None
     """The instance's embedding model, which embeds the question; ``None``: lexical only."""
-    enabled: bool | None = None
-    """``True``: on in every space; ``None``: on only with an embedding model (words alone are
-    weaker evidence). Off (``enabled = false``) builds no caching at all."""
     threshold: float | None = None
     """How similar (0 to 1) a question must be to a cached one to reuse its answer; ``None``:
     ``DEFAULT_AGENT_CACHE_THRESHOLD`` with an embedding model, else
@@ -4235,7 +4232,7 @@ class AgentAnswerCaching:
         own: Sequence[BudgetLimit] = (),
         repo_guidance: str = "off",
         held: Callable[[Sequence[CachedPick]], Awaitable[Sequence[ChunkId]]],
-    ) -> AgentCacheLookup | None:
+    ) -> AgentCacheLookup:
         """Find the most similar cached question of the search's scope, if similar enough.
 
         The scope is read first, then its answers are compared by words: only the same question
@@ -4260,12 +4257,9 @@ class AgentAnswerCaching:
             held: Says which of an answer's picks the pinned version holds under the filter.
 
         Returns:
-            The lookup: the hit, if any, and what a miss is stored under; ``None`` when the
-            cache is off for this search (``enabled`` unset and no embedding model).
+            The lookup: the hit, if any, and what a miss is stored under.
         """
         configured = await self._configured()
-        if configured is None and self.enabled is not True:
-            return None  # words alone: only when the operator turned the cache on
         threshold = self._threshold(configured)
         scope = AgentCacheScope.of(
             version=version,

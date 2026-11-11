@@ -3,8 +3,8 @@ Feature: Similar agentic questions are answered from a cache
   I want a question asked again in other words answered from the earlier agentic answer
   So that I get it at once, without the cost of another agent run, and never from another version
 
-  The LLM is a scripted pydantic-ai FunctionModel: no provider is called. No embedding model is
-  configured, so the operator turned the cache on explicitly and questions are compared by their
+  The LLM is a scripted pydantic-ai FunctionModel: no provider is called. The cache is opt-in: the
+  operator turned it on. No embedding model is configured, so questions are compared by their
   words: only a question with the same content words in the same order, the same numbers and the
   same negations matches.
 

@@ -386,7 +386,7 @@ def _agent_cache_key(settings: Settings, *, create: bool) -> bytes | None:
         The key, or ``None`` when the cache is off, or there is no secret key and none may be
         created.
     """
-    if settings.ai.agentic_cache.enabled is False:
+    if not settings.ai.agentic_cache.enabled:
         return None
     return _cache_key(settings, AGENT_CACHE_PURPOSE, create=create)
 

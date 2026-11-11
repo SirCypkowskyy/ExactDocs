@@ -316,10 +316,10 @@ class AgenticCacheSettings(BaseModel):
 
     model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
 
-    enabled: bool | None = None
-    """`EXACTDOCS_AI__AGENTIC_CACHE__ENABLED`: unset, the cache is on only when an embedding model
-    is configured; `true` turns it on with words alone too; `false` turns it off, and the nightly
-    upkeep then deletes every cached answer."""
+    enabled: bool = False
+    """`EXACTDOCS_AI__AGENTIC_CACHE__ENABLED`: `true` turns the cache on. It is opt-in, with an
+    embedding model too: it trades exactness for cost, and serves only near-verbatim re-asks.
+    While it is off, the nightly upkeep deletes every cached answer."""
     threshold: float | None = Field(default=None, gt=0, le=1)
     """`EXACTDOCS_AI__AGENTIC_CACHE__THRESHOLD`: how similar (0 to 1) a question must be to a cached
     one asked again: the same content words in the same order and the same guards, or it never

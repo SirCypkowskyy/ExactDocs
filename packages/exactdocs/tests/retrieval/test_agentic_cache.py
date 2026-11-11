@@ -322,7 +322,7 @@ class World:
 async def _world(
     *,
     threshold: float | None = None,
-    enabled: bool | None = True,
+    enabled: bool = True,
     scope: str = "library",
     cache: AgentAnswerCache | None = None,
     budgets: Budgets | None = None,
@@ -534,6 +534,18 @@ async def test_the_threshold_is_configurable(threshold: float, hit: bool) -> Non
         ("build for arm", "build on arm"),
         ("should I use postgres or mysql", "should I use postgres and mysql"),
         ("how to treat warnings", "how to tree warnings"),
+        ("when latency > threshold", "when latency < threshold"),
+        ("requires python ≥3.8", "requires python ≤3.8"),
+        ("does it support python 3.8+", "does it support python 3.8"),
+        ("is a < b", "is a > b"),
+        ("move it to a from b", "move it to b from a"),
+        ("does c++ support it", "does c support it"),
+        ("a → b", "a ← b"),
+        ("what is the meaning of the score", "what is the mean of the score"),
+        ("configure hosting", "configure the host"),
+        ("what happens on a cache miss", "what happens on a cache missing"),
+        ("how to add a heading", "how to add a head"),
+        ("what is a port", "what is ported"),
     ],
 )
 def test_questions_that_ask_something_else_never_match_by_words(asked: str, again: str) -> None:
@@ -555,10 +567,13 @@ def test_questions_that_ask_something_else_never_match_by_words(asked: str, agai
         ("dont retry uploads", "do not retry uploads"),
         ("migrate from postgres to mysql", "Migrate from Postgres to MySQL"),
         ("how to configure retries", "how do I configure retries"),
-        ("how to connect to postgres", "connecting to postgres"),
+        ("how to connect to postgres", "connect to postgres"),
         ("how do I upgrade to v2", "how to upgrade to v2"),
         ("I want to configure retries", "how do I configure retries"),
         ("requires python>=3.8", "requires python >= 3.8"),
+        ("requires python ≥ 3.8", "requires python >= 3.8"),
+        ("a → b", "a -> b"),
+        ("why is my request retried!", "why is my request retried"),
         ("delete rows", "delete a row"),
         ("enable logs", "enable the log"),
     ],
@@ -578,6 +593,7 @@ def test_the_same_question_asked_again_matches(asked: str, again: str) -> None:
         ("database migration", "migrate the database"),
         ("how do I upgrade to v2", "upgrading to v2"),
         ("enable logging", "enable logs"),
+        ("how to connect to postgres", "connecting to postgres"),
     ],
 )
 def test_a_re_ask_in_another_order_misses_by_design(asked: str, again: str) -> None:
@@ -599,12 +615,6 @@ def test_a_re_ask_in_another_order_misses_by_design(asked: str, again: str) -> N
         ("matches", "match"),
         ("boxes", "box"),
         ("classes", "class"),
-        ("connecting", "connect"),
-        ("connected", "connect"),
-        ("configuring", "configured"),
-        ("stopping", "stop"),
-        ("called", "call"),
-        ("installed", "install"),
         ("settings", "setting"),
         ("strings", "string"),
     ],
@@ -636,6 +646,16 @@ def test_inflections_fold_to_one_term(word: str, other: str) -> None:
         ("configuration", "configure"),
         ("cookies", "cookie"),
         ("added", "add"),
+        ("meaning", "mean"),
+        ("hosting", "host"),
+        ("missing", "miss"),
+        ("heading", "head"),
+        ("ported", "port"),
+        ("united", "unit"),
+        ("connecting", "connect"),
+        ("called", "call"),
+        ("lens", "len"),
+        ("pending", "pend"),
     ],
 )
 def test_the_fold_is_minimal_and_these_stay_apart_on_purpose(word: str, other: str) -> None:
@@ -703,8 +723,9 @@ def test_an_embedding_only_confirms_the_same_terms() -> None:
     assert same.similarity(near) == pytest.approx(0.96)
 
 
-async def test_without_an_embedding_model_the_cache_is_off_unless_turned_on() -> None:
-    world = await _world(enabled=None)
+@pytest.mark.parametrize("embedded", [False, True])
+async def test_the_cache_is_off_unless_turned_on(embedded: bool) -> None:
+    world = await _world(enabled=False, embeddings=QuestionModels() if embedded else None)
     await _ask(world, FIRST)
 
     again = await _ask(world, FIRST)
@@ -714,8 +735,12 @@ async def test_without_an_embedding_model_the_cache_is_off_unless_turned_on() ->
     assert not _entries(world)
 
 
-async def test_with_an_embedding_model_the_cache_is_on_by_default() -> None:
-    world = await _world(enabled=None, embeddings=QuestionModels())
+def test_the_cache_is_opt_in_by_default() -> None:
+    assert AiSettings().agentic_cache.enabled is False
+
+
+async def test_turned_on_with_an_embedding_model_a_re_ask_hits() -> None:
+    world = await _world(embeddings=QuestionModels())
     await _ask(world, FIRST)
 
     assert (await _ask(world, SIMILAR)).cache_hit is True
@@ -1138,10 +1163,10 @@ async def test_a_failing_question_embedding_compares_words_only_and_logs_no_ques
 def test_question_terms_fold_plurals_and_verb_endings_and_drop_filler() -> None:
     assert question_terms(FIRST) == ("configure", "retry")
     assert question_terms("Configuring the retry_policy, retried calls") == (
-        "configur",
+        "configuring",
         "retry",
         "policy",
-        "retri",
+        "retried",
         "call",
     )
     assert question_terms("how to go from v1 to v2") == ("go", "from", "#1", "to", "#2")
@@ -1416,10 +1441,10 @@ async def test_a_read_only_process_reads_shared_answers_and_keeps_its_own() -> N
 
 def test_the_cache_key_is_derived_for_its_own_purpose_and_can_be_turned_off() -> None:
     secret = "a-secret-key-of-enough-characters-0123456789"
-    on = Settings(secret_key=secret)
-    off = Settings(
-        secret_key=secret, ai=AiSettings.model_validate({"agentic_cache": {"enabled": False}})
+    on = Settings(
+        secret_key=secret, ai=AiSettings.model_validate({"agentic_cache": {"enabled": True}})
     )
+    off = Settings(secret_key=secret)  # off by default
 
     assert _agent_cache_key(on, create=False) == derived_key(secret, AGENT_CACHE_PURPOSE)
     assert _agent_cache_key(on, create=False) != derived_key(secret, HYDE_CACHE_PURPOSE)

@@ -1159,7 +1159,7 @@ REPEATED_CALLS_TOO_LOW: Final[str] = "max_repeated_calls must be at least 2"
 """Why ``AgentBounds`` refuses a loop threshold that would end a run at its first call."""
 
 # ---------------------------------------------------------------- models (agentic cache, #100)
-AGENT_CACHE_FORMAT: Final[int] = 3
+AGENT_CACHE_FORMAT: Final[int] = 4
 """The format of a cached agentic answer and of what it was found with (the explorer's
 instructions and tools): part of every entry's scope, so changing it makes every entry a miss."""
 DEFAULT_AGENT_CACHE_THRESHOLD: Final[float] = 0.8
@@ -1198,11 +1198,30 @@ QUESTION_POLARITY_WORDS: Final[frozenset[str]] = frozenset(
 """Words that turn a question around: two questions must hold the same ones, as often, to share
 an answer (``cannot`` and every ``n't`` count as ``not``)."""
 QUESTION_NUMBER: Final[str] = (
-    r"(?:(>=|<=|==|!=|~=|>|<|~|\^|=)\s*)?(?<![\w.])(-?)v?(\d+(?:\.\d+)*)\b"
+    r"(?:(>=|<=|==|!=|~=|>|<|~|\^|=)\s*)?(?<![\w.])(-?)v?(\d+(?:\.\d+)*)\b(\+*)"
 )
-"""A number or version in a question (``v1``, ``2.0``, ``-1``, ``>= 3.8``): a content term of its
-own, in its place, and a guard. ``v1`` and ``1`` are one; ``-1`` and ``1`` are not, nor are
-``>=3.8`` and ``<3.8``: a comparison or range operator right before it is part of it."""
+"""A number or version in a question (``v1``, ``2.0``, ``-1``, ``>= 3.8``, ``3.8+``): a content
+term of its own, in its place, and a guard. ``v1`` and ``1`` are one; ``-1`` and ``1`` are not,
+nor are ``>=3.8`` and ``<3.8``, nor ``3.8+`` and ``3.8``: a comparison or range operator right
+before it, and a ``+`` right after it, are part of it."""
+QUESTION_SYMBOLS: Final[str] = r"[<>=!~^+\-*/|&%]+"
+"""A run of symbols (``>``, ``->``, ``!=``, ``-``, ``/``...): a content term in its place, so
+"latency > threshold" is not "latency < threshold". Sentence punctuation (``. , ? : ; ( )`` and
+quotes) is no symbol, nor is a ``!`` that ends a sentence."""
+QUESTION_SYMBOL_SPELLINGS: Final[dict[str, str]] = {
+    "\u2265": ">=",
+    "\u2264": "<=",
+    "\u2260": "!=",
+    "\u2248": "~=",
+    "\u2192": "->",
+}
+"""Symbols NFKC leaves as they are, written the ASCII way (``≥`` is ``>=``, ``→`` is ``->``)."""
+QUESTION_ARTICLES: Final[frozenset[str]] = frozenset({"a", "i"})
+"""Single letters that are filler as an article or a pronoun, but a name (a content term) next
+to a symbol or a direction word ("move it to a from b", "is a < b"); every other single letter
+is always a content term."""
+QUESTION_DIRECTIONS: Final[frozenset[str]] = frozenset({"to", "from", "into", "onto"})
+"""Words next to which ``a`` and ``i`` are names, not articles."""
 QUESTION_NEGATIONS: Final[frozenset[str]] = frozenset(
     {"dont", "doesnt", "didnt", "cant", "wont", "isnt", "arent", "wasnt", "werent", "shouldnt"}
     | {"couldnt", "wouldnt", "hasnt", "havent", "hadnt", "mustnt", "neednt", "aint"}
@@ -1217,11 +1236,10 @@ QUESTION_INFINITIVE: Final[str] = "to"
 _UNFOLDED_S_ENDINGS: Final[tuple[str, ...]] = ("ss", "us", "is")
 """Endings a final ``s`` is kept after (``class``, ``status``, ``redis``)."""
 _UNFOLDED_WORDS: Final[frozenset[str]] = frozenset(
-    {"https", "ftps", "sftps", "wss", "dns", "news", "windows"}
-    | {"during", "string", "thing", "nothing", "something", "ceiling", "morning", "evening"}
+    {"https", "ftps", "sftps", "wss", "dns", "news", "windows", "lens"}
 )
-"""Words never folded: a protocol's ``s`` is part of its name (``https`` is not ``http``), a few
-words whose ``s`` is not a plural, and words whose ``-ing`` is not a verb's."""
+"""Words never folded: a protocol's ``s`` is part of its name (``https`` is not ``http``), and a
+few words whose ``s`` is not a plural."""
 _PLURALS: Final[tuple[tuple[str, str], ...]] = (
     ("ies", "y"),
     ("ches", "ch"),
@@ -1231,20 +1249,10 @@ _PLURALS: Final[tuple[tuple[str, str], ...]] = (
     ("s", ""),
 )
 """Plural endings and what they fold to, first match wins: ``retries`` is ``retry``, ``rows``
-is ``row``. Nothing else of a word's ending is folded but ``-ing`` and ``-ed``
-(``_VERB_ENDINGS``): ``-ation``, ``-ate`` and ``-ment`` stay, so ``migration`` is not
-``migrate`` (a miss), and ``format`` is never ``form``."""
-_VERB_ENDINGS: Final[tuple[str, ...]] = ("ing", "ed")
-"""Verb endings folded only when at least ``_SHORTEST_STEM`` letters remain once a final doubled
-consonant is undoubled: ``connecting`` is ``connect``, but ``setting``, ``logging`` and
-``mapping`` stay whole (``set``, ``log``, ``map`` would be too short to trust)."""
-_SHORTEST_STEM: Final[int] = 4
-"""The shortest stem an ``-ing`` or ``-ed`` fold may leave."""
+is ``row``. Nothing else of a word is folded: not ``-ing`` or ``-ed`` (``meaning`` is not
+``mean``, ``hosting`` is not ``host``), not ``-ation``, ``-ate`` or ``-ment``."""
 _SHORTEST_PLURAL: Final[int] = 4
 """The shortest word whose plural ending is folded (``bus``, ``gas`` stay)."""
-_UNDOUBLED: Final[str] = "bdgkmnprt"
-"""A final doubled consonant of these is undoubled after ``-ing``/``-ed`` (``stopping`` is
-``stop``); ``ll``, ``ss``, ``ff`` and ``zz`` are spelt so in the word itself (``call``)."""
 BM25_SIMILARITY: Final[str] = "bm25"
 """What an entry's similarity space is called when no embedding model is configured (words
 alone; the name is kept for stored rows)."""
