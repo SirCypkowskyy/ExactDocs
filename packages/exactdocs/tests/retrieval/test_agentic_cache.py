@@ -6,6 +6,7 @@ agent run, which tells a cache hit from a run.
 """
 
 import logging
+import re
 from collections.abc import AsyncIterator, Collection, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
@@ -14,6 +15,14 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader, NumberDataPoint
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from databases import SQL_BACKENDS
 from exactdocs.bootstrap.constants import AGENT_CACHE_PURPOSE, HYDE_CACHE_PURPOSE
@@ -21,6 +30,7 @@ from exactdocs.bootstrap.container import Container, _agent_cache_key
 from exactdocs.bootstrap.secret_box import derived_key
 from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.retrieval.adapters.driven.ai_explorer import PydanticAiExplorer
+from exactdocs.retrieval.adapters.driven.ai_judge import PydanticAiCandidateJudge
 from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryAgentAnswerCache,
     InMemoryCallRates,
@@ -69,6 +79,8 @@ from exactdocs.retrieval.models import (
     ProviderKind,
     ProviderProfile,
     RepoGuidance,
+    RerankLimits,
+    RerankWith,
     RetrievalMode,
     SearchableVersion,
     SourceHost,
@@ -76,7 +88,6 @@ from exactdocs.retrieval.models import (
     SpendWindow,
     TagFilter,
     TagMatch,
-    lexical_similarity,
     question_terms,
 )
 from exactdocs.retrieval.module import RetrievalModule
@@ -93,6 +104,7 @@ CORP = ProviderProfile(
     base_url="https://llm.example.com/v1",
 )
 EXPLORER = ModelRef(profile="corp", model="explorer")
+JUDGE = ModelRef(profile="corp", model="judge-mini")
 FIRST = "how do I configure retries"
 SIMILAR = "how to configure retry behaviour"
 OTHER = "how do I rotate the API token"
@@ -217,11 +229,16 @@ class Factory:
     """``ModelFactory``: the scripted chat model, and a marker embedder."""
 
     scripted: ScriptedModels
+    judged: list[str] = field(default_factory=list)
+    """Every judge model built: one per judged search."""
 
     def unsupported(self, profile: ProviderProfile) -> str | None:
         del profile
 
     async def chat_model(self, profile: ProviderProfile, model: str) -> object:
+        if model == JUDGE.model:
+            self.judged.append(model)
+            return FunctionModel(_judge, model_name=JUDGE.model)
         return await self.scripted.chat_model(profile, model)
 
     async def embedder(self, profile: ProviderProfile, model: str) -> object:
@@ -236,6 +253,29 @@ class Factory:
 
     async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
         return ModelCheck(role=role, profile=profile.name, model=model, ok=True)
+
+
+def _judge(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Rate every candidate of the judge's prompt, the later ones higher.
+
+    Args:
+        messages: The judge's request.
+        info: Its output tool.
+
+    Returns:
+        The ratings.
+    """
+    prompt = next(
+        str(part.content)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    )
+    ids = re.findall(r'<candidate id="(c[0-9]+)">', prompt)
+    ratings = [{"id": i, "score": min(n + 1, 10)} for n, i in enumerate(ids)]
+    tool = info.output_tools[0]
+    return ModelResponse(parts=[ToolCallPart(tool.name, {"response": ratings})])
 
 
 @dataclass(slots=True)
@@ -276,6 +316,7 @@ class World:
     modes: InMemoryLibraryModes
     clock: Clock
     questions: QuestionModels | None
+    factory: Factory
 
 
 async def _world(
@@ -287,6 +328,7 @@ async def _world(
     budgets: Budgets | None = None,
     embeddings: QuestionModels | None = None,
     bounds: AgentBounds | None = None,
+    judge: bool = False,
 ) -> World:
     chunks = InMemoryChunkRepository()
     index = InMemorySearchIndex(chunks=chunks)
@@ -297,9 +339,9 @@ async def _world(
     ledger = InMemorySpendLedger()
     modes = InMemoryLibraryModes()
     clock = Clock()
-    roles = InstanceRoles(llm=EXPLORER)
-    if embeddings is not None:
-        roles = InstanceRoles(llm=EXPLORER, embedding=ModelRef(profile="corp", model="e"))
+    embedding = None if embeddings is None else ModelRef(profile="corp", model="e")
+    roles = InstanceRoles(llm=EXPLORER, embedding=embedding, judge=JUDGE if judge else None)
+    factory = Factory(scripted=models)
     module = RetrievalModule.build(
         searchable=catalog,
         libraries=catalog,
@@ -311,7 +353,10 @@ async def _world(
         library_modes=modes,
         configured_profiles=[CORP],
         instance_roles=roles,
-        models=Factory(scripted=models),
+        models=factory,
+        rerank_with=RerankWith.JUDGE if judge else RerankWith.CROSS_ENCODER,
+        judge=PydanticAiCandidateJudge(ledger=ledger) if judge else None,
+        rerank_limits=RerankLimits(top_n=5),
         clock=clock,
         tracer=tracer,
         spend=ledger,
@@ -337,6 +382,7 @@ async def _world(
         modes=modes,
         clock=clock,
         questions=embeddings,
+        factory=factory,
     )
     await _import(world, "v1", "m1", OLD_GUIDE)
     await _import(world, "v2", "m2", GUIDE)
@@ -471,6 +517,13 @@ async def test_the_threshold_is_configurable(threshold: float, hit: bool) -> Non
         ("cant retry uploads", "retry uploads"),
         ("isnt the cache shared", "is the cache shared"),
         ("shouldnt I retry", "should I retry"),
+        ("replace requests with httpx", "replace httpx with requests"),
+        ("use redis instead of memcached", "use memcached instead of redis"),
+        ("is postgres faster than mysql", "is mysql faster than postgres"),
+        ("use the client as a server", "use the server as a client"),
+        ("does the cache expire before the token", "does the token expire before the cache"),
+        ("how to go from v1 to v2", "how to go to v1 from v2"),
+        ("upgrade from v2", "upgrade to v2"),
     ],
 )
 def test_questions_that_ask_something_else_never_match_by_words(asked: str, again: str) -> None:
@@ -484,22 +537,78 @@ def test_questions_that_ask_something_else_never_match_by_words(asked: str, agai
     ("asked", "again"),
     [
         (FIRST, SIMILAR),
-        ("retry configuration", "configure retries"),
         ("why doesn't the cache work", "why does not the cache work"),
         ("why can't I connect", "why cannot I connect"),
         ("migrate from v1 to v2", "Migrate from 1 to 2"),
-        ("how do I not retry on v2", "on v2, how not to retry"),
+        ("how do I not retry on v2", "how not to retry on v2"),
         ("change the settings", "change the setting"),
         ("dont retry uploads", "do not retry uploads"),
         ("migrate from postgres to mysql", "migrating from Postgres to MySQL"),
         ("how to configure retries", "how do I configure retries"),
-        ("check the status of https", "check https status"),
+        ("how to connect to postgres", "connecting to postgres"),
+        ("how do I upgrade to v2", "upgrading to v2"),
+        ("I want to configure retries", "how do I configure retries"),
+        ("database migration", "database migrate"),
+        ("delete rows", "delete a row"),
+        ("enable logging", "enable logs"),
     ],
 )
-def test_the_same_question_in_other_words_matches(asked: str, again: str) -> None:
+def test_the_same_question_asked_again_matches(asked: str, again: str) -> None:
     one, two = CachedQuestion.of(asked, key=KEY), CachedQuestion.of(again, key=KEY)
 
-    assert one.similarity(two) >= 0.9
+    assert one.similarity(two) == 1
+
+
+@pytest.mark.parametrize(
+    ("asked", "again"),
+    [
+        ("retry configuration", "configure retries"),
+        ("check the status of https", "check https status"),
+        ("on v2, how not to retry", "how not to retry on v2"),
+    ],
+)
+def test_a_re_ask_in_another_order_misses_by_design(asked: str, again: str) -> None:
+    one, two = CachedQuestion.of(asked, key=KEY), CachedQuestion.of(again, key=KEY)
+
+    assert one.similarity(two) == 0  # order carries meaning elsewhere: no exception here
+
+
+@pytest.mark.parametrize(
+    ("word", "other"),
+    [
+        ("migration", "migrate"),
+        ("validation", "validate"),
+        ("authentication", "authenticate"),
+        ("creation", "create"),
+        ("created", "creates"),
+        ("configuration", "configure"),
+        ("configuring", "configured"),
+        ("rows", "row"),
+        ("workflows", "workflow"),
+        ("views", "view"),
+        ("flows", "flow"),
+        ("logging", "log"),
+        ("logs", "log"),
+        ("mapping", "map"),
+        ("setting", "set"),
+        ("settings", "setting"),
+        ("cookies", "cookie"),
+        ("retries", "retry"),
+        ("retried", "retry"),
+        ("called", "call"),
+        ("added", "add"),
+    ],
+)
+def test_inflections_fold_to_one_term(word: str, other: str) -> None:
+    assert question_terms(word) == question_terms(other)
+
+
+@pytest.mark.parametrize(
+    ("word", "other"),
+    [("https", "http"), ("wss", "ws"), ("news", "new"), ("windows", "window")],
+)
+def test_names_whose_s_is_no_plural_keep_it(word: str, other: str) -> None:
+    assert question_terms(word) != question_terms(other)
 
 
 @pytest.mark.parametrize(
@@ -875,6 +984,34 @@ async def test_a_cache_hit_is_not_held_back_by_the_rate_limit() -> None:
     assert other.fallback_reason == FallbackReason.LLM_RATE_LIMITED
 
 
+async def test_a_cache_hit_with_the_judge_counts_the_judge_as_one_llm_search() -> None:
+    world = await _world(judge=True, budgets=Budgets(llm_searches_per_minute=3))
+    first = await _ask(world, FIRST)  # the agent and its judge: one LLM search
+    assert (first.cache_hit, first.reranked) == (False, True)
+
+    hit = await _ask(world, SIMILAR)  # no agent; the judge is checked and counted
+
+    assert (hit.retrieval_mode, hit.cache_hit, hit.reranked) == (RetrievalMode.AGENTIC, True, True)
+    assert _runs(world) == 1
+    assert world.factory.judged == ["judge-mini", "judge-mini"]
+
+
+async def test_a_cache_hit_whose_judge_is_refused_is_served_unreranked_with_the_reason() -> None:
+    world = await _world(judge=True, budgets=Budgets(llm_searches_per_minute=1))
+    await _ask(world, FIRST)  # the one LLM search of this minute
+
+    hit = await _ask(world, SIMILAR)
+
+    assert (hit.retrieval_mode, hit.cache_hit, hit.reranked, hit.fallback_reason) == (
+        RetrievalMode.AGENTIC,
+        True,
+        False,
+        FallbackReason.LLM_RATE_LIMITED,
+    )
+    assert hit.results
+    assert world.factory.judged == ["judge-mini"]  # the refused judge was never built
+
+
 # ---------------------------------------------------------------- what is stored
 
 
@@ -960,16 +1097,15 @@ async def test_a_failing_question_embedding_compares_words_only_and_logs_no_ques
 
 
 def test_question_terms_fold_plurals_and_verb_endings_and_drop_filler() -> None:
-    assert question_terms(FIRST) == ("how", "configur", "retry")
+    assert question_terms(FIRST) == ("configur", "retri")
     assert question_terms("Configuring the retry_policy, retried calls") == (
         "configur",
-        "retry",
-        "policy",
+        "retri",
+        "polici",
         "retri",
         "call",
     )
-    assert lexical_similarity(question_terms(FIRST), question_terms(FIRST)) == pytest.approx(1)
-    assert lexical_similarity((), ("a",)) == 0
+    assert question_terms("how to go from v1 to v2") == ("go", "from", "#1", "to", "#2")
 
 
 def test_the_scope_fingerprint_covers_the_filter_and_the_limits() -> None:

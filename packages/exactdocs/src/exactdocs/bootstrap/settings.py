@@ -322,10 +322,10 @@ class AgenticCacheSettings(BaseModel):
     upkeep then deletes every cached answer."""
     threshold: float | None = Field(default=None, gt=0, le=1)
     """`EXACTDOCS_AI__AGENTIC_CACHE__THRESHOLD`: how similar (0 to 1) a question must be to a cached
-    one asked again (the same content terms and guards, or it never matches); 1 reuses only the
-    same question (case and spacing aside). With an embedding model the score is the lower of
-    the words' similarity and the embeddings' cosine, which only confirms. Unset: 0.8 with an
-    embedding model, 0.9 with words alone."""
+    one asked again: the same content words in the same order and the same guards, or it never
+    matches. With an embedding model the two questions' cosine must also reach it, as a
+    confirmation; with words alone a re-ask scores 1. Unset: 0.8 with an embedding model, 0.9
+    with words alone."""
     scope: Literal["library", "caller"] = "library"
     """`EXACTDOCS_AI__AGENTIC_CACHE__SCOPE`: `library`, every caller of a library's version shares
     the cached answers (one caller's answer, the model's justifications included, can be served to

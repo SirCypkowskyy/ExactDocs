@@ -5,7 +5,8 @@ Feature: Similar agentic questions are answered from a cache
 
   The LLM is a scripted pydantic-ai FunctionModel: no provider is called. No embedding model is
   configured, so the operator turned the cache on explicitly and questions are compared by their
-  words (BM25 term weights): only questions with the same terms, numbers and negations match.
+  words: only a question with the same content words in the same order, the same numbers and the
+  same negations matches.
 
   Scenario: A similar question hits the cache
     Given ExactDocs is running with the fixture docs repository imported at "v1.3.0" and "v1.4.0"

@@ -379,8 +379,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `agent_loop_detected`; a model that fails or answers nothing usable, or a read that fails on
   the server, gives `agent_failed`. The agent's reads are bound to the version and the call's
   tags (its `deps`, never a tool argument), and an output guardrail removes any pick outside
-  them before the answer is used. A question that asks again (the same content terms, numbers,
-  negations and direction; with an embedding model, its cosine confirms it at
+  them before the answer is used. A question that asks again (the same content words in the same
+  order, numbers and negations; with an embedding model, its cosine confirms it at
   `[ai.agentic_cache] threshold`) what one answered agentically before asked for the same version (manifest), tags, `llm` model and limits
   is answered from that answer with `cache_hit: true` (every other search: `false`), its chunks
   checked again against the version and the tags; it calls no LLM and uses no budget. `query-docs`

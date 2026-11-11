@@ -4174,7 +4174,7 @@ class AgentAnswerCaching:
     setting is another scope, so it never reuses an answer; the use cases also forget a removed
     manifest's answers and a library's when its settings change, and the nightly upkeep prunes
     them by age. Only a question asked again hits (``CachedQuestion.similarity``): the same
-    guards (numbers, versions, negations) and the same content terms, in any order or
+    guards (numbers, versions, negations) and the same content terms in the same order, any
     inflection; with an embedding model, the cosine of the two questions' embeddings must also
     clear ``threshold``, as a confirmation, never as a bridge across different terms. The most
     similar at or above ``threshold`` whose picks the version still holds is the hit; its

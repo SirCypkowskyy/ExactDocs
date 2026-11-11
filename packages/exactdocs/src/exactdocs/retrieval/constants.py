@@ -1159,7 +1159,7 @@ REPEATED_CALLS_TOO_LOW: Final[str] = "max_repeated_calls must be at least 2"
 """Why ``AgentBounds`` refuses a loop threshold that would end a run at its first call."""
 
 # ---------------------------------------------------------------- models (agentic cache, #100)
-AGENT_CACHE_FORMAT: Final[int] = 1
+AGENT_CACHE_FORMAT: Final[int] = 2
 """The format of a cached agentic answer and of what it was found with (the explorer's
 instructions and tools): part of every entry's scope, so changing it makes every entry a miss."""
 DEFAULT_AGENT_CACHE_THRESHOLD: Final[float] = 0.8
@@ -1182,44 +1182,44 @@ AGENT_CACHE_TERM_HASH_CHARS: Final[int] = 16
 """Hex characters kept of each question term's HMAC (64 bits): enough that two terms of one
 scope never collide in practice."""
 QUESTION_STOP_WORDS: Final[frozenset[str]] = (
-    TERM_HASH_STOP_WORDS - {"how", "what", "when", "which", "why"}
+    TERM_HASH_STOP_WORDS - {"what", "when", "which", "why", "to"}
 ) | frozenset(
     {"about", "am", "be", "could", "get", "if", "me", "should", "there", "this", "we"}
     | {"would", "behaviour", "behavior", "way", "ways", "please", "possible", "properly"}
+    | {"want", "wants", "need", "needs", "try", "tries", "trying", "like", "able"}
 )
-"""Words two questions may differ by and still ask the same: left out of their lexical
-similarity."""
+"""Filler two questions may differ by and still ask the same ("how do I", "I want"): left out
+of their content terms. ``to`` is not one: only the infinitive is (``QUESTION_INFINITIVE``)."""
 QUESTION_POLARITY_WORDS: Final[frozenset[str]] = frozenset(
     {"not", "no", "never", "without", "nor", "none", "neither", "nothing"}
 )
 """Words that turn a question around: two questions must hold the same ones, as often, to share
 an answer (``cannot`` and every ``n't`` count as ``not``)."""
 QUESTION_NUMBER: Final[str] = r"(?<![\w.])(-?)v?(\d+(?:\.\d+)*)\b"
-"""A number or version in a question (``v1``, ``2.0``, ``-1``): two questions must hold the same
-ones, in the same order, to share an answer (``v1`` and ``1`` are one; ``-1`` and ``1`` are
-not). Digits inside a word (``python3``, ``E42``) are guards too, as the whole word."""
+"""A number or version in a question (``v1``, ``2.0``, ``-1``): a content term of its own, in
+its place (``v1`` and ``1`` are one; ``-1`` and ``1`` are not), and a guard."""
 QUESTION_NEGATIONS: Final[frozenset[str]] = frozenset(
     {"dont", "doesnt", "didnt", "cant", "wont", "isnt", "arent", "wasnt", "werent", "shouldnt"}
     | {"couldnt", "wouldnt", "hasnt", "havent", "hadnt", "mustnt", "neednt", "aint"}
 )
 """Negations written without their apostrophe: each reads as ``not``."""
-QUESTION_WORDS: Final[frozenset[str]] = frozenset(
-    {"how", "what", "when", "where", "which", "who", "why"}
+QUESTION_WORDS: Final[frozenset[str]] = frozenset({"what", "when", "where", "which", "who", "why"})
+"""Question words that are content terms ("when is the cache cleared" is not "why"); ``how`` is
+filler. After one, ``to`` is an infinitive ("what to configure")."""
+QUESTION_INFINITIVE: Final[str] = "to"
+"""Dropped when it follows filler, a question word, a negation or nothing ("how to configure",
+"I want to configure"); kept as a term elsewhere ("connect to postgres")."""
+_UNFOLDED_S_ENDINGS: Final[tuple[str, ...]] = ("ss", "us", "is")
+"""Endings a final ``s`` is kept after (``class``, ``status``, ``redis``)."""
+_UNFOLDED_WORDS: Final[frozenset[str]] = frozenset(
+    {"https", "ftps", "sftps", "wss", "dns", "news", "windows"}
 )
-"""Question words: content terms ("when is the cache cleared" is not "why"), and after one
-``to`` is an infinitive ("how to configure")."""
-QUESTION_DIRECTIONS: Final[frozenset[str]] = frozenset({"from", "to", "into", "onto"})
-"""Words that give the next content term a role (``from:postgr``, ``to:mysql``), so "from
-postgres to mysql" is not "from mysql to postgres". ``to`` right after a stop word or a
-question word ("how to configure") is the infinitive and gives no role."""
-_UNFOLDED_S_ENDINGS: Final[tuple[str, ...]] = ("ss", "ws", "us", "is")
-"""Endings a final ``s`` is kept after (``class``, ``news``, ``status``, ``redis``)."""
-_UNFOLDED_WORDS: Final[frozenset[str]] = frozenset({"https", "ftps", "sftps", "wss", "dns"})
-"""Words never folded: a protocol's ``s`` is part of its name (``https`` is not ``http``)."""
+"""Words never folded: a protocol's ``s`` is part of its name (``https`` is not ``http``), and a
+few words whose ``s`` is not a plural."""
 _QUESTION_SUFFIXES: Final[tuple[tuple[str, str, int], ...]] = (
     ("ations", "", 8),
     ("ation", "", 7),
-    ("ies", "y", 5),
+    ("ies", "i", 5),
     ("ches", "ch", 6),
     ("shes", "sh", 6),
     ("sses", "ss", 6),
@@ -1229,14 +1229,24 @@ _QUESTION_SUFFIXES: Final[tuple[tuple[str, str, int], ...]] = (
     ("s", "", 4),
 )
 """Light suffix folding: (suffix, replacement, shortest word it applies to), first match wins,
-applied until nothing changes: plural and verb endings, and ``-ation`` (``configuration`` and
-``configure`` are one term; ``settings`` and ``setting`` too)."""
+applied until nothing changes: plural and verb endings, and ``-ation``. Then ``_folded`` drops a
+final ``e``, undoubles a final consonant, drops a final ``at`` and reads a final ``y`` as ``i``,
+so ``configure`` / ``configuration``, ``migrate`` / ``migration``, ``create`` / ``creation``,
+``logging`` / ``log``, ``setting`` / ``settings`` / ``set``, ``retry`` / ``retries`` and
+``cookie`` / ``cookies`` are one term each."""
+_SHORTEST_FOLD: Final[int] = 2
+"""A word this short is never undoubled nor has its ``y`` read as ``i`` (``ok``, ``my``)."""
 _SHORTEST_E_FOLD: Final[int] = 3
 """A folded word longer than this loses a final ``e`` (``configure`` and ``configur`` match)."""
-BM25_K1: Final[float] = 1.2
-"""BM25's term-frequency saturation, as the question terms are weighed."""
+_SHORTEST_AT_FOLD: Final[int] = 5
+"""A folded word at least this long loses a final ``at`` (``migrat`` of ``migrate`` and ``migr`` of
+``migration`` match)."""
+_UNDOUBLED: Final[str] = "bdgkmnprt"
+"""A final doubled consonant of these is undoubled (``logg`` of ``logging`` is ``log``); ``ll``,
+``ss``, ``ff`` and ``zz`` are spelt so in the word itself (``call``, ``pass``)."""
 BM25_SIMILARITY: Final[str] = "bm25"
-"""What an entry's similarity space is called when no embedding model is configured."""
+"""What an entry's similarity space is called when no embedding model is configured (words
+alone; the name is kept for stored rows)."""
 AGENTIC_ANSWER_CACHE: Final[str] = "agentic_answer"
 """The ``exactdocs.ai.cache_hits`` label of a search answered from the agentic answer cache."""
 HYDE_ANSWER_CACHE: Final[str] = "hyde_answer"

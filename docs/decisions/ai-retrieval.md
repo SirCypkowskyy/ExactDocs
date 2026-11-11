@@ -342,8 +342,10 @@ model is no longer configured, or all of them once the cache is turned off. With
 "library"` (the default) a cached answer, its model-written justifications included, is served to
 every caller of the library's version, so one caller can read the gist of another's question;
 `scope = "caller"` keeps each caller's answers to themselves. The cache serves only re-asked
-questions: the same content terms in any order or inflection, with the same numbers, versions,
-negations and direction; an embedding only confirms such a match and never makes two questions
+questions: the same content words in the same order (any inflection, filler dropped), with the
+same numbers, versions and negations, so a swap ("replace requests with httpx" and the reverse)
+misses, and so does a re-ask in another word order, which is accepted; an embedding only
+confirms such a match and never makes two questions
 with different terms match (on the default local model, siblings such as enable/disable and
 client/server score as high as paraphrases).
 
