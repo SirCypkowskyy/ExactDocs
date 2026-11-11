@@ -15,6 +15,7 @@ from exactdocs.retrieval.dtos import (
     EmbeddedBatchOut,
     EmbeddingEstimateOut,
     EmbeddingPlanOut,
+    EmbeddingProgressOut,
     EmbeddingSpaceOut,
     EmbedVersionCommand,
     FinishedEmbeddingOut,
@@ -511,6 +512,18 @@ class EstimateEmbedding(Protocol):
 
         Returns:
             The estimate.
+        """
+        ...
+
+
+class GetEmbeddingProgress(Protocol):
+    """Show how far each embedding space has got: versions and chunks with vectors (admins)."""
+
+    async def __call__(self) -> EmbeddingProgressOut:
+        """Run the use case.
+
+        Returns:
+            The configured model and every space that is not retired.
         """
         ...
 

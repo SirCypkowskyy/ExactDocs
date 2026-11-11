@@ -372,7 +372,9 @@ only holds each process's git work folders and `known_hosts`. What changes:
   (`instance`, `""`), its library's (`library`, the library ID) and the embedding budget's
   (`embedding`, `""`) for the day and the month; `unpriced` counts the requests whose model has
   no known price. Before each batch `AiSpend.embedding_batch` checks the embedding, instance and
-  library budgets and raises `AiBudgetReachedError` (`ai_budget_reached`), which fails the job;
+  library budgets (a library's own `LibraryAi.budgets` from `retrieval_library_settings`, merged
+  with the instance's per-library limit by `Budgets.for_library`: the tighter ceiling wins) and
+  raises `AiBudgetReachedError` (`ai_budget_reached`), which fails the job;
   `ListUnembeddedVersions` leaves such a library out, and bootstrap queues the missing embedding
   again just after each UTC midnight, when the windows reset (`requeue_daily`: a random delay of
   up to five minutes; on PostgreSQL only the process holding a session advisory lock queues,

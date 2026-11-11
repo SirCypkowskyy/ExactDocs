@@ -575,7 +575,9 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   read-only there. A stored key is dropped, not reused, when the profile's endpoint changes.
 - **Per library** (`PUT /api/v1/libraries/{owner}/{repo}/retrieval`): AI on or off (off: nothing
   of the library is ever sent to a provider, searches are BM25), its own `llm`, `judge` and
-  `reranker`, and its own `rerank_top_n`. The embedding model is instance-wide only.
+  `reranker`, its own `rerank_top_n`, and its own spend limits per day and month (`budgets`), no
+  higher than the instance's. The embedding model is instance-wide only. The library's settings
+  page (*Retrieval and AI*) shows the pipeline its searches run now and edits all of these.
 - **Check:** `exactdocs ai check` (where the server runs) makes one minimal call per role and
   prints the latency, the model that answered and an embedding's dimensions, never a key;
   `POST /api/v1/ai/providers/{name}/check` does the same for one profile.
@@ -625,9 +627,13 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   that has no price is refused at start. Spans never carry prompts or completions, even with
   `EXACTDOCS_TELEMETRY_QUERY_TEXT` on.
 - **Usage:** `GET /api/v1/ai/usage` (admins) shows what the instance, embedding runs, each
-  library and each account spent today and this month, and what is left of each budget;
+  library and each account spent today and this month, and what is left of each budget (a
+  library's own budget where it is tighter);
   `/metrics` has pydantic-ai's `gen_ai.client.token.usage` and `operation.cost` and
   `exactdocs_ai_fallbacks_total` by mode and reason (never a library, user or query).
+- **In the UI:** the *AI* page (admins) lists the providers and roles (never a key) with a
+  check per profile, the embedding progress of each space (`GET /api/v1/ai/embedding`) and the
+  usage and budgets above.
 
 ```toml
 [ai.budgets]

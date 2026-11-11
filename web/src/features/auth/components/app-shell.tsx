@@ -33,6 +33,10 @@ export function AppShell({ children, search }: { children: ReactNode; search?: R
           >
             Libraries
           </Link>
+          {/* Every account is an admin until library roles exist (E12-05). */}
+          <Link to="/ai" className={navLink}>
+            AI
+          </Link>
           <Link to="/account" className={navLink}>
             Account
           </Link>

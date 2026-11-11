@@ -4675,6 +4675,96 @@
         ]
       }
     },
+    "/api/v1/ai/embedding": {
+      "get": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Get Embedding Progress",
+        "description": "Show the configured embedding model and how far each embedding space has got.\n\nOne entry per space that is not retired, oldest first: the active versions (of\nlibraries with AI on) and their chunks, and how many of each it has vectors for. While\na new model embeds, its space is `building` and the old one still answers searches.",
+        "operationId": "ai-get_embedding_progress",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbeddingProgressOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/ai/usage": {
       "get": {
         "tags": [
@@ -8159,6 +8249,128 @@
         "title": "EmbeddingEstimateOut",
         "description": "What embedding every version not embedded yet would send and cost, before it runs.\n\nCounted from characters (4 per token), never with the model's tokenizer, and priced with the\nbundled price list: an estimate, as `note` says."
       },
+      "EmbeddingProgressOut": {
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model",
+            "description": "The configured embedding model, `<profile>:<model>`; null when none is."
+          },
+          "spaces": {
+            "items": {
+              "$ref": "#/components/schemas/EmbeddingSpaceProgressOut"
+            },
+            "type": "array",
+            "title": "Spaces",
+            "description": "Every space that is not retired, oldest first; none without a vector store."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "model",
+          "spaces"
+        ],
+        "title": "EmbeddingProgressOut",
+        "description": "The configured embedding model and how far each embedding space has got (RET-01)."
+      },
+      "EmbeddingSpaceProgressOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id",
+            "description": "The space's ID."
+          },
+          "profile_kind": {
+            "type": "string",
+            "title": "Profile Kind",
+            "description": "The kind of profile its model was called through (`openai-compatible`, `local`...)."
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "description": "The model, as its provider names it."
+          },
+          "dimensions": {
+            "type": "integer",
+            "title": "Dimensions",
+            "description": "Numbers per vector."
+          },
+          "state": {
+            "$ref": "#/components/schemas/SpaceState",
+            "description": "`building` while its first run is under way, `active` once it is searched."
+          },
+          "current": {
+            "type": "boolean",
+            "title": "Current",
+            "description": "It is the configured embedding model's space; an older one is retired once it is done."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "When it was created."
+          },
+          "activated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated At",
+            "description": "When it became the searched space; null while building."
+          },
+          "versions": {
+            "type": "integer",
+            "title": "Versions",
+            "description": "Active versions of libraries with AI on."
+          },
+          "versions_embedded": {
+            "type": "integer",
+            "title": "Versions Embedded",
+            "description": "Of those, the versions it has a vector for every chunk of."
+          },
+          "chunks": {
+            "type": "integer",
+            "title": "Chunks",
+            "description": "Chunks of those versions."
+          },
+          "chunks_embedded": {
+            "type": "integer",
+            "title": "Chunks Embedded",
+            "description": "Of those, the chunks it has a vector for."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "profile_kind",
+          "model",
+          "dimensions",
+          "state",
+          "current",
+          "created_at",
+          "activated_at",
+          "versions",
+          "versions_embedded",
+          "chunks",
+          "chunks_embedded"
+        ],
+        "title": "EmbeddingSpaceProgressOut",
+        "description": "How far one embedding space has got: the versions and chunks it has vectors for."
+      },
       "ErrorResponse": {
         "properties": {
           "error": {
@@ -8654,6 +8866,66 @@
         "title": "LibraryAccess",
         "description": "Whether the library's repository is private: it has a stored credential (token or key)."
       },
+      "LibraryBudgets": {
+        "properties": {
+          "daily_usd": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daily Usd",
+            "description": "US dollars per day."
+          },
+          "monthly_usd": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthly Usd",
+            "description": "US dollars per month."
+          },
+          "daily_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daily Tokens",
+            "description": "Tokens per day."
+          },
+          "monthly_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthly Tokens",
+            "description": "Tokens per month."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "LibraryBudgets",
+        "description": "A library's own spend limits per UTC day and month; null: not limited by the library."
+      },
       "LibraryDetail": {
         "properties": {
           "id": {
@@ -8915,6 +9187,10 @@
             ],
             "title": "Rerank Top N",
             "description": "How many of its best candidates the reranker reorders (1 to 200); null: the instance's\n(`EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default)."
+          },
+          "budgets": {
+            "$ref": "#/components/schemas/LibraryBudgets",
+            "description": "The library's own spend limits per UTC day and month. Each may be at most the instance's\n(`budget_ceilings` of the response; 422 `budget_above_instance` otherwise); the tighter of\nthe two applies. None by default."
           }
         },
         "additionalProperties": false,
@@ -9040,6 +9316,14 @@
             "type": "integer",
             "title": "Effective Rerank Top N",
             "description": "How many candidates its searches rerank now: its own number, else the instance's."
+          },
+          "budgets": {
+            "$ref": "#/components/schemas/LibraryBudgets",
+            "description": "The library's own spend limits; the tighter of these and the instance's applies."
+          },
+          "budget_ceilings": {
+            "$ref": "#/components/schemas/LibraryBudgets",
+            "description": "The most each of the library's own limits may be (the instance's limits); null: any."
           }
         },
         "additionalProperties": false,
@@ -9057,7 +9341,9 @@
           "judge",
           "reranker",
           "rerank_top_n",
-          "effective_rerank_top_n"
+          "effective_rerank_top_n",
+          "budgets",
+          "budget_ceilings"
         ],
         "title": "LibraryRetrievalOut",
         "description": "A library's retrieval setting and the mode its searches use now when a call names none."
@@ -11253,6 +11539,16 @@
         ],
         "title": "SettingsChange",
         "description": "What an edit of a library's settings asks of its versions; each does what follows it too.\n\n``PATHS`` re-imports with the new chunking and tag rules, ``CHUNKING`` re-tags as well."
+      },
+      "SpaceState": {
+        "type": "string",
+        "enum": [
+          "building",
+          "active",
+          "retired"
+        ],
+        "title": "SpaceState",
+        "description": "Where an embedding space is in its life."
       },
       "Span": {
         "properties": {

@@ -732,6 +732,12 @@ BUDGET_NOT_POSITIVE: Final[str] = "a budget ceiling must be positive"
 """Why a ceiling of zero or less is refused (unset it for no limit)."""
 RATE_LIMIT_BELOW_ONE: Final[str] = "llm_searches_per_minute must be at least 1"
 """Why a rate limit below one is refused (unset it for no limit)."""
+LIBRARY_BUDGET_NOT_LIBRARY: Final[str] = "a library's own budget must limit the library scope"
+"""Why a library override that limits another scope kind is refused."""
+LIBRARY_BUDGET_TWICE: Final[str] = "a library has at most one own budget per window"
+"""Why two own budgets of a library for the same window are refused."""
+BUDGET_WINDOW_PREFIX: Final[dict[str, str]] = {"day": "daily", "month": "monthly"}
+"""The word a budget setting or column of a spend window starts with (``daily_usd``)."""
 RATE_WINDOW_SECONDS: Final[float] = 60.0
 """The sliding window of the LLM searches-per-minute limit."""
 SPEND_COUNTERS: Final[tuple[str, ...]] = (
@@ -819,6 +825,13 @@ _VECTOR_COVERAGE: Final[str] = (
     + "LEFT JOIN {table} v ON v.chunk_key = c.id WHERE mc.manifest_id = :manifest"
 )
 """Counts a manifest's chunk rows and those with a vector."""
+_VECTOR_COVERAGE_MANY: Final[str] = (
+    "SELECT mc.manifest_id AS manifest_id, count(*) AS chunks, count(v.chunk_key) AS embedded"
+    + _VECTOR_JOIN
+    + "LEFT JOIN {table} v ON v.chunk_key = c.id WHERE mc.manifest_id IN :manifests "
+    "GROUP BY mc.manifest_id"
+)
+"""Counts the chunk rows of several manifests and those with a vector, one row per manifest."""
 _VECTOR_MISSING: Final[str] = (
     "SELECT DISTINCT c.blob_sha, c.config_hash, c.position"
     + _VECTOR_JOIN
