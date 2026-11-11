@@ -159,6 +159,9 @@ def _ready(url: str) -> bool:
 
 @contextlib.contextmanager
 def running(cmd: list[str], env: dict[str, str], api: Api) -> Generator[dict]:
+    # With a cold uv cache, uvx first resolves and downloads every dependency (40 s and more on
+    # a CI runner): done here, the readiness wait times only the server's startup.
+    subprocess.run([*cmd, "--version"], env=env, check=True)
     port = api.url.rsplit(":", 1)[1]
     server = subprocess.Popen([*cmd, "serve", "--port", port], env=env)
     try:
