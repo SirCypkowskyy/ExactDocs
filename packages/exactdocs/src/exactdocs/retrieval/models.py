@@ -116,7 +116,7 @@ def identifier_tokens(text: str) -> str:
     Contract for the search adapters:
 
     - The column must be tokenized so that `-`, `_` and `.` stay inside a token: FTS5
-      `tokenize="unicode61 tokenchars '-_.'"`; the pg_search configuration (E12-02) must match.
+      `tokenize="unicode61 tokenchars '-_.'"`; `pg_search`'s `_PG_SEARCH_PATTERN` matches.
       With the default `unicode61` the whole tokens (`max_retries`, `--dry-run`) are lost.
     - Query tokens are alternatives: `split()` the result and OR / rank them. Do not match them
       as one phrase or AND them, or a query `retryPolicy` misses prose that says `retry policy`.
@@ -469,6 +469,8 @@ class SearchIndexState:
 
     stored_format: int | None
     current_format: int
+    engine: SearchEngine
+    """The search engine that answers."""
 
     @property
     def needs_rebuild(self) -> bool:
@@ -482,6 +484,19 @@ class RebuiltIndex:
 
     format: int
     entries: int
+
+
+class SearchEngine(StrEnum):
+    """The engine that answers full-text searches (``/healthz`` reports it)."""
+
+    FTS5 = "fts5"
+    """SQLite: FTS5's BM25."""
+    PG_SEARCH = "pg_search"
+    """PostgreSQL with ParadeDB's `pg_search` extension: BM25."""
+    POSTGRES_FTS = "postgres_fts"
+    """PostgreSQL without `pg_search`: its full-text search, ranked with `ts_rank_cd`."""
+    MEMORY = "memory"
+    """The in-memory reference index (tests only)."""
 
 
 class ManifestStatus(StrEnum):

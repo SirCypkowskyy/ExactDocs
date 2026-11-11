@@ -167,7 +167,7 @@ fixture). A fixture change has to keep BM25's recall@5 within those 2 points.
 
 | Tier | Modes | Where they run for real |
 |---|---|---|
-| every PR (gating) | `bm25` | the *Python* CI job, step *Retrieval eval (BM25, gating)*; no model |
+| every PR (gating) | `bm25` | the *Python* CI job, step *Retrieval eval (BM25, gating)* on SQLite, and step *Retrieval eval on pg_search (BM25, gating)* on ParadeDB's BM25 against the branch's baseline (#104), with `--expect-engine pg_search` so a fallback to PostgreSQL full-text search fails it; no model. The suite runs on the database `EXACTDOCS_DATABASE_URL` names, so `EXACTDOCS_DATABASE_URL=postgresql+psycopg://.../<empty database> EXACTDOCS_SECRET_KEY=... just eval` runs it on PostgreSQL by hand |
 | local (report-only on PRs) | `hybrid`, with rerank when a reranker is configured | a CI job with the `[local]` extra and cached ONNX models, no secret, compared with the baseline on `develop`; added with the local models (#245) |
 | provider | `hybrid_hyde`, `agentic` | in tests with pydantic-ai's `TestModel` / `FunctionModel`; with a real provider only by hand: `just eval --configured-models --allow-providers`, or the manual *Retrieval eval (real providers)* workflow (`.github/workflows/eval-providers.yml`, `workflow_dispatch` only), which configures profile `eval` from the repository variables `EVAL_PROVIDER_KIND`, `EVAL_PROVIDER_BASE_URL`, `EVAL_PROVIDER_API_VERSION` and `EVAL_<ROLE>_MODEL` and the secret `EVAL_PROVIDER_API_KEY` |
 

@@ -124,7 +124,11 @@ def step_running(context: Context) -> None:
     stack = ExitStack()
     context.add_cleanup(stack.close)  # runs the app's shutdown after the scenario
     data_dir = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="exactdocs-")))
-    settings = Settings(data_dir=data_dir)
+    running_with(context, stack, Settings(data_dir=data_dir))
+
+
+def running_with(context: Context, stack: ExitStack, settings: Settings) -> None:
+    """Store the demo catalog and serve the app on ``settings`` until ``stack`` closes."""
     context.settings = settings
     asyncio.run(store_demo_catalog(settings))
     context.client = stack.enter_context(

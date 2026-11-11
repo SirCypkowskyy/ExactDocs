@@ -23,8 +23,7 @@ if ADMIN_URL is None and os.environ.get("EXACTDOCS_REQUIRE_POSTGRES") == "1":
 
 SQL_BACKENDS = ["sqlite", "postgres"] if ADMIN_URL else ["sqlite"]
 """The SQL backends the contract tests run on here."""
-SEARCH_BACKENDS = [*SQL_BACKENDS, *(["postgres_c"] if ADMIN_URL else [])]
-"""The search index's contract also runs on a PostgreSQL database in the ``C`` locale."""
+
 
 # A fixed, valid key: every process of one test shares it, as a deployment's must.
 SECRET_KEY = "contract-tests-secret-key-0123456789abcdef"
@@ -38,10 +37,25 @@ class PostgresDatabase:
     url: str
 
 
-def _admin() -> psycopg.Connection:
+def _admin(database: str | None = None) -> psycopg.Connection:
     assert ADMIN_URL is not None, "EXACTDOCS_TEST_POSTGRES_URL is not set"
     url = make_url(ADMIN_URL).set(drivername="postgresql")
+    if database is not None:
+        url = url.set(database=database)
     return psycopg.connect(url.render_as_string(hide_password=False), autocommit=True)
+
+
+PG_SEARCH = ADMIN_URL is not None and os.environ.get("EXACTDOCS_TEST_PG_SEARCH") == "1"
+"""The test server has ParadeDB's ``pg_search`` (``EXACTDOCS_TEST_PG_SEARCH=1``; CI's ParadeDB
+does): the BM25 variants run. Declared rather than asked, so importing this module never connects
+(the no-outbound tests import it inside a namespace without a network)."""
+SEARCH_BACKENDS = [
+    *SQL_BACKENDS,
+    *(["postgres_c"] if ADMIN_URL else []),
+    *(["pg_search"] if PG_SEARCH else []),
+]
+"""The search index's contract also runs on a PostgreSQL database in the ``C`` locale (full-text
+search) and, where the server has it, on ``pg_search``."""
 
 
 @contextmanager
@@ -50,6 +64,7 @@ def postgres_database(
     owner_without_createdb: bool = False,
     c_locale: bool = False,
     without_extensions: tuple[str, ...] = (),
+    pg_search: bool = False,
 ) -> Generator[PostgresDatabase]:
     """Create an empty database, yield it, then drop it (and its role) whatever happened.
 
@@ -59,6 +74,9 @@ def postgres_database(
     character classes such as ``[[:alnum:]]`` only know ASCII.
     ``without_extensions`` drops these extensions from the new database (ParadeDB's template
     database already has ``vector``), as on a server where they were never installed in it.
+    ``pg_search`` installs ParadeDB's extension in it, so ExactDocs searches with BM25; without it
+    the extension is removed even where the template has it (ParadeDB's ``template1``), so
+    ExactDocs uses PostgreSQL full-text search.
 
     Yields:
         The database's name and URL.
@@ -95,6 +113,12 @@ def postgres_database(
                 db.execute(
                     sql.SQL("DROP EXTENSION IF EXISTS {} CASCADE").format(sql.Identifier(extension))
                 )
+    with _admin(name) as admin:
+        admin.execute(
+            "CREATE EXTENSION IF NOT EXISTS pg_search CASCADE"
+            if pg_search
+            else "DROP EXTENSION IF EXISTS pg_search"
+        )
     url = admin_url.set(drivername="postgresql+psycopg", database=name)
     if role is not None:
         url = url.set(username=role, password=password)

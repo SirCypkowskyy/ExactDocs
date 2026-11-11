@@ -54,11 +54,13 @@ jobs:
         env:
           EXACTDOCS_TEST_POSTGRES_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/exactdocs
           EXACTDOCS_REQUIRE_POSTGRES: "1"
+          EXACTDOCS_TEST_PG_SEARCH: "1" # the server has pg_search: the BM25 variants run (#104)
         run: uv run pytest --cov=exactdocs --cov=exactdocs_kernel --cov-report=term-missing --junitxml=reports/pytest.xml
       - name: behave (acceptance)
         env:
           EXACTDOCS_TEST_POSTGRES_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/exactdocs
           EXACTDOCS_REQUIRE_POSTGRES: "1"
+          EXACTDOCS_TEST_PG_SEARCH: "1"
         run: uv run behave --format=progress --junit --junit-directory=reports/behave
       # docs/evals.md: the baseline the eval compares with is develop's, so a pull request cannot
       # lower its own bar. Checked out on its own (that file, and the dataset it was measured on),
@@ -95,6 +97,27 @@ jobs:
             cp "$baseline" "$RUNNER_TEMP/baseline.json"
           fi
           uv run python packages/exactdocs/evals/run_retrieval_eval.py "${flags[@]}"
+      # The same BM25 gates with pg_search answering (#104), against this branch's baseline (the
+      # step above checked it against develop's): a database of its own with the extension, so
+      # the app chooses pg_search at start as a ParadeDB deployment does; --expect-engine fails
+      # the step if it fell back to PostgreSQL full-text search instead.
+      - name: Retrieval eval on pg_search (BM25, gating)
+        env:
+          ADMIN_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}
+          EXACTDOCS_SECRET_KEY: eval-only-secret-key-0123456789abcdefgh
+        run: |
+          uv run python - <<'PY'
+          import os
+          import psycopg
+          admin = os.environ["ADMIN_URL"]
+          with psycopg.connect(f"{admin}/exactdocs", autocommit=True) as connection:
+              connection.execute("CREATE DATABASE exactdocs_eval")
+          with psycopg.connect(f"{admin}/exactdocs_eval", autocommit=True) as connection:
+              connection.execute("CREATE EXTENSION IF NOT EXISTS pg_search CASCADE")
+          PY
+          EXACTDOCS_DATABASE_URL="${ADMIN_URL/postgresql:/postgresql+psycopg:}/exactdocs_eval" \
+            uv run python packages/exactdocs/evals/run_retrieval_eval.py \
+            --expect-engine pg_search --report reports/evals/retrieval-pg-search.json
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
