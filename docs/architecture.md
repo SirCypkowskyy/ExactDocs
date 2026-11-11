@@ -1209,16 +1209,21 @@ field, `AGENT_CACHE_FORMAT` and the similarity space (`bm25`, or the embedding r
 filter, limit or embedding model. The scope's answers (`AgentAnswerCache.scoped`, at most
 `AGENT_CACHE_PER_SCOPE` = 200, newest first) are read first; with none that could serve, nothing
 is embedded. They are compared with the question (`CachedQuestion.similarity`): 1 for the same
-normalized question; 0 when their `question_guards` differ (numbers and versions in order, and
-the polarity words `not`, `no`, `never`, `without`..., `n't` and `cannot` spelt out as `not`); when
-their `question_terms` are the same set, the lexical similarity (the cosine of BM25's saturated
-term-frequency weights; no IDF: a scope holds too few short questions for document frequencies
-to mean anything), averaged with the cosine of their embeddings when both have one; when one
-has a term the other lacks, the embeddings' cosine alone, or 0 without embeddings. Words are
-compared first; only without a hit is the question embedded (as a query by the instance's
-embedding model, checked against the embedding budget and the instance's, library's and caller's
-budgets the LLM step is checked against, and recorded like a hybrid query embedding; a failure or
-a budget leaves the words alone). The LLM search rate limit is not consulted there: counting it
+normalized question; 0 when their `question_guards` differ (signed numbers and versions in
+order, words with digits such as `python3`, and the polarity words `not`, `no`, `never`,
+`without`..., with `n't`, `cannot` and the apostrophe-less `dont`, `cant`... read as `not`) or
+their `question_terms` are not the same set (question words kept, a term after `from`, `to` or
+`into` tagged with its role, so direction counts); else the lexical similarity (the cosine of
+BM25's saturated term-frequency weights; no IDF: a scope holds too few short questions for
+document frequencies to mean anything), or the lower of it and the cosine of their embeddings
+when both have one. So an embedding only confirms a re-asked question and never bridges two
+questions with different terms: on `BAAI/bge-small-en-v1.5` opposites and siblings
+("enable"/"disable", "client"/"server") score 0.85 to 0.96, as real paraphrases do, so no
+threshold separates them. Words find the candidates first; with none, nothing is embedded;
+with some, the question is embedded to confirm them (as a query by the instance's embedding
+model, checked against the embedding budget and the instance's, library's and caller's budgets
+the LLM step is checked against, and recorded like a hybrid query embedding; a failure or a
+budget leaves the words to decide). The LLM search rate limit is not consulted there: counting it
 would charge a search the cache may answer. Only an
 answer asked for at least as many chunks qualifies. The most similar at or above `threshold`
 whose picks the pinned manifest still holds under the tag filter is the hit, carried in

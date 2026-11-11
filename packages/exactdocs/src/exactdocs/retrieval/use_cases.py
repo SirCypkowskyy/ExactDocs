@@ -3939,9 +3939,10 @@ class AgentAnswerCaching:
     space questions are compared in. A re-sync (a new manifest), another model, filter or
     setting is another scope, so it never reuses an answer; the use cases also forget a removed
     manifest's answers and a library's when its settings change, and the nightly upkeep prunes
-    them by age. Questions are compared by hybrid similarity (``CachedQuestion.similarity``):
-    the cosine of their embeddings with the instance's embedding model, averaged with their
-    lexical similarity, or the lexical similarity alone without an embedding model. The most
+    them by age. Only a question asked again hits (``CachedQuestion.similarity``): the same
+    guards (numbers, versions, negations) and the same content terms, in any order or
+    inflection; with an embedding model, the cosine of the two questions' embeddings must also
+    clear ``threshold``, as a confirmation, never as a bridge across different terms. The most
     similar at or above ``threshold`` whose picks the version still holds is the hit; its
     picks are checked again against the manifest and the filter before they are shown.
 
@@ -4003,11 +4004,13 @@ class AgentAnswerCaching:
     ) -> AgentCacheLookup | None:
         """Find the most similar cached question of the search's scope, if similar enough.
 
-        The scope is read first: with no answer in it that could serve, nothing is embedded
-        (``store`` embeds the question if the agent answers). Words are compared next; only
-        when they find no hit is the question embedded, after the budgets the embedding counts
-        to are checked (the instance's, the library's and the caller's, the same ones the LLM
-        step is checked against).
+        The scope is read first, then its answers are compared by words: only the same question
+        re-asked (the same guards and content terms) can hit. With no such answer nothing is
+        embedded (``store`` embeds the question if the agent answers). With one and an embedding
+        model, the question is embedded to confirm it: its cosine with the cached question must
+        clear the threshold too. The embedding is made after the budgets it counts to are
+        checked (the instance's, the library's and the caller's, the same ones the LLM step is
+        checked against); when it fails or a budget refuses it, the words decide.
 
         Args:
             version: The version searched.
@@ -4047,17 +4050,22 @@ class AgentAnswerCaching:
             entries = await self._cache_call(self.cache.scoped(scope))
         except AgentCacheError:  # never a failed search: the agent answers
             return miss
-        eligible = [e for e in entries if e.limit >= limit]
-        found = await self._best(question, eligible, threshold, held) if eligible else None
-        if found is None and eligible and configured is not None:
+        # Only the same question re-asked can hit (``CachedQuestion.similarity``): words find
+        # the candidates, and an embedding, when there is one, only confirms them.
+        candidates = [
+            e for e in entries if e.limit >= limit and question.similarity(e.question) >= threshold
+        ]
+        if not candidates:
+            return miss  # nothing could serve: nothing is embedded
+        if configured is not None:
             vector = await self._embedded(version, query, configured, caller, own)
             miss = replace(miss, embedded=True)
-            if vector is not None:
+            if vector is not None:  # else the words decide (a failure or a budget)
                 question = replace(question, vector=vector)
                 miss = replace(miss, question=question)
-                found = await self._best(question, eligible, threshold, held)
+        found = await self._best(question, candidates, threshold, held)
         if found is None:
-            return miss  # with no answer that could serve, nothing was embedded
+            return miss
         return replace(miss, hit=found[1], similarity=found[0])
 
     def _threshold(self, configured: _Configured | None) -> float:

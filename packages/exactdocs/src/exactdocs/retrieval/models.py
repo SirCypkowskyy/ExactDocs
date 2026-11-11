@@ -24,8 +24,9 @@ from exactdocs.retrieval.constants import (
     _QUESTION_SUFFIXES,
     _SELF_HOSTED_KINDS,
     _SHORTEST_E_FOLD,
+    _UNFOLDED_S_ENDINGS,
+    _UNFOLDED_WORDS,
     _WORD,
-    AGENT_CACHE_DENSE_WEIGHT,
     AGENT_CACHE_FORMAT,
     AGENT_CACHE_TERM_HASH_CHARS,
     BM25_K1,
@@ -72,9 +73,12 @@ from exactdocs.retrieval.constants import (
     MIN_AGENT_REPEATED_CALLS,
     MONTHS_PER_YEAR,
     PROFILE_NAME,
+    QUESTION_DIRECTIONS,
+    QUESTION_NEGATIONS,
     QUESTION_NUMBER,
     QUESTION_POLARITY_WORDS,
     QUESTION_STOP_WORDS,
+    QUESTION_WORDS,
     RATE_LIMIT_BELOW_ONE,
     REPEATED_CALLS_TOO_LOW,
     REPLAY_RETAIN_DAYS,
@@ -3260,12 +3264,24 @@ def _folded(word: str) -> str:
         word: A case-folded word.
 
     Returns:
-        The word without its ending, and without a final ``e`` (``configure``, ``configured``
-        and ``configuring`` are one term).
+        The word without its endings (``_QUESTION_SUFFIXES``, until none applies) and without a
+        final ``e`` (``configure``, ``configured`` and ``configuring`` are one term). A final
+        ``s`` stays after ``_UNFOLDED_S_ENDINGS``, and ``_UNFOLDED_WORDS`` stay as they are.
     """
-    for suffix, replacement, shortest in _QUESTION_SUFFIXES:
-        if len(word) >= shortest and word.endswith(suffix) and not word.endswith("ss"):
+    if word in _UNFOLDED_WORDS:
+        return word
+    changed = True
+    while changed:
+        changed = False
+        for suffix, replacement, shortest in _QUESTION_SUFFIXES:
+            if len(word) < shortest or not word.endswith(suffix):
+                continue
+            if suffix == "s" and word.endswith(_UNFOLDED_S_ENDINGS):
+                continue
+            if word.endswith("ss"):
+                continue
             word = word[: -len(suffix)] + replacement
+            changed = True
             break
     return word[:-1] if len(word) > _SHORTEST_E_FOLD and word.endswith("e") else word
 
@@ -3292,48 +3308,68 @@ def _question_words(query: str) -> tuple[list[str], list[str]]:
         query: The question, as the caller sent it.
 
     Returns:
-        The numbers and versions (``QUESTION_NUMBER``, without a ``v``), and the other words
-        (split at anything but letters and digits, ``_`` included), in order.
+        The numbers and versions (``QUESTION_NUMBER``: its sign kept, without a ``v``), and the
+        other words (split at anything but letters and digits, ``_`` included), in order, each
+        of ``QUESTION_NEGATIONS`` read as ``not``.
     """
     text = _question_text(query)
-    numbers = [m.group(1) for m in re.finditer(QUESTION_NUMBER, text)]
-    return numbers, re.findall(r"[^\W_]+", re.sub(QUESTION_NUMBER, " ", text))
+    numbers = [m.group(1) + m.group(2) for m in re.finditer(QUESTION_NUMBER, text)]
+    words = re.findall(r"[^\W_]+", re.sub(QUESTION_NUMBER, " ", text))
+    return numbers, ["not" if w in QUESTION_NEGATIONS else w for w in words]
 
 
 def question_terms(query: str) -> tuple[str, ...]:
     """Split a question into the terms its lexical similarity compares, in order.
 
+    A term after ``from``, ``into``, ``onto``, or after ``to`` that follows a content word,
+    carries that role (``from:postgr``), so the direction of a question is part of its terms.
+
     Args:
         query: The question, as the caller sent it.
 
     Returns:
-        Its words without ``QUESTION_STOP_WORDS``, numbers and polarity words (those are its
-        ``question_guards``), each folded (``_folded``); repeated ones are kept, as a term
-        frequency counts them.
+        Its words without ``QUESTION_STOP_WORDS``, numbers, polarity words (those are its
+        ``question_guards``) and direction words, each folded (``_folded``); repeated ones are
+        kept, as a term frequency counts them.
     """
     _, words = _question_words(query)
-    return tuple(
-        _folded(w)
-        for w in words
-        if w not in QUESTION_STOP_WORDS and w not in QUESTION_POLARITY_WORDS
-    )
+    terms: list[str] = []
+    role = ""
+    previous = ""
+    for word in words:
+        if word in QUESTION_DIRECTIONS:
+            infinitive = word == "to" and (
+                not previous
+                or previous in QUESTION_STOP_WORDS
+                or previous in QUESTION_WORDS
+                or previous in QUESTION_POLARITY_WORDS
+            )
+            role = "" if infinitive else f"{word}:"
+        elif word not in QUESTION_STOP_WORDS and word not in QUESTION_POLARITY_WORDS:
+            terms.append(role + _folded(word))
+            role = ""
+        previous = word
+    return tuple(terms)
 
 
 def question_guards(query: str) -> tuple[str, ...]:
     """Name what two questions must share exactly: their numbers, versions and negations.
 
-    "Why is my request not retried" and "why is my request retried", or a migration "from v1 to
-    v2" and one "from v2 to v3", differ by one word of many: similar words, opposite questions.
+    "Why is my request not retried" and "why is my request retried", a migration "from v1 to
+    v2" and one "from v2 to v3", or ``python3`` and ``python2``, differ by one word of many:
+    similar words, opposite questions.
 
     Args:
         query: The question, as the caller sent it.
 
     Returns:
-        Its numbers and versions in order ("from v2 to v1" is not "from v1 to v2"), then its
-        ``QUESTION_POLARITY_WORDS`` sorted (a paraphrase may move them); repeated ones kept.
+        Its numbers and versions in order ("from v2 to v1" is not "from v1 to v2"), its words
+        with a digit (``python3``, ``e42``) in order, then its ``QUESTION_POLARITY_WORDS``
+        sorted (a paraphrase may move them); repeated ones kept.
     """
     numbers, words = _question_words(query)
-    return (*numbers, *sorted(w for w in words if w in QUESTION_POLARITY_WORDS))
+    digits = [w for w in words if any(c.isdigit() for c in w)]
+    return (*numbers, *digits, *sorted(w for w in words if w in QUESTION_POLARITY_WORDS))
 
 
 def _bm25_weight(frequency: int) -> float:
@@ -3369,7 +3405,7 @@ def lexical_similarity(first: Sequence[str], second: Sequence[str]) -> float:
     dot = sum(w * two[t] for t, w in one.items() if t in two)
     norms = math.sqrt(sum(w * w for w in one.values()))
     norms *= math.sqrt(sum(w * w for w in two.values()))
-    return dot / norms if norms else 0.0
+    return min(1.0, dot / norms) if norms else 0.0
 
 
 def dense_similarity(first: Sequence[float], second: Sequence[float]) -> float:
@@ -3512,35 +3548,31 @@ class CachedQuestion:
         )
 
     def similarity(self, other: CachedQuestion) -> float:
-        """Say how alike two questions are (hybrid: embeddings and terms, else terms alone).
+        """Say how alike two questions are: the same question asked again, or not at all.
 
-        Words alone cannot tell a refinement ("configure retries for uploads") or a negation from
-        the same question, so two questions that differ by a content term are similar only by
-        their embeddings, and two that differ by a number, a version or a negation are never.
+        Only a question re-asked hits: the same content terms (any order, any inflection) and
+        the same guards. Neither words nor embeddings can tell a refinement, an opposite or a
+        sibling ("enable" and "disable", "client" and "server") from a paraphrase: the default
+        embedding model scores both 0.85 to 0.96. So an embedding never bridges a difference in
+        terms; when both questions have one, its cosine must also clear the threshold, as a
+        confirmation.
 
         Args:
             other: A cached question of the same scope.
 
         Returns:
-            1 for the same normalized question; 0 when their ``guards`` differ. When their terms
-            are the same set: ``AGENT_CACHE_DENSE_WEIGHT`` of their embeddings' cosine plus the
-            rest of their lexical similarity when both have an embedding, else their lexical
-            similarity. When one has a term the other lacks: their embeddings' cosine alone, or
-            0 without embeddings.
+            1 for the same normalized question; 0 when their guards or their term sets differ;
+            else their lexical similarity, or the lower of it and their embeddings' cosine when
+            both have an embedding.
         """
         if self.question_hash == other.question_hash:
             return 1.0
-        if self.guards != other.guards:
+        if self.guards != other.guards or set(self.terms) != set(other.terms):
             return 0.0
-        dense = None
-        if self.vector is not None and other.vector is not None:
-            dense = dense_similarity(self.vector, other.vector)
-        if set(self.terms) != set(other.terms):
-            return 0.0 if dense is None else dense
         lexical = lexical_similarity(self.terms, other.terms)
-        if dense is None:
+        if self.vector is None or other.vector is None:
             return lexical
-        return AGENT_CACHE_DENSE_WEIGHT * dense + (1 - AGENT_CACHE_DENSE_WEIGHT) * lexical
+        return min(lexical, dense_similarity(self.vector, other.vector))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

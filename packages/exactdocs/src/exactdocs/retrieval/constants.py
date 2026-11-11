@@ -1115,14 +1115,13 @@ AGENT_CACHE_PER_SCOPE: Final[int] = 200
 so a lookup compares a question with at most this many."""
 AGENT_CACHE_MEMORY_SIZE: Final[int] = 2_000
 """The most answers an in-memory cache keeps (a stdio process's own); the oldest go first."""
-AGENT_CACHE_DENSE_WEIGHT: Final[float] = 0.5
-"""With an embedding model, a question's similarity is this share of the cosine of the two
-questions' embeddings plus the rest of their lexical similarity."""
 AGENT_CACHE_TERM_HASH_CHARS: Final[int] = 16
 """Hex characters kept of each question term's HMAC (64 bits): enough that two terms of one
 scope never collide in practice."""
-QUESTION_STOP_WORDS: Final[frozenset[str]] = TERM_HASH_STOP_WORDS | frozenset(
-    {"about", "am", "be", "could", "from", "get", "if", "me", "should", "there", "this", "we"}
+QUESTION_STOP_WORDS: Final[frozenset[str]] = (
+    TERM_HASH_STOP_WORDS - {"how", "what", "when", "which", "why"}
+) | frozenset(
+    {"about", "am", "be", "could", "get", "if", "me", "should", "there", "this", "we"}
     | {"would", "behaviour", "behavior", "way", "ways", "please", "possible", "properly"}
 )
 """Words two questions may differ by and still ask the same: left out of their lexical
@@ -1132,9 +1131,28 @@ QUESTION_POLARITY_WORDS: Final[frozenset[str]] = frozenset(
 )
 """Words that turn a question around: two questions must hold the same ones, as often, to share
 an answer (``cannot`` and every ``n't`` count as ``not``)."""
-QUESTION_NUMBER: Final[str] = r"\bv?(\d+(?:\.\d+)*)\b"
-"""A number or version in a question (``v1``, ``2.0``, ``3``): two questions must hold the same
-ones, as often, to share an answer (``v1`` and ``1`` are one)."""
+QUESTION_NUMBER: Final[str] = r"(?<![\w.])(-?)v?(\d+(?:\.\d+)*)\b"
+"""A number or version in a question (``v1``, ``2.0``, ``-1``): two questions must hold the same
+ones, in the same order, to share an answer (``v1`` and ``1`` are one; ``-1`` and ``1`` are
+not). Digits inside a word (``python3``, ``E42``) are guards too, as the whole word."""
+QUESTION_NEGATIONS: Final[frozenset[str]] = frozenset(
+    {"dont", "doesnt", "didnt", "cant", "wont", "isnt", "arent", "wasnt", "werent", "shouldnt"}
+    | {"couldnt", "wouldnt", "hasnt", "havent", "hadnt", "mustnt", "neednt", "aint"}
+)
+"""Negations written without their apostrophe: each reads as ``not``."""
+QUESTION_WORDS: Final[frozenset[str]] = frozenset(
+    {"how", "what", "when", "where", "which", "who", "why"}
+)
+"""Question words: content terms ("when is the cache cleared" is not "why"), and after one
+``to`` is an infinitive ("how to configure")."""
+QUESTION_DIRECTIONS: Final[frozenset[str]] = frozenset({"from", "to", "into", "onto"})
+"""Words that give the next content term a role (``from:postgr``, ``to:mysql``), so "from
+postgres to mysql" is not "from mysql to postgres". ``to`` right after a stop word or a
+question word ("how to configure") is the infinitive and gives no role."""
+_UNFOLDED_S_ENDINGS: Final[tuple[str, ...]] = ("ss", "ws", "us", "is")
+"""Endings a final ``s`` is kept after (``class``, ``news``, ``status``, ``redis``)."""
+_UNFOLDED_WORDS: Final[frozenset[str]] = frozenset({"https", "ftps", "sftps", "wss", "dns"})
+"""Words never folded: a protocol's ``s`` is part of its name (``https`` is not ``http``)."""
 _QUESTION_SUFFIXES: Final[tuple[tuple[str, str, int], ...]] = (
     ("ations", "", 8),
     ("ation", "", 7),
@@ -1147,8 +1165,9 @@ _QUESTION_SUFFIXES: Final[tuple[tuple[str, str, int], ...]] = (
     ("ed", "", 5),
     ("s", "", 4),
 )
-"""Light suffix folding: (suffix, replacement, shortest word it applies to), first match wins:
-plural and verb endings, and ``-ation`` (``configuration`` and ``configure`` are one term)."""
+"""Light suffix folding: (suffix, replacement, shortest word it applies to), first match wins,
+applied until nothing changes: plural and verb endings, and ``-ation`` (``configuration`` and
+``configure`` are one term; ``settings`` and ``setting`` too)."""
 _SHORTEST_E_FOLD: Final[int] = 3
 """A folded word longer than this loses a final ``e`` (``configure`` and ``configur`` match)."""
 BM25_K1: Final[float] = 1.2

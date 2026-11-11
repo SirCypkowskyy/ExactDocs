@@ -431,12 +431,12 @@ async def test_a_different_question_runs_the_agent() -> None:
 @pytest.mark.parametrize(("threshold", "hit"), [(0.95, True), (0.97, False)])
 async def test_the_threshold_is_configurable(threshold: float, hit: bool) -> None:
     questions = QuestionModels(
-        vectors={FIRST: (1.0, 0.0, 0.0), PARAPHRASE: (0.96, 0.28, 0.0)}  # cosine 0.96
+        vectors={FIRST: (1.0, 0.0, 0.0), SIMILAR: (0.96, 0.28, 0.0)}  # cosine 0.96
     )
     world = await _world(embeddings=questions, threshold=threshold)
     await _ask(world, FIRST)
 
-    assert (await _ask(world, PARAPHRASE)).cache_hit is hit
+    assert (await _ask(world, SIMILAR)).cache_hit is hit  # the same terms, confirmed or not
     assert (await _ask(world, "  How do i CONFIGURE retries ")).cache_hit is True  # the same
 
 
@@ -459,6 +459,18 @@ async def test_the_threshold_is_configurable(threshold: float, hit: bool) -> Non
         ("add a webhook", "remove a webhook"),
         ("create the index", "drop the index"),
         ("call it over http", "call it over grpc"),
+        ("migrate from postgres to mysql", "migrate from mysql to postgres"),
+        ("convert json to yaml", "convert yaml to json"),
+        ("copy from the bucket to disk", "copy from disk to the bucket"),
+        ("how to enable http", "how to enable https"),
+        ("read the news", "read the new"),
+        ("set the timeout to -1", "set the timeout to 1"),
+        ("when is the cache cleared", "why is the cache cleared"),
+        ("where is the config file", "what is the config file"),
+        ("use python3", "use python2"),
+        ("cant retry uploads", "retry uploads"),
+        ("isnt the cache shared", "is the cache shared"),
+        ("shouldnt I retry", "should I retry"),
     ],
 )
 def test_questions_that_ask_something_else_never_match_by_words(asked: str, again: str) -> None:
@@ -477,6 +489,11 @@ def test_questions_that_ask_something_else_never_match_by_words(asked: str, agai
         ("why can't I connect", "why cannot I connect"),
         ("migrate from v1 to v2", "Migrate from 1 to 2"),
         ("how do I not retry on v2", "on v2, how not to retry"),
+        ("change the settings", "change the setting"),
+        ("dont retry uploads", "do not retry uploads"),
+        ("migrate from postgres to mysql", "migrating from Postgres to MySQL"),
+        ("how to configure retries", "how do I configure retries"),
+        ("check the status of https", "check https status"),
     ],
 )
 def test_the_same_question_in_other_words_matches(asked: str, again: str) -> None:
@@ -485,14 +502,57 @@ def test_the_same_question_in_other_words_matches(asked: str, again: str) -> Non
     assert one.similarity(two) >= 0.9
 
 
-def test_a_negation_or_a_number_stops_even_close_embeddings() -> None:
-    near = (1.0, 0.0, 0.0)
-    negated = CachedQuestion.of("why is my request not retried", key=KEY, vector=near)
-    plain = CachedQuestion.of("why is my request retried", key=KEY, vector=near)
-    refined = CachedQuestion.of("why is my upload request retried", key=KEY, vector=near)
+@pytest.mark.parametrize(
+    ("asked", "again"),
+    [
+        ("how do I enable retries", "how do I disable retries"),
+        ("configure timeouts for the client", "configure timeouts for the server"),
+        ("how to set the read timeout", "how to set the write timeout"),
+        ("how to encrypt a file", "how to decrypt a file"),
+        ("how to allow cors", "how to deny cors"),
+        ("what is the minimum memory", "what is the maximum memory"),
+        ("what is the min memory", "what is the max memory"),
+        ("how to log in", "how to log out"),
+        ("how to import data", "how to export data"),
+        ("use python3", "use python2"),
+        ("configure oauth1", "configure oauth2"),
+        ("support for ipv4", "support for ipv6"),
+        ("what happens on retry error E42", "what happens on retry error E43"),
+        ("dont retry failed requests", "retry failed requests"),
+        ("configure retries", "configure retries for uploads"),
+        ("why is my request not retried", "why is my request retried"),
+    ],
+)
+def test_a_term_apart_never_matches_even_with_identical_embeddings(asked: str, again: str) -> None:
+    near = (1.0, 0.0, 0.0)  # a stand-in model that scores the pair as one question
+    one = CachedQuestion.of(asked, key=KEY, vector=near)
+    two = CachedQuestion.of(again, key=KEY, vector=near)
 
-    assert negated.similarity(plain) == 0  # cosine 1, opposite questions
-    assert plain.similarity(refined) == pytest.approx(1)  # a term apart: the cosine decides
+    assert one.similarity(two) == 0
+    assert two.similarity(one) == 0
+
+
+async def test_a_term_apart_misses_through_the_pipeline_even_with_identical_embeddings() -> None:
+    near = (1.0, 0.0, 0.0)
+    questions = QuestionModels(
+        vectors={"how do I enable retries": near, "how do I disable retries": near}
+    )
+    world = await _world(embeddings=questions)
+    await _ask(world, "how do I enable retries")
+
+    again = await _ask(world, "how do I disable retries")
+
+    assert again.cache_hit is False
+    assert _runs(world) == 2
+
+
+def test_an_embedding_only_confirms_the_same_terms() -> None:
+    same = CachedQuestion.of(FIRST, key=KEY, vector=(1.0, 0.0, 0.0))
+    far = CachedQuestion.of(SIMILAR, key=KEY, vector=(0.0, 1.0, 0.0))
+    near = CachedQuestion.of(SIMILAR, key=KEY, vector=(0.96, 0.28, 0.0))
+
+    assert same.similarity(far) == 0  # the same terms, but the model says otherwise
+    assert same.similarity(near) == pytest.approx(0.96)
 
 
 async def test_without_an_embedding_model_the_cache_is_off_unless_turned_on() -> None:
@@ -543,7 +603,7 @@ async def test_an_empty_scope_embeds_nothing_at_lookup_and_the_answer_at_store()
     assert _entries(world)[0].question.vector == (1.0, 0.0, 0.0)
 
 
-async def test_a_hit_by_words_embeds_nothing() -> None:
+async def test_a_candidate_by_words_is_confirmed_by_its_embedding() -> None:
     questions = QuestionModels()
     world = await _world(embeddings=questions)
     await _ask(world, FIRST)
@@ -552,7 +612,19 @@ async def test_a_hit_by_words_embeds_nothing() -> None:
     again = await _ask(world, SIMILAR)
 
     assert again.cache_hit is True
-    assert questions.queries == []
+    assert questions.queries == [SIMILAR]
+
+
+async def test_a_question_with_other_terms_embeds_nothing() -> None:
+    questions = QuestionModels()
+    world = await _world(embeddings=questions)
+    await _ask(world, FIRST)
+    questions.queries.clear()
+
+    other = await _ask(world, PARAPHRASE)
+
+    assert other.cache_hit is False
+    assert questions.queries == [PARAPHRASE]  # once: when the agent's answer was stored
 
 
 async def test_a_used_up_library_budget_embeds_no_question() -> None:
@@ -578,9 +650,9 @@ async def test_a_used_up_library_budget_embeds_no_question() -> None:
     )
     await world.cache.put(_entries(world)[0])  # saving the settings forgot it
 
-    result = await _ask(world, PARAPHRASE)
+    result = await _ask(world, SIMILAR)
 
-    assert result.cache_hit is False
+    assert result.cache_hit is True  # the words decide when the confirmation cannot be paid
     assert questions.queries == []  # the paid embedding was not made
 
 
@@ -848,28 +920,27 @@ async def test_a_cache_that_fails_is_a_miss_and_logs_only_the_error_class(
 # ---------------------------------------------------------------- hybrid similarity
 
 
-async def test_with_an_embedding_model_questions_are_compared_by_meaning_and_words() -> None:
+async def test_with_an_embedding_model_only_the_same_question_asked_again_hits() -> None:
     questions = QuestionModels(
         vectors={
             FIRST: (1.0, 0.0, 0.0),
+            SIMILAR: (0.98, 0.2, 0.0),  # the same terms, a close embedding
             PARAPHRASE: (0.96, 0.28, 0.0),  # cosine 0.96, no shared term
-            "how do I configure logging": (0.0, 1.0, 0.0),
         }
     )
     world = await _world(embeddings=questions)
     await _ask(world, FIRST)
     (entry,) = _entries(world)
 
+    again = await _ask(world, SIMILAR)
     paraphrase = await _ask(world, PARAPHRASE)
-    unrelated = await _ask(world, "how do I configure logging")  # shares "configure" only
 
     assert entry.question.vector == (1.0, 0.0, 0.0)
     assert (
         entry.scope.similarity
         == EmbeddingTarget(profile_kind="openai-compatible", model="e").identity
     )
-    assert (paraphrase.cache_hit, unrelated.cache_hit) == (True, False)
-    assert questions.queries == [FIRST, PARAPHRASE, "how do I configure logging"]
+    assert (again.cache_hit, paraphrase.cache_hit) == (True, False)
 
 
 async def test_a_failing_question_embedding_compares_words_only_and_logs_no_question(
@@ -889,7 +960,7 @@ async def test_a_failing_question_embedding_compares_words_only_and_logs_no_ques
 
 
 def test_question_terms_fold_plurals_and_verb_endings_and_drop_filler() -> None:
-    assert question_terms(FIRST) == ("configur", "retry")
+    assert question_terms(FIRST) == ("how", "configur", "retry")
     assert question_terms("Configuring the retry_policy, retried calls") == (
         "configur",
         "retry",

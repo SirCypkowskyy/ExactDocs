@@ -441,7 +441,7 @@ chunks until the new ones are in place.
 | `EXACTDOCS_AI__PROVIDERS__<NAME>__<FIELD>`, `EXACTDOCS_AI__<ROLE>__MODEL` | unset | AI provider profiles and model roles, see [AI providers and model roles](#ai-providers-and-model-roles) |
 | `EXACTDOCS_AI__MODE` | unset (`auto`) | The retrieval mode of searches that name none, for libraries without their own: `bm25`, `hybrid`, `hybrid_hyde` or `agentic`; unset or `auto`: the best default mode the configured models allow, which is BM25 until the eval suite makes another mode a default. An unknown name stops the server at start; a mode whose model is not configured falls back with `fallback_reason: mode_unavailable` (see [Retrieval](#retrieval)) |
 | `EXACTDOCS_AI__HYDE__CACHE_TTL` | `P30D` (30 days) | How long a HyDE hypothetical answer stays cached (seconds or an ISO 8601 duration). Once a day (just after UTC midnight, and at start; one process on PostgreSQL), and after every collection, the server deletes older answers and those of an `llm` model no longer configured; answers are also deleted when their version's manifest is collected |
-| `EXACTDOCS_AI__AGENTIC_CACHE__ENABLED`, `__THRESHOLD`, `__SCOPE`, `__TTL` | unset, unset, `library`, `P7D` | The agentic answer cache (see [Agentic search](#agentic-search)): a question at least `THRESHOLD` similar (0 to 1; `1` reuses only the same question) to one answered agentically before for the same version, tag filter and `llm` model is answered from that answer (`cache_hit: true`). `ENABLED` unset: on only when an embedding model is configured; `true`: on with words alone too; `false`: off, and the nightly upkeep deletes every cached answer. `THRESHOLD` unset: `0.8` with an embedding model, `0.9` with words alone. `SCOPE`: `library` (callers of a version share answers, justifications included) or `caller`. Answers older than `TTL` are deleted by the nightly upkeep |
+| `EXACTDOCS_AI__AGENTIC_CACHE__ENABLED`, `__THRESHOLD`, `__SCOPE`, `__TTL` | unset, unset, `library`, `P7D` | The agentic answer cache (see [Agentic search](#agentic-search)): a question that asks again what one answered agentically before asked (the same content terms, numbers, negations and direction; `THRESHOLD`, 0 to 1, is the bar for the words' similarity and, with an embedding model, the confirming cosine), for the same version, tag filter and `llm` model is answered from that answer (`cache_hit: true`). `ENABLED` unset: on only when an embedding model is configured; `true`: on with words alone too; `false`: off, and the nightly upkeep deletes every cached answer. `THRESHOLD` unset: `0.8` with an embedding model, `0.9` with words alone. `SCOPE`: `library` (callers of a version share answers, justifications included) or `caller`. Answers older than `TTL` are deleted by the nightly upkeep |
 | `EXACTDOCS_QUERY_DOCS_TOKEN_BUDGET` | `10000` | Size of one whole `query-docs` answer, notice included, in tokens counted as characters / 4 (undercounts CJK text and dense code); at least `500`. Only whole chunks are returned: one too large for the budget is listed as a pointer to fetch with `read_chunk`, and a last line says how many matching chunks were left out |
 | `EXACTDOCS_HOST`, `EXACTDOCS_PORT` | `127.0.0.1`, `3000` | Address `serve` binds (the Docker image binds `0.0.0.0`); `--host` / `--port` override them |
 | `EXACTDOCS_MAX_ARTICLE_BYTES` | `2097152` (2 MiB) | An import skips a file above this size, unread, and reports it as `too_large` |
@@ -755,24 +755,27 @@ calls nested in `run_code`, each with an `exactdocs.agent.read` event naming the
 bound to and the versions of what it returned), never with prompts, answers or tool arguments;
 `/metrics` shows its tokens (`gen_ai.client.token.usage`).
 
-**Similar questions are answered from a cache.** Teams ask the same thing in other words; an
-agentic answer is kept, and a later question similar enough to it is answered from it at once,
+**Re-asked questions are answered from a cache.** Teams ask the same thing again; an agentic
+answer is kept, and a later question that asks it again is answered from it at once,
 with `cache_hit: true` and the same results, justifications and explored paths, costing no LLM
 call, no budget and no rate limit (counted in `exactdocs.ai.cache_hits`). An answer is reused only
 for the same version as it is now (a re-sync to a new commit, a new manifest, never reuses it),
 the same tag filter, the same `llm` model and the same `[ai.agentic]` limits; each of its chunks
 is looked up again in the version, under the call's tags, before it is returned, and an answer
-none of whose chunks are left runs the agent. Questions are compared by hybrid similarity: with
-an embedding model, the mean of their embeddings' cosine and of their words' similarity; without
-one, their words only (BM25 term weights over the words left after filler such as "how", "do",
-"I" or "behaviour" is dropped, with plurals, verb endings and `-ation` folded: "how do I
-configure retries" and "how to configure retry behaviour" are the same terms). Words cannot tell
-a refinement or an opposite from the same question, so two questions match by words only when
-they have **the same terms**, and never when their numbers or versions ("from v1 to v2") or
-their negations ("not", "never", "without", "can't"...) differ, whatever the embeddings say; a
-question with a term the other lacks ("configure retries for uploads") matches only by its
-embedding's cosine, with an embedding model. That is why the cache is on by default only with an
-embedding model; with words alone, turn it on with `enabled = true` (threshold 0.9 by default).
+none of whose chunks are left runs the agent. **Only a question asked again hits: the same
+content terms, in any order or inflection.** Filler such as "do", "I" or "behaviour" is dropped,
+and plurals, verb endings and `-ation` fold ("how do I configure retries" and "how to configure
+retry behaviour" are the same terms); question words stay ("when" is not "why"). Numbers and
+versions (with their sign: `-1` is not `1`), words with digits (`python3`, `oauth2`, `E42`) and
+negations ("not", "never", "without", "can't", "dont"...) must match exactly, and the term after
+"from", "to" or "into" keeps its role, so "migrate from postgres to mysql" is not the reverse.
+A question with a term the other lacks never hits, a paraphrase in other words included: neither
+words nor embeddings tell "enable" from "disable" or "client" from "server" (the default local
+model scores those 0.85 to 0.96, as high as real paraphrases), and a wrong answer costs more than
+a miss. With an embedding model, the cosine of the two questions' embeddings must also clear the
+threshold, as a confirmation (it never makes two different questions match). The cache is on by
+default only with an embedding model; with words alone, turn it on with `enabled = true`
+(threshold 0.9 by default).
 Saving a library's retrieval settings or removing it forgets its answers; the nightly upkeep
 deletes answers past `ttl`, of an `llm` model no longer configured, or compared with another
 embedding model than the configured one, and every answer while the cache is off.

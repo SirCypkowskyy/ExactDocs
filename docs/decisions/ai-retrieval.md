@@ -335,7 +335,11 @@ ttl` (7 days), with their manifest, with the library's settings, once their mode
 model is no longer configured, or all of them once the cache is turned off. With `scope =
 "library"` (the default) a cached answer, its model-written justifications included, is served to
 every caller of the library's version, so one caller can read the gist of another's question;
-`scope = "caller"` keeps each caller's answers to themselves.
+`scope = "caller"` keeps each caller's answers to themselves. The cache serves only re-asked
+questions: the same content terms in any order or inflection, with the same numbers, versions,
+negations and direction; an embedding only confirms such a match and never makes two questions
+with different terms match (on the default local model, siblings such as enable/disable and
+client/server score as high as paraphrases).
 
 What leaves the instance when a role is set: **embedding** receives chunk text (in background
 jobs) and query text; **reranker** and **judge** receive query text and candidate chunk text;
