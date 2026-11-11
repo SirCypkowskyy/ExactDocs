@@ -1065,6 +1065,26 @@ async def test_a_stored_budget_above_a_lowered_instance_limit_is_kept_but_not_ra
     assert lower.budgets.daily_usd == 3
 
 
+async def test_the_usage_shows_the_lower_instance_limit_and_the_librarys_higher_own_one() -> None:
+    stored = InMemoryLibraryModes()
+    own = (_limit("library", usd=2, tokens=900), _limit("library", MONTH, usd=None, tokens=50))
+    await stored.save(LIB, None, LibraryAi(budgets=own))
+    # The operator lowered the per-library daily limit to 1 USD since; tokens stay the library's.
+    limits = (_limit("library", usd=1, tokens=5000), _limit("library", MONTH, usd=None, tokens=50))
+    world = await _build(ModelRole.LLM, budgets=Budgets(limits=limits), modes=stored)
+    await _spend(world, "library", LIB, DAY, USD // 4)
+    await _spend(world, "library", OTHER, DAY, USD // 4)
+
+    usage = await world.module.get_ai_usage()
+
+    libraries = {s.id: s for s in usage.scopes if s.scope == "library"}
+    daily, monthly = libraries[LIB].budgets
+    assert (daily.usd_limit, daily.usd_left, daily.own_usd_limit) == (1.0, 0.75, 2.0)
+    assert (daily.tokens_limit, daily.own_tokens_limit) == (900, None), "its own is tighter"
+    assert (monthly.own_usd_limit, monthly.own_tokens_limit) == (None, None), "the same"
+    assert all(b.own_usd_limit is None for b in libraries[OTHER].budgets), "no budget of its own"
+
+
 async def test_the_usage_lists_a_library_with_its_own_budget_before_it_spends() -> None:
     world = await _build(ModelRole.LLM)
     await world.module.set_library_retrieval(

@@ -1407,6 +1407,18 @@ export interface components {
              * @description The limit is used up: the scope's calls are skipped until `resets_at`.
              */
             readonly reached: boolean;
+            /**
+             * Own Usd Limit
+             * @description A library's own dollar ceiling when it is higher than `usd_limit`, the instance's
+             *     per-library limit that applies instead; null otherwise.
+             */
+            readonly own_usd_limit?: number | null;
+            /**
+             * Own Tokens Limit
+             * @description A library's own token ceiling when it is higher than `tokens_limit`, the instance's
+             *     per-library limit that applies instead; null otherwise.
+             */
+            readonly own_tokens_limit?: number | null;
         };
         /**
          * C7ContextResponse
