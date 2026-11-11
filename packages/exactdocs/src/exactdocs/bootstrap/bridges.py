@@ -8,6 +8,8 @@ import asyncio
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 
+from pydantic import ValidationError as PydanticValidationError
+
 from exactdocs.bootstrap.constants import STATUSES
 from exactdocs.catalog.dtos import (
     ActivateManifestCommand,
@@ -28,6 +30,7 @@ from exactdocs.catalog.dtos import (
     GetVersionTagsQuery,
     HostKind,
     ImageIn,
+    ListArticlesQuery,
     ListLibrariesQuery,
     ListRenamesQuery,
     RemoveLibraryCommand,
@@ -55,6 +58,12 @@ from exactdocs.catalog.dtos import (
     Removal as CatalogRemoval,
 )
 from exactdocs.catalog.dtos import (
+    TagFilter as CatalogTagFilter,
+)
+from exactdocs.catalog.dtos import (
+    TagMatch as CatalogTagMatch,
+)
+from exactdocs.catalog.dtos import (
     VersionOrigin as CatalogVersionOrigin,
 )
 from exactdocs.catalog.errors import ArticleNotFoundError as CatalogArticleNotFoundError
@@ -75,6 +84,7 @@ from exactdocs.catalog.ports.driving import (
     GetLibrary,
     GetManifestStates,
     GetVersionTags,
+    ListArticles,
     ListDefaultManifests,
     ListLibraries,
     ListRenames,
@@ -135,12 +145,14 @@ from exactdocs.retrieval.dtos import (
 )
 from exactdocs.retrieval.errors import EmbeddingFailedError
 from exactdocs.retrieval.models import (
+    ArticleEntry,
     CatalogLibrary,
     DocTarget,
     ManifestPaths,
     ManifestStatus,
     SearchableVersion,
     SourceHost,
+    TagFilter,
 )
 from exactdocs.retrieval.ports.driving import (
     CollectChunks,
@@ -966,3 +978,66 @@ class CatalogArticleTitles:
             GetArticleTitlesQuery(manifest_id=articles.manifest_id, paths=list(articles.paths))
         )
         return found.titles
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CatalogVersionArticles:
+    """Implements ``retrieval.ports.driven.VersionArticles`` with the catalog's article reads.
+
+    The catalog answers for a library and a ref, from the version's active manifest at that
+    moment; an answer from any other manifest than the one searched (a re-sync activated a new
+    one meanwhile) is dropped, so the agentic explorer never reads another version's articles.
+    """
+
+    list_articles: ListArticles
+    """The catalog's paged article list."""
+    get_article: GetArticle
+    """The catalog's article read."""
+
+    async def list(
+        self, version: SearchableVersion, prefix: str, limit: int, tag_filter: TagFilter
+    ) -> Sequence[ArticleEntry]:
+        """List the version's articles under a folder that the tag filter keeps (one page).
+
+        Args:
+            version: The exact version.
+            prefix: A folder; empty for every article.
+            limit: How many at most (the catalog pages at ``MAX_LIMIT``).
+            tag_filter: The search's tag filter, applied by the catalog.
+
+        Returns:
+            The articles; none when the folder is invalid or the manifest is no longer active.
+        """
+        try:
+            query = ListArticlesQuery(
+                library=version.library,
+                ref=version.version,
+                path_prefix=prefix,
+                tag_filter=CatalogTagFilter(
+                    tags=list(tag_filter.tags), match=CatalogTagMatch(tag_filter.match.value)
+                ),
+                limit=min(max(limit, 1), MAX_LIMIT),
+            )
+            page = await self.list_articles(query)
+        except NotFoundError, ValidationError, PydanticValidationError:
+            return ()
+        if page.manifest_id != version.manifest_id:
+            return ()
+        return [ArticleEntry(path=a.path, title=a.title) for a in page.articles]
+
+    async def read(self, version: SearchableVersion, path: str) -> str | None:
+        """Read an article of the version.
+
+        Args:
+            version: The exact version.
+            path: The article's path.
+
+        Returns:
+            Its Markdown; ``None`` when there is no such article or the manifest changed.
+        """
+        try:
+            query = GetArticleQuery(library=version.library, ref=version.version, path=path)
+            article = await self.get_article(query)
+        except NotFoundError, ValidationError, PydanticValidationError:
+            return None
+        return article.content if article.manifest_id == version.manifest_id else None

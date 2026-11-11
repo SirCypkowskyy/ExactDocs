@@ -24,6 +24,10 @@ TRACES = "/v1/traces"
 class Span:
     name: str
     attributes: dict[str, object]
+    span_id: str = ""
+    """Hex; empty when unknown."""
+    parent_span_id: str = ""
+    """Hex; empty for a root span."""
 
 
 @dataclass(slots=True)
@@ -44,6 +48,8 @@ class Collector:
                         Span(
                             name=s.name,
                             attributes={a.key: _value(a.value) for a in s.attributes},
+                            span_id=s.span_id.hex(),
+                            parent_span_id=s.parent_span_id.hex(),
                         )
                         for s in scope.spans
                     ]

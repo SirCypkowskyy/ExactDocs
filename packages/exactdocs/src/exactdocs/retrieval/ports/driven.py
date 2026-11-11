@@ -6,6 +6,10 @@ from datetime import date, datetime
 from typing import Protocol
 
 from exactdocs.retrieval.models import (
+    AgentPick,
+    AgentRun,
+    ArticleEntry,
+    ArticleText,
     BudgetLimit,
     CatalogLibrary,
     ChunkId,
@@ -31,6 +35,7 @@ from exactdocs.retrieval.models import (
     ManifestStatus,
     ModelCheck,
     ModelRole,
+    Outline,
     PendingChunks,
     PipelineAnswer,
     PipelineRequest,
@@ -50,6 +55,7 @@ from exactdocs.retrieval.models import (
     VectorHit,
     VersionCounts,
 )
+from exactdocs_kernel import Clock
 
 
 class SearchableVersions(Protocol):
@@ -1027,6 +1033,144 @@ class Prices(Protocol):
 
         Returns:
             US dollars per million output tokens, or ``None`` when the model is not listed.
+        """
+        ...
+
+
+class VersionArticles(Protocol):
+    """The articles of one exact version, as the catalog stores them (the agentic explorer reads).
+
+    Both answer from ``version.manifest_id`` only: when the version's active manifest changed
+    meanwhile (a re-sync), they answer nothing rather than another manifest's articles.
+    """
+
+    async def list(
+        self, version: SearchableVersion, prefix: str, limit: int, tag_filter: TagFilter
+    ) -> Sequence[ArticleEntry]:
+        """List the version's articles under a folder, by path, that the tag filter keeps.
+
+        Args:
+            version: The exact version.
+            prefix: A folder (``guide``); empty for every article.
+            limit: How many to return at most.
+            tag_filter: The search's tag filter.
+
+        Returns:
+            At most ``limit`` articles.
+        """
+        ...
+
+    async def read(self, version: SearchableVersion, path: str) -> str | None:
+        """Read one article's Markdown, verbatim.
+
+        Args:
+            version: The exact version.
+            path: The article's path.
+
+        Returns:
+            Its text, or ``None`` when the version has no such article.
+        """
+        ...
+
+
+class DocsBrowser(Protocol):
+    """The read tools the agentic explorer may call, all bound to the one version searched.
+
+    Retrieval implements it (``VersionBrowser``) over the pinned manifest: the model never names
+    a library or a version, so it cannot read another one. Every call is recorded as a step of
+    the explored path.
+    """
+
+    async def list_articles(self, prefix: str = "") -> Sequence[ArticleEntry]:
+        """List the version's articles under a folder.
+
+        Args:
+            prefix: A folder; empty for every article.
+
+        Returns:
+            At most ``AGENT_LIST_LIMIT`` articles, by path.
+        """
+        ...
+
+    async def article_outline(self, path: str) -> Outline | None:
+        """Read an article's heading tree, with the chunk holding each heading.
+
+        Args:
+            path: The article's path.
+
+        Returns:
+            The outline, or ``None`` when the version has no such article.
+        """
+        ...
+
+    async def read_article(self, path: str) -> ArticleText | None:
+        """Read an article's Markdown.
+
+        Args:
+            path: The article's path.
+
+        Returns:
+            Its text, possibly cut, or ``None`` when the version has no such article.
+        """
+        ...
+
+    async def read_chunk(self, chunk_id: str) -> StoredChunk | None:
+        """Read one chunk of the version.
+
+        Args:
+            chunk_id: Its ID.
+
+        Returns:
+            The chunk, or ``None`` when the version has no such chunk.
+        """
+        ...
+
+    async def search_docs(self, query: str, limit: int) -> Sequence[tuple[SearchHit, StoredChunk]]:
+        """Search the version with BM25, within the search's tag filter.
+
+        Args:
+            query: The words to look for.
+            limit: How many hits at most (capped at ``AGENT_SEARCH_LIMIT``).
+
+        Returns:
+            The best hits with their chunks, best first.
+        """
+        ...
+
+
+class Explorer(Protocol):
+    """Runs the agentic explorer: an LLM that browses one version and picks the chunks (RET-04).
+
+    The pydantic-ai adapter runs an agent in harness Code Mode, with the browser's read tools
+    callable only inside the Monty sandbox of ``run_code``, bounded by ``run.bounds`` and the
+    spend budgets (the harness ``SpendLimits`` over ``ledger``). It is instrumented without
+    content. The picks are the model's own: the caller checks them against the version.
+    """
+
+    async def explore(
+        self,
+        model: object,
+        browser: DocsBrowser,
+        run: AgentRun,
+        *,
+        ledger: SpendLedger,
+        clock: Clock,
+    ) -> Sequence[AgentPick]:
+        """Run the agent until it answers.
+
+        Args:
+            model: The ``llm`` role's model, as ``ModelFactory.chat_model`` built it.
+            browser: The read tools, bound to the version searched (the agent's ``deps``).
+            run: The question, the limits and who pays.
+            ledger: Where the run's spend is recorded and budgets are read.
+            clock: Decides the spend windows.
+
+        Returns:
+            The chunks it answers with, best first, at most ``run.limit``.
+
+        Raises:
+            AgentStoppedError: The run ended without an answer: a limit, a budget, or a failure;
+                its ``reason`` is the fallback reason to show.
         """
         ...
 

@@ -404,6 +404,15 @@ describe("retrieval model", () => {
     ]);
   });
 
+  it("shows the agentic pipeline's steps and its single llm role", () => {
+    const r = { ...HYBRID, effective_mode: "agentic" as const, configured_roles: ["llm" as const] };
+    expect(pipelineSteps(r)).toEqual([
+      "An LLM agent browses this version in a sandbox: outlines, articles, chunks and keyword search",
+      "Its picks are checked against this version, each with why it was picked",
+    ]);
+    expect(rolesInUse(r, ROLES as never).map((x) => x.role)).toEqual(["llm"]);
+  });
+
   it("keeps a stored mode that can't run visible but not choosable", () => {
     const r = { ...HYBRID, mode: "agentic" as const, fallback_reason: "mode_unavailable" as const };
     expect(modeOptions(r, retrievalDraftOf(r)).at(-1)).toEqual({

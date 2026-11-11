@@ -354,11 +354,22 @@ PROMPT_SPAN_ATTRIBUTES: Final[frozenset[str]] = frozenset(
         "gen_ai.system_instructions",
         "gen_ai.tool.call.arguments",
         "gen_ai.tool.call.result",
+        # pydantic-ai's older attribute names (instrumentation version 2) and its agent run's
+        # message history and output: the same text under other keys.
+        "tool_arguments",
+        "tool_response",
+        "pydantic_ai.all_messages",
+        "final_result",
     }
 )
-"""What a model was sent and answered (pydantic-ai's instrumentation): always left out, even with
-the query text opted in. ``include_content=False`` is the first guard, this the second
-(docs/decisions/ai-retrieval.md, *Telemetry*)."""
+"""What a model was sent and answered, and what an agent's tools were called with and returned
+(pydantic-ai's instrumentation): always left out, even with the query text opted in.
+``include_content=False`` is the first guard, this the second (docs/decisions/ai-retrieval.md,
+*Telemetry*)."""
+GEN_AI_PREFIX: Final[str] = "gen_ai."
+"""OpenTelemetry's generative AI attributes: any ``gen_ai.<...>.messages`` one is a prompt too."""
+MESSAGES_SUFFIX: Final[str] = ".messages"
+"""The end of a ``gen_ai`` attribute that holds messages (``gen_ai.input.messages``)."""
 SCRUBBED_SPAN_ATTRIBUTES: Final[frozenset[str]] = frozenset(
     {"enduser.id", "enduser.scope", *PROMPT_SPAN_ATTRIBUTES}
 )

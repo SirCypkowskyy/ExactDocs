@@ -572,6 +572,40 @@ class RerankerError(DomainError):
         super().__init__(f"reranker failed: {reason}")
 
 
+class AgentStoppedError(DomainError):
+    """The agentic explorer ended without an answer: a cheaper mode answers instead.
+
+    Searches never fail with it: ``reason`` is the ``fallback_reason`` the result shows
+    (``agent_limit_reached``, ``agent_failed``, ``llm_budget_reached``). The message names the
+    kind of stop, never the query, a prompt or what the agent read.
+    """
+
+    code = "agent_stopped"
+
+    def __init__(self, reason: str, detail: str) -> None:
+        """Say why the run ended.
+
+        Args:
+            reason: The ``FallbackReason`` value the search shows.
+            detail: A fixed text or an exception's class name; nothing from the run.
+        """
+        super().__init__(f"the agentic search stopped ({reason}): {_data(detail)}")
+        self.reason = reason
+        self.detail = detail
+
+
+class InvalidAgentBoundsError(ValidationError):
+    """A limit of the agentic explorer that cannot be enforced as written."""
+
+    def __init__(self, problem: str) -> None:
+        """Say what is wrong.
+
+        Args:
+            problem: A fixed text naming the limit and the rule it breaks.
+        """
+        super().__init__(f"invalid agentic limit: {problem}")
+
+
 class InvalidJudgmentError(DomainError):
     """The judge's ratings are not exactly one bounded score per candidate it was given.
 

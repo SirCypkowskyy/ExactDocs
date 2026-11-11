@@ -11,6 +11,7 @@ from exactdocs.retrieval.constants import (
     QUERY_EMBEDDING_TIMEOUT,
 )
 from exactdocs.retrieval.models import (
+    AgentBounds,
     Budgets,
     InstanceRoles,
     ModelPrice,
@@ -28,6 +29,7 @@ from exactdocs.retrieval.ports.driven import (
     ChunkRepository,
     DefaultVersions,
     EmbeddingModels,
+    Explorer,
     HypotheticalAnswerCache,
     HypotheticalAnswers,
     Libraries,
@@ -45,6 +47,7 @@ from exactdocs.retrieval.ports.driven import (
     SecretBox,
     SpendLedger,
     VectorIndex,
+    VersionArticles,
 )
 from exactdocs.retrieval.ports.driving import (
     ArticleOutline,
@@ -83,6 +86,7 @@ from exactdocs.retrieval.ports.driving import (
     SetLibraryRetrieval,
 )
 from exactdocs.retrieval.use_cases import (
+    AgenticPipeline,
     AiProviders,
     AiSpend,
     ArticleOutlineUseCase,
@@ -235,6 +239,9 @@ class RetrievalModule:
         embedding_dimensions: int | None = None,
         embedding_batch_size: int = DEFAULT_EMBEDDING_BATCH,
         query_embedding_timeout: float = QUERY_EMBEDDING_TIMEOUT,
+        explorer: Explorer | None = None,
+        version_articles: VersionArticles | None = None,
+        agent_bounds: AgentBounds | None = None,
         hypotheses: HypotheticalAnswers | None = None,
         hypothesis_cache: HypotheticalAnswerCache | None = None,
         hyde_timeout: float = HYDE_TIMEOUT,
@@ -270,6 +277,9 @@ class RetrievalModule:
         Cost: ``price_overrides`` are the operator's prices by ``<profile>:<model>``, ``budgets``
         the spend limits and the LLM search rate limit, ``call_rates`` counts LLM searches per
         caller (without it they are not rate limited).
+        Agentic search: with an ``explorer``, ``agentic`` runs ``AgenticPipeline`` within
+        ``agent_bounds``, its agent listing and reading articles through ``version_articles``;
+        an ``agentic`` entry of ``pipelines`` replaces it (tests).
         """
         clock = clock or SystemClock()
         tracer = tracer or UntracedSearches()
@@ -330,6 +340,17 @@ class RetrievalModule:
                     tracer=tracer,
                     timeout=hyde_timeout,
                 )
+        if explorer is not None:
+            built[RetrievalMode.AGENTIC] = AgenticPipeline(
+                providers=providers,
+                chunks=chunks,
+                search=search,
+                spend=ai_spend,
+                explorer=explorer,
+                articles=version_articles,
+                bounds=agent_bounds or AgentBounds(),
+                tracer=tracer,
+            )
         modes = RetrievalModes(
             pipelines={**built, **(pipelines or {})},
             roles=roles or ProfileModelRoles(providers=providers),
