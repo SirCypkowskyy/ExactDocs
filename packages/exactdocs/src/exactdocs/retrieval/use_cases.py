@@ -713,8 +713,9 @@ class RetrievalModes:
     ) -> ModeChoice:
         """Skip the LLM step or the paid rerank a budget or the rate limit does not allow now.
 
-        Called by the search use cases right after ``choose``, so every later stage (the
-        pipeline, a rerank) sees the same choice.
+        Called by the search use cases once the version resolved (a search of an unknown
+        library or ref uses up nothing), before every later stage (the pipeline, a rerank),
+        which all see the same choice.
 
         Args:
             choice: The mode picked by ``choose``.
@@ -780,7 +781,6 @@ class SearchDocsUseCase:
         # Built only to refuse a whitespace-only query (EmptySearchTextError).
         text = SearchText(value=query.query)
         choice = await self.modes.choose(asked=query.mode, library=query.library)
-        choice = await self.modes.within_budget(choice, library=query.library, caller=caller)
         with self.tracer.span(
             "search_docs",
             mode=choice.mode.value,
@@ -788,7 +788,7 @@ class SearchDocsUseCase:
             library=query.library,
             ref=query.ref,
         ) as whole:
-            return await self._search(query, text, choice, whole)
+            return await self._search(query, text, choice, whole, caller)
 
     async def _search(
         self,
@@ -796,6 +796,7 @@ class SearchDocsUseCase:
         text: SearchText,
         choice: ModeChoice,
         whole: SearchSpan,
+        caller: str | None,
     ) -> SearchDocsResult:
         """Resolve the version, rank its chunks and load the shown ones, one span per stage.
 
@@ -804,6 +805,7 @@ class SearchDocsUseCase:
             text: Its validated query text.
             choice: The retrieval mode it runs in.
             whole: The search's span, told which mode answered.
+            caller: The account searching.
 
         Returns:
             The results of the one version searched.
@@ -813,6 +815,10 @@ class SearchDocsUseCase:
             version = await self.versions.find(query.library, query.ref)
         if version is None:
             raise VersionNotIndexedError(query.library, query.ref or "(default version)")
+        # Only a search that will run counts against the caller's limits; every stage after this
+        # one sees the same choice.
+        choice = await self.modes.within_budget(choice, library=version.library, caller=caller)
+        mode = choice.mode.value
         tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
         with self.tracer.span("search_docs.rank", mode=mode) as rank:
             answer = await self.modes.run(choice, version, text.value, tag_filter, query.limit)
@@ -1489,11 +1495,10 @@ class QueryDocsUseCase:
         library = f"/{owner}/{repo}"
         # context7's tool has no mode argument: the library's mode, else the instance's (C7-02).
         choice = await self.modes.choose(asked=None, library=library)
-        choice = await self.modes.within_budget(choice, library=library, caller=caller)
         with self.tracer.span(
             "query_docs", mode=choice.mode.value, query=text.value, library=library, ref=ref
         ) as whole:
-            return await self._answer(query, text, library, ref, choice, whole)
+            return await self._answer(query, text, library, ref, choice, whole, caller)
 
     async def _answer(
         self,
@@ -1503,6 +1508,7 @@ class QueryDocsUseCase:
         ref: str | None,
         choice: ModeChoice,
         whole: SearchSpan,
+        caller: str | None,
     ) -> QueryDocsResult:
         """Resolve the version, rank, load the chunks and pack them, one span per stage.
 
@@ -1513,6 +1519,7 @@ class QueryDocsUseCase:
             ref: The version it names; ``None`` for the default version.
             choice: The retrieval mode it runs in.
             whole: The search's span, told which mode answered.
+            caller: The account asking.
 
         Returns:
             The packed sections of the one version searched.
@@ -1522,6 +1529,9 @@ class QueryDocsUseCase:
             version = await self.versions.find(library, ref)
         if version is None:
             raise VersionNotIndexedError(library, ref or "(default version)")
+        # Only a request that will run counts against the caller's limits.
+        choice = await self.modes.within_budget(choice, library=version.library, caller=caller)
+        mode = choice.mode.value
         with self.tracer.span("query_docs.rank", mode=mode) as rank:
             answer = await self.modes.run(
                 choice,

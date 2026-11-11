@@ -343,7 +343,10 @@ only holds each process's git work folders and `known_hosts`. What changes:
   `ListUnembeddedVersions` leaves such a library out, and bootstrap queues the missing embedding
   again just after each UTC midnight, when the windows reset (`requeue_daily`: a random delay of
   up to five minutes; on PostgreSQL only the process holding a session advisory lock queues,
-  since `EmbeddingQueue` checks and inserts without one atomic step). `exactdocs ai estimate` counts the distinct chunks without a vector
+  since `EmbeddingQueue` checks and inserts without one atomic step). The lock is checked again
+  every night (`RequeueLeader`): a session that failed is closed and a new one opened, and a
+  failed night is logged, so the loop only ends when the server stops. A search uses up its
+  caller's LLM rate limit only once its version resolved. `exactdocs ai estimate` counts the distinct chunks without a vector
   (`VectorIndex.pending`) with their titles at 4 characters per token, priced from the bundled
   `genai-prices` data (a model the instance runs itself, `ollama`, `vllm` or `local`, is never
   priced from another provider's list). An instance without a vector store plans, queues and

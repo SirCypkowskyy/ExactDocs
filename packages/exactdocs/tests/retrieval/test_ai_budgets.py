@@ -801,3 +801,15 @@ async def test_the_in_memory_ledger_forgets_replay_tokens_of_windows_that_are_ov
         ("new", DAY, date(2026, 12, 2)),
         ("new", MONTH, date(2026, 12, 1)),
     }
+
+
+async def test_a_search_of_an_unknown_version_uses_up_no_llm_search() -> None:
+    world = await _build(ModelRole.LLM, budgets=Budgets(llm_searches_per_minute=1))
+
+    for ref in ("v9", "v8"):
+        with pytest.raises(VersionNotIndexedError):
+            await world.module.search_docs(
+                SearchDocsQuery(library=LIB, ref=ref, query="token", mode="agentic"), caller=ADA
+            )
+
+    assert (await _search(world, "agentic"))[:2] == (AGENTIC, None)

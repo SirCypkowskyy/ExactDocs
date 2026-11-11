@@ -7,6 +7,7 @@ configured model, or the server refuses to start.
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -17,13 +18,19 @@ from fastapi import FastAPI
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import SecretStr
+from sqlalchemy import text
 
 from app_lifespan import serving
 from databases import ADMIN_URL
 from exactdocs.bootstrap.ai_models import budgets
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.database import StartupError, open_database
-from exactdocs.bootstrap.embedding import requeue_daily, seconds_to_next_window
+from exactdocs.bootstrap.embedding import (
+    RequeueLeader,
+    requeue_daily,
+    requeue_nightly,
+    seconds_to_next_window,
+)
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import AiSettings, BudgetSettings, Settings
 from exactdocs.identity.dtos import CreateFirstAdminCommand
@@ -320,3 +327,132 @@ async def test_only_one_process_requeues_on_postgresql(on_postgres: object) -> N
     assert all(isinstance(r, NightsOverError) for r in results), results
     assert len(queued) == 2  # two nights, one process each night
     assert len(set(queued)) == 1  # the same one: it keeps the lock
+
+
+@dataclass(slots=True)
+class FakeSession:
+    """A lock session that holds the lock, or fails like a dropped connection."""
+
+    world: FakeDatabase
+    alive: bool = True
+
+    async def holds_lock(self, *, held_before: bool) -> bool:
+        del held_before
+        if not self.alive:
+            message = "server closed the connection unexpectedly"
+            raise ConnectionError(message)
+        return True
+
+    async def close(self) -> None:
+        self.world.closed += 1
+
+
+@dataclass(slots=True)
+class FakeDatabase:
+    sessions: list[FakeSession] = field(default_factory=list)
+    closed: int = 0
+
+    async def open(self) -> FakeSession:
+        session = FakeSession(world=self)
+        self.sessions.append(session)
+        return session
+
+
+async def test_a_dropped_connection_between_nights_is_replaced_and_the_loop_goes_on() -> None:
+    database = FakeDatabase()
+    leader = RequeueLeader(open_session=database.open)
+    queued: list[int] = []
+    waits: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        if len(waits) == 3:
+            raise NightsOverError
+        if len(waits) == 1:
+            database.sessions[-1].alive = False  # PostgreSQL restarted after the first night
+        waits.append(seconds)
+
+    async def queue() -> None:
+        queued.append(len(database.sessions))
+
+    with pytest.raises(NightsOverError):
+        await requeue_nightly(
+            leader=leader, queue=queue, now=lambda: T0, sleep=sleep, jitter=lambda: 0.0
+        )
+
+    assert queued == [1, 2, 2]  # every night queued; the second on a new session
+    assert database.closed == 2  # the dead session, then the live one at the end
+    assert leader.session is None
+
+
+async def test_a_failed_night_is_logged_and_the_next_one_runs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    waits: list[float] = []
+    nights: list[int] = []
+
+    async def queue() -> None:
+        nights.append(1)
+        if len(nights) == 1:
+            message = "database is locked"
+            raise RuntimeError(message)
+
+    with pytest.raises(NightsOverError):
+        await requeue_nightly(
+            leader=None, queue=queue, now=lambda: T0, sleep=_nights(2, waits), jitter=lambda: 0.0
+        )
+
+    assert len(nights) == 2
+    assert "re-queue of embedding failed" in caplog.text
+
+
+async def test_stopping_the_loop_cancels_it_cleanly() -> None:
+    database = FakeDatabase()
+    leader = RequeueLeader(open_session=database.open)
+    started = asyncio.Event()
+
+    async def sleep(seconds: float) -> None:
+        del seconds
+        started.set()
+        await asyncio.Event().wait()
+
+    async def queue() -> None: ...
+
+    task = asyncio.create_task(
+        requeue_nightly(leader=leader, queue=queue, now=lambda: T0, sleep=sleep, jitter=lambda: 0.0)
+    )
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.skipif(ADMIN_URL is None, reason="needs a PostgreSQL server")
+async def test_the_leader_survives_its_session_being_terminated(on_postgres: object) -> None:
+    del on_postgres
+    engine, admin = open_database(Settings()), open_database(Settings())
+    queued: list[int] = []
+    waits: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        if len(waits) == 3:
+            raise NightsOverError
+        if len(waits) == 1:  # the server ends the leader's session between nights
+            async with admin.connect() as connection:
+                await connection.execute(
+                    text(
+                        "SELECT pg_terminate_backend(pid) FROM pg_locks "
+                        "WHERE locktype = 'advisory' AND pid <> pg_backend_pid()"
+                    )
+                )
+                await connection.commit()
+        waits.append(seconds)
+
+    async def queue() -> None:
+        queued.append(1)
+
+    with pytest.raises(NightsOverError):
+        await requeue_daily(engine=engine, queue=queue, sleep=sleep, jitter=lambda: 0.0)
+    for each in (engine, admin):
+        await each.dispose()
+
+    assert len(queued) == 3
