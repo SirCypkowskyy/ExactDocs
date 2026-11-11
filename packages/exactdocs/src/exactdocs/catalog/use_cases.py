@@ -41,9 +41,12 @@ from exactdocs.catalog.dtos import (
     GetArticleQuery,
     GetArticleTitlesQuery,
     GetAssetQuery,
+    GetInstructionFilesQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
     GetVersionTagsQuery,
+    InstructionFileOut,
+    InstructionFiles,
     LibraryDetail,
     LibraryList,
     ListArticlesQuery,
@@ -97,6 +100,7 @@ from exactdocs.catalog.models import (
     ManifestEntry,
     ManifestId,
     ManifestImage,
+    ManifestInstruction,
     ManifestRename,
     ManualTags,
     ParsedId,
@@ -110,6 +114,7 @@ from exactdocs.catalog.models import (
 from exactdocs.catalog.ports.driven import (
     ArticleTitleFinder,
     ImportedTagWriter,
+    InstructionFileReader,
     LibraryRepository,
     ManifestCopier,
     ManifestRepository,
@@ -395,6 +400,10 @@ class StoreManifestUseCase:
                     ),
                     key=lambda image: image.path,
                 )
+            ),
+            instructions=tuple(
+                ManifestInstruction(path=i.path, content=i.content)
+                for i in sorted(command.instructions, key=lambda i: i.path)
             ),
         )
         contents: dict[ContentKey, str] = {}
@@ -892,6 +901,31 @@ class GetArticleTitlesUseCase:
         """
         titles = await self.titles.titles(ManifestId(query.manifest_id), query.paths)
         return ArticleTitles(titles=dict(titles))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GetInstructionFilesUseCase:
+    """Implements ``ports.driving.GetInstructionFiles``."""
+
+    reader: InstructionFileReader
+    """Reads the manifest's instruction files."""
+
+    async def __call__(self, query: GetInstructionFilesQuery) -> InstructionFiles:
+        """Read the files kept with the manifest.
+
+        Args:
+            query: The manifest.
+
+        Returns:
+            Its files, sorted by path; none for an unknown manifest.
+        """
+        found = await self.reader.list_instructions(ManifestId(query.manifest_id))
+        return InstructionFiles(
+            files=[
+                InstructionFileOut(path=f.path, content=f.content)
+                for f in sorted(found, key=lambda f: f.path)
+            ]
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

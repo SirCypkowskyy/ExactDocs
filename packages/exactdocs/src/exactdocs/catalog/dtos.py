@@ -18,6 +18,8 @@ from exactdocs.catalog.constants import (
     _PINNED,
     DEFAULT_GRACE_SECONDS,
     MAX_DESCRIPTION,
+    MAX_INSTRUCTION_FILE_CHARS,
+    MAX_INSTRUCTION_FILES,
     MAX_LIBRARY_RULE_CHARS,
     MAX_LIBRARY_RULES,
     MAX_STORED_ARTICLE_FILES,
@@ -303,6 +305,15 @@ class ImageIn(_Dto):
     data: bytes = Field(repr=False)
 
 
+class InstructionFileIn(_Dto):
+    """An instruction file of the commit (`AGENTS.md` / `CLAUDE.md`), kept with the manifest."""
+
+    path: str = Field(min_length=1, max_length=MAX_PATH)
+    """Repository-relative."""
+    content: str = Field(max_length=MAX_INSTRUCTION_FILE_CHARS, repr=False)
+    """Its text; untrusted repository content."""
+
+
 class StoreManifestCommand(_Dto):
     """Store the articles of `ref` at `commit_sha` as a new, pending manifest."""
 
@@ -319,6 +330,8 @@ class StoreManifestCommand(_Dto):
     """Files moved since an earlier version; kept and replaced with the manifest."""
     origin: VersionOrigin = Field(default=VersionOrigin.MANUAL)
     """Given to the version if this manifest's activation creates it."""
+    instructions: list[InstructionFileIn] = Field(default=[], max_length=MAX_INSTRUCTION_FILES)
+    """The commit's instruction files, kept for agentic retrieval (only with repo guidance on)."""
 
 
 class StoredManifest(_Dto):
@@ -813,6 +826,29 @@ class GetArticleTitlesQuery(_Dto):
     """The manifest (any state)."""
     paths: list[str]
     """The article paths."""
+
+
+class GetInstructionFilesQuery(_Dto):
+    """Ask for the instruction files kept with one manifest."""
+
+    manifest_id: str = Field(min_length=1)
+    """The manifest (any state)."""
+
+
+class InstructionFileOut(_Dto):
+    """An instruction file kept with a manifest; untrusted repository text."""
+
+    path: str
+    """Repository-relative."""
+    content: str = Field(repr=False)
+    """Its text."""
+
+
+class InstructionFiles(_Dto):
+    """The instruction files kept with a manifest, by path; none for an unknown manifest."""
+
+    files: list[InstructionFileOut]
+    """Sorted by path."""
 
 
 class ArticleTitles(_Dto):

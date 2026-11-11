@@ -92,10 +92,10 @@ from exactdocs.retrieval.models import (
     SearchableVersion,
     SourceHost,
     SpendWindow,
+    estimated_tokens,
     judge_id,
     judge_max_tokens,
     judge_prompt,
-    judge_tokens,
     judge_window,
     judged_scores,
     pick_reranker,
@@ -942,7 +942,7 @@ def test_each_non_ascii_character_counts_as_at_least_one_token() -> None:
 
     window, _ = _sent_prompt(CJK)
 
-    assert judge_tokens(text) >= len(text)
+    assert estimated_tokens(text) >= len(text)
     assert window > 0
     assert window * MAX_JUDGE_DOCUMENT_CHARS <= JUDGE_INPUT_TOKEN_BUDGET
 

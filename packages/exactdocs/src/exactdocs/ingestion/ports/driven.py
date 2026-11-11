@@ -21,6 +21,7 @@ from exactdocs.ingestion.models import (
     ImportedRef,
     ImportedVersion,
     ImportSource,
+    InstructionPolicy,
     Job,
     JobId,
     NewLibrary,
@@ -225,6 +226,42 @@ class GitGateway(Protocol):
         ...
 
 
+class RepositoryFiles(Protocol):
+    """Read a few files of one commit by path, each on its own (the instruction files, RET-08)."""
+
+    async def read_files(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        paths: Sequence[str],
+        *,
+        max_bytes: int,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> Mapping[str, FetchedFile]:
+        """Read these literal repository paths of ``commit_sha``, at most ``max_bytes`` each.
+
+        Only the commit's trees are fetched, then each existing file's blob. A path the commit
+        does not have is left out. One that is too big, not a regular file, or a link that does
+        not lead (in one hop, inside the repository) to a regular file has a ``problem`` and a
+        ``code``, and the others are still read; a link that does is read as its target. Runs
+        under an import's fetch slot. ``refs`` and ``credential`` are as in ``GitGateway.fetch``;
+        raises what it raises.
+
+        Args:
+            repository: The repository.
+            commit_sha: The pinned commit.
+            paths: Literal repository paths.
+            max_bytes: The most one file may be.
+            refs: Full ref names to try when a bare SHA is refused.
+            credential: The library's credential, if any.
+
+        Returns:
+            What was found, by path; a path the commit does not have is left out.
+        """
+        ...
+
+
 class RenameSource(Protocol):
     """Ask git which files were moved between two commits, cheaply."""
 
@@ -408,6 +445,21 @@ class ImportedTagStore(Protocol):
         Only what differs is written; manual tags are kept. Returns every tag (imported and
         manual) of each given article the manifest has, changed or not: the chunk index must
         get the same.
+        """
+        ...
+
+
+class GuidancePolicy(Protocol):
+    """Whether a library keeps its instruction files (retrieval's repo guidance, RET-08)."""
+
+    async def instruction_policy(self, library: str) -> InstructionPolicy:
+        """Say whether imports of the library keep its ``AGENTS.md`` / ``CLAUDE.md`` files.
+
+        Args:
+            library: ``/owner/repo``, any letter case.
+
+        Returns:
+            ``KEEP`` when the library's repo guidance is on; ``DROP`` (the default) otherwise.
         """
         ...
 

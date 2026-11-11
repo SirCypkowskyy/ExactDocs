@@ -9206,6 +9206,11 @@
           "budgets": {
             "$ref": "#/components/schemas/LibraryBudgets",
             "description": "The library's own spend limits per UTC day and month. Each may be at most the instance's\n(`budget_ceilings` of the response; 422 `budget_above_instance` otherwise); the tighter of\nthe two applies. None by default."
+          },
+          "repo_guidance": {
+            "$ref": "#/components/schemas/RepoGuidance",
+            "description": "What the repository's `AGENTS.md` / `CLAUDE.md` do for agentic retrieval. `off` (the\ndefault): imports keep none. `notes`: each version keeps the root's and the selected\nfolders' files, even outside the selected paths, and a folder's file reaches the agent as an\nuntrusted user-channel note when it opens that folder. `trusted`: as `notes`, and the root's\nfile is also part of the agent's system instructions; only for a repository whose content you\ntrust as much as your own instructions. Turning it on queues a `reprocess` of the library\n(every version re-imported at its commit, so it keeps its files); the other changes apply at\nthe next search.",
+            "default": "off"
           }
         },
         "additionalProperties": false,
@@ -9366,6 +9371,11 @@
           "budget_ceilings": {
             "$ref": "#/components/schemas/LibraryBudgets",
             "description": "The most each of the library's own limits may be (the instance's limits); null: any."
+          },
+          "repo_guidance": {
+            "$ref": "#/components/schemas/RepoGuidance",
+            "description": "What the repository's `AGENTS.md` / `CLAUDE.md` do for agentic retrieval: `off` (kept by\nno import), `notes` (each version keeps them; a folder's file reaches the agent as a\nuser-channel note when it opens the folder) or `trusted` (also the root's file as system\ninstructions). Turning it on re-imports the library's versions (a `reprocess` job) so they\nkeep their files; the other changes apply at the next search.",
+            "default": "off"
           }
         },
         "additionalProperties": false,
@@ -9388,7 +9398,8 @@
           "instance_rerank_with",
           "effective_reranker",
           "budgets",
-          "budget_ceilings"
+          "budget_ceilings",
+          "repo_guidance"
         ],
         "title": "LibraryRetrievalOut",
         "description": "A library's retrieval setting and the mode its searches use now when a call names none."
@@ -10318,7 +10329,8 @@
           "image_budget",
           "missing_image",
           "truncated",
-          "context7"
+          "context7",
+          "instruction_files"
         ],
         "title": "ProblemCode",
         "description": "Why a file shows up in a job's problems; stable, clients may branch on it."
@@ -11010,6 +11022,16 @@
         ],
         "title": "RenamedPath",
         "description": "`old_path` of version `from_ref` is `new_path` in `ref`, as git saw it."
+      },
+      "RepoGuidance": {
+        "type": "string",
+        "enum": [
+          "off",
+          "notes",
+          "trusted"
+        ],
+        "title": "RepoGuidance",
+        "description": "What a library's ``AGENTS.md`` / ``CLAUDE.md`` files do for agentic retrieval (RET-08).\n\nThe files are repository content, so untrusted: they become system instructions only when\nthe owner says the library is trusted."
       },
       "RepositoryHost": {
         "type": "string",

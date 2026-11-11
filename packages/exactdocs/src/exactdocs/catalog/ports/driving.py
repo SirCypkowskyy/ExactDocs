@@ -26,9 +26,11 @@ from exactdocs.catalog.dtos import (
     GetArticleQuery,
     GetArticleTitlesQuery,
     GetAssetQuery,
+    GetInstructionFilesQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
     GetVersionTagsQuery,
+    InstructionFiles,
     LibraryDetail,
     LibraryList,
     ListArticlesQuery,
@@ -224,6 +226,21 @@ class GetArticleTitles(Protocol):
 
         Returns:
             The titles found.
+        """
+        ...
+
+
+class GetInstructionFiles(Protocol):
+    """Read the instruction files kept with a manifest, for domains that hold its ID (RET-08)."""
+
+    async def __call__(self, query: GetInstructionFilesQuery) -> InstructionFiles:
+        """Run the use case.
+
+        Args:
+            query: The manifest.
+
+        Returns:
+            Its instruction files, sorted by path.
         """
         ...
 

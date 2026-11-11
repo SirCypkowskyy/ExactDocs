@@ -50,6 +50,7 @@ import asyncio
 import json
 import math
 import os
+import posixpath
 import re
 import shlex
 import shutil
@@ -62,7 +63,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Self
+from typing import Never, Self
 from urllib.parse import urlsplit
 
 from exactdocs.ingestion.constants import (
@@ -93,13 +94,17 @@ from exactdocs.ingestion.constants._git import (
     _COMMIT,
     _CONFIG,
     _DRAIN_SECONDS,
+    _ENTRY_FIELDS,
+    _FILE_MODES,
     _GIT_OVERHEAD,
     _GONE,
     _HEADS,
     _HOST_KEY_CHANGED,
     _KEY_FILE,
     _KEYGEN_SECONDS,
+    _LINK_MODE,
     _MAX_BRACE_EXPANSIONS,
+    _MAX_LINK_BYTES,
     _MAX_STEP_OUTPUT,
     _NO_CONNECTION,
     _NOT_A_REPO,
@@ -134,6 +139,7 @@ from exactdocs.ingestion.models import (
     FetchedFile,
     GitRename,
     PathSelection,
+    ProblemCode,
     RemoteRef,
     RemoteRefs,
     RepositoryUrl,
@@ -487,6 +493,60 @@ class GitCli:
                 raise _failure(data.stderr, ssh=trees.ssh)
             return FetchedFile(data=data.stdout)
 
+    async def read_files(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        paths: Sequence[str],
+        *,
+        max_bytes: int,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> dict[str, FetchedFile]:
+        """Implement ``RepositoryFiles.read_files``: the trees, then each file's blob on its own.
+
+        Under one of the imports' ``fetch_slots``. One ``ls-tree`` names every path's entry; a
+        regular file's blob is read with ``cat-file``, capped at ``max_bytes`` (a bigger one is
+        cut off while it downloads and reported, the others are still read). A symlink is
+        followed one hop to a regular file inside the repository (its target's text under the
+        link's path); a link that leads out, to a link, a folder or nothing is reported.
+
+        Args:
+            repository: The repository.
+            commit_sha: The pinned commit.
+            paths: Literal repository paths.
+            max_bytes: The most one file may be.
+            refs: Full ref names to try when a bare SHA is refused.
+            credential: The library's credential, if any.
+
+        Returns:
+            What was found, by path; a path the commit does not have is left out.
+        """
+        literal = [f":(literal){p}" for p in paths if p and p.isprintable()]
+        if not literal:
+            return {}
+        async with self._trees(repository, commit_sha, refs, credential, imports=True) as trees:
+            entries = await _entries(trees, commit_sha, literal)
+            found: dict[str, FetchedFile] = {}
+            for path in paths:
+                entry = entries.get(path)
+                if entry is None:
+                    continue
+                mode, blob = entry
+                if mode == _LINK_MODE:
+                    target = await _link_target(trees, commit_sha, path, blob)
+                    if isinstance(target, FetchedFile):
+                        found[path] = target
+                        continue
+                    mode, blob = target
+                if mode not in _FILE_MODES:
+                    found[path] = FetchedFile(
+                        problem="not a regular file", code=ProblemCode.NOT_A_FILE
+                    )
+                    continue
+                found[path] = await _blob(trees, blob, max_bytes)
+            return found
+
     @asynccontextmanager
     async def _trees(
         self,
@@ -494,8 +554,12 @@ class GitCli:
         commit_sha: str,
         refs: Sequence[str],
         credential: Credential | None,
+        *,
+        imports: bool = False,
     ) -> AsyncGenerator[_Trees]:
-        """Hold a preview slot and fetch the commit and its trees, no blob, into a fresh folder.
+        """Hold a slot and fetch the commit and its trees, no blob, into a fresh folder.
+
+        A preview slot, or with ``imports`` one of the imports' ``fetch_slots``.
 
         Yields:
             The fetched folder (removed afterwards) and how to run git in it.
@@ -508,7 +572,7 @@ class GitCli:
             or not all(_valid_ref(ref) for ref in refs)
         ):
             raise InvalidRepositoryUrlError(UrlProblem.GIT_OPTION)
-        async with self._preview_slot():
+        async with self.fetch_slots if imports else self._preview_slot():
             if self.work_root is not None:
                 await asyncio.to_thread(self.work_root.mkdir, parents=True, exist_ok=True)
             folder = Path(await asyncio.to_thread(_make_folder, self.work_root))
@@ -788,6 +852,123 @@ class MissingGit:
         """Refuse with ``GitNotInstalledError``."""
         del repository, commit_sha, paths, max_bytes, refs, credential
         return _no_git()
+
+    async def read_files(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        paths: Sequence[str],
+        *,
+        max_bytes: int,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> dict[str, FetchedFile]:
+        """Refuse with ``GitNotInstalledError``.
+
+        Args:
+            repository: The repository.
+            commit_sha: The pinned commit.
+            paths: Literal repository paths.
+            max_bytes: The most one file may be.
+            refs: Full ref names to try when a bare SHA is refused.
+            credential: The library's credential, if any.
+
+        Returns:
+            Never: ``_git_missing`` raises.
+        """
+        del repository, commit_sha, paths, max_bytes, refs, credential
+        return await _git_missing()
+
+
+async def _entries(
+    trees: _Trees, commit_sha: str, literal: Sequence[str]
+) -> dict[str, tuple[str, str]]:
+    """List the tree entries of literal paths: ``(mode, blob SHA)`` by path, blobs only.
+
+    Args:
+        trees: The blob-less fetch.
+        commit_sha: The commit.
+        literal: ``:(literal)`` pathspecs.
+
+    Returns:
+        The entries found; git's own failure raises as ``_failure`` says.
+    """
+    out = await trees.git("ls-tree", "-z", "--full-tree", commit_sha, "--", *literal)
+    if out.code:
+        raise _failure(out.stderr, ssh=trees.ssh)
+    found: dict[str, tuple[str, str]] = {}
+    for entry in out.stdout.split(b"\0"):
+        head, _, path = entry.partition(b"\t")
+        parts = head.decode(errors="replace").split()
+        if path and len(parts) == _ENTRY_FIELDS and parts[1] == "blob":
+            found[path.decode(errors="replace")] = (parts[0], parts[2])
+    return found
+
+
+async def _link_target(
+    trees: _Trees, commit_sha: str, path: str, blob: str
+) -> tuple[str, str] | FetchedFile:
+    """Follow a symlink one hop, inside the repository only.
+
+    Args:
+        trees: The blob-less fetch.
+        commit_sha: The commit.
+        path: The link's path.
+        blob: The link's blob (its target, as text).
+
+    Returns:
+        The target's ``(mode, blob SHA)``, or why the link is not followed.
+    """
+    text = await _blob(trees, blob, _MAX_LINK_BYTES)
+    refused = FetchedFile(problem="a link that leads nowhere usable", code=ProblemCode.NOT_A_FILE)
+    if text.data is None:
+        return refused
+    target_text = text.data.decode(errors="replace")
+    target = posixpath.normpath(posixpath.join(posixpath.dirname(path), target_text))
+    parts = target.split("/")
+    if (
+        target_text.startswith("/")
+        or not target_text.isprintable()
+        or parts[0] in {"..", "."}
+        or any(p.lower() == ".git" for p in parts)
+    ):
+        return refused
+    found = (await _entries(trees, commit_sha, [f":(literal){target}"])).get(target)
+    if found is None or found[0] not in _FILE_MODES:
+        return refused
+    return found
+
+
+async def _blob(trees: _Trees, blob: str, max_bytes: int) -> FetchedFile:
+    """Read one blob, capped at ``max_bytes`` (download included).
+
+    Args:
+        trees: The blob-less fetch.
+        blob: The blob's SHA.
+        max_bytes: The most it may be.
+
+    Returns:
+        Its bytes, or why not.
+    """
+    used, _ = await asyncio.to_thread(_measure, trees.folder)
+    try:
+        data = await trees.git(
+            "cat-file", "blob", blob, cap=max_bytes, watch_bytes=used + max_bytes + _GIT_OVERHEAD
+        )
+    except _OutputTooBigError, RepositoryTooLargeError:
+        return FetchedFile(problem=f"larger than {max_bytes} bytes", code=ProblemCode.TOO_LARGE)
+    if data.code:
+        raise _failure(data.stderr, ssh=trees.ssh)
+    return FetchedFile(data=data.stdout)
+
+
+async def _git_missing() -> Never:
+    """Refuse: there is no ``git``.
+
+    Raises:
+        GitNotInstalledError: Always.
+    """
+    raise GitNotInstalledError
 
 
 @asynccontextmanager

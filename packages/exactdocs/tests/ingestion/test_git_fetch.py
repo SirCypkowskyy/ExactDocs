@@ -27,6 +27,7 @@ from exactdocs.ingestion.errors import (
 from exactdocs.ingestion.models import (
     FetchedFile,
     PathSelection,
+    ProblemCode,
     ProposedId,
     RepositoryHost,
     RepositoryUrl,
@@ -724,3 +725,54 @@ async def test_only_a_plain_root_name_can_be_read(
         await gateway.read_file(
             repository(docs_repo.file_url), sha(docs_repo, "next"), path, max_bytes=99
         )
+
+
+# --- instruction files (RET-08): read one by one, links followed one hop inside the repo ---
+
+
+def _linked_repo(tmp_path: Path) -> tuple[Path, str]:
+    source = tmp_path / "links"
+    source.mkdir()
+    git("init", "-q", "-b", "main", cwd=source)
+    (source / "CLAUDE.md").write_text("Root notes.\n")
+    (source / "AGENTS.md").symlink_to("CLAUDE.md")  # a common layout
+    (source / "docs" / "guide").mkdir(parents=True)
+    (source / "docs" / "guide" / "AGENTS.md").symlink_to("../../CLAUDE.md")
+    (source / "docs" / "CLAUDE.md").symlink_to("../../outside/CLAUDE.md")
+    (source / "docs" / "AGENTS.md").symlink_to("/etc/passwd")
+    (source / "big").mkdir()
+    (source / "big" / "AGENTS.md").write_text("x" * 5000)
+    (source / "big" / "CLAUDE.md").write_text("Small one.\n")
+    (source / "loop").mkdir()
+    (source / "loop" / "AGENTS.md").symlink_to("CLAUDE.md")
+    (source / "loop" / "CLAUDE.md").symlink_to("AGENTS.md")
+    git("add", ".", cwd=source)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x", cwd=source)
+    return source, git("rev-parse", "HEAD", cwd=source)
+
+
+async def test_instruction_files_are_read_one_by_one_and_links_resolve_inside_the_repo(
+    tmp_path: Path, gateway: GitCli, work: Path
+) -> None:
+    source, head = _linked_repo(tmp_path)
+    wanted = [
+        "AGENTS.md", "CLAUDE.md", "docs/AGENTS.md", "docs/CLAUDE.md", "docs/guide/AGENTS.md",
+        "big/AGENTS.md", "big/CLAUDE.md", "loop/AGENTS.md", "nope/AGENTS.md",
+    ]  # fmt: skip
+
+    found = await gateway.read_files(repository(source.as_uri()), head, wanted, max_bytes=1000)
+
+    root = FetchedFile(data=b"Root notes.\n")
+    assert found["AGENTS.md"] == root  # the target's text, never the link's ("CLAUDE.md")
+    assert found["CLAUDE.md"] == root
+    assert found["docs/guide/AGENTS.md"] == root
+    refused = FetchedFile(problem="a link that leads nowhere usable", code=ProblemCode.NOT_A_FILE)
+    assert found["docs/CLAUDE.md"] == refused  # out of the repository
+    assert found["docs/AGENTS.md"] == refused  # absolute
+    assert found["loop/AGENTS.md"] == refused  # a link to a link: one hop only
+    assert found["big/AGENTS.md"] == FetchedFile(
+        problem="larger than 1000 bytes", code=ProblemCode.TOO_LARGE
+    )
+    assert found["big/CLAUDE.md"] == FetchedFile(data=b"Small one.\n")  # the others are kept
+    assert "nope/AGENTS.md" not in found
+    assert leftovers(work) == []

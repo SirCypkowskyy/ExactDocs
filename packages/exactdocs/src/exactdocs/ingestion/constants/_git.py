@@ -193,5 +193,13 @@ _NOT_A_REPO: Final[re.Pattern[str]] = re.compile(
     r"does not appear to be a git repository|repository (?:'[^']*' )?not found|error: 404\b"
 )
 """Git errors that mean the URL is not a git repository."""
+_LINK_MODE: Final[str] = "120000"
+"""A symlink's tree mode."""
+_FILE_MODES: Final[frozenset[str]] = frozenset({"100644", "100755"})
+"""A regular file's tree modes."""
+_ENTRY_FIELDS: Final[int] = 3
+"""``ls-tree``'s fields before the tab: mode, type, object."""
+_MAX_LINK_BYTES: Final[int] = 1024
+"""The longest link target followed."""
 _GIT_OVERHEAD: Final[int] = 4 * 2**20
 """.git of a one-commit, blob-less fetch: trees, refs, config."""

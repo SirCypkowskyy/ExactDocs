@@ -1132,7 +1132,7 @@ by default); the judge reranks only when chosen and its role resolves (`judge`, 
 else the cross-encoder does when there is one (`ModeChoice.reranker`). `Reranking` then hands the
 best of the same candidates that fit one bounded call (`models.judge_window`: at most
 `JUDGE_MAX_CANDIDATES`, 64, while the input, the text as cut and escaped and estimated by
-`models.judge_tokens` (ASCII at `CHARS_PER_TOKEN` per token, every other character as a token,
+`models.estimated_tokens` (ASCII at `CHARS_PER_TOKEN` per token, every other character as a token,
 since CJK runs at about one token per character), stays within `JUDGE_INPUT_TOKEN_BUDGET`,
 22,000, whose headroom covers ASCII code with escaped entities at about 1.7 characters per token
 together with the largest output cap under the step's `LLM_TOKEN_LIMIT`: pydantic-ai checks that limit only after a request, so a larger prompt would be
@@ -1226,6 +1226,31 @@ own recorder, which is where every agentic run is checked against the version as
 `include_content=False` (the factory's, or wrapped there), so the agent run, its model requests and
 its tool calls get spans (the read calls nested in `run_code`) and `gen_ai.client.token.usage`,
 without content.
+
+**Repo guidance (#101).** A library's `LibraryAi.repo_guidance` (`off`, `notes`, `trusted`) decides
+what its `AGENTS.md` / `CLAUDE.md` files do. Ingestion asks through its `GuidancePolicy` port
+(bootstrap's `RetrievalGuidancePolicy`, over `GetLibraryRetrieval`) in the import step "fetch the
+instruction files": with `KEEP`, the root's and every selected file's folder's files
+(`instruction_candidates`, also outside the selection) are read one by one through the
+`RepositoryFiles` port (`GitCli.read_files`: the trees, then each blob capped at 32 KiB; a symlink
+is followed one hop inside the repository, else refused; an oversized file is a job problem and
+the others are kept) and travel in
+`ImportedVersion.instructions` to the catalog, which keeps them per manifest
+(`catalog_manifest_instructions`, copied with a re-chunk, deleted with the manifest). The
+`AgenticPipeline` reads the searched manifest's files through the `InstructionFiles` port
+(bootstrap's `CatalogInstructionFiles`, over `GetInstructionFiles`), bounds and defuses them
+(`GuidanceFiles.of`: at most `MAX_GUIDANCE_FILES` / `MAX_GUIDANCE_CHARS`, NFKC, control and
+default-ignorable characters dropped, every `<` / `>` and lookalike written `&lt;` / `&gt;`) and passes them in `AgentRun.guidance`. `ai_guidance_sdk.py` gives
+the agent harness `RepoContext` over `GuidanceBackend`, an in-memory, read-only workspace backend
+holding only those files: nested traversal always (a folder's file as a user-channel note once the
+agent opens it; `Traversals` emits the harness's filesystem events after each read tool), walk-up
+autoload (the root's file in the system instructions) only for `trusted`. The tools, the browser
+and `AgentBounds` are set before the run, so a file can change none of them. RepoContext listens to
+the run's events, so a run with guidance streams its model requests; its model is wrapped in
+`UsageFloor`, which counts each side of a streamed response as at least 4 characters per token,
+so a server that reports no usage cannot switch off `UsageLimits` or the budgets. Turning
+guidance on for a library already imported is bootstrap's `SetRetrievalThenReprocess` (the REST
+setting): it queues a `reprocess`, which re-imports every version at its commit.
 
 Later modes plug in as pipelines; their models come through the ports below. The `[ai]`
 extra is declared and installed for development; the model-free test proves none of it is imported.

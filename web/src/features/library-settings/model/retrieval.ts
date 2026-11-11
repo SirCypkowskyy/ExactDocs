@@ -14,6 +14,23 @@ export const RERANK_WITH_LABEL: Record<RerankWith, string> = {
   judge: "LLM judge",
 };
 
+export type RepoGuidance = components["schemas"]["RepoGuidance"];
+
+/** What the repository's AGENTS.md / CLAUDE.md do for the agent, in the order of trust. */
+export const REPO_GUIDANCE: readonly { value: RepoGuidance; label: string; hint: string }[] = [
+  { value: "off", label: "Off", hint: "Imports keep no instruction file." },
+  {
+    value: "notes",
+    label: "Untrusted notes",
+    hint: "Each version keeps its AGENTS.md / CLAUDE.md files; the agent gets a folder's file as a note when it opens that folder, never as instructions.",
+  },
+  {
+    value: "trusted",
+    label: "Trusted instructions",
+    hint: "As notes, and the root file also becomes part of the agent's instructions. Only for a repository you trust as much as your own instructions.",
+  },
+];
+
 /** The roles a library may override. Never the embedding model: one per instance. */
 export const OVERRIDABLE = ["llm", "judge", "reranker"] as const;
 export type OverridableRole = (typeof OVERRIDABLE)[number];
@@ -73,6 +90,15 @@ export function modeSource(r: LibraryRetrieval): string {
 /** The steps the effective pipeline runs, the reranker or the LLM judge last when one reranks. */
 export function pipelineSteps(r: LibraryRetrieval): string[] {
   const steps = [...MODE_STEPS[r.effective_mode]];
+  if (r.effective_mode === "agentic" && r.repo_guidance !== "off") {
+    steps.splice(
+      1,
+      0,
+      r.repo_guidance === "trusted"
+        ? "The repository's root AGENTS.md / CLAUDE.md is part of its instructions; a folder's is a note when it opens it"
+        : "A folder's AGENTS.md / CLAUDE.md reaches it as an untrusted note when it opens the folder",
+    );
+  }
   const top = r.effective_rerank_top_n;
   if (r.effective_reranker === "cross_encoder") {
     steps.push(`The reranker reorders the best ${top}`);
@@ -125,13 +151,16 @@ export interface RetrievalDraft {
   rerankTopN: string;
   /** `""`: the instance's choice. */
   rerankWith: "" | RerankWith;
+  repoGuidance: RepoGuidance;
   dailyUsd: string;
   monthlyUsd: string;
   dailyTokens: string;
   monthlyTokens: string;
 }
 
-export type DraftErrors = Partial<Record<Exclude<keyof RetrievalDraft, "aiEnabled">, string>>;
+export type DraftErrors = Partial<
+  Record<Exclude<keyof RetrievalDraft, "aiEnabled" | "repoGuidance">, string>
+>;
 
 const roleDraft = (ref: string | null): RoleDraft => {
   if (!ref) return { profile: "", model: "" };
@@ -151,6 +180,7 @@ export function retrievalDraftOf(r: LibraryRetrieval): RetrievalDraft {
     reranker: roleDraft(r.reranker),
     rerankTopN: text(r.rerank_top_n),
     rerankWith: r.rerank_with ?? "",
+    repoGuidance: r.repo_guidance,
     dailyUsd: text(b.daily_usd),
     monthlyUsd: text(b.monthly_usd),
     dailyTokens: text(b.daily_tokens),
@@ -171,6 +201,7 @@ export function bodyOf(d: RetrievalDraft): LibraryRetrievalBody {
     reranker: ref(d.reranker),
     rerank_top_n: num(d.rerankTopN),
     rerank_with: d.rerankWith || null,
+    repo_guidance: d.repoGuidance,
     budgets: {
       daily_usd: num(d.dailyUsd),
       monthly_usd: num(d.monthlyUsd),
