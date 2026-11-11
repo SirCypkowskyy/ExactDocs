@@ -52,6 +52,7 @@ const MODE_ROLES: Record<RetrievalMode, readonly ModelRole[]> = {
 const FALLBACK_WORDS: Partial<Record<FallbackReason, string>> = {
   agent_limit_reached: "The agent ran past its limits, so a cheaper mode answered.",
   agent_failed: "The agent could not finish, so a cheaper mode answered.",
+  agent_loop_detected: "The agent kept repeating the same call, so a cheaper mode answered.",
   mode_unavailable: "The mode set for it can't run now: a model role it needs is not configured.",
   vector_store_unavailable: "The vector store can't be loaded, so the vector modes are off.",
 };

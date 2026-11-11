@@ -1183,13 +1183,16 @@ builds its model through `AiProviders.model_for` and runs the `Explorer` driven 
 (retrieval's implementation of the `DocsBrowser` port: `list_articles`, `article_outline`,
 `read_article`, `read_chunk`, `search_docs`), bound to the request's `SearchableVersion`: chunks,
 outlines and BM25 come from its manifest, articles from the `VersionArticles` port (bootstrap's
-`CatalogVersionArticles`, which drops a catalog answer from any other manifest). The browser
+`CatalogVersionArticles`; each answer names the manifest the catalog served it from, and the
+browser drops one from any other manifest). The browser and the call's tag filter are the
+caller's access scope: it is the agent's `deps`, never a tool argument. The browser
 records each call as a step and the first step that reached each article, which becomes a result's
 `explored_path`. The agent's picks are looked up in the pinned manifest under the tag filter, so a
 chunk of another version or a made-up ID is dropped (the wrong-version guarantee does not rest on
 the model). A run that stops raises `AgentStoppedError(reason)`; `RetrievalModes.run` answers it
 with `ModeChoice.without_llm(reason)` (BM25, or hybrid), keeping the agent's reason first
-(`agent_limit_reached`, `llm_budget_reached`, `agent_failed`). The pydantic-ai adapter is split
+(`agent_limit_reached`, `llm_budget_reached`, `agent_loop_detected`, `agent_failed`). The
+pydantic-ai adapter is split
 like the embedding one: `adapters/driven/ai_explorer.py` imports nothing of `[ai]` and loads
 `ai_explorer_sdk.py` at the first agentic search. That module runs a pydantic-ai `Agent` with the
 browser as `deps` (never a tool argument), harness `CodeMode` around the five read tools (typed
@@ -1202,7 +1205,21 @@ hands a tripped Monty limit back to the model as a retry; `_RunEnders` (a capabi
 `run_code` call) turns it into the end of the run instead. A read that raises on the host is
 recorded by class in the agent's `deps` and the sandbox sees only the fixed `READ_FAILED`, so no
 SQL, DSN or path reaches the model; `_RunEnders` then ends the run (`agent_failed`), even when the
-snippet caught the error. The browser applies the call's tag filter to every read, and
+snippet caught the error. The guardrails of #99: `_RunEnders` also counts every call by tool
+name and a hash of its arguments (pydantic-ai-harness 0.60.0 has no loop detection); the
+`max_repeated_calls`-th identical call (3 by default) ends the run with `agent_loop_detected`, a
+repeated `run_code` before it runs, a repeated read by raising the fixed `REPEATED_CALL` into the
+sandbox (so do the reads after it) and ending the run when the snippet returns. A loop whose
+arguments change each time escapes the hash; it is bounded by Code Mode's per-snippet
+`max_tool_calls` and `UsageLimits.tool_calls_limit`, and ends with `agent_limit_reached`. The harness
+`OutputGuardrail` runs `DocsBrowser.admit` on the answer and replaces it with the admitted picks
+only (a host error in that check ends the run as `agent_failed`); the pipeline's own check after
+it stays, so the guarantee holds whatever the adapter does. Each read is also recorded through
+the `AgentReads` port as an `AgentRead` (the version and manifest it was bound to, and those of
+what it served; never its argument or the text): bootstrap wires the OpenTelemetry adapter
+(an `exactdocs.agent.read` event on the read's span) when telemetry is on, and the eval suite its
+own recorder, which is where every agentic run is checked against the version asked for
+(docs/evals.md). The browser applies the call's tag filter to every read, and
 `explored_path` and `justification` go through `models.model_text` (no control characters, cut). The model is instrumented with
 `include_content=False` (the factory's, or wrapped there), so the agent run, its model requests and
 its tool calls get spans (the read calls nested in `run_code`) and `gen_ai.client.token.usage`,

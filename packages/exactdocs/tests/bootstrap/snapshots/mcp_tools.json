@@ -1347,7 +1347,8 @@
                 "reranker_timeout",
                 "reranker_failed",
                 "agent_limit_reached",
-                "agent_failed"
+                "agent_failed",
+                "agent_loop_detected"
               ],
               "type": "string"
             },

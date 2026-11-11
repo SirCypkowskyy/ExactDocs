@@ -27,6 +27,7 @@ from exactdocs.bootstrap.constants import (
     SETTINGS_FILE_VARIABLE,
 )
 from exactdocs.retrieval.constants import (
+    DEFAULT_AGENT_REPEATED_CALLS,
     DEFAULT_AGENT_REQUESTS,
     DEFAULT_AGENT_TIMEOUT,
     DEFAULT_AGENT_TOKENS,
@@ -40,6 +41,7 @@ from exactdocs.retrieval.constants import (
     DEFAULT_SANDBOX_SECONDS,
     DEFAULT_SANDBOX_SUSPENSIONS,
     HYDE_CACHE_TTL_DAYS,
+    MAX_AGENT_REPEATED_CALLS,
     MAX_AGENT_REQUESTS,
     MAX_AGENT_TIMEOUT,
     MAX_AGENT_TOKENS,
@@ -52,6 +54,7 @@ from exactdocs.retrieval.constants import (
     MAX_SANDBOX_MEMORY,
     MAX_SANDBOX_SECONDS,
     MAX_SANDBOX_SUSPENSIONS,
+    MIN_AGENT_REPEATED_CALLS,
     SANDBOX_NOT_BELOW_TIMEOUT,
 )
 from exactdocs.retrieval.models import AnthropicPlatform, AzureAuth, RerankWith, RetrievalMode
@@ -231,7 +234,8 @@ class AgenticSettings(BaseModel):
     """The agentic mode's limits per search (``EXACTDOCS_AI__AGENTIC__*``, ``[ai.agentic]``).
 
     Passing any of them ends the agent's run, and the search answers with the best mode without an
-    LLM step (`fallback_reason` `agent_limit_reached`). Spend budgets apply on top of them.
+    LLM step (`fallback_reason` `agent_limit_reached`; `agent_loop_detected` for a repeated
+    call). Spend budgets apply on top of them.
     """
 
     model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
@@ -255,6 +259,13 @@ class AgenticSettings(BaseModel):
     """Seconds one agentic search may take, model calls included, before it falls back. A snippet
     running then stops at its own `sandbox_seconds`, so a search can last up to `timeout` plus
     `sandbox_seconds`."""
+    max_repeated_calls: int = Field(
+        default=DEFAULT_AGENT_REPEATED_CALLS,
+        ge=MIN_AGENT_REPEATED_CALLS,
+        le=MAX_AGENT_REPEATED_CALLS,
+    )
+    """The agent making the same call (tool and arguments) this many times in one search is
+    looping: the run ends and the search falls back with `agent_loop_detected`."""
 
     @model_validator(mode="after")
     def _snippet_shorter_than_run(self) -> Self:

@@ -95,6 +95,17 @@ with the version asked for. (Today `search_docs` already drops a pipeline's hit 
 version, since it loads chunks from the asked version's manifest only; the eval is the check that
 this stays true for every mode and adapter.)
 
+**Agentic runs are also checked from their traces** (#99), and only here. The suite hands the app
+a recorder of the agentic explorer's reads (`Container.build(agent_reads=...)`; every
+`run_on_fixture` builder takes it), so each answer carries its run's trace: for every read the
+agent made, the version and manifest it was bound to and those of what it returned to the agent
+(never its arguments or the text). `StayedInVersion` asserts `stayed_in_version` for each case: a
+read bound to another version, one that served something of another version or manifest, reads
+bound to more than one manifest, or an `agentic` answer with results but no trace fail it. This
+checks what the agent was shown on the way, where the wrong-version rate checks what it
+returned. The report counts `traced_runs` and lists the failing cases in `left_version_cases`;
+any fails the suite, and a mode with one is never `eligible_as_default`.
+
 The JSON report also lists, per mode, the cases with a wrong version (and the offending results),
 the questions whose section was not in the top 10, the questions that raised, how many a
 cheaper mode answered (`fallbacks`), how many a reranker reordered (`reranked`) and, with a reranker
@@ -140,6 +151,7 @@ real one with `EVAL_JUDGE_MODEL` and `EVAL_RERANK_WITH=judge`.
   measures (a stored recall@5 above the measured one fails).
 - Both compare with `develop`'s baseline only **on the same dataset**; when the dataset changed,
   see [Changing the dataset](#changing-the-dataset).
+- **No agentic run may read outside the version asked for**, from its trace (above).
 - A question whose search raises fails the suite.
 - **A mode becomes a default only when the suite shows it beats BM25's recall@5 by at least
   5 points with a wrong-version rate of 0.** The report marks such a mode `eligible_as_default`;
@@ -202,7 +214,7 @@ fixture). A fixture change has to keep BM25's recall@5 within those 2 points.
 |---|---|---|
 | every PR (gating) | `bm25` | the *Python* CI job, step *Retrieval eval (BM25 gating, hybrid on term-hash)* on SQLite, and step *Retrieval eval on pg_search (BM25, gating)* on ParadeDB's BM25 against the branch's baseline (#104), with `--expect-engine pg_search` so a fallback to PostgreSQL full-text search fails it; no model. The suite runs on the database `EXACTDOCS_DATABASE_URL` names, so `EXACTDOCS_DATABASE_URL=postgresql+psycopg://.../<empty database> EXACTDOCS_SECRET_KEY=... just eval` runs it on PostgreSQL by hand |
 | local (report-only on PRs) | `hybrid`, with rerank when a reranker is configured | on every PR in the SQLite step on the term-hash stand-in (`--offline-embedding`): its wrong-version rate must be 0, its recall is not a measure of hybrid. With real models: the CI job *Retrieval eval (local models, report-only)* (#245), with the `[local]` extra and the default models cached between runs, no secret: `bm25` and `hybrid` on `BAAI/bge-small-en-v1.5`, then both reranked by `Xenova/ms-marco-MiniLM-L-6-v2` (reranker timeout raised to 30 s so every rerank is measured), compared with the baseline on `develop`. It never fails a pull request; its summary marks `default-eligible` |
-| provider | `hybrid_hyde`, `agentic`, and any mode reranked by the LLM judge | in tests with pydantic-ai's `TestModel` / `FunctionModel` (`hybrid_hyde`: `tests/evals/`, `run_on_fixture` with `offline_hyde_container`, the term-hash embedding and a priced stand-in LLM, `llm` in `local_roles`: wrong-version rate 0, and its tokens and USD reach `tokens_per_question` / `usd_per_question`; `agentic`: `test_agentic_is_evaluated_on_a_scripted_model_and_stays_in_the_version` runs the whole suite through the real pipeline, Code Mode and limits on a scripted `FunctionModel` in the *Python* CI job's pytest step, and fails on any wrong-version answer); with a real provider only by hand: `just eval --configured-models --allow-providers`, or the manual *Retrieval eval (real providers)* workflow (`.github/workflows/eval-providers.yml`, `workflow_dispatch` only), which configures profile `eval` from the repository variables `EVAL_PROVIDER_KIND`, `EVAL_PROVIDER_BASE_URL`, `EVAL_PROVIDER_API_VERSION` and `EVAL_<ROLE>_MODEL` and the secret `EVAL_PROVIDER_API_KEY` |
+| provider | `hybrid_hyde`, `agentic`, and any mode reranked by the LLM judge | in tests with pydantic-ai's `TestModel` / `FunctionModel` (`hybrid_hyde`: `tests/evals/`, `run_on_fixture` with `offline_hyde_container`, the term-hash embedding and a priced stand-in LLM, `llm` in `local_roles`: wrong-version rate 0, and its tokens and USD reach `tokens_per_question` / `usd_per_question`; `agentic`: `test_agentic_is_evaluated_on_a_scripted_model_and_stays_in_the_version` runs the whole suite through the real pipeline, Code Mode and limits on a scripted `FunctionModel` in the *Python* CI job's pytest step, and fails on any wrong-version answer or any read outside the version in a run's trace); with a real provider only by hand: `just eval --configured-models --allow-providers`, or the manual *Retrieval eval (real providers)* workflow (`.github/workflows/eval-providers.yml`, `workflow_dispatch` only), which configures profile `eval` from the repository variables `EVAL_PROVIDER_KIND`, `EVAL_PROVIDER_BASE_URL`, `EVAL_PROVIDER_API_VERSION` and `EVAL_<ROLE>_MODEL` and the secret `EVAL_PROVIDER_API_KEY` |
 
 A mode whose model role is not configured is reported as `unavailable`, with the role it lacks.
 Whether a configured mode may run is decided **per model role**, not per tier: every role its

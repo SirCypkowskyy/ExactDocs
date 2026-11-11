@@ -6,12 +6,17 @@ from typing import Final
 
 from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
 
-from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question
+from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question, TracedRead
 
 RECALL_AT: Final[tuple[int, ...]] = (1, 5, 10)
 """The cut-offs recall is measured at; the suite asks every mode for the largest."""
 RIGHT_VERSION: Final[str] = "right_version"
 """The assertion that every hit is of the pinned version."""
+STAYED_IN_VERSION: Final[str] = "stayed_in_version"
+"""The assertion, from an agentic run's trace, that every read it made was bound to the pinned
+version and served nothing of another (#99)."""
+AGENTIC: Final[str] = "agentic"
+"""The mode whose runs leave a trace of reads."""
 RECIPROCAL_RANK: Final[str] = "reciprocal_rank"
 """1 / the rank of the expected section (0 when it is not returned)."""
 TOKENS: Final[str] = "tokens"
@@ -113,3 +118,76 @@ class Cost(Evaluator[Question, Answer, CaseInfo]):
             ``tokens`` and ``usd``.
         """
         return {TOKENS: float(ctx.output.tokens), USD: ctx.output.usd}
+
+
+def reads_outside(question: Question, answer: Answer) -> list[str]:
+    """Return what an agentic run's trace shows it read outside the version asked for.
+
+    A read is outside when it was bound to another version, or served something of another
+    version or of another manifest than the one it was bound to, or when the run's reads were
+    bound to more than one manifest. A run that answered agentic with results must have left a
+    trace: its picks can only come from reads.
+
+    Args:
+        question: The question, with its version.
+        answer: What the mode returned, with the run's trace.
+
+    Returns:
+        One line per offending read (or a missing trace); empty when the run stayed in.
+    """
+    if answer.reads is None:
+        return []
+    asked = f"{answer.library}/{question.version}".casefold()
+    problems = []
+    for read in answer.reads:
+        foreign = sorted(
+            {v for v in [read.pinned_version, *read.served_versions] if v.casefold() != asked}
+            | {m for m in read.served_manifests if m != read.pinned_manifest}
+        )
+        if foreign:
+            problems.append(_described(read, foreign))
+    if len({r.pinned_manifest for r in answer.reads}) > 1:
+        problems.append("its reads were bound to more than one manifest")
+    if answer.answered_by == AGENTIC and answer.hits and not answer.reads:
+        problems.append("it answered without a trace of its reads")
+    return problems
+
+
+def _described(read: TracedRead, foreign: list[str]) -> str:
+    """Describe an offending read.
+
+    Args:
+        read: The read.
+        foreign: The versions or manifests outside the one asked for.
+
+    Returns:
+        ``<tool> read <foreign>``.
+    """
+    return f"{read.tool} read {', '.join(foreign)}"
+
+
+@dataclass(repr=False)
+class StayedInVersion(Evaluator[Question, Answer, CaseInfo]):
+    """Asserts, from an agentic run's trace, that it read only the version asked for (#99).
+
+    This is the only check of the trace: the hits are checked by ``VersionAndRank``, this checks
+    what the agent was shown on the way. A case without a trace (another mode) passes.
+    """
+
+    def evaluate(
+        self, ctx: EvaluatorContext[Question, Answer, CaseInfo]
+    ) -> Mapping[str, EvaluationReason]:
+        """Evaluate one case.
+
+        Args:
+            ctx: The question and what the mode returned, with its trace.
+
+        Returns:
+            ``stayed_in_version``, with the offending reads as the reason.
+        """
+        outside = reads_outside(ctx.inputs, ctx.output)
+        return {
+            STAYED_IN_VERSION: EvaluationReason(
+                value=not outside, reason="; ".join(outside) or None
+            )
+        }

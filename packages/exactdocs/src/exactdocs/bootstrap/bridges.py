@@ -151,6 +151,8 @@ from exactdocs.retrieval.models import (
     ManifestPaths,
     ManifestStatus,
     SearchableVersion,
+    ServedArticle,
+    ServedArticles,
     SourceHost,
     TagFilter,
 )
@@ -985,8 +987,9 @@ class CatalogVersionArticles:
     """Implements ``retrieval.ports.driven.VersionArticles`` with the catalog's article reads.
 
     The catalog answers for a library and a ref, from the version's active manifest at that
-    moment; an answer from any other manifest than the one searched (a re-sync activated a new
-    one meanwhile) is dropped, so the agentic explorer never reads another version's articles.
+    moment; each answer names that manifest, so the agentic explorer drops one from any other
+    manifest than the one searched (a re-sync activated a new one meanwhile) and never reads
+    another version's articles.
     """
 
     list_articles: ListArticles
@@ -996,7 +999,7 @@ class CatalogVersionArticles:
 
     async def list(
         self, version: SearchableVersion, prefix: str, limit: int, tag_filter: TagFilter
-    ) -> Sequence[ArticleEntry]:
+    ) -> ServedArticles | None:
         """List the version's articles under a folder that the tag filter keeps (one page).
 
         Args:
@@ -1006,7 +1009,8 @@ class CatalogVersionArticles:
             tag_filter: The search's tag filter, applied by the catalog.
 
         Returns:
-            The articles; none when the folder is invalid or the manifest is no longer active.
+            The articles and the manifest they come from; ``None`` when the folder is invalid
+            or the version is gone.
         """
         try:
             query = ListArticlesQuery(
@@ -1020,12 +1024,13 @@ class CatalogVersionArticles:
             )
             page = await self.list_articles(query)
         except NotFoundError, ValidationError, PydanticValidationError:
-            return ()
-        if page.manifest_id != version.manifest_id:
-            return ()
-        return [ArticleEntry(path=a.path, title=a.title) for a in page.articles]
+            return None
+        return ServedArticles(
+            manifest_id=page.manifest_id,
+            articles=tuple(ArticleEntry(path=a.path, title=a.title) for a in page.articles),
+        )
 
-    async def read(self, version: SearchableVersion, path: str) -> str | None:
+    async def read(self, version: SearchableVersion, path: str) -> ServedArticle | None:
         """Read an article of the version.
 
         Args:
@@ -1033,11 +1038,11 @@ class CatalogVersionArticles:
             path: The article's path.
 
         Returns:
-            Its Markdown; ``None`` when there is no such article or the manifest changed.
+            Its Markdown and the manifest it comes from; ``None`` when there is no such article.
         """
         try:
             query = GetArticleQuery(library=version.library, ref=version.version, path=path)
             article = await self.get_article(query)
         except NotFoundError, ValidationError, PydanticValidationError:
             return None
-        return article.content if article.manifest_id == version.manifest_id else None
+        return ServedArticle(manifest_id=article.manifest_id, content=article.content)
