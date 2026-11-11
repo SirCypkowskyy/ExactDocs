@@ -398,6 +398,7 @@ async def test_bm25_on_the_fixture_meets_the_stored_baseline_and_reports_the_res
     assert bm25.metrics.wrong_version_rate == 0
     assert bm25.metrics.recall_at_5 >= read_baseline(BASELINE_FILE).recall_at_5["bm25"] - 0.02
     assert bm25.fallbacks == 0
+    assert report.search_engine == "fts5"
     assert [(o.mode, o.status, o.reason) for o in others] == [
         (RetrievalMode.HYBRID, "unavailable", "needs the embedding role, not configured"),
         (
@@ -956,3 +957,15 @@ def test_a_stored_recall_the_run_does_not_back_up_fails(
 
 def test_a_mode_without_any_baseline_gets_no_per_mode_warning() -> None:
     assert judge("retrieval", 10, [_ran(BM25, 0.9)], Comparison()).warnings == []
+
+
+async def test_another_search_engine_than_the_expected_one_fails_the_suite(
+    docs_repo: DocsRepo, tmp_path: Path
+) -> None:
+    report = await run_on_fixture(
+        docs_repo, tmp_path / "data", build=model_free_container, expect_engine="pg_search"
+    )
+
+    assert not report.passed
+    assert "the search engine was fts5, not the expected pg_search" in report.problems
+    assert "on the `fts5` search engine" in markdown(report)

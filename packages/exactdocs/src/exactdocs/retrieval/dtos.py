@@ -50,6 +50,7 @@ from exactdocs.retrieval.models import (
     RetrievalMode,
     RoleSource,
     SearchableVersion,
+    SearchEngine,
     SearchHit,
     SearchIndexState,
     SpaceState,
@@ -458,6 +459,9 @@ class SearchIndexStateOut(_Dto):
     stored_format: int | None
     current_format: int
     needs_rebuild: bool
+    engine: SearchEngine
+    """The search engine that answers: `fts5` (SQLite), `postgres_fts` (PostgreSQL full-text search)
+    or `pg_search` (ParadeDB's BM25 on PostgreSQL); `memory` only in tests."""
 
     @classmethod
     def from_model(cls, state: SearchIndexState) -> Self:
@@ -466,6 +470,7 @@ class SearchIndexStateOut(_Dto):
             stored_format=state.stored_format,
             current_format=state.current_format,
             needs_rebuild=state.needs_rebuild,
+            engine=state.engine,
         )
 
 

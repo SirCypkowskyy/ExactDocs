@@ -85,6 +85,12 @@ def _parser() -> argparse.ArgumentParser:
         help="append the Markdown summary here (default: $GITHUB_STEP_SUMMARY when set)",
     )
     parser.add_argument(
+        "--expect-engine",
+        default=None,
+        help="fail unless this full-text search engine answers (fts5, pg_search, postgres_fts; "
+        "CI: pg_search on ParadeDB, so a silent fallback cannot pass)",
+    )
+    parser.add_argument(
         "--write-baseline",
         action="store_true",
         help=f"store this run's ranking metrics and the dataset's fingerprint as the baseline "
@@ -153,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
                     local_roles=frozenset(ModelRole(r) for r in roles),
                     comparison=against,
                     dataset_file=dataset_file,
+                    expect_engine=args.expect_engine,
                 )
             )
             report_file.parent.mkdir(parents=True, exist_ok=True)
