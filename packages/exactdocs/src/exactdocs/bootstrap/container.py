@@ -48,6 +48,8 @@ from exactdocs.bootstrap.constants import (
     JOBS_FILE,
     KEY_FILE,
     KNOWN_HOSTS_FILE,
+    LOCAL_PROFILE,
+    LOCAL_PROFILE_HINT,
     WORK_DIR,
 )
 from exactdocs.bootstrap.database import (
@@ -122,7 +124,11 @@ from exactdocs.retrieval.adapters.driven.sqlite import (
 )
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
-from exactdocs.retrieval.constants import PG_SEARCH_QUIET_SCANS
+from exactdocs.retrieval.constants import (
+    DEFAULT_RERANK_TIMEOUT,
+    LOCAL_RERANK_TIMEOUT,
+    PG_SEARCH_QUIET_SCANS,
+)
 from exactdocs.retrieval.models import (
     ModelRole,
     ProviderKind,
@@ -172,12 +178,57 @@ def _ai_configuration(settings: Settings, local: LocalModels) -> ConfiguredAi:
         if (reason := probe.unsupported(profile)) is not None:
             message = f"AI provider {profile.name!r}: {reason}"
             raise StartupError(message)
+    _warn_undeclared_local(configured)
     roles = configured.roles
     for profile, role, model in _local_roles(configured):
         if (reason := local.missing(model, role)) is not None:
             logger.error("AI role %s (%s:%s) is off: %s", role.value, profile.name, model, reason)
             roles = replace(roles, **{role.value: None})
     return replace(configured, roles=roles)
+
+
+def _warn_undeclared_local(configured: ConfiguredAi) -> None:
+    """Warn about roles that name a profile ``local`` the configuration does not declare.
+
+    ``local:BAAI/bge-small-en-v1.5`` needs a profile named ``local`` of kind ``local``; without
+    one the role resolves only to a profile of that name stored over the REST API, if any.
+
+    Args:
+        configured: The configuration.
+    """
+    if any(p.name == LOCAL_PROFILE for p in configured.profiles):
+        return
+    for role in ModelRole:
+        ref = configured.roles.explicit(role)
+        if ref is not None and ref.profile == LOCAL_PROFILE:
+            logger.warning(
+                "AI role %s names profile %r, which is not configured: set %s to run the model "
+                "in this process (a profile of that name stored over the REST API is used "
+                "otherwise, if there is one)",
+                role.value,
+                LOCAL_PROFILE,
+                LOCAL_PROFILE_HINT,
+            )
+
+
+def _rerank_limits(settings: Settings, configured: ConfiguredAi) -> RerankLimits:
+    """Read the reranker's limits; an unset timeout is longer for a ``local`` reranker.
+
+    Args:
+        settings: The runtime configuration.
+        configured: The configuration (which kind of profile the instance's reranker uses).
+
+    Returns:
+        The limits.
+    """
+    timeout = settings.ai.reranker.timeout
+    if timeout is None:
+        ref = configured.roles.reranker
+        local = ref is not None and any(
+            p.name == ref.profile and p.kind is ProviderKind.LOCAL for p in configured.profiles
+        )
+        timeout = LOCAL_RERANK_TIMEOUT if local else DEFAULT_RERANK_TIMEOUT
+    return RerankLimits(top_n=settings.ai.reranker.top_n, timeout=timeout)
 
 
 def _local_roles(configured: ConfiguredAi) -> LocalRoles:
@@ -372,9 +423,7 @@ def _build_read_side(
         or AiModels(remote=PydanticAiModels(keys=ai.keys, box=ai_box), local=local),
         secret_box=ai_box,
         instance_mode=settings.ai.mode,
-        rerank_limits=RerankLimits(
-            top_n=settings.ai.reranker.top_n, timeout=settings.ai.reranker.timeout
-        ),
+        rerank_limits=_rerank_limits(settings, ai),
         pipelines=pipelines,
         suggestions=CatalogArticleSuggestions(get_article=catalog.get_article),
         query_docs_token_budget=settings.query_docs_token_budget,
@@ -549,6 +598,7 @@ class ReadOnlyContainer:
             yield
         finally:
             try:
+                self.local.close()  # queued local model calls are dropped, not waited for
                 await self.engine.dispose()
             finally:
                 self._run.release()
@@ -836,6 +886,7 @@ class Container:
                     yield
         finally:
             try:
+                self.local.close()  # queued local model calls are dropped, not waited for
                 await self.engine.dispose()
             finally:
                 self._run.release()

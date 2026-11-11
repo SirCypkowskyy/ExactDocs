@@ -66,6 +66,20 @@ class FakeEmbedding:
         return sum(len(t.split()) + 2 for t in texts)
 
 
+class BlockedEmbedding(FakeEmbedding):
+    """Document batches wait for ``release``; queries answer at once."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = threading.Event()
+        self.batches_started = threading.Semaphore(0)
+
+    def passage_embed(self, texts: Iterable[str], **kwargs: object) -> Iterator[list[float]]:
+        self.batches_started.release()
+        assert self.release.wait(10)
+        return super().passage_embed(texts, **kwargs)
+
+
 class FakeCrossEncoder:
     """Scores a document by the words it shares with the query."""
 
@@ -92,7 +106,7 @@ def executor() -> Iterator[ThreadPoolExecutor]:
 def _embeddings(
     model: FakeEmbedding, executor: ThreadPoolExecutor, batch_size: int = 2
 ) -> Embeddings:
-    handle = LocalEmbedder(model=model, dimensions=2, executor=executor)
+    handle = LocalEmbedder(model=model, dimensions=2, executor=executor, query_executor=executor)
     return LocalEmbeddingModels().bind(
         handle, name="offline:BAAI/bge-small-en-v1.5", dimensions=None, batch_size=batch_size
     )
@@ -171,7 +185,9 @@ async def test_the_event_loop_keeps_running_while_a_model_works(
 def test_other_configured_dimensions_than_the_model_makes_are_refused(
     executor: ThreadPoolExecutor,
 ) -> None:
-    handle = LocalEmbedder(model=FakeEmbedding(), dimensions=384, executor=executor)
+    handle = LocalEmbedder(
+        model=FakeEmbedding(), dimensions=384, executor=executor, query_executor=executor
+    )
 
     with pytest.raises(ProviderUnsupportedError, match="384 dimensions, not 256"):
         LocalEmbeddingModels().bind(handle, name="offline:m", dimensions=256, batch_size=8)
@@ -208,3 +224,46 @@ async def test_a_failing_reranker_is_a_reranker_error(
 ) -> None:
     with pytest.raises(RerankerError, match=message):
         await LocalReranker(model=model, executor=executor).rerank("q", ["a", "b"])
+
+
+async def test_a_search_is_not_starved_while_document_batches_hold_their_pool() -> None:
+    """Query embeddings and reranks run on their own pool, never behind an embedding job."""
+    model = BlockedEmbedding()
+    with (
+        ThreadPoolExecutor(max_workers=1) as documents,
+        ThreadPoolExecutor(max_workers=2) as queries,
+    ):
+        handle = LocalEmbedder(
+            model=model, dimensions=2, executor=documents, query_executor=queries
+        )
+        embeddings = LocalEmbeddingModels().bind(
+            handle, name="offline:m", dimensions=None, batch_size=1
+        )
+        ingestion = [
+            asyncio.create_task(embeddings.embed_documents(["a b", "c"])) for _ in range(2)
+        ]
+        assert await asyncio.to_thread(model.batches_started.acquire, True, 5)
+
+        query = await asyncio.wait_for(embeddings.embed_query("retry"), timeout=2)
+        scores = await asyncio.wait_for(
+            LocalReranker(model=FakeCrossEncoder(), executor=queries).rerank("a", ["a", "b"]),
+            timeout=2,
+        )
+
+        assert query.vectors == ((5.0, 0.0),)
+        assert scores == [1.0, 0.0]
+        assert not any(task.done() for task in ingestion)  # the batches are still blocked
+        model.release.set()
+        done = await asyncio.gather(*ingestion)
+    assert [d.requests for d in done] == [2, 2]
+
+
+async def test_a_local_model_embeds_at_most_16_texts_per_call(
+    executor: ThreadPoolExecutor,
+) -> None:
+    model = FakeEmbedding()
+
+    embedded = await _embeddings(model, executor, batch_size=64).embed_documents(["t"] * 40)
+
+    assert [len(texts) for _, texts in model.calls] == [16, 16, 8]
+    assert embedded.requests == 3

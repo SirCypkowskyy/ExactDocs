@@ -28,7 +28,6 @@ from exactdocs.bootstrap.constants import (
 from exactdocs.retrieval.constants import (
     DEFAULT_EMBEDDING_BATCH,
     DEFAULT_REQUEST_TIMEOUT,
-    DEFAULT_RERANK_TIMEOUT,
     DEFAULT_RERANK_TOP_N,
     DEFAULT_RETRIES,
     MAX_EMBEDDING_BATCH,
@@ -128,9 +127,10 @@ class RerankerSettings(RoleSettings):
     top_n: int = Field(default=DEFAULT_RERANK_TOP_N, ge=1, le=MAX_RERANK_TOP_N)
     """`EXACTDOCS_AI__RERANKER__TOP_N`: how many of a search's best candidates are reranked (a
     library may set its own)."""
-    timeout: float = Field(default=DEFAULT_RERANK_TIMEOUT, gt=0, le=MAX_RERANK_TIMEOUT)
+    timeout: float | None = Field(default=None, gt=0, le=MAX_RERANK_TIMEOUT)
     """`EXACTDOCS_AI__RERANKER__TIMEOUT`: seconds a search gives the reranker, to be built and to
-    answer (reading the candidates' text is not counted); after that, or on any reranker error,
+    answer (reading the candidates' text is not counted). Unset: 2 s, or 5 s when the reranker
+    runs on a `local` profile (a CPU is slower); after that, or on any reranker error,
     results keep their order (`reranked: false`, `fallback_reason` `reranker_timeout` or
     `reranker_failed`)."""
 

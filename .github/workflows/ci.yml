@@ -152,8 +152,9 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: .models
-          key: local-models-${{ hashFiles('uv.lock', 'packages/exactdocs/src/exactdocs/bootstrap/constants.py') }}
-          restore-keys: local-models-
+          # The models and their pinned revisions: a pull skips what is there, so nothing else
+          # (a dependency bump) needs a new cache.
+          key: local-models-bge-small-en-v1.5-aa8f8b06-ms-marco-MiniLM-L-6-v2-a0914435
       - name: Pull the default models (skipped when the cache has them)
         run: uv run exactdocs models pull
       - name: The default models embed and rerank with sockets blocked
@@ -187,6 +188,7 @@ jobs:
       # take more than the 2 s default, so the timeout is raised here: a reranker that timed out
       # would not be measured (`rerank_fallbacks` must be 0).
       - name: Retrieval eval, reranked by MiniLM (local reranker)
+        if: ${{ !cancelled() }}
         env:
           EXACTDOCS_AI__RERANKER__MODEL: local:Xenova/ms-marco-MiniLM-L-6-v2
           EXACTDOCS_AI__RERANKER__TIMEOUT: "30"

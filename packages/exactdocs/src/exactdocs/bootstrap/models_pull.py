@@ -4,7 +4,8 @@ The only code that contacts the Hugging Face Hub. Each model goes to ``<models d
 as plain files (its ONNX file and its tokenizer), fetched into a temporary folder beside it and
 renamed into place, with a marker written last: the server loads a model only when its marker is
 there. A model already pulled is skipped without any request, so a CI cache of the directory
-makes the command offline.
+makes the command offline; a default model pulled at another commit than its pinned one
+(``PINNED_MODEL_REVISIONS``) is pulled again. The marker records the commit.
 """
 
 import importlib
@@ -23,12 +24,14 @@ from exactdocs.bootstrap.constants import (
     LOCAL_MODULES,
     LOCAL_SDK_MODULE,
     MODEL_MARKER,
+    PINNED_MODEL_REVISIONS,
     TOKENIZER_FILES,
 )
 from exactdocs.bootstrap.local_models import LocalModelInfo, model_folder, read_marker
 
-type Download = Callable[[str, Sequence[str], Path], None]
-"""Fetches ``(repository, files, into folder)``: the Hub's ``snapshot_download`` by default."""
+type Download = Callable[[str, Sequence[str], Path, str | None], str]
+"""Fetches ``(repository, files, into folder, at revision)`` and returns the commit it fetched
+(``main``'s when no revision is given): the Hub's ``snapshot_download`` by default."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -43,16 +46,24 @@ class Pulled:
     """What happened, for the terminal."""
 
 
-def hub_download(repository: str, files: Sequence[str], folder: Path) -> None:
-    """Fetch files of a Hub repository into a folder (huggingface_hub, imported here only).
+def hub_download(repository: str, files: Sequence[str], folder: Path, revision: str | None) -> str:
+    """Fetch files of a Hub repository at one commit into a folder (huggingface_hub, here only).
 
     Args:
         repository: ``<org>/<name>`` on the Hub.
         files: The files (glob patterns) to fetch; others in the repository are skipped.
         folder: Where they go, with the repository's layout.
+        revision: The commit; ``None``: the one ``main`` points to now.
+
+    Returns:
+        The commit fetched.
     """
     hub = importlib.import_module("huggingface_hub")
-    hub.snapshot_download(repo_id=repository, allow_patterns=list(files), local_dir=folder)
+    commit = revision or str(hub.HfApi().model_info(repository).sha)
+    hub.snapshot_download(
+        repo_id=repository, revision=commit, allow_patterns=list(files), local_dir=folder
+    )
+    return commit
 
 
 def default_models() -> tuple[str, ...]:
@@ -102,7 +113,9 @@ def _pull_one(
         return Pulled(model=model, ok=False, message=reason)
     name, repository, files = info.model, info.repository, info.files
     folder = model_folder(models_dir, name)
-    if (pulled := read_marker(folder)) is not None and pulled.model == name:
+    pinned = PINNED_MODEL_REVISIONS.get(name)
+    pulled = read_marker(folder)
+    if pulled is not None and pulled.model == name and pinned in {None, pulled.revision}:
         return Pulled(model=model, ok=True, message=f"already in {folder}")
     if repository is None:
         return Pulled(model=model, ok=False, message="it is not on the Hugging Face Hub")
@@ -110,7 +123,7 @@ def _pull_one(
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(parents=True)
     try:
-        download(repository, [*HUB_FILES, *files], staging)
+        revision = download(repository, [*HUB_FILES, *files], staging, pinned)
         absent = [f for f in (files[0], *TOKENIZER_FILES) if not (staging / f).is_file()]
         if absent:
             return Pulled(model=model, ok=False, message=f"{repository} has no {', '.join(absent)}")
@@ -120,6 +133,7 @@ def _pull_one(
             "role": info.role.value,
             "dimensions": info.dimensions,
             "repository": repository,
+            "revision": revision,
             "files": list(files),
         }
         (staging / MODEL_MARKER).write_text(json.dumps(marker, indent=2), encoding="utf-8")
@@ -128,4 +142,6 @@ def _pull_one(
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     size = sum(f.stat().st_size for f in folder.rglob("*") if f.is_file()) / 1e6
-    return Pulled(model=model, ok=True, message=f"pulled into {folder} ({size:.0f} MB)")
+    return Pulled(
+        model=model, ok=True, message=f"pulled into {folder} at {revision[:12]} ({size:.0f} MB)"
+    )

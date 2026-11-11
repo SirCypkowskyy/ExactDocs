@@ -646,31 +646,41 @@ exactdocs models pull BAAI/bge-base-en-v1.5   # or any fastembed embedding model
 ```
 
 ```toml
-[ai.providers.local]
-kind = "local"                          # no endpoint, key, headers or proxy
+[ai.providers.local]                    # EXACTDOCS_AI__PROVIDERS__LOCAL__KIND=local: required,
+kind = "local"                          # a `local:` role without it is warned about at start
 
 [ai.embedding]
 model = "local:BAAI/bge-small-en-v1.5"  # <profile>:<model>, 384 dimensions
 
 [ai.reranker]
 model = "local:Xenova/ms-marco-MiniLM-L-6-v2"
-timeout = 5.0                           # a CPU reranks 32 long candidates in about 1 to 3 s
+# timeout: unset means 5 s for a reranker on a `local` profile (2 s otherwise): a CPU reranks
+# 32 long candidates in about 0.2 to 2 s, more with fewer cores
 ```
 
 - **Where models live:** `EXACTDOCS_MODELS_DIR` (default `<data dir>/models`; the `-local` image
   sets its read-only `/opt/exactdocs/models`), one folder per model (`BAAI/bge-small-en-v1.5/`)
   with its ONNX file, its tokenizer and a marker `models pull` writes last. A model already there
   is skipped, so a cached directory makes the command offline.
-- **Never downloaded at run time.** Models load from that folder only, with `HF_HUB_OFFLINE=1`.
+- **Pinned revisions:** the two defaults are pulled at a fixed Hub commit (bge-small's
+  `aa8f8b06`, MiniLM's `a0914435`), so a pull, and the `-local` image, are reproducible; the
+  marker records the commit of every model. A default model pulled at another commit is refused
+  at start (pull it again); other models are pulled at the commit `main` points to then.
+- **Never downloaded at run time.** Models load from that folder only (fastembed's
+  `specific_model_path` and `local_files_only`), which never reaches Hub code, so
+  `HF_HUB_OFFLINE` is not needed; a test with sockets blocked proves no connection is made.
   A role whose model is not there is **turned off at start** with an error naming the command
   (`AI role embedding (local:BAAI/bge-small-en-v1.5) is off: model ... is not in ...: run
   `exactdocs models pull BAAI/bge-small-en-v1.5``); the server starts and answers BM25.
 - **In process, bounded:** each model is loaded once per process (at start for the instance's
-  roles), and calls run on a pool of 2 worker threads, never on the event loop; ONNX Runtime
-  uses the CPU's cores within each call. On a 4-core x86_64 machine, embedding the fixture
-  library (3 versions, 61 distinct chunks, batches of 64) with bge-small took 5.9 s (12.2 s of
-  CPU), and the whole process grew from 397 MB (app and model loaded) to 636 MB; reranking 32
-  candidates with MiniLM took about 0.2 to 1.2 s.
+  roles), never on the event loop. The embedding jobs' batches run on a pool of their own (one
+  at a time); what a search waits on (its query embedding, the rerank) runs on another (two at
+  a time), so a search never queues behind ingestion. Each call gives ONNX Runtime half the
+  cores, and its memory arena is off. A local model embeds at most 16 texts per call (padding
+  to the longest text costs memory). On a 4-core x86_64 machine, embedding the fixture library
+  (3 versions, 61 distinct chunks) with bge-small took 2.4 to 3.3 s (4.7 to 5.7 s of CPU), and
+  the whole process grew from 398 MB (app and model loaded) to about 495 MB, peaking near
+  530 MB; with all cores per call, one arena and batches of 64 it was 4.3 to 5.9 s and 636 MB.
 - A local model cannot shorten its vectors: leave `[ai.embedding] dimensions` unset (or set to
   the model's). A `local` profile runs no chat model; use `ollama` (or any `openai-compatible`
   server) for a local LLM.

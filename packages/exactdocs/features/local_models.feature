@@ -7,7 +7,8 @@ Feature: Local models: hybrid search and reranking with no network at all
   The models here are tiny stand-ins built by the test (a bag-of-words embedding model and a
   word-overlap cross-encoder), run by the real fastembed and ONNX Runtime from the models
   directory, exactly as `exactdocs models pull` leaves models there. The defaults
-  (BAAI/bge-small-en-v1.5 and Xenova/ms-marco-MiniLM-L-6-v2) run in CI's local-models eval job.
+  (BAAI/bge-small-en-v1.5 and Xenova/ms-marco-MiniLM-L-6-v2) run in CI's local-models eval job
+  and in tests/bootstrap/test_local_models_real.py.
   Hybrid is chosen by the operator: it is no default until the eval suite says so (docs/evals.md).
 
   Background:

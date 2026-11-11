@@ -1031,16 +1031,22 @@ or text. Bootstrap's `ai_sdk.reranker` builds it on the profile's one guarded `h
 **Local models (#245).** Bootstrap's `ModelFactory` is `AiModels`: `local` profiles go to
 `LocalModels` (`bootstrap/local_models.py`), every other kind to `PydanticAiModels`. `LocalModels`
 imports nothing heavy: a model is known by its folder in `EXACTDOCS_MODELS_DIR` and the marker
-`exactdocs models pull` (`bootstrap/models_pull.py`, the only code that contacts the Hub) writes
-last, so at build time `_ai_configuration` turns off, with an error naming the pull command, every
-instance role whose local model is missing. Its first use, or `Container.running`'s warm-up for the
-instance's roles, sets `HF_HUB_OFFLINE=1`, imports `bootstrap/local_sdk.py` (fastembed) and loads
-the model in a worker thread with `specific_model_path` and `local_files_only`, once per process.
+`exactdocs models pull` (`bootstrap/models_pull.py`, the only code that contacts the Hub, at the
+commits `PINNED_MODEL_REVISIONS` fixes for the defaults) writes last, so at build time
+`_ai_configuration` turns off, with an error naming the pull command, every instance role whose
+local model is missing or was pulled at another pinned commit, and warns about a `local:` role
+with no `local` profile. Its first use, or `Container.running`'s warm-up for the instance's
+roles, imports `bootstrap/local_sdk.py` (fastembed) and loads the model in a worker thread (the
+load lock is only ever taken there) with `specific_model_path` and `local_files_only`, which
+never reach Hub code, half the cores for ONNX Runtime and no CPU memory arena, once per process.
 The adapters (`retrieval/adapters/driven/local_models.py`: `LocalEmbeddings`, `LocalReranker`)
-never import fastembed: they call the loaded model through small structural types, on the
-factory's thread pool (2 workers), and turn ONNX Runtime's errors into `EmbeddingFailedError` /
-`RerankerError`. `AiEmbeddingModels` wraps a `LocalEmbedder` handle with them and a pydantic-ai
-`Embedder` with `PydanticAiEmbeddings`.
+never import fastembed: they call the loaded model through small structural types, document
+batches (at most 16 texts) on a one-worker pool and query embeddings and reranks on a
+two-worker pool of their own, so a search never waits behind an embedding job; ONNX Runtime's
+errors become `EmbeddingFailedError` / `RerankerError`. `Container.running` shuts both pools down
+when it ends. An unset reranker timeout is 5 s when the instance's reranker is on a `local`
+profile, 2 s otherwise. `AiEmbeddingModels` wraps a `LocalEmbedder` handle with them and a
+pydantic-ai `Embedder` with `PydanticAiEmbeddings`.
 
 Later modes plug in as pipelines; their models come through the ports below. The `[ai]`
 extra is declared and installed for development; the model-free test proves none of it is imported.

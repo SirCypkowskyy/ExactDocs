@@ -14,7 +14,6 @@ import hashlib
 import json
 import re
 import struct
-from array import array
 from pathlib import Path
 
 from fastembed import TextEmbedding
@@ -62,7 +61,7 @@ def _tensor(name: str, dims: list[int], data: bytes, data_type: int) -> bytes:
 
 
 def _floats(name: str, dims: list[int], values: list[float]) -> bytes:
-    return _tensor(name, dims, array("f", values).tobytes(), 1)
+    return _tensor(name, dims, struct.pack(f"<{len(values)}f", *values), 1)  # ONNX: little-endian
 
 
 def _int64s(name: str, values: list[int]) -> bytes:

@@ -32,7 +32,8 @@ package = false
 default-groups = ["dev"]
 # A new dependency must be at least 14 days old. The `[local]` extra (#245) pulls these two
 # transitively, and their newest releases were younger than that when it was locked: hold them
-# at what was out by then. Drop an entry once a bump takes a release older than 14 days.
+# at what was out by then. #280 drops both entries (after 2026-11-23): until then no bump moves
+# them.
 exclude-newer-package = { filelock = "2026-10-28T00:00:00Z", hf-xet = "2026-10-28T00:00:00Z" }
 
 [tool.uv.workspace]

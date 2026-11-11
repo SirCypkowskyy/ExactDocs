@@ -1,8 +1,9 @@
 """The fastembed side of local models (the ``[local]`` extra): imported only once one is used.
 
-``LocalModels`` sets ``HF_HUB_OFFLINE=1`` before it imports this module, and every model loads
-from its own folder in ``EXACTDOCS_MODELS_DIR`` (``specific_model_path``, ``local_files_only``),
-so loading never reaches the Hugging Face Hub. ``exactdocs models pull`` uses the same model
+Every model loads from its own folder in ``EXACTDOCS_MODELS_DIR`` (``specific_model_path``,
+``local_files_only``): fastembed 0.9.0 returns that folder before any Hub code runs, so loading
+never reaches the Hugging Face Hub (``HF_HUB_OFFLINE`` is not needed, and not set; the
+socket-blocked tests prove it). ``exactdocs models pull`` uses the same model
 lists to know which files to fetch; it is the only command that downloads.
 """
 
@@ -62,13 +63,17 @@ def describe(model: str) -> LocalModelInfo | None:
     return None
 
 
-def load_embedding(model: str, folder: Path, cache_dir: Path) -> TextEmbedding:
+def load_embedding(
+    model: str, folder: Path, cache_dir: Path, *, threads: int, arena: bool
+) -> TextEmbedding:
     """Load an embedding model from its folder, offline.
 
     Args:
         model: Its name, as fastembed lists it.
         folder: Its folder in the models directory.
         cache_dir: The models directory (fastembed requires one; nothing is written to it).
+        threads: ONNX Runtime's threads per call.
+        arena: Keep ONNX Runtime's CPU memory arena.
 
     Returns:
         The model, its ONNX session open.
@@ -78,16 +83,22 @@ def load_embedding(model: str, folder: Path, cache_dir: Path) -> TextEmbedding:
         cache_dir=str(cache_dir),
         specific_model_path=str(folder),
         local_files_only=True,
+        threads=threads,
+        enable_cpu_mem_arena=arena,
     )
 
 
-def load_cross_encoder(model: str, folder: Path, cache_dir: Path) -> TextCrossEncoder:
+def load_cross_encoder(
+    model: str, folder: Path, cache_dir: Path, *, threads: int, arena: bool
+) -> TextCrossEncoder:
     """Load a cross-encoder from its folder, offline.
 
     Args:
         model: Its name, as fastembed lists it.
         folder: Its folder in the models directory.
         cache_dir: The models directory (fastembed requires one; nothing is written to it).
+        threads: ONNX Runtime's threads per call.
+        arena: Keep ONNX Runtime's CPU memory arena.
 
     Returns:
         The model, its ONNX session open.
@@ -97,4 +108,6 @@ def load_cross_encoder(model: str, folder: Path, cache_dir: Path) -> TextCrossEn
         cache_dir=str(cache_dir),
         specific_model_path=str(folder),
         local_files_only=True,
+        threads=threads,
+        enable_cpu_mem_arena=arena,
     )

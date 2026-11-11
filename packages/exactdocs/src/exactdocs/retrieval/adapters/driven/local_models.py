@@ -16,6 +16,7 @@ from itertools import batched
 from typing import Protocol
 
 from exactdocs.retrieval.constants import (
+    LOCAL_EMBEDDING_BATCH,
     LOCAL_MODEL_ERRORS,
     LOCAL_RERANK_BATCH,
     MAX_EMBEDDING_ERROR,
@@ -97,7 +98,9 @@ class LocalEmbedder:
     dimensions: int
     """How many numbers each of its vectors holds (fixed by the model)."""
     executor: Executor = field(repr=False)
-    """Runs the calls, at most a few at a time."""
+    """Runs the document batches of the embedding jobs, one at a time."""
+    query_executor: Executor = field(repr=False)
+    """Runs query embeddings, apart from the batches, so a search never waits behind them."""
     errors: tuple[type[Exception], ...] = LOCAL_MODEL_ERRORS
     """What a failed call raises (ONNX Runtime's errors among them)."""
 
@@ -129,7 +132,7 @@ class LocalEmbeddingModels:
             name: ``<profile>:<model>``.
             dimensions: The configured dimensions, if any: a local model cannot shorten its
                 vectors, so they must be the model's.
-            batch_size: The most texts per call.
+            batch_size: The most texts per call (at most ``LOCAL_EMBEDDING_BATCH``).
 
         Returns:
             The model.
@@ -147,7 +150,9 @@ class LocalEmbeddingModels:
                 "unset EXACTDOCS_AI__EMBEDDING__DIMENSIONS"
             )
             raise ProviderUnsupportedError(profile, reason)
-        return LocalEmbeddings(embedder=handle, name=name, batch_size=batch_size)
+        return LocalEmbeddings(
+            embedder=handle, name=name, batch_size=min(batch_size, LOCAL_EMBEDDING_BATCH)
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -181,7 +186,9 @@ class LocalEmbeddings:
         vectors: list[tuple[float, ...]] = []
         tokens = calls = 0
         for batch in batched(texts, self.batch_size, strict=False):
-            embedded, counted = await self._call(partial(self._documents, list(batch)))
+            embedded, counted = await self._call(
+                partial(self._documents, list(batch)), self.embedder.executor
+            )
             if len(embedded) != len(batch):
                 reason = f"{len(embedded)} vectors for {len(batch)} texts"
                 raise EmbeddingFailedError(self.name, reason)
@@ -199,7 +206,9 @@ class LocalEmbeddings:
         Returns:
             Its vector and its tokens.
         """
-        embedded, tokens = await self._call(partial(self._query, text))
+        embedded, tokens = await self._call(
+            partial(self._query, text), self.embedder.query_executor
+        )
         return EmbeddedTexts(vectors=embedded, input_tokens=tokens, requests=1)
 
     def _documents(self, texts: list[str]) -> tuple[tuple[tuple[float, ...], ...], int]:
@@ -230,11 +239,12 @@ class LocalEmbeddings:
         vectors = tuple(tuple(float(x) for x in v) for v in model.query_embed(text))
         return vectors[:1], model.token_count(text)
 
-    async def _call[T](self, call: Callable[[], T]) -> T:
-        """Run a call on the executor, turning a failure into ``EmbeddingFailedError``.
+    async def _call[T](self, call: Callable[[], T], executor: Executor) -> T:
+        """Run a call on an executor, turning a failure into ``EmbeddingFailedError``.
 
         Args:
             call: The call.
+            executor: The documents' pool or the queries'.
 
         Returns:
             Its result.
@@ -243,7 +253,7 @@ class LocalEmbeddings:
             EmbeddingFailedError: The model failed; not transient (it would fail again).
         """
         try:
-            return await _run(self.embedder.executor, call)
+            return await _run(executor, call)
         except self.embedder.errors as error:
             raise EmbeddingFailedError(
                 self.name, type(error).__name__[:MAX_EMBEDDING_ERROR]
@@ -257,7 +267,7 @@ class LocalReranker:
     model: CrossEncoderModel = field(repr=False)
     """The loaded cross-encoder, shared by every caller in this process."""
     executor: Executor = field(repr=False)
-    """Runs the calls, at most a few at a time."""
+    """Runs the calls on the query-time pool (never behind an embedding job's batches)."""
     errors: tuple[type[Exception], ...] = LOCAL_MODEL_ERRORS
     """What a failed call raises (ONNX Runtime's errors among them)."""
 

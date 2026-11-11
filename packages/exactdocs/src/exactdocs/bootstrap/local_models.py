@@ -3,9 +3,11 @@
 This module is light: it imports no fastembed. A model is found by its folder in
 ``EXACTDOCS_MODELS_DIR`` and the marker ``exactdocs models pull`` writes last, so a missing model
 is known at start without importing anything, and its role is turned off there (it is never
-downloaded). The first use, or the warm-up at start, sets ``HF_HUB_OFFLINE=1``, imports
-``bootstrap/local_sdk.py`` and loads the model in a worker thread, once per process. Calls run on
-one small thread pool, which bounds how many run at once.
+downloaded). The first use, or the warm-up at start, imports ``bootstrap/local_sdk.py`` and
+loads the model in a worker thread, once per process, from its folder only
+(``specific_model_path``, ``local_files_only``). Calls run on two small thread pools: one for
+the embedding jobs' document batches, one for what a search waits on (query embeddings,
+reranks), so a search never queues behind ingestion. ONNX Runtime gets half the cores per call.
 """
 
 import asyncio
@@ -26,13 +28,15 @@ from typing import NoReturn, cast
 
 from exactdocs.bootstrap.constants import (
     CHECK_TEXT,
-    HF_OFFLINE_VARIABLE,
+    LOCAL_DOCUMENT_WORKERS,
     LOCAL_EXTRA,
-    LOCAL_MODEL_WORKERS,
+    LOCAL_MEMORY_ARENA,
     LOCAL_MODULES,
+    LOCAL_QUERY_WORKERS,
     LOCAL_SDK_MODULE,
     MODEL_MARKER,
     MODEL_NAME,
+    PINNED_MODEL_REVISIONS,
 )
 from exactdocs.retrieval.adapters.driven.local_models import (
     CrossEncoderModel,
@@ -72,6 +76,20 @@ class PulledModel:
     """``embedding`` or ``reranker``."""
     dimensions: int | None = None
     """An embedding model's vector size."""
+    revision: str | None = None
+    """The Hub commit it was pulled at (``None`` in a marker from before revisions were kept)."""
+
+
+def onnx_threads() -> int:
+    """Name the ONNX Runtime threads of one call: half the cores, at least one.
+
+    Two calls may run at once (a document batch and a search's call), so together they use the
+    cores without oversubscribing them.
+
+    Returns:
+        The threads.
+    """
+    return max(1, (os.cpu_count() or 2) // 2)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -122,11 +140,12 @@ def read_marker(folder: Path) -> PulledModel | None:
     """
     try:
         data = json.loads((folder / MODEL_MARKER).read_text(encoding="utf-8"))
-        dimensions = data.get("dimensions")
+        dimensions, revision = data.get("dimensions"), data.get("revision")
         return PulledModel(
             model=str(data["model"]),
             role=ModelRole(data["role"]),
             dimensions=int(dimensions) if dimensions is not None else None,
+            revision=str(revision) if revision is not None else None,
         )
     except OSError, ValueError, KeyError, TypeError, AttributeError:
         return None
@@ -143,9 +162,10 @@ class LocalModels:
     )
     """The models loaded so far, by role and lower-cased name: each once per process."""
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
-    """One load at a time (two first calls never load a model twice)."""
-    _pool: list[ThreadPoolExecutor] = field(default_factory=list, init=False, repr=False)
-    """The thread pool every call runs on, made at the first load."""
+    """One load at a time (two first calls never load a model twice); taken in worker threads
+    only, never on the event loop."""
+    _pools: dict[str, ThreadPoolExecutor] = field(default_factory=dict, init=False, repr=False)
+    """The ``documents`` and ``queries`` pools, made at first use and shut down by ``close``."""
 
     def unsupported(self, profile: ProviderProfile) -> str | None:
         """Say why this installation cannot run local models (fastembed is not installed).
@@ -183,6 +203,13 @@ class LocalModels:
             )
         if pulled.role is not role:
             return f"{model} was pulled for the {pulled.role.value} role, not the {role.value} role"
+        pinned = PINNED_MODEL_REVISIONS.get(pulled.model)
+        if pinned is not None and pulled.revision != pinned:
+            return (
+                f"model {model} in {self.models_dir} was pulled at revision "
+                f"{pulled.revision or 'unknown'}, not the pinned {pinned}: run "
+                f"`exactdocs models pull {model}` again"
+            )
         return None
 
     def _refuse(self, profile: ProviderProfile, reason: str) -> NoReturn:
@@ -197,23 +224,36 @@ class LocalModels:
         """
         raise ProviderUnsupportedError(profile.name, reason)
 
-    def _executor(self) -> ThreadPoolExecutor:
-        """Return the thread pool of model calls, made once.
+    def _pool(self, kind: str) -> ThreadPoolExecutor:
+        """Return one of the two pools, made at first use.
+
+        No lock: a pool starts no thread before its first call, so one made twice by a race is
+        dropped unused.
+
+        Args:
+            kind: ``documents`` or ``queries``.
 
         Returns:
             The pool.
         """
-        with self._lock:
-            if not self._pool:
-                self._pool.append(
-                    ThreadPoolExecutor(
-                        max_workers=LOCAL_MODEL_WORKERS, thread_name_prefix="exactdocs-local-model"
-                    )
-                )
-            return self._pool[0]
+        pool = self._pools.get(kind)
+        if pool is None:
+            workers = LOCAL_DOCUMENT_WORKERS if kind == "documents" else LOCAL_QUERY_WORKERS
+            made = ThreadPoolExecutor(max_workers=workers, thread_name_prefix=f"local-{kind}")
+            pool = self._pools.setdefault(kind, made)
+        return pool
+
+    def close(self) -> None:
+        """Shut both pools down, dropping queued calls (``Container.running`` ends with it).
+
+        A call already running finishes in its thread; the next use makes new pools.
+        """
+        while self._pools:
+            _, pool = self._pools.popitem()
+            pool.shutdown(wait=False, cancel_futures=True)
 
     def _sdk(self) -> ModuleType:
-        """Import fastembed's side, offline (in a worker thread: it takes a second or two).
+        """Import fastembed's side (in a worker thread the first time: it takes a second or two).
 
         Returns:
             ``exactdocs.bootstrap.local_sdk``.
@@ -221,8 +261,6 @@ class LocalModels:
         loaded = sys.modules.get(LOCAL_SDK_MODULE)
         if loaded is not None:
             return loaded
-        os.environ[HF_OFFLINE_VARIABLE] = "1"  # nothing below may reach the Hub
-        os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
         return importlib.import_module(LOCAL_SDK_MODULE)
 
     def _load(self, profile: ProviderProfile, role: ModelRole, model: str) -> object:
@@ -252,7 +290,13 @@ class LocalModels:
                 self._refuse(profile, f"fastembed supports no model named {model!r}")
             load = sdk.load_embedding if role is ModelRole.EMBEDDING else sdk.load_cross_encoder
             try:
-                loaded = load(model, folder, self.models_dir)
+                loaded = load(
+                    model,
+                    folder,
+                    self.models_dir,
+                    threads=onnx_threads(),
+                    arena=LOCAL_MEMORY_ARENA,
+                )
             except sdk.errors() as error:  # a file missing or damaged, ONNX Runtime refusing it
                 reason = f"model {model} in {folder} cannot be loaded ({type(error).__name__})"
                 self._refuse(profile, f"{reason}: run `exactdocs models pull {model}` again")
@@ -290,7 +334,8 @@ class LocalModels:
         return LocalEmbedder(
             model=cast("TextEmbeddingModel", loaded),
             dimensions=dimensions,
-            executor=self._executor(),
+            executor=self._pool("documents"),
+            query_executor=self._pool("queries"),
             errors=self._sdk().errors(),
         )
 
@@ -307,7 +352,7 @@ class LocalModels:
         loaded = await asyncio.to_thread(self._load, profile, ModelRole.RERANKER, model)
         return LocalReranker(
             model=cast("CrossEncoderModel", loaded),
-            executor=self._executor(),
+            executor=self._pool("queries"),
             errors=self._sdk().errors(),
         )
 

@@ -462,8 +462,27 @@ MODEL_NAME: Final[re.Pattern[str]] = re.compile(
 )
 """A model name as fastembed lists it (``<org>/<name>``): also its folder in the models
 directory, so no ``..``, no absolute path."""
-LOCAL_MODEL_WORKERS: Final[int] = 2
-"""Local model calls that may run at once (each also uses ONNX Runtime's own threads)."""
+LOCAL_DOCUMENT_WORKERS: Final[int] = 1
+"""Embedding batches (the background jobs) that run at once: one, on a pool of its own."""
+LOCAL_QUERY_WORKERS: Final[int] = 2
+"""Query embeddings and reranks that run at once, on a pool of their own: a search never waits
+behind an embedding job's batches."""
+LOCAL_MEMORY_ARENA: Final[bool] = False
+"""ONNX Runtime's CPU memory arena: off, so memory a batch used is given back. Embedding the
+fixture library (bge-small, 2 threads, batches of 16) ended at 493 MB with it off, 510 MB on,
+at the same speed (#278)."""
+PINNED_MODEL_REVISIONS: Final[dict[str, str]] = {
+    "BAAI/bge-small-en-v1.5": "aa8f8b060edb00e03bfdd08813a2949946c8ba55",
+    "Xenova/ms-marco-MiniLM-L-6-v2": "a09144355adeed5f58c8ed011d209bf8ee5a1fec",
+}
+"""The Hub commit each default model is pulled at (Qdrant/bge-small-en-v1.5-onnx-Q of
+2026-09-24, Xenova/ms-marco-MiniLM-L-6-v2 of 2025-06-30): a pull is reproducible, and a model
+pulled at another commit is refused until it is pulled again. Other models are pulled at the
+commit ``main`` points to then, which the marker records."""
+LOCAL_PROFILE: Final[str] = "local"
+"""The profile name the docs' ``local:<model>`` roles use."""
+LOCAL_PROFILE_HINT: Final[str] = "EXACTDOCS_AI__PROVIDERS__LOCAL__KIND=local"
+"""How an operator declares the ``local`` profile a ``local:<model>`` role names."""
 HUB_FILES: Final[tuple[str, ...]] = (
     "config.json",
     "tokenizer.json",
@@ -473,5 +492,3 @@ HUB_FILES: Final[tuple[str, ...]] = (
 """The tokenizer and configuration files fetched with a model's ONNX file."""
 TOKENIZER_FILES: Final[tuple[str, ...]] = ("tokenizer.json", "tokenizer_config.json")
 """Files a pulled model must have besides its ONNX file (the others are optional)."""
-HF_OFFLINE_VARIABLE: Final[str] = "HF_HUB_OFFLINE"
-"""Hugging Face's offline switch: set to 1 whenever a local model loads, so nothing downloads."""
