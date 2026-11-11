@@ -4,6 +4,7 @@ from datetime import timedelta
 from typing import Self
 
 from exactdocs.retrieval.constants import (
+    DEFAULT_AGENT_CACHE_TTL_DAYS,
     DEFAULT_EMBEDDING_BATCH,
     DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
     HYDE_CACHE_TTL_DAYS,
@@ -22,6 +23,7 @@ from exactdocs.retrieval.models import (
 )
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
+    AgentAnswerCache,
     AgentReads,
     ArticleSuggestions,
     ArticleTitles,
@@ -88,6 +90,7 @@ from exactdocs.retrieval.ports.driving import (
     SetLibraryRetrieval,
 )
 from exactdocs.retrieval.use_cases import (
+    AgentAnswerCaching,
     AgenticPipeline,
     AiProviders,
     AiSpend,
@@ -116,6 +119,7 @@ from exactdocs.retrieval.use_cases import (
     ListProvidersUseCase,
     ListRolesUseCase,
     ListUnembeddedVersionsUseCase,
+    NoAgentAnswerCache,
     NoHypothesisCache,
     NoModelFactory,
     NoSpendLedger,
@@ -251,6 +255,12 @@ class RetrievalModule:
         hyde_timeout: float = HYDE_TIMEOUT,
         hyde_cache_key: bytes | None = None,
         hyde_cache_ttl: timedelta = timedelta(days=HYDE_CACHE_TTL_DAYS),
+        agent_answer_cache: AgentAnswerCache | None = None,
+        agent_cache_key: bytes | None = None,
+        agent_cache_enabled: bool = False,
+        agent_cache_threshold: float | None = None,
+        agent_cache_scope: str = "library",
+        agent_cache_ttl: timedelta = timedelta(days=DEFAULT_AGENT_CACHE_TTL_DAYS),
         instruction_files: InstructionFiles | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
@@ -287,7 +297,14 @@ class RetrievalModule:
         each read recorded in ``agent_reads`` (the runs' trace; none by default), and, for a
         library with repo guidance on, given the ``AGENTS.md`` / ``CLAUDE.md`` files
         ``instruction_files`` reads for the searched manifest (RET-08); an ``agentic`` entry of
-        ``pipelines`` replaces it (tests).
+        ``pipelines`` replaces it (tests). With ``agent_answer_cache`` and
+        ``agent_cache_key`` (the HMAC key of its questions), a question at least
+        ``agent_cache_threshold`` similar to one answered before in the same scope is answered
+        from the cache (``AgentAnswerCaching``), only when ``agent_cache_enabled`` is true (the
+        cache is opt-in); ``agent_cache_scope`` says whether callers share
+        answers (``library``) or not (``caller``). The nightly prune deletes answers older than
+        ``agent_cache_ttl``, and every answer while the cache is off. Removing a manifest, or
+        saving or forgetting a library's settings, forgets its answers, on or off.
         """
         clock = clock or SystemClock()
         tracer = tracer or UntracedSearches()
@@ -321,8 +338,28 @@ class RetrievalModule:
             batch_size=embedding_batch_size,
         )
         hypotheses_cached = hypothesis_cache or NoHypothesisCache()
+        # The store is always wired, so its rows are forgotten and pruned even with the cache
+        # off; only looking up and storing need it on and a key.
+        answers: AgentAnswerCache = agent_answer_cache or NoAgentAnswerCache()
+        caching = None
+        if agent_answer_cache is not None and agent_cache_key is not None and agent_cache_enabled:
+            caching = AgentAnswerCaching(
+                cache=answers,
+                key=agent_cache_key,
+                clock=clock,
+                runs=runs,
+                threshold=agent_cache_threshold,
+                audience=agent_cache_scope,
+                timeout=query_embedding_timeout,
+            )
         prune_hypotheses = PruneHypothesesUseCase(
-            hypotheses=hypotheses_cached, providers=providers, clock=clock, ttl=hyde_cache_ttl
+            hypotheses=hypotheses_cached,
+            providers=providers,
+            clock=clock,
+            ttl=hyde_cache_ttl,
+            caching=caching,
+            answers=answers,
+            answers_ttl=agent_cache_ttl,
         )
         built: dict[RetrievalMode, RetrievalPipeline] = {
             RetrievalMode.BM25: Bm25Pipeline(search=search)
@@ -360,6 +397,7 @@ class RetrievalModule:
                 tracer=tracer,
                 instructions=instruction_files,
                 reads=agent_reads or UnrecordedAgentReads(),
+                cache=caching,
             )
         modes = RetrievalModes(
             pipelines={**built, **(pipelines or {})},
@@ -409,18 +447,23 @@ class RetrievalModule:
                 tracer=tracer,
             ),
             discard_pending_chunks=DiscardPendingChunksUseCase(
-                manifests=manifests, chunks=chunks, clock=clock, hypotheses=hypotheses_cached
+                manifests=manifests,
+                chunks=chunks,
+                clock=clock,
+                hypotheses=hypotheses_cached,
+                answers=answers,
             ),
             collect_chunks=CollectChunksUseCase(
                 manifests=manifests,
                 chunks=chunks,
                 clock=clock,
                 hypotheses=hypotheses_cached,
+                answers=answers,
                 prune=prune_hypotheses,
             ),
             prune_hypotheses=prune_hypotheses,
             remove_chunks=RemoveChunksUseCase(
-                manifests=manifests, chunks=chunks, hypotheses=hypotheses_cached
+                manifests=manifests, chunks=chunks, hypotheses=hypotheses_cached, answers=answers
             ),
             retag_articles=RetagArticlesUseCase(chunks=chunks),
             get_search_index_state=GetSearchIndexStateUseCase(maintenance=maintenance),
@@ -428,9 +471,9 @@ class RetrievalModule:
             rebuild_search_index=RebuildSearchIndexUseCase(maintenance=maintenance),
             get_library_retrieval=GetLibraryRetrievalUseCase(libraries=libraries, modes=modes),
             set_library_retrieval=SetLibraryRetrievalUseCase(
-                libraries=libraries, modes=modes, providers=providers
+                libraries=libraries, modes=modes, providers=providers, answers=answers
             ),
-            forget_library=ForgetLibraryUseCase(library_modes=library_modes),
+            forget_library=ForgetLibraryUseCase(library_modes=library_modes, answers=answers),
             list_providers=ListProvidersUseCase(providers=providers),
             get_provider=GetProviderUseCase(providers=providers),
             save_provider=SaveProviderUseCase(providers=providers),

@@ -532,6 +532,11 @@ FALLBACKS_METRIC: Final[str] = "exactdocs.ai.fallbacks"
 """Counter of searches a cheaper mode answered, by mode and reason (no library, user or query)."""
 FALLBACK_REASON_ATTRIBUTE: Final[str] = "exactdocs.fallback.reason"
 """The label of ``FALLBACKS_METRIC`` naming the reason (``llm_budget_reached``)."""
+CACHE_HITS_METRIC: Final[str] = "exactdocs.ai.cache_hits"
+"""Counter of searches whose LLM step a cache answered, by cache and mode (no library, user or
+query)."""
+CACHE_ATTRIBUTE: Final[str] = "exactdocs.cache"
+"""The label of ``CACHE_HITS_METRIC`` naming the cache (``agentic_answer``, ``hyde_answer``)."""
 SEARCH_ATTRIBUTE: Final[str] = "exactdocs.search"
 """The metric attribute naming the search (``search_docs``, ``query_docs``...)."""
 STAGE_ATTRIBUTE: Final[str] = "exactdocs.search.stage"
@@ -1152,6 +1157,109 @@ MAX_AGENT_REPEATED_CALLS: Final[int] = 50
 """The highest ``max_repeated_calls`` an operator may set."""
 REPEATED_CALLS_TOO_LOW: Final[str] = "max_repeated_calls must be at least 2"
 """Why ``AgentBounds`` refuses a loop threshold that would end a run at its first call."""
+
+# ---------------------------------------------------------------- models (agentic cache, #100)
+AGENT_CACHE_FORMAT: Final[int] = 4
+"""The format of a cached agentic answer and of what it was found with (the explorer's
+instructions and tools): part of every entry's scope, so changing it makes every entry a miss."""
+DEFAULT_AGENT_CACHE_THRESHOLD: Final[float] = 0.8
+"""How similar (0 to 1) a question must be to a cached one of the same scope for its answer to
+be reused, with an embedding model (``[ai.agentic_cache] threshold``)."""
+DEFAULT_BM25_CACHE_THRESHOLD: Final[float] = 0.9
+"""The same without an embedding model: words alone say less, so the bar is higher."""
+AGENT_CACHE_SCOPES: Final[tuple[str, ...]] = ("library", "caller")
+"""Who shares cached agentic answers (``[ai.agentic_cache] scope``): every caller of a library's
+version, or each caller only their own."""
+DEFAULT_AGENT_CACHE_TTL_DAYS: Final[int] = 7
+"""Days a cached agentic answer is kept (``[ai.agentic_cache] ttl``); the nightly upkeep deletes
+older ones."""
+AGENT_CACHE_PER_SCOPE: Final[int] = 200
+"""The most answers kept per scope (manifest, model, filter and settings): the oldest go first,
+so a lookup compares a question with at most this many."""
+AGENT_CACHE_MEMORY_SIZE: Final[int] = 2_000
+"""The most answers an in-memory cache keeps (a stdio process's own); the oldest go first."""
+AGENT_CACHE_TERM_HASH_CHARS: Final[int] = 16
+"""Hex characters kept of each question term's HMAC (64 bits): enough that two terms of one
+scope never collide in practice."""
+QUESTION_STOP_WORDS: Final[frozenset[str]] = (
+    TERM_HASH_STOP_WORDS
+    - {"what", "when", "which", "why", "to", "for", "on", "in", "of", "with", "and", "or"}
+) | frozenset(
+    {"about", "am", "be", "could", "get", "if", "me", "should", "there", "this", "we"}
+    | {"would", "behaviour", "behavior", "way", "ways", "please", "possible", "properly"}
+    | {"want", "wants", "need", "needs", "try", "tries", "trying", "like", "able"}
+)
+"""Filler two questions may differ by and still ask the same ("how do I", "I want"): left out
+of their content terms. Prepositions and conjunctions are not ("build for arm" is not "build on
+arm"), nor is ``to``: only the infinitive is (``QUESTION_INFINITIVE``)."""
+QUESTION_POLARITY_WORDS: Final[frozenset[str]] = frozenset(
+    {"not", "no", "never", "without", "nor", "none", "neither", "nothing"}
+)
+"""Words that turn a question around: two questions must hold the same ones, as often, to share
+an answer (``cannot`` and every ``n't`` count as ``not``)."""
+QUESTION_NUMBER: Final[str] = (
+    r"(?:(>=|<=|==|!=|~=|>|<|~|\^|=)\s*)?(?<![\w.])(-?)v?(\d+(?:\.\d+)*)\b(\+*)"
+)
+"""A number or version in a question (``v1``, ``2.0``, ``-1``, ``>= 3.8``, ``3.8+``): a content
+term of its own, in its place, and a guard. ``v1`` and ``1`` are one; ``-1`` and ``1`` are not,
+nor are ``>=3.8`` and ``<3.8``, nor ``3.8+`` and ``3.8``: a comparison or range operator right
+before it, and a ``+`` right after it, are part of it."""
+QUESTION_SYMBOLS: Final[str] = r"[<>=!~^+\-*/|&%]+"
+"""A run of symbols (``>``, ``->``, ``!=``, ``-``, ``/``...): a content term in its place, so
+"latency > threshold" is not "latency < threshold". Sentence punctuation (``. , ? : ; ( )`` and
+quotes) is no symbol, nor is a ``!`` that ends a sentence."""
+QUESTION_SYMBOL_SPELLINGS: Final[dict[str, str]] = {
+    "\u2265": ">=",
+    "\u2264": "<=",
+    "\u2260": "!=",
+    "\u2248": "~=",
+    "\u2192": "->",
+}
+"""Symbols NFKC leaves as they are, written the ASCII way (``≥`` is ``>=``, ``→`` is ``->``)."""
+QUESTION_ARTICLES: Final[frozenset[str]] = frozenset({"a", "i"})
+"""Single letters that are filler as an article or a pronoun, but a name (a content term) next
+to a symbol or a direction word ("move it to a from b", "is a < b"); every other single letter
+is always a content term."""
+QUESTION_DIRECTIONS: Final[frozenset[str]] = frozenset({"to", "from", "into", "onto"})
+"""Words next to which ``a`` and ``i`` are names, not articles."""
+QUESTION_NEGATIONS: Final[frozenset[str]] = frozenset(
+    {"dont", "doesnt", "didnt", "cant", "wont", "isnt", "arent", "wasnt", "werent", "shouldnt"}
+    | {"couldnt", "wouldnt", "hasnt", "havent", "hadnt", "mustnt", "neednt", "aint"}
+)
+"""Negations written without their apostrophe: each reads as ``not``."""
+QUESTION_WORDS: Final[frozenset[str]] = frozenset({"what", "when", "where", "which", "who", "why"})
+"""Question words that are content terms ("when is the cache cleared" is not "why"); ``how`` is
+filler. After one, ``to`` is an infinitive ("what to configure")."""
+QUESTION_INFINITIVE: Final[str] = "to"
+"""Dropped when it follows filler, a question word, a negation or nothing ("how to configure",
+"I want to configure"); kept as a term elsewhere ("connect to postgres")."""
+_UNFOLDED_S_ENDINGS: Final[tuple[str, ...]] = ("ss", "us", "is")
+"""Endings a final ``s`` is kept after (``class``, ``status``, ``redis``)."""
+_UNFOLDED_WORDS: Final[frozenset[str]] = frozenset(
+    {"https", "ftps", "sftps", "wss", "dns", "news", "windows", "lens"}
+)
+"""Words never folded: a protocol's ``s`` is part of its name (``https`` is not ``http``), and a
+few words whose ``s`` is not a plural."""
+_PLURALS: Final[tuple[tuple[str, str], ...]] = (
+    ("ies", "y"),
+    ("ches", "ch"),
+    ("shes", "sh"),
+    ("sses", "ss"),
+    ("xes", "x"),
+    ("s", ""),
+)
+"""Plural endings and what they fold to, first match wins: ``retries`` is ``retry``, ``rows``
+is ``row``. Nothing else of a word is folded: not ``-ing`` or ``-ed`` (``meaning`` is not
+``mean``, ``hosting`` is not ``host``), not ``-ation``, ``-ate`` or ``-ment``."""
+_SHORTEST_PLURAL: Final[int] = 4
+"""The shortest word whose plural ending is folded (``bus``, ``gas`` stay)."""
+BM25_SIMILARITY: Final[str] = "bm25"
+"""What an entry's similarity space is called when no embedding model is configured (words
+alone; the name is kept for stored rows)."""
+AGENTIC_ANSWER_CACHE: Final[str] = "agentic_answer"
+"""The ``exactdocs.ai.cache_hits`` label of a search answered from the agentic answer cache."""
+HYDE_ANSWER_CACHE: Final[str] = "hyde_answer"
+"""The ``exactdocs.ai.cache_hits`` label of a HyDE search whose hypothetical answer was cached."""
 
 # ---------------------------------------------------------------- adapters/driven/ai_explorer
 EXPLORER_SDK_MODULE: Final[str] = "exactdocs.retrieval.adapters.driven.ai_explorer_sdk"

@@ -333,6 +333,27 @@ What stays on the instance: HyDE's hypothetical answers (#94), written from user
 cached in `retrieval_hyde_answers` per manifest, model and an HMAC of the normalized query (keyed
 from the instance's secret key, never the query text), and deleted after `[ai.hyde] cache_ttl`
 (30 days), with their manifest, or once their model is no longer configured.
+The agentic answer cache (#100, `retrieval_agentic_answers`) keeps agentic answers (chunk IDs,
+justifications, explored paths) per manifest, `llm` model and a fingerprint of the tag filter and
+agentic limits; the question is kept as HMACs of it and of each term (HKDF purpose `exactdocs
+agentic cache v1`) and, with an embedding model, as its embedding. Deleted after `[ai.agentic_cache]
+ttl` (7 days), with their manifest, with the library's settings, once their model or embedding
+model is no longer configured, or all of them once the cache is turned off. With `scope =
+"library"` (the default) a cached answer, its model-written justifications included, is served to
+every caller of the library's version, so one caller can read the gist of another's question;
+`scope = "caller"` keeps each caller's answers to themselves. The cache is opt-in (`enabled =
+false` by default, with an embedding model too): it trades exactness for cost, and serves only
+near-verbatim re-asks: the same content words in the same order (only plurals folded, filler
+dropped, symbols and single-letter names kept as terms), with the same numbers, versions,
+operators (`>=`, `~`, a trailing `+`...) and negations, so a swap ("replace requests with httpx" and the reverse) misses; an embedding
+only confirms such a match and never makes two questions with different terms match (on the
+default local model, siblings such as enable/disable and client/server score as high as
+paraphrases). Correct answers come before hit rate; the accepted losses are re-asks in another
+word order ("retry configuration" for "configure retries", "E42 error" for "error E42": order is
+compared as is, never as a set, also when no relation word is present), a verb and its noun
+("migration" / "migrate", "validation" / "validate"), synonyms ("set up" / "configure"), and
+inflections other than plurals ("connecting" / "connect", "logging" / "log": `-ing` and `-ed`
+are never folded, since "meaning" / "mean" and "hosting" / "host" are other words).
 
 What leaves the instance when a role is set: **embedding** receives chunk text (in background
 jobs) and query text; **reranker** and **judge** receive query text and candidate chunk text;
@@ -398,7 +419,7 @@ admin-only; `notes` and `off` may stay with the library's owner.
   text of request spans only; it never turns prompts on.
 - **Metrics** (OTLP and `/metrics`): pydantic-ai's `gen_ai.client.token.usage`,
   `gen_ai.client.operation.duration` and `operation.cost`; ours: `exactdocs.ai.fallbacks` (by mode
-  and reason), `exactdocs.ai.cache_hits`, `exactdocs.embedding.backlog` (chunks waiting). Labels
+  and reason), `exactdocs.ai.cache_hits` (by cache and mode), `exactdocs.embedding.backlog` (chunks waiting). Labels
   are bounded: provider kind, model (from configuration), operation, role, token type. Never the
   library, version, user or query, as for the existing metrics.
 

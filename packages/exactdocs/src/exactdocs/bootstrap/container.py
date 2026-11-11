@@ -46,6 +46,7 @@ from exactdocs.bootstrap.bridges import (
     RetrievalVersionEmbedder,
 )
 from exactdocs.bootstrap.constants import (
+    AGENT_CACHE_PURPOSE,
     AI_KEYS_PURPOSE,
     CREDENTIALS_KEY_PURPOSE,
     HYDE_CACHE_PURPOSE,
@@ -126,6 +127,7 @@ from exactdocs.retrieval.adapters.driven.ai_judge import PydanticAiCandidateJudg
 from exactdocs.retrieval.adapters.driven.genai_prices import GenaiPrices
 from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryCallRates,
+    ReadOnlyAgentAnswerCache,
     ReadOnlyHypothesisCache,
     ReadOnlySpendLedger,
 )
@@ -133,6 +135,7 @@ from exactdocs.retrieval.adapters.driven.pg_search import PgSearchIndex
 from exactdocs.retrieval.adapters.driven.postgres_fts import PostgresSearchIndex
 from exactdocs.retrieval.adapters.driven.postgres_vectors import PostgresVectorIndex
 from exactdocs.retrieval.adapters.driven.sqlite import (
+    SqliteAgentAnswerCache,
     SqliteChunkRepository,
     SqliteHypothesisCache,
     SqliteLibraryModes,
@@ -155,6 +158,7 @@ from exactdocs.retrieval.models import (
     RetrievalMode,
 )
 from exactdocs.retrieval.ports.driven import (
+    AgentAnswerCache,
     AgentReads,
     EmbeddingModels,
     HypotheticalAnswerCache,
@@ -367,17 +371,47 @@ def _hyde_cache_key(settings: Settings, *, create: bool) -> bytes | None:
 
     Returns:
         The key, or ``None`` when there is no secret key and none may be created.
+    """
+    return _cache_key(settings, HYDE_CACHE_PURPOSE, create=create)
+
+
+def _agent_cache_key(settings: Settings, *, create: bool) -> bytes | None:
+    """Derive the HMAC key of the agentic answer cache (its own purpose), if the cache is on.
+
+    Args:
+        settings: The runtime configuration.
+        create: Generate the key file when there is none (never in a read-only process).
+
+    Returns:
+        The key, or ``None`` when the cache is off, or there is no secret key and none may be
+        created.
+    """
+    if not settings.ai.agentic_cache.enabled:
+        return None
+    return _cache_key(settings, AGENT_CACHE_PURPOSE, create=create)
+
+
+def _cache_key(settings: Settings, purpose: bytes, *, create: bool) -> bytes | None:
+    """Derive a cache's HMAC key from the instance's secret key, for its own purpose.
+
+    Args:
+        settings: The runtime configuration.
+        purpose: The HKDF context of the cache.
+        create: Generate the key file when there is none (never in a read-only process).
+
+    Returns:
+        The key, or ``None`` when there is no secret key and none may be created.
 
     Raises:
         StartupError: The key or the key file is unusable.
     """
     try:
         if settings.secret_key:
-            return derived_key(settings.secret_key.get_secret_value(), HYDE_CACHE_PURPOSE)
+            return derived_key(settings.secret_key.get_secret_value(), purpose)
         path = settings.data_dir / KEY_FILE
         if not create and not path.is_file():
             return None
-        return derived_key(read_key_file(path), HYDE_CACHE_PURPOSE)
+        return derived_key(read_key_file(path), purpose)
     except ValueError as error:  # fixed texts: they never repeat a key
         raise StartupError(str(error)) from None
 
@@ -441,6 +475,7 @@ def _build_read_side(
     *,
     ai_box: FernetSecretBox | None,
     hyde_key: bytes | None = None,
+    agent_cache_key: bytes | None = None,
     model_roles: ModelRoles | None = None,
     pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
     vector_extension: Callable[[], str] | None = None,
@@ -458,6 +493,8 @@ def _build_read_side(
         ai_box: Seals and opens the provider keys stored over the REST API; ``None``: none can be
             stored or opened.
         hyde_key: The HMAC key of the queries in HyDE's cache; ``None``: nothing is cached.
+        agent_cache_key: The HMAC key of the questions in the agentic answer cache; ``None``:
+            nothing is cached.
         model_roles: Stands in for the role resolution over the configured profiles (tests).
         pipelines: Retrieval modes beside BM25 (tests, until the AI modes are built).
         vector_extension: Finds sqlite-vec's loadable extension (tests: one that cannot load).
@@ -497,9 +534,11 @@ def _build_read_side(
     vectors = vector_index(engine, sqlite_extension=vector_extension)
     spend: SpendLedger = SqliteSpendLedger(engine=engine)
     hypotheses: HypotheticalAnswerCache = SqliteHypothesisCache(engine=engine)
+    answers: AgentAnswerCache = SqliteAgentAnswerCache(engine=engine)
     if read_only:
         spend = ReadOnlySpendLedger(shared=spend)
         hypotheses = ReadOnlyHypothesisCache(shared=hypotheses)
+        answers = ReadOnlyAgentAnswerCache(shared=answers)
     retrieval = RetrievalModule.build(
         searchable=CatalogSearchableVersions(
             get_library=catalog.get_library, get_active_manifest=catalog.get_active_manifest
@@ -553,6 +592,12 @@ def _build_read_side(
         hypothesis_cache=hypotheses,
         hyde_cache_key=hyde_key,
         hyde_cache_ttl=settings.ai.hyde.cache_ttl,
+        agent_answer_cache=answers,
+        agent_cache_key=agent_cache_key,
+        agent_cache_enabled=settings.ai.agentic_cache.enabled,
+        agent_cache_threshold=settings.ai.agentic_cache.threshold,
+        agent_cache_scope=settings.ai.agentic_cache.scope,
+        agent_cache_ttl=settings.ai.agentic_cache.ttl,
         instruction_files=CatalogInstructionFiles(
             get_instruction_files=catalog.get_instruction_files
         ),
@@ -696,6 +741,7 @@ class ReadOnlyContainer:
             settings,
             ai_box=ai_box,
             hyde_key=_hyde_cache_key(settings, create=False),
+            agent_cache_key=_agent_cache_key(settings, create=False),
             read_only=True,
         )
         return cls(
@@ -815,6 +861,7 @@ class Container:
             settings,
             ai_box=_secret_box(settings, AI_KEYS_PURPOSE),
             hyde_key=_hyde_cache_key(settings, create=True),
+            agent_cache_key=_agent_cache_key(settings, create=True),
             model_roles=model_roles,
             pipelines=pipelines,
             vector_extension=vector_extension,
@@ -984,7 +1031,7 @@ class Container:
         await requeue_daily(engine=self.engine, queue=self.nightly)
 
     async def nightly(self) -> None:
-        """Queue the missing embedding, then prune HyDE's cache (its TTL, retired models).
+        """Queue the missing embedding, then prune HyDE's and the agentic answer cache.
 
         Each part is logged on failure and never stops the other or the server.
         """
@@ -992,7 +1039,7 @@ class Container:
         try:
             await self.retrieval.prune_hypotheses()
         except Exception:
-            logger.exception("pruning HyDE's cache failed; it runs again tomorrow")
+            logger.exception("pruning the answer caches failed; it runs again tomorrow")
 
     async def queue_embedding(self) -> None:
         """Queue the embedding of every version the configured model has not embedded.

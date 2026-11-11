@@ -1305,6 +1305,11 @@
       "additionalProperties": false,
       "description": "Results of one search, best first, with the version and the way they were found.",
       "properties": {
+        "cache_hit": {
+          "default": false,
+          "description": "An agentic search answered from the agentic answer cache: a similar question of the same\nversion, filter and model was answered before, so no agent ran. Its results were checked\nagainst this version and filter again.",
+          "type": "boolean"
+        },
         "commit_sha": {
           "type": "string"
         },
@@ -1530,6 +1535,7 @@
         "reranked",
         "coverage",
         "fallback_reason",
+        "cache_hit",
         "results"
       ],
       "type": "object"

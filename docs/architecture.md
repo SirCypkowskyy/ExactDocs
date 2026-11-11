@@ -968,7 +968,9 @@ room for its 9 MB.)
   pydantic-ai's `gen_ai.client.token.usage` and `operation.cost`, recorded by every chat model and
   embedder the `ModelFactory` builds (instrumented with `include_content=False`, labelled by
   provider, model, operation and token type). `OpenTelemetrySearchTracer.fallback` counts
-  `exactdocs.ai.fallbacks` (by mode and reason) for each search a cheaper mode answered.
+  `exactdocs.ai.fallbacks` (by mode and reason) for each search a cheaper mode answered, and
+  `OpenTelemetrySearchTracer.cache_hit` counts `exactdocs.ai.cache_hits` (by cache,
+  `agentic_answer` or `hyde_answer`, and mode) for each search whose LLM step a cache answered.
 
 ## AI retrieval (planned)
 
@@ -1090,9 +1092,9 @@ limit. `PruneHypotheses` deletes answers older than `[ai.hyde] cache_ttl`
 (30 days) and those of an `llm` model no longer configured (neither the instance's nor any
 library's override, or its profile is gone). It runs at start and once a day just after UTC
 midnight with the embedding re-queue (`Container.nightly`, the same single leader on
-PostgreSQL as `requeue_daily`), and after every collection (`CollectChunks`). Cache hits are not
-a metric yet
-(`exactdocs.ai.cache_hits` comes with the answer cache, #100).
+PostgreSQL as `requeue_daily`), and after every collection (`CollectChunks`). A search whose
+hypothetical answer came from the cache is counted in `exactdocs.ai.cache_hits` (cache
+`hyde_answer`, #100).
 
 *Data at rest.* The table stores the hypothetical answers in plain text; they are written from
 user queries and often restate them. The query itself is stored only as an HMAC-SHA256 of its
@@ -1226,6 +1228,68 @@ own recorder, which is where every agentic run is checked against the version as
 `include_content=False` (the factory's, or wrapped there), so the agent run, its model requests and
 its tool calls get spans (the read calls nested in `run_code`) and `gen_ai.client.token.usage`,
 without content.
+
+**Agentic answer cache (#100).** `AgentAnswerCaching` (in `use_cases`, given to `AgenticPipeline`
+when the module has an `AgentAnswerCache` and a key, and `[ai.agentic_cache] enabled` is true:
+the cache is opt-in) answers a question asked again. `threshold` unset is
+`DEFAULT_AGENT_CACHE_THRESHOLD` (0.8) with one and `DEFAULT_BM25_CACHE_THRESHOLD` (0.9) without.
+`scope = "caller"` adds `caller_audience` (an HMAC of the account) to the fingerprint. Like HyDE's cache it is read once, by `RetrievalModes.within_budget`, **before**
+the budget and the rate limit: `AgenticPipeline.cached_answer` resolves the library's `llm` model
+(nothing for a library with AI off) and builds the search's `AgentCacheScope`: the manifest, the
+model, and a SHA-256 fingerprint of the tag filter (tags sorted, `match`), every `AgentBounds`
+field, `AGENT_CACHE_FORMAT` and the similarity space (`bm25`, or the embedding role's
+`EmbeddingTarget.identity`). A re-sync is a new manifest, so a new scope; so is another model,
+filter, limit or embedding model. The scope's answers (`AgentAnswerCache.scoped`, at most
+`AGENT_CACHE_PER_SCOPE` = 200, newest first) are read first; with none that could serve, nothing
+is embedded. They are compared with the question (`CachedQuestion.similarity`): 1 for the same
+normalized question; 0 when their `question_guards` differ (signed numbers and versions in
+order, words with digits such as `python3`, and the polarity words `not`, `no`, `never`,
+`without`..., with `n't`, `cannot` and the apostrophe-less `dont`, `cant`... read as `not`) or
+their `question_terms` differ as sequences: the content words in order, filler dropped
+(`how`, `do`, `I`, `want`...; question words such as `when` and `why`, prepositions and
+conjunctions stay), only plurals folded (a no-fold list such as `https`, `news`, `lens`; never
+`-ing`, `-ed`, `-ation`, `-ate` or `-ment`), symbols as terms in their places (`>`, `->`, `c++`;
+`≥` and the like written the ASCII way; sentence punctuation dropped), single letters as terms
+(`a` and `i` only next to a symbol or a direction word), numbers in their places with a
+comparison operator right before and a `+` right after them (`#>=3.8`, `#3.8+`), and `to` kept
+except as an infinitive. Order is compared as is,
+so a swap of any relation ("A with B", "A than B", "from v1 to v2") misses without a rule per
+word, and a re-ask in another word order misses too (accepted). Else 1, or the cosine of their
+embeddings when both have one. So an embedding only confirms a re-asked question and never bridges two
+questions with different terms: on `BAAI/bge-small-en-v1.5` opposites and siblings
+("enable"/"disable", "client"/"server") score 0.85 to 0.96, as real paraphrases do, so no
+threshold separates them. `AGENT_CACHE_FORMAT` is 4: rows of an earlier term format are
+another scope. Words find the candidates first; with none, nothing is embedded;
+with some, the question is embedded to confirm them (as a query by the instance's embedding
+model, checked against the embedding budget and the instance's, library's and caller's budgets
+the LLM step is checked against, and recorded like a hybrid query embedding; a failure or a
+budget leaves the words to decide). The LLM search rate limit is not consulted there: counting it
+would charge a search the cache may answer. Only an
+answer asked for at least as many chunks qualifies. The most similar at or above `threshold`
+whose picks the pinned manifest still holds under the tag filter is the hit, carried in
+`ModeChoice.agent_cache` / `PipelineRequest.agent_cache`; `within_budget` then skips the LLM
+budget and rate-limit checks. `AgenticPipeline.run` turns a hit's picks into hits through the
+same `_answer` as a fresh run (looked up again in the manifest under the filter), marks
+`PipelineAnswer.cache_hit` (`cache_hit` in `search_docs` and `query_docs`) and counts
+`exactdocs.ai.cache_hits` (`SearchTracer.cache_hit`, labels cache and mode only). A miss runs the
+agent and stores its kept picks, with justifications and explored paths, under the lookup's
+scope and question, embedding the question then if the lookup did not (once per search). A cache that fails is a miss and an
+unwritten answer; only the error's class is logged. `_removed` forgets the answers of removed
+manifests with HyDE's, `SetLibraryRetrieval` and `ForgetLibrary` a library's
+(`forget_library`), and `PruneHypotheses` (nightly and after every collection) those older than
+`[ai.agentic_cache] ttl` (7 days), of an `llm` model no longer configured, or of another
+similarity space. The store is wired whether the cache is on or off, so a library's or a
+manifest's answers are still forgotten with the cache off, and the prune then deletes them all. Adapters: `SqliteAgentAnswerCache` (`retrieval_agentic_answers`, SQLite and
+PostgreSQL), `InMemoryAgentAnswerCache`, and `ReadOnlyAgentAnswerCache` for `serve --stdio`.
+
+*Data at rest.* No question text: an HMAC-SHA256 of the normalized question and a 64-bit HMAC
+of each term, keyed from the secret key for the HKDF purpose `exactdocs agentic cache v1`
+(`AGENT_CACHE_PURPOSE`), and, with an embedding model, the question's embedding as float32
+(an embedding can be partly inverted, so the table is treated as holding the question's meaning).
+The answers are stored as returned: chunk IDs, and the model-written justifications and explored
+paths, which may quote the question's words; with `scope = "library"` they are served to every
+caller of the version. Without a secret key (a read-only process) or with `enabled = false`
+nothing is cached (and the nightly prune deletes what was).
 
 **Repo guidance (#101).** A library's `LibraryAi.repo_guidance` (`off`, `notes`, `trusted`) decides
 what its `AGENTS.md` / `CLAUDE.md` files do. Ingestion asks through its `GuidancePolicy` port

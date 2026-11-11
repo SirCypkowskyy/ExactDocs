@@ -795,6 +795,7 @@ class CountingTracer:
     """A ``SearchTracer`` that only counts fallbacks."""
 
     fallbacks: list[tuple[str, str]] = field(default_factory=list)
+    cache_hits: list[tuple[str, str]] = field(default_factory=list)
     untraced: UntracedSearches = field(default_factory=UntracedSearches)
 
     def span(self, name: str, *, mode: str, query: str | None = None, **attributes: str | None):
@@ -802,6 +803,9 @@ class CountingTracer:
 
     def fallback(self, *, mode: str, reason: str) -> None:
         self.fallbacks.append((mode, reason))
+
+    def cache_hit(self, *, cache: str, mode: str) -> None:
+        self.cache_hits.append((cache, mode))
 
 
 async def test_each_degraded_search_is_counted_by_mode_and_reason() -> None:

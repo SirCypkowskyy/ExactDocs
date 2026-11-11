@@ -433,7 +433,7 @@ chunks until the new ones are in place.
 | `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | A SQLite file, e.g. `sqlite:////srv/exactdocs.db` (opened in WAL mode), or a PostgreSQL database, `postgresql://user:password@host:5432/exactdocs` (psycopg 3; see [PostgreSQL](#postgresql) and [Supabase](#supabase)). The schema is migrated on start and `/api/health` reports its revision (see [Upgrading](#upgrading)) |
 | `EXACTDOCS_DBOS_SYSTEM_SCHEMA` | `dbos` | PostgreSQL only: the schema of the same database where DBOS keeps the durable steps of jobs (SQLite keeps them in `<data dir>/jobs.sqlite`) |
 | `EXACTDOCS_SECRET_KEY` | generated into `<data dir>/secret.key` (mode 0600) on first run | Encrypts the stored tokens and deploy keys of private repositories (Fernet). It must be **random** and at least 32 characters: `openssl rand -base64 32` (it is stretched with HKDF, not a password hash, so a passphrase is not safe). Without it the credentials cannot be read: libraries keep serving their docs and ask for the token again (`credentials_required`) |
-| `EXACTDOCS_SECRET_KEY_PREVIOUS` | – | Rotation: set the new key in `EXACTDOCS_SECRET_KEY` and the old one here. Credentials sealed with the old key still open and are sealed with the new one whenever they are sent again; remove this once they all were. HyDE's cached answers are keyed with the current key only, so after a rotation every cached answer is a miss (the LLM is asked again) until the TTL prunes the old rows |
+| `EXACTDOCS_SECRET_KEY_PREVIOUS` | – | Rotation: set the new key in `EXACTDOCS_SECRET_KEY` and the old one here. Credentials sealed with the old key still open and are sealed with the new one whenever they are sent again; remove this once they all were. HyDE's and the agentic cache's answers are keyed with the current key only, so after a rotation every cached answer is a miss (the LLM is asked again) until the TTL prunes the old rows |
 | `EXACTDOCS_ALLOWED_HOSTS` | – | Host names besides localhost the server answers to, comma-separated (e.g. `docs.example.com,*.corp.example`); needed behind a reverse proxy or on a LAN address |
 | `EXACTDOCS_ALLOWED_ORIGINS` | – | Browser origins allowed to make state-changing requests, comma-separated |
 | `EXACTDOCS_SECURE_COOKIES` | `false` | The session cookie is always `Secure` over HTTPS; set `true` when TLS ends at a proxy that does not forward `X-Forwarded-Proto` from a trusted address |
@@ -442,6 +442,7 @@ chunks until the new ones are in place.
 | `EXACTDOCS_AI__PROVIDERS__<NAME>__<FIELD>`, `EXACTDOCS_AI__<ROLE>__MODEL` | unset | AI provider profiles and model roles, see [AI providers and model roles](#ai-providers-and-model-roles) |
 | `EXACTDOCS_AI__MODE` | unset (`auto`) | The retrieval mode of searches that name none, for libraries without their own: `bm25`, `hybrid`, `hybrid_hyde` or `agentic`; unset or `auto`: the best default mode the configured models allow, which is BM25 until the eval suite makes another mode a default. An unknown name stops the server at start; a mode whose model is not configured falls back with `fallback_reason: mode_unavailable` (see [Retrieval](#retrieval)) |
 | `EXACTDOCS_AI__HYDE__CACHE_TTL` | `P30D` (30 days) | How long a HyDE hypothetical answer stays cached (seconds or an ISO 8601 duration). Once a day (just after UTC midnight, and at start; one process on PostgreSQL), and after every collection, the server deletes older answers and those of an `llm` model no longer configured; answers are also deleted when their version's manifest is collected |
+| `EXACTDOCS_AI__AGENTIC_CACHE__ENABLED`, `__THRESHOLD`, `__SCOPE`, `__TTL` | `false`, unset, `library`, `P7D` | The agentic answer cache (see [Agentic search](#agentic-search)): a question that asks again what one answered agentically before asked (the same content words in the same order, numbers and negations; with an embedding model, its cosine must also reach `THRESHOLD`, 0 to 1, as a confirmation), for the same version, tag filter and `llm` model is answered from that answer (`cache_hit: true`). `ENABLED`: the cache is opt-in, with an embedding model too (it trades exactness for cost and serves only near-verbatim re-asks); while it is off, the nightly upkeep deletes every cached answer. `THRESHOLD` unset: `0.8` with an embedding model, `0.9` with words alone. `SCOPE`: `library` (callers of a version share answers, justifications included) or `caller`. Answers older than `TTL` are deleted by the nightly upkeep |
 | `EXACTDOCS_QUERY_DOCS_TOKEN_BUDGET` | `10000` | Size of one whole `query-docs` answer, notice included, in tokens counted as characters / 4 (undercounts CJK text and dense code); at least `500`. Only whole chunks are returned: one too large for the budget is listed as a pointer to fetch with `read_chunk`, and a last line says how many matching chunks were left out |
 | `EXACTDOCS_HOST`, `EXACTDOCS_PORT` | `127.0.0.1`, `3000` | Address `serve` binds (the Docker image binds `0.0.0.0`); `--host` / `--port` override them |
 | `EXACTDOCS_MAX_ARTICLE_BYTES` | `2097152` (2 MiB) | An import skips a file above this size, unread, and reports it as `too_large` |
@@ -647,7 +648,9 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   library and each account spent today and this month, and what is left of each budget (a
   library's own budget where it is tighter);
   `/metrics` has pydantic-ai's `gen_ai.client.token.usage` and `operation.cost` and
-  `exactdocs_ai_fallbacks_total` by mode and reason (never a library, user or query).
+  `exactdocs_ai_fallbacks_total` by mode and reason, and `exactdocs_ai_cache_hits_total` (searches
+  whose LLM step a cache answered) by cache (`agentic_answer`, `hyde_answer`) and mode (never a
+  library, user or query).
 - **In the UI:** the *AI* page (admins) lists the providers and roles (never a key) with a
   check per profile, the embedding progress of each space (`GET /api/v1/ai/embedding`) and the
   usage and budgets above.
@@ -792,6 +795,63 @@ show the run as the `agent` stage, with one span per model request and per tool 
 calls nested in `run_code`, each with an `exactdocs.agent.read` event naming the version it was
 bound to and the versions of what it returned), never with prompts, answers or tool arguments;
 `/metrics` shows its tokens (`gen_ai.client.token.usage`).
+
+**Re-asked questions are answered from a cache.** Teams ask the same thing again; an agentic
+answer is kept, and a later question that asks it again is answered from it at once,
+with `cache_hit: true` and the same results, justifications and explored paths, costing no LLM
+call, no budget and no rate limit (counted in `exactdocs.ai.cache_hits`). An answer is reused only
+for the same version as it is now (a re-sync to a new commit, a new manifest, never reuses it),
+the same tag filter, the same `llm` model and the same `[ai.agentic]` limits; each of its chunks
+is looked up again in the version, under the call's tags, before it is returned, and an answer
+none of whose chunks are left runs the agent. **Only a question asked again hits: the same
+content words in the same order.** Filler such as "how", "do", "I", "I want" or "behaviour" is
+dropped, and only plurals fold ("retries"/"retry", "rows"/"row"), so "how do I configure
+retries", "how to configure retry behaviour" and "I want to configure retries" are one
+question. Nothing else folds: "connecting" is not "connect", "meaning" is not "mean",
+"migration" is not "migrate" and "format" is never "form", because a wrong fold serves a wrong
+answer and a missing one only costs a miss. Question words ("when" is not "why"), prepositions and conjunctions ("build for
+arm" is not "build on arm") stay. Order is part of the question, so every swap misses: "replace requests
+with httpx" is not "replace httpx with requests", "from v1 to v2" is not "to v1 from v2". That
+also makes an order-flipped re-ask ("retry configuration" for "configure retries") a miss,
+which is accepted. Symbols are terms in their places ("latency > threshold" is not "latency <
+threshold", `c++` is not `c`; `≥`, `≤`, `≠`, `≈` and `→` read as `>=`, `<=`, `!=`, `~=` and `->`);
+only sentence punctuation is dropped. Single letters are terms too, but "a" and "I" only as
+names, next to a symbol or a direction word ("move it to a from b"). Numbers and versions (with
+their sign, a comparison or range operator right before them and a `+` right after: `-1` is not
+`1`, `>= 3.8` is not `< 3.8`, `~1.2` is not `^1.2`, `3.8+` is not `3.8`), words with digits
+(`python3`, `oauth2`, `E42`) and negations ("not", "never", "without", "can't", "dont"...) must
+match exactly. A question with a word the other lacks never hits, a paraphrase in other words
+included: neither words nor embeddings tell "enable" from "disable" or "client" from "server"
+(the default local model scores those 0.85 to 0.96, as high as real paraphrases), and a wrong
+answer costs more than a miss. With an embedding model, the cosine of the two questions' embeddings must also clear the
+threshold, as a confirmation (it never makes two different questions match). **The cache is
+opt-in** (`enabled = true`), with an embedding model too: it trades exactness for cost, and it
+serves only near-verbatim re-asks; the threshold is 0.8 with an embedding model and 0.9 with
+words alone by default.
+Saving a library's retrieval settings or removing it forgets its answers; the nightly upkeep
+deletes answers past `ttl`, of an `llm` model no longer configured, or compared with another
+embedding model than the configured one, and every answer while the cache is off.
+
+```toml
+[ai.agentic_cache]
+enabled = true       # off by default: while off, stored answers are deleted
+# threshold = 0.8    # 0 to 1; unset: 0.8 with an embedding model, 0.9 with words alone
+scope = "library"    # or "caller": each caller is answered from their own questions only
+ttl = "P7D"          # seconds or an ISO 8601 duration
+```
+
+With `scope = "library"` (the default) every caller of a library's version shares the cache: one
+caller's cached answer, **the model's justifications included** (which may paraphrase their
+question), can be served to another caller of the same library and version. Use `scope =
+"caller"` where callers must not see the gist of each other's questions.
+
+The cache (`retrieval_agentic_answers`) never stores the question's text: it keeps an HMAC of
+the normalized question and of each of its terms, keyed from the instance's secret key, and,
+with an embedding model, the question's embedding (an embedding can be partly inverted into the
+words it came from, so treat the table as holding what the question meant). It also keeps the
+answer as returned: chunk IDs, justifications and explored paths, which are model output and may
+quote words of the question. The embedding of the question is a query embedding like a hybrid
+search's: it is sent to the embedding model and counted to the same budgets.
 
 **Repo guidance** (`AGENTS.md` / `CLAUDE.md`, off by default). Many repositories describe how
 their docs are organized in these files; a library can let the agent use them with

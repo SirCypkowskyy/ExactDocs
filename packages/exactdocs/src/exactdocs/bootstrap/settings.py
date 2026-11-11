@@ -27,6 +27,7 @@ from exactdocs.bootstrap.constants import (
     SETTINGS_FILE_VARIABLE,
 )
 from exactdocs.retrieval.constants import (
+    DEFAULT_AGENT_CACHE_TTL_DAYS,
     DEFAULT_AGENT_REPEATED_CALLS,
     DEFAULT_AGENT_REQUESTS,
     DEFAULT_AGENT_TIMEOUT,
@@ -304,6 +305,36 @@ class HydeSettings(BaseModel):
     `llm` model no longer configured."""
 
 
+class AgenticCacheSettings(BaseModel):
+    """The agentic answer cache (``EXACTDOCS_AI__AGENTIC_CACHE__<FIELD>``, ``[ai.agentic_cache]``).
+
+    A question similar enough to one answered agentically before, for the same version (manifest),
+    tag filter, `llm` model and agentic limits, is answered from the earlier answer (`cache_hit`),
+    re-checked against the version and the filter. Questions are compared with the embedding
+    model when one is configured (hybrid: embeddings and words), else by their words (#100).
+    """
+
+    model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
+
+    enabled: bool = False
+    """`EXACTDOCS_AI__AGENTIC_CACHE__ENABLED`: `true` turns the cache on. It is opt-in, with an
+    embedding model too: it trades exactness for cost, and serves only near-verbatim re-asks.
+    While it is off, the nightly upkeep deletes every cached answer."""
+    threshold: float | None = Field(default=None, gt=0, le=1)
+    """`EXACTDOCS_AI__AGENTIC_CACHE__THRESHOLD`: how similar (0 to 1) a question must be to a cached
+    one asked again: the same content words in the same order and the same guards, or it never
+    matches. With an embedding model the two questions' cosine must also reach it, as a
+    confirmation; with words alone a re-ask scores 1. Unset: 0.8 with an embedding model, 0.9
+    with words alone."""
+    scope: Literal["library", "caller"] = "library"
+    """`EXACTDOCS_AI__AGENTIC_CACHE__SCOPE`: `library`, every caller of a library's version shares
+    the cached answers (one caller's answer, the model's justifications included, can be served to
+    another); `caller`, each caller is answered from their own questions only."""
+    ttl: timedelta = Field(default=timedelta(days=DEFAULT_AGENT_CACHE_TTL_DAYS), gt=timedelta(0))
+    """`EXACTDOCS_AI__AGENTIC_CACHE__TTL`: how long a cached answer is kept (seconds or an ISO 8601
+    duration such as `P7D`); the nightly upkeep deletes older ones."""
+
+
 class AiSettings(BaseModel):
     """The ``ai`` section: AI retrieval, read from ``EXACTDOCS_AI__<FIELD>`` variables."""
 
@@ -339,6 +370,8 @@ class AiSettings(BaseModel):
     """Spend limits and the LLM search rate limit (`EXACTDOCS_AI__BUDGETS__...`)."""
     agentic: AgenticSettings = Field(default_factory=AgenticSettings)
     """The agentic mode's limits per search (`EXACTDOCS_AI__AGENTIC__MAX_TOOL_CALLS`, ...)."""
+    agentic_cache: AgenticCacheSettings = Field(default_factory=AgenticCacheSettings)
+    """The agentic answer cache (`EXACTDOCS_AI__AGENTIC_CACHE__THRESHOLD`, `__TTL`, `__ENABLED`)."""
     prices: dict[str, PriceSettings] = Field(default_factory=dict)
     """Prices by `<profile>:<model>`, overriding the bundled list (`[ai.prices."corp:m"]`)."""
 

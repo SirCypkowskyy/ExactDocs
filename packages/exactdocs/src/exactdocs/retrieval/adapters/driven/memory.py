@@ -9,6 +9,8 @@ from datetime import date, datetime, timedelta
 from itertools import batched
 
 from exactdocs.retrieval.constants import (
+    AGENT_CACHE_MEMORY_SIZE,
+    AGENT_CACHE_PER_SCOPE,
     CHARS_PER_TOKEN,
     HYDE_MEMORY_CACHE_SIZE,
     MEMORY_FORMAT,
@@ -23,7 +25,9 @@ from exactdocs.retrieval.errors import (
     VectorStoreUnavailableError,
 )
 from exactdocs.retrieval.models import (
+    AgentCacheScope,
     BudgetLimit,
+    CachedAgentAnswer,
     CatalogLibrary,
     Chunk,
     ChunkId,
@@ -66,7 +70,11 @@ from exactdocs.retrieval.models import (
     identifier_tokens,
     search_terms,
 )
-from exactdocs.retrieval.ports.driven import HypotheticalAnswerCache, SpendLedger
+from exactdocs.retrieval.ports.driven import (
+    AgentAnswerCache,
+    HypotheticalAnswerCache,
+    SpendLedger,
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1317,3 +1325,211 @@ class ReadOnlyHypothesisCache:
             How many answers were deleted.
         """
         return await self.local.prune(written_before, keep_models)
+
+
+type _AnswerKey = tuple[str, str, str, str]
+"""A cached agentic answer's key: manifest, model, fingerprint, question hash."""
+
+
+def _answer_key(answer: CachedAgentAnswer) -> _AnswerKey:
+    """Key a cached agentic answer.
+
+    Args:
+        answer: The answer.
+
+    Returns:
+        Its scope's manifest, model and fingerprint, and its question's hash.
+    """
+    scope = answer.scope
+    return (scope.manifest_id, scope.model, scope.fingerprint, answer.question.question_hash)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryAgentAnswerCache:
+    """Implements ``ports.driven.AgentAnswerCache`` with a bounded dictionary (oldest go first)."""
+
+    max_entries: int = AGENT_CACHE_MEMORY_SIZE
+    """The most answers kept in all."""
+    per_scope: int = AGENT_CACHE_PER_SCOPE
+    """The most answers kept per scope."""
+    answers: OrderedDict[_AnswerKey, CachedAgentAnswer] = field(default_factory=OrderedDict)
+    """Each answer by its key, oldest stored first."""
+
+    async def scoped(self, scope: AgentCacheScope) -> Sequence[CachedAgentAnswer]:
+        """Read every answer of a scope.
+
+        Args:
+            scope: The scope.
+
+        Returns:
+            Its answers, newest first.
+        """
+        found = [a for a in self.answers.values() if _same_scope(a.scope, scope)]
+        return sorted(found, key=lambda a: a.created_at, reverse=True)[: self.per_scope]
+
+    async def put(self, answer: CachedAgentAnswer) -> None:
+        """Store an answer, replacing one of the same key; trim its scope, then the whole.
+
+        Args:
+            answer: The answer.
+        """
+        key = _answer_key(answer)
+        self.answers.pop(key, None)
+        self.answers[key] = answer
+        scoped = [k for k, a in self.answers.items() if _same_scope(a.scope, answer.scope)]
+        for doomed in scoped[: max(0, len(scoped) - self.per_scope)]:
+            del self.answers[doomed]
+        while len(self.answers) > self.max_entries:
+            self.answers.popitem(last=False)
+
+    async def forget(self, manifest_ids: Collection[str]) -> int:
+        """Delete the answers of these manifests.
+
+        Args:
+            manifest_ids: The manifests.
+
+        Returns:
+            How many answers were deleted.
+        """
+        doomed = set(manifest_ids)
+        return self._drop([k for k, a in self.answers.items() if a.scope.manifest_id in doomed])
+
+    async def forget_library(self, library: str) -> int:
+        """Delete a library's answers.
+
+        Args:
+            library: The library, any letter case.
+
+        Returns:
+            How many answers were deleted.
+        """
+        folded = library.casefold()
+        return self._drop([k for k, a in self.answers.items() if a.scope.library == folded])
+
+    async def prune(
+        self, written_before: datetime, keep_models: Collection[str], keep_similarity: str
+    ) -> int:
+        """Delete answers past the TTL, of models not kept, or of another similarity space.
+
+        Args:
+            written_before: The TTL's cutoff.
+            keep_models: The models still configured.
+            keep_similarity: The space questions are compared in now.
+
+        Returns:
+            How many answers were deleted.
+        """
+        kept = set(keep_models)
+        return self._drop(
+            [
+                k
+                for k, a in self.answers.items()
+                if a.created_at < written_before
+                or a.scope.model not in kept
+                or a.scope.similarity != keep_similarity
+            ]
+        )
+
+    def _drop(self, keys: Sequence[_AnswerKey]) -> int:
+        """Delete answers.
+
+        Args:
+            keys: Their keys.
+
+        Returns:
+            How many were deleted.
+        """
+        for key in keys:
+            del self.answers[key]
+        return len(keys)
+
+
+def _same_scope(first: AgentCacheScope, second: AgentCacheScope) -> bool:
+    """Say whether two scopes are the same (the library and space follow from the rest).
+
+    Args:
+        first: One scope.
+        second: The other.
+
+    Returns:
+        True for the same manifest, model and fingerprint.
+    """
+    return (first.manifest_id, first.model, first.fingerprint) == (
+        second.manifest_id,
+        second.model,
+        second.fingerprint,
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ReadOnlyAgentAnswerCache:
+    """Implements ``ports.driven.AgentAnswerCache`` over a read-only database.
+
+    A stdio MCP process (``serve --stdio``) reads the shared answers and keeps its own in memory.
+    """
+
+    shared: AgentAnswerCache
+    """The instance's ``retrieval_agentic_answers``, read only."""
+    local: InMemoryAgentAnswerCache = field(default_factory=InMemoryAgentAnswerCache)
+    """What this process stored."""
+
+    async def scoped(self, scope: AgentCacheScope) -> Sequence[CachedAgentAnswer]:
+        """Read this process's answers of a scope, then the shared ones.
+
+        Args:
+            scope: The scope.
+
+        Returns:
+            Its answers, this process's first, each question once.
+        """
+        mine = await self.local.scoped(scope)
+        seen = {a.question.question_hash for a in mine}
+        theirs = [
+            a for a in await self.shared.scoped(scope) if a.question.question_hash not in seen
+        ]
+        return [*mine, *theirs]
+
+    async def put(self, answer: CachedAgentAnswer) -> None:
+        """Keep an answer in this process.
+
+        Args:
+            answer: The answer.
+        """
+        await self.local.put(answer)
+
+    async def forget(self, manifest_ids: Collection[str]) -> int:
+        """Delete this process's answers of these manifests (the shared ones are not ours).
+
+        Args:
+            manifest_ids: The manifests.
+
+        Returns:
+            How many answers were deleted.
+        """
+        return await self.local.forget(manifest_ids)
+
+    async def forget_library(self, library: str) -> int:
+        """Delete this process's answers of a library.
+
+        Args:
+            library: The library.
+
+        Returns:
+            How many answers were deleted.
+        """
+        return await self.local.forget_library(library)
+
+    async def prune(
+        self, written_before: datetime, keep_models: Collection[str], keep_similarity: str
+    ) -> int:
+        """Prune this process's answers (the server prunes the shared ones).
+
+        Args:
+            written_before: The TTL's cutoff.
+            keep_models: The models still configured.
+            keep_similarity: The space questions are compared in now.
+
+        Returns:
+            How many answers were deleted.
+        """
+        return await self.local.prune(written_before, keep_models, keep_similarity)

@@ -1,5 +1,6 @@
 from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
+    AgentAnswerCache,
     AgentReads,
     ArticleSuggestions,
     ArticleTitles,
@@ -69,6 +70,7 @@ from exactdocs.retrieval.ports.driving import (
 
 __all__ = [
     "ActiveManifests",
+    "AgentAnswerCache",
     "AgentReads",
     "ArticleOutline",
     "ArticleSuggestions",

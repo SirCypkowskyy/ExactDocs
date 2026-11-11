@@ -80,6 +80,7 @@ class RecordingTracer:
     opened: list[Opened] = field(default_factory=list)
     answered: dict[str, str] = field(default_factory=dict)
     fallbacks: list[tuple[str, str]] = field(default_factory=list)
+    cache_hits: list[tuple[str, str]] = field(default_factory=list)
 
     def span(
         self, name: str, *, mode: str, query: str | None = None, **attributes: str | None
@@ -89,6 +90,9 @@ class RecordingTracer:
 
     def fallback(self, *, mode: str, reason: str) -> None:
         self.fallbacks.append((mode, reason))
+
+    def cache_hit(self, *, cache: str, mode: str) -> None:
+        self.cache_hits.append((cache, mode))
 
     @property
     def names(self) -> list[str]:
