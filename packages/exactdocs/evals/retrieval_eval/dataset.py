@@ -51,6 +51,11 @@ class Answer(_Model):
     """The commit the asked version points at; a hit of another commit is of another version."""
     answered_by: str | None = None
     """The mode that really answered (a pipeline may fall back to a cheaper one)."""
+    reranked: bool = False
+    """A reranker reordered the candidates."""
+    fallback_reason: str | None = None
+    """Why the answer is not what the mode would have given (a cheaper mode, a reranker that
+    failed or timed out)."""
     tokens: int = 0
     """Model tokens the answer cost (0 without a model)."""
     usd: float = 0.0

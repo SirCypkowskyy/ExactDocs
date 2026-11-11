@@ -27,9 +27,13 @@ from exactdocs.bootstrap.constants import (
 from exactdocs.retrieval.constants import (
     DEFAULT_EMBEDDING_BATCH,
     DEFAULT_REQUEST_TIMEOUT,
+    DEFAULT_RERANK_TIMEOUT,
+    DEFAULT_RERANK_TOP_N,
     DEFAULT_RETRIES,
     MAX_EMBEDDING_BATCH,
     MAX_EMBEDDING_DIMENSIONS,
+    MAX_RERANK_TIMEOUT,
+    MAX_RERANK_TOP_N,
 )
 from exactdocs.retrieval.models import AnthropicPlatform, AzureAuth, RetrievalMode
 
@@ -108,14 +112,26 @@ class ProviderSettings(BaseModel):
 class RoleSettings(BaseModel):
     """One model role: ``EXACTDOCS_AI__<ROLE>__MODEL`` or ``[ai.<role>]``.
 
-    Fields the later issues read (``top_n``) are accepted and kept for them; nothing reads them
-    yet.
+    Fields a later issue reads are accepted and kept for it; nothing reads them yet.
     """
 
     model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="allow")
 
     model: str | None = None
     """`<profile>:<model>`, e.g. `corp:gpt-4.1-mini`."""
+
+
+class RerankerSettings(RoleSettings):
+    """The reranker role: ``EXACTDOCS_AI__RERANKER__<FIELD>`` or ``[ai.reranker]`` (RET-02)."""
+
+    top_n: int = Field(default=DEFAULT_RERANK_TOP_N, ge=1, le=MAX_RERANK_TOP_N)
+    """`EXACTDOCS_AI__RERANKER__TOP_N`: how many of a search's best candidates are reranked (a
+    library may set its own)."""
+    timeout: float = Field(default=DEFAULT_RERANK_TIMEOUT, gt=0, le=MAX_RERANK_TIMEOUT)
+    """`EXACTDOCS_AI__RERANKER__TIMEOUT`: seconds a search gives the reranker, to be built and to
+    answer (reading the candidates' text is not counted); after that, or on any reranker error,
+    results keep their order (`reranked: false`, `fallback_reason` `reranker_timeout` or
+    `reranker_failed`)."""
 
 
 class EmbeddingRoleSettings(RoleSettings):
@@ -147,8 +163,8 @@ class AiSettings(BaseModel):
     """Named provider profiles (`EXACTDOCS_AI__PROVIDERS__<NAME>__...`); read-only over REST."""
     embedding: EmbeddingRoleSettings = Field(default_factory=EmbeddingRoleSettings)
     """The embedding role, instance-wide only (`EXACTDOCS_AI__EMBEDDING__MODEL`)."""
-    reranker: RoleSettings = Field(default_factory=RoleSettings)
-    """The reranker role (`EXACTDOCS_AI__RERANKER__MODEL`)."""
+    reranker: RerankerSettings = Field(default_factory=RerankerSettings)
+    """The reranker role (`EXACTDOCS_AI__RERANKER__MODEL`, `__TOP_N`, `__TIMEOUT`)."""
     llm: RoleSettings = Field(default_factory=RoleSettings)
     """The LLM role (`EXACTDOCS_AI__LLM__MODEL`)."""
     judge: RoleSettings = Field(default_factory=RoleSettings)

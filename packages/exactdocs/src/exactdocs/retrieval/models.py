@@ -26,6 +26,8 @@ from exactdocs.retrieval.constants import (
     CREDENTIAL_HEADERS,
     DEFAULT_MODE_ORDER,
     DEFAULT_REQUEST_TIMEOUT,
+    DEFAULT_RERANK_TIMEOUT,
+    DEFAULT_RERANK_TOP_N,
     DEFAULT_RETRIES,
     DNS_LABEL,
     EMBEDDING_INPUT_FORMAT,
@@ -615,6 +617,11 @@ class FallbackReason(StrEnum):
     """Too many LLM searches in the last minute."""
     VECTOR_STORE_UNAVAILABLE = "vector_store_unavailable"
     """The vector store cannot be loaded here (sqlite-vec), so no hybrid mode can run."""
+    RERANKER_TIMEOUT = "reranker_timeout"
+    """The reranker did not answer in time: the candidates keep the order the mode found."""
+    RERANKER_FAILED = "reranker_failed"
+    """The reranker failed (an error, a bad answer, a profile that cannot rerank): the candidates
+    keep the order the mode found."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -624,9 +631,15 @@ class ModeChoice:
     mode: RetrievalMode
     """The mode whose pipeline runs."""
     rerank: bool
-    """A reranker is configured: the pipeline reorders its best candidates."""
+    """A reranker is configured: the best candidates are reordered after the pipeline."""
     fallback_reason: FallbackReason | None = None
     """Why the library's or the instance's mode was skipped, if it was."""
+    rerank_top_n: int = 0
+    """How many of the best candidates the reranker reorders (the library's, else the
+    instance's); 0 when there is no reranking."""
+    library_ai: LibraryAi | None = None
+    """The library's AI overrides as read for this search, so the reranker resolves from the same
+    read; ``None`` when there is no reranking."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -828,7 +841,8 @@ class PipelineRequest:
     limit: int
     """How many hits to return at most."""
     rerank: bool
-    """Reorder the best candidates with the configured reranker."""
+    """The best candidates are reranked after the pipeline: ``limit`` already counts the top N
+    that the reranker reorders, so the pipeline need not rerank itself."""
     space: EmbeddingSpace | None = None
     """The embedding space a mode that searches vectors must search: the configured model's, which
     the caller checked covers ``version``. Never look up the active space instead: during a switch
@@ -851,6 +865,48 @@ class PipelineAnswer:
     """False when more matches exist than the limit allowed."""
     fallback_reason: FallbackReason | None = None
     """Why a cheaper mode answered, if one did."""
+
+    def cut(self, limit: int) -> PipelineAnswer:
+        """Keep the best ``limit`` hits of an answer that holds more (the reranker's top N).
+
+        Args:
+            limit: How many hits the caller asked for.
+
+        Returns:
+            The answer with at most ``limit`` hits; not complete when hits were left out.
+        """
+        if len(self.hits) <= limit:
+            return self
+        return replace(self, hits=self.hits[:limit], complete=False)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RerankLimits:
+    """How much of a search the reranker may take: the instance's setting (``[ai.reranker]``)."""
+
+    top_n: int = DEFAULT_RERANK_TOP_N
+    """How many of the best candidates are reranked; a library may set its own."""
+    timeout: float = DEFAULT_RERANK_TIMEOUT
+    """How long a search gives the reranker to be built and to answer, in seconds, before it keeps
+    its order; the candidates' text is read before the clock starts."""
+
+
+def reorder(hits: Sequence[SearchHit], scores: Sequence[float]) -> tuple[SearchHit, ...]:
+    """Order the first hits by the reranker's scores; the rest keep their place after them.
+
+    Args:
+        hits: The candidates, best first as the mode found them.
+        scores: The reranker's score of each of the first ``len(scores)`` hits, in their order.
+
+    Returns:
+        The reranked hits, highest score first (ties keep the mode's order), each carrying its
+        reranker score, then the hits that were not reranked, unchanged.
+    """
+    head = sorted(zip(hits, scores, strict=False), key=lambda pair: -pair[1])
+    return (
+        *(replace(hit, score=score) for hit, score in head),
+        *hits[len(scores) :],
+    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1013,6 +1069,9 @@ class ProviderKind(StrEnum):
     OVHCLOUD = "ovhcloud"
     SAMBANOVA = "sambanova"
     ALIBABA = "alibaba"
+    TEI = "tei"
+    """Hugging Face Text Embeddings Inference serving a reranker (``POST /rerank``): the
+    ``reranker`` role only."""
     LOCAL = "local"
     """Models in this process (fastembed, the ``[local]`` extra, #245): no endpoint at all."""
 
@@ -1067,9 +1126,18 @@ class ProviderKind(StrEnum):
         """Say whether the kind can serve the embedding role.
 
         Returns:
-            False for Anthropic (no embedding API).
+            False for Anthropic (no embedding API) and TEI (served here as a reranker).
         """
-        return self is not ProviderKind.ANTHROPIC
+        return self not in {ProviderKind.ANTHROPIC, ProviderKind.TEI}
+
+    @property
+    def has_chat(self) -> bool:
+        """Say whether the kind can serve the ``llm`` and ``judge`` roles.
+
+        Returns:
+            False for TEI, which serves a reranker only.
+        """
+        return self is not ProviderKind.TEI
 
 
 class AnthropicPlatform(StrEnum):
@@ -1525,6 +1593,8 @@ class LibraryAi:
     """Its own judge instead of the instance's."""
     reranker: ModelRef | None = None
     """Its own reranker instead of the instance's."""
+    rerank_top_n: int | None = None
+    """How many of its best candidates the reranker reorders; ``None``: the instance's."""
 
     def override(self, role: ModelRole) -> ModelRef | None:
         """Read the library's own model for ``role``.
@@ -1550,9 +1620,13 @@ class LibraryAi:
         """Say whether the library overrides nothing.
 
         Returns:
-            True when AI is on and no role is overridden.
+            True when AI is on and nothing is overridden.
         """
-        return self.enabled and not (self.llm or self.judge or self.reranker)
+        return (
+            self.enabled
+            and not (self.llm or self.judge or self.reranker)
+            and self.rerank_top_n is None
+        )
 
     def profiles(self) -> frozenset[str]:
         """Name the profiles the overrides use.

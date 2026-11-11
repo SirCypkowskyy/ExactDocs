@@ -18,7 +18,7 @@ import importlib
 import logging
 import os
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -88,16 +88,20 @@ from exactdocs.bootstrap.constants import (
     FOUNDRY_HOST,
     GOOGLE_SCOPE,
     NO_KEY,
+    RERANK_DIALECTS,
     SDK_HEADER_VARIABLES,
     VERTEX_HOST,
 )
-from exactdocs.retrieval.errors import ProviderUnsupportedError
+from exactdocs.retrieval.adapters.driven.http_reranker import HttpReranker, RerankDialect
+from exactdocs.retrieval.errors import ProviderUnsupportedError, RerankerError
 from exactdocs.retrieval.models import (
     AnthropicPlatform,
     KeySource,
     ProviderKind,
     ProviderProfile,
 )
+from exactdocs.retrieval.ports.driven import Reranker
+from exactdocs_kernel import SealedTextUnreadableError
 
 logger = logging.getLogger(__name__)
 
@@ -292,7 +296,14 @@ def read_key(
             if open_sealed is None or profile.sealed_key is None:
                 reason = "its key is sealed and this process has no secret key to open it"
                 raise ProviderUnsupportedError(profile.name, reason)
-            return open_sealed(profile.sealed_key)
+            try:
+                return open_sealed(profile.sealed_key)
+            except SealedTextUnreadableError:
+                reason = (
+                    "its stored key does not open with this secret key (it was changed); "
+                    "store the key again"
+                )
+                raise ProviderUnsupportedError(profile.name, reason) from None
 
 
 def http_client(
@@ -603,6 +614,9 @@ async def chat_model(endpoint: Endpoint, model: str) -> Model:
         The pydantic-ai model.
     """
     profile = endpoint.profile
+    if not profile.kind.has_chat:
+        reason = f"kind {profile.kind.value} serves a reranker only, not a chat model"
+        raise ProviderUnsupportedError(profile.name, reason)
     match profile.kind:
         case ProviderKind.ANTHROPIC if profile.anthropic_platform is AnthropicPlatform.BEDROCK:
             return _bedrock_model(endpoint, model)
@@ -632,7 +646,7 @@ async def embedder(endpoint: Endpoint, model: str) -> Embedder:
         The pydantic-ai embedder.
 
     Raises:
-        ProviderUnsupportedError: The kind has no embedding API (Anthropic).
+        ProviderUnsupportedError: The kind has no embedding API (Anthropic, TEI).
     """
     profile = endpoint.profile
     if not profile.kind.has_embeddings:
@@ -648,69 +662,39 @@ async def embedder(endpoint: Endpoint, model: str) -> Embedder:
     )
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class HttpReranker:
-    """A reranker in the Cohere-compatible ``/rerank`` dialect (vLLM, LiteLLM, gateways).
+def reranker(endpoint: Endpoint, model: str) -> Reranker:
+    """Build the HTTP reranker of a profile: Cohere-compatible ``/rerank``, or TEI's.
 
-    The minimal client the ``reranker`` role's check needs; #93 builds the reranker port and the
-    TEI dialect on top.
-    """
-
-    endpoint: Endpoint
-    """The profile's endpoint."""
-    model: str
-    """The rerank model."""
-
-    async def rerank(self, query: str, documents: Sequence[str]) -> list[float]:
-        """Score each document against the query.
-
-        Args:
-            query: The query.
-            documents: The candidates.
-
-        Returns:
-            One relevance score per document, in their order.
-        """
-        headers = {}
-        if self.endpoint.key:
-            headers["Authorization"] = f"Bearer {self.endpoint.key}"
-        response = await self.endpoint.client.post(
-            self.endpoint.base_url.rstrip("/") + "/rerank",
-            json={"model": self.model, "query": query, "documents": list(documents)},
-            headers=headers,
-        )
-        response.raise_for_status()
-        scores = [0.0] * len(documents)
-        for result in response.json()["results"]:
-            scores[int(result["index"])] = float(result["relevance_score"])
-        return scores
-
-
-def reranker(endpoint: Endpoint, model: str) -> HttpReranker:
-    """Build the reranker of a gateway profile.
+    Cohere, Jina, Voyage and Azure AI Foundry are ``openai-compatible`` profiles whose base URL
+    carries the version prefix (``https://api.cohere.com/v2``); vLLM and LiteLLM speak the same
+    dialect; a ``tei`` profile speaks TEI's.
 
     Args:
         endpoint: The profile's endpoint.
         model: The rerank model.
 
     Returns:
-        The reranker.
+        The reranker, on the profile's one HTTP client.
 
     Raises:
         ProviderUnsupportedError: The kind has no rerank API.
     """
     profile = endpoint.profile
-    if profile.kind not in {
-        ProviderKind.OPENAI_COMPATIBLE,
-        ProviderKind.VLLM,
-        ProviderKind.LITELLM,
-    }:
+    dialect = RERANK_DIALECTS.get(profile.kind.value)
+    if dialect is None:
         reason = (
-            f"kind {profile.kind.value} has no rerank API; use an openai-compatible, vllm or "
-            "litellm profile (the LLM judge reranks with any chat model)"
+            f"kind {profile.kind.value} has no rerank API; use an openai-compatible (Cohere, "
+            "Jina, Voyage, Azure AI Foundry), vllm, litellm or tei profile (the LLM judge "
+            "reranks with any chat model)"
         )
         raise ProviderUnsupportedError(profile.name, reason)
-    return HttpReranker(endpoint=endpoint, model=model)
+    return HttpReranker(
+        client=endpoint.client,
+        base_url=endpoint.base_url,
+        model=model,
+        key=endpoint.key,
+        dialect=RerankDialect(dialect),
+    )
 
 
 async def check_chat(model: Model) -> str:
@@ -744,18 +728,19 @@ async def check_embedding(embedding: Embedder, text: str) -> tuple[str, int]:
     return result.model_name, len(result.embeddings[0])
 
 
-async def check_rerank(reranker: HttpReranker, text: str) -> str:
+async def check_rerank(reranker: Reranker, model: str, text: str) -> str:
     """Rerank one text against itself.
 
     Args:
         reranker: The reranker.
+        model: The model asked for.
         text: The query and the one candidate.
 
     Returns:
-        The model asked for (the rerank dialect reports none).
+        The model asked for (the rerank dialects report none).
     """
     await reranker.rerank(text, [text])
-    return reranker.model
+    return model
 
 
 def call_errors() -> tuple[type[Exception], ...]:
@@ -773,6 +758,7 @@ def call_errors() -> tuple[type[Exception], ...]:
         AzureError,
         AgentRunError,
         UserError,
+        RerankerError,
         OSError,
         ValueError,
         KeyError,

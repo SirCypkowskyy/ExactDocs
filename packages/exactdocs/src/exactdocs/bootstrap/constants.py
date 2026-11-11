@@ -406,6 +406,17 @@ VERTEX_HOST: Final[re.Pattern[str]] = re.compile(
     r"(aiplatform|[a-z0-9-]+-aiplatform|aiplatform\.(us|eu)\.rep)\.googleapis\.com"
 )
 """A Vertex AI endpoint: global, regional (``<location>-aiplatform``) or multi-region."""
+RERANK_DIALECTS: Final[dict[str, str]] = {
+    "openai-compatible": "cohere",
+    "vllm": "cohere",
+    "litellm": "cohere",
+    "tei": "tei",
+}
+"""The rerank dialect (``RerankDialect``) of each provider kind that has a rerank API: the
+Cohere-compatible ``/rerank`` (Cohere, Jina, Voyage and Azure AI Foundry through
+``openai-compatible``), or TEI's."""
+AI_SDK_MODULE: Final[str] = "exactdocs.bootstrap.ai_sdk"
+"""The module that imports pydantic-ai and the provider SDKs: loaded only once a role is used."""
 NO_KEY: Final[str] = "unused"
 """The key sent by a profile without one, instead of letting an SDK read ``*_API_KEY``."""
 AZURE_SCOPE: Final[str] = "https://cognitiveservices.azure.com/.default"

@@ -979,7 +979,7 @@
           "description": "How much of the index the answer stands on.",
           "properties": {
             "candidates": {
-              "description": "Lower bound: matching chunks the search looked at, at most `limit` + 1.",
+              "description": "Lower bound: matching chunks the search looked at, at most `limit` + 1 (with a reranker, at\nmost its top N + 1 when that is more).",
               "type": "integer"
             },
             "complete": {
@@ -987,7 +987,7 @@
               "type": "boolean"
             },
             "reranked": {
-              "description": "Of those, how many a reranker reordered.",
+              "description": "Of those, how many a reranker reordered (0 when it failed or timed out).",
               "type": "integer"
             }
           },
@@ -1294,7 +1294,7 @@
           "description": "How much of the index the answer stands on.",
           "properties": {
             "candidates": {
-              "description": "Lower bound: matching chunks the search looked at, at most `limit` + 1.",
+              "description": "Lower bound: matching chunks the search looked at, at most `limit` + 1 (with a reranker, at\nmost its top N + 1 when that is more).",
               "type": "integer"
             },
             "complete": {
@@ -1302,7 +1302,7 @@
               "type": "boolean"
             },
             "reranked": {
-              "description": "Of those, how many a reranker reordered.",
+              "description": "Of those, how many a reranker reordered (0 when it failed or timed out).",
               "type": "integer"
             }
           },
@@ -1322,7 +1322,9 @@
                 "embedding_in_progress",
                 "llm_budget_reached",
                 "llm_rate_limited",
-                "vector_store_unavailable"
+                "vector_store_unavailable",
+                "reranker_timeout",
+                "reranker_failed"
               ],
               "type": "string"
             },
