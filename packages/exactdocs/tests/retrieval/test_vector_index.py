@@ -391,6 +391,24 @@ async def test_coverage_and_missing_chunks_of_a_manifest(world: World) -> None:
     assert (await world.vectors.coverage(space.id, "unknown")).complete
 
 
+async def test_coverage_of_many_manifests_is_counted_at_once(world: World) -> None:
+    await world.index("m", {"a": 2, "b": 1})
+    await world.index("n", {"a": 2})  # shares blob a with m: counted for each manifest
+    space = await world.vectors.create_space(SMALL, T0)
+    await world.vectors.upsert(space.id, {key("a", 1): [1, 0, 0]})
+
+    found = await world.vectors.coverage_many(space.id, ["m", "n", "unknown"])
+
+    assert found == {
+        "m": VectorCoverage(chunks=3, embedded=1),
+        "n": VectorCoverage(chunks=2, embedded=1),
+    }
+    assert await world.vectors.coverage_many(space.id, []) == {}
+    await world.vectors.retire_space(space.id)
+    with pytest.raises(RetiredEmbeddingSpaceError):
+        await world.vectors.coverage_many(space.id, ["m"])
+
+
 async def test_vectors_are_removed_with_their_chunk_sets(world: World) -> None:
     await world.index("v13", {"old": 1, "shared": 1})
     await world.index("v14", {"shared": 1})

@@ -8,6 +8,7 @@ from itertools import batched
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     Column,
     Delete,
     ForeignKey,
@@ -38,7 +39,9 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from exactdocs.retrieval.constants import (
+    BUDGET_WINDOW_PREFIX,
     SPEND_COUNTERS,
+    SPEND_SCOPE_LIBRARY,
     STORED_PROFILE_FIELDS,
     VECTOR_BATCH,
 )
@@ -50,6 +53,7 @@ from exactdocs.retrieval.errors import (
 from exactdocs.retrieval.models import (
     AnthropicPlatform,
     AzureAuth,
+    BudgetLimit,
     Chunk,
     ChunkHeading,
     ChunkId,
@@ -159,6 +163,11 @@ library_settings = Table(
     Column("judge", Text),
     Column("reranker", Text),
     Column("rerank_top_n", Integer),  # NULL: the instance's top N
+    # The library's own budgets (#102); NULL: not limited by the library.
+    Column("daily_usd_micros", BigInteger),
+    Column("monthly_usd_micros", BigInteger),
+    Column("daily_tokens", BigInteger),
+    Column("monthly_tokens", BigInteger),
 )
 # Provider profiles managed over the REST API. The key is sealed by the secret box (its own HKDF
 # purpose); every other field is JSON in `settings`, as `ProviderProfile` names them.
@@ -672,7 +681,27 @@ class SqliteLibraryModes:
             judge=_stored_ref(row.judge),
             reranker=_stored_ref(row.reranker),
             rerank_top_n=row.rerank_top_n,
+            budgets=_stored_budgets(row),
         )
+
+    async def budgets(self) -> dict[str, tuple[BudgetLimit, ...]]:
+        """Read the own budgets of every library that has some, in one query.
+
+        Returns:
+            Each such library's budgets, by case-folded library ID.
+        """
+        columns = library_settings.c
+        query = select(library_settings).where(
+            or_(
+                columns.daily_usd_micros.is_not(None),
+                columns.monthly_usd_micros.is_not(None),
+                columns.daily_tokens.is_not(None),
+                columns.monthly_tokens.is_not(None),
+            )
+        )
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(query)).all()
+        return {row.library: _stored_budgets(row) for row in rows}
 
     async def forget(self, library: str) -> None:
         """Delete the library's row.
@@ -708,8 +737,50 @@ class SqliteLibraryModes:
                         judge=_ref_text(ai.judge),
                         reranker=_ref_text(ai.reranker),
                         rerank_top_n=ai.rerank_top_n,
+                        **_budget_columns(ai),
                     )
                 )
+
+
+def _stored_budgets(row: Row[Any]) -> tuple[BudgetLimit, ...]:
+    """Read a library's own budgets from its row.
+
+    Args:
+        row: The ``retrieval_library_settings`` row.
+
+    Returns:
+        One limit per window that has a ceiling.
+    """
+    found: list[BudgetLimit] = []
+    for window in SpendWindow:
+        usd = getattr(row, f"{BUDGET_WINDOW_PREFIX[window.value]}_usd_micros")
+        tokens = getattr(row, f"{BUDGET_WINDOW_PREFIX[window.value]}_tokens")
+        if usd is not None or tokens is not None:
+            found.append(
+                BudgetLimit(
+                    scope_kind=SPEND_SCOPE_LIBRARY, window=window, usd_micros=usd, tokens=tokens
+                )
+            )
+    return tuple(found)
+
+
+def _budget_columns(ai: LibraryAi) -> dict[str, int | None]:
+    """Write a library's own budgets as its row's columns.
+
+    Args:
+        ai: The library's overrides.
+
+    Returns:
+        The four budget columns.
+    """
+    columns: dict[str, int | None] = {}
+    for window in SpendWindow:
+        limit = ai.budget(window)
+        columns[f"{BUDGET_WINDOW_PREFIX[window.value]}_usd_micros"] = (
+            limit.usd_micros if limit else None
+        )
+        columns[f"{BUDGET_WINDOW_PREFIX[window.value]}_tokens"] = limit.tokens if limit else None
+    return columns
 
 
 def _stored_ref(text: str | None) -> ModelRef | None:

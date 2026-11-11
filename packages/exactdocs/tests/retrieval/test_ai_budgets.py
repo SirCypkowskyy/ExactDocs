@@ -30,7 +30,9 @@ from exactdocs.retrieval.dtos import (
     ChunkIn,
     EmbedBatchCommand,
     EmbedVersionCommand,
+    GetLibraryRetrievalQuery,
     IndexManifestCommand,
+    LibraryBudgets,
     QueryDocsQuery,
     SearchDocsQuery,
     SetLibraryRetrievalCommand,
@@ -39,6 +41,7 @@ from exactdocs.retrieval.dtos import (
 from exactdocs.retrieval.errors import (
     AiBudgetReachedError,
     InvalidBudgetError,
+    LibraryBudgetAboveInstanceError,
     UnknownSpendKeyError,
     VersionNotIndexedError,
 )
@@ -191,6 +194,7 @@ async def _build(
     embedding: bool = False,
     tracer: SearchTracer | None = None,
     price_overrides: dict[str, ModelPrice] | None = None,
+    modes: InMemoryLibraryModes | None = None,
 ) -> World:
     chunks = InMemoryChunkRepository()
     index = InMemorySearchIndex(chunks=chunks)
@@ -234,7 +238,7 @@ async def _build(
         chunks=chunks,
         search=index,
         maintenance=index,
-        library_modes=InMemoryLibraryModes(),
+        library_modes=modes or InMemoryLibraryModes(),
         roles=None if embedding else Roles(frozenset(roles)),
         configured_profiles=[profile],
         instance_roles=InstanceRoles(
@@ -878,3 +882,196 @@ async def test_a_search_of_an_unknown_version_uses_up_no_llm_search() -> None:
             )
 
     assert (await _search(world, "agentic"))[:2] == (AGENTIC, None)
+
+
+# ---------------------------------------------------------------- a library's own budgets (#102)
+
+
+def test_a_library_has_at_most_one_own_budget_per_window_and_only_for_itself() -> None:
+    with pytest.raises(InvalidBudgetError):
+        LibraryAi(budgets=(_limit("user"),))
+    with pytest.raises(InvalidBudgetError):
+        LibraryAi(budgets=(_limit("library"), _limit("library", usd=None, tokens=5)))
+    own = LibraryAi(budgets=(_limit("library", MONTH),))
+
+    assert (own.budget(MONTH), own.budget(DAY), own.is_default) == (
+        _limit("library", MONTH),
+        None,
+        False,
+    )
+
+
+def test_the_tighter_of_a_librarys_own_budget_and_the_instances_applies() -> None:
+    budgets = Budgets(
+        limits=(
+            _limit("instance", usd=10),
+            _limit("library", usd=2, tokens=1000),
+            _limit("user", MONTH, usd=5),
+        )
+    )
+    own = (_limit("library", usd=1, tokens=None), _limit("library", MONTH, usd=None, tokens=50))
+
+    merged = budgets.for_library(own)
+
+    assert budgets.for_library(()) is budgets
+    assert set(merged.limits) == {
+        _limit("instance", usd=10),
+        _limit("user", MONTH, usd=5),
+        _limit("library", usd=1, tokens=1000),  # its dollars, the instance's tokens
+        _limit("library", MONTH, usd=None, tokens=50),  # only its own for the month
+    }
+
+
+def test_a_librarys_ceiling_is_the_lowest_instance_or_per_library_limit_of_the_window() -> None:
+    budgets = Budgets(
+        limits=(
+            _limit("instance", usd=10, tokens=500),
+            _limit("library", usd=2),
+            _limit("user", usd=0.5),
+            _limit("embedding", MONTH, usd=0.1),
+        )
+    )
+
+    day, month = budgets.ceiling(DAY), budgets.ceiling(MONTH)
+
+    assert (day.usd_micros, day.tokens) == (2 * USD, 500)
+    assert (month.usd_micros, month.tokens) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("own", "what"),
+    [
+        (_limit("library", usd=3), "daily_usd"),
+        (_limit("library", usd=None, tokens=501), "daily_tokens"),
+    ],
+)
+def test_a_librarys_own_budget_above_the_instances_is_refused(own: BudgetLimit, what: str) -> None:
+    budgets = Budgets(limits=(_limit("library", usd=2), _limit("instance", usd=None, tokens=500)))
+
+    with pytest.raises(LibraryBudgetAboveInstanceError, match=what) as raised:
+        budgets.check_library([own])
+
+    assert raised.value.code == "budget_above_instance"
+    budgets.check_library([_limit("library", usd=2, tokens=500), _limit("library", MONTH)])
+    Budgets().check_library([_limit("library", usd=1000)])  # no instance limit: anything goes
+
+
+async def test_a_librarys_own_budget_is_stored_shown_with_its_ceilings_and_cleared() -> None:
+    world = await _build(ModelRole.LLM, budgets=Budgets(limits=(_limit("library", usd=2),)))
+
+    shown = await world.module.set_library_retrieval(
+        SetLibraryRetrievalCommand(
+            library=LIB.upper(), budgets=LibraryBudgets(daily_usd=1.5, monthly_tokens=10)
+        )
+    )
+    read = await world.module.get_library_retrieval(GetLibraryRetrievalQuery(library=LIB))
+    cleared = await world.module.set_library_retrieval(SetLibraryRetrievalCommand(library=LIB))
+
+    assert shown.budgets == read.budgets == LibraryBudgets(daily_usd=1.5, monthly_tokens=10)
+    assert shown.budget_ceilings == LibraryBudgets(daily_usd=2.0)
+    assert cleared.budgets == LibraryBudgets()
+
+
+async def test_a_librarys_own_budget_above_the_instances_is_not_stored() -> None:
+    world = await _build(ModelRole.LLM, budgets=Budgets(limits=(_limit("library", usd=2),)))
+
+    with pytest.raises(LibraryBudgetAboveInstanceError):
+        await world.module.set_library_retrieval(
+            SetLibraryRetrievalCommand(library=LIB, budgets=LibraryBudgets(daily_usd=3))
+        )
+
+    read = await world.module.get_library_retrieval(GetLibraryRetrievalQuery(library=LIB))
+    assert read.budgets == LibraryBudgets()
+
+
+async def test_a_librarys_own_budget_skips_its_llm_step_and_no_other_librarys() -> None:
+    world = await _build(ModelRole.LLM, budgets=Budgets(limits=(_limit("library", usd=5),)))
+    await world.module.set_library_retrieval(
+        SetLibraryRetrievalCommand(library=LIB, budgets=LibraryBudgets(daily_usd=1))
+    )
+    await _spend(world, "library", LIB, DAY, USD)
+    await _spend(world, "library", OTHER, DAY, USD)
+
+    assert (await _search(world, "agentic"))[:2] == (BM25, FallbackReason.LLM_BUDGET_REACHED)
+    assert (await _search(world, "agentic", library=OTHER))[:2] == (AGENTIC, None)
+
+
+async def test_a_librarys_own_budget_works_without_any_instance_limit() -> None:
+    world = await _build(ModelRole.LLM)
+    await world.module.set_library_retrieval(
+        SetLibraryRetrievalCommand(library=LIB, budgets=LibraryBudgets(daily_tokens=500))
+    )
+    await _spend(world, "library", LIB, DAY, 0)  # 1000 tokens
+
+    assert (await _search(world, "agentic"))[:2] == (BM25, FallbackReason.LLM_BUDGET_REACHED)
+
+
+async def test_a_librarys_own_budget_pauses_its_embedding() -> None:
+    world = await _build(embedding=True)
+    await world.module.set_library_retrieval(
+        SetLibraryRetrievalCommand(library=LIB, budgets=LibraryBudgets(monthly_usd=1))
+    )
+    await _spend(world, "library", LIB, MONTH, USD)
+
+    with pytest.raises(AiBudgetReachedError):
+        await world.module.embed_batch(await _plan(world))
+    queued = await world.module.list_unembedded_versions(UnembeddedVersionsQuery())
+
+    assert {v.library for v in queued.versions} == {OTHER}
+
+
+async def test_the_usage_shows_a_librarys_own_budget_where_it_is_tighter() -> None:
+    world = await _build(ModelRole.LLM, budgets=Budgets(limits=(_limit("library", usd=2),)))
+    await world.module.set_library_retrieval(
+        SetLibraryRetrievalCommand(library=LIB, budgets=LibraryBudgets(daily_usd=1))
+    )
+    await _spend(world, "library", LIB, DAY, USD)
+    await _spend(world, "library", OTHER, DAY, USD)
+
+    usage = await world.module.get_ai_usage()
+
+    limits = {
+        s.id: [(b.usd_limit, b.reached) for b in s.budgets]
+        for s in usage.scopes
+        if s.scope == "library"
+    }
+    assert limits == {LIB: [(1.0, True)], OTHER: [(2.0, False)]}
+
+
+async def test_a_stored_budget_above_a_lowered_instance_limit_is_kept_but_not_raised() -> None:
+    stored = InMemoryLibraryModes()
+    await stored.save(LIB, None, LibraryAi(budgets=(_limit("library", usd=4),)))
+    # The operator lowered the per-library limit from 5 to 2 USD since.
+    lowered = await _build(
+        ModelRole.LLM, budgets=Budgets(limits=(_limit("library", usd=2),)), modes=stored
+    )
+    modes = lowered.module.set_library_retrieval
+    await modes(SetLibraryRetrievalCommand(library=LIB, budgets=LibraryBudgets(daily_usd=4)))
+
+    shown = await modes(
+        SetLibraryRetrievalCommand(library=LIB, rerank_top_n=4, budgets=LibraryBudgets(daily_usd=4))
+    )  # another setting changes: the stored budget stays
+    lower = await modes(
+        SetLibraryRetrievalCommand(library=LIB, budgets=LibraryBudgets(daily_usd=3))
+    )
+    with pytest.raises(LibraryBudgetAboveInstanceError):
+        await modes(SetLibraryRetrievalCommand(library=LIB, budgets=LibraryBudgets(daily_usd=3.5)))
+
+    assert (shown.budgets.daily_usd, shown.budget_ceilings.daily_usd) == (4, 2)
+    assert lower.budgets.daily_usd == 3
+
+
+async def test_the_usage_lists_a_library_with_its_own_budget_before_it_spends() -> None:
+    world = await _build(ModelRole.LLM)
+    await world.module.set_library_retrieval(
+        SetLibraryRetrievalCommand(library=OTHER.upper(), budgets=LibraryBudgets(monthly_tokens=9))
+    )
+    await _spend(world, "library", LIB, DAY, USD)
+
+    usage = await world.module.get_ai_usage()
+
+    libraries = {s.id: s for s in usage.scopes if s.scope == "library"}
+    assert set(libraries) == {LIB, OTHER}
+    (monthly,) = libraries[OTHER].budgets
+    assert (monthly.tokens_limit, monthly.tokens_left, libraries[OTHER].month.tokens) == (9, 9, 0)
+    assert libraries[LIB].budgets == []

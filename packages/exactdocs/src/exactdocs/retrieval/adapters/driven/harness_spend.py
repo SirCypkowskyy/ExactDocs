@@ -239,7 +239,10 @@ def agent_limits(
 
     Args:
         ledger: The ``retrieval_ai_spend`` rows.
-        budgets: The instance's limits.
+        budgets: The limits of the caller's library: pass ``AiSpend.limits_for(caller.scopes())``
+            (or ``Budgets.for_library(own)``), never the instance's ``Budgets`` alone, or the
+            agent does not see a library's own budget (#102). TODO(#94): the first agent
+            pipeline wires this in.
         caller: The library and the account the step runs for.
         clock: The current time; read in UTC, so the harness's day and month buckets are the
             ledger's UTC windows whatever zone the clock answers in.

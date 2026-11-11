@@ -38,7 +38,9 @@ from exactdocs.retrieval.dtos import (
     CheckProviderCommand,
     ChunkOut,
     EmbeddingEstimateOut,
+    EmbeddingProgressOut,
     GetLibraryRetrievalQuery,
+    LibraryBudgets,
     LibraryMatchOut,
     LibraryRetrievalOut,
     ModelChecksOut,
@@ -64,6 +66,7 @@ from exactdocs.retrieval.ports.driving import (
     DeleteProvider,
     EstimateEmbedding,
     GetAiUsage,
+    GetEmbeddingProgress,
     GetLibraryRetrieval,
     GetProvider,
     ListProviders,
@@ -101,6 +104,11 @@ class LibraryRetrievalIn(BaseModel):
     rerank_top_n: int | None = Field(default=None, ge=1, le=MAX_RERANK_TOP_N)
     """How many of its best candidates the reranker reorders (1 to 200); null: the instance's
     (`EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default).
+    """
+    budgets: LibraryBudgets = Field(default_factory=LibraryBudgets)
+    """The library's own spend limits per UTC day and month. Each may be at most the instance's
+    (`budget_ceilings` of the response; 422 `budget_above_instance` otherwise); the tighter of
+    the two applies. None by default.
     """
 
 
@@ -572,6 +580,47 @@ def _command[T](build: Callable[[], T]) -> T:
         raise RequestValidationError(error.errors()) from error
 
 
+def _embedding_routes(
+    router: APIRouter,
+    estimate_embedding: EstimateEmbedding,
+    get_embedding_progress: GetEmbeddingProgress,
+) -> None:
+    """Add the embedding routes to the AI router: the estimate and the progress per space.
+
+    Args:
+        router: The AI router.
+        estimate_embedding: Estimates what embedding the versions not embedded yet costs.
+        get_embedding_progress: Shows how far each embedding space has got.
+    """
+
+    @router.get("/embedding/estimate", name="estimate_embedding")
+    async def estimate() -> EmbeddingEstimateOut:
+        """Estimate the chunks, tokens and US dollars of embedding what is not embedded yet.
+
+        Counts the distinct chunks of every active version (of libraries with AI on) that have no
+        vector from the configured embedding model, at 4 characters per token, priced with the
+        bundled price list. Calls no model and no tokenizer: an estimate, as `note` says.
+        The REST form of `exactdocs ai estimate`.
+
+        Returns:
+            The estimate; `model` is null when no embedding model is configured.
+        """
+        return await estimate_embedding()
+
+    @router.get("/embedding", name="get_embedding_progress")
+    async def embedding_progress() -> EmbeddingProgressOut:
+        """Show the configured embedding model and how far each embedding space has got.
+
+        One entry per space that is not retired, oldest first: the active versions (of
+        libraries with AI on) and their chunks, and how many of each it has vectors for. While
+        a new model embeds, its space is `building` and the old one still answers searches.
+
+        Returns:
+            The progress; no space without a vector store.
+        """
+        return await get_embedding_progress()
+
+
 def build_ai_router(
     *,
     list_providers: ListProviders,
@@ -581,6 +630,7 @@ def build_ai_router(
     check_provider: CheckProvider,
     list_roles: ListRoles,
     estimate_embedding: EstimateEmbedding,
+    get_embedding_progress: GetEmbeddingProgress,
     get_ai_usage: GetAiUsage,
 ) -> APIRouter:
     """Build the routes of the AI provider profiles and roles (RET-01..03), admins only.
@@ -593,6 +643,7 @@ def build_ai_router(
         check_provider: Makes one minimal call per role that uses one.
         list_roles: Shows the instance's roles.
         estimate_embedding: Estimates what embedding the versions not embedded yet costs.
+        get_embedding_progress: Shows how far each embedding space has got.
         get_ai_usage: Shows spend and budget left per scope.
 
     Returns:
@@ -701,19 +752,7 @@ def build_ai_router(
         """
         return await list_roles()
 
-    @router.get("/embedding/estimate", name="estimate_embedding")
-    async def estimate() -> EmbeddingEstimateOut:
-        """Estimate the chunks, tokens and US dollars of embedding what is not embedded yet.
-
-        Counts the distinct chunks of every active version (of libraries with AI on) that have no
-        vector from the configured embedding model, at 4 characters per token, priced with the
-        bundled price list. Calls no model and no tokenizer: an estimate, as `note` says.
-        The REST form of `exactdocs ai estimate`.
-
-        Returns:
-            The estimate; `model` is null when no embedding model is configured.
-        """
-        return await estimate_embedding()
+    _embedding_routes(router, estimate_embedding, get_embedding_progress)
 
     @router.get("/usage", name="get_ai_usage")
     async def usage() -> AiUsageOut:

@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import type { Activity, JobViews, SettingsLibrary } from "../model/settings";
+import { AiSection } from "./ai-section";
 import { DangerSection } from "./danger-section";
 import { DetailsForm } from "./details-form";
 import { PathsSection } from "./paths-section";
@@ -23,6 +24,7 @@ const SECTIONS = [
   ["details-heading", "Details"],
   ["paths-heading", "Files and tags"],
   ["versions-heading", "Versions"],
+  ["ai-heading", "Retrieval and AI"],
   ["sync-heading", "Re-sync"],
   ["danger-heading", "Remove library"],
 ] as const;
@@ -104,6 +106,7 @@ export function LibrarySettingsPage({ owner, repo, library, jobs }: Props) {
             activity={activity}
             onStart={start("versions")}
           />
+          <AiSection owner={owner} repo={repo} activity={activity} onStart={start("ai")} />
           <SyncSection
             owner={owner}
             repo={repo}

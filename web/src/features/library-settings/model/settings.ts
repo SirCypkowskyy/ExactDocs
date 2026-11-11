@@ -35,7 +35,7 @@ export const MAX_DESCRIPTION = 1000;
 
 /** What went wrong, and where it belongs: next to a field, or in the section's alert. */
 export interface Problem {
-  field?: "title" | "description" | "ref" | "paths" | "tags" | "credential";
+  field?: "title" | "description" | "ref" | "paths" | "tags" | "credential" | "mode";
   message: string;
   /** A wait state, not a mistake: shown neutral instead of red. */
   tone?: "info";
@@ -111,6 +111,34 @@ export function explainSave(error: unknown): Problem {
     return field === "title" || field === "description"
       ? { field, message: error.fields[0]?.msg ?? "The server refused that value." }
       : { message: "The server refused something in the form. Check it and try again." };
+  }
+  return generic(error);
+}
+
+/** The profiles an override may name could not be read. */
+export function explainProfilesError(error: unknown): string {
+  const words = error instanceof HttpError ? session(error)?.message : OFFLINE.message;
+  return `${words ?? "The AI profiles could not be read."} Overrides keep what they have; try again to change them.`;
+}
+
+/** A refused retrieval save: a mode that can't run, a profile that's gone, a budget too high. */
+export function explainRetrievalSave(error: unknown): Problem {
+  if (!(error instanceof HttpError)) return OFFLINE;
+  const gone = session(error);
+  if (gone) return gone;
+  switch (error.code) {
+    case "mode_unavailable":
+      return { field: "mode", message: error.message };
+    case "unknown_provider":
+    case "provider_unsupported":
+    case "invalid_model":
+    case "budget_above_instance":
+      return { message: error.message };
+    case "not_found":
+      return { message: GONE };
+  }
+  if (error.status === 422) {
+    return { message: "The server refused something in the form. Check it and try again." };
   }
   return generic(error);
 }
