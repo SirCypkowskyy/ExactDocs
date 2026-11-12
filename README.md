@@ -307,10 +307,11 @@ The one exception is AI spend: when an LLM step or a paid reranker runs in a std
 spend is added to the shared `retrieval_ai_spend` ledger (and its replay tokens), so the server's
 budgets and `GET /api/v1/ai/usage` count it. That write goes through a second connection of its
 own: on SQLite it opens the existing file with `mode=rw` under an authorizer that refuses every
-write to any other table, every schema change and every `PRAGMA` assignment; on PostgreSQL it is
+write to any other table, every schema change and every `PRAGMA` but a few reads; on PostgreSQL it is
 the same role without `default_transaction_read_only`, used by the spend ledger alone. If that
 write fails (a read-only file system, a lock held too long), the process logs a warning and keeps
-the spend in memory until it exits; the AI call never fails for it. If the server has since been upgraded and
+the spend in memory until it exits; the AI call never fails for it. While the server holds the
+SQLite write lock, a stdio call that spent can wait up to 5 s for it before falling back to memory. If the server has since been upgraded and
 migrated the database, upgrade the stdio command too. Manage libraries through the server. Run it as the same user as the server: with the server
 stopped, SQLite creates `exactdocs.db-wal` and `-shm` next to the database (the directory must be
 writable for that), and files owned by another user can stop the server from starting later.

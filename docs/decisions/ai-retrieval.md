@@ -415,8 +415,9 @@ admin-only; `notes` and `off` may stay with the library's owner.
       engine for `retrieval_ai_spend` and `retrieval_ai_spend_replays` only, with the same keys
       and the same replay deduplication as a server (the same `SqliteSpendLedger`). On SQLite
       that engine opens the existing file with `mode=rw` and a `sqlite3` authorizer that denies
-      every insert, update or delete outside those two tables, every schema change, `ATTACH` and
-      `PRAGMA` assignment. On PostgreSQL it is the same role without
+      every insert, update or delete outside those two tables, every schema change, `ATTACH`, and
+      every `PRAGMA` but a read of a short allow-list (no `wal_checkpoint` or
+      `incremental_vacuum`). On PostgreSQL it is the same role without
       `default_transaction_read_only`: the limit is the code path (only the ledger is given that
       engine), not the database. This is the one documented exception to stdio's read-only
       guarantee. A failed write is logged and the spend kept in the process's memory

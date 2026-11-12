@@ -41,6 +41,7 @@ from exactdocs.bootstrap.constants import (
     SECURE_SSLMODES,
     SPEND_LEDGER_TABLES,
     SQLITE_READ_ACTIONS,
+    SQLITE_READ_PRAGMAS,
     SQLITE_WRITE_ACTIONS,
     SUPABASE_HOSTS,
     SUPABASE_TRANSACTION_PORT,
@@ -162,10 +163,11 @@ def open_spend_ledger_database(settings: Settings) -> AsyncEngine:
     """Return the one engine a read-only (``serve --stdio``) process writes with: its AI spend.
 
     The process's other engine stays read-only. On SQLite this one opens the existing file with
-    ``mode=rw`` and an authorizer that refuses every write but to ``SPEND_LEDGER_TABLES``, and
-    every schema change, attachment and ``PRAGMA`` assignment. On PostgreSQL it connects as the
-    same role without ``default_transaction_read_only``: only the spend ledger is given it, so
-    the limit there is this code path, not the database. No connection is made yet.
+    ``mode=rw`` and an authorizer that refuses every write but to ``SPEND_LEDGER_TABLES``, every
+    schema change and attachment, and every ``PRAGMA`` but a read of ``SQLITE_READ_PRAGMAS``. On
+    PostgreSQL it connects as the same role without ``default_transaction_read_only``: only the
+    spend ledger is given it, so the limit there is this code path, not the database. No
+    connection is made yet.
 
     Args:
         settings: The instance's settings.
@@ -232,19 +234,20 @@ def spend_ledger_authorizer(
         action: What the statement does (``sqlite3.SQLITE_*``).
         first: The table of a read or write, or the PRAGMA's name.
         second: The column, or the value a PRAGMA is set to.
-        database: The schema (``main``).
+        database: The schema: writes go to ``main`` only, never to a ``temp`` table of the same
+            name.
         trigger: The trigger or view the access comes from.
 
     Returns:
         ``SQLITE_OK`` or ``SQLITE_DENY``.
     """
-    del database, trigger
+    del trigger
     if action in SQLITE_READ_ACTIONS:
         return sqlite3.SQLITE_OK
-    if action in SQLITE_WRITE_ACTIONS and first in SPEND_LEDGER_TABLES:
+    if action in SQLITE_WRITE_ACTIONS and first in SPEND_LEDGER_TABLES and database == "main":
         return sqlite3.SQLITE_OK
-    if action == sqlite3.SQLITE_PRAGMA and second is None:  # reading a PRAGMA changes nothing
-        return sqlite3.SQLITE_OK
+    if action == sqlite3.SQLITE_PRAGMA and first in SQLITE_READ_PRAGMAS and second is None:
+        return sqlite3.SQLITE_OK  # only reads it
     return sqlite3.SQLITE_DENY
 
 

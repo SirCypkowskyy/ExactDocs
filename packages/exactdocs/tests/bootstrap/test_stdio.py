@@ -2,20 +2,24 @@
 
 import json
 import os
+import sqlite3
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 from datetime import date
 from pathlib import Path
 
+import aiosqlite
 import pytest
 from fastmcp import Client
-from sqlalchemy.exc import DatabaseError, OperationalError
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.database import (
     StartupError,
     open_database,
     open_spend_ledger_database,
+    spend_ledger_authorizer,
 )
 from exactdocs.bootstrap.mcp import build_stdio_mcp
 from exactdocs.bootstrap.settings import Settings
@@ -135,6 +139,10 @@ async def test_the_spend_ledger_engine_adds_spend_the_server_reads_once_per_repl
     assert (row.input_tokens, row.output_tokens, row.requests) == (50, 10, 1)
 
 
+DENIED = "not authorized|authorization denied"  # at prepare time, or (VACUUM) when it runs
+DELETE_CATALOG = "AFTER INSERT ON retrieval_ai_spend BEGIN DELETE FROM catalog_libraries; END"
+
+
 @pytest.mark.usefixtures("demo_catalog")
 @pytest.mark.parametrize(
     "statement",
@@ -149,14 +157,64 @@ async def test_the_spend_ledger_engine_adds_spend_the_server_reads_once_per_repl
         "ATTACH DATABASE ':memory:' AS other",
         "PRAGMA journal_mode=DELETE",
         "PRAGMA writable_schema=ON",
+        "PRAGMA incremental_vacuum",
+        "PRAGMA wal_checkpoint",
+        "PRAGMA wal_checkpoint(TRUNCATE)",
+        "PRAGMA optimize",
+        "VACUUM",
+        "VACUUM INTO 'copy.db'",
+        "CREATE TEMP TABLE x (a)",
+        "CREATE TEMP VIEW x AS SELECT 1",
+        f"CREATE TRIGGER x {DELETE_CATALOG}",
+        f"CREATE TEMP TRIGGER x {DELETE_CATALOG}",
     ],
 )
 async def test_the_spend_ledger_engine_writes_nothing_else(statement: str) -> None:
     ledger = open_spend_ledger_database(Settings())
     try:
-        async with ledger.begin() as connection:
-            with pytest.raises(DatabaseError, match="not authorized"):
-                await connection.exec_driver_sql(statement)
+        async with ledger.connect() as connection:  # no transaction: VACUUM would refuse one
+            driver = await _driver(connection)
+            with pytest.raises(sqlite3.DatabaseError, match=DENIED):
+                await driver.execute(statement)
+    finally:
+        await ledger.dispose()
+
+
+@pytest.mark.usefixtures("demo_catalog")
+async def test_the_spend_ledger_engine_writes_no_temp_table_named_like_the_ledger() -> None:
+    ledger = open_spend_ledger_database(Settings())
+    try:
+        async with ledger.connect() as connection:
+            driver = await _driver(connection)
+            await driver.set_authorizer(None)  # only the test can make the shadowing table
+            await driver.execute(
+                "CREATE TEMP TABLE retrieval_ai_spend_replays AS "
+                "SELECT * FROM main.retrieval_ai_spend_replays WHERE 0"
+            )
+            await driver.set_authorizer(spend_ledger_authorizer)
+            with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+                await driver.execute(
+                    "INSERT INTO temp.retrieval_ai_spend_replays "
+                    "SELECT * FROM main.retrieval_ai_spend_replays"
+                )
+    finally:
+        await ledger.dispose()
+
+
+async def _driver(connection: AsyncConnection) -> aiosqlite.Connection:
+    """Return the aiosqlite connection under one of the spend ledger engine's connections."""
+    driver = (await connection.get_raw_connection()).driver_connection
+    assert isinstance(driver, aiosqlite.Connection)
+    return driver
+
+
+@pytest.mark.usefixtures("demo_catalog")
+@pytest.mark.parametrize("pragma", ["user_version", "journal_mode", "busy_timeout"])
+async def test_the_spend_ledger_engine_may_read_a_pragma(pragma: str) -> None:
+    ledger = open_spend_ledger_database(Settings())
+    try:
+        async with ledger.connect() as connection:
+            assert (await connection.exec_driver_sql(f"PRAGMA {pragma}")).scalar() is not None
     finally:
         await ledger.dispose()
 

@@ -970,6 +970,41 @@ async def test_a_failed_ledger_write_is_logged_and_counted_in_the_process(
 
 
 @dataclass(slots=True)
+class FlakyLedger:
+    """A ledger connection whose first write fails, then writes to ``rows``."""
+
+    rows: InMemorySpendLedger
+    failures: int = 1
+
+    async def add(self, entries: Sequence[SpendEntry]) -> None:
+        if self.failures:
+            self.failures -= 1
+            message = "connection lost during COMMIT"
+            raise OSError(message)
+        await self.rows.add(entries)
+
+    async def get(self, keys: Sequence[SpendKey]) -> dict[SpendKey, SpendEntry]:
+        raise AssertionError(keys)
+
+    async def since(self, first: date) -> list[SpendEntry]:
+        raise AssertionError(first)
+
+
+async def test_a_replay_of_spend_kept_in_the_process_is_not_counted_again() -> None:
+    shared = InMemorySpendLedger()
+    key = SpendKey(scope_kind="instance", scope_id="", window=DAY, window_start=T0.date())
+    stdio = ReadOnlySpendLedger(shared=shared, writer=FlakyLedger(rows=shared))
+    spent = replace(_entry(key, tokens=60), token="response-1")
+    other = replace(_entry(key, tokens=5), token="response-2")
+
+    await stdio.add([spent])  # the write fails: kept in this process
+    await stdio.add([spent, other])  # the same response again, beside a new one
+
+    assert (await stdio.get([key]))[key].input_tokens == 65, "response-1 counted once"
+    assert (await shared.get([key]))[key].input_tokens == 5, "only the new one is written"
+
+
+@dataclass(slots=True)
 class CountingTracer:
     """A ``SearchTracer`` that only counts fallbacks."""
 

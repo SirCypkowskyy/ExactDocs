@@ -191,6 +191,22 @@ SQLITE_WRITE_ACTIONS: Final[frozenset[int]] = frozenset(
     }
 )
 """Authorizer actions it may take on ``SPEND_LEDGER_TABLES`` only."""
+SQLITE_READ_PRAGMAS: Final[frozenset[str]] = frozenset(
+    {
+        "busy_timeout",
+        "data_version",
+        "foreign_keys",
+        "journal_mode",
+        "query_only",
+        "read_uncommitted",
+        "schema_version",
+        "user_version",
+    }
+)
+"""PRAGMAs the spend ledger's SQLite connection may read (with no argument, so nothing is set).
+Any other is refused, including ``incremental_vacuum`` and ``wal_checkpoint``, which change the
+file even with no argument. The ledger itself issues none: ``busy_timeout`` is set before the
+authorizer is installed."""
 MIN_SQLITE: Final[tuple[int, ...]] = (3, 35)
 """Search uses `WITH ... AS MATERIALIZED`"""
 POSTGRES_DRIVER: Final[str] = "postgresql+psycopg"

@@ -1139,11 +1139,18 @@ class ReadOnlySpendLedger:
     async def add(self, entries: Sequence[SpendEntry]) -> None:
         """Add the usage to the shared rows, or keep it in this process if that fails.
 
-        A failed write never fails the AI call that spent: it is logged and counted here.
+        A failed write never fails the AI call that spent: it is logged and counted here. An
+        entry whose replay token this process already kept is skipped before the write: the
+        failed transaction may have left the token unclaimed in the shared rows (or, on a lost
+        ``COMMIT``, claimed it), so writing it now could count it twice in what this process reads.
 
         Args:
             entries: The usage.
         """
+        kept = self.local.replays
+        entries = [e for e in entries if e.token is None or (e.token, e.key) not in kept]
+        if not entries:
+            return
         if self.writer is not None:
             try:
                 await self.writer.add(entries)

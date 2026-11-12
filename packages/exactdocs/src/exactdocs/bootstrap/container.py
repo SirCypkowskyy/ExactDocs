@@ -789,8 +789,10 @@ class ReadOnlyContainer:
         finally:
             try:
                 self.local.close()  # queued local model calls are dropped, not waited for
-                await self.engine.dispose()
-                await self.spend_engine.dispose()
+                try:
+                    await self.engine.dispose()
+                finally:
+                    await self.spend_engine.dispose()
             finally:
                 self._run.release()
 
