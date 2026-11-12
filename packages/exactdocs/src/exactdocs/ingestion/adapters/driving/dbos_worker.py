@@ -161,8 +161,8 @@ class DbosJobWorker:
     """With ``executors``: how often the worker checks that it still holds its slot, and looks
     for the jobs of stopped executors."""
     slot_check_timeout: float = 1.5
-    """Bound on one slot check (``keep``, and the job check after a retake): a check that hangs
-    counts as ``unknown``."""
+    """Bound on one whole slot check (``keep``, and the job check after a retake, share it): a
+    ``keep`` that hangs counts as ``unknown``, a job check that runs out of it as ``lost``."""
     slot_give_up: float = 15.0
     """How long after its last confirmed hold the slot counts as lost while the database cannot
     be reached: a shorter outage is waited out, a longer one stops the process."""
@@ -475,6 +475,10 @@ class DbosJobWorker:
         stopped (``halt_timeout`` at most) before another process can adopt its jobs
         (``adopt_grace``). A slot another process holds is lost at once.
 
+        The whole check, ``keep`` and the job check after a retake, shares one
+        ``slot_check_timeout`` deadline: the halt starts at most that long after the check did,
+        the bound the timing invariants count. A job check left without time counts as lost.
+
         Args:
             executor_id: This process's executor ID.
             executors: The slots.
@@ -482,16 +486,23 @@ class DbosJobWorker:
         Returns:
             ``held`` (go on), ``unknown`` (go on, adopt nothing) or ``lost`` (stopped).
         """
+        deadline = asyncio.get_running_loop().time() + self.slot_check_timeout
         try:
-            state = await asyncio.wait_for(executors.keep(), self.slot_check_timeout)
+            async with asyncio.timeout_at(deadline):
+                state = await executors.keep()
         except TimeoutError:
             state = SlotState.UNKNOWN
         if state is SlotState.RETAKEN:
             try:
-                ours = await asyncio.wait_for(
-                    self._still_ours(executor_id), self.slot_check_timeout
-                )
+                async with asyncio.timeout_at(deadline):
+                    ours = await self._still_ours(executor_id)
             except TimeoutError:
+                log.warning(
+                    "executor slot %s was retaken but its jobs could not be checked within"
+                    " %.1f s: counting it as lost",
+                    executor_id,
+                    self.slot_check_timeout,
+                )
                 ours = False
             state = SlotState.HELD if ours else SlotState.LOST
         if state is SlotState.UNKNOWN:

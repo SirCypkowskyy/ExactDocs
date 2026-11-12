@@ -17,3 +17,10 @@ Feature: A process that lost its executor slot stops before its jobs are adopted
     Then the process stops taking jobs and stops DBOS within halt_timeout of the check that found the slot lost
     And it asks to be stopped within that time
     And no job of slot 1 runs in it after another process may resume or adopt the slot's jobs
+
+  Scenario: A retaken slot whose job check hangs is given up within one slot check
+    Given a process holds executor slot 1 and runs a job
+    And its slot connection dies and the slot is taken again in a check that uses most of its time
+    And the check of whether its jobs are still its own hangs
+    When the worker checks its slot
+    Then the slot counts as lost within one slot_check_timeout of the check's start
