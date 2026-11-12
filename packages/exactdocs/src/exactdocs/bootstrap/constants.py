@@ -4,6 +4,7 @@ Each is ``Final`` and documented; see *Python conventions* in docs/architecture.
 """
 
 import re
+import sqlite3
 from pathlib import Path
 from typing import Final
 
@@ -163,6 +164,49 @@ MIGRATIONS: Final[Path] = Path(__file__).parent / "migrations"
 """Folder of the Alembic revisions that build the database."""
 BUSY_TIMEOUT_MS: Final[int] = 5000
 """How long SQLite waits for a lock held by another connection before it gives up."""
+SPEND_LEDGER_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "retrieval_ai_spend",
+        "retrieval_ai_spend_replays",
+    }
+)
+"""The only tables a ``serve --stdio`` process may write: the AI spend ledger and its replay
+tokens (#274). Its ledger connection's authorizer refuses a write to any other on SQLite."""
+SQLITE_READ_ACTIONS: Final[frozenset[int]] = frozenset(
+    {
+        sqlite3.SQLITE_READ,
+        sqlite3.SQLITE_SELECT,
+        sqlite3.SQLITE_FUNCTION,
+        sqlite3.SQLITE_RECURSIVE,
+        sqlite3.SQLITE_TRANSACTION,
+        sqlite3.SQLITE_SAVEPOINT,
+    }
+)
+"""Authorizer actions the spend ledger's SQLite connection may take anywhere: they write nothing."""
+SQLITE_WRITE_ACTIONS: Final[frozenset[int]] = frozenset(
+    {
+        sqlite3.SQLITE_INSERT,
+        sqlite3.SQLITE_UPDATE,
+        sqlite3.SQLITE_DELETE,
+    }
+)
+"""Authorizer actions it may take on ``SPEND_LEDGER_TABLES`` only."""
+SQLITE_READ_PRAGMAS: Final[frozenset[str]] = frozenset(
+    {
+        "busy_timeout",
+        "data_version",
+        "foreign_keys",
+        "journal_mode",
+        "query_only",
+        "read_uncommitted",
+        "schema_version",
+        "user_version",
+    }
+)
+"""PRAGMAs the spend ledger's SQLite connection may read (with no argument, so nothing is set).
+Any other is refused, including ``incremental_vacuum`` and ``wal_checkpoint``, which change the
+file even with no argument. The ledger itself issues none: ``busy_timeout`` is set before the
+authorizer is installed."""
 MIN_SQLITE: Final[tuple[int, ...]] = (3, 35)
 """Search uses `WITH ... AS MATERIALIZED`"""
 POSTGRES_DRIVER: Final[str] = "postgresql+psycopg"

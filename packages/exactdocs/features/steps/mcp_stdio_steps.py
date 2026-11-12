@@ -34,8 +34,8 @@ FRAMES = [
 ]
 
 
-def start(data_dir: Path) -> subprocess.Popen[str]:
-    env = {**os.environ, "EXACTDOCS_DATA_DIR": str(data_dir)}
+def start(data_dir: Path, more_env: Mapping[str, str] | None = None) -> subprocess.Popen[str]:
+    env = {**os.environ, "EXACTDOCS_DATA_DIR": str(data_dir), **(more_env or {})}
     env.pop("EXACTDOCS_DATABASE_URL", None)
     return subprocess.Popen(  # ruff: ignore[subprocess-without-shell-equals-true]  # our own interpreter and module
         [sys.executable, "-c", CLI, "serve", "--stdio"],

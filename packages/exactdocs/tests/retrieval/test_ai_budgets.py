@@ -919,6 +919,91 @@ async def test_a_read_only_process_adds_its_own_spend_to_the_shared_rows() -> No
     assert (await shared.get([key]))[key].usd_micros == 3  # never written
 
 
+async def test_a_read_only_process_writes_its_spend_through_its_ledger_connection() -> None:
+    shared = InMemorySpendLedger()  # the HTTP server reads these rows
+    key = SpendKey(scope_kind="instance", scope_id="", window=DAY, window_start=T0.date())
+    stdio = ReadOnlySpendLedger(shared=shared, writer=shared)
+    spent = replace(_entry(key, tokens=60), token="response-1")
+
+    await stdio.add([spent])
+    await stdio.add([spent])  # replayed: the shared rows dedupe it as for a server
+
+    assert (await shared.get([key]))[key].input_tokens == 60
+    assert (await stdio.get([key]))[key].input_tokens == 60, "counted once, not also in memory"
+
+
+@dataclass(slots=True)
+class BrokenLedger:
+    """A ledger connection whose every write fails (a locked or unwritable database)."""
+
+    attempts: int = 0
+
+    async def add(self, entries: Sequence[SpendEntry]) -> None:
+        del entries
+        self.attempts += 1
+        message = "attempt to write a readonly database"
+        raise OSError(message)
+
+    async def get(self, keys: Sequence[SpendKey]) -> dict[SpendKey, SpendEntry]:
+        raise AssertionError(keys)
+
+    async def since(self, first: date) -> list[SpendEntry]:
+        raise AssertionError(first)
+
+
+async def test_a_failed_ledger_write_is_logged_and_counted_in_the_process(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    shared = InMemorySpendLedger()
+    key = SpendKey(scope_kind="instance", scope_id="", window=DAY, window_start=T0.date())
+    writer = BrokenLedger()
+    stdio = ReadOnlySpendLedger(shared=shared, writer=writer)
+
+    with caplog.at_level("WARNING"):
+        await stdio.add([_entry(key, tokens=60)])  # never fails the AI call
+        await stdio.add([_entry(key, tokens=40)])
+
+    assert writer.attempts == 2, "each write is tried again"
+    assert (await stdio.get([key]))[key].input_tokens == 100
+    assert await shared.get([key]) == {}
+    assert "counted in this process only" in caplog.text
+
+
+@dataclass(slots=True)
+class FlakyLedger:
+    """A ledger connection whose first write fails, then writes to ``rows``."""
+
+    rows: InMemorySpendLedger
+    failures: int = 1
+
+    async def add(self, entries: Sequence[SpendEntry]) -> None:
+        if self.failures:
+            self.failures -= 1
+            message = "connection lost during COMMIT"
+            raise OSError(message)
+        await self.rows.add(entries)
+
+    async def get(self, keys: Sequence[SpendKey]) -> dict[SpendKey, SpendEntry]:
+        raise AssertionError(keys)
+
+    async def since(self, first: date) -> list[SpendEntry]:
+        raise AssertionError(first)
+
+
+async def test_a_replay_of_spend_kept_in_the_process_is_not_counted_again() -> None:
+    shared = InMemorySpendLedger()
+    key = SpendKey(scope_kind="instance", scope_id="", window=DAY, window_start=T0.date())
+    stdio = ReadOnlySpendLedger(shared=shared, writer=FlakyLedger(rows=shared))
+    spent = replace(_entry(key, tokens=60), token="response-1")
+    other = replace(_entry(key, tokens=5), token="response-2")
+
+    await stdio.add([spent])  # the write fails: kept in this process
+    await stdio.add([spent, other])  # the same response again, beside a new one
+
+    assert (await stdio.get([key]))[key].input_tokens == 65, "response-1 counted once"
+    assert (await shared.get([key]))[key].input_tokens == 5, "only the new one is written"
+
+
 @dataclass(slots=True)
 class CountingTracer:
     """A ``SearchTracer`` that only counts fallbacks."""

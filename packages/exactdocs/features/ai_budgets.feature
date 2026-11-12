@@ -31,3 +31,9 @@ Feature: LLM usage is limited by budgets and rate limits
     Given the instance's daily LLM budget is used up
     When the admin reads the AI usage
     Then it shows the instance's spend today and that its daily budget is reached
+
+  Scenario: A stdio process's LLM spend counts against the instance budget
+    Given a stdio MCP process searches with an LLM step
+    When the HTTP server reads the AI usage
+    Then the spend of the stdio process is included
+    And the instance's budget is reduced by it for every process
