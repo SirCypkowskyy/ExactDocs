@@ -268,7 +268,6 @@ packages/exactdocs/src/exactdocs/bootstrap/database.py _check_sqlite function-wi
 packages/exactdocs/src/exactdocs/bootstrap/database.py _configure_connection function-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/database.py _configure_read_only_connection function-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/database.py _enable_wal docstring-missing-args
-packages/exactdocs/src/exactdocs/bootstrap/database.py _open_read_only function-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/database.py _pragma function-without-docstring
 packages/exactdocs/src/exactdocs/bootstrap/database.py _prepare_directory docstring-missing-args
 packages/exactdocs/src/exactdocs/bootstrap/database.py _upgrade function-without-docstring

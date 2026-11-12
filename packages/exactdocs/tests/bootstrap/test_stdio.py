@@ -4,18 +4,25 @@ import json
 import os
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
 from fastmcp import Client
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import DatabaseError, OperationalError
 
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
-from exactdocs.bootstrap.database import StartupError, open_database
+from exactdocs.bootstrap.database import (
+    StartupError,
+    open_database,
+    open_spend_ledger_database,
+)
 from exactdocs.bootstrap.mcp import build_stdio_mcp
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
 from exactdocs.catalog.models import HostKind, Library, LibraryId, VersionRef
+from exactdocs.retrieval.adapters.driven.sqlite import SqliteSpendLedger
+from exactdocs.retrieval.models import SpendEntry, SpendKey, SpendWindow
 
 CLI = "from exactdocs.bootstrap.cli import main; main()"
 INITIALIZE = {
@@ -95,6 +102,69 @@ async def test_the_engine_refuses_every_write() -> None:
                 await connection.exec_driver_sql("DELETE FROM catalog_libraries")
     finally:
         await engine.dispose()
+
+
+TODAY = SpendKey(
+    scope_kind="instance", scope_id="", window=SpendWindow.DAY, window_start=date(2026, 11, 12)
+)
+
+
+@pytest.mark.usefixtures("demo_catalog")
+async def test_the_spend_ledger_engine_adds_spend_the_server_reads_once_per_replay() -> None:
+    server = Container.build(Settings())
+    ledger = open_spend_ledger_database(Settings())
+    spent = SpendEntry(
+        scope_kind="instance",
+        scope_id="",
+        window=SpendWindow.DAY,
+        window_start=TODAY.window_start,
+        input_tokens=50,
+        output_tokens=10,
+        requests=1,
+        token="response-1",
+    )
+    try:
+        async with server.running():  # the HTTP server, writing beside it
+            await SqliteSpendLedger(engine=ledger).add([spent])
+            await SqliteSpendLedger(engine=ledger).add([spent])  # a replay: counted once
+
+            row = (await SqliteSpendLedger(engine=server.engine).get([TODAY]))[TODAY]
+    finally:
+        await ledger.dispose()
+
+    assert (row.input_tokens, row.output_tokens, row.requests) == (50, 10, 1)
+
+
+@pytest.mark.usefixtures("demo_catalog")
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "DELETE FROM catalog_libraries",
+        "UPDATE catalog_libraries SET title = 'x'",
+        "INSERT INTO retrieval_hyde_answers SELECT * FROM retrieval_hyde_answers",
+        "CREATE TABLE x (a)",
+        "DROP TABLE retrieval_ai_spend",
+        "ALTER TABLE retrieval_ai_spend ADD COLUMN x",
+        "CREATE INDEX x ON retrieval_ai_spend (requests)",
+        "ATTACH DATABASE ':memory:' AS other",
+        "PRAGMA journal_mode=DELETE",
+        "PRAGMA writable_schema=ON",
+    ],
+)
+async def test_the_spend_ledger_engine_writes_nothing_else(statement: str) -> None:
+    ledger = open_spend_ledger_database(Settings())
+    try:
+        async with ledger.begin() as connection:
+            with pytest.raises(DatabaseError, match="not authorized"):
+                await connection.exec_driver_sql(statement)
+    finally:
+        await ledger.dispose()
+
+
+async def test_the_spend_ledger_engine_never_creates_a_database(tmp_path: Path) -> None:
+    with pytest.raises(StartupError, match="No ExactDocs database"):
+        open_spend_ledger_database(Settings(data_dir=tmp_path / "missing"))
+    assert not (tmp_path / "missing").exists()
 
 
 async def test_works_before_any_account_exists() -> None:

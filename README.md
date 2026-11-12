@@ -302,7 +302,15 @@ stdio needs no token and no running server, but it needs an **existing database*
 `exactdocs serve` (or `exactdocs admin create`) once first. Otherwise it exits with an error on
 stderr naming the expected path. It uses the same data directory (`EXACTDOCS_DATA_DIR`), opens the
 SQLite file read-only (`mode=ro` and `query_only`, safe next to a running server, which keeps
-importing), runs no worker, no identity and no migration, and exposes the same read-only tools. If the server has since been upgraded and
+importing), runs no worker, no identity and no migration, and exposes the same read-only tools.
+The one exception is AI spend: when an LLM step or a paid reranker runs in a stdio process, its
+spend is added to the shared `retrieval_ai_spend` ledger (and its replay tokens), so the server's
+budgets and `GET /api/v1/ai/usage` count it. That write goes through a second connection of its
+own: on SQLite it opens the existing file with `mode=rw` under an authorizer that refuses every
+write to any other table, every schema change and every `PRAGMA` assignment; on PostgreSQL it is
+the same role without `default_transaction_read_only`, used by the spend ledger alone. If that
+write fails (a read-only file system, a lock held too long), the process logs a warning and keeps
+the spend in memory until it exits; the AI call never fails for it. If the server has since been upgraded and
 migrated the database, upgrade the stdio command too. Manage libraries through the server. Run it as the same user as the server: with the server
 stopped, SQLite creates `exactdocs.db-wal` and `-shm` next to the database (the directory must be
 writable for that), and files owned by another user can stop the server from starting later.
@@ -627,10 +635,9 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   only) and for embedding runs (`daily_embedding_...`, `monthly_embedding_...`).
   `llm_searches_per_minute` limits each caller's LLM searches, over REST, HTTP MCP and stdio
   alike (counted per server process). Every model call is counted from the provider's reported
-  usage, in one `retrieval_ai_spend` table shared by every server process (a stdio MCP process
-  opens the database read-only: it reads the shared spend, so the instance's and libraries'
-  budgets hold for it, but keeps its own spend in memory, unseen by the server's budgets and
-  usage and lost when it exits; #274). LLM agents are held by the
+  usage, in one `retrieval_ai_spend` table shared by every server process and by stdio MCP
+  processes, which open the database read-only but add their spend to this table over a
+  connection that may write it alone (see [stdio](#without-a-network-port-stdio); #274). LLM agents are held by the
   harness `SpendLimits`, embedding and rerank calls by retrieval's own check before each batch or
   call, so a burst can overshoot by the calls already in flight. Reaching a limit degrades search,
   never breaks it: the LLM step is skipped and the result names the cheaper mode with

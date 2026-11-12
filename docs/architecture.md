@@ -416,8 +416,9 @@ only holds each process's git work folders and `known_hosts`. What changes:
   lookup (a `price` function for the harness; `None` falls back to genai-prices), and the clock
   is read in UTC. Replay tokens of the harness are kept in
   `retrieval_ai_spend_replays`, claimed in the same transaction as the addition. A read-only
-  stdio process reads the shared rows and keeps its own spend in memory (`ReadOnlySpendLedger`):
-  the server never sees it and it is lost on exit (#274). In memory, replay tokens of windows a
+  stdio process reads the shared rows and adds its own spend to them over a second engine that
+  may write the ledger alone (`open_spend_ledger_database`: a SQLite authorizer, on PostgreSQL
+  the code path); a write that fails is logged and kept in memory (`ReadOnlySpendLedger`, #274). In memory, replay tokens of windows a
   replay can no longer reach are dropped (`SpendWindow.kept_since`), as on SQL.
   Prices: `PriceBook` (the operator's `[ai.prices]`, then free kinds, then the bundled list);
   bootstrap refuses a US dollar budget at start when a configured role's model has no price.

@@ -11,6 +11,7 @@ import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import replace
+from datetime import date
 from pathlib import Path
 
 import psycopg
@@ -36,6 +37,9 @@ from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.postgres import PostgresLibraryLocks
 from exactdocs.ingestion.adapters.driving import dbos_worker
 from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker, SlotState
+from exactdocs.retrieval.adapters.driven.memory import ReadOnlySpendLedger
+from exactdocs.retrieval.adapters.driven.sqlite import SqliteSpendLedger
+from exactdocs.retrieval.models import SpendEntry, SpendWindow
 from import_child import big_repository, page, run
 
 if ADMIN_URL is None:
@@ -251,6 +255,39 @@ async def test_the_stdio_server_reads_postgresql_but_cannot_write_to_it() -> Non
     async with container.running(), container.engine.connect() as connection:
         with pytest.raises(DBAPIError, match="read-only transaction"):
             await connection.execute(text("DELETE FROM catalog_libraries"))
+
+
+async def test_the_stdio_server_s_spend_reaches_the_shared_ledger_once_per_replay() -> None:
+    server = open_database(Settings())
+    await migrate(server)
+    container = ReadOnlyContainer.build(Settings())
+    spent = SpendEntry(
+        scope_kind="instance",
+        scope_id="",
+        window=SpendWindow.DAY,
+        window_start=date(2026, 11, 12),
+        input_tokens=50,
+        output_tokens=10,
+        requests=1,
+        token="response-1",
+    )
+    stdio = ReadOnlySpendLedger(
+        shared=SqliteSpendLedger(engine=container.engine),
+        writer=SqliteSpendLedger(engine=container.spend_engine),
+    )
+    try:
+        async with container.running():
+            await stdio.add([spent])
+            await stdio.add([spent])  # a replay: counted once, as for a server
+            async with container.engine.connect() as connection:  # every other write refused
+                with pytest.raises(DBAPIError, match="read-only transaction"):
+                    await connection.execute(text("DELETE FROM retrieval_ai_spend"))
+        row = (await SqliteSpendLedger(engine=server).get([spent.key]))[spent.key]
+    finally:
+        await server.dispose()
+
+    assert (row.input_tokens, row.output_tokens, row.requests) == (50, 10, 1)
+    assert stdio.local.rows == {}, "nothing was kept in memory only"
 
 
 async def test_collation_keeps_a_column_s_type_and_skips_what_generated_columns_read(

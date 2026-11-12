@@ -66,6 +66,7 @@ from exactdocs.bootstrap.database import (
     is_postgres,
     migrate,
     open_database,
+    open_spend_ledger_database,
 )
 from exactdocs.bootstrap.embedding import SaveProviderThenEmbed, requeue_daily
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
@@ -489,6 +490,7 @@ def _build_read_side(
     model_factory: ModelFactory | None = None,
     embedding_models: EmbeddingModels | None = None,
     read_only: bool = False,
+    spend_engine: AsyncEngine | None = None,
     clock: Clock | None = None,
     agent_reads: AgentReads | None = None,
 ) -> _ReadSide:
@@ -508,8 +510,9 @@ def _build_read_side(
         model_factory: Builds the models instead of pydantic-ai (tests and the eval suite).
         embedding_models: Wraps the embedder instead of pydantic-ai (tests and the eval suite:
             an in-process embedding, so no provider is called).
-        read_only: The database is opened read-only (``serve --stdio``): spend is read from it
-            and kept in memory.
+        read_only: The database is opened read-only (``serve --stdio``): spend is read from it,
+            written over ``spend_engine``, and kept in memory when that fails.
+        spend_engine: With ``read_only``, the one engine that may write: the spend ledger's.
         clock: Decides the spend windows (tests); the system clock by default.
         agent_reads: Records the agentic explorer's reads (the eval suite's trace check); by
             default span events when telemetry is on, else nothing.
@@ -543,7 +546,8 @@ def _build_read_side(
     hypotheses: HypotheticalAnswerCache = SqliteHypothesisCache(engine=engine)
     answers: AgentAnswerCache = SqliteAgentAnswerCache(engine=engine)
     if read_only:
-        spend = ReadOnlySpendLedger(shared=spend)
+        writer = None if spend_engine is None else SqliteSpendLedger(engine=spend_engine)
+        spend = ReadOnlySpendLedger(shared=spend, writer=writer)
         hypotheses = ReadOnlyHypothesisCache(shared=hypotheses)
         answers = ReadOnlyAgentAnswerCache(shared=answers)
     retrieval = RetrievalModule.build(
@@ -721,12 +725,15 @@ def _dbos_database(settings: Settings, engine: AsyncEngine) -> dict[str, Any]:
 class ReadOnlyContainer:
     """Catalog and retrieval over an existing database opened read-only (``serve --stdio``).
 
-    No identity, ingestion, worker, secret key, ``known_hosts`` or ``git``: nothing here can write.
+    No identity, ingestion, worker, secret key, ``known_hosts`` or ``git``: nothing here can write
+    but the AI spend ledger, over its own engine (#274).
     """
 
     settings: Settings
     """The runtime configuration (which AI roles to load the SDKs for at start)."""
     engine: AsyncEngine
+    spend_engine: AsyncEngine = field(repr=False)
+    """Writes the AI spend ledger and nothing else (``open_spend_ledger_database``)."""
     catalog: CatalogModule
     retrieval: RetrievalModule
     search_choice: PostgresSearchChoice | None = field(default=None, repr=False)
@@ -741,6 +748,7 @@ class ReadOnlyContainer:
     def build(cls, settings: Settings) -> Self:
         """Open the database read-only; ``StartupError`` when it does not exist."""
         engine = open_database(settings, read_only=True)
+        spend_engine = open_spend_ledger_database(settings)
         # Opens the provider keys stored over the REST API when a key exists; never creates one.
         ai_box = _existing_secret_box(settings, AI_KEYS_PURPOSE)
         read = _build_read_side(
@@ -750,10 +758,12 @@ class ReadOnlyContainer:
             hyde_key=_hyde_cache_key(settings, create=False),
             agent_cache_key=_agent_cache_key(settings, create=False),
             read_only=True,
+            spend_engine=spend_engine,
         )
         return cls(
             settings=settings,
             engine=engine,
+            spend_engine=spend_engine,
             catalog=read.catalog,
             retrieval=read.retrieval,
             search_choice=read.search_choice,
@@ -780,6 +790,7 @@ class ReadOnlyContainer:
             try:
                 self.local.close()  # queued local model calls are dropped, not waited for
                 await self.engine.dispose()
+                await self.spend_engine.dispose()
             finally:
                 self._run.release()
 
