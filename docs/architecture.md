@@ -713,21 +713,32 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
     only if every job it runs is still its own pending workflow. A database that cannot be
     reached is `unknown`: the worker adopts nothing and waits, and gives up 15 s
     (`slot_give_up`) after the slot was **last confirmed held**, so outages up to about 15 s are
-    waited out and longer ones restart the process. When another process holds the slot (or
+    waited out and longer ones restart the process. The claim counts as the first confirmation
+    (the clock is read just before it); one more check (`keep`, bounded by `slot_check_timeout`)
+    just before DBOS launches moves it there if the slot is still held, so a `claim_grace` wait
+    does not use up the give-up time; if another process holds the slot by then, the start fails
+    before DBOS launches (it would resume and dequeue that process's jobs). The watchdog starts right after `DBOS.launch()` (DBOS
+    resumes the slot's workflows from then on) and checks at once, while the queue is
+    registered, the jobs recovered and the schedule applied: a slot lost during a slow startup
+    is given up counting from its last confirmation, the startup is cancelled and fails, and the
+    process stops. When another process holds the slot (or
     after that wait) the slot is lost: the worker first stops taking jobs (a job DBOS still hands
     over is refused), cancels the running ones, stops DBOS (and gives the event loop a new thread
     pool, as its normal teardown does), then queues the refused jobs again through a
-    `DBOSClient`, all within `halt_timeout` (5 s), and stops the process with `SIGTERM`; `serve`
+    `DBOSClient`, all within `halt_timeout` (5 s), and stops the process with `SIGTERM`, also when
+    a part of that stop failed (the watchdog does not check again once the slot is lost); `serve`
     bounds the shutdown (`timeout_graceful_shutdown`, 30 s) and a restart policy brings it back.
   - **Adoption.** Slots no new process takes (fewer processes than before) are adopted: on each
     watchdog round the worker lists the pending job workflows of other executors and takes the
     locks of the free slots (so no process holds them, and no other can adopt them meanwhile). A
-    slot must have stayed free for `adopt_grace` (30 s) first. It then lists their workflows
+    slot must have been seen free for `adopt_grace` (30 s) first, by this run of the worker (a
+    restarted worker starts counting again). It then lists their workflows
     again and re-queues them (`resume_workflows`).
   - **Timing invariants**, checked when the worker is built (a `ValueError` otherwise):
     `slot_give_up + slot_check_interval + slot_check_timeout + halt_timeout < adopt_grace`
     (15 + 2 + 1.5 + 5 = 23.5 < 30: a process whose slot went unconfirmed has stopped its jobs
-    before anyone adopts them), and `claim_grace > slot_check_interval + slot_check_timeout +
+    before anyone adopts them, also while it is still starting, since the watchdog runs from
+    DBOS's launch on), and `claim_grace > slot_check_interval + slot_check_timeout +
     halt_timeout` (15 > 8.5: a process that lost its slot to a newly started one stops before the
     newcomer's DBOS resumes the slot's jobs).
   - **Start.** Recovery (`sort_workflows`) deletes or recovers only the workflows of this process's

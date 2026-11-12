@@ -8,7 +8,9 @@ import asyncio
 import json
 import signal
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 
 import psycopg
@@ -32,6 +34,7 @@ from exactdocs.bootstrap.database import (
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.postgres import PostgresLibraryLocks
+from exactdocs.ingestion.adapters.driving import dbos_worker
 from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker, SlotState
 from import_child import big_repository, page, run
 
@@ -402,6 +405,183 @@ async def test_a_slot_another_process_took_stops_this_one_before_any_adoption(
             # Stopped within one check and the halt, long before anyone adopts its jobs.
             assert time.monotonic() - started < worker.slot_check_timeout + worker.halt_timeout
             assert worker.slot_check_interval + worker.slot_check_timeout < worker.adopt_grace
+
+
+class _NoDbos:
+    """DBOS as far as the worker's start and stop need it: nothing runs, the launch is recorded."""
+
+    launched = False
+    on_launch: Callable[[], None] = staticmethod(lambda: None)
+
+    def __init__(self, *, config: object) -> None:
+        del config
+
+    @staticmethod
+    def workflow(*, name: str) -> Callable[[object], object]:
+        del name
+        return lambda function: function
+
+    @classmethod
+    def launch(cls) -> None:
+        cls.launched = True
+        cls.on_launch()
+
+    @staticmethod
+    async def register_queue_async(*_: object, **__: object) -> None:
+        return None
+
+    @staticmethod
+    async def delete_schedule_async(*_: object) -> None:
+        return None
+
+    @staticmethod
+    async def list_workflows_async(**_: object) -> list[object]:
+        return []
+
+    @staticmethod
+    def destroy(**_: object) -> None:
+        return None
+
+
+class _Slots:
+    """Real slots, with something done to them between the claim and the start, and the answers
+    the worker got from ``keep`` recorded."""
+
+    def __init__(
+        self,
+        slots: PostgresExecutorSlots,
+        after_claim: Callable[[], AbstractAsyncContextManager[None]],
+    ) -> None:
+        self.slots = slots
+        self.after_claim = after_claim
+        self.answers: list[SlotState] = []
+        self.watched = asyncio.Event()
+        """Set at the second answer: the watchdog's first check, after the one before launch."""
+        self.claim_grace = slots.claim_grace
+
+    @asynccontextmanager
+    async def claim(self) -> AsyncGenerator[str]:
+        async with self.slots.claim() as mine, self.after_claim():
+            yield mine
+
+    async def keep(self) -> SlotState:
+        answer = await self.slots.keep()
+        self.answers.append(answer)
+        if len(self.answers) >= 2:
+            self.watched.set()
+        return answer
+
+    @asynccontextmanager
+    async def orphaned(self, executor_ids: Collection[str]) -> AsyncGenerator[Collection[str]]:
+        if not executor_ids:  # nothing to look at (no DBOS runs): no connection during an outage
+            yield []
+            return
+        async with self.slots.orphaned(executor_ids) as dead:
+            yield dead
+
+
+def _starting_worker(stopped: list[str], slots: _Slots, now: list[float]) -> DbosJobWorker:
+    """A worker that starts on the slots with a fake DBOS, the production timings and ``now``."""
+    return replace(
+        _slot_worker(stopped, PostgresExecutorSlots(engine=slots.slots.engine)),
+        executors=slots,
+        monotonic=lambda: now[0],
+    )
+
+
+async def test_a_slot_still_held_after_a_long_claim_is_confirmed_before_dbos_starts(
+    engines: tuple[AsyncEngine, AsyncEngine],
+    on_postgres: PostgresDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now, stopped = [0.0], []
+
+    @asynccontextmanager
+    async def claim_grace() -> AsyncGenerator[None]:
+        now[0] += 15  # the claim waited claim_grace: the whole give-up time
+        yield
+
+    def outage() -> None:  # from DBOS's launch on, the database cannot be reached
+        _allow_connections(on_postgres.name, allowed=False)
+        _terminate_backends(on_postgres.name)
+
+    monkeypatch.setattr(_NoDbos, "launched", False)
+    monkeypatch.setattr(_NoDbos, "on_launch", staticmethod(outage))
+    monkeypatch.setattr(dbos_worker, "DBOS", _NoDbos)
+    slots = _Slots(PostgresExecutorSlots(engine=engines[0]), claim_grace)
+    worker = _starting_worker(stopped, slots, now)
+
+    try:
+        async with worker.running(), asyncio.timeout(5):
+            await slots.watched.wait()  # the watchdog's first check meets the outage
+    finally:
+        _allow_connections(on_postgres.name, allowed=True)
+
+    # Held just before DBOS started: the give-up time counts from there, the outage is waited out.
+    assert slots.answers[:2] == [SlotState.HELD, SlotState.UNKNOWN]
+    assert stopped == []
+
+
+async def test_a_slot_retaken_before_dbos_starts_is_kept(
+    engines: tuple[AsyncEngine, AsyncEngine], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now, stopped = [0.0], []
+
+    @asynccontextmanager
+    async def connection_dies() -> AsyncGenerator[None]:
+        await _drop_slot_connection(engines[0], 0)
+        yield
+
+    monkeypatch.setattr(_NoDbos, "launched", False)
+    monkeypatch.setattr(dbos_worker, "DBOS", _NoDbos)
+    slots = _Slots(PostgresExecutorSlots(engine=engines[0]), connection_dies)
+    worker = _starting_worker(stopped, slots, now)
+
+    async with worker.running(), asyncio.timeout(5):
+        await slots.watched.wait()
+
+    # Taken again before DBOS started (nobody held it meanwhile), then held by the watchdog.
+    assert slots.answers[:2] == [SlotState.RETAKEN, SlotState.HELD]
+    assert (_NoDbos.launched, stopped) == (True, [])
+
+
+async def test_a_slot_taken_by_another_process_before_dbos_starts_fails_the_start(
+    engines: tuple[AsyncEngine, AsyncEngine], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now, stopped = [0.0], []
+    other = PostgresExecutorSlots(engine=engines[1])
+
+    @asynccontextmanager
+    async def taken_meanwhile() -> AsyncGenerator[None]:
+        await _drop_slot_connection(engines[0], 0)  # its connection dies during the claim...
+        async with other.claim() as theirs:  # ...and a process starting then takes the slot
+            assert theirs == "exactdocs-0"
+            yield
+
+    monkeypatch.setattr(_NoDbos, "launched", False)
+    monkeypatch.setattr(dbos_worker, "DBOS", _NoDbos)
+    slots = _Slots(PostgresExecutorSlots(engine=engines[0]), taken_meanwhile)
+    worker = _starting_worker(stopped, slots, now)
+
+    with pytest.raises(RuntimeError, match="taken by another process before the job worker"):
+        async with worker.running():
+            pytest.fail("the worker started on a slot another process holds")
+
+    # DBOS never launched: none of the other process's jobs was resumed or dequeued here.
+    assert slots.answers == [SlotState.LOST]
+    assert (_NoDbos.launched, stopped) == (False, [])
+
+
+def _terminate_backends(database: str) -> None:
+    """Kill every backend on the database, from outside it (synchronously)."""
+    admin_url = make_url(ADMIN_URL or "").set(drivername="postgresql")
+    with psycopg.connect(admin_url.render_as_string(hide_password=False), autocommit=True) as a:
+        a.execute(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
+            " WHERE datname = %s AND pid <> pg_backend_pid()",
+            (database,),
+        )
+    time.sleep(0.1)  # the server ends the backends asynchronously
 
 
 async def _drop_slot_connection_as_admin(database: str) -> None:

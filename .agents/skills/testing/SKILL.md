@@ -41,6 +41,10 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   lifespan is such a run. A test that needs the MCP session manager runs the container through the
   app only: `app.router.lifespan_context(app)` in the test body, or `serving(app)` from
   `tests/fixtures/app_lifespan.py` in an async fixture. Don't also wrap it in `container.running()`.
+- **No unbounded waits in tests.** A behave scenario that hangs (cleanups included) fails after
+  `BEHAVE_SCENARIO_TIMEOUT` seconds (default 300) with every thread's stack (`environment.py`);
+  still give a step's own waits a timeout, and end a `SlowDatabase` stall (`release()`) before the
+  app stops.
 - Async tests need no decorator (`asyncio_mode = "auto"`). Warnings are errors (`filterwarnings = error`).
 - **Close every SQLite connection a test opens**, or the garbage collector finalizes it during a
   later test, which then fails with "unclosed database". An autouse guard
