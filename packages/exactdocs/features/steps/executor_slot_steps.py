@@ -6,6 +6,7 @@ PostgreSQL slots themselves.
 """
 
 import asyncio
+import logging
 import tempfile
 import time
 from collections.abc import AsyncGenerator, Collection
@@ -19,6 +20,7 @@ from dbos import DBOS
 from sqlalchemy import NullPool
 
 from exactdocs.ingestion.adapters.driven.dbos import enqueue_options
+from exactdocs.ingestion.adapters.driving import dbos_worker
 from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker, SlotState
 from exactdocs.ingestion.constants import QUEUE, STEPS_VERSION, WORKFLOW
 
@@ -292,3 +294,128 @@ def step_no_job_after_resume(context: Context, slot: int) -> None:
     assert context.destroyed_at < resumable_at, "DBOS still ran when the jobs were resumed"
     ran = context.step_ran_at
     assert ran is None or ran < resumable_at, "the job took a step after its jobs were resumed"
+
+
+class RetakenSlot:
+    """Executor slot 1, held until its connection dies; the check that takes it again is slow."""
+
+    claim_grace = CLAIM_GRACE
+
+    def __init__(self, slot: int) -> None:
+        self.executor_id = f"exactdocs-{slot}"
+        self.dies: asyncio.Event | None = None
+        self.retake_takes = 0.0
+        self.check_started_at: float | None = None
+
+    @asynccontextmanager
+    async def claim(self) -> AsyncGenerator[str]:
+        yield self.executor_id
+
+    async def keep(self) -> SlotState:
+        if self.dies is None or not self.dies.is_set():
+            return SlotState.HELD
+        if self.check_started_at is None:
+            self.check_started_at = time.monotonic()
+        await asyncio.sleep(self.retake_takes)
+        return SlotState.RETAKEN
+
+    @asynccontextmanager
+    async def orphaned(self, executor_ids: Collection[str]) -> AsyncGenerator[Collection[str]]:
+        del executor_ids
+        yield []
+
+
+class _LostAt(logging.Handler):
+    """Records when the worker declared its slot lost (the start of its halt)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.at: float | None = None
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if self.at is None and "is lost" in record.getMessage():
+            self.at = time.monotonic()
+
+
+@given("a process holds executor slot {slot:d} and runs a job")
+def step_holds_slot_with_job(context: Context, slot: int) -> None:
+    context.slot = RetakenSlot(slot)
+    context.job_started = None
+
+    async def waits(job_id: str) -> None:  # ends as soon as it is cancelled
+        del job_id
+        context.job_started.set()
+        await asyncio.sleep(DEADLINE)
+
+    context.run_job = waits
+
+
+@given("its slot connection dies and the slot is taken again in a check that uses most of its time")
+def step_slot_retaken_slowly(context: Context) -> None:
+    context.slot.retake_takes = CHECK_TIMEOUT * 0.75
+
+
+@given("the check of whether its jobs are still its own hangs")
+def step_job_check_hangs(context: Context) -> None:
+    async def hanging(job_id: str) -> None:
+        del job_id
+        await asyncio.sleep(DEADLINE)
+
+    context.hanging_status = hanging
+
+
+@when("the worker checks its slot")
+def step_worker_checks_slot(context: Context) -> None:
+    slot: RetakenSlot = context.slot
+    stack_dir = tempfile.TemporaryDirectory(prefix="exactdocs-slots-")
+    context.add_cleanup(stack_dir.cleanup)
+    lost_at = _LostAt()
+    logger = logging.getLogger(dbos_worker.__name__)
+    logger.addHandler(lost_at)
+    context.add_cleanup(logger.removeHandler, lost_at)
+    context.lost_at = lost_at
+    stopping = asyncio.Event()
+    worker = DbosJobWorker(
+        run_job=context.run_job,
+        recover_jobs=_nothing,
+        submit_queued_jobs=_nothing,
+        database=Path(stack_dir.name) / "jobs.sqlite",
+        engine_options={"poolclass": NullPool},
+        executors=slot,
+        queue=QUEUE,
+        workflow=WORKFLOW,
+        version=STEPS_VERSION,
+        poll_interval=0.02,
+        stop_grace=0.05,
+        slot_give_up=GIVE_UP,
+        slot_check_interval=INTERVAL,
+        slot_check_timeout=CHECK_TIMEOUT,
+        halt_timeout=HALT,
+        adopt_grace=ADOPT_GRACE,
+        on_slot_lost=stopping.set,
+    )
+
+    async def run() -> None:
+        context.job_started = asyncio.Event()
+        slot.dies = asyncio.Event()
+        async with asyncio.timeout(DEADLINE), worker.running():
+            await DBOS.enqueue_workflow_with_options_async(
+                enqueue_options("job-1", "/a/b"), "job-1"
+            )
+            await context.job_started.wait()
+            # From here on the job check hangs (only the watchdog asks it in this process).
+            with patch.object(DBOS, "get_workflow_status_async", context.hanging_status):
+                slot.dies.set()
+                await stopping.wait()
+
+    asyncio.run(run())
+
+
+@then("the slot counts as lost within one slot_check_timeout of the check's start")
+def step_lost_within_one_check(context: Context) -> None:
+    started = context.slot.check_started_at
+    assert started is not None, "no check found the slot retaken"
+    assert context.lost_at.at is not None, "the slot was never given up"
+    took = context.lost_at.at - started
+    # keep() and the job check share one deadline: one slot_check_timeout, not two.
+    assert took < CHECK_TIMEOUT * 1.25, f"the slot was given up {took:.2f} s into the check"

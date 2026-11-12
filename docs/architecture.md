@@ -736,7 +736,9 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
     checks in `pg_locks` that its own backend still holds it, the whole check bounded by 1.5 s
     (`slot_check_timeout`; the slot connection also has `tcp_user_timeout`), so a host that
     stopped answering cannot hold the check. If the slot is free it takes it again, and goes on
-    only if every job it runs is still its own pending workflow. A database that cannot be
+    only if every job it runs is still its own pending workflow; that job check shares the
+    check's one `slot_check_timeout` deadline (a check that runs out of it counts the slot lost),
+    so a check never takes longer than `slot_check_timeout` in all. A database that cannot be
     reached is `unknown`: the worker adopts nothing and waits, and gives up 15 s
     (`slot_give_up`) after the slot was **last confirmed held**, so outages up to about 15 s are
     waited out and longer ones restart the process. The claim counts as the first confirmation
@@ -769,7 +771,8 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
     again and re-queues them (`resume_workflows`).
   - **Timing invariants**, checked when the worker is built (a `ValueError` otherwise). They
     rely on `halt_timeout` bounding the halt whatever the jobs do: the halt never waits on a job
-    past its deadline (cancelling tasks does not swallow the caller's own cancellation):
+    past its deadline (cancelling tasks does not swallow the caller's own cancellation), and on
+    one `slot_check_timeout` bounding a whole check, a retaken slot's job check included:
     `slot_give_up + slot_check_interval + slot_check_timeout + halt_timeout < adopt_grace`
     (15 + 2 + 1.5 + 5 = 23.5 < 30: a process whose slot went unconfirmed has cancelled its jobs,
     stopped DBOS and asked to be stopped before anyone adopts them, also while it is still

@@ -495,6 +495,39 @@ async def test_a_retaken_slot_with_its_jobs_still_its_own_goes_on(
     assert lost == []
 
 
+async def test_a_retaken_slot_whose_job_check_hangs_is_given_up_within_one_check_timeout(
+    monkeypatch: pytest.MonkeyPatch, no_dbos: list[str]
+) -> None:
+    # keep() uses most of the check's time, then the job check hangs. Both share one deadline,
+    # so the check ends one slot_check_timeout after it began (the bound the timing invariants
+    # count), not two.
+    timeout = 0.4
+
+    class SlowRetake(FakeSlots):
+        async def keep(self) -> SlotState:
+            await asyncio.sleep(timeout * 0.75)
+            return SlotState.RETAKEN
+
+    async def hanging_status(job_id: str) -> Any:
+        await asyncio.sleep(60)
+        return workflow(job_id, "exactdocs-0", "PENDING")
+
+    monkeypatch.setattr(dbos_worker.DBOS, "get_workflow_status_async", hanging_status)
+    loop = asyncio.get_running_loop()
+    stopped: list[float] = []
+    slots = SlowRetake()
+    subject = replace(
+        worker(slots), slot_check_timeout=timeout, on_slot_lost=lambda: stopped.append(loop.time())
+    )
+    subject.job_ids.add("job-1")
+    started = loop.time()
+
+    assert await subject.check_slot("exactdocs-0", slots) is SlotState.LOST
+    took = stopped[0] - started  # the halt itself is near instant here: no DBOS, no job tasks
+    assert took < timeout * 1.25, f"the check and halt took {took:.2f} s"
+    assert no_dbos == ["destroy"]
+
+
 @pytest.mark.parametrize(
     ("schedule", "kept"),
     [
