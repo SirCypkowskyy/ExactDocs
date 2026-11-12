@@ -152,10 +152,10 @@ class RerankerSettings(RoleSettings):
     library may set its own)."""
     timeout: float | None = Field(default=None, gt=0, le=MAX_RERANK_TIMEOUT)
     """`EXACTDOCS_AI__RERANKER__TIMEOUT`: seconds a search gives the reranker, to be built and to
-    answer (reading the candidates' text is not counted). Unset: 2 s, or 5 s when the reranker
-    runs on a `local` profile (a CPU is slower); after that, or on any reranker error,
-    results keep their order (`reranked: false`, `fallback_reason` `reranker_timeout` or
-    `reranker_failed`)."""
+    answer (reading the candidates' text is not counted). Unset: 2 s, or 5 s when the search's
+    reranker runs on a `local` profile, the instance's or a library's own (a CPU is slower); after
+    that, or on any reranker error, results keep their order (`reranked: false`,
+    `fallback_reason` `reranker_timeout` or `reranker_failed`)."""
 
 
 class JudgeSettings(RoleSettings):

@@ -169,12 +169,18 @@ jobs:
           enable-cache: true
       - name: Install (with the [local] extra, through the dev group)
         run: uv sync --locked
+      - name: Name the models cache after the pinned revisions
+        id: models-key
+        # From PINNED_MODEL_REVISIONS itself, so a new pin gets a new cache: a pull skips what is
+        # there, so nothing else (a dependency bump) needs one.
+        run: >-
+          uv run python -c "from exactdocs.bootstrap.constants import PINNED_MODEL_REVISIONS as p;
+          print('key=local-models-' + '-'.join(m.replace('/', '_') + '@' + r[:12] for m, r in
+          sorted(p.items())))" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v6
         with:
           path: .models
-          # The models and their pinned revisions: a pull skips what is there, so nothing else
-          # (a dependency bump) needs a new cache.
-          key: local-models-bge-small-en-v1.5-aa8f8b06-ms-marco-MiniLM-L-6-v2-a0914435
+          key: ${{ steps.models-key.outputs.key }}
       - name: Pull the default models (skipped when the cache has them)
         run: uv run exactdocs models pull
       - name: The default models embed and rerank with sockets blocked

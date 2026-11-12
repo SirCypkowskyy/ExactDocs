@@ -581,8 +581,8 @@ class NoAgentAnswerCache:
 class PriceBook:
     """Prices models: the operator's price for a ``<profile>:<model>``, else the bundled list.
 
-    In-process models (``local``) cost nothing; their tokens are still counted. Never fetched
-    over the network.
+    In-process models (``local``) cost nothing; their tokens are still recorded, but count toward
+    no token budget (``SpendEntry.local_tokens``). Never fetched over the network.
     """
 
     listed: Prices | None = None
@@ -781,6 +781,9 @@ class AiSpend:
     ) -> None:
         """Record a call that ran outside an agent (a rerank, a query embedding).
 
+        A ``local`` model's tokens are recorded as ``local_tokens``: shown in the usage, never
+        counted toward a token budget.
+
         Args:
             scopes: (kind, ID) of each scope it counts to.
             ref: The model called.
@@ -797,6 +800,7 @@ class AiSpend:
                 output_tokens=output_tokens,
                 requests=requests,
                 price=self.prices.price(ref, profile_kind),
+                local=profile_kind in FREE_PROFILE_KINDS,
             )
         )
 
@@ -963,8 +967,6 @@ class RetrievalModes:
     answers BM25 (``embedding_in_progress``) for a version its space does not cover yet."""
     spend: AiSpend | None = None
     """The budgets and the LLM search rate limit; without it no step is ever skipped for them."""
-    providers: AiProviders | None = None
-    """Resolves the reranker's profile: a ``local`` one costs nothing and is never skipped."""
 
     async def registry(self, library: str, ai: LibraryAi | None = None) -> ModeRegistry:
         """Say which modes can run now for a library's searches.
@@ -1132,14 +1134,16 @@ class RetrievalModes:
                 counted = True
         if choice.rerank and choice.reranker is RerankWith.JUDGE:
             return await _judge_within_budget(self.spend, choice, who, own, counted=counted)
-        if (
-            choice.rerank
-            # no limit: no need to read the reranker's profile
-            and (self.spend.budgets.limits or own)
-            and await self._paid_rerank(who.library, choice.library_ai)
-            and (reason := await self.spend.paid_call(who, own)) is not None
-        ):
-            choice = replace(choice, rerank=False, fallback_reason=choice.fallback_reason or reason)
+        if choice.rerank and (self.spend.budgets.limits or own):  # no limit: no need for its kind
+            choice = await self._with_reranker_profile(choice, who.library)
+            if (
+                choice.rerank
+                and _paid_rerank(choice)
+                and (reason := await self.spend.paid_call(who, own)) is not None
+            ):
+                choice = replace(
+                    choice, rerank=False, fallback_reason=choice.fallback_reason or reason
+                )
         return choice
 
     async def _cached_agentic(
@@ -1201,20 +1205,28 @@ class RetrievalModes:
         hyde = self.pipelines.get(RetrievalMode.HYBRID_HYDE)
         return await hyde.cached_answer(version, query) if isinstance(hyde, HydePipeline) else None
 
-    async def _paid_rerank(self, library: str, ai: LibraryAi | None) -> bool:
-        """Say whether the library's reranker costs money (any but an in-process one).
+    async def _with_reranker_profile(self, choice: ModeChoice, library: str) -> ModeChoice:
+        """Read the cross-encoder's profile once for this search, unless it was read already.
 
         Args:
+            choice: The choice; the judge has no cross-encoder profile to read.
             library: The library searched.
-            ai: Its overrides as read for this search.
 
         Returns:
-            False only for a reranker whose profile is ``local``.
+            The choice carrying the profile read, or the same without reranking and the reason
+            when it cannot be read (``Reranking.profile``): a reranker problem never fails a
+            search.
         """
-        if self.providers is None:
-            return True
-        found = await self.providers.resolved(ModelRole.RERANKER, library, ai)
-        return found is None or found[1] not in FREE_PROFILE_KINDS
+        if (
+            self.reranking is None
+            or choice.reranker is RerankWith.JUDGE
+            or choice.reranker_profile is not None
+        ):
+            return choice
+        found = await self.reranking.profile(library, choice.library_ai)
+        if isinstance(found, FallbackReason):
+            return replace(choice, rerank=False, fallback_reason=choice.fallback_reason or found)
+        return replace(choice, reranker_profile=found)
 
     async def rerank(
         self, choice: ModeChoice, version: SearchableVersion, query: str, answer: PipelineAnswer
@@ -1233,6 +1245,11 @@ class RetrievalModes:
         """
         if not choice.rerank or self.reranking is None:
             return answer, {}
+        if choice.reranker is not RerankWith.JUDGE and choice.reranker_profile is None:
+            found = await self.reranking.profile(version.library, choice.library_ai)
+            if isinstance(found, FallbackReason):
+                return _fallen_back(answer, found), {}
+            choice = replace(choice, reranker_profile=found)  # its spend is recorded from it too
         reranked, read = await self.reranking.apply(version, query, answer, choice)
         # The judge's spend is recorded by the harness inside its agent; a cross-encoder's here.
         if reranked.reranked and choice.reranker is not RerankWith.JUDGE:
@@ -1261,15 +1278,10 @@ class RetrievalModes:
             reranked: The reranked answer; its first ``reranked`` hits were sent.
             read: The candidates' chunks, by ID.
         """
-        if self.spend is None or self.providers is None:
+        if self.spend is None or choice.reranker_profile is None:
             return
         try:
-            found = await self.providers.resolved(
-                ModelRole.RERANKER, version.library, choice.library_ai
-            )
-            if found is None:
-                return
-            ref, kind = found
+            ref, profile = choice.reranker_profile  # as the search read it: no read of its own
             sent = len(query) + sum(
                 len(read[h.chunk_id].chunk.content)
                 for h in reranked.hits[: reranked.reranked]
@@ -1278,11 +1290,25 @@ class RetrievalModes:
             await self.spend.record(
                 AiCaller(library=version.library, user=choice.caller).scopes(),
                 ref=ref,
-                profile_kind=kind,
+                profile_kind=profile.kind.value,
                 input_tokens=-(-sent // CHARS_PER_TOKEN),
             )
         except Exception:
             logger.exception("could not record the spend of a rerank of %s", version.library)
+
+
+def _paid_rerank(choice: ModeChoice) -> bool:
+    """Say whether the search's cross-encoder costs money (any but an in-process one).
+
+    Args:
+        choice: The choice, carrying the reranker's profile when it was read.
+
+    Returns:
+        False only for a reranker whose profile is ``local``; True when it was not read (there is
+        no ``Reranking`` to read it).
+    """
+    found = choice.reranker_profile
+    return found is None or found[1].kind.value not in FREE_PROFILE_KINDS
 
 
 async def _judge_within_budget(
@@ -1328,13 +1354,14 @@ class Reranking:
     """Reorders a search's best candidates with a cross-encoder or the LLM judge (RET-02).
 
     The reranker is the one the library resolves to (its override, else the instance's
-    ``reranker`` role), built from the profile as it is now. It receives the query text and the
+    ``reranker`` role), built from its profile as read once for the search (``profile``: bounded
+    by ``limits.longest`` and never failing the search either). It receives the query text and the
     candidates' chunk text only, read before the clock starts. Building the reranker and its call
-    must finish within ``limits.timeout``. A reranker that does not, that fails, answers something
-    unusable or cannot be built (a profile that cannot rerank, a key that no longer opens) never
-    fails the search: the candidates keep the mode's order, ``reranked`` stays 0, and the
-    fallback reason says why (when no other reason was given already). Failures are logged
-    without the query or any text.
+    must finish within the timeout of the profile's kind (``limits.timeout_for``). A reranker
+    that does not, that fails, answers something unusable or cannot be built (a profile that
+    cannot rerank, a key that no longer opens) never fails the search: the candidates keep the
+    mode's order, ``reranked`` stays 0, and the fallback reason says why (when no other reason
+    was given already). Failures are logged without the query or any text.
 
     The judge (#96, ``choice.reranker`` is ``judge``) is the library's ``judge`` role (its
     override, else the instance's, else the ``llm`` role), called once for all the candidates
@@ -1416,15 +1443,22 @@ class Reranking:
         Returns:
             The answer reordered, or in its own order with a fallback reason.
         """
+        found = choice.reranker_profile
+        if found is None:  # not read for this search yet (``RetrievalModes.rerank`` reads it)
+            found = await self.profile(version.library, choice.library_ai)
+            if isinstance(found, FallbackReason):
+                return _fallen_back(answer, found)
+        ref, profile = found
+        timeout = self.limits.timeout_for(profile.kind.value)
         try:
-            async with asyncio.timeout(self.limits.timeout):
-                reranker = await self._reranker(version.library, choice.library_ai)
+            async with asyncio.timeout(timeout):
+                reranker = await self._reranker(ref, profile)
                 scores = await _called(reranker, query, texts)
         except TimeoutError:
             logger.warning(
                 "the reranker of %s did not answer within %ss: the search keeps its order",
                 version.library,
-                self.limits.timeout,
+                timeout,
             )
             return _fallen_back(answer, FallbackReason.RERANKER_TIMEOUT)
         except RerankerError as error:
@@ -1563,31 +1597,88 @@ class Reranking:
             reason = f"it failed ({_kind(error)})"
             raise RerankerError(reason) from error
 
-    async def _reranker(self, library: str, ai: LibraryAi | None) -> Reranker:
-        """Build the library's reranker from the profile as it is now.
+    async def profile(
+        self, library: str, ai: LibraryAi | None
+    ) -> tuple[ModelRef, ProviderProfile] | FallbackReason:
+        """Read the model and the profile the library's cross-encoder resolves to now.
+
+        Read once per search, for its kind (a budget, the timeout), the reranker built and the
+        spend recorded. A stored profile is a database read: it must finish within
+        ``limits.longest`` (the kind, and so the timeout, is not known before it), and whatever
+        it raises never fails the search (#284).
 
         Args:
             library: The library searched.
-            ai: Its overrides, as read for this search; ``None`` reads them.
+            ai: Its overrides, as read for this search.
+
+        Returns:
+            The model and the profile; or ``reranker_timeout`` or ``reranker_failed`` when the
+            read did not finish in time, failed (logged by its kind only) or nothing resolves.
+        """
+        bound = self.limits.longest
+        try:
+            async with asyncio.timeout(bound):
+                return await self._read_profile(library, ai)
+        except TimeoutError:
+            logger.warning(
+                "the reranker profile of %s was not read within %ss: the search keeps its order",
+                library,
+                bound,
+            )
+            return FallbackReason.RERANKER_TIMEOUT
+        except RerankerError as error:
+            logger.warning(
+                "the reranker of %s failed: %s; the search keeps its order", library, error
+            )
+            return FallbackReason.RERANKER_FAILED
+
+    async def _read_profile(
+        self, library: str, ai: LibraryAi | None
+    ) -> tuple[ModelRef, ProviderProfile]:
+        """Read the model and the profile the library's cross-encoder resolves to now.
+
+        Args:
+            library: The library searched.
+            ai: Its overrides, as read for this search.
+
+        Returns:
+            The model and the profile.
+
+        Raises:
+            RerankerError: The read failed, however (its text names only the kind of failure),
+                or no reranker resolves for the library.
+        """
+        try:
+            found = await self.providers.profile_for(ModelRole.RERANKER, library, ai)
+        except Exception as error:  # a reranker problem never fails a search; re-raised as ours
+            # Never the error's text: only its kind, which holds no URL, key or path.
+            reason = f"its profile could not be read ({_kind(error)})"
+            raise RerankerError(reason) from error
+        if found is None:
+            reason = "no reranker resolves for the library"
+            raise RerankerError(reason)
+        return found
+
+    async def _reranker(self, ref: ModelRef, profile: ProviderProfile) -> Reranker:
+        """Build the reranker from the profile read for this search.
+
+        Args:
+            ref: The model.
+            profile: Its profile, as read for this search.
 
         Returns:
             The reranker.
 
         Raises:
-            RerankerError: No reranker resolves for the library, or building it failed, for
-                whatever reason (the profile cannot rerank here, its key does not open, its key
-                file cannot be read, a partly installed SDK).
+            RerankerError: Building it failed, for whatever reason (the profile cannot rerank
+                here, its key does not open, its key file cannot be read, a partly installed SDK).
         """
         try:
-            reranker = await self.providers.reranker_for(library, ai)
+            return await self.providers.factory.reranker(profile, ref.model)
         except Exception as error:  # a reranker problem never fails a search; re-raised as ours
             # Never the error's text: only its kind, which holds no key, URL or path.
             reason = f"it could not be built ({_kind(error)})"
             raise RerankerError(reason) from error
-        if reranker is None:
-            reason = "no reranker resolves for the library"
-            raise RerankerError(reason)
-        return reranker
 
 
 async def _called(reranker: Reranker, query: str, texts: Sequence[str]) -> Sequence[float]:
@@ -3085,28 +3176,6 @@ class AiProviders:
                 return await self.factory.reranker(profile, binding.ref.model)
             case ModelRole.LLM | ModelRole.JUDGE:
                 return await self.factory.chat_model(profile, binding.ref.model)
-
-    async def reranker_for(self, library: str, ai: LibraryAi | None = None) -> Reranker | None:
-        """Build the reranker a library's searches use, from the profile as it is now.
-
-        Args:
-            library: The library ID, any letter case.
-            ai: The library's overrides, when the caller read them already; ``None`` reads them.
-
-        Returns:
-            The reranker, or ``None`` when the role does not resolve for the library (AI off,
-            no role, a profile that no longer exists). The factory raises
-            ``ProviderUnsupportedError`` for a profile that cannot rerank here.
-        """
-        if ai is None:
-            ai = await self.library_modes.ai_of(library)
-        binding = bind_role(ModelRole.RERANKER, self.roles, ai)
-        if binding is None:
-            return None
-        profile = await self.profile(binding.ref.profile)
-        if profile is None:
-            return None
-        return await self.factory.reranker(profile, binding.ref.model)
 
     async def check(self, binding_role: ModelRole | None, ref: ModelRef) -> ModelCheck:
         """Make one minimal call, or say why it cannot be made.
@@ -5113,8 +5182,9 @@ class EmbedBatchUseCase:
         space = await runs.space(configured.target)
         if space is None or space.id != command.space_id:
             return _done()  # the model changed: its own jobs embed the version
-        if runs.spend is not None:  # before the batch: a used-up budget stops the job here
-            await runs.spend.embedding_batch(command.library)
+        local = configured.target.profile_kind in FREE_PROFILE_KINDS
+        if runs.spend is not None and not local:  # before the batch: a used-up budget stops it
+            await runs.spend.embedding_batch(command.library)  # a local model costs nothing (#284)
         vectors = runs.store()
         keys = await vectors.missing(space.id, command.manifest_id, runs.batch_size)
         sources = await runs.chunks.embedding_sources(command.manifest_id, keys)
@@ -5139,6 +5209,7 @@ class EmbedBatchUseCase:
                     requests=embedded.requests,
                     library=command.library,
                     usd_per_million=runs.price(configured),
+                    local=local,
                 )
             )
         try:
@@ -5230,19 +5301,21 @@ class ListUnembeddedVersionsUseCase:
 
         Returns:
             The versions; none when no embedding model or no vector store is configured, and
-            none of a library while a budget its embedding counts to is used up.
+            none of a library while a budget its embedding counts to is used up, unless the
+            model is a ``local`` one, which no budget stops (#284).
         """
         configured = await self.runs.configured()
         if configured is None or self.runs.vectors is None:
             return UnembeddedVersionsOut(versions=[])
         space = await self.runs.space(configured.target)
+        local = configured.target.profile_kind in FREE_PROFILE_KINDS
         spent: dict[str, bool] = {}
         versions: list[VersionRefOut] = []
         for v in await self.runs.active_versions(query.library):
             if space is not None and await self.runs.covers(space, v.manifest_id):
                 continue
             if v.library not in spent:
-                spent[v.library] = await self._spent(v.library)
+                spent[v.library] = not local and await self._spent(v.library)
             if not spent[v.library]:
                 versions.append(VersionRefOut(library=v.library, ref=v.ref))
         return UnembeddedVersionsOut(versions=versions)

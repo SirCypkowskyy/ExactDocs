@@ -58,7 +58,7 @@ from exactdocs.retrieval.models import (
 )
 from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.ports.driven import Reranker, RetrievalPipeline
-from exactdocs.retrieval.use_cases import Bm25Pipeline
+from exactdocs.retrieval.use_cases import AiProviders, Bm25Pipeline
 from exactdocs_kernel import SealedTextUnreadableError
 
 LIB = "/acme/payments"
@@ -83,6 +83,8 @@ OWN = ProviderProfile(
     origin=ProfileOrigin.CONFIGURATION,
     base_url="http://tei.internal:8080",
 )
+ON_CPU = ProviderProfile(name="cpu", kind=ProviderKind.LOCAL, origin=ProfileOrigin.CONFIGURATION)
+"""An in-process (``local``) profile a library can rerank with."""
 RERANKER = ModelRef(profile="rr", model="rerank-v3.5")
 WITH_HYBRID = InstanceRoles(reranker=RERANKER, embedding=ModelRef(profile="rr", model="embed"))
 """Roles under which ``hybrid`` can run (its stand-in pipeline falls back to BM25)."""
@@ -260,7 +262,7 @@ async def _world(
         search=index,
         maintenance=index,
         library_modes=modes,
-        configured_profiles=(RR, OWN),
+        configured_profiles=(RR, OWN, ON_CPU),
         instance_roles=roles if roles is not None else InstanceRoles(reranker=RERANKER),
         models=factory,
         rerank_limits=limits,
@@ -506,6 +508,55 @@ async def test_a_reranker_that_cannot_be_built_keeps_the_order_and_says_so(
     assert not world.reranker.calls
 
 
+@pytest.mark.parametrize(
+    ("limits", "kind", "seconds"),
+    [
+        (RerankLimits(), "local", 5.0),
+        (RerankLimits(), "openai-compatible", 2.0),
+        (RerankLimits(), None, 2.0),
+        (RerankLimits(timeout=1.5), "local", 1.5),
+        (RerankLimits(timeout=1.5), "tei", 1.5),
+    ],
+)
+def test_an_unset_timeout_is_longer_for_a_local_reranker(
+    limits: RerankLimits, kind: str | None, seconds: float
+) -> None:
+    assert limits.timeout_for(kind) == seconds
+
+
+@pytest.mark.parametrize(
+    ("limits", "seconds"),
+    [
+        (RerankLimits(), 5.0),
+        (RerankLimits(local_timeout=0.5), 2.0),
+        (RerankLimits(local_timeout=9.0), 9.0),
+        (RerankLimits(timeout=1.5), 1.5),
+    ],
+)
+def test_the_profile_read_is_bounded_by_the_longest_timeout_it_could_need(
+    limits: RerankLimits, seconds: float
+) -> None:
+    assert limits.longest == seconds
+
+
+async def test_a_library_reranking_on_a_local_profile_gets_the_local_timeout(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The instance's reranker is an endpoint (2 s); the library's own runs in-process (#284).
+    world = await _world(
+        limits=RerankLimits(top_n=5, local_timeout=0.05), reranker=ScriptedReranker(hang=True)
+    )
+    await world.module.set_library_retrieval(
+        SetLibraryRetrievalCommand(library=LIB, reranker="cpu:tiny-reranker")
+    )
+
+    result = await _search(world)
+
+    assert (result.reranked, result.fallback_reason) == (False, FallbackReason.RERANKER_TIMEOUT)
+    assert world.factory.built == [("cpu", "tiny-reranker")]
+    assert "did not answer within 0.05s" in caplog.text
+
+
 async def test_building_the_reranker_counts_toward_its_timeout() -> None:
     world = await _world(limits=RerankLimits(top_n=5, timeout=0.05))
     world.factory.build_seconds = 1.0
@@ -513,6 +564,63 @@ async def test_building_the_reranker_counts_toward_its_timeout() -> None:
     result = await _search(world)
 
     assert (result.reranked, result.fallback_reason) == (False, FallbackReason.RERANKER_TIMEOUT)
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        (RuntimeError("postgresql://ada:s3cret@db/exactdocs is down"), "reranker_failed"),
+        (None, "reranker_timeout"),  # the read stalls
+    ],
+    ids=["fails", "stalls"],
+)
+async def test_a_reranker_profile_that_cannot_be_read_keeps_the_order_and_says_so(
+    failure: Exception | None,
+    reason: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A stored profile is a database read: it is bounded and guarded like the rerank (#284).
+    world = await _world(limits=RerankLimits(top_n=5, timeout=0.05))
+    found = await _unreranked(3)
+
+    async def unreadable(*args: object) -> None:
+        del args
+        if failure is not None:
+            raise failure
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(AiProviders, "profile_for", unreadable)
+
+    result = await _search(world)
+
+    assert [r.chunk_id for r in result.results] == found
+    assert (result.reranked, result.fallback_reason) == (False, FallbackReason(reason))
+    assert not world.factory.built
+    assert "s3cret" not in caplog.text
+    if failure is not None:
+        assert "its profile could not be read (RuntimeError)" in caplog.text
+
+
+async def test_the_reranker_profile_is_read_once_per_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = await _world(limits=RerankLimits(top_n=5))
+    reads: list[ModelRole] = []
+    profile_for = AiProviders.profile_for
+
+    async def counting(
+        self: AiProviders, role: ModelRole, library: str, ai: LibraryAi | None = None
+    ) -> object:
+        reads.append(role)
+        return await profile_for(self, role, library, ai)
+
+    monkeypatch.setattr(AiProviders, "profile_for", counting)
+
+    result = await _search(world)
+
+    assert result.reranked is True
+    assert reads == [ModelRole.RERANKER]
 
 
 async def test_a_candidate_gone_before_reranking_is_neither_sent_nor_counted() -> None:

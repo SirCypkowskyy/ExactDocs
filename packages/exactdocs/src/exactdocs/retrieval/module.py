@@ -415,7 +415,6 @@ class RetrievalModule:
             rerank_with=rerank_with,
             embedded=runs,
             spend=ai_spend,
-            providers=providers,
         )
         return cls(
             search_docs=SearchDocsUseCase(

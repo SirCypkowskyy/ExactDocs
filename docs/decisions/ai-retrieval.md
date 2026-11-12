@@ -373,7 +373,23 @@ admin-only; `notes` and `off` may stay with the library's owner.
 - **Accounting.** Every model call records input and output tokens and its price in USD:
   pydantic-ai's bundled `genai-prices` data, or the operator's per-model price
   (`[ai.prices]`). A USD budget on a model with no known price is refused at start; tokens are
-  always counted. Local models cost nothing but their tokens are counted.
+  always counted.
+- **Local models and token budgets (#284, decided by the owner).** In-process (`local`) models
+  cost nothing. Their tokens are still **recorded**, for visibility (`local_tokens` in the
+  ledger row and in `GET /api/v1/ai/usage`, included in its input and output tokens), but they
+  **count toward no token budget**: a row's budgeted `tokens` leave them out. No budget is checked
+  before a local call either: a search's local query embedding and rerank always run, and a local
+  embedding job is never stopped, nor held back from the queue, by a budget (`ai_budget_reached`
+  is for paid models only), even one that paid calls have used up. Before #284 local tokens
+  counted: local search traffic alone (about 16k tokens per rerank of 32 candidates) could use up
+  an instance or library token budget and so stop the local embedding job, while the searches
+  themselves were exempt. Self-hosted endpoints (`ollama`, `vllm`, TEI) are not `local`: they
+  count as paid, tokens included. **Rows written before the upgrade** (migration
+  `b5e8d2a7c4f9`) get `local_tokens = 0`: a row does not record which model spent its tokens, so
+  no backfill is possible, and local tokens already in the current day and month windows stay
+  counted until each window resets. An instance with a monthly token budget and paid models can
+  therefore keep refusing paid calls and a paid embed job until the month ends; the operator can
+  raise the budget meanwhile.
 - **Budgets** (#95): token and USD limits per instance, per library and per user (the token's
   account; stdio MCP counts to instance and library), per UTC day and month, in one
   `retrieval_ai_spend` table (an atomic upsert per scope key and window) that works on SQLite and
@@ -385,7 +401,7 @@ admin-only; `notes` and `off` may stay with the library's owner.
     - **Embedding and rerank calls** (`Embedder`, the HTTP rerankers, fastembed) never run
       through an agent, so `SpendLimits` cannot see them. Retrieval records and checks them
       itself, against the same table and the same rows, before each batch (the embed job) or
-      call (rerank).
+      call (rerank); fastembed's calls are recorded but never checked (local models, above).
     - **We own the key format.** A ledger row is keyed by (scope kind, scope id, window, window
       start), in our own format. The harness builds its `SpendEntry.key` with private helpers
       (`store_key`, `bucket` in `pydantic_ai_harness/spend/_budget.py`, not exported), so our
@@ -401,8 +417,8 @@ admin-only; `notes` and `off` may stay with the library's owner.
   which only sees MCP and limits every tool, not just the expensive ones.
 - **Degrade, never fail.** A budget or rate limit skips the LLM step and answers with the next
   cheaper mode, saying why (`fallback_reason`: `llm_budget_reached`, `llm_rate_limited`). An
-  exhausted embedding budget stops the `embed` job (`ai_budget_reached`), retried when the window
-  resets, while BM25 keeps answering.
+  exhausted embedding budget stops the `embed` job of a paid model (`ai_budget_reached`),
+  retried when the window resets, while BM25 keeps answering; a local model's job runs on.
 - **Visibility:** `GET /api/v1/ai/usage` and the UI (#102) show spend and budget left per scope;
   `exactdocs ai estimate` prints the tokens and USD of embedding every version before it starts.
 

@@ -459,8 +459,10 @@ decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
   `scope` is `instance`, `embedding` (embedding runs, instance-wide), `library` (`id` the library
   ID) or `user` (`id` the account ID); the instance and embedding come first, then every library
   and account that spent something this month. `day` and `month` are the current UTC windows:
-  `{"input_tokens", "output_tokens", "tokens", "requests", "usd", "unpriced_requests"}`, as the
-  providers reported (an LLM step's tokens, which the harness does not split, are input tokens).
+  `{"input_tokens", "output_tokens", "tokens", "local_tokens", "requests", "usd",
+  "unpriced_requests"}`, as the providers reported (an LLM step's tokens, which the harness does
+  not split, are input tokens). `local_tokens` are those of in-process (`local`) models, included
+  in the input and output tokens; `tokens`, what token budgets count, leaves them out.
   Each budget: `{"window", "window_start", "resets_at", "usd_limit", "usd_left", "tokens_limit",
   "tokens_left", "reached", "own_usd_limit", "own_tokens_limit"}` (`null` for a ceiling that is
   not set). A library with budgets of its own shows the tighter of its own and the instance's

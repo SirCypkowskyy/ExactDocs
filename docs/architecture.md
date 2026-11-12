@@ -1127,10 +1127,15 @@ pipeline for the top N when that is more than the call's limit; the search use c
 `rerank` stage span (no query, no text) and call `RetrievalModes.rerank`, which hands the answer to
 `Reranking` (in `use_cases`): it reads the candidates' chunk text (handed back to the use case,
 which reads only the chunks it lacks; a candidate whose chunk is gone is dropped and no longer
-counted in `coverage.candidates`), then, under `asyncio.timeout` (`[ai.reranker] timeout`, 2 s),
-builds the library's reranker through `AiProviders.reranker_for` (the `ModelFactory`'s
-`reranker`, typed as the `Reranker` driven port: query and documents in, one score each out) from
-the library settings `RetrievalModes.choose` read once for the search, and calls it. Any build
+counted in `coverage.candidates`), then, under `asyncio.timeout` (`RerankLimits.timeout_for`
+the profile's kind), builds the library's reranker (the `ModelFactory`'s `reranker`, typed as the
+`Reranker` driven port: query and documents in, one score each out) and calls it. The reranker's
+model and profile are read once per search (`Reranking.profile`, carried on
+`ModeChoice.reranker_profile`): by `within_budget` when a budget needs the profile's kind, else by
+`RetrievalModes.rerank`, from the library settings `RetrievalModes.choose` read once for the
+search; the kind, the timeout, the build and the recorded spend all use that read. The read is
+bounded by `RerankLimits.longest` and guarded like the call: a stored profile that cannot be read
+in time or at all answers `reranker_timeout` / `reranker_failed` (#284). Any build
 failure, and anything the call raises (a client closed under it, an `ExceptionGroup` of its
 batches), is re-raised as a `RerankerError` naming only the exception's class; cancellation passes
 through. The provider SDKs are loaded in a worker thread: at start when a profile other than `local`
@@ -1195,11 +1200,14 @@ never reach Hub code, half the cores for ONNX Runtime and no CPU memory arena, o
 The adapters (`retrieval/adapters/driven/local_models.py`: `LocalEmbeddings`, `LocalReranker`)
 never import fastembed: they call the loaded model through small structural types, document
 batches (at most 16 texts) on a one-worker pool and query embeddings and reranks on a
-two-worker pool of their own, so a search never waits behind an embedding job; ONNX Runtime's
-errors become `EmbeddingFailedError` / `RerankerError`. `Container.running` shuts both pools down
-when it ends. An unset reranker timeout is 5 s when the instance's reranker is on a `local`
-profile, 2 s otherwise. `AiEmbeddingModels` wraps a `LocalEmbedder` handle with them and a
-pydantic-ai `Embedder` with `PydanticAiEmbeddings`.
+two-worker pool of their own, so a search never waits behind an embedding job (up to three calls
+at once, each with half the cores); ONNX Runtime's errors become `EmbeddingFailedError` /
+`RerankerError`. `Container.running` shuts both pools down when it ends. An unset reranker
+timeout is 5 s when the search's reranker (the instance's or a library's own) is on a `local`
+profile, 2 s otherwise (`RerankLimits.timeout_for`, per search). A `local` model's tokens are
+recorded in the spend ledger's `local_tokens` and count toward no token budget, and no budget
+stops its embedding job or a search's call to it (#284). `AiEmbeddingModels` wraps a
+`LocalEmbedder` handle with them and a pydantic-ai `Embedder` with `PydanticAiEmbeddings`.
 
 **Agentic search (#98).** `AgenticPipeline` (in `use_cases`, registered for `agentic` when the
 module is given an `Explorer`, as bootstrap always does) resolves the library's `llm` role,
