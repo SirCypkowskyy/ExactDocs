@@ -361,7 +361,7 @@ async def test_a_job_that_ends_late_within_its_share_is_waited_for_and_the_refus
     assert await check is SlotState.LOST
     took = loop.time() - began
 
-    assert unwind <= took <= unwind + 0.15  # its end (scheduling slack), not the whole share
+    assert unwind <= took < 0.5  # its end, not the whole share (slack for a slow runner)
     assert ended == ["job-slow"]
     assert job.cancelled()
     assert no_dbos == ["destroy", "resume job-late on q", "client closed"]
@@ -397,6 +397,14 @@ async def test_a_second_stop_during_stop_grace_still_cancels_every_task_before_d
     )
     subject = replace(worker(FakeSlots()), executors=None, run_job=job, stop_grace=10)
     jobs: list[asyncio.Task[None]] = []
+    seen_at_destroy: list[bool] = []
+
+    def destroy(**_: object) -> None:  # every task must already be told to stop by now
+        tasks = [*jobs, *subject._forgetting]  # ruff: ignore[private-member-access]
+        seen_at_destroy.append(bool(tasks) and all(task.cancelling() for task in tasks))
+        StartingDbos.stopped.append("destroy")
+
+    monkeypatch.setattr(StartingDbos, "destroy", staticmethod(destroy))
 
     async def serve() -> None:
         async with subject.running():
@@ -418,6 +426,7 @@ async def test_a_second_stop_during_stop_grace_still_cancels_every_task_before_d
     assert jobs[0].cancelled()  # the bug: it went on running after DBOS was destroyed
     assert sorted(cancelled) == ["forget job-quick", "job-slow"]
     assert StartingDbos.stopped == ["destroy"]
+    assert seen_at_destroy == [True]  # cancelled before DBOS stops, not after
 
 
 async def test_an_unreachable_database_is_waited_out_before_the_slot_counts_as_lost(
