@@ -12,8 +12,10 @@ still reaches (a ``gc.collect()`` would not finalize it yet). Keeping the connec
 block ends only delays a leaked connection's own warning to that point, still inside the test.
 
 When connections are still open after the block, the guard waits up to ``CLOSE_GRACE`` for them to
-close before it fails (see there). A reported leak drops its references before raising, so the
-connection is finalized in that test's teardown, not in a later test.
+close before it fails (see there). A reported leak drops the guard's own references before
+raising, so when nothing else holds the connection it is finalized in that test's teardown, not in
+a later test. Something else may still hold it (a fixture's undisposed engine, through the test's
+arguments); then it can still be finalized later, but the test that leaked it has already failed.
 
 Only connections opened inside the block are tracked. The autouse fixture runs per test, so a
 session- or module-scoped fixture is covered only for what it opens in its own setup. An engine

@@ -107,7 +107,10 @@ import sqlite3
 
 import pytest
 
+import sqlite_guard
 from sqlite_guard import no_connection_left_open
+
+sqlite_guard.CLOSE_GRACE = 0.05
 
 
 @pytest.fixture(autouse=True)
@@ -133,9 +136,21 @@ def test_a_reported_leak_does_not_fail_a_later_test(tmp_path: Path) -> None:
     (tmp_path / "test_leak.py").write_text(LEAK_THEN_COLLECT)
 
     run = subprocess.run(
-        [sys.executable, "-m", "pytest", "-v", "-p", "no:cacheprovider", "test_leak.py"],
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-v",
+            "--color=no",
+            "-p",
+            "no:cacheprovider",
+            "test_leak.py",
+        ],
         cwd=tmp_path,
-        env={**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"},
+        env={
+            **{k: v for k, v in os.environ.items() if k != "PYTEST_ADDOPTS"},
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        },
         capture_output=True,
         text=True,
         check=False,
