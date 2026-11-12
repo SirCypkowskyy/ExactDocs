@@ -73,6 +73,23 @@ MAX_FAILED_SIGN_IN_KEYS: Final[int] = 10_000
 bytes a record): a flood of made-up usernames cannot grow the log without bound.
 """
 
+# ---------------------------------------------------------------- adapters.driven.sqlite
+MAX_CONCURRENT_SIGN_IN_TURNS: Final[int] = 4
+"""Sign-in throttle transactions one process runs at once, well below the database pool's size: the
+rest wait in the process without a connection, so a sign-in flood cannot take the pool from the
+instance's other readers.
+"""
+SIGN_IN_TURN_TIMEOUT: Final[timedelta] = timedelta(seconds=5)
+"""Longest a sign-in attempt waits for its turn on its keys, in the process and then again in the
+database (PostgreSQL's ``lock_timeout``). An attempt that runs out is refused with this as its
+``Retry-After``, uncounted (it fails closed); a right password's reset is then skipped.
+"""
+_LOCK_NOT_AVAILABLE: Final[str] = "55P03"
+"""PostgreSQL's SQLSTATE for a lock wait that hit ``lock_timeout``."""
+_SIGN_IN_LOCKS: Final[int] = 0x45584449
+"""First key ("EXDI") of the two-key PostgreSQL advisory locks that make the sign-in throttle's
+read-then-write atomic across processes; the second is ``hashtext`` of the throttle key."""
+
 # ---------------------------------------------------------------- adapters.driving.http
 SESSION_COOKIE: Final[str] = "exactdocs_session"
 """Name of the web session cookie."""
