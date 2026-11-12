@@ -13,7 +13,10 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Setup */
+        /**
+         * Setup
+         * @description Create the first admin account. Refused (409) once any account exists.
+         */
         readonly post: operations["identity-setup"];
         readonly delete?: never;
         readonly options?: never;
@@ -28,12 +31,21 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** Get Session */
+        /**
+         * Get Session
+         * @description Tell whether setup is due, nobody is signed in, or who is.
+         */
         readonly get: operations["identity-get_session"];
         readonly put?: never;
-        /** Create Session */
+        /**
+         * Create Session
+         * @description Sign in: check the username and password and set the session cookie.
+         */
         readonly post: operations["identity-create_session"];
-        /** Delete Session */
+        /**
+         * Delete Session
+         * @description Sign out: end the session and clear its cookie. Signing out twice is not an error.
+         */
         readonly delete: operations["identity-delete_session"];
         readonly options?: never;
         readonly head?: never;
@@ -67,10 +79,16 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** List All */
+        /**
+         * List All
+         * @description List the signed-in account's API tokens, newest first, without their secrets.
+         */
         readonly get: operations["identity-list_all"];
         readonly put?: never;
-        /** Create */
+        /**
+         * Create
+         * @description Create an API token for the signed-in account. The secret is in this response only.
+         */
         readonly post: operations["identity-create"];
         readonly delete?: never;
         readonly options?: never;
@@ -88,7 +106,10 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         readonly post?: never;
-        /** Revoke */
+        /**
+         * Revoke
+         * @description Revoke one of the signed-in account's API tokens; it stops working at once.
+         */
         readonly delete: operations["identity-revoke"];
         readonly options?: never;
         readonly head?: never;
@@ -988,11 +1009,20 @@ export interface components {
          * @description An account as the outside world sees it (never the password hash).
          */
         readonly AccountSummary: {
-            /** Id */
+            /**
+             * Id
+             * @description Stable identifier of the account.
+             */
             readonly id: string;
-            /** Username */
+            /**
+             * Username
+             * @description The login name, normalised: case-folded, so `Admin` signs in as `admin`.
+             */
             readonly username: string;
-            /** Role */
+            /**
+             * Role
+             * @description What the account may do; `admin` is the only role so far.
+             */
             readonly role: string;
         };
         /**
@@ -1283,11 +1313,15 @@ export interface components {
          * @description A username and password to check.
          */
         readonly AuthenticateQuery: {
-            /** Username */
+            /**
+             * Username
+             * @description Login name of the account, compared case-insensitively.
+             */
             readonly username: string;
             /**
              * Password
              * Format: password
+             * @description Password of the account.
              */
             readonly password: string;
         };
@@ -1724,11 +1758,15 @@ export interface components {
          * @description The first admin's credentials. The password is a ``SecretStr``: never shown in a repr.
          */
         readonly CreateFirstAdminCommand: {
-            /** Username */
+            /**
+             * Username
+             * @description Login name of the first admin: 1 to 64 characters, no whitespace or control characters.
+             */
             readonly username: string;
             /**
              * Password
              * Format: password
+             * @description Password of the first admin, 12 to 1024 characters.
              */
             readonly password: string;
         };
@@ -1737,9 +1775,15 @@ export interface components {
          * @description A new API token for the caller. ``expires_at`` (timezone-aware) is optional.
          */
         readonly CreateTokenCommand: {
-            /** Name */
+            /**
+             * Name
+             * @description Label of the new token, 1 to 64 characters, to tell it apart in the token list.
+             */
             readonly name: string;
-            /** Expires At */
+            /**
+             * Expires At
+             * @description When the token stops working (in the future, with a timezone); omit it for no expiry.
+             */
             readonly expires_at?: string | null;
         };
         /**
@@ -2561,16 +2605,26 @@ export interface components {
          * @description Credentials exchanged for an API token (the CLI's login); ``name`` labels the token.
          */
         readonly LoginForTokenCommand: {
-            /** Username */
+            /**
+             * Username
+             * @description Login name of the account, compared case-insensitively.
+             */
             readonly username: string;
             /**
              * Password
              * Format: password
+             * @description Password of the account.
              */
             readonly password: string;
-            /** Name */
+            /**
+             * Name
+             * @description Label of the new token, 1 to 64 characters, to tell it apart in the token list.
+             */
             readonly name: string;
-            /** Expires At */
+            /**
+             * Expires At
+             * @description When the token stops working (in the future, with a timezone); omit it for no expiry.
+             */
             readonly expires_at?: string | null;
         };
         /**
@@ -3484,9 +3538,11 @@ export interface components {
         readonly SessionState: {
             /**
              * State
+             * @description `setup_required` while no account exists, else whether the caller is signed in.
              * @enum {string}
              */
             readonly state: "setup_required" | "signed_out" | "signed_in";
+            /** @description The signed-in account; `null` unless `state` is `signed_in`. */
             readonly account?: components["schemas"]["AccountSummary"] | null;
         };
         /**
@@ -3694,22 +3750,41 @@ export interface components {
          * @description A new token. ``token`` is the only copy of the secret and is never shown again.
          */
         readonly TokenGrant: {
-            /** Id */
+            /**
+             * Id
+             * @description Stable identifier of the token, used to revoke it.
+             */
             readonly id: string;
-            /** Name */
+            /**
+             * Name
+             * @description Label the token was given when it was created.
+             */
             readonly name: string;
-            /** Prefix */
+            /**
+             * Prefix
+             * @description The first characters of the secret (`exd_` and four more), to recognise the token.
+             */
             readonly prefix: string;
             /**
              * Created At
              * Format: date-time
+             * @description When the token was created.
              */
             readonly created_at: string;
-            /** Expires At */
+            /**
+             * Expires At
+             * @description When the token stops working; `null` for a token that never expires.
+             */
             readonly expires_at: string | null;
-            /** Last Used At */
+            /**
+             * Last Used At
+             * @description When the token last authenticated a request; `null` if it was never used.
+             */
             readonly last_used_at: string | null;
-            /** Token */
+            /**
+             * Token
+             * @description The token's secret, shown only this once: send it as `Authorization: Bearer <token>`.
+             */
             readonly token: string;
         };
         /**
@@ -3717,7 +3792,10 @@ export interface components {
          * @description The caller's tokens, newest first.
          */
         readonly TokenList: {
-            /** Tokens */
+            /**
+             * Tokens
+             * @description The tokens, newest first.
+             */
             readonly tokens: readonly components["schemas"]["TokenSummary"][];
         };
         /**
@@ -3725,20 +3803,36 @@ export interface components {
          * @description A token as listed: everything but the secret.
          */
         readonly TokenSummary: {
-            /** Id */
+            /**
+             * Id
+             * @description Stable identifier of the token, used to revoke it.
+             */
             readonly id: string;
-            /** Name */
+            /**
+             * Name
+             * @description Label the token was given when it was created.
+             */
             readonly name: string;
-            /** Prefix */
+            /**
+             * Prefix
+             * @description The first characters of the secret (`exd_` and four more), to recognise the token.
+             */
             readonly prefix: string;
             /**
              * Created At
              * Format: date-time
+             * @description When the token was created.
              */
             readonly created_at: string;
-            /** Expires At */
+            /**
+             * Expires At
+             * @description When the token stops working; `null` for a token that never expires.
+             */
             readonly expires_at: string | null;
-            /** Last Used At */
+            /**
+             * Last Used At
+             * @description When the token last authenticated a request; `null` if it was never used.
+             */
             readonly last_used_at: string | null;
         };
         /**

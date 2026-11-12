@@ -21,23 +21,52 @@ class AccountRepository(Protocol):
         """Store the account only if no account exists yet; ``False`` when one already does.
 
         Must be atomic: two concurrent calls store at most one account.
+
+        Args:
+            account: The first account.
+
+        Returns:
+            ``True`` when it was stored, ``False`` when an account already exists.
         """
         ...
 
     async def get(self, username: Username) -> Account | None:
-        """Return the account with this username, or ``None``."""
+        """Return the account with this username, or ``None``.
+
+        Args:
+            username: The normalized username.
+
+        Returns:
+            The account, or ``None``.
+        """
         ...
 
     async def get_by_id(self, account_id: AccountId) -> Account | None:
-        """Return the account with this id, or ``None``."""
+        """Return the account with this id, or ``None``.
+
+        Args:
+            account_id: The account's id.
+
+        Returns:
+            The account, or ``None``.
+        """
         ...
 
     async def set_password_hash(self, account_id: AccountId, password_hash: str) -> None:
-        """Replace the account's password hash."""
+        """Replace the account's password hash.
+
+        Args:
+            account_id: The account's id.
+            password_hash: The new encoded hash.
+        """
         ...
 
     async def any_exists(self) -> bool:
-        """Return whether at least one account exists."""
+        """Return whether at least one account exists.
+
+        Returns:
+            ``True`` once an account exists.
+        """
         ...
 
 
@@ -45,27 +74,56 @@ class SessionRepository(Protocol):
     """Persistence for sessions, keyed by token hash."""
 
     async def add(self, session: Session) -> None:
-        """Store a new session."""
+        """Store a new session.
+
+        Args:
+            session: The session.
+        """
         ...
 
     async def get(self, token_hash: str) -> Session | None:
-        """Return the session with this token hash, or ``None``."""
+        """Return the session with this token hash, or ``None``.
+
+        Args:
+            token_hash: The hash of the session token.
+
+        Returns:
+            The session, or ``None``.
+        """
         ...
 
     async def touch(self, token_hash: str, at: datetime) -> None:
-        """Record that the session was used at ``at``."""
+        """Record that the session was used at ``at``.
+
+        Args:
+            token_hash: The hash of the session token.
+            at: When it was used.
+        """
         ...
 
     async def delete(self, token_hash: str) -> None:
-        """Remove the session (nothing happens when it does not exist)."""
+        """Remove the session (nothing happens when it does not exist).
+
+        Args:
+            token_hash: The hash of the session token.
+        """
         ...
 
     async def delete_for_account(self, account_id: AccountId) -> None:
-        """Remove every session of the account."""
+        """Remove every session of the account.
+
+        Args:
+            account_id: The account's id.
+        """
         ...
 
     async def delete_expired(self, *, idle_before: datetime, created_before: datetime) -> None:
-        """Remove sessions last used before ``idle_before`` or created before ``created_before``."""
+        """Remove sessions last used before ``idle_before`` or created before ``created_before``.
+
+        Args:
+            idle_before: Idle deadline: sessions last used before it go.
+            created_before: Absolute deadline: sessions created before it go.
+        """
         ...
 
 
@@ -73,31 +131,70 @@ class TokenRepository(Protocol):
     """Persistence for API tokens, keyed by token hash."""
 
     async def add(self, token: ApiToken) -> None:
-        """Store a new token."""
+        """Store a new token.
+
+        Args:
+            token: The token.
+        """
         ...
 
     async def get(self, token_hash: str) -> ApiToken | None:
-        """Return the token with this hash, or ``None``."""
+        """Return the token with this hash, or ``None``.
+
+        Args:
+            token_hash: The hash of the token's secret.
+
+        Returns:
+            The token, or ``None``.
+        """
         ...
 
     async def list_for_account(self, account_id: AccountId) -> list[ApiToken]:
-        """Return the account's tokens, newest first."""
+        """Return the account's tokens, newest first.
+
+        Args:
+            account_id: The account's id.
+
+        Returns:
+            The tokens, newest first.
+        """
         ...
 
     async def touch(self, token_hash: str, at: datetime) -> None:
-        """Record that the token was used at ``at``."""
+        """Record that the token was used at ``at``.
+
+        Args:
+            token_hash: The hash of the token's secret.
+            at: When it was used.
+        """
         ...
 
     async def delete(self, account_id: AccountId, token_id: str) -> bool:
-        """Remove the account's token with this id; ``False`` when there is none."""
+        """Remove the account's token with this id; ``False`` when there is none.
+
+        Args:
+            account_id: The owner's id.
+            token_id: The token's id.
+
+        Returns:
+            ``True`` when a token was removed, ``False`` when the account has none by this id.
+        """
         ...
 
     async def delete_for_account(self, account_id: AccountId) -> None:
-        """Remove every token of the account."""
+        """Remove every token of the account.
+
+        Args:
+            account_id: The account's id.
+        """
         ...
 
     async def delete_expired(self, now: datetime) -> None:
-        """Remove the tokens whose expiry is at or before ``now``."""
+        """Remove the tokens whose expiry is at or before ``now``.
+
+        Args:
+            now: The current time.
+        """
         ...
 
 
@@ -115,6 +212,13 @@ class FailedSignInLog(Protocol):
         The check and the count are one atomic step, so attempts made at the same time cannot
         all pass the check before any is counted. Returns the longest wait; when it is above zero
         nothing was counted.
+
+        Args:
+            keys: The throttle keys of the attempt (its address and its username).
+            now: When the attempt is made.
+
+        Returns:
+            The longest wait among the keys; zero when the attempt was counted and may go ahead.
         """
         ...
 
@@ -123,15 +227,29 @@ class FailedSignInLog(Protocol):
 
         If no later attempt was charged since, the record goes back to how it was before that
         attempt, so the wait is not restarted; otherwise only the count goes down.
+
+        Args:
+            key: The throttle key.
+            charged_at: The ``now`` the attempt was charged with.
         """
         ...
 
     async def get(self, key: str) -> FailedSignIns | None:
-        """Return the record under ``key``, or ``None``."""
+        """Return the record under ``key``, or ``None``.
+
+        Args:
+            key: The throttle key.
+
+        Returns:
+            The record, or ``None``.
+        """
         ...
 
     async def forget(self, key: str) -> bool:
         """Drop the record under ``key`` (nothing happens when there is none).
+
+        Args:
+            key: The throttle key.
 
         Returns:
             ``True`` once no record is left under ``key`` (dropped, or there was none);
@@ -140,11 +258,24 @@ class FailedSignInLog(Protocol):
         ...
 
     async def remember_sign_in(self, key: str, now: datetime) -> None:
-        """Note that the sign-in ``key`` (a username at an address) just succeeded."""
+        """Note that the sign-in ``key`` (a username at an address) just succeeded.
+
+        Args:
+            key: The sign-in key.
+            now: When the sign-in succeeded.
+        """
         ...
 
     async def signed_in_before(self, key: str, now: datetime) -> bool:
-        """Whether ``key`` succeeded within ``REMEMBER_SIGN_INS_FOR`` of ``now``."""
+        """Whether ``key`` succeeded within ``REMEMBER_SIGN_INS_FOR`` of ``now``.
+
+        Args:
+            key: The sign-in key.
+            now: The current time.
+
+        Returns:
+            ``True`` when it did.
+        """
         ...
 
 
@@ -152,9 +283,24 @@ class PasswordHasher(Protocol):
     """A memory-hard, salted password KDF. Hashes are self-describing strings."""
 
     async def hash(self, password: str) -> str:
-        """Return the encoded hash of ``password`` (a fresh salt every call)."""
+        """Return the encoded hash of ``password`` (a fresh salt every call).
+
+        Args:
+            password: The password.
+
+        Returns:
+            The encoded hash, with its parameters and salt.
+        """
         ...
 
     async def verify(self, password_hash: str, password: str) -> bool:
-        """Return whether ``password`` matches the hash, in constant time."""
+        """Return whether ``password`` matches the hash, in constant time.
+
+        Args:
+            password_hash: An encoded hash made by ``hash``.
+            password: The password to check.
+
+        Returns:
+            ``True`` when the password matches.
+        """
         ...

@@ -107,7 +107,14 @@ _lock_keys = text(
 
 
 def _stamp(moment: datetime) -> str:
-    """UTC ISO 8601 with a fixed width, so comparing the text compares the instants."""
+    """UTC ISO 8601 with a fixed width, so comparing the text compares the instants.
+
+    Args:
+        moment: A timezone-aware time.
+
+    Returns:
+        The time as stored, e.g. ``2026-01-02T03:04:05.000000+00:00``.
+    """
     return moment.astimezone(UTC).isoformat(timespec="microseconds")
 
 
@@ -116,9 +123,17 @@ class SqliteAccountRepository:
     """Implements ``ports.driven.AccountRepository`` with SQLAlchemy Core on SQLite."""
 
     engine: AsyncEngine
+    """The database engine."""
 
     async def add_first(self, account: Account) -> bool:
-        """Store the account only if the table is empty, in one statement under a write lock."""
+        """Store the account only if the table is empty, in one statement under a write lock.
+
+        Args:
+            account: The first account.
+
+        Returns:
+            ``True`` when it was stored, ``False`` when an account already exists.
+        """
         values = {
             "id": account.id,
             "username": account.username.value,
@@ -143,14 +158,28 @@ class SqliteAccountRepository:
         return result.rowcount == 1
 
     async def get(self, username: Username) -> Account | None:
-        """Return the account with this username, or ``None``."""
+        """Return the account with this username, or ``None``.
+
+        Args:
+            username: The normalized username.
+
+        Returns:
+            The account, or ``None``.
+        """
         query = select(accounts).where(accounts.c.username == username.value)
         async with self.engine.connect() as connection:
             row = (await connection.execute(query)).first()
         return None if row is None else _account(row)
 
     async def get_by_id(self, account_id: AccountId) -> Account | None:
-        """Return the account with this id, or ``None``."""
+        """Return the account with this id, or ``None``.
+
+        Args:
+            account_id: The account's id.
+
+        Returns:
+            The account, or ``None``.
+        """
         async with self.engine.connect() as connection:
             row = (
                 await connection.execute(select(accounts).where(accounts.c.id == account_id))
@@ -158,7 +187,12 @@ class SqliteAccountRepository:
         return None if row is None else _account(row)
 
     async def set_password_hash(self, account_id: AccountId, password_hash: str) -> None:
-        """Replace the account's password hash."""
+        """Replace the account's password hash.
+
+        Args:
+            account_id: The account's id.
+            password_hash: The new encoded hash.
+        """
         statement = (
             update(accounts).where(accounts.c.id == account_id).values(password_hash=password_hash)
         )
@@ -166,12 +200,24 @@ class SqliteAccountRepository:
             await connection.execute(statement)
 
     async def any_exists(self) -> bool:
-        """Return whether at least one account exists."""
+        """Return whether at least one account exists.
+
+        Returns:
+            ``True`` once an account exists.
+        """
         async with self.engine.connect() as connection:
             return bool((await connection.execute(select(exists(select(accounts.c.id))))).scalar())
 
 
 def _account(row: Row[Any]) -> Account:
+    """Map an ``accounts`` row to its entity.
+
+    Args:
+        row: The row.
+
+    Returns:
+        The account.
+    """
     return Account(
         id=AccountId(row.id),
         username=Username(row.username),
@@ -186,9 +232,14 @@ class SqliteSessionRepository:
     """Implements ``ports.driven.SessionRepository`` with SQLAlchemy Core on SQLite."""
 
     engine: AsyncEngine
+    """The database engine."""
 
     async def add(self, session: Session) -> None:
-        """Store a new session."""
+        """Store a new session.
+
+        Args:
+            session: The session.
+        """
         values = {
             "token_hash": session.token_hash,
             "account_id": session.account_id,
@@ -199,7 +250,14 @@ class SqliteSessionRepository:
             await connection.execute(insert(sessions).values(values))
 
     async def get(self, token_hash: str) -> Session | None:
-        """Return the session with this token hash, or ``None``."""
+        """Return the session with this token hash, or ``None``.
+
+        Args:
+            token_hash: The hash of the session token.
+
+        Returns:
+            The session, or ``None``.
+        """
         query = select(sessions).where(sessions.c.token_hash == token_hash)
         async with self.engine.connect() as connection:
             row = (await connection.execute(query)).first()
@@ -213,7 +271,12 @@ class SqliteSessionRepository:
         )
 
     async def touch(self, token_hash: str, at: datetime) -> None:
-        """Record that the session was used at ``at``."""
+        """Record that the session was used at ``at``.
+
+        Args:
+            token_hash: The hash of the session token.
+            at: When it was used.
+        """
         statement = (
             update(sessions)
             .where(sessions.c.token_hash == token_hash)
@@ -223,17 +286,30 @@ class SqliteSessionRepository:
             await connection.execute(statement)
 
     async def delete(self, token_hash: str) -> None:
-        """Remove the session."""
+        """Remove the session.
+
+        Args:
+            token_hash: The hash of the session token.
+        """
         async with self.engine.begin() as connection:
             await connection.execute(delete(sessions).where(sessions.c.token_hash == token_hash))
 
     async def delete_for_account(self, account_id: AccountId) -> None:
-        """Remove every session of the account."""
+        """Remove every session of the account.
+
+        Args:
+            account_id: The account's id.
+        """
         async with self.engine.begin() as connection:
             await connection.execute(delete(sessions).where(sessions.c.account_id == account_id))
 
     async def delete_expired(self, *, idle_before: datetime, created_before: datetime) -> None:
-        """Remove sessions last used before ``idle_before`` or created before ``created_before``."""
+        """Remove sessions last used before ``idle_before`` or created before ``created_before``.
+
+        Args:
+            idle_before: Idle deadline: sessions last used before it go.
+            created_before: Absolute deadline: sessions created before it go.
+        """
         statement = delete(sessions).where(
             or_(
                 sessions.c.last_used_at < _stamp(idle_before),
@@ -245,6 +321,14 @@ class SqliteSessionRepository:
 
 
 def _moment(value: str | None) -> datetime | None:
+    """Read an optional stored time.
+
+    Args:
+        value: The stored ISO 8601 text, or ``None``.
+
+    Returns:
+        The time, or ``None``.
+    """
     return None if value is None else datetime.fromisoformat(value)
 
 
@@ -253,9 +337,14 @@ class SqliteTokenRepository:
     """Implements ``ports.driven.TokenRepository`` with SQLAlchemy Core on SQLite."""
 
     engine: AsyncEngine
+    """The database engine."""
 
     async def add(self, token: ApiToken) -> None:
-        """Store a new token."""
+        """Store a new token.
+
+        Args:
+            token: The token.
+        """
         values = {
             "id": token.id,
             "account_id": token.account_id,
@@ -270,14 +359,28 @@ class SqliteTokenRepository:
             await connection.execute(insert(api_tokens).values(values))
 
     async def get(self, token_hash: str) -> ApiToken | None:
-        """Return the token with this hash, or ``None``."""
+        """Return the token with this hash, or ``None``.
+
+        Args:
+            token_hash: The hash of the token's secret.
+
+        Returns:
+            The token, or ``None``.
+        """
         query = select(api_tokens).where(api_tokens.c.token_hash == token_hash)
         async with self.engine.connect() as connection:
             row = (await connection.execute(query)).first()
         return None if row is None else _token(row)
 
     async def list_for_account(self, account_id: AccountId) -> list[ApiToken]:
-        """Return the account's tokens, newest first."""
+        """Return the account's tokens, newest first.
+
+        Args:
+            account_id: The account's id.
+
+        Returns:
+            The tokens, newest first.
+        """
         query = (
             select(api_tokens)
             .where(api_tokens.c.account_id == account_id)
@@ -287,7 +390,12 @@ class SqliteTokenRepository:
             return [_token(row) for row in await connection.execute(query)]
 
     async def touch(self, token_hash: str, at: datetime) -> None:
-        """Record that the token was used at ``at``."""
+        """Record that the token was used at ``at``.
+
+        Args:
+            token_hash: The hash of the token's secret.
+            at: When it was used.
+        """
         statement = (
             update(api_tokens)
             .where(api_tokens.c.token_hash == token_hash)
@@ -297,7 +405,15 @@ class SqliteTokenRepository:
             await connection.execute(statement)
 
     async def delete(self, account_id: AccountId, token_id: str) -> bool:
-        """Remove the account's token with this id; ``False`` when there is none."""
+        """Remove the account's token with this id; ``False`` when there is none.
+
+        Args:
+            account_id: The owner's id.
+            token_id: The token's id.
+
+        Returns:
+            ``True`` when a token was removed, ``False`` when the account has none by this id.
+        """
         statement = delete(api_tokens).where(
             api_tokens.c.id == token_id, api_tokens.c.account_id == account_id
         )
@@ -306,20 +422,36 @@ class SqliteTokenRepository:
         return result.rowcount == 1
 
     async def delete_for_account(self, account_id: AccountId) -> None:
-        """Remove every token of the account."""
+        """Remove every token of the account.
+
+        Args:
+            account_id: The account's id.
+        """
         async with self.engine.begin() as connection:
             await connection.execute(
                 delete(api_tokens).where(api_tokens.c.account_id == account_id)
             )
 
     async def delete_expired(self, now: datetime) -> None:
-        """Remove the tokens whose expiry is at or before ``now``."""
+        """Remove the tokens whose expiry is at or before ``now``.
+
+        Args:
+            now: The current time.
+        """
         statement = delete(api_tokens).where(api_tokens.c.expires_at <= _stamp(now))
         async with self.engine.begin() as connection:
             await connection.execute(statement)
 
 
 def _token(row: Row[Any]) -> ApiToken:
+    """Map an ``api_tokens`` row to its entity.
+
+    Args:
+        row: The row.
+
+    Returns:
+        The token.
+    """
     return ApiToken(
         id=row.id,
         account_id=AccountId(row.account_id),
@@ -565,6 +697,7 @@ class SqliteFailedSignInLog:
 
         Raises:
             _TurnTimeoutError: Another process held a lock for longer.
+            OperationalError: The database failed for another reason.
         """
         milliseconds = int(self.turn_timeout.total_seconds() * 1000)
         await connection.execute(text(f"SET LOCAL lock_timeout = {milliseconds}"))

@@ -38,6 +38,12 @@ class BusyError(DomainError):
     code = "busy"
 
     def __init__(self, detail: str, *, retry_after: int = 1) -> None:
+        """Create the error.
+
+        Args:
+            detail: What is busy, for the caller.
+            retry_after: Seconds to wait before trying again; raised to at least 1.
+        """
         super().__init__(detail)
         self.retry_after = max(1, retry_after)
 
@@ -54,6 +60,12 @@ class RateLimitedError(DomainError):
     code = "rate_limited"
 
     def __init__(self, message: str, retry_after: int) -> None:
+        """Create the error.
+
+        Args:
+            message: What was refused, for the caller.
+            retry_after: Seconds to wait before trying again; raised to at least 1.
+        """
         super().__init__(message)
         self.retry_after = max(1, retry_after)
 

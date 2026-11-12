@@ -13,6 +13,11 @@ class InvalidUsernameError(ValidationError):
     code = "invalid_username"
 
     def __init__(self, max_length: int) -> None:
+        """Create the error.
+
+        Args:
+            max_length: The most characters allowed, for the message.
+        """
         super().__init__(
             f"username must be 1 to {max_length} characters, "
             "without whitespace or control characters"
@@ -25,6 +30,7 @@ class AlreadySetUpError(ConflictError):
     code = "already_set_up"
 
     def __init__(self) -> None:
+        """Create the error with its fixed message."""
         super().__init__("the instance is already set up: an account exists")
 
 
@@ -34,6 +40,7 @@ class InvalidCredentialsError(UnauthenticatedError):
     code = "invalid_credentials"
 
     def __init__(self) -> None:
+        """Create the error with its fixed message."""
         super().__init__("invalid username or password")
 
 
@@ -41,6 +48,7 @@ class NotSignedInError(UnauthenticatedError):
     """No session, or one that is unknown, expired or ended; deliberately not told apart."""
 
     def __init__(self) -> None:
+        """Create the error with its fixed message."""
         super().__init__("sign in to use this")
 
 
@@ -50,6 +58,7 @@ class UnknownAccountError(NotFoundError):
     code = "unknown_account"
 
     def __init__(self) -> None:
+        """Create the error with its fixed message."""
         super().__init__("no account has this username")
 
 
@@ -59,6 +68,11 @@ class InvalidTokenNameError(ValidationError):
     code = "invalid_token_name"
 
     def __init__(self, max_length: int) -> None:
+        """Create the error.
+
+        Args:
+            max_length: The most characters allowed, for the message.
+        """
         super().__init__(f"token name must be 1 to {max_length} characters")
 
 
@@ -68,6 +82,7 @@ class InvalidTokenExpiryError(ValidationError):
     code = "invalid_token_expiry"
 
     def __init__(self) -> None:
+        """Create the error with its fixed message."""
         super().__init__("a token must expire in the future")
 
 
@@ -77,6 +92,11 @@ class TooManyTokensError(ConflictError):
     code = "too_many_tokens"
 
     def __init__(self, limit: int) -> None:
+        """Create the error.
+
+        Args:
+            limit: The most tokens an account may hold, for the message.
+        """
         super().__init__(f"an account may hold at most {limit} API tokens; revoke one first")
 
 
@@ -84,6 +104,7 @@ class InvalidTokenError(UnauthenticatedError):
     """An API token that is unknown, expired or revoked; deliberately not told apart."""
 
     def __init__(self) -> None:
+        """Create the error with its fixed message."""
         super().__init__("the API token is invalid, expired or revoked")
 
 
@@ -93,6 +114,7 @@ class UnknownTokenError(NotFoundError):
     code = "unknown_token"
 
     def __init__(self) -> None:
+        """Create the error with its fixed message."""
         super().__init__("no such token")
 
 
@@ -103,6 +125,11 @@ class SignInThrottledError(RateLimitedError):
     """
 
     def __init__(self, retry_after: int) -> None:
+        """Create the error.
+
+        Args:
+            retry_after: Seconds until the next attempt may go ahead.
+        """
         super().__init__(
             f"too many failed sign-ins; try again in {retry_after} seconds", retry_after
         )
