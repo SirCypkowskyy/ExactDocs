@@ -23,6 +23,9 @@ if ADMIN_URL is None and os.environ.get("EXACTDOCS_REQUIRE_POSTGRES") == "1":
     message = "EXACTDOCS_REQUIRE_POSTGRES=1 but EXACTDOCS_TEST_POSTGRES_URL is not set"
     raise RuntimeError(message)
 
+TERMINATE_WAIT_MS = 5000
+"""How long ``pg_terminate_backend`` waits for a backend to exit (and release its locks)."""
+
 SQL_BACKENDS = ["sqlite", "postgres"] if ADMIN_URL else ["sqlite"]
 """The SQL backends the contract tests run on here."""
 

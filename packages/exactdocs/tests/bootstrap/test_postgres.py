@@ -21,7 +21,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from databases import ADMIN_URL, PostgresDatabase
+from databases import ADMIN_URL, TERMINATE_WAIT_MS, PostgresDatabase
 from exactdocs.bootstrap import database
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.database import (
@@ -295,10 +295,6 @@ async def test_a_writer_that_waits_too_long_for_its_turn_fails_clearly(
                 await waiter.execute(text("SELECT 1"))
     async with second.execution_options(begin_immediate=True).begin() as later:
         assert await later.scalar(text("SHOW lock_timeout")) == "0"  # only the turn waits
-
-
-TERMINATE_WAIT_MS = 5000
-"""How long ``pg_terminate_backend`` waits for a backend to exit (and release its locks)."""
 
 
 async def _drop_slot_connection(engine: AsyncEngine, slot: int) -> None:
@@ -587,12 +583,16 @@ def _terminate_backends(database: str) -> None:
     """Kill every backend on the database, from outside it, and wait until they have exited."""
     admin_url = make_url(ADMIN_URL or "").set(drivername="postgresql")
     with psycopg.connect(admin_url.render_as_string(hide_password=False), autocommit=True) as a:
+        # Client backends only: an autovacuum or parallel worker may exit on its own first, and
+        # pg_terminate_backend answers false for a pid that is already gone.
         exited = a.execute(
-            "SELECT pg_terminate_backend(pid, %s) FROM pg_stat_activity"
-            " WHERE datname = %s AND pid <> pg_backend_pid()",
+            "SELECT pid, pg_terminate_backend(pid, %s) FROM pg_stat_activity"
+            " WHERE datname = %s AND backend_type = 'client backend'"
+            " AND pid <> pg_backend_pid()",
             (TERMINATE_WAIT_MS, database),
         ).fetchall()
-    assert all(gone for (gone,) in exited)  # each one exited within the wait
+    stuck = [pid for pid, gone in exited if not gone]
+    assert not stuck, f"backends still there after {TERMINATE_WAIT_MS} ms: {stuck}"
 
 
 async def _drop_slot_connection_as_admin(database: str) -> None:

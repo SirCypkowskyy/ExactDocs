@@ -21,7 +21,7 @@ from pydantic import SecretStr
 from sqlalchemy import text
 
 from app_lifespan import serving
-from databases import ADMIN_URL
+from databases import ADMIN_URL, TERMINATE_WAIT_MS
 from exactdocs.bootstrap.ai_models import budgets
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.database import StartupError, open_database
@@ -438,14 +438,16 @@ async def test_the_leader_survives_its_session_being_terminated(on_postgres: obj
             raise NightsOverError
         if len(waits) == 1:  # the server ends the leader's session between nights
             async with admin.connect() as connection:
-                await connection.execute(
+                exited = await connection.execute(
                     text(
-                        "SELECT pg_terminate_backend(l.pid, 5000) FROM pg_locks l "
+                        "SELECT pg_terminate_backend(l.pid, :wait) FROM pg_locks l "
                         "JOIN pg_database d ON d.oid = l.database "
                         "WHERE d.datname = current_database() AND l.locktype = 'advisory' "
                         "AND l.pid <> pg_backend_pid()"
-                    )
+                    ),
+                    {"wait": TERMINATE_WAIT_MS},
                 )
+                assert exited.scalars().all() == [True]  # the leader's session ended
                 await connection.commit()
         waits.append(seconds)
 
