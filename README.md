@@ -724,11 +724,12 @@ settings or the UI; unset, the instance's choice applies. When both a cross-enco
 are configured, the cross-encoder (cheaper) reranks unless the judge is chosen; a library that
 chooses the judge without one configured is reranked by the cross-encoder, if there is one. The
 judge gets the best of the same top N as the cross-encoder that fit one bounded call: at most 64,
-and at most about 22,000 input tokens, estimated at 4 characters per token for ASCII text and a
-token per character for any other (CJK, Cyrillic...), on the high side of what tokenizers count.
+and at most about 18,500 input tokens, estimated at 4 characters per token for ASCII text, 1.5 for
+long ASCII runs without whitespace (base64, hashes), 4 tokens for a character above U+FFFF (CJK
+Extension B, emoji) and a token for any other (CJK, Cyrillic, control characters...).
 That keeps the call under the 60,000 tokens one LLM step may use, even for code full of escaped
-`<`, `>` and `&`, so a call is never stopped after it was paid for. With 2000 characters per
-candidate that is about 42 English or 10 CJK candidates; the candidates beyond them keep the mode's order
+`<`, `>` and `&`, base64 broken by spaces or rare scripts at 3 tokens a character, so a call is never stopped after it was paid for. With 2000 characters per
+candidate that is about 32 English or code candidates, or 9 CJK; the candidates beyond them keep the mode's order
 after the judged ones, and `coverage.reranked` counts only the judged. It gets the query and each
 candidate's chunk text (cut to 2000 characters), named by position (`c1`, `c2`...), never by
 chunk ID, and never a library name, a version or a user; the prompt and the instructions mark
@@ -872,8 +873,8 @@ neither close its block nor open one; at most 16 files / 24,000 characters per s
 They cannot add a tool, reach another library or version, or lift a limit: the read tools, the
 pinned version and `[ai.agentic]` are fixed before the run, and every pick is still checked
 against the version. Their text counts toward the run's `max_tokens` and budgets like everything
-else sent to the model (a streamed response whose server reports no usage is counted at 4
-characters per token), and is never logged or put on a span. Turning guidance on (`off` to
+else sent to the model (a streamed response whose server reports no usage is counted with the
+judge's estimate above), and is never logged or put on a span. Turning guidance on (`off` to
 `notes` or `trusted`) queues a `reprocess` of the library: every version is re-imported at its
 commit and keeps its files, without a new upstream commit. Switching between `notes` and `trusted`,
 or back to `off`, takes effect at the next search (`off`: nothing is sent; the kept files go with

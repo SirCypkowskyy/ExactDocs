@@ -394,7 +394,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `reranker_failed` (unless the mode itself fell back, whose reason is kept). With
   `rerank_with: judge` (#96), the LLM judge reorders them instead: each reranked result's `score`
   is its rating over 10 (0 to 1). It rates only the best candidates that fit one bounded call
-  (at most 64, about 42 full-size English or 10 CJK chunks; `coverage.reranked` counts them), and the rest keep the
+  (at most 64, about 32 full-size English or code chunks, or 9 CJK; `coverage.reranked` counts them), and the rest keep the
   mode's order after them. Ratings that name an ID it was not given (it sees `c1` to `cN`, never
   chunk IDs), or are not one score from 0 to 10 per candidate, are refused (`reranker_failed`); a used-up budget or the LLM
   search rate limit skips it (`llm_budget_reached`, `llm_rate_limited`).
