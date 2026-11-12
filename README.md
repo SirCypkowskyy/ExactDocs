@@ -633,14 +633,19 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   never breaks it: the LLM step is skipped and the result names the cheaper mode with
   `fallback_reason: llm_budget_reached` (or `llm_rate_limited`); a paid rerank is skipped
   (`reranked: false`; a rerank that ran counts one request and its tokens, estimated at 4
-  characters per token since rerank endpoints report none); an `embed` job stops before its next batch with `ai_budget_reached` and is
-  queued again after the window resets (each UTC midnight, by one server process, a few minutes
-  after at random), while BM25 keeps answering.
+  characters per token since rerank endpoints report none); an `embed` job of a paid model stops
+  before its next batch with `ai_budget_reached` and is queued again after the window resets
+  (each UTC midnight, by one server process, a few minutes after at random), while BM25 keeps
+  answering.
 - **Prices:** from the `genai-prices` data bundled with pydantic-ai (never fetched); a model it
   does not know gets `[ai.prices."<profile>:<model>"]` `input_usd_per_mtok` and
-  `output_usd_per_mtok`. `local` models cost nothing (their tokens still count). Self-hosted
-  endpoints (`ollama`, `vllm`, a TEI reranker) count as paid and are never priced from another
-  provider's list: with a US dollar budget, give them a price of 0
+  `output_usd_per_mtok`. `local` models cost nothing: their tokens are recorded (`local_tokens`
+  in the usage) but count toward no token budget, so local search traffic never uses up a
+  budget, and no budget stops a local embedding job or a search's local query embedding or
+  rerank (#284). Tokens recorded before this release (local ones included, since older rows do
+  not say which model spent them) stay counted until their day or month window resets.
+  Self-hosted endpoints (`ollama`, `vllm`, a TEI reranker) count as paid and are never priced
+  from another provider's list: with a US dollar budget, give them a price of 0
   (`input_usd_per_mtok = 0`) if they cost nothing. A US dollar budget with a configured model
   that has no price is refused at start. Spans never carry prompts or completions, even with
   `EXACTDOCS_TELEMETRY_QUERY_TEXT` on.
@@ -902,8 +907,8 @@ model = "local:BAAI/bge-small-en-v1.5"  # <profile>:<model>, 384 dimensions
 
 [ai.reranker]
 model = "local:Xenova/ms-marco-MiniLM-L-6-v2"
-# timeout: unset means 5 s for a reranker on a `local` profile (2 s otherwise): a CPU reranks
-# 32 long candidates in about 0.2 to 2 s, more with fewer cores
+# timeout: unset means 5 s for a reranker on a `local` profile, the instance's or a library's
+# own (2 s otherwise): a CPU reranks 32 long candidates in about 0.2 to 2 s, more with fewer cores
 ```
 
 The `-local` image has both default models already, so the same settings in its environment are

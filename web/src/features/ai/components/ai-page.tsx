@@ -329,7 +329,9 @@ function UsageSection() {
 
 function spent(s: ScopeUsage["day"]) {
   const unpriced = s.unpriced_requests ? `, ${count(s.unpriced_requests)} unpriced` : "";
-  return `${usd(s.usd)} · ${count(s.tokens)} tokens · ${count(s.requests)} calls${unpriced}`;
+  // Local models cost nothing: their tokens are shown, but no token budget counts them.
+  const local = s.local_tokens ? ` (+${count(s.local_tokens)} local, not budgeted)` : "";
+  return `${usd(s.usd)} · ${count(s.tokens)} tokens${local} · ${count(s.requests)} calls${unpriced}`;
 }
 
 function UsageRow({ scope: s }: { scope: ScopeUsage }) {

@@ -88,10 +88,11 @@ const EMBEDDING = {
     },
   ],
 };
-const spent = (usd: number, tokens: number) => ({
-  input_tokens: tokens,
+const spent = (usd: number, tokens: number, local_tokens = 0) => ({
+  input_tokens: tokens + local_tokens,
   output_tokens: 0,
   tokens,
+  local_tokens,
   requests: 3,
   usd,
   unpriced_requests: 0,
@@ -118,7 +119,13 @@ const USAGE = {
         },
       ],
     },
-    { scope: "embedding", id: "", day: spent(0, 0), month: spent(0, 0), budgets: [] },
+    {
+      scope: "embedding",
+      id: "",
+      day: spent(0, 0, 1200),
+      month: spent(0, 0, 1200),
+      budgets: [],
+    },
     {
       scope: "library",
       id: "/acme/docs",
@@ -268,6 +275,16 @@ describe("instance AI page", () => {
       "tr",
     ) as HTMLElement;
     expect(within(instance).getByText(/\$1\.50 · 3,000 tokens · 3 calls/)).toBeInTheDocument();
+    expect(within(instance).queryByText(/local/)).not.toBeInTheDocument();
+    const embedding = usage
+      .getByRole("rowheader", { name: "Embedding runs" })
+      .closest("tr") as HTMLElement;
+    // Local models' tokens are shown, apart: no token budget counts them (#284).
+    expect(
+      within(embedding).getAllByText(
+        /\$0\.00 · 0 tokens \(\+1,200 local, not budgeted\) · 3 calls/,
+      ),
+    ).toHaveLength(2);
     expect(within(instance).getByText("Today: $8.50 of $10.00 left")).toBeInTheDocument();
     const library = usage
       .getByRole("rowheader", { name: "Library /acme/payments" })

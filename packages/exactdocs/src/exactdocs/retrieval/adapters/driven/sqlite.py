@@ -209,6 +209,8 @@ ai_spend = Table(
     Column("requests", Integer, nullable=False, server_default="0"),
     Column("usd_micros", Integer, nullable=False, server_default="0"),
     Column("unpriced", Integer, nullable=False, server_default="0"),  # requests without a price
+    # Of the tokens, those of in-process (local) models: no token budget counts them (#284).
+    Column("local_tokens", Integer, nullable=False, server_default="0"),
 )
 # HyDE's hypothetical answers (#94), by the searched manifest, the `llm` model and a SHA-256 of
 # the normalized query (never its text). A changed version has a new manifest, so a new key; the
@@ -1184,6 +1186,7 @@ def _spend_row(row: Row[Any]) -> SpendEntry:
         requests=row.requests,
         usd_micros=row.usd_micros,
         unpriced=row.unpriced,
+        local_tokens=row.local_tokens,
     )
 
 

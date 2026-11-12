@@ -76,6 +76,10 @@ CORP = ProviderProfile(
     origin=ProfileOrigin.CONFIGURATION,
     base_url="https://llm.example.com/v1",
 )
+LOCAL_CORP = ProviderProfile(
+    name="corp", kind=ProviderKind.LOCAL, origin=ProfileOrigin.CONFIGURATION
+)
+"""The same roles on an in-process (``local``) profile: free, so no budget is checked."""
 CONCEPTS = {
     "retry": 1,
     "retries": 1,
@@ -302,6 +306,7 @@ def _world(
     wait: float = 5.0,
     reranker: bool = False,
     budgets: Budgets | None = None,
+    local: bool = False,
 ) -> World:
     chunks = InMemoryChunkRepository()
     index = InMemorySearchIndex(chunks=chunks)
@@ -321,7 +326,7 @@ def _world(
         search=index,
         maintenance=index,
         library_modes=modes,
-        configured_profiles=[CORP],
+        configured_profiles=[LOCAL_CORP if local else CORP],
         instance_roles=InstanceRoles(
             embedding=None if embedding is None else ModelRef(profile="corp", model=embedding),
             reranker=ModelRef(profile="corp", model="cross") if reranker else None,
@@ -671,6 +676,36 @@ async def test_a_used_up_budget_answers_bm25_without_embedding_the_query(scope_k
     )
     assert world.models.queries == []
     assert _texts(result)[0] == "Resilience/S0"  # BM25 still answers
+
+
+async def test_a_local_query_embedding_runs_under_a_used_up_token_budget() -> None:
+    # #284: local models cost nothing, so their tokens are recorded but count toward no token
+    # budget, and a budget paid calls used up never refuses a local query embedding (or job).
+    limit = BudgetLimit(scope_kind="instance", window=SpendWindow.DAY, tokens=10_000)
+    world = _world(budgets=Budgets(limits=(limit,)), local=True)
+    used = SpendEntry(
+        scope_kind="instance",
+        scope_id="",
+        window=SpendWindow.DAY,
+        window_start=T0.date(),
+        input_tokens=10_000,
+    )
+    await world.ledger.add([used])  # what paid calls spent today
+    await _import(world, "v2", "m2", GUIDE)
+    await _embed(world, "v2")  # the embedding job is never stopped either
+
+    result = await _search(world, "repeat failed requests")
+
+    assert (result.retrieval_mode, result.fallback_reason) == (RetrievalMode.HYBRID, None)
+    assert world.models.queries == ["repeat failed requests"]
+    (today,) = [
+        r
+        for k, r in world.ledger.rows.items()
+        if (k.scope_kind, k.window) == ("instance", SpendWindow.DAY)
+    ]
+    assert today.local_tokens > 0  # the job's and the query's tokens are recorded
+    assert today.input_tokens == 10_000 + today.local_tokens
+    assert today.tokens == 10_000  # but only the paid ones count toward the budget
 
 
 async def test_a_budget_not_reached_lets_the_query_be_embedded() -> None:

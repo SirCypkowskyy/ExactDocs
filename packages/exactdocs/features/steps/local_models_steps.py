@@ -6,10 +6,12 @@ socket guard in this process: it refuses, and records, every connection and name
 not loopback (the fixture repository is already imported, from loopback).
 """
 
+import asyncio
 import logging
 import socket
 import tempfile
 from contextlib import ExitStack
+from datetime import UTC, datetime
 from errno import ECONNREFUSED
 from http import HTTPStatus
 from pathlib import Path
@@ -24,12 +26,16 @@ import tiny_models
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import AiSettings
+from exactdocs.retrieval.adapters.driven.sqlite import SqliteSpendLedger
+from exactdocs.retrieval.models import SpendEntry, SpendWindow
 from steps.http_steps import DEMO_COOKIE, SESSION_COOKIE
 from steps.hybrid_search_steps import step_embedded
 from steps.reranking_steps import step_agent_searches
 
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 SEARCH = "/api/v1/libraries/fixture/docs-repo/search"
+PAID_TOKENS = 1000
+"""The daily token budget, and what paid calls already spent of it."""
 
 
 def _models_dir(context: Context) -> Path:
@@ -85,9 +91,42 @@ def step_local_roles(context: Context, embedding: str, reranker: str) -> None:
             "providers": {"local": {"kind": "local"}},
             "embedding": {"model": embedding},
             "reranker": {"model": reranker},
+            "budgets": getattr(context, "local_budgets", {}),
         }
     )
     _serve(context, context.local_ai)
+
+
+@given("paid calls have used up a daily token budget of the instance and of embedding")
+def step_paid_used_up(context: Context) -> None:
+    # Recorded before the app is served again, so the embed jobs queued at its start see it.
+    context.local_budgets = {"daily_tokens": PAID_TOKENS, "daily_embedding_tokens": PAID_TOKENS}
+    today = SpendWindow.DAY.start(datetime.now(UTC))
+    entries = [
+        SpendEntry(
+            scope_kind=kind,
+            scope_id="",
+            window=SpendWindow.DAY,
+            window_start=today,
+            input_tokens=PAID_TOKENS,
+            requests=1,
+            usd_micros=1,
+        )
+        for kind in ("instance", "embedding")
+    ]
+    asyncio.run(_record(context, entries))
+
+
+async def _record(context: Context, entries: list[SpendEntry]) -> None:
+    """Add spend to the scenario's database, as earlier calls would have.
+
+    Args:
+        context: The behave context.
+        entries: The spend.
+    """
+    container = Container.build(context.settings)
+    async with container.running(jobs=False):
+        await SqliteSpendLedger(engine=container.engine).add(entries)
 
 
 @given('the embedding role is "{embedding}" and the model is not in the models directory')
@@ -171,6 +210,20 @@ def step_hybrid_reranked(context: Context) -> None:
     assert body["coverage"]["reranked"] > 0, body
     assert body["version"] == "v1.4.0", body
     assert body["results"], body
+
+
+@then("the usage records the local tokens without counting them toward the token budget")
+def step_local_tokens_recorded(context: Context) -> None:
+    response = context.client.get("/api/v1/ai/usage")
+    assert response.status_code == HTTPStatus.OK, response.text
+    scopes = {(s["scope"], s["id"]): s for s in response.json()["scopes"]}
+    for scope in (("instance", ""), ("embedding", "")):
+        day = scopes[scope]["day"]
+        assert day["local_tokens"] > 0, day  # the embedding job's (and the search's) tokens
+        assert day["input_tokens"] == PAID_TOKENS + day["local_tokens"], day
+        assert day["tokens"] == PAID_TOKENS, day  # only the paid ones count
+        (budget,) = scopes[scope]["budgets"]
+        assert (budget["tokens_left"], budget["reached"]) == (0, True), budget
 
 
 @then("nothing tried to reach the network")

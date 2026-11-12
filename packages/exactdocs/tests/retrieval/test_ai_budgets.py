@@ -76,6 +76,7 @@ from exactdocs.retrieval.models import (
 from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.ports.driven import Reranker, RetrievalPipeline, SearchTracer
 from exactdocs.retrieval.use_cases import (
+    AiProviders,
     AiSpend,
     Bm25Pipeline,
     PriceBook,
@@ -95,6 +96,8 @@ BM25, HYBRID, HYDE, AGENTIC = (
     RetrievalMode.AGENTIC,
 )
 USD = 1_000_000
+ON_CPU = ProviderProfile(name="cpu", kind=ProviderKind.LOCAL, origin=ProfileOrigin.CONFIGURATION)
+"""An in-process profile a library can rerank with, next to the paid ``corp`` one."""
 
 
 @dataclass(slots=True)
@@ -240,7 +243,7 @@ async def _build(
         maintenance=index,
         library_modes=modes or InMemoryLibraryModes(),
         roles=None if embedding else Roles(frozenset(roles)),
-        configured_profiles=[profile],
+        configured_profiles=[profile, ON_CPU],
         instance_roles=InstanceRoles(
             reranker=ModelRef(profile="corp", model="rerank"),
             embedding=ModelRef(profile="corp", model="a") if embedding else None,
@@ -460,6 +463,28 @@ def test_one_call_is_written_to_every_scope_and_window_at_its_price() -> None:
     assert {(e.usd_micros, e.unpriced) for e in entries} == {(6000, 0)}  # $0.002 + $0.004
 
 
+def test_a_local_models_tokens_are_recorded_but_count_toward_no_token_budget() -> None:
+    entries = spend_entries(
+        T0,
+        AiCaller(library=LIB, user=ADA).scopes(),
+        input_tokens=1000,
+        output_tokens=500,
+        requests=1,
+        price=ModelPrice(input_usd_per_million=0.0),
+        local=True,
+    )
+    budgets = Budgets(limits=(_limit("instance", usd=None, tokens=1),))
+    rows = {e.key: e for e in entries}
+
+    assert {(e.input_tokens, e.output_tokens, e.local_tokens, e.tokens) for e in entries} == {
+        (1000, 500, 1500, 0)
+    }
+    assert budgets.reached(AiCaller(library=LIB).scopes(), rows, T0) is None
+    paid = spend_entries(T0, AiCaller(library=LIB).scopes(), input_tokens=7, requests=1, price=None)
+    summed = rows[paid[0].key].plus(paid[0])
+    assert (summed.input_tokens, summed.local_tokens, summed.tokens) == (1007, 1500, 7)
+
+
 def test_prices_come_from_the_operator_then_free_kinds_then_the_bundled_list() -> None:
     listed = StaticPrices(
         input_prices={("openai", "gpt"): 1.0}, output_prices={("openai", "gpt"): 4.0}
@@ -646,6 +671,63 @@ async def test_a_local_reranker_costs_nothing_and_is_never_skipped() -> None:
     assert {r.usd_micros for k, r in world.ledger.rows.items() if k.scope_kind == "user"} == {0}
 
 
+async def test_a_local_rerank_is_recorded_as_local_tokens() -> None:
+    world = await _build(
+        ModelRole.RERANKER,
+        budgets=Budgets(limits=(_limit("library", usd=None, tokens=1),)),
+        reranker_kind=ProviderKind.LOCAL,
+    )
+
+    assert (await _search(world))[2] is True
+    assert (await _search(world))[2] is True  # the first rerank's tokens never reach the budget
+
+    rows = [r for k, r in world.ledger.rows.items() if k.scope_kind == "library"]
+    assert {(r.requests, r.tokens) for r in rows} == {(2, 0)}
+    assert all(r.local_tokens == r.input_tokens > 0 for r in rows)
+
+
+async def test_a_reranker_profile_that_cannot_be_read_under_a_budget_never_fails_a_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A budget needs the reranker's kind before the search runs: that read is guarded too (#284).
+    world = await _build(ModelRole.RERANKER, budgets=Budgets(limits=(_limit("library"),)))
+
+    async def unreadable(*args: object) -> None:
+        del args
+        raise ConnectionError
+
+    monkeypatch.setattr(AiProviders, "profile_for", unreadable)
+
+    assert await _search(world) == (BM25, FallbackReason.RERANKER_FAILED, False, True)
+    assert not world.reranker.calls
+    assert not world.ledger.rows
+
+
+async def test_the_reranker_profile_is_read_once_per_search_under_a_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Its kind (the budget), its timeout, the reranker built and its spend share one read.
+    world = await _build(
+        ModelRole.RERANKER,
+        budgets=Budgets(limits=(_limit("library"),)),
+        reranker_kind=ProviderKind.LOCAL,
+    )
+    reads: list[ModelRole] = []
+    profile_for = AiProviders.profile_for
+
+    async def counting(
+        self: AiProviders, role: ModelRole, library: str, ai: LibraryAi | None = None
+    ) -> object:
+        reads.append(role)
+        return await profile_for(self, role, library, ai)
+
+    monkeypatch.setattr(AiProviders, "profile_for", counting)
+
+    assert (await _search(world))[2] is True
+    assert reads == [ModelRole.RERANKER]
+    assert {r.requests for k, r in world.ledger.rows.items() if k.scope_kind == "library"} == {1}
+
+
 async def test_a_fallback_never_answers_from_another_version() -> None:
     world = await _build(ModelRole.LLM, budgets=Budgets(limits=(_limit("instance"),)))
     await _spend(world, "instance", "", DAY, USD)
@@ -696,6 +778,53 @@ async def test_a_used_up_embedding_budget_stops_the_job_before_its_next_batch() 
     queued = await world.module.list_unembedded_versions(UnembeddedVersionsQuery())
     assert {(v.library, v.ref) for v in queued.versions} >= {(LIB, "v2")}
     assert (await world.module.embed_batch(command)).embedded == 1
+
+
+async def test_a_used_up_budget_never_stops_a_local_embedding_job() -> None:
+    world = await _build(
+        embedding=True,
+        reranker_kind=ProviderKind.LOCAL,  # the embedding model is on the same local profile
+        budgets=Budgets(
+            limits=(
+                _limit("embedding", MONTH, usd=None, tokens=1),
+                _limit("instance", usd=1),
+            )
+        ),
+    )
+    await _spend(world, "instance", "", DAY, USD)  # paid calls used up the instance's budget
+    command = await _plan(world)
+
+    batches = [await world.module.embed_batch(command) for _ in range(3)]
+
+    assert [b.embedded for b in batches] == [1, 1, 0]
+    assert batches[-1].finished
+    embedding = [r for k, r in world.ledger.rows.items() if k.scope_kind == "embedding"]
+    assert {(r.tokens, r.usd_micros) for r in embedding} == {(0, 0)}
+    assert all(r.local_tokens == r.input_tokens > 0 for r in embedding)
+
+
+async def test_local_rerank_tokens_never_stop_a_paid_embedding_model() -> None:
+    # #284: the embedding model is paid (instance-wide), the library reranks in-process. Its
+    # rerank tokens fill the instance and library rows, but only paid tokens count: the paid
+    # embedding job and the paid query embedding's gate are not stopped by them.
+    limits = (_limit("instance", usd=None, tokens=20), _limit("library", usd=None, tokens=20))
+    world = await _build(embedding=True, budgets=Budgets(limits=limits))
+    await world.module.set_library_retrieval(
+        SetLibraryRetrievalCommand(library=LIB, reranker="cpu:tiny-reranker")
+    )
+
+    for _ in range(3):
+        assert (await _search(world, mode="bm25"))[2] is True
+
+    rows = [r for k, r in world.ledger.rows.items() if k.scope_kind in {"instance", "library"}]
+    assert {(r.requests, r.tokens) for r in rows} == {(3, 0)}
+    assert all(r.local_tokens > 20 for r in rows)  # more than the limit, all of it local
+    spend = AiSpend(ledger=world.ledger, budgets=Budgets(limits=limits), clock=world.clock)
+    assert await spend.reached(AiCaller(library=LIB, user=ADA).scopes()) is None  # query embed
+    queued = await world.module.list_unembedded_versions(UnembeddedVersionsQuery())
+    assert (LIB, "v2") in {(v.library, v.ref) for v in queued.versions}
+    assert (await world.module.embed_batch(await _plan(world))).embedded == 1
+    assert world.models.sent  # the paid model was called
 
 
 async def test_embedding_counts_to_the_embedding_instance_and_library_rows_never_a_user() -> None:

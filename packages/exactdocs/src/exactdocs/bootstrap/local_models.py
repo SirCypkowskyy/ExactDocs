@@ -83,8 +83,10 @@ class PulledModel:
 def onnx_threads() -> int:
     """Name the ONNX Runtime threads of one call: half the cores, at least one.
 
-    Two calls may run at once (a document batch and a search's call), so together they use the
-    cores without oversubscribing them.
+    Up to three calls may run at once: one document batch (``LOCAL_DOCUMENT_WORKERS``) and two
+    search calls, query embeddings or reranks (``LOCAL_QUERY_WORKERS``). Fully loaded they ask
+    for one and a half times the cores, which the OS shares out; a search alone gets half of them
+    and never waits behind a batch.
 
     Returns:
         The threads.
