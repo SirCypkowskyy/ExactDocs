@@ -1042,7 +1042,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: exactdocs
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U exactdocs -d exactdocs"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U exactdocs -d exactdocs"]
       interval: 2s
       retries: 30
     volumes: ["exactdocs-db:/var/lib/postgresql/data"]
