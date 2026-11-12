@@ -3,7 +3,7 @@
 import logging
 import math
 import secrets
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from uuid import uuid7
@@ -324,10 +324,11 @@ class ResetPasswordUseCase:
         await self.tokens.delete_for_account(account.id)
         username = str(account.username)
         count = await self._forget_throttle(
-            self.failures.forget(f"username:{username}"), "a username's count was not reset"
+            lambda: self.failures.forget(f"username:{username}"),
+            "a username's count was not reset",
         )
         remembered = await self._forget_throttle(
-            self.failures.forget_remembered(username),
+            lambda: self.failures.forget_remembered(username),
             "a username's remembered sign-ins were not forgotten",
         )
         # The worse of the two: either one left undone is worth a warning.
@@ -338,18 +339,19 @@ class ResetPasswordUseCase:
         return PasswordReset(account=AccountSummary.from_model(account), throttle=throttle)
 
     @staticmethod
-    async def _forget_throttle(forgetting: Awaitable[bool], what: str) -> ThrottleReset:
+    async def _forget_throttle(forget: Callable[[], Awaitable[bool]], what: str) -> ThrottleReset:
         """Await one of the throttle's forgets, reporting rather than raising a failure.
 
         Args:
-            forgetting: The forget, not awaited yet.
+            forget: Starts the forget; called inside the ``try``, so a forget that raises
+                before it awaits anything is reported too.
             what: What stays when it fails, for the log.
 
         Returns:
             ``cleared``, ``busy`` (the log skipped it) or ``failed`` (the log raised).
         """
         try:
-            cleared = await forgetting
+            cleared = await forget()
         except Exception as error:  # ruff: ignore[blind-except] - the password changed already
             # No traceback: the reset worked, and one would read as if it had not.
             logger.warning("Sign-in throttle failed: %s (%s)", what, type(error).__name__)

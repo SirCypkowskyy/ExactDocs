@@ -149,7 +149,8 @@ class FailedSignInLog(Protocol):
 
         Returns:
             ``True`` once none is left (dropped, or there was none); ``False`` when the log was
-            too busy to take their turn and left them all as they were.
+            too busy to take their turn and kept some of them (possibly all). Running it again
+            is safe and forgets the rest.
         """
         ...
 

@@ -31,6 +31,7 @@ from exactdocs.identity.constants import (
     _LOCK_NOT_AVAILABLE,
     _SIGN_IN_LOCKS,
     FORGET_FAILURES_AFTER,
+    FORGOTTEN_SIGN_INS_PER_TURN,
     MAX_CONCURRENT_SIGN_IN_TURNS,
     REMEMBER_SIGN_INS_FOR,
     SIGN_IN_TURN_TIMEOUT,
@@ -352,7 +353,9 @@ class SqliteFailedSignInLog:
     with ``turn_timeout`` as its wait and nothing is counted. ``refund``, ``forget`` and
     ``remember_sign_in`` only make the throttle more lenient, so they are skipped (and logged).
     ``forget_remembered`` makes it stricter, but runs after a password reset that is already
-    done: it is skipped too, and returns ``False`` so the reset can say so.
+    done: it stops there too, and returns ``False`` so the reset can say so. It takes its keys'
+    turns ``forgotten_per_turn`` at a time, so a username with many remembered addresses does not
+    fill PostgreSQL's lock table in one transaction.
 
     Old rows are pruned when one is written, without a background job: a charge deletes the
     counts with no failure for ``FORGET_FAILURES_AFTER`` (they no longer hold anyone back), a
@@ -366,6 +369,8 @@ class SqliteFailedSignInLog:
     """Turns one process runs at once, each holding a connection."""
     turn_timeout: timedelta = SIGN_IN_TURN_TIMEOUT
     """Longest wait for a turn, in the process and then in the database."""
+    forgotten_per_turn: int = FORGOTTEN_SIGN_INS_PER_TURN
+    """Remembered sign-ins ``forget_remembered`` deletes in one turn."""
     _queues: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, _TurnQueue] = field(
         default_factory=weakref.WeakKeyDictionary, init=False, repr=False
     )
@@ -439,36 +444,38 @@ class SqliteFailedSignInLog:
     async def forget_remembered(self, username: str) -> bool:
         """Forget every address remembered for ``username``, in the turn of each one.
 
-        The keys are read first, then their turns are taken at once (as ``charge`` takes its
-        keys') and exactly those rows are deleted, so a ``remember_sign_in`` holding one of them
-        finishes first and is deleted after. A sign-in remembered for a new address after the
-        read stays: normally one made with the new password, as the reset set it before; one
-        that checked the old password just before the reset and is still in flight could stay
-        too, as the session it is about to start would.
+        The keys are read first, then deleted in key order, ``forgotten_per_turn`` at a time: each
+        batch takes its keys' turns at once (as ``charge`` takes its keys') and deletes exactly
+        those rows, so a ``remember_sign_in`` holding one of them finishes first and is deleted
+        after. A sign-in remembered for a new address after the read stays: normally one made with
+        the new password, as the reset set it before; one that checked the old password just
+        before the reset and is still in flight could stay too, as the session it is about to
+        start would.
 
         Args:
             username: The (normalised) username.
 
         Returns:
-            ``True`` once none is left (dropped, or there was none); ``False`` when a turn did not
-            come within ``turn_timeout`` and they were all left as they were.
+            ``True`` once none is left (dropped, or there was none); ``False`` when a batch's turn
+            did not come within ``turn_timeout``. The batches before it stay forgotten, that one
+            and the rest are kept, and running it again carries on.
         """
         prefix = known_sign_ins_prefix(username)
         query = select(known_sign_ins.c.key).where(
             known_sign_ins.c.key.startswith(prefix, autoescape=True)
         )
         async with self.engine.connect() as connection:
-            keys = list((await connection.execute(query)).scalars())
-        if not keys:
-            return True
-        try:
-            async with self._turn([f"known:{key}" for key in keys]) as connection:
-                await connection.execute(
-                    delete(known_sign_ins).where(known_sign_ins.c.key.in_(keys))
-                )
-        except _TurnTimeoutError:
-            logger.warning("Sign-in throttle busy: a username's remembered sign-ins were kept")
-            return False
+            keys = sorted((await connection.execute(query)).scalars())
+        for start in range(0, len(keys), self.forgotten_per_turn):
+            batch = keys[start : start + self.forgotten_per_turn]
+            try:
+                async with self._turn([f"known:{key}" for key in batch]) as connection:
+                    await connection.execute(
+                        delete(known_sign_ins).where(known_sign_ins.c.key.in_(batch))
+                    )
+            except _TurnTimeoutError:
+                logger.warning("Sign-in throttle busy: a username's remembered sign-ins were kept")
+                return False
         return True
 
     async def remember_sign_in(self, key: str, now: datetime) -> None:

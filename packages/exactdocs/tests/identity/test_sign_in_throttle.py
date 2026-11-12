@@ -282,6 +282,11 @@ async def _remembered_broken(_log: InMemoryFailedSignInLog, _username: str) -> b
     raise OSError(message)
 
 
+def _remembered_broken_at_once(_log: InMemoryFailedSignInLog, _username: str) -> bool:
+    message = "connection lost"
+    raise OSError(message)  # before there is anything to await
+
+
 async def _cleared(_log: InMemoryFailedSignInLog, _key: str) -> bool:
     return True
 
@@ -291,6 +296,7 @@ async def _cleared(_log: InMemoryFailedSignInLog, _key: str) -> bool:
     [
         (_cleared, _remembered_busy, "busy"),
         (_cleared, _remembered_broken, "failed"),
+        (_cleared, _remembered_broken_at_once, "failed"),
         (_busy, _remembered_broken, "failed"),  # the worse of the two
         (_broken, _remembered_busy, "failed"),
     ],
@@ -320,7 +326,7 @@ async def test_a_reset_whose_remembered_sign_ins_cannot_be_forgotten_still_chang
         credentials(password="a brand new passphrase"), client=ADMIN_HOST
     )
     assert account.username == "ada"  # the new password is in place
-    if forget_remembered is _remembered_broken:
+    if forget_remembered in {_remembered_broken, _remembered_broken_at_once}:
         (record,) = [r for r in caplog.records if "remembered sign-ins" in r.getMessage()]
         assert record.exc_info is None
         assert "OSError" in record.getMessage()

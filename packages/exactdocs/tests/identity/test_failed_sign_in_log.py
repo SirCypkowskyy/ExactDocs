@@ -1,7 +1,7 @@
 """Adapter contract: every ``FailedSignInLog`` behaves the same, whatever keeps the counts."""
 
 import asyncio
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
@@ -171,6 +171,28 @@ async def test_forget_remembered_drops_every_sign_in_of_the_username_and_nothing
         assert await log.signed_in_before(key, LATER)
 
 
+@pytest.mark.parametrize(
+    ("username", "theirs"),
+    [
+        ("a%a", "abca"),  # what an unescaped LIKE "a%a@address:%" would match
+        ("a/a", "a//a"),  # "/" is the escape character autoescape picks
+        ("a/", "a//"),
+        ("a\\a", "a\\\\a"),  # a backslash, LIKE's default escape character
+    ],
+)
+async def test_forget_remembered_takes_like_wildcards_and_escapes_literally(
+    log: FailedSignInLog, username: str, theirs: str
+) -> None:
+    ours = f"{username}@address:203.0.113.7"
+    others = [f"{theirs}@address:203.0.113.7", "a@address:203.0.113.7"]
+    for key in [ours, *others]:
+        await log.remember_sign_in(key, START)
+
+    assert await log.forget_remembered(username) is True
+
+    assert sorted((await _state(log))[1]) == sorted(others)
+
+
 async def test_a_sign_in_is_remembered_for_a_while(log: FailedSignInLog) -> None:
     await log.remember_sign_in("ada@address:a", START)
 
@@ -327,7 +349,7 @@ async def test_forget_remembered_that_waits_too_long_says_so_and_keeps_them(
         forgotten = await impatient.forget_remembered("ada")
 
     assert forgotten is False
-    assert await _state(impatient) == before  # all or nothing: "a" stays too
+    assert await _state(impatient) == before  # one turn for both: "a" stays too
 
 
 async def test_forget_remembered_that_waits_too_long_for_another_process_says_so(
@@ -357,3 +379,68 @@ async def test_forget_remembered_waits_for_a_sign_in_holding_the_turn(
     assert await forgetting is True
 
     assert not await sql_log.signed_in_before("ada@address:a", LATER)
+
+
+async def _remember_many(log: SqliteFailedSignInLog, username: str, count: int) -> list[str]:
+    """Remember ``count`` addresses for ``username`` in one statement; return their keys."""
+    keys = [f"{username}@address:2001:db8:{n:x}::/64" for n in range(count)]
+    stamp = START.isoformat()
+    async with log.engine.begin() as connection:
+        await connection.execute(
+            text("INSERT INTO identity_known_sign_ins (key, signed_in_at) VALUES (:key, :at)"),
+            [{"key": key, "at": stamp} for key in keys],
+        )
+    return keys
+
+
+async def test_forget_remembered_takes_its_turns_a_batch_at_a_time(
+    sql_log: SqliteFailedSignInLog, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    batched = SqliteFailedSignInLog(engine=sql_log.engine, forgotten_per_turn=4)
+    await _remember_many(batched, "ada", 2 * 4 + 1)
+    await batched.remember_sign_in("bob@address:a", START)
+    turns: list[int] = []
+    take_turn = SqliteFailedSignInLog._turn  # ruff: ignore[private-member-access]
+
+    def counted(log: SqliteFailedSignInLog, keys: Iterable[str]) -> object:
+        keys = list(keys)
+        turns.append(len(keys))
+        return take_turn(log, keys)
+
+    monkeypatch.setattr(SqliteFailedSignInLog, "_turn", counted)
+
+    assert await batched.forget_remembered("ada") is True
+
+    assert turns == [4, 4, 1]
+    assert (await _state(batched))[1] == {"bob@address:a": START.isoformat()}
+
+
+async def test_forget_remembered_that_waits_too_long_on_a_later_batch_keeps_only_the_rest(
+    postgres_log: SqliteFailedSignInLog,
+) -> None:
+    # On PostgreSQL only: on SQLite the turn held on "c" holds the database's write turn too.
+    impatient = SqliteFailedSignInLog(
+        engine=postgres_log.engine, turn_timeout=timedelta(seconds=0.2), forgotten_per_turn=2
+    )
+    for address in "abc":
+        await impatient.remember_sign_in(f"ada@address:{address}", START)
+    async with impatient._turn(["known:ada@address:c"]):  # ruff: ignore[private-member-access]
+        forgotten = await impatient.forget_remembered("ada")
+
+    assert forgotten is False
+    assert sorted((await _state(impatient))[1]) == ["ada@address:c"]
+    assert await impatient.forget_remembered("ada") is True  # running it again carries on
+    assert (await _state(impatient))[1] == {}
+
+
+async def test_forget_remembered_clears_more_addresses_than_one_transaction_can_lock(
+    postgres_log: SqliteFailedSignInLog,
+) -> None:
+    # One transaction locking all 20,000 ran out of PostgreSQL's shared lock table (the default
+    # max_locks_per_transaction=64 times max_connections=100 holds 6,400).
+    await _remember_many(postgres_log, "ada", 20_000)
+    await postgres_log.remember_sign_in("bob@address:a", START)
+
+    assert await postgres_log.forget_remembered("ada") is True
+
+    assert list((await _state(postgres_log))[1]) == ["bob@address:a"]

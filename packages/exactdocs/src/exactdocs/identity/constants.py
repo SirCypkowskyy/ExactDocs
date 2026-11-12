@@ -84,6 +84,12 @@ SIGN_IN_TURN_TIMEOUT: Final[timedelta] = timedelta(seconds=5)
 database (PostgreSQL's ``lock_timeout``). An attempt that runs out is refused with this as its
 ``Retry-After``, uncounted (it fails closed); a right password's reset is then skipped.
 """
+FORGOTTEN_SIGN_INS_PER_TURN: Final[int] = 256
+"""Remembered sign-ins ``forget_remembered`` deletes in one turn (one transaction). Each key is one
+PostgreSQL advisory lock held to the end of the transaction, and the shared lock table only holds
+``max_locks_per_transaction`` (default 64) times ``max_connections`` of them: one turn for every key
+of a username with tens of thousands of remembered addresses ran out of it and failed every time.
+"""
 _LOCK_NOT_AVAILABLE: Final[str] = "55P03"
 """PostgreSQL's SQLSTATE for a lock wait that hit ``lock_timeout``."""
 _SIGN_IN_LOCKS: Final[int] = 0x45584449
