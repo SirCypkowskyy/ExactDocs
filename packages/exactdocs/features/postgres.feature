@@ -9,6 +9,11 @@ Feature: A shared instance runs on PostgreSQL with several server processes
     When a library is imported through the first
     Then the second serves it, and the import ran exactly once
 
+  Scenario: Failed sign-ins count on every process
+    Given two ExactDocs processes use the same PostgreSQL database
+    When 5 sign-ins for "admin" fail, each from a different address, alternating between the processes
+    Then the next sign-in for "admin", from a new address, is throttled on both processes
+
   Scenario: DBOS needs no second database
     Given the database role may not create databases
     When ExactDocs starts on PostgreSQL
