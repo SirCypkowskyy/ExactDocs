@@ -6,7 +6,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.security import APIKeyCookie, HTTPAuthorizationCredentials, HTTPBearer
 
-from exactdocs.identity.constants import _THROTTLED, COOKIE_ATTRS, SESSION_COOKIE
+from exactdocs.identity.constants import (
+    _THROTTLED,
+    COOKIE_ATTRS,
+    CREATE_TOKEN_DESCRIPTION,
+    LOGIN_FOR_TOKEN_DESCRIPTION,
+    SESSION_COOKIE,
+)
 from exactdocs.identity.dtos import (
     AccountSummary,
     AuthenticateQuery,
@@ -164,7 +170,7 @@ def build_tokens_router(
     router = APIRouter(tags=["identity"], dependencies=[Depends(session_caller)])
     caller = Annotated[AccountSummary, Depends(session_caller)]
 
-    @router.post("/tokens", status_code=201)
+    @router.post("/tokens", status_code=201, description=CREATE_TOKEN_DESCRIPTION)
     async def create(
         command: CreateTokenCommand, account: caller, response: Response
     ) -> TokenGrant:
@@ -276,7 +282,12 @@ def build_router(
         response.headers["Cache-Control"] = "no-store"
         return await get_session_state(request.cookies.get(SESSION_COOKIE))
 
-    @router.post("/tokens/login", status_code=201, responses=_THROTTLED)
+    @router.post(
+        "/tokens/login",
+        status_code=201,
+        responses=_THROTTLED,
+        description=LOGIN_FOR_TOKEN_DESCRIPTION,
+    )
     async def login(
         command: LoginForTokenCommand, request: Request, response: Response
     ) -> TokenGrant:

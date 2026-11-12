@@ -13,6 +13,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.rest import v1_openapi_json
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.identity.constants import MAX_TOKENS_PER_ACCOUNT
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")
 
@@ -107,6 +108,13 @@ def test_operation_descriptions_leave_out_the_python_docstring_sections(app) -> 
     assert not [
         d for d in descriptions if re.search(r"^\s*(Args|Returns|Raises):", d, re.MULTILINE)
     ]
+
+
+def test_the_token_routes_name_the_token_cap(app) -> None:
+    paths = json.loads(v1_openapi_json(app))["paths"]
+
+    for path in ["/api/v1/tokens", "/api/v1/tokens/login"]:
+        assert f"at most {MAX_TOKENS_PER_ACCOUNT} tokens" in paths[path]["post"]["description"]
 
 
 def test_committed_openapi_file_is_up_to_date(app) -> None:

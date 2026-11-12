@@ -63,7 +63,7 @@ export interface paths {
         readonly put?: never;
         /**
          * Login
-         * @description Exchange a username and password for a new API token (what ``exactdocs login`` does).
+         * @description Exchange a username and password for a new API token (what `exactdocs login` does). An account holds at most 50 tokens; one more is refused with `too_many_tokens` (409) until one is revoked.
          */
         readonly post: operations["identity-login"];
         readonly delete?: never;
@@ -87,7 +87,7 @@ export interface paths {
         readonly put?: never;
         /**
          * Create
-         * @description Create an API token for the signed-in account. The secret is in this response only.
+         * @description Create an API token for the signed-in account. The secret is in this response only. An account holds at most 50 tokens; one more is refused with `too_many_tokens` (409) until one is revoked.
          */
         readonly post: operations["identity-create"];
         readonly delete?: never;
@@ -1016,7 +1016,7 @@ export interface components {
             readonly id: string;
             /**
              * Username
-             * @description The login name, normalised: case-folded, so `Admin` signs in as `admin`.
+             * @description The login name, normalised (NFKC, trimmed, case-folded): `Admin` signs in as `admin`.
              */
             readonly username: string;
             /**
@@ -1760,7 +1760,7 @@ export interface components {
         readonly CreateFirstAdminCommand: {
             /**
              * Username
-             * @description Login name of the first admin: 1 to 64 characters, no whitespace or control characters.
+             * @description Login name of the first admin: 1 to 64 characters once normalised (Unicode NFKC, trimmed, case-folded), no whitespace or control characters.
              */
             readonly username: string;
             /**
@@ -1777,7 +1777,7 @@ export interface components {
         readonly CreateTokenCommand: {
             /**
              * Name
-             * @description Label of the new token, 1 to 64 characters, to tell it apart in the token list.
+             * @description Label of the new token, to tell it apart in the token list: 1 to 64 characters once trimmed. `maxLength` (256) only caps the raw input; a name longer than 64 characters after trimming, or a blank one, is refused with `invalid_token_name` (422).
              */
             readonly name: string;
             /**
@@ -2618,7 +2618,7 @@ export interface components {
             readonly password: string;
             /**
              * Name
-             * @description Label of the new token, 1 to 64 characters, to tell it apart in the token list.
+             * @description Label of the new token, to tell it apart in the token list: 1 to 64 characters once trimmed. `maxLength` (256) only caps the raw input; a name longer than 64 characters after trimming, or a blank one, is refused with `invalid_token_name` (422).
              */
             readonly name: string;
             /**

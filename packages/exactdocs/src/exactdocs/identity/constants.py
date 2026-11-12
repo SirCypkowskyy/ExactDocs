@@ -51,6 +51,24 @@ MIN_PASSWORD_LENGTH: Final[int] = 12
 """Shortest password an account may have, in characters."""
 MAX_PASSWORD_LENGTH: Final[int] = 1024
 """Bounds the work a request can make the hasher do."""
+MAX_TOKEN_NAME_INPUT: Final[int] = 4 * MAX_TOKEN_NAME_LENGTH
+"""Longest token name a request may send: a cap on the raw input, checked before it is trimmed and
+held to ``MAX_TOKEN_NAME_LENGTH``.
+"""
+USERNAME_DESCRIPTION: Final[str] = (
+    f"Login name of the first admin: 1 to {MAX_USERNAME_LENGTH} characters once normalised "
+    "(Unicode NFKC, trimmed, case-folded), no whitespace or control characters."
+)
+"""OpenAPI description of the first admin's username, built from the limit so it cannot drift."""
+NEW_PASSWORD_DESCRIPTION: Final[str] = f"{MIN_PASSWORD_LENGTH} to {MAX_PASSWORD_LENGTH} characters."
+"""OpenAPI description tail of a password being set, built from the limits so they cannot drift."""
+TOKEN_NAME_DESCRIPTION: Final[str] = (
+    f"Label of the new token, to tell it apart in the token list: 1 to {MAX_TOKEN_NAME_LENGTH} "
+    f"characters once trimmed. `maxLength` ({MAX_TOKEN_NAME_INPUT}) only caps the raw input; "
+    f"a name longer than {MAX_TOKEN_NAME_LENGTH} characters after trimming, or a blank one, is "
+    "refused with `invalid_token_name` (422)."
+)
+"""OpenAPI description of a new token's name, built from the limits so they cannot drift."""
 
 # ---------------------------------------------------------------- use_cases
 MAX_TOKENS_PER_ACCOUNT: Final[int] = 50
@@ -102,6 +120,18 @@ SESSION_COOKIE: Final[str] = "exactdocs_session"
 COOKIE_PATH: Final[str] = "/api"
 """Only `/api` needs the cookie (the UI itself is static), so the browser never sends it to `/mcp`.
 """
+CREATE_TOKEN_DESCRIPTION: Final[str] = (
+    "Create an API token for the signed-in account. The secret is in this response only. "
+    f"An account holds at most {MAX_TOKENS_PER_ACCOUNT} tokens; one more is refused with "
+    "`too_many_tokens` (409) until one is revoked."
+)
+"""OpenAPI description of ``POST /tokens``, built from the token cap so it cannot drift."""
+LOGIN_FOR_TOKEN_DESCRIPTION: Final[str] = (
+    "Exchange a username and password for a new API token (what `exactdocs login` does). "
+    f"An account holds at most {MAX_TOKENS_PER_ACCOUNT} tokens; one more is refused with "
+    "`too_many_tokens` (409) until one is revoked."
+)
+"""OpenAPI description of ``POST /tokens/login``, built from the token cap so it cannot drift."""
 _THROTTLED: Final[dict[int | str, dict[str, object]]] = {
     429: {
         "description": (

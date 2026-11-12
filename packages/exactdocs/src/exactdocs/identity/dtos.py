@@ -7,9 +7,12 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr
 
 from exactdocs.identity.constants import (
     MAX_PASSWORD_LENGTH,
-    MAX_TOKEN_NAME_LENGTH,
+    MAX_TOKEN_NAME_INPUT,
     MAX_USERNAME_LENGTH,
     MIN_PASSWORD_LENGTH,
+    NEW_PASSWORD_DESCRIPTION,
+    TOKEN_NAME_DESCRIPTION,
+    USERNAME_DESCRIPTION,
 )
 from exactdocs.identity.models import Account, ApiToken
 
@@ -24,7 +27,7 @@ class AccountSummary(_Dto):
     id: str
     """Stable identifier of the account."""
     username: str
-    """The login name, normalised: case-folded, so `Admin` signs in as `admin`."""
+    """The login name, normalised (NFKC, trimmed, case-folded): `Admin` signs in as `admin`."""
     role: str
     """What the account may do; `admin` is the only role so far."""
 
@@ -51,10 +54,14 @@ class SetupState(_Dto):
 class CreateFirstAdminCommand(_Dto):
     """The first admin's credentials. The password is a ``SecretStr``: never shown in a repr."""
 
-    username: str
-    """Login name of the first admin: 1 to 64 characters, no whitespace or control characters."""
-    password: SecretStr = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
-    """Password of the first admin, 12 to 1024 characters."""
+    username: str = Field(description=USERNAME_DESCRIPTION)
+    """Login name of the first admin; its schema description is ``USERNAME_DESCRIPTION``."""
+    password: SecretStr = Field(
+        min_length=MIN_PASSWORD_LENGTH,
+        max_length=MAX_PASSWORD_LENGTH,
+        description=f"Password of the first admin, {NEW_PASSWORD_DESCRIPTION}",
+    )
+    """Password of the first admin; its schema description names the length limits."""
 
 
 class AuthenticateQuery(_Dto):
@@ -73,8 +80,8 @@ class LoginForTokenCommand(_Dto):
     """Login name of the account, compared case-insensitively."""
     password: SecretStr = Field(max_length=MAX_PASSWORD_LENGTH)
     """Password of the account."""
-    name: str = Field(max_length=4 * MAX_TOKEN_NAME_LENGTH)
-    """Label of the new token, 1 to 64 characters, to tell it apart in the token list."""
+    name: str = Field(max_length=MAX_TOKEN_NAME_INPUT, description=TOKEN_NAME_DESCRIPTION)
+    """Label of the new token; its schema description is ``TOKEN_NAME_DESCRIPTION``."""
     expires_at: AwareDatetime | None = None
     """When the token stops working (in the future, with a timezone); omit it for no expiry."""
 
@@ -84,8 +91,12 @@ class ResetPasswordCommand(_Dto):
 
     username: str
     """Login name of the account, compared case-insensitively."""
-    password: SecretStr = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
-    """The new password, 12 to 1024 characters."""
+    password: SecretStr = Field(
+        min_length=MIN_PASSWORD_LENGTH,
+        max_length=MAX_PASSWORD_LENGTH,
+        description=f"The new password, {NEW_PASSWORD_DESCRIPTION}",
+    )
+    """The new password; its schema description names the length limits."""
 
 
 ThrottleReset = Literal["cleared", "busy", "failed"]
@@ -111,7 +122,7 @@ class SessionGrant(_Dto):
     """A new session. ``token`` is the only copy of the secret; hand it to the browser."""
 
     token: SecretStr
-    """The session's secret, shown only this once."""
+    """The session's secret, handed to the browser as the session cookie (never sent as JSON)."""
     account: AccountSummary
     """The account now signed in."""
     max_age: int
@@ -130,8 +141,8 @@ class SessionState(_Dto):
 class CreateTokenCommand(_Dto):
     """A new API token for the caller. ``expires_at`` (timezone-aware) is optional."""
 
-    name: str = Field(max_length=4 * MAX_TOKEN_NAME_LENGTH)  # cap the input before validating
-    """Label of the new token, 1 to 64 characters, to tell it apart in the token list."""
+    name: str = Field(max_length=MAX_TOKEN_NAME_INPUT, description=TOKEN_NAME_DESCRIPTION)
+    """Label of the new token; its schema description is ``TOKEN_NAME_DESCRIPTION``."""
     expires_at: AwareDatetime | None = None
     """When the token stops working (in the future, with a timezone); omit it for no expiry."""
 
