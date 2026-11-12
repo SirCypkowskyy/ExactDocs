@@ -229,12 +229,15 @@ password takes its own attempt back (without restarting the address's wait) and 
 username's count. An address that has signed
 into a username in the last 30 days is held to its own count only, not to the username's, so
 others failing for the admin's username cannot lock the admin out of a machine they already
-use; a new address still waits. Behind a reverse proxy, list it in
+use; a new address still waits. `admin reset-password` forgets every address remembered for
+the username, so one that signed in with the old password is held to the username's count
+again. Behind a reverse proxy, list it in
 `EXACTDOCS_FORWARDED_ALLOW_IPS`, so the throttle counts the client's address rather than the
-proxy's. On SQLite the counts are kept in the server's memory: restarting the server clears
-them, and nothing else does (`admin reset-password` runs in another process and cannot). On
-PostgreSQL they are kept in the database, so every server process counts the same failures and
-a restart keeps them (`admin reset-password` drops the username's count); each count is dropped
+proxy's. On SQLite the counts and remembered addresses are kept in the server's memory:
+restarting the server clears them, and nothing else does (`admin reset-password` runs in another
+process and cannot). On PostgreSQL they are kept in the database, so every server process counts
+the same failures and a restart keeps them (`admin reset-password` drops the username's count
+and its remembered addresses on every process); each count is dropped
 once an hour has passed without a failure. If the database is too busy to count an attempt
 within 5 seconds, the attempt is refused (429).
 
@@ -242,9 +245,12 @@ The web UI signs the admin in with `POST /api/v1/session`: an HttpOnly, SameSite
 ends after 7 days without use or 30 days at most, and that only works on `/api` (never on `/mcp`).
 Lost the password? Run `exactdocs admin reset-password` on the machine (same options as
 `admin create`): it sets a new password, signs the admin out everywhere and revokes
-the API tokens. If sign-ins are throttled meanwhile (429): on SQLite, restart the server to
-clear the throttle. On PostgreSQL the command also clears the username's count, so the new
-password works straight away on every server process (the client addresses' counts stay),
+the API tokens. If sign-ins are throttled meanwhile (429), or the old password may have leaked:
+on SQLite, restart the server, which clears the throttle and the addresses it remembers (an
+address that signed in with the old password is otherwise not held to the username's count). On
+PostgreSQL the command also clears the username's count and forgets every address remembered
+for it, so the new password works straight away on every server process and every address is
+held to the username's count again (the client addresses' counts and other usernames' stay),
 unless it warns that the sign-in throttle was busy or failed: the password has changed all the
 same, so run the command again (that is safe) or wait out the `Retry-After`.
 
