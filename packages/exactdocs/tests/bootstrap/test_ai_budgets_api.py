@@ -440,8 +440,10 @@ async def test_the_leader_survives_its_session_being_terminated(on_postgres: obj
             async with admin.connect() as connection:
                 await connection.execute(
                     text(
-                        "SELECT pg_terminate_backend(pid) FROM pg_locks "
-                        "WHERE locktype = 'advisory' AND pid <> pg_backend_pid()"
+                        "SELECT pg_terminate_backend(l.pid, 5000) FROM pg_locks l "
+                        "JOIN pg_database d ON d.oid = l.database "
+                        "WHERE d.datname = current_database() AND l.locktype = 'advisory' "
+                        "AND l.pid <> pg_backend_pid()"
                     )
                 )
                 await connection.commit()

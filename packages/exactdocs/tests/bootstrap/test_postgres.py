@@ -297,20 +297,31 @@ async def test_a_writer_that_waits_too_long_for_its_turn_fails_clearly(
         assert await later.scalar(text("SHOW lock_timeout")) == "0"  # only the turn waits
 
 
+TERMINATE_WAIT_MS = 5000
+"""How long ``pg_terminate_backend`` waits for a backend to exit (and release its locks)."""
+
+
 async def _drop_slot_connection(engine: AsyncEngine, slot: int) -> None:
-    """Kill the backend that holds the slot, as a failover or an idle timeout would."""
+    """Kill the backend that holds the slot, as a failover or an idle timeout would.
+
+    Only this test's database is searched: another run on the same server holds slots of its own.
+    Returns once the backend has exited, so its advisory lock is released by then.
+    """
     async with engine.connect() as connection:
-        killed = await connection.scalar(
-            text(
-                "SELECT count(pg_terminate_backend(pid)) FROM pg_locks"
-                " WHERE locktype = 'advisory' AND classid = 1163412547 AND objid = :slot"
-                " AND objsubid = 2"
-            ),
-            {"slot": slot},
-        )
+        killed = (
+            await connection.execute(
+                text(
+                    "SELECT pg_terminate_backend(l.pid, :wait) FROM pg_locks l"
+                    " JOIN pg_database d ON d.oid = l.database"
+                    " WHERE d.datname = current_database() AND l.locktype = 'advisory'"
+                    " AND l.classid = 1163412547 AND l.objid = :slot AND l.objsubid = 2"
+                ),
+                {"slot": slot, "wait": TERMINATE_WAIT_MS},
+            )
+        ).scalars()
+        exited = list(killed)
         await connection.commit()
-    assert killed == 1
-    await asyncio.sleep(0.1)  # the server ends the backend asynchronously
+    assert exited == [True]  # one holder, gone within the wait
 
 
 async def test_a_process_whose_slot_connection_died_takes_it_back_or_stops(
@@ -573,24 +584,17 @@ async def test_a_slot_taken_by_another_process_before_dbos_starts_fails_the_star
 
 
 def _terminate_backends(database: str) -> None:
-    """Kill every backend on the database, from outside it (synchronously)."""
+    """Kill every backend on the database, from outside it, and wait until they have exited."""
     admin_url = make_url(ADMIN_URL or "").set(drivername="postgresql")
     with psycopg.connect(admin_url.render_as_string(hide_password=False), autocommit=True) as a:
-        a.execute(
-            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
+        exited = a.execute(
+            "SELECT pg_terminate_backend(pid, %s) FROM pg_stat_activity"
             " WHERE datname = %s AND pid <> pg_backend_pid()",
-            (database,),
-        )
-    time.sleep(0.1)  # the server ends the backends asynchronously
+            (TERMINATE_WAIT_MS, database),
+        ).fetchall()
+    assert all(gone for (gone,) in exited)  # each one exited within the wait
 
 
 async def _drop_slot_connection_as_admin(database: str) -> None:
-    """Kill every backend on the database, from outside it."""
-    admin_url = make_url(ADMIN_URL or "").set(drivername="postgresql")
-    with psycopg.connect(admin_url.render_as_string(hide_password=False), autocommit=True) as a:
-        a.execute(
-            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
-            " WHERE datname = %s AND pid <> pg_backend_pid()",
-            (database,),
-        )
-    await asyncio.sleep(0.1)
+    """Kill every backend on the database, from outside it, and wait until they have exited."""
+    await asyncio.to_thread(_terminate_backends, database)
