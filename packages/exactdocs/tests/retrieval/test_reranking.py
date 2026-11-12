@@ -524,6 +524,21 @@ def test_an_unset_timeout_is_longer_for_a_local_reranker(
     assert limits.timeout_for(kind) == seconds
 
 
+@pytest.mark.parametrize(
+    ("limits", "seconds"),
+    [
+        (RerankLimits(), 5.0),
+        (RerankLimits(local_timeout=0.5), 2.0),
+        (RerankLimits(local_timeout=9.0), 9.0),
+        (RerankLimits(timeout=1.5), 1.5),
+    ],
+)
+def test_the_profile_read_is_bounded_by_the_longest_timeout_it_could_need(
+    limits: RerankLimits, seconds: float
+) -> None:
+    assert limits.longest == seconds
+
+
 async def test_a_library_reranking_on_a_local_profile_gets_the_local_timeout(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
