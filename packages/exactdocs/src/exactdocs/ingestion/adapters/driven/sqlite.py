@@ -141,6 +141,30 @@ class SqliteJobRepository:
         async with self.engine.connect() as connection:
             return [_job(row) for row in await connection.execute(query)]
 
+    async def list_page_for_library(
+        self, library: str, *, before: str | None, limit: int
+    ) -> Sequence[Job]:
+        """Return up to ``limit`` of the library's jobs with an ID below ``before``, newest first.
+
+        A keyset query (``id < :before ORDER BY id DESC LIMIT :limit``), so only the page's
+        rows, problems included, are read. Text columns compare by code point on both
+        databases (PostgreSQL's are collated ``C`` by the migration), as Python compares str.
+
+        Args:
+            library: The library whose jobs are listed.
+            before: Only jobs whose ID sorts before this one; ``None`` starts at the newest.
+            limit: At most this many jobs.
+
+        Returns:
+            The page, highest ID first.
+        """
+        query = select(jobs).where(jobs.c.library == library)
+        if before is not None:
+            query = query.where(jobs.c.id < before)
+        query = query.order_by(jobs.c.id.desc()).limit(limit)
+        async with self.engine.connect() as connection:
+            return [_job(row) for row in await connection.execute(query)]
+
     async def list_latest(self) -> Sequence[Job]:
         """Return the newest job of every (library, version), ordered by library and version."""
         # One grouped query (job IDs are time-ordered, so max(id) is the newest); NULL versions

@@ -10,11 +10,12 @@ import pytest
 from databases import SQL_BACKENDS
 from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.ingestion.adapters.driven import sqlite as sql_adapter
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository, jobs
 from exactdocs.ingestion.constants import JobKind
 from exactdocs.ingestion.errors import VersionImportingError
-from exactdocs.ingestion.models import Job, JobId, JobState, ProblemCode, RefKind
+from exactdocs.ingestion.models import FileProblem, Job, JobId, JobState, ProblemCode, RefKind
 from exactdocs.ingestion.ports import JobRepository
 
 T0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
@@ -102,6 +103,73 @@ async def test_a_library_lists_its_own_jobs_newest_first(repository: JobReposito
     listed = await repository.list_for_library("/acme/payments")
 
     assert [job.id for job in listed] == ["job-3", "job-2", "job-1"]
+
+
+async def test_a_library_with_more_jobs_than_a_page_is_paged_newest_first(
+    repository: JobRepository,
+) -> None:
+    for number in range(7):
+        await repository.add(queued(f"job-{number}", version=f"v{number}"))
+    await repository.add(queued("job-9", library="/acme/ledger"))  # newer, another library
+
+    pages: list[list[str]] = []
+    before: str | None = None
+    while True:
+        page = await repository.list_page_for_library("/acme/payments", before=before, limit=3)
+        pages.append([job.id for job in page])
+        if len(page) < 3:
+            break
+        before = page[-1].id
+
+    assert pages == [["job-6", "job-5", "job-4"], ["job-3", "job-2", "job-1"], ["job-0"]]
+
+
+async def test_a_page_of_a_library_carries_its_jobs_problems(repository: JobRepository) -> None:
+    for number in range(5):
+        await repository.add(
+            queued(f"job-{number}", version=f"v{number}")
+            .started(T0)
+            .with_problem(f"skipped-{number}.png", ProblemCode.BINARY, "binary file")
+            .succeeded(T0)
+        )
+
+    page = await repository.list_page_for_library("/acme/payments", before="job-4", limit=2)
+
+    assert [(job.id, [p.path for p in job.problems]) for job in page] == [
+        ("job-3", ["skipped-3.png"]),
+        ("job-2", ["skipped-2.png"]),
+    ]
+
+
+@pytest.mark.parametrize("backend", SQL_BACKENDS)
+async def test_a_page_of_a_library_reads_only_that_pages_rows(
+    backend: str, request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if backend == "postgres":
+        request.getfixturevalue("on_postgres")
+    engine = open_database(Settings())
+    await migrate(engine)
+    repository = SqliteJobRepository(engine=engine)
+    for number in range(20):
+        await repository.add(
+            queued(f"job-{number:02}", version=f"v{number}").with_problem(
+                f"skipped-{number:02}.png", ProblemCode.BINARY, "binary file"
+            )
+        )
+    read: list[str] = []
+
+    def counting(*, path: str, code: ProblemCode, reason: str) -> FileProblem:
+        read.append(path)
+        return FileProblem(path=path, code=code, reason=reason)
+
+    # every stored problem the query brings back is read into a FileProblem
+    monkeypatch.setattr(sql_adapter, "FileProblem", counting)
+
+    page = await repository.list_page_for_library("/acme/payments", before="job-15", limit=4)
+    await engine.dispose()
+
+    assert [job.id for job in page] == ["job-14", "job-13", "job-12", "job-11"]
+    assert read == [f"skipped-{n}.png" for n in (14, 13, 12, 11)]
 
 
 async def test_the_latest_job_of_each_library_and_version_is_listed(
