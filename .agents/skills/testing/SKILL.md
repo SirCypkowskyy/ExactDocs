@@ -42,6 +42,11 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   app only: `app.router.lifespan_context(app)` in the test body, or `serving(app)` from
   `tests/fixtures/app_lifespan.py` in an async fixture. Don't also wrap it in `container.running()`.
 - Async tests need no decorator (`asyncio_mode = "auto"`). Warnings are errors (`filterwarnings = error`).
+- **Close every SQLite connection a test opens**, or the garbage collector finalizes it during a
+  later test, which then fails with "unclosed database". An autouse guard
+  (`tests/fixtures/sqlite_guard.py`) fails the test itself when a connection it opened is still open
+  at teardown. `with sqlite3.connect()` does not close: use `contextlib.closing`. A container built
+  but never run must have its engine disposed (`await container.engine.dispose()`).
 
 ## MCP tool snapshot
 
