@@ -1,6 +1,6 @@
 import pytest
 
-from exactdocs_kernel import InvalidCursorError, paginate
+from exactdocs_kernel import InvalidCursorError, decode_cursor, encode_cursor, paginate
 
 KEYS = ["a", "b", "c", "d", "e"]
 
@@ -45,6 +45,25 @@ def test_descending_pages_walk_a_newest_first_list() -> None:
 def test_foreign_cursor_is_rejected(cursor: str) -> None:
     with pytest.raises(InvalidCursorError):
         paginate(KEYS, key=str, limit=2, cursor=cursor)
+
+
+@pytest.mark.parametrize(
+    "cursor",
+    [
+        pytest.param("AA", id="only NUL"),
+        pytest.param("YQBi", id="NUL inside"),
+        pytest.param(encode_cursor("job-\x00"), id="NUL at the end"),
+    ],
+)
+def test_a_cursor_whose_key_holds_nul_is_rejected(cursor: str) -> None:
+    # no key we encode holds NUL; PostgreSQL text would refuse it with a server error
+    with pytest.raises(InvalidCursorError):
+        decode_cursor(cursor)
+
+
+@pytest.mark.parametrize("key", ["job-1", "żółw", "\U0010ffff", "a b/c"])
+def test_a_cursor_decodes_to_the_key_it_was_encoded_from(key: str) -> None:
+    assert decode_cursor(encode_cursor(key)) == key
 
 
 @pytest.mark.parametrize("limit", [0, -1, 201])

@@ -63,6 +63,22 @@ class JobRepository(Protocol):
         """Return the library's jobs, newest first (job IDs are time-ordered)."""
         ...
 
+    async def list_page_for_library(
+        self, library: str, *, before: str | None, limit: int
+    ) -> Sequence[Job]:
+        """Return one page of the library's jobs, newest first, without loading the others.
+
+        Args:
+            library: The library whose jobs are listed.
+            before: Only jobs whose ID sorts before this one (the last job of the previous
+                page, compared by code point); ``None`` starts at the newest job.
+            limit: At most this many jobs.
+
+        Returns:
+            Up to ``limit`` jobs, with their problems, highest ID first.
+        """
+        ...
+
     async def list_latest(self) -> Sequence[Job]:
         """Return the newest job of every (library, version), ordered by library and version."""
         ...

@@ -212,7 +212,14 @@ from exactdocs.ingestion.ports.driven import (
     VersionPublisher,
 )
 from exactdocs.ingestion.ports.driving import EnqueueJob, RemoveVersion, SyncLibraryFromRefs
-from exactdocs_kernel import Clock, DomainError, NotFoundError, paginate
+from exactdocs_kernel import (
+    Clock,
+    DomainError,
+    NotFoundError,
+    Page,
+    decode_cursor,
+    encode_cursor,
+)
 
 log = logging.getLogger(__name__)
 
@@ -307,14 +314,18 @@ class ListLibraryJobsUseCase:
     jobs: JobRepository
 
     async def __call__(self, query: ListLibraryJobsQuery) -> JobList:
-        """List a page of the library's jobs, newest first."""
-        # ponytail: loads all of the library's jobs, then pages in memory; a keyset query in
-        # the repository once a library has thousands of jobs.
-        jobs = await self.jobs.list_for_library(query.library)
-        page = paginate(
-            jobs, key=lambda job: job.id, limit=query.limit, cursor=query.cursor, descending=True
+        """List a page of the library's jobs, newest first; only that page is read."""
+        before = decode_cursor(query.cursor) if query.cursor is not None else None
+        jobs = await self.jobs.list_page_for_library(
+            query.library,
+            before=before,
+            limit=query.limit + 1,  # one more than asked tells whether another page follows
         )
-        return JobList.from_page(page)
+        page = list(jobs[: query.limit])
+        more = len(jobs) > query.limit
+        return JobList.from_page(
+            Page(items=page, next_cursor=encode_cursor(page[-1].id) if more else None)
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

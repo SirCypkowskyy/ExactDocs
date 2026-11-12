@@ -1,6 +1,7 @@
 """Jobs end to end through the driving ports, with the in-memory repository."""
 
 import asyncio
+from datetime import UTC, datetime
 
 import pytest
 
@@ -18,7 +19,8 @@ from exactdocs.ingestion.errors import (
 )
 from exactdocs.ingestion.models import Job, JobId, JobState, ProblemCode
 from exactdocs.ingestion.ports import JobProgress
-from exactdocs_kernel import ValidationError
+from exactdocs.ingestion.use_cases import ListLibraryJobsUseCase
+from exactdocs_kernel import InvalidCursorError, ValidationError
 
 IMPORT = JobKind("import")
 
@@ -398,3 +400,51 @@ async def test_run_job_leaves_a_finished_or_unknown_job_alone(
     await build_module({IMPORT: succeed}).run_job(job_id)
 
     assert jobs.jobs == {JobId("finished"): finished}
+
+
+class _PagesOnly(InMemoryJobRepository):
+    """A repository that refuses to hand over a library's jobs except one page at a time."""
+
+    async def list_for_library(self, library: str) -> list[Job]:
+        loaded_everything = f"every job of {library} was loaded to serve one page"
+        raise AssertionError(loaded_everything)
+
+
+async def test_a_page_of_jobs_is_read_from_the_repository_one_page_at_a_time() -> None:
+    jobs = _PagesOnly()
+    for number in range(5):
+        await jobs.add(
+            Job.queued(
+                job_id=JobId(f"job-{number}"),
+                kind=IMPORT,
+                library="/acme/payments",
+                version=f"v{number}",
+                now=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+        )
+    listing = ListLibraryJobsUseCase(jobs=jobs)
+
+    first = await listing(ListLibraryJobsQuery(library="/acme/payments", limit=2))
+    second = await listing(
+        ListLibraryJobsQuery(library="/acme/payments", limit=2, cursor=first.next_cursor)
+    )
+    last = await listing(
+        ListLibraryJobsQuery(library="/acme/payments", limit=2, cursor=second.next_cursor)
+    )
+
+    assert [[job.id for job in page.jobs] for page in (first, second, last)] == [
+        ["job-4", "job-3"],
+        ["job-2", "job-1"],
+        ["job-0"],
+    ]
+    assert last.next_cursor is None
+
+
+@pytest.mark.parametrize(
+    "cursor", [pytest.param("!", id="not base64"), pytest.param("AA", id="decodes to NUL")]
+)
+async def test_a_malformed_cursor_of_the_job_list_is_refused(cursor: str) -> None:
+    listing = ListLibraryJobsUseCase(jobs=InMemoryJobRepository())
+
+    with pytest.raises(InvalidCursorError):
+        await listing(ListLibraryJobsQuery(library="/acme/payments", cursor=cursor))

@@ -77,6 +77,16 @@ async def test_a_library_lists_its_jobs_newest_first_in_pages(
     assert second["next_cursor"] is None
 
 
+@pytest.mark.parametrize("cursor", ["!", "AA"])  # "AA" decodes to NUL, which no job ID holds
+async def test_a_malformed_cursor_of_the_job_list_is_a_422(
+    client: httpx.AsyncClient, cursor: str
+) -> None:
+    response = await client.get("/api/v1/libraries/acme/payments/jobs", params={"cursor": cursor})
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "invalid_cursor"
+
+
 async def test_the_limit_of_the_job_list_is_validated(client: httpx.AsyncClient) -> None:
     response = await client.get("/api/v1/libraries/acme/payments/jobs", params={"limit": 0})
 

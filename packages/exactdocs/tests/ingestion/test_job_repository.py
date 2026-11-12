@@ -2,10 +2,11 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable, Mapping
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import event
 
 from databases import SQL_BACKENDS
 from exactdocs.bootstrap.database import migrate, open_database
@@ -102,6 +103,90 @@ async def test_a_library_lists_its_own_jobs_newest_first(repository: JobReposito
     listed = await repository.list_for_library("/acme/payments")
 
     assert [job.id for job in listed] == ["job-3", "job-2", "job-1"]
+
+
+async def test_a_library_with_more_jobs_than_a_page_is_paged_newest_first(
+    repository: JobRepository,
+) -> None:
+    for number in range(7):
+        await repository.add(queued(f"job-{number}", version=f"v{number}"))
+    await repository.add(queued("job-9", library="/acme/ledger"))  # newer, another library
+
+    pages: list[list[str]] = []
+    before: str | None = None
+    while True:
+        page = await repository.list_page_for_library("/acme/payments", before=before, limit=3)
+        pages.append([job.id for job in page])
+        if len(page) < 3:
+            break
+        before = page[-1].id
+
+    assert pages == [["job-6", "job-5", "job-4"], ["job-3", "job-2", "job-1"], ["job-0"]]
+
+
+async def test_a_page_of_a_library_carries_its_jobs_problems(repository: JobRepository) -> None:
+    for number in range(5):
+        await repository.add(
+            queued(f"job-{number}", version=f"v{number}")
+            .started(T0)
+            .with_problem(f"skipped-{number}.png", ProblemCode.BINARY, "binary file")
+            .succeeded(T0)
+        )
+
+    page = await repository.list_page_for_library("/acme/payments", before="job-4", limit=2)
+
+    assert [(job.id, [p.path for p in job.problems]) for job in page] == [
+        ("job-3", ["skipped-3.png"]),
+        ("job-2", ["skipped-2.png"]),
+    ]
+
+
+@pytest.mark.parametrize("backend", SQL_BACKENDS)
+async def test_a_page_of_a_library_is_one_select_bounded_by_the_cursor_and_limit(
+    backend: str, request: pytest.FixtureRequest
+) -> None:
+    if backend == "postgres":
+        request.getfixturevalue("on_postgres")
+    engine = open_database(Settings())
+    await migrate(engine)
+    repository = SqliteJobRepository(engine=engine)
+    for number in range(20):
+        await repository.add(queued(f"job-{number:02}", version=f"v{number}"))
+    sent: list[tuple[str, list[object]]] = []
+
+    def record(*args: object) -> None:  # (conn, cursor, statement, parameters, context, many)
+        statement, parameters = str(args[2]), args[3]
+        if statement.lstrip().upper().startswith("SELECT") and "ingestion_jobs" in statement:
+            # SQLite's driver takes a tuple, psycopg a dict of named parameters
+            values = parameters.values() if isinstance(parameters, Mapping) else parameters
+            assert isinstance(values, Iterable)
+            sent.append((statement, list(values)))
+
+    event.listen(engine.sync_engine, "before_cursor_execute", record)
+    try:
+        page = await repository.list_page_for_library("/acme/payments", before="job-15", limit=4)
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", record)
+    (statement, parameters), *others = sent
+    plan: list[str] = []
+    if backend == "sqlite":
+        async with engine.connect() as connection:
+            rows = await connection.exec_driver_sql(
+                f"EXPLAIN QUERY PLAN {statement}", tuple(parameters)
+            )
+            plan = [row.detail for row in rows]
+    await engine.dispose()
+
+    assert [job.id for job in page] == ["job-14", "job-13", "job-12", "job-11"]
+    assert others == []  # one query, not one per job or a second pass
+    assert "LIMIT" in statement.upper()
+    assert "ingestion_jobs.id <" in statement
+    bound = {"/acme/payments", "job-15", 4}
+    assert bound <= set(parameters)
+    assert set(parameters) - bound <= {0}  # SQLite also binds OFFSET 0
+    if backend == "sqlite":  # a range of the (library, id) index, no sort of the whole library
+        assert any("USING INDEX ingestion_jobs_library_id" in step for step in plan), plan
+        assert not any("TEMP B-TREE" in step for step in plan), plan
 
 
 async def test_the_latest_job_of_each_library_and_version_is_listed(

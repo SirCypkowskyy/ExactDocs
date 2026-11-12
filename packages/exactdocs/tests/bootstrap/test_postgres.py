@@ -14,6 +14,7 @@ from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
+import httpx
 import psycopg
 import pytest
 from psycopg import sql
@@ -33,6 +34,7 @@ from exactdocs.bootstrap.database import (
     open_database,
 )
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
+from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.postgres import PostgresLibraryLocks
 from exactdocs.ingestion.adapters.driving import dbos_worker
@@ -255,6 +257,27 @@ async def test_the_stdio_server_reads_postgresql_but_cannot_write_to_it() -> Non
     async with container.running(), container.engine.connect() as connection:
         with pytest.raises(DBAPIError, match="read-only transaction"):
             await connection.execute(text("DELETE FROM catalog_libraries"))
+
+
+@pytest.mark.parametrize("cursor", ["AA", "am9iLQA"])  # "\x00" and "job-\x00"
+async def test_a_job_list_cursor_holding_nul_is_a_422_not_a_server_error(
+    demo_catalog: dict[str, str], cursor: str
+) -> None:
+    # PostgreSQL text cannot hold NUL: such a key must be refused before it reaches the query.
+    container = Container.build(Settings())
+    transport = httpx.ASGITransport(app=create_app(container))
+    async with (
+        container.running(jobs=False),
+        httpx.AsyncClient(
+            transport=transport, base_url="http://localhost", cookies=demo_catalog
+        ) as client,
+    ):
+        response = await client.get(
+            "/api/v1/libraries/acme/payments/jobs", params={"cursor": cursor}
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "invalid_cursor"
 
 
 async def test_the_stdio_server_s_spend_reaches_the_shared_ledger_once_per_replay() -> None:
