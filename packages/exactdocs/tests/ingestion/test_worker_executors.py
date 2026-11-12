@@ -7,6 +7,7 @@ same paths against a real database and real processes.
 import asyncio
 import concurrent.futures
 import threading
+import time
 from collections.abc import AsyncGenerator, Collection
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field, replace
@@ -532,12 +533,14 @@ async def test_a_retaken_slot_whose_job_check_hangs_is_given_up_within_one_check
 async def test_a_retaken_slot_with_no_jobs_is_held_even_at_the_deadline(
     no_dbos: list[str],
 ) -> None:
-    # No job to check: a retake that lands just before the deadline keeps the slot.
+    # No job to check: a retake reported after the deadline has passed still keeps the slot.
+    # keep() blocks the loop past the deadline, so its own timeout cannot fire first.
     timeout = 0.2
 
     class LateRetake(FakeSlots):
         async def keep(self) -> SlotState:
-            await asyncio.sleep(timeout * 0.9)
+            # Blocks the loop on purpose: the deadline passes with no chance for a timeout.
+            time.sleep(timeout * 1.5)  # ruff: ignore[blocking-sleep-in-async-function]
             return SlotState.RETAKEN
 
     slots = LateRetake()
