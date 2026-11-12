@@ -474,30 +474,23 @@ def _configured(ai: dict) -> ConfiguredAi:
 
 
 @pytest.mark.parametrize(
-    ("reranker", "kind", "timeout"),
+    ("reranker", "timeout"),
     [
-        ({"model": "local:Xenova/ms-marco-MiniLM-L-6-v2"}, "local", 5.0),
-        ({"model": "local:Xenova/ms-marco-MiniLM-L-6-v2", "timeout": 1.5}, "local", 1.5),
-        ({"model": "corp:rerank-v3.5"}, "openai-compatible", 2.0),
-        # A library's own reranker on a local profile gets the local default too (#284).
-        ({"model": "corp:rerank-v3.5"}, "local", 5.0),
-        ({}, None, 2.0),
+        ({"model": "local:Xenova/ms-marco-MiniLM-L-6-v2"}, None),
+        ({"model": "local:Xenova/ms-marco-MiniLM-L-6-v2", "timeout": 1.5}, 1.5),
+        ({}, None),
     ],
 )
-def test_an_unset_rerank_timeout_is_longer_for_a_local_reranker(
-    tmp_path: Path, reranker: dict, kind: str | None, timeout: float
+def test_the_rerank_timeout_setting_is_passed_through_unresolved(
+    tmp_path: Path, reranker: dict, timeout: float | None
 ) -> None:
-    ai = {
-        "providers": {
-            "local": {"kind": "local"},
-            "corp": {"kind": "openai-compatible", "base_url": "http://127.0.0.1:9/v1"},
-        },
-        "reranker": reranker,
-    }
+    # Which default an unset timeout gets is decided per search by the reranker's profile
+    # (test_reranking.py); the container only passes the operator's value on (#284).
+    ai = {"providers": {"local": {"kind": "local"}}, "reranker": reranker}
 
     limits = _rerank_limits(Settings(data_dir=tmp_path, ai=AiSettings.model_validate(ai)))
 
-    assert limits.timeout_for(kind) == timeout
+    assert limits.timeout == timeout
 
 
 def test_a_local_role_without_a_local_profile_is_warned_about_at_start(

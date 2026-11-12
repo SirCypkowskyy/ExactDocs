@@ -384,7 +384,12 @@ admin-only; `notes` and `off` may stay with the library's owner.
   counted: local search traffic alone (about 16k tokens per rerank of 32 candidates) could use up
   an instance or library token budget and so stop the local embedding job, while the searches
   themselves were exempt. Self-hosted endpoints (`ollama`, `vllm`, TEI) are not `local`: they
-  count as paid, tokens included.
+  count as paid, tokens included. **Rows written before the upgrade** (migration
+  `b5e8d2a7c4f9`) get `local_tokens = 0`: a row does not record which model spent its tokens, so
+  no backfill is possible, and local tokens already in the current day and month windows stay
+  counted until each window resets. An instance with a monthly token budget and paid models can
+  therefore keep refusing paid calls and a paid embed job until the month ends; the operator can
+  raise the budget meanwhile.
 - **Budgets** (#95): token and USD limits per instance, per library and per user (the token's
   account; stdio MCP counts to instance and library), per UTC day and month, in one
   `retrieval_ai_spend` table (an atomic upsert per scope key and window) that works on SQLite and

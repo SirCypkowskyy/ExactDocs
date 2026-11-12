@@ -878,6 +878,10 @@ class ModeChoice:
     agent_cache: AgentCacheLookup | None = None
     """What an agentic search found in the agentic answer cache, looked up once by
     ``within_budget``: a hit answers without the agent; a miss is stored under it."""
+    reranker_profile: tuple[ModelRef, ProviderProfile] | None = None
+    """The cross-encoder's model and profile, read once per search (by ``within_budget`` when a
+    budget needs its kind, else by the rerank stage): its kind, its timeout, the reranker built and
+    its spend all come from this read. ``None``: not read yet."""
 
     def depth(self, limit: int) -> int:
         """Say how many hits the pipeline is asked for.
@@ -1206,6 +1210,18 @@ class RerankLimits:
     names it: a CPU takes longer than an endpoint."""
     judge_timeout: float = DEFAULT_JUDGE_TIMEOUT
     """The same for the judge (``[ai.judge] timeout``): an LLM call takes longer."""
+
+    @property
+    def longest(self) -> float:
+        """The longest a reranker may take before its profile's kind is known.
+
+        Returns:
+            The operator's timeout when set, else the longer of the local and the default one:
+            the bound of the read of the reranker's profile.
+        """
+        if self.timeout is not None:
+            return self.timeout
+        return max(self.local_timeout, DEFAULT_RERANK_TIMEOUT)
 
     def timeout_for(self, profile_kind: str | None) -> float:
         """Give the timeout of a reranker on a profile of this kind.

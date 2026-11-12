@@ -58,7 +58,7 @@ from exactdocs.retrieval.models import (
 )
 from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.ports.driven import Reranker, RetrievalPipeline
-from exactdocs.retrieval.use_cases import Bm25Pipeline
+from exactdocs.retrieval.use_cases import AiProviders, Bm25Pipeline
 from exactdocs_kernel import SealedTextUnreadableError
 
 LIB = "/acme/payments"
@@ -549,6 +549,63 @@ async def test_building_the_reranker_counts_toward_its_timeout() -> None:
     result = await _search(world)
 
     assert (result.reranked, result.fallback_reason) == (False, FallbackReason.RERANKER_TIMEOUT)
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        (RuntimeError("postgresql://ada:s3cret@db/exactdocs is down"), "reranker_failed"),
+        (None, "reranker_timeout"),  # the read stalls
+    ],
+    ids=["fails", "stalls"],
+)
+async def test_a_reranker_profile_that_cannot_be_read_keeps_the_order_and_says_so(
+    failure: Exception | None,
+    reason: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A stored profile is a database read: it is bounded and guarded like the rerank (#284).
+    world = await _world(limits=RerankLimits(top_n=5, timeout=0.05))
+    found = await _unreranked(3)
+
+    async def unreadable(*args: object) -> None:
+        del args
+        if failure is not None:
+            raise failure
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(AiProviders, "profile_for", unreadable)
+
+    result = await _search(world)
+
+    assert [r.chunk_id for r in result.results] == found
+    assert (result.reranked, result.fallback_reason) == (False, FallbackReason(reason))
+    assert not world.factory.built
+    assert "s3cret" not in caplog.text
+    if failure is not None:
+        assert "its profile could not be read (RuntimeError)" in caplog.text
+
+
+async def test_the_reranker_profile_is_read_once_per_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = await _world(limits=RerankLimits(top_n=5))
+    reads: list[ModelRole] = []
+    profile_for = AiProviders.profile_for
+
+    async def counting(
+        self: AiProviders, role: ModelRole, library: str, ai: LibraryAi | None = None
+    ) -> object:
+        reads.append(role)
+        return await profile_for(self, role, library, ai)
+
+    monkeypatch.setattr(AiProviders, "profile_for", counting)
+
+    result = await _search(world)
+
+    assert result.reranked is True
+    assert reads == [ModelRole.RERANKER]
 
 
 async def test_a_candidate_gone_before_reranking_is_neither_sent_nor_counted() -> None:
