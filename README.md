@@ -1266,7 +1266,10 @@ A probe stops waiting for the database when its budget is up, even while a state
 runs; that check ends in the background, and later probes wait for it instead of starting
 another: however often they are called, a stuck database holds at most one connection for each.
 So a probe may get the result of a check an earlier probe started. A stopping instance waits up
-to 2 s for such a check, then cancels it, before it closes its database connections.
+to 2 s for such a check, then cancels it and waits up to 2 s more, before it closes its database
+connections. A statement stuck in the driver's thread cannot be interrupted: if the check still
+runs after those 4 s, the instance logs a warning and stops without it, and that connection may
+be finalized, unclosed, later.
 
 The probes answer whatever the `Host` header says, so a Kubernetes `httpGet` probe (which sends
 the pod IP) needs no extra header. Only exact `GET`/`HEAD` requests on these three paths skip the

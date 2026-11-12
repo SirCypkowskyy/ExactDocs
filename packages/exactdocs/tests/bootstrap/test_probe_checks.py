@@ -7,6 +7,7 @@ tests are in ``test_probe_budgets.py``.
 import asyncio
 import gc
 import logging
+import time
 from dataclasses import dataclass, field
 
 import pytest
@@ -18,6 +19,8 @@ BUDGET_SECONDS = 0.05
 """How long a call waits for the fake check."""
 SETTLE_SECONDS = 0.05
 """How long ``settle`` gives the fake check."""
+BOUND_SLACK_SECONDS = 0.5
+"""Scheduling slack on top of ``settle``'s bound."""
 REPEATS = 5
 """Calls made while the check is held."""
 
@@ -34,6 +37,8 @@ class GatedCheck:
     """Set to let the check end."""
     fails: bool = False
     """The check raises instead of answering."""
+    stubborn: bool = False
+    """The check ignores cancellation and keeps waiting for the gate, like a stuck statement."""
     started: int = 0
     """Checks started so far."""
     cancelled: int = 0
@@ -54,7 +59,9 @@ class GatedCheck:
             await self.gate.wait()
         except asyncio.CancelledError:
             self.cancelled += 1
-            raise
+            if not self.stubborn:
+                raise
+            await self.gate.wait()
         if self.fails:
             raise CheckBugError(number)
         return number
@@ -174,3 +181,47 @@ async def test_the_probes_settle_every_check_they_left_running() -> None:
 
     assert [runner.pending for runner in runners] == [None, None]
     assert (liveness.cancelled, readiness.cancelled) == (1, 1)
+
+
+async def test_settle_abandons_a_check_that_ignores_its_cancellation_within_twice_grace(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    check = GatedCheck(stubborn=True)
+    runner = _runner(check)
+    with pytest.raises(TimeoutError):
+        await runner()
+    task = runner.pending
+    assert task is not None
+
+    started = time.monotonic()
+    with caplog.at_level(logging.WARNING, logger="exactdocs.bootstrap.probes"):
+        # The timeout only turns a hang into a failure; ``took`` is the assertion.
+        async with asyncio.timeout(2 * SETTLE_SECONDS + BOUND_SLACK_SECONDS):
+            await runner.settle(SETTLE_SECONDS)
+    took = time.monotonic() - started
+
+    assert check.cancelled == 1
+    assert not task.done()
+    assert took < 2 * SETTLE_SECONDS + BOUND_SLACK_SECONDS
+    assert "abandoning it and its connection" in caplog.text
+    check.gate.set()
+    await task  # the test's own cleanup: the stubborn check ends once let through
+
+
+async def test_cancelling_settle_cancels_the_check_in_flight() -> None:
+    check = GatedCheck()
+    runner = _runner(check)
+    with pytest.raises(TimeoutError):
+        await runner()
+    task = runner.pending
+    assert task is not None
+
+    settling = asyncio.create_task(runner.settle(SETTLE_SECONDS * 100))
+    await asyncio.sleep(0)
+    settling.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await settling
+    await asyncio.wait({task}, timeout=SETTLE_SECONDS)
+    check.gate.set()  # lets the check end even when settle failed to cancel it
+
+    assert (check.cancelled, task.cancelled()) == (1, True)

@@ -11,7 +11,8 @@ waiting, shielded from the cancellation, for the driver, which first finishes th
 check the probe stopped waiting for runs to its end, and the next probe waits for it rather than
 starting another: however often it is called, each probe holds at most one connection. When the
 app stops, ``Probes.settle`` waits for those checks before the engine is disposed, so none is
-left holding a connection of a discarded pool (#291).
+left holding a connection of a discarded pool (#291), unless its statement is stuck in the
+driver's thread: shutdown waits for that at most twice ``PROBE_SETTLE_SECONDS``, then gives up.
 """
 
 import asyncio
@@ -110,11 +111,13 @@ class Probes:
         """Wait for the checks still in flight; cancel those that outlast ``grace``.
 
         Call it before the engine is disposed: a check left running would give its connection
-        back to the discarded pool, which never closes it. (A grace, not an ``asyncio.timeout``
-        around the call: cancelling ``settle`` itself would leave the checks running.)
+        back to the discarded pool, which never closes it. It returns within about ``2 * grace``
+        (the checks settle side by side); see ``_OneCheckAtATime.settle``. (A grace rather than
+        an ``asyncio.timeout`` around the call: the bound is the method's own, and cancelling
+        ``settle`` only cancels the checks without waiting for them.)
 
         Args:
-            grace: Seconds each check gets to finish before it is cancelled.
+            grace: Seconds each check gets to finish before it is cancelled, and again after.
         """
         await asyncio.gather(*(check.settle(grace) for check in self.checks))
 
@@ -234,25 +237,42 @@ class _OneCheckAtATime[T]:
         return task.result()
 
     async def settle(self, grace: float) -> None:
-        """Wait for the check in flight at most ``grace`` seconds, then cancel and await it.
+        """Wait for the check in flight at most ``grace`` seconds, then cancel it and wait again.
 
-        No check is left running once this returns. A cancelled check still waits for its
-        connection to close, which SQLAlchemy does shielded once the statement ends.
+        Returns within about ``2 * grace``. A cancelled check still waits, shielded, for its
+        connection to close, and that waits for the statement: cancellation cannot interrupt a
+        statement stuck in the driver's thread. If the check is still running after the second
+        ``grace``, it is abandoned with a warning: its connection may then go back to a disposed
+        pool and be finalized unclosed later. An exiting process can spare one connection better
+        than it can hang its shutdown.
+
+        If ``settle`` itself is cancelled, it cancels the check and re-raises without waiting.
 
         Args:
-            grace: Seconds the check gets to finish on its own.
+            grace: Seconds the check gets to finish on its own, and again once cancelled.
         """
         task = self.pending
         if task is None:
             return
-        await asyncio.wait({task}, timeout=grace)
-        if not task.done():
+        try:
+            await asyncio.wait({task}, timeout=grace)
+            if task.done():
+                return
             logger.warning(
                 "a probe's database check was still running after %s s at shutdown; cancelling it",
                 grace,
             )
             task.cancel()
-            await asyncio.wait({task})
+            await asyncio.wait({task}, timeout=grace)
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
+        if not task.done():
+            logger.warning(
+                "a probe's database check ignored its cancellation for %s s at shutdown; "
+                "abandoning it and its connection",
+                grace,
+            )
 
     def _finished(self, task: asyncio.Task[T]) -> None:
         """Let the next call start a new check, and log the task's error so none goes unseen.

@@ -218,7 +218,8 @@ READINESS_TIMEOUT_SECONDS: Final[float] = 2.0
 READINESS_UNREACHABLE: Final[str] = "the database is unreachable"
 """Readiness' reason when the database does not answer, or not within its budget."""
 PROBE_SETTLE_SECONDS: Final[float] = 2.0
-"""How long a stopping app waits for a probe's database check before it cancels it."""
+"""How long a stopping app waits for a probe's database check before it cancels it, and again
+after: at most twice this in all, then the check and its connection are abandoned."""
 LIVENESS_DATABASE_SECONDS: Final[float] = 0.3
 """How long liveness waits for the database's details: it must answer fast whatever the database
 does (Kubernetes' default probe timeout is 1 s), so after this it answers without them.

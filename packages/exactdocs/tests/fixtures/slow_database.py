@@ -49,6 +49,11 @@ class SlowDatabase:
         slow = cls()
         event.listen(engine.sync_engine, "connect", slow._install)
         event.listen(engine.sync_engine, "before_cursor_execute", _note_statement)
+        # A COMMIT or ROLLBACK goes to the driver without a cursor: forget the last statement, or
+        # it would stall under ``only`` as if it were that statement.
+        event.listen(engine.sync_engine, "commit", _forget_statement)
+        event.listen(engine.sync_engine, "rollback", _forget_statement)
+        event.listen(engine.sync_engine, "reset", _forget_on_reset)
         return slow
 
     def stall(self, seconds: float, *, only: str = "") -> None:
@@ -117,3 +122,30 @@ def _note_statement(
     running = connection.info.get(STATEMENT)
     if isinstance(running, _Running):
         running.sql = statement
+
+
+def _forget_statement(connection: Connection) -> None:
+    """Forget a connection's last statement before it commits or rolls back.
+
+    Args:
+        connection: The connection.
+    """
+    running = connection.info.get(STATEMENT)
+    if isinstance(running, _Running):
+        running.sql = ""
+
+
+def _forget_on_reset(
+    dbapi_connection: AdaptedConnection, record: ConnectionPoolEntry, reset_state: object
+) -> None:
+    """Forget a connection's last statement before the pool rolls it back on return.
+
+    Args:
+        dbapi_connection: Unused.
+        record: The pool record that holds the statement.
+        reset_state: Unused.
+    """
+    del dbapi_connection, reset_state
+    running = record.info.get(STATEMENT)
+    if isinstance(running, _Running):
+        running.sql = ""
