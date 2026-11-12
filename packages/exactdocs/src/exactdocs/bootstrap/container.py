@@ -4,7 +4,7 @@ import os
 import signal
 import threading
 from collections.abc import AsyncGenerator, Callable, Mapping
-from contextlib import asynccontextmanager, nullcontext, suppress
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Self
@@ -45,6 +45,7 @@ from exactdocs.bootstrap.bridges import (
     RetrievalGuidancePolicy,
     RetrievalVersionEmbedder,
 )
+from exactdocs.bootstrap.cancellation import being_cancelled
 from exactdocs.bootstrap.constants import (
     AGENT_CACHE_PURPOSE,
     AI_KEYS_PURPOSE,
@@ -55,6 +56,7 @@ from exactdocs.bootstrap.constants import (
     KNOWN_HOSTS_FILE,
     LOCAL_PROFILE,
     LOCAL_PROFILE_HINT,
+    UPKEEP_STOP_SECONDS,
     WORK_DIR,
 )
 from exactdocs.bootstrap.database import (
@@ -1002,7 +1004,8 @@ class Container:
     async def _embedding_queued(self) -> AsyncGenerator[None]:
         """Queue the missing embedding in the background while the block runs, and every day.
 
-        A start never waits for the coverage of every version; stopping cancels what is left.
+        A start never waits for the coverage of every version; stopping cancels what is left
+        and waits for it at most ``UPKEEP_STOP_SECONDS``, then stops without it (logged).
         Then the queueing runs again just after each UTC midnight, when the day's (and on the
         first, the month's) spend windows reset: a version an exhausted budget left unembedded
         (its job stopped with ``ai_budget_reached``) is retried then.
@@ -1015,8 +1018,15 @@ class Container:
             yield
         finally:
             queueing.cancel()
-            with suppress(asyncio.CancelledError):
-                await queueing
+            # Bounded: an upkeep that does not stop (#308) must not hold the server's stop.
+            done, _ = await asyncio.wait({queueing}, timeout=UPKEEP_STOP_SECONDS)
+            if not done:
+                logger.warning(
+                    "the nightly upkeep did not stop within %s s; the server stops without it",
+                    UPKEEP_STOP_SECONDS,
+                )
+            elif not queueing.cancelled() and (error := queueing.exception()) is not None:
+                logger.warning("the nightly upkeep failed while it stopped", exc_info=error)
 
     async def _queue_embedding_daily(self) -> None:
         """Run the nightly upkeep now, then after every UTC midnight (one process does)."""
@@ -1026,12 +1036,15 @@ class Container:
     async def nightly(self) -> None:
         """Queue the missing embedding, then prune HyDE's and the agentic answer cache.
 
-        Each part is logged on failure and never stops the other or the server.
+        Each part is logged on failure and never stops the other or the server. A failure while
+        the server stops (it cancels this) is raised instead, so the upkeep ends (#308).
         """
         await self.queue_embedding()
         try:
             await self.retrieval.prune_hypotheses()
         except Exception:
+            if being_cancelled():  # the error replaced the server's stop: stop all the same
+                raise
             logger.exception("pruning the answer caches failed; it runs again tomorrow")
 
     async def queue_embedding(self) -> None:
@@ -1039,11 +1052,14 @@ class Container:
 
         A new or changed embedding model, or versions imported while none was configured, are
         embedded in the background from here. No model is called: only the stored spaces are
-        read. A failure is logged and never stops the start (BM25 answers meanwhile).
+        read. A failure is logged and never stops the start (BM25 answers meanwhile); one while
+        the server stops (it cancels this) is raised instead, so the upkeep ends (#308).
         """
         try:
             queued = await self.ingestion.queue_embedding(QueueEmbeddingCommand())
         except Exception:
+            if being_cancelled():  # the error replaced the server's stop: stop all the same
+                raise
             logger.exception("could not queue the embedding of the versions not embedded yet")
             return
         if queued.queued:

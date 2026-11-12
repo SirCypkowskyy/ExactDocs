@@ -16,6 +16,7 @@ from typing import Protocol
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from exactdocs.bootstrap.cancellation import being_cancelled
 from exactdocs.bootstrap.constants import (
     REQUEUE_JITTER_SECONDS,
     REQUEUE_LOCK_KEY,
@@ -226,7 +227,8 @@ async def requeue_nightly(
     """Run the nights of the re-queue until cancelled; a failed night is logged, not fatal.
 
     Only cancellation ends it: an error (the database went away) would otherwise end the loop
-    for good and be raised again when the server stops.
+    for good and be raised again when the server stops. An error that replaced the
+    cancellation (raised while the cancelled night unwinds) ends it too (#308).
 
     Args:
         leader: Decides whether this process queues; ``None``: it always does (SQLite).
@@ -242,6 +244,8 @@ async def requeue_nightly(
                 if leader is None or await leader.leads():
                     await queue()
             except Exception:
+                if being_cancelled():  # the error replaced the cancellation: the loop still ends
+                    raise
                 logger.exception(
                     "the midnight re-queue of embedding failed; it runs again tomorrow"
                 )

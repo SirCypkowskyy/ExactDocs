@@ -380,7 +380,10 @@ only holds each process's git work folders and `known_hosts`. What changes:
   up to five minutes; on PostgreSQL only the process holding a session advisory lock queues,
   since `EmbeddingQueue` checks and inserts without one atomic step). The lock is checked again
   every night (`RequeueLeader`): a session that failed is closed and a new one opened, and a
-  failed night is logged, so the loop only ends when the server stops. Each server process keeps one
+  failed night is logged, so the loop only ends when the server stops. A failure raised while the
+  stop cancels it (a `PendingRollbackError`, or a database error during the rollback, replacing the
+  `CancelledError`) ends it too (`being_cancelled`), and the stop waits for the nightly upkeep at most
+  `UPKEEP_STOP_SECONDS` (10 s), then logs a warning and goes on without it. Each server process keeps one
   pooled connection open for it (the lock lives in that session), so size the pool for it. A search uses up its
   caller's LLM rate limit only once its version resolved. `exactdocs ai estimate` counts the distinct chunks without a vector
   (`VectorIndex.pending`) with their titles at 4 characters per token, priced from the bundled
