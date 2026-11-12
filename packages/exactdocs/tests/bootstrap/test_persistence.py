@@ -428,6 +428,20 @@ async def test_a_long_wait_for_another_migration_is_logged_again_naming_the_lock
         await engine.dispose()
 
 
+async def test_a_host_name_that_is_not_utf8_never_fails_the_migration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(database.socket, "gethostname", lambda: "host\udcff")
+    engine = open_database(Settings())
+    try:
+        await migrate(engine)
+
+        assert await current_revision(engine) == head()
+        assert not migration_turn(engine).read_text()  # cleared again after the migration
+    finally:
+        await engine.dispose()
+
+
 async def test_a_migration_lock_in_a_missing_directory_stops_startup_naming_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

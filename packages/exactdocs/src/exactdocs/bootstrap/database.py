@@ -571,7 +571,7 @@ async def _migration_turn(engine: AsyncEngine) -> AsyncGenerator[None]:
                 await asyncio.sleep(MIGRATION_TURN_POLL_SECONDS)
             else:
                 break
-        _write_turn_holder(descriptor, f"pid {os.getpid()} on {socket.gethostname()}")
+        _write_turn_holder(descriptor, _this_holder())
         try:
             yield
         finally:
@@ -589,7 +589,20 @@ def _write_turn_holder(descriptor: int, holder: str) -> None:
     """
     with contextlib.suppress(OSError):
         os.ftruncate(descriptor, 0)
-        os.pwrite(descriptor, holder.encode(), 0)
+        # A host name need not be valid UTF-8 (surrogates): escape it, never fail the start.
+        os.pwrite(descriptor, holder.encode(errors="backslashreplace"), 0)
+
+
+def _this_holder() -> str:
+    """Name this process as the migration turn's holder, as far as the system tells.
+
+    Returns:
+        ``pid <n> on <host>``, or ``pid <n>`` when the host name cannot be read.
+    """
+    try:
+        return f"pid {os.getpid()} on {socket.gethostname()}"
+    except OSError:
+        return f"pid {os.getpid()}"
 
 
 def _turn_holder(descriptor: int) -> str:
