@@ -221,6 +221,214 @@ async def test_no_job_starts_after_the_slot_is_lost(no_dbos: list[str]) -> None:
     assert no_dbos == ["destroy", "resume job-late on q", "client closed"]
 
 
+async def _delay_cancellation(released: asyncio.Event) -> None:
+    """A job that keeps going once cancelled (cancelled again too) until ``released``."""
+    try:
+        await asyncio.sleep(3600)
+    except asyncio.CancelledError:
+        while not released.is_set():
+            with suppress(asyncio.CancelledError):
+                await released.wait()
+        raise
+
+
+async def test_a_lost_slot_is_given_up_within_halt_timeout_even_if_a_job_delays_its_cancellation(
+    no_dbos: list[str],
+) -> None:
+    released = asyncio.Event()
+    started = asyncio.Event()
+    lost: list[str] = []
+
+    async def slow_to_cancel(job_id: str) -> None:
+        del job_id
+        started.set()
+        await _delay_cancellation(released)
+
+    slots = FakeSlots(states=[SlotState.LOST])
+    subject = replace(worker(slots, lost), run_job=slow_to_cancel)
+    job = asyncio.create_task(subject.run_workflow("job-slow"))
+    try:
+        await started.wait()
+        loop = asyncio.get_running_loop()
+        began = loop.time()
+        async with asyncio.timeout(subject.halt_timeout * 3):  # the bug: it waited for the job
+            assert await subject.check_slot("exactdocs-0", slots) is SlotState.LOST
+        took = loop.time() - began
+
+        assert took <= subject.halt_timeout + 0.25  # scheduling slack only
+        assert lost == ["stop"]
+        assert no_dbos == ["destroy"]  # DBOS hands over no more jobs, the job notwithstanding
+        assert not job.done()  # still cleaning up: nothing waited for it
+    finally:
+        released.set()
+        with suppress(asyncio.CancelledError):
+            await job
+
+
+async def test_a_halt_whose_dbos_hangs_still_stops_the_process_at_halt_timeout(
+    monkeypatch: pytest.MonkeyPatch, no_dbos: list[str]
+) -> None:
+    unblock = threading.Event()
+
+    def hanging_destroy(**_: object) -> None:
+        no_dbos.append("destroy")
+        unblock.wait(5)
+
+    monkeypatch.setattr(dbos_worker.DBOS, "destroy", hanging_destroy)
+    lost: list[str] = []
+    slots = FakeSlots(states=[SlotState.LOST])
+    subject = worker(slots, lost)
+    loop = asyncio.get_running_loop()
+    began = loop.time()
+    try:
+        assert await subject.check_slot("exactdocs-0", slots) is SlotState.LOST
+        took = loop.time() - began
+    finally:
+        unblock.set()
+
+    assert took <= subject.halt_timeout + 0.25  # scheduling slack only
+    assert lost == ["stop"]
+    assert no_dbos == ["destroy"]
+
+
+async def test_a_stop_cancelled_again_does_not_wait_for_a_job_that_delays_its_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(StartingDbos, "stopped", [], raising=False)
+    monkeypatch.setattr(dbos_worker, "DBOS", StartingDbos)
+    released = asyncio.Event()
+    started = asyncio.Event()
+    jobs: list[asyncio.Task[None]] = []
+
+    async def slow_to_cancel(job_id: str) -> None:
+        del job_id
+        started.set()
+        await _delay_cancellation(released)
+
+    subject = replace(worker(FakeSlots()), executors=None, run_job=slow_to_cancel, stop_grace=0.01)
+
+    async def serve() -> None:
+        async with subject.running():
+            jobs.append(asyncio.create_task(subject.run_workflow("job-slow")))
+            await asyncio.Event().wait()  # until the server is stopped
+
+    serving = asyncio.create_task(serve())
+    try:
+        await started.wait()
+        serving.cancel()  # the server stops: the job is cancelled, and takes its time
+        await asyncio.sleep(0.05)
+        assert not serving.done()  # the normal stop waits for its jobs
+        serving.cancel()  # stopped again (a second Ctrl-C): the stop ends now
+        await asyncio.wait({serving}, timeout=1)
+
+        assert serving.cancelled()
+        assert StartingDbos.stopped == ["destroy"]  # DBOS does not outlive the worker
+        assert not jobs[0].done()
+    finally:
+        released.set()
+        with suppress(asyncio.CancelledError):
+            await jobs[0]
+
+
+async def test_a_job_that_ends_late_within_its_share_is_waited_for_and_the_refused_requeued(
+    no_dbos: list[str],
+) -> None:
+    unwind = 0.3  # less than the jobs' share of halt_timeout (0.5 s of 1 s)
+    started = asyncio.Event()
+    ended: list[str] = []
+
+    async def slow_to_end(job_id: str) -> None:
+        started.set()
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            await asyncio.sleep(unwind)  # its cleanup, then it ends
+            ended.append(job_id)
+            raise
+
+    lost: list[str] = []
+    slots = FakeSlots(states=[SlotState.LOST])
+    subject = replace(worker(slots, lost), run_job=slow_to_end)
+    job = asyncio.create_task(subject.run_workflow("job-slow"))
+    await started.wait()
+    loop = asyncio.get_running_loop()
+    began = loop.time()
+    check = asyncio.create_task(subject.check_slot("exactdocs-0", slots))
+    await asyncio.sleep(0.05)
+    with pytest.raises(asyncio.CancelledError):  # handed over while the halt waits: refused
+        await subject.run_workflow("job-late")
+
+    assert await check is SlotState.LOST
+    took = loop.time() - began
+
+    assert unwind <= took < 0.5  # its end, not the whole share (slack for a slow runner)
+    assert ended == ["job-slow"]
+    assert job.cancelled()
+    assert no_dbos == ["destroy", "resume job-late on q", "client closed"]
+    assert lost == ["stop"]
+
+
+async def test_a_second_stop_during_stop_grace_still_cancels_every_task_before_dbos_stops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(StartingDbos, "stopped", [], raising=False)
+    monkeypatch.setattr(dbos_worker, "DBOS", StartingDbos)
+    cancelled: list[str] = []
+    running = asyncio.Event()
+    forgetting = asyncio.Event()
+
+    async def hang(name: str, ready: asyncio.Event) -> None:
+        ready.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.append(name)
+            raise
+
+    async def job(job_id: str) -> None:
+        if job_id == "job-slow":
+            await hang(job_id, running)
+
+    async def workflow_status(job_id: str) -> None:
+        await hang(f"forget {job_id}", forgetting)
+
+    monkeypatch.setattr(
+        StartingDbos, "get_workflow_status_async", staticmethod(workflow_status), raising=False
+    )
+    subject = replace(worker(FakeSlots()), executors=None, run_job=job, stop_grace=10)
+    jobs: list[asyncio.Task[None]] = []
+    seen_at_destroy: list[bool] = []
+
+    def destroy(**_: object) -> None:  # every task must already be told to stop by now
+        tasks = [*jobs, *subject._forgetting]  # ruff: ignore[private-member-access]
+        seen_at_destroy.append(bool(tasks) and all(task.cancelling() for task in tasks))
+        StartingDbos.stopped.append("destroy")
+
+    monkeypatch.setattr(StartingDbos, "destroy", staticmethod(destroy))
+
+    async def serve() -> None:
+        async with subject.running():
+            jobs.append(asyncio.create_task(subject.run_workflow("job-slow")))
+            await subject.run_workflow("job-quick")  # done: its workflow is being deleted
+            await asyncio.Event().wait()  # until the server is stopped
+
+    serving = asyncio.create_task(serve())
+    await running.wait()
+    await forgetting.wait()
+    serving.cancel()  # the server stops: the job gets stop_grace to finish
+    await asyncio.sleep(0.05)
+    assert not serving.done()
+    serving.cancel()  # stopped again, well within stop_grace
+    await asyncio.wait({serving}, timeout=1)
+    await asyncio.wait(jobs, timeout=1)
+
+    assert serving.cancelled()
+    assert jobs[0].cancelled()  # the bug: it went on running after DBOS was destroyed
+    assert sorted(cancelled) == ["forget job-quick", "job-slow"]
+    assert StartingDbos.stopped == ["destroy"]
+    assert seen_at_destroy == [True]  # cancelled before DBOS stops, not after
+
+
 async def test_an_unreachable_database_is_waited_out_before_the_slot_counts_as_lost(
     no_dbos: list[str],
 ) -> None:

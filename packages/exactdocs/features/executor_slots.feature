@@ -10,3 +10,10 @@ Feature: A process that lost its executor slot stops before its jobs are adopted
     When the worker starts
     Then the process stops while it is still starting
     And the process stops before another process may adopt slot 1's jobs
+
+  Scenario: A lost slot is given up within halt_timeout even if a job delays its cancellation
+    Given a process holds executor slot 1 and runs a job that takes long to react to cancellation
+    When another process takes slot 1
+    Then the process stops taking jobs and stops DBOS within halt_timeout of the check that found the slot lost
+    And it asks to be stopped within that time
+    And no job of slot 1 runs in it after another process may resume or adopt the slot's jobs

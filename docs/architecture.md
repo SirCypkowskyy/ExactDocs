@@ -723,24 +723,33 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
     is given up counting from its last confirmation, the startup is cancelled and fails, and the
     process stops. When another process holds the slot (or
     after that wait) the slot is lost: the worker first stops taking jobs (a job DBOS still hands
-    over is refused), cancels the running ones, stops DBOS (and gives the event loop a new thread
-    pool, as its normal teardown does), then queues the refused jobs again through a
-    `DBOSClient`, all within `halt_timeout` (5 s), and stops the process with `SIGTERM`, also when
-    a part of that stop failed (the watchdog does not check again once the slot is lost); `serve`
-    bounds the shutdown (`timeout_graceful_shutdown`, 30 s) and a restart policy brings it back.
+    over is refused), cancels the running ones and gives them half of `halt_timeout` to end,
+    stops DBOS whether they did or not (and gives the event loop a new thread pool, as its normal
+    teardown does), then queues the refused jobs again through a `DBOSClient`. `halt_timeout`
+    (5 s) is a hard bound on all of it: when it runs out, whatever is left is abandoned (a job
+    that ignores or delays its cancellation is not waited for, and its next step finds DBOS
+    stopped). Then, at most `halt_timeout` after the check that found the slot lost, it stops the
+    process with `SIGTERM`, also when a part of that stop failed or ran out of time (the watchdog
+    does not check again once the slot is lost); `serve` bounds the shutdown
+    (`timeout_graceful_shutdown`, 30 s) and a restart policy brings it back. The normal teardown
+    that follows waits for a job still unwinding (`stop_grace`, then until it ends): a job that
+    ignores its cancellation holds the shutdown up to `timeout_graceful_shutdown`, or until the
+    restart policy kills the process (its next step fails meanwhile: DBOS is stopped).
   - **Adoption.** Slots no new process takes (fewer processes than before) are adopted: on each
     watchdog round the worker lists the pending job workflows of other executors and takes the
     locks of the free slots (so no process holds them, and no other can adopt them meanwhile). A
     slot must have been seen free for `adopt_grace` (30 s) first, by this run of the worker (a
     restarted worker starts counting again). It then lists their workflows
     again and re-queues them (`resume_workflows`).
-  - **Timing invariants**, checked when the worker is built (a `ValueError` otherwise):
+  - **Timing invariants**, checked when the worker is built (a `ValueError` otherwise). They
+    rely on `halt_timeout` bounding the halt whatever the jobs do: the halt never waits on a job
+    past its deadline (cancelling tasks does not swallow the caller's own cancellation):
     `slot_give_up + slot_check_interval + slot_check_timeout + halt_timeout < adopt_grace`
-    (15 + 2 + 1.5 + 5 = 23.5 < 30: a process whose slot went unconfirmed has stopped its jobs
-    before anyone adopts them, also while it is still starting, since the watchdog runs from
-    DBOS's launch on), and `claim_grace > slot_check_interval + slot_check_timeout +
-    halt_timeout` (15 > 8.5: a process that lost its slot to a newly started one stops before the
-    newcomer's DBOS resumes the slot's jobs).
+    (15 + 2 + 1.5 + 5 = 23.5 < 30: a process whose slot went unconfirmed has cancelled its jobs,
+    stopped DBOS and asked to be stopped before anyone adopts them, also while it is still
+    starting, since the watchdog runs from DBOS's launch on), and `claim_grace >
+    slot_check_interval + slot_check_timeout + halt_timeout` (15 > 8.5: a process that lost its
+    slot to a newly started one stops before the newcomer's DBOS resumes the slot's jobs).
   - **Start.** Recovery (`sort_workflows`) deletes or recovers only the workflows of this process's
     executor and of free slots: a live process's workflows, of any `STEPS_VERSION`, are never
     touched, and `RecoverJobs` leaves their jobs alone. A release that changes `STEPS_VERSION`
