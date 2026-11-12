@@ -254,12 +254,18 @@ class DbosJobWorker:
         ``claim`` may have waited ``claim_grace`` for a slot that left pending jobs, as long as
         ``slot_give_up``: without this check a restarted process would start with its give-up
         time already spent, and an outage at its first watchdog check would stop it again. The
-        clock is read before the check, so never later than the hold it confirms. Any other
-        answer leaves the claim's reading: the watchdog decides (no DBOS to halt yet here).
+        clock is read before the check, so never later than the hold it confirms. A slot another
+        process holds already fails the start before DBOS launches: DBOS would resume and dequeue
+        this executor's jobs at once, though they are that process's now. Any other answer
+        leaves the claim's reading: the watchdog decides (no DBOS to halt yet here).
 
         Args:
             executor_id: This process's executor ID.
             executors: The slots.
+
+        Raises:
+            RuntimeError: Another process holds the slot now (``keep`` already let go of the
+                slot's connection, so the claim releases nothing).
         """
         checking = self.monotonic()
         try:
@@ -269,6 +275,12 @@ class DbosJobWorker:
         except Exception:  # the watchdog's first check tries again
             log.exception("could not check executor slot %s before starting", executor_id)
             return
+        if state is SlotState.LOST:
+            message = (
+                f"executor slot {executor_id} was taken by another process before the job"
+                " worker started"
+            )
+            raise RuntimeError(message)
         if state is SlotState.HELD:
             self._confirmed["at"] = checking
 
@@ -354,16 +366,17 @@ class DbosJobWorker:
             return
         try:
             await asyncio.wait({startup, watch}, return_when=asyncio.FIRST_COMPLETED)
-        except asyncio.CancelledError:
+            if startup.done() and not self._lost.is_set():
+                startup.result()  # its error, if it failed
+                return
+            # Lost while starting: let the watchdog finish stopping (bounded by halt_timeout),
+            # then stop the startup, which may still be waiting on DBOS or on a recovery hook.
+            await asyncio.wait({watch})
+        finally:
+            # Also when the caller is cancelled: the startup must not outlive the worker.
             await self._cancel({startup})
-            raise
-        if startup.done() and not self._lost.is_set():
-            startup.result()  # its error, if it failed
-            return
-        # Lost while starting: let the watchdog finish stopping (bounded by halt_timeout), then
-        # stop the startup, which may still be waiting on DBOS or on a recovery hook.
-        await asyncio.wait({watch})
-        await self._cancel({startup})
+            if self._lost.is_set():
+                _log_failed(startup, "the job worker's startup failed too")
         message = f"executor slot {executor_id} was lost while the job worker started"
         raise RuntimeError(message)
 
@@ -486,8 +499,11 @@ class DbosJobWorker:
             log.exception(
                 "stopping the jobs took over %.0f s; stopping the process", self.halt_timeout
             )
-        if self.on_slot_lost is not None:
-            self.on_slot_lost()
+        except Exception:  # the process must stop all the same: _watch does not check again
+            log.exception("stopping the jobs failed; stopping the process")
+        finally:
+            if self.on_slot_lost is not None:
+                self.on_slot_lost()
         return SlotState.LOST
 
     async def _halt(self) -> None:
@@ -506,8 +522,11 @@ class DbosJobWorker:
         its next step).
         """
         self._lost.set()
-        await self._cancel(set(self._running))
-        await self._destroy_dbos()
+        try:
+            await self._cancel(set(self._running))
+            await self._destroy_dbos()
+        except Exception:  # DBOS may still hand jobs over: queue those refused so far anyway
+            log.exception("could not stop DBOS after the executor slot was lost")
         refused = sorted(self._refused)
         if refused and self.system_database_url is not None:
             try:
@@ -798,6 +817,17 @@ class DbosJobWorker:
             task.cancel()
         with suppress(asyncio.CancelledError):
             await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _log_failed(task: asyncio.Task[None], what: str) -> None:
+    """Log the error a finished task ended with, if any (its caller raises another one).
+
+    Args:
+        task: The task.
+        what: What failed, for the log.
+    """
+    if task.done() and not task.cancelled() and (error := task.exception()) is not None:
+        log.error(what, exc_info=error)
 
 
 def _vacuum(database: Path) -> None:

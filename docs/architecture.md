@@ -716,7 +716,8 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
     waited out and longer ones restart the process. The claim counts as the first confirmation
     (the clock is read just before it); one more check (`keep`, bounded by `slot_check_timeout`)
     just before DBOS launches moves it there if the slot is still held, so a `claim_grace` wait
-    does not use up the give-up time. The watchdog starts right after `DBOS.launch()` (DBOS
+    does not use up the give-up time; if another process holds the slot by then, the start fails
+    before DBOS launches (it would resume and dequeue that process's jobs). The watchdog starts right after `DBOS.launch()` (DBOS
     resumes the slot's workflows from then on) and checks at once, while the queue is
     registered, the jobs recovered and the schedule applied: a slot lost during a slow startup
     is given up counting from its last confirmation, the startup is cancelled and fails, and the
@@ -724,7 +725,8 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
     after that wait) the slot is lost: the worker first stops taking jobs (a job DBOS still hands
     over is refused), cancels the running ones, stops DBOS (and gives the event loop a new thread
     pool, as its normal teardown does), then queues the refused jobs again through a
-    `DBOSClient`, all within `halt_timeout` (5 s), and stops the process with `SIGTERM`; `serve`
+    `DBOSClient`, all within `halt_timeout` (5 s), and stops the process with `SIGTERM`, also when
+    a part of that stop failed (the watchdog does not check again once the slot is lost); `serve`
     bounds the shutdown (`timeout_graceful_shutdown`, 30 s) and a restart policy brings it back.
   - **Adoption.** Slots no new process takes (fewer processes than before) are adopted: on each
     watchdog round the worker lists the pending job workflows of other executors and takes the

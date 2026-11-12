@@ -5,8 +5,10 @@ same paths against a real database and real processes.
 """
 
 import asyncio
+import concurrent.futures
+import threading
 from collections.abc import AsyncGenerator, Collection
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from types import SimpleNamespace
@@ -490,6 +492,142 @@ async def test_a_restarted_worker_counts_a_slot_free_only_from_what_it_saw(
     # The second run saw slot 2 free just now: not for the adoption grace yet.
     assert resumed == []
     assert slots.states == []
+
+
+async def test_a_slot_lost_while_dbos_fails_to_stop_still_stops_the_process(
+    monkeypatch: pytest.MonkeyPatch, no_dbos: list[str]
+) -> None:
+    loop = asyncio.get_running_loop()
+    lost: list[str] = []
+    stopping = asyncio.Event()
+
+    class FailingToStop(StartingDbos):
+        @classmethod
+        def destroy(cls, **_: object) -> None:
+            # DBOS's queue thread hands one more job over while it stops, then the stop fails.
+            handover = asyncio.run_coroutine_threadsafe(subject.run_workflow("job-late"), loop)
+            with suppress(concurrent.futures.CancelledError):
+                handover.result(timeout=1)
+            message = "DBOS could not stop"
+            raise RuntimeError(message)
+
+    def stop() -> None:
+        lost.append("stop")
+        stopping.set()
+
+    monkeypatch.setattr(dbos_worker, "DBOS", FailingToStop)
+    slots = FakeSlots(states=[SlotState.HELD, SlotState.HELD, SlotState.HELD, SlotState.LOST])
+    subject = replace(worker(slots), on_slot_lost=stop, slot_check_interval=0.01)
+
+    async with subject.running(), asyncio.timeout(1):
+        await stopping.wait()
+        await asyncio.sleep(0.05)  # the watchdog does not check again, nor stop twice
+
+    assert lost == ["stop"]
+    assert no_dbos == ["resume job-late on q", "client closed"]  # the refused job, queued again
+    assert slots.states == []
+
+
+async def test_a_slot_taken_before_dbos_launches_fails_the_start_before_launch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lost: list[str] = []
+    monkeypatch.setattr(StartingDbos, "stopped", [], raising=False)
+    monkeypatch.setattr(StartingDbos, "launched", False)
+    monkeypatch.setattr(dbos_worker, "DBOS", StartingDbos)
+    # The slot's connection died during the claim's grace, and another process took the slot.
+    slots = FakeSlots(states=[SlotState.LOST])
+    subject = worker(slots, lost)
+
+    with pytest.raises(RuntimeError, match="taken by another process before the job worker"):
+        async with subject.running():
+            pytest.fail("the worker started on a slot another process holds")
+
+    # DBOS never launched, so it resumed and dequeued none of that process's jobs.
+    assert StartingDbos.launched is False
+    assert (StartingDbos.stopped, lost) == ([], [])
+
+
+@dataclass(kw_only=True)  # conventions: allow-mutable-dataclass -- a test scenario's state
+class FailingStartup:
+    """A recovery that fails while the watchdog stops DBOS for a lost slot.
+
+    The stop (``destroy``) waits until the recovery has failed, then until ``released``: the
+    worker's start sees a finished, failed startup while the watchdog is still stopping.
+    """
+
+    destroying: asyncio.Event = field(default_factory=asyncio.Event)
+    failed: threading.Event = field(default_factory=threading.Event)
+    released: threading.Event = field(default_factory=threading.Event)
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> DbosJobWorker:
+        loop = asyncio.get_running_loop()
+        scenario = self
+
+        class SlowToStop(StartingDbos):
+            @classmethod
+            def destroy(cls, **_: object) -> None:
+                loop.call_soon_threadsafe(scenario.destroying.set)
+                scenario.failed.wait(1)
+                scenario.released.wait(1)
+
+        async def failing_recovery(**_: object) -> None:
+            await self.destroying.wait()
+            self.failed.set()
+            message = "the recovery failed"
+            raise ValueError(message)
+
+        monkeypatch.setattr(dbos_worker, "DBOS", SlowToStop)
+        slots = FakeSlots(states=[SlotState.HELD, SlotState.LOST])
+        return replace(worker(slots, []), recover_jobs=failing_recovery)
+
+
+def _startup_errors(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        str(r.exc_info[1])
+        for r in caplog.records
+        if r.getMessage() == "the job worker's startup failed too" and r.exc_info
+    ]
+
+
+async def test_a_startup_that_fails_while_the_slot_is_lost_is_logged(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    scenario = FailingStartup(released=threading.Event())
+    scenario.released.set()
+    subject = scenario.install(monkeypatch)
+
+    with pytest.raises(RuntimeError, match="lost while the job worker started"):
+        async with subject.running():
+            pytest.fail("the worker started after its slot was lost")
+
+    # The lost slot is what the start reports; the recovery's own error is not swallowed.
+    assert _startup_errors(caplog) == ["the recovery failed"]
+
+
+async def test_a_caller_cancelled_while_the_watchdog_stops_still_ends_the_startup(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    scenario = FailingStartup()
+    subject = scenario.install(monkeypatch)
+
+    async def start() -> None:
+        async with subject.running():
+            pytest.fail("the worker started after its slot was lost")
+
+    starting = asyncio.create_task(start())
+    try:
+        await scenario.destroying.wait()
+        await asyncio.sleep(0.05)  # the recovery failed; the start waits for the watchdog
+        assert not starting.done()
+        starting.cancel()  # e.g. the server is stopped while it starts
+        with pytest.raises(asyncio.CancelledError):
+            await starting
+    finally:
+        scenario.released.set()
+
+    # The startup was ended with the worker, and its error was seen, not left unretrieved.
+    assert _startup_errors(caplog) == ["the recovery failed"]
 
 
 @pytest.mark.parametrize(
