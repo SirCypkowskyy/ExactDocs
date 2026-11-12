@@ -57,6 +57,26 @@ class InMemoryJobRepository:
         mine = [job for job in self.jobs.values() if job.library == library]
         return sorted(mine, key=lambda job: job.id, reverse=True)
 
+    async def list_page_for_library(
+        self, library: str, *, before: str | None, limit: int
+    ) -> Sequence[Job]:
+        """Return up to ``limit`` of the library's jobs with an ID below ``before``, newest first.
+
+        Args:
+            library: The library whose jobs are listed.
+            before: Only jobs whose ID sorts before this one; ``None`` starts at the newest.
+            limit: At most this many jobs.
+
+        Returns:
+            The page, highest ID first.
+        """
+        mine = [
+            job
+            for job in self.jobs.values()
+            if job.library == library and (before is None or job.id < before)
+        ]
+        return sorted(mine, key=lambda job: job.id, reverse=True)[:limit]
+
     async def list_latest(self) -> Sequence[Job]:
         """Return the newest job of every (library, version), ordered by library and version."""
         newest: dict[tuple[str, str | None], Job] = {}
