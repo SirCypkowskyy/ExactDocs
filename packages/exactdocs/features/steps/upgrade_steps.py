@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 import tempfile
@@ -9,6 +10,7 @@ import time
 from contextlib import ExitStack
 from http import HTTPStatus
 from pathlib import Path
+from unittest import mock
 
 from alembic import command
 from alembic.script import ScriptDirectory
@@ -17,6 +19,7 @@ from behave.runner import Context
 from fastapi.testclient import TestClient
 from sqlalchemy import Connection, text
 
+from exactdocs.bootstrap import database
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.database import alembic_config, open_database
 from exactdocs.bootstrap.http import create_app
@@ -159,3 +162,42 @@ def step_swapped(context: Context) -> None:
     assert _search(context) == context.searched_before
     health = context.client.get("/api/health").json()
     assert not health["reindex_required"], health
+
+
+@given("{count:d} processes start at the same time on one empty SQLite database")
+def step_processes_on_empty_database(context: Context, count: int) -> None:
+    # Each "process" is a container of its own on one event loop in this process: that is a real
+    # race, because the migration turn is an flock, which locks per open file description (two
+    # engines exclude each other as two processes do). A POSIX lock (fcntl.lockf) would not.
+    context.data_dir = Path(tempfile.mkdtemp(prefix="exactdocs-"))
+    context.add_cleanup(shutil.rmtree, context.data_dir, ignore_errors=True)
+    context.process_count = count  # built in the Then, after the busy machine is set up
+
+
+@given("the machine is so busy that a migration outlasts SQLite's wait for a lock")
+def step_busy_machine(context: Context) -> None:
+    # SQLite gives up on a lock after 100 ms: enough for a brief lock (a checkpoint, a pool's
+    # switch to WAL), shorter than migrating an empty database takes, as on a busy machine (#320).
+    # It also shrinks _enable_wal's own retry deadline to 100 ms: look there first if this
+    # scenario ever flakes on the switch to WAL rather than on the migration.
+    busy = mock.patch.object(database, "BUSY_TIMEOUT_MS", 100)
+    busy.start()
+    context.add_cleanup(busy.stop)
+
+
+@then('every process migrates or waits for the migration, and none fails with "database is locked"')
+def step_all_migrated(context: Context) -> None:
+    async def start(container: Container) -> str | None:
+        async with container.running(jobs=False):  # one job worker per process
+            return await database.current_revision(container.engine)
+
+    async def start_all() -> list[str | BaseException | None]:
+        # Every start runs to its end, so a failed one is reported, not left half started.
+        return await asyncio.gather(*(start(c) for c in context.containers), return_exceptions=True)
+
+    # Built only now, with the busy machine's timeout patched, whenever the timeout is read.
+    settings = Settings(data_dir=context.data_dir)
+    context.containers = [Container.build(settings) for _ in range(context.process_count)]
+    head = ScriptDirectory.from_config(alembic_config()).get_current_head()
+    outcomes = asyncio.run(start_all())
+    assert outcomes == [head] * len(context.containers), outcomes

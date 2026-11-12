@@ -237,6 +237,18 @@ LOCK_NOT_AVAILABLE: Final[str] = "55P03"
 MIGRATION_LOCK: Final[int] = 0x45584443_00000002
 """PostgreSQL advisory lock held while the schema is migrated: processes starting together
 migrate one after the other."""
+MIGRATION_TURN_SUFFIX: Final[str] = "-migration.lock"
+"""Suffix of the file next to a SQLite database (``exactdocs.db-migration.lock``) that a process
+keeps locked (``flock``) while it migrates: processes starting together migrate one after the
+other, however long each takes (#320). It stays, naming only the current holder (pid and host,
+for the waiters' log line); the kernel drops the lock of a process that dies."""
+MIGRATION_TURN_POLL_SECONDS: Final[float] = 0.05
+"""How often a SQLite process waiting for another one's migration tries the lock again."""
+MIGRATION_TURN_NOTICE_SECONDS: Final[float] = 5.0
+"""After this long waiting for another process's migration, the wait is first logged."""
+MIGRATION_TURN_REPEAT_SECONDS: Final[float] = 60.0
+"""While the wait for another process's migration goes on, it is logged again this often, so a
+start stuck behind a hung migration stays visible in the logs."""
 COLLATED_PREFIXES: Final[tuple[str, ...]] = ("catalog_", "identity_", "ingestion_", "retrieval_")
 """Tables whose text columns get the "C" collation on PostgreSQL, so text compares and sorts by
 code point, as SQLite's BINARY collation does, whatever the database's locale."""

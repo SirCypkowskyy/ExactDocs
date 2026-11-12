@@ -8,12 +8,17 @@ The database is a SQLite file in the data directory (the default) or PostgreSQL
 (``EXACTDOCS_DATABASE_URL=postgresql+psycopg://...``), which several server processes can share.
 """
 
+import asyncio
+import contextlib
+import fcntl
 import logging
 import os
 import secrets
+import socket
 import sqlite3
 import tempfile
 import time
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -36,6 +41,10 @@ from exactdocs.bootstrap.constants import (
     COLLATED_PREFIXES,
     LOCK_NOT_AVAILABLE,
     MIGRATION_LOCK,
+    MIGRATION_TURN_NOTICE_SECONDS,
+    MIGRATION_TURN_POLL_SECONDS,
+    MIGRATION_TURN_REPEAT_SECONDS,
+    MIGRATION_TURN_SUFFIX,
     MIGRATIONS,
     MIN_POSTGRES,
     MIN_SQLITE,
@@ -476,8 +485,11 @@ async def migrate(engine: AsyncEngine, *, location: Path = MIGRATIONS) -> None:
     Foreign keys are off while revisions run, because a batch alteration recreates a table and
     SQLite would otherwise apply ``ON DELETE CASCADE`` to the rows of the tables that reference
     it. ``PRAGMA foreign_key_check`` before the commit proves the revisions left no violation.
-    The transaction is ``BEGIN IMMEDIATE``: processes starting together migrate one after the
-    other (the later ones find nothing left to do) instead of failing with "database is locked".
+    Processes starting together on one SQLite file migrate one after the other (the later ones
+    find nothing left to do): each first takes the migration turn (``_migration_turn``, a file
+    lock it waits for as long as another process's migration takes), then runs the revisions in
+    a ``BEGIN IMMEDIATE`` transaction. SQLite's own wait for a lock (``BUSY_TIMEOUT_MS``) is not
+    long enough on its own: it does not depend on how fast the machine migrates (#320).
 
     On PostgreSQL the revisions run in one transaction that first takes an advisory lock (the
     same turn-taking across processes), and the text columns of ExactDocs' tables are then given
@@ -487,7 +499,8 @@ async def migrate(engine: AsyncEngine, *, location: Path = MIGRATIONS) -> None:
         async with engine.begin() as connection:
             await connection.run_sync(_upgrade_postgres, location)
         return
-    async with engine.connect() as connection:
+    # The turn comes first, so the first connection's switch to WAL is taken in turn too.
+    async with _migration_turn(engine), engine.connect() as connection:
         await connection.execution_options(begin_immediate=True)
         # Raw cursor: the pragma is a no-op inside a transaction, which SQLAlchemy would begin.
         await connection.run_sync(_pragma, "foreign_keys=OFF")
@@ -496,6 +509,116 @@ async def migrate(engine: AsyncEngine, *, location: Path = MIGRATIONS) -> None:
                 await connection.run_sync(_upgrade, location)
         finally:
             await connection.run_sync(_pragma, "foreign_keys=ON")
+
+
+@contextlib.asynccontextmanager
+async def _migration_turn(engine: AsyncEngine) -> AsyncGenerator[None]:
+    """Hold the SQLite file's migration turn: an exclusive ``flock`` on a file next to it.
+
+    A process waits for the turn for as long as another process's migration takes, however slow
+    the machine is, and without blocking the event loop: it tries the lock again every
+    ``MIGRATION_TURN_POLL_SECONDS``, so a start cancelled while it waits stops at once. A long
+    wait is logged as a warning naming the lock file and the holder, first after
+    ``MIGRATION_TURN_NOTICE_SECONDS`` and then every ``MIGRATION_TURN_REPEAT_SECONDS``. The
+    kernel releases the lock of a process that dies, so a crash leaves no stale turn behind.
+    An in-memory database has no other process to wait for.
+
+    ``flock`` (not ``fcntl.lockf``) on purpose: it locks per open file description, so two
+    engines of one process exclude each other as two processes do, while a POSIX record lock
+    would let every descriptor of the same process through.
+
+    Args:
+        engine: A SQLite engine.
+
+    Yields:
+        Nothing, while this process holds the turn.
+
+    Raises:
+        StartupError: The lock file cannot be opened (another user's file, a missing directory).
+    """
+    path = database_file(engine)
+    if path is None:
+        yield
+        return
+    turn = path.with_name(path.name + MIGRATION_TURN_SUFFIX)
+    try:
+        descriptor = os.open(turn, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    except OSError as exc:
+        message = (
+            f"Cannot open {turn}, the lock processes take turns on to migrate: "
+            f"{exc.strerror or exc}. Run every ExactDocs command as the same user, or, with "
+            "every ExactDocs process stopped, remove the file (it only names the last holder)."
+        )
+        raise StartupError(message) from exc
+    try:
+        started = time.monotonic()
+        notice_at = started + MIGRATION_TURN_NOTICE_SECONDS
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                now = time.monotonic()
+                if now >= notice_at:
+                    notice_at = now + MIGRATION_TURN_REPEAT_SECONDS
+                    logger.warning(
+                        "Waited %.0f s for another ExactDocs process (%s) to migrate %s; "
+                        "it holds %s.",
+                        now - started,
+                        _turn_holder(descriptor),
+                        path,
+                        turn,
+                    )
+                await asyncio.sleep(MIGRATION_TURN_POLL_SECONDS)
+            else:
+                break
+        _write_turn_holder(descriptor, _this_holder())
+        try:
+            yield
+        finally:
+            _write_turn_holder(descriptor, "")  # a later waiter names no finished process
+    finally:
+        os.close(descriptor)  # releases the lock
+
+
+def _write_turn_holder(descriptor: int, holder: str) -> None:
+    """Record who holds the migration turn in its lock file; a diagnostic only, never needed.
+
+    Args:
+        descriptor: The lock file, open for writing.
+        holder: Who holds the turn, or ``""`` once it is given back.
+    """
+    with contextlib.suppress(OSError):
+        os.ftruncate(descriptor, 0)
+        # A host name need not be valid UTF-8 (surrogates): escape it, never fail the start.
+        os.pwrite(descriptor, holder.encode(errors="backslashreplace"), 0)
+
+
+def _this_holder() -> str:
+    """Name this process as the migration turn's holder, as far as the system tells.
+
+    Returns:
+        ``pid <n> on <host>``, or ``pid <n>`` when the host name cannot be read.
+    """
+    try:
+        return f"pid {os.getpid()} on {socket.gethostname()}"
+    except OSError:
+        return f"pid {os.getpid()}"
+
+
+def _turn_holder(descriptor: int) -> str:
+    """Tell who the migration turn's lock file names as its holder, as far as it says.
+
+    Args:
+        descriptor: The lock file, open for reading.
+
+    Returns:
+        The holder (``pid <n> on <host>``), or ``"holder unknown"``.
+    """
+    try:
+        holder = os.pread(descriptor, 256, 0).decode(errors="replace").strip()
+    except OSError:
+        holder = ""
+    return holder or "holder unknown"
 
 
 def _pragma(connection: Connection, pragma: str) -> None:

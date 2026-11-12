@@ -20,7 +20,7 @@ jobs:
   python:
     name: Python (ruff, ty, pytest, behave)
     runs-on: [self-hosted, linux, ARM64, exactdocs]
-    timeout-minutes: 25
+    timeout-minutes: 40
     # PostgreSQL for the adapter contract tests and the @postgres scenarios (#103): ParadeDB, which
     # also has pg_search and pgvector. A service container on the runner VM's own Docker, on a
     # free host port. Its POSTGRES_USER is a superuser: the tests create a database per test, and
