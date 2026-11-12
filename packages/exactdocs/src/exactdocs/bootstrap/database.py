@@ -10,6 +10,7 @@ The database is a SQLite file in the data directory (the default) or PostgreSQL
 
 import logging
 import os
+import secrets
 import sqlite3
 import tempfile
 import time
@@ -29,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import ConnectionPoolEntry
 from sqlalchemy.util import await_
 
+from exactdocs.bootstrap.cancellation import being_cancelled
 from exactdocs.bootstrap.constants import (
     BUSY_TIMEOUT_MS,
     COLLATED_PREFIXES,
@@ -39,6 +41,7 @@ from exactdocs.bootstrap.constants import (
     MIN_SQLITE,
     POSTGRES_DRIVER,
     SECURE_SSLMODES,
+    SESSION_PROBE,
     SPEND_LEDGER_TABLES,
     SQLITE_READ_ACTIONS,
     SQLITE_READ_PRAGMAS,
@@ -513,6 +516,98 @@ def _upgrade(connection: Connection, location: Path) -> None:
         raise StartupError(message)
 
 
+async def warn_unless_session(engine: AsyncEngine) -> bool:
+    """Warn when the PostgreSQL connection loses its session state between transactions.
+
+    One pooled connection sets a session-level value (``set_config(..., false)``) in one
+    transaction and reads it back in the next. Behind a pooler in transaction mode (PgBouncer's
+    ``pool_mode = transaction``, Supabase's port 6543, another provider's) the second
+    transaction may run on another server connection, or on one the pooler reset, and the value
+    is gone. That is logged as one WARNING and the start goes on. The probe cannot prove the
+    opposite: a transaction-mode pooler with one idle server connection keeps the value, so no
+    warning is no guarantee. It opens no connection of its own (the pool's, checked out once)
+    and costs three statements in two transactions; the last clears the value. SQLite has no
+    session to lose: nothing is done. A probe that fails (a pooler that refuses
+    ``set_config``, a dropped connection, a ``statement_timeout``) is logged as a WARNING too
+    and the start goes on, unless the start is being cancelled.
+
+    Args:
+        engine: The database engine, already migrated.
+
+    Returns:
+        ``True`` when the value was lost and the warning logged.
+    """
+    if not is_postgres(engine):
+        return False
+    try:
+        lost = await _session_is_lost(engine)
+    except Exception as exc:
+        if being_cancelled():  # the error replaced the start's cancellation: stop all the same
+            raise
+        logger.warning(
+            "Could not check that the PostgreSQL connection (%s) keeps its session between "
+            "transactions; the start goes on: %s",
+            shown_url(engine.url),
+            exc,
+        )
+        return False
+    if not lost:
+        return False
+    logger.warning(
+        "The PostgreSQL connection (%s) lost its session state between two transactions: "
+        "EXACTDOCS_DATABASE_URL looks like a connection pooler in transaction mode, which "
+        "ExactDocs does not support (its jobs, advisory locks and prepared statements need a "
+        "session). Jobs may fail at random. Use a session connection instead: the pooler in "
+        "session mode (PgBouncer's pool_mode = session; Supabase's session pooler, port 5432) "
+        "or the direct connection to PostgreSQL.",
+        shown_url(engine.url),
+    )
+    return True
+
+
+async def _session_is_lost(engine: AsyncEngine) -> bool:
+    """Set a session value in one transaction, read it in the next, then clear it.
+
+    Clearing it matters behind a transaction-mode pooler that kept the value: the server
+    connection is shared with other clients afterwards.
+
+    Args:
+        engine: A PostgreSQL engine.
+
+    Returns:
+        ``True`` when the second transaction did not see the value.
+    """
+    token = secrets.token_hex(8)
+    async with engine.connect() as connection:
+        async with connection.begin():
+            await connection.execute(
+                text("SELECT set_config(:name, :token, false)"),
+                {"name": SESSION_PROBE, "token": token},
+            )
+        async with connection.begin():
+            found = await connection.scalar(
+                text("SELECT current_setting(:name, true)"), {"name": SESSION_PROBE}
+            )
+            await connection.execute(
+                text("SELECT set_config(:name, '', false)"), {"name": SESSION_PROBE}
+            )
+    return found != token
+
+
+def shown_url(url: URL) -> str:
+    """Render a database URL for a log line or an error, with every password hidden.
+
+    ``hide_password`` covers the userinfo only; libpq also reads a ``password`` query key.
+
+    Args:
+        url: The database URL.
+
+    Returns:
+        The URL with ``***`` for the userinfo password and no ``password`` query key.
+    """
+    return url.difference_update_query(["password"]).render_as_string(hide_password=True)
+
+
 def _upgrade_postgres(connection: Connection, location: Path) -> None:
     """Run the revisions on PostgreSQL, one process at a time, then collate the text columns.
 
@@ -639,7 +734,7 @@ async def check_schema_is_current(engine: AsyncEngine) -> None:
     script = ScriptDirectory.from_config(alembic_config())
     head = script.get_current_head()
     if is_postgres(engine):
-        where = engine.url.render_as_string(hide_password=True)
+        where = shown_url(engine.url)
         try:
             revision = await current_revision(engine)
         except OperationalError as exc:
