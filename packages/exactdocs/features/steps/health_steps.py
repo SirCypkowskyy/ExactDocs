@@ -1,8 +1,16 @@
-"""Steps for the liveness and readiness probes, asked like an orchestrator asks them."""
+"""Steps for the liveness and readiness probes, asked like an orchestrator asks them.
 
+Every wait here is bounded by ``STEP_SECONDS`` (#304): a request, the instance's start or its
+stop that takes longer fails the scenario with the stack it is stuck in, instead of hanging the
+run. A scenario's stall is released before its instance stops.
+"""
+
+import faulthandler
 import shutil
 import tempfile
+import threading
 import time
+from collections.abc import Callable
 from contextlib import ExitStack
 from http import HTTPStatus
 from pathlib import Path
@@ -19,6 +27,43 @@ from slow_database import SlowDatabase
 
 DATABASE_DIR = "database"
 """Folder of the data directory that holds only the database, so it can disappear on its own."""
+STDERR = 2
+"""The process's standard error descriptor: behave captures ``sys.stderr``, not this."""
+STEP_SECONDS = 30.0
+"""The longest a step waits for the instance: a start, a request or a stop. Each takes well
+under a few seconds, even with a stalled statement (at most 3 s) and the probes' settle (4 s)."""
+
+
+def _within[T](what: str, call: Callable[[], T]) -> T:
+    """Run a blocking call, failing the step if it takes more than ``STEP_SECONDS``.
+
+    The call runs in a daemon thread of its own, so a stuck one is left behind and the run goes
+    on to the next scenario rather than waiting for it. An error the call raises is printed by
+    ``threading.excepthook`` (into the step's captured output) and fails the step.
+
+    Args:
+        what: What the call does, for the failure message.
+        call: The call.
+
+    Returns:
+        What the call returned.
+
+    Raises:
+        AssertionError: The call raised, or did not return in time; then every thread's stack is
+            printed to standard error first.
+    """
+    outcome: list[T] = []
+    worker = threading.Thread(
+        target=lambda: outcome.append(call()), name=f"health: {what}", daemon=True
+    )
+    worker.start()
+    worker.join(STEP_SECONDS)
+    if worker.is_alive():
+        faulthandler.dump_traceback(file=STDERR, all_threads=True)
+        message = f"{what} did not finish within {STEP_SECONDS} s; the stacks are on stderr"
+        raise AssertionError(message)
+    assert outcome, f"{what} failed: its traceback is above"
+    return outcome[0]
 
 
 @given("ExactDocs is running on its own database")
@@ -29,7 +74,7 @@ def step_running(context: Context) -> None:
         context: The behave context.
     """
     stack = ExitStack()
-    context.add_cleanup(stack.close)
+    context.add_cleanup(_within, "stopping the instance", stack.close)
     data_dir = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="exactdocs-")))
     context.database_dir = data_dir / DATABASE_DIR
     context.container = Container.build(
@@ -39,10 +84,11 @@ def step_running(context: Context) -> None:
         )
     )
     context.slow_database = SlowDatabase.on(context.container.engine)
+    # Added after the stop, so it runs first: the instance stops with its statements running free.
+    context.add_cleanup(context.slow_database.release)
     # An orchestrator sends no cookie and no token.
-    context.client = stack.enter_context(
-        TestClient(create_app(context.container), base_url="http://localhost")
-    )
+    client = TestClient(create_app(context.container), base_url="http://localhost")
+    context.client = _within("starting the instance", lambda: stack.enter_context(client))
 
 
 @when("the database is unreachable")
@@ -53,7 +99,8 @@ def step_database_unreachable(context: Context) -> None:
         context: The behave context.
     """
     shutil.rmtree(context.database_dir)
-    context.client.portal.call(context.container.engine.dispose)
+    portal = context.client.portal
+    _within("disposing of the engine", lambda: portal.call(context.container.engine.dispose))
 
 
 @then('"{live}" reports up and "{ready}" reports {state}')
@@ -66,10 +113,10 @@ def step_probes(context: Context, live: str, ready: str, state: str) -> None:
         ready: Path of the readiness probe.
         state: ``ready`` or ``not ready``.
     """
-    alive = context.client.get(live)
+    alive = _within(f"GET {live}", lambda: context.client.get(live))
     assert alive.status_code == HTTPStatus.OK, (alive.status_code, alive.text)
     assert alive.json()["status"] == "ok"
-    readiness = context.client.get(ready)
+    readiness = _within(f"GET {ready}", lambda: context.client.get(ready))
     expected = HTTPStatus.OK if state == "ready" else HTTPStatus.SERVICE_UNAVAILABLE
     assert readiness.status_code == expected, (readiness.status_code, readiness.text)
     assert readiness.json()["status"] == state.replace(" ", "_")
@@ -79,7 +126,8 @@ def step_probes(context: Context, live: str, ready: str, state: str) -> None:
 def step_slow_statement(context: Context, seconds: int) -> None:
     """Hold every database statement until ``seconds`` from now.
 
-    The instance's lifespan waits for the check the probe leaves running when it stops.
+    The stall ends on its own, or at the latest when the scenario ends (released before the
+    instance stops).
 
     Args:
         context: The behave context.
@@ -96,7 +144,7 @@ def step_call_liveness(context: Context) -> None:
         context: The behave context.
     """
     started = time.monotonic()
-    context.response = context.client.get(LIVENESS_PATH)
+    context.response = _within("the liveness probe", lambda: context.client.get(LIVENESS_PATH))
     context.elapsed = time.monotonic() - started
 
 

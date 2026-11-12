@@ -1,5 +1,11 @@
-"""Behave hooks: build the fixture docs repository once per run and serve it on 127.0.0.1."""
+"""Behave hooks: build the fixture docs repository once per run and serve it on 127.0.0.1.
 
+A guard bounds each scenario (#304): one that runs, cleanups included, for longer than
+``SCENARIO_SECONDS`` makes the run print every thread's stack and exit with status 1, instead of
+using up the CI job's timeout without a trace.
+"""
+
+import faulthandler
 import os
 import sys
 import tempfile
@@ -7,7 +13,7 @@ from contextlib import ExitStack
 from importlib import import_module
 from pathlib import Path
 
-from behave.model import Scenario
+from behave.model import Feature, Scenario
 from behave.runner import Context
 
 # The fixture builder is test support shared with pytest, not part of the package. behave has no
@@ -15,6 +21,13 @@ from behave.runner import Context
 sys.path.insert(0, str(Path(__file__).parents[1] / "tests" / "fixtures"))
 # The retrieval eval suite (retrieval_eval.feature) is development tooling beside the package.
 sys.path.insert(0, str(Path(__file__).parents[1] / "evals"))
+
+STDERR = 2
+"""The process's standard error descriptor: behave captures ``sys.stderr``, not this."""
+SCENARIO_SECONDS = float(os.environ.get("BEHAVE_SCENARIO_TIMEOUT", "300"))
+"""Longest a scenario may run, from its start to the next one's (so its cleanups count). The
+slowest whole feature takes about 35 s on CI; a hung scenario fails within this."""
+
 fixture_repo = import_module("fixture_repo")
 databases = import_module("databases")  # raises when CI requires PostgreSQL and has none
 
@@ -30,10 +43,19 @@ def before_all(context: Context) -> None:
 
 
 def after_all(context: Context) -> None:
+    faulthandler.cancel_dump_traceback_later()
     context.stack.close()
 
 
+def after_feature(context: Context, feature: Feature) -> None:
+    # The feature's last scenario and its cleanups are done: nothing is guarded until the next.
+    del context, feature
+    faulthandler.cancel_dump_traceback_later()
+
+
 def before_scenario(context: Context, scenario: Scenario) -> None:
+    # Re-armed for each scenario; it fires only if this one, or its cleanups, hang.
+    faulthandler.dump_traceback_later(SCENARIO_SECONDS, exit=True, file=STDERR)
     # PostgreSQL scenarios need a server (EXACTDOCS_TEST_POSTGRES_URL); CI always has one and
     # sets EXACTDOCS_REQUIRE_POSTGRES=1, so there they can never be skipped.
     del context

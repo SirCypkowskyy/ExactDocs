@@ -75,7 +75,10 @@ async def probed(tmp_path: Path) -> AsyncIterator[Probed]:
         serving(app),  # its end settles the checks a probe left running
         httpx.AsyncClient(transport=transport, base_url="http://localhost") as client,
     ):
-        yield Probed(client=client, slow=slow)
+        try:
+            yield Probed(client=client, slow=slow)
+        finally:
+            slow.release()  # the app stops with its statements running free (#304)
 
 
 async def _timed(client: httpx.AsyncClient, path: str) -> tuple[httpx.Response, float]:
