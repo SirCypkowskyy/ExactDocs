@@ -235,8 +235,13 @@ class DbosJobWorker:
         try:
             async with AsyncExitStack() as stack:
                 executor_id = None
+                self._confirmed.clear()
                 if self.executors is not None:
+                    # Read before the claim, so never later than the moment the slot was taken:
+                    # the give-up clock counts from there, however long DBOS then takes to start.
+                    claiming = self.monotonic()
                     executor_id = await stack.enter_async_context(self.executors.claim())
+                    self._confirmed["at"] = claiming
                 async with self._dbos(executor_id):
                     yield
         finally:
@@ -253,7 +258,6 @@ class DbosJobWorker:
             Nothing, while jobs run.
         """
         self._destroyed.clear()
-        self._confirmed.clear()
         self._lost.clear()
         self._refused.clear()
         DBOS(config=self._config(executor_id))
@@ -335,19 +339,21 @@ class DbosJobWorker:
         return config
 
     async def _watch(self, executor_id: str, executors: ExecutorSlots) -> None:
-        """Every ``slot_check_interval``: keep the slot, then adopt stopped executors' jobs.
+        """At once, then every ``slot_check_interval``: keep the slot, then adopt stopped jobs.
 
         A slot lost and taken again is fine only while no other process adopted this one's jobs
         meanwhile; otherwise, as when another process holds the slot, this process stops its
         jobs and asks to be stopped (``on_slot_lost``), so no job runs twice for long.
 
+        The slot was last confirmed when it was claimed (``running``), before DBOS launched and
+        the startup recovery ran: the first check comes at once, so a slot lost during a slow
+        startup is given up ``slot_give_up`` after the claim, not after the watcher started.
+
         Args:
             executor_id: This process's executor ID.
             executors: The slots.
         """
-        self._confirmed["at"] = self.monotonic()  # claimed just now
         while True:
-            await asyncio.sleep(self.slot_check_interval)
             try:
                 state = await self.check_slot(executor_id, executors)
                 if state is SlotState.LOST:
@@ -356,6 +362,7 @@ class DbosJobWorker:
                     await self.adopt_orphans(executor_id, executors)
             except Exception:  # the next round tries again
                 log.exception("could not check executor slot %s", executor_id)
+            await asyncio.sleep(self.slot_check_interval)
 
     async def check_slot(self, executor_id: str, executors: ExecutorSlots) -> SlotState:
         """Keep the slot; when it is lost, stop taking and running jobs and report it.

@@ -37,8 +37,9 @@ class FakeSlots:
     dead: set[str] = field(default_factory=set)
     claim_grace: float = 15.0
 
-    def claim(self) -> Any:
-        raise NotImplementedError
+    @asynccontextmanager
+    async def claim(self) -> AsyncGenerator[str]:
+        yield "exactdocs-1"
 
     async def keep(self) -> SlotState:
         return self.states.pop(0)
@@ -328,6 +329,64 @@ async def test_the_give_up_clock_runs_from_the_last_confirmed_hold(no_dbos: list
     assert await subject.check_slot("exactdocs-0", slots) is SlotState.LOST
     assert lost == ["stop"]
     assert no_dbos == ["destroy"]
+
+
+class StartingDbos:
+    """DBOS as far as a worker's start and halt need it: nothing runs, the stop is recorded."""
+
+    stopped: list[str]
+
+    def __init__(self, *, config: object) -> None:
+        del config
+
+    @staticmethod
+    def workflow(*, name: str) -> Any:
+        del name
+        return lambda function: function
+
+    @staticmethod
+    def launch() -> None:
+        return None
+
+    register_queue_async = staticmethod(_nothing)
+    delete_schedule_async = staticmethod(_nothing)
+    delete_workflows_async = staticmethod(_nothing)
+
+    @staticmethod
+    async def list_workflows_async(**_: object) -> list[Any]:
+        return []
+
+    @classmethod
+    def destroy(cls, **_: object) -> None:
+        cls.stopped.append("destroy")
+
+
+async def test_a_slot_lost_during_a_slow_startup_is_given_up_counting_from_the_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [0.0]
+    stopped_at: list[float] = []
+    stopping = asyncio.Event()
+    monkeypatch.setattr(StartingDbos, "stopped", [], raising=False)
+    monkeypatch.setattr(dbos_worker, "DBOS", StartingDbos)
+
+    async def slow_recovery(**_: object) -> None:
+        now[0] += 6  # the startup outlasts the give-up time (5 s here)...
+
+    def stop() -> None:
+        stopped_at.append(now[0])
+        stopping.set()
+
+    slots = FakeSlots(states=[SlotState.UNKNOWN] * 5)  # ...and its slot's connection died
+    subject = replace(worker(slots, now=now), recover_jobs=slow_recovery, on_slot_lost=stop)
+
+    async with subject.running(), asyncio.timeout(0.5):  # the first check runs at once
+        await stopping.wait()
+
+    # 6 s since the claim, though 0 s since the watcher started: given up before adoption.
+    assert stopped_at == [6.0]
+    assert stopped_at[0] < subject.adopt_grace
+    assert StartingDbos.stopped == ["destroy"]
 
 
 @pytest.mark.parametrize(

@@ -713,7 +713,10 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
     only if every job it runs is still its own pending workflow. A database that cannot be
     reached is `unknown`: the worker adopts nothing and waits, and gives up 15 s
     (`slot_give_up`) after the slot was **last confirmed held**, so outages up to about 15 s are
-    waited out and longer ones restart the process. When another process holds the slot (or
+    waited out and longer ones restart the process. The claim counts as the first confirmation
+    (the clock is read just before it), and the watchdog's first check runs as soon as DBOS has
+    started and recovered, so a slot lost during a slow startup is given up counting from the
+    claim, not from the watchdog's start. When another process holds the slot (or
     after that wait) the slot is lost: the worker first stops taking jobs (a job DBOS still hands
     over is refused), cancels the running ones, stops DBOS (and gives the event loop a new thread
     pool, as its normal teardown does), then queues the refused jobs again through a
