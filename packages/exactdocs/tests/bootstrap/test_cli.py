@@ -77,21 +77,24 @@ async def _broken(_log: InMemoryFailedSignInLog, _key: str) -> bool:
     raise OSError(message)
 
 
+@pytest.mark.parametrize("method", ["forget", "forget_remembered"])
 @pytest.mark.parametrize(("forget", "cause"), [(_busy, "was busy"), (_broken, "failed")])
 def test_reset_password_warns_when_the_throttle_was_not_cleared(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    method: str,
     forget: object,
     cause: str,
 ) -> None:
     run(monkeypatch, GOOD + "\n", "--username", "ada", "--password-stdin")
-    monkeypatch.setattr(InMemoryFailedSignInLog, "forget", forget)
+    monkeypatch.setattr(InMemoryFailedSignInLog, method, forget)
 
     reset(monkeypatch, "a brand new passphrase\n", "--username", "ada", "--password-stdin")
 
     out, err = capsys.readouterr()
     assert "Password of 'ada' changed; all its sessions ended." in out
     assert f"the password was changed, but the sign-in throttle {cause}" in err
+    assert "count or the addresses it remembers for this username" in err
     assert "Run the command again to retry (that is safe)" in err
     assert "Retry-After" in err
     assert "Traceback" not in err

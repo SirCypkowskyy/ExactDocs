@@ -96,7 +96,8 @@ class ResetPassword(Protocol):
         """Run the use case.
 
         Returns:
-            The account, and whether its username's sign-in throttle count was cleared.
+            The account, and whether its username's sign-in throttle count and remembered
+            sign-ins were cleared.
         """
         ...
 

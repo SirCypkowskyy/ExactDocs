@@ -167,6 +167,34 @@ class FailedSignIns:
         )
 
 
+def known_sign_in_key(username: Username, address: str) -> str:
+    """Return the key under which the throttle remembers that an address signed into a username.
+
+    Args:
+        username: The username signed into.
+        address: The client's throttle key (``address_key``).
+
+    Returns:
+        ``<username>@address:...``.
+    """
+    return f"{username}@{address}"
+
+
+def known_sign_ins_prefix(username: str) -> str:
+    """Return what every remembered sign-in key of ``username`` starts with.
+
+    ``address_key`` always starts with ``address:``. Only a username that itself holds
+    ``@address:`` could share the prefix of another one, and such a name is not worth a schema.
+
+    Args:
+        username: The (normalised) username.
+
+    Returns:
+        ``<username>@address:``.
+    """
+    return f"{username}@address:"
+
+
 def address_key(client: str) -> str:
     """Return the throttle key of a client address.
 

@@ -250,6 +250,82 @@ async def test_a_reset_whose_throttle_count_cannot_be_cleared_still_changes_the_
         assert "OSError" in record.getMessage()
 
 
+async def test_after_a_reset_an_address_that_signed_in_before_is_held_to_the_username_again(
+    world: World,
+) -> None:
+    await world.identity.authenticate(credentials(), client=ADMIN_HOST)  # with the old password
+    await world.failures.remember_sign_in("root@address:198.51.100.2", START)  # another username
+    await world.failures.remember_sign_in("adab@address:198.51.100.2", START)
+    await fail(world, 2, username="root")
+    counts = dict(world.failures.records)
+    others = {k: v for k, v in world.failures.sign_ins.items() if not k.startswith("ada@")}
+    assert f"ada@{address_key(ADMIN_HOST)}" in world.failures.sign_ins
+
+    reset = await world.identity.reset_password(
+        ResetPasswordCommand(username="ada", password=SecretStr("a brand new passphrase"))
+    )
+
+    assert reset.throttle == "cleared"
+    assert world.failures.sign_ins == others
+    assert sorted(others) == ["adab@address:198.51.100.2", "root@address:198.51.100.2"]
+    assert world.failures.records == counts
+    await fail(world, 1, username="ada", client=ADMIN_HOST)
+    assert await world.failures.get("username:ada") == FailedSignIns(count=1, last_at=START)
+
+
+async def _remembered_busy(_log: InMemoryFailedSignInLog, _username: str) -> bool:
+    return False
+
+
+async def _remembered_broken(_log: InMemoryFailedSignInLog, _username: str) -> bool:
+    message = "connection lost"
+    raise OSError(message)
+
+
+async def _cleared(_log: InMemoryFailedSignInLog, _key: str) -> bool:
+    return True
+
+
+@pytest.mark.parametrize(
+    ("forget", "forget_remembered", "outcome"),
+    [
+        (_cleared, _remembered_busy, "busy"),
+        (_cleared, _remembered_broken, "failed"),
+        (_busy, _remembered_broken, "failed"),  # the worse of the two
+        (_broken, _remembered_busy, "failed"),
+    ],
+)
+async def test_a_reset_whose_remembered_sign_ins_cannot_be_forgotten_still_changes_the_password(
+    world: World,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    forget: object,
+    forget_remembered: object,
+    outcome: str,
+) -> None:
+    await world.identity.authenticate(credentials(), client=ADMIN_HOST)
+    remembered = dict(world.failures.sign_ins)
+    with monkeypatch.context() as patched:
+        patched.setattr(InMemoryFailedSignInLog, "forget", forget)
+        patched.setattr(InMemoryFailedSignInLog, "forget_remembered", forget_remembered)
+        reset = await world.identity.reset_password(
+            ResetPasswordCommand(username="ada", password=SecretStr("a brand new passphrase"))
+        )
+
+    assert (reset.account.username, reset.throttle) == ("ada", outcome)
+    assert world.failures.sign_ins == remembered  # still remembered, as reported
+    with pytest.raises(InvalidCredentialsError):
+        await world.identity.authenticate(credentials(), client=ADMIN_HOST)
+    account = await world.identity.authenticate(
+        credentials(password="a brand new passphrase"), client=ADMIN_HOST
+    )
+    assert account.username == "ada"  # the new password is in place
+    if forget_remembered is _remembered_broken:
+        (record,) = [r for r in caplog.records if "remembered sign-ins" in r.getMessage()]
+        assert record.exc_info is None
+        assert "OSError" in record.getMessage()
+
+
 @pytest.mark.parametrize("typos", [FREE_FAILURES, FREE_FAILURES + 8], ids=["first-wait", "long"])
 async def test_a_second_sign_in_right_after_a_correct_one_is_not_refused(
     world: World, typos: int

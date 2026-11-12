@@ -225,9 +225,16 @@ def _throttle_counts(url: str) -> dict[object, tuple[object, ...]]:
     return {row[0]: row[1:] for row in rows}
 
 
+def _remembered(url: str) -> dict[object, object]:
+    """The sign-in throttle's remembered sign-ins in the database, by key."""
+    rows = query_as(url, "SELECT key, signed_in_at FROM identity_known_sign_ins")
+    return {row[0]: row[1] for row in rows}
+
+
 @when('the operator runs "exactdocs admin reset-password" for "{username}" on that database')
 def step_reset_on_postgres(context: Context, username: str) -> None:
     context.counts_before = _throttle_counts(context.database_url)
+    context.remembered_before = _remembered(context.database_url)
     assert f"username:{username}" in context.counts_before, context.counts_before
     data = Path(tempfile.mkdtemp(prefix="exactdocs-cli-"))
     context.add_cleanup(shutil.rmtree, data, ignore_errors=True)
@@ -250,6 +257,73 @@ def step_reset_on_postgres(context: Context, username: str) -> None:
     assert done.returncode == 0, done.stdout + done.stderr
     assert RESET["password"] not in done.stdout + done.stderr
     assert "warning" not in done.stderr, done.stderr  # the username's count was cleared
+
+
+@given(
+    '"{username}" signed in successfully from {address}, so that address is remembered for "{same}"'
+)
+def step_signed_in_from(context: Context, username: str, address: str, same: str) -> None:
+    assert username == same == CREDENTIALS["username"], (username, same)
+    with httpx.Client(base_url=context.first, timeout=30) as client:
+        setup = client.post("/api/v1/setup", json=CREDENTIALS)
+        assert setup.status_code in {httpx.codes.CREATED, httpx.codes.CONFLICT}, setup.text
+        response = client.post("/api/v1/session", json=CREDENTIALS, headers=_from(address))
+        assert response.status_code == httpx.codes.CREATED, response.text
+    context.remembered_key = f"{username}@address:{address}"
+    assert context.remembered_key in _remembered(context.database_url)
+
+
+OTHER_SIGN_INS = (
+    "root@address:203.0.113.7",  # another username, at the same address
+    "admin2@address:198.51.100.9",  # a username that starts with the reset one
+    "admin@example.com@address:198.51.100.9",  # one that has an @ in it
+)
+"""Remembered sign-ins of usernames other than the one being reset."""
+
+
+@given("sign-ins of other usernames are remembered too")
+def step_other_sign_ins(context: Context) -> None:
+    # Only one account exists (ACL-06), so the other usernames' rows are written directly,
+    # stamped like the admin's (a stale stamp would be pruned).
+    added = query_as(
+        context.database_url,
+        "INSERT INTO identity_known_sign_ins (key, signed_in_at)"
+        " SELECT k, signed_in_at FROM identity_known_sign_ins, unnest(CAST(%s AS text[])) AS k"
+        " WHERE key = %s RETURNING key",
+        list(OTHER_SIGN_INS),
+        context.remembered_key,
+    )
+    assert {row[0] for row in added} == set(OTHER_SIGN_INS), added
+
+
+@then(
+    'no sign-in of "{username}" is remembered, '
+    "and the other usernames' remembered sign-ins are unchanged"
+)
+def step_remembered_forgotten(context: Context, username: str) -> None:
+    before = context.remembered_before
+    assert context.remembered_key in before, before
+    expected = {k: v for k, v in before.items() if not str(k).startswith(f"{username}@address:")}
+    assert set(OTHER_SIGN_INS) <= set(expected), expected
+    remembered = _remembered(context.database_url)
+    assert remembered == expected, (remembered, expected)
+
+
+@then(
+    'a failed sign-in for "{username}" from {address} counts against the username "{same}" '
+    "again, on both processes"
+)
+def step_counts_again(context: Context, username: str, address: str, same: str) -> None:
+    assert username == same, (username, same)
+    wrong = {"username": username, "password": "not the admin's password"}
+    for count, base in enumerate((context.first, context.second), start=1):
+        response = httpx.post(
+            f"{base}/api/v1/session", json=wrong, headers=_from(address), timeout=30
+        )
+        assert response.status_code == httpx.codes.UNAUTHORIZED, response.text
+        record = _throttle_counts(context.database_url).get(f"username:{username}")
+        assert record is not None, f"not charged to the username on {base}"
+        assert record[0] == count, record
 
 
 @then(

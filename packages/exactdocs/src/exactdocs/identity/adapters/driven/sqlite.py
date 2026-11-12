@@ -43,6 +43,7 @@ from exactdocs.identity.models import (
     Role,
     Session,
     Username,
+    known_sign_ins_prefix,
 )
 
 # The identity tables, prefixed `identity_`. The schema itself is created by an Alembic revision
@@ -350,6 +351,8 @@ class SqliteFailedSignInLog:
     at most ``turn_timeout``. When it runs out, ``charge`` fails closed: the attempt is refused
     with ``turn_timeout`` as its wait and nothing is counted. ``refund``, ``forget`` and
     ``remember_sign_in`` only make the throttle more lenient, so they are skipped (and logged).
+    ``forget_remembered`` makes it stricter, but runs after a password reset that is already
+    done: it is skipped too, and returns ``False`` so the reset can say so.
 
     Old rows are pruned when one is written, without a background job: a charge deletes the
     counts with no failure for ``FORGET_FAILURES_AFTER`` (they no longer hold anyone back), a
@@ -430,6 +433,41 @@ class SqliteFailedSignInLog:
                 )
         except _TurnTimeoutError:
             logger.warning("Sign-in throttle busy: a username's count was not reset")
+            return False
+        return True
+
+    async def forget_remembered(self, username: str) -> bool:
+        """Forget every address remembered for ``username``, in the turn of each one.
+
+        The keys are read first, then their turns are taken at once (as ``charge`` takes its
+        keys') and exactly those rows are deleted, so a ``remember_sign_in`` holding one of them
+        finishes first and is deleted after. A sign-in remembered for a new address after the
+        read stays: normally one made with the new password, as the reset set it before; one
+        that checked the old password just before the reset and is still in flight could stay
+        too, as the session it is about to start would.
+
+        Args:
+            username: The (normalised) username.
+
+        Returns:
+            ``True`` once none is left (dropped, or there was none); ``False`` when a turn did not
+            come within ``turn_timeout`` and they were all left as they were.
+        """
+        prefix = known_sign_ins_prefix(username)
+        query = select(known_sign_ins.c.key).where(
+            known_sign_ins.c.key.startswith(prefix, autoescape=True)
+        )
+        async with self.engine.connect() as connection:
+            keys = list((await connection.execute(query)).scalars())
+        if not keys:
+            return True
+        try:
+            async with self._turn([f"known:{key}" for key in keys]) as connection:
+                await connection.execute(
+                    delete(known_sign_ins).where(known_sign_ins.c.key.in_(keys))
+                )
+        except _TurnTimeoutError:
+            logger.warning("Sign-in throttle busy: a username's remembered sign-ins were kept")
             return False
         return True
 

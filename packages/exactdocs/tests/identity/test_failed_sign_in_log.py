@@ -126,6 +126,51 @@ async def test_forget_drops_one_record_and_tolerates_a_missing_one(log: FailedSi
     assert await log.get("address:a") is not None
 
 
+async def _state(log: FailedSignInLog) -> tuple[dict[str, object], dict[str, object]]:
+    """Everything the log holds: its counts and its remembered sign-ins, by key."""
+    if isinstance(log, InMemoryFailedSignInLog):
+        return dict(log.records), dict(log.sign_ins)
+    assert isinstance(log, SqliteFailedSignInLog)
+    async with log.engine.connect() as connection:
+        counts = await connection.execute(
+            text("SELECT key, failures, last_at, previous_at FROM identity_failed_sign_ins")
+        )
+        known = await connection.execute(
+            text("SELECT key, signed_in_at FROM identity_known_sign_ins")
+        )
+        return {row[0]: tuple(row[1:]) for row in counts}, {row[0]: row[1] for row in known}
+
+
+THEIRS = [
+    "aba@address:203.0.113.7",  # what an unescaped LIKE "a_a@address:%" would match
+    "a_a2@address:203.0.113.7",  # starts with the username
+    "a_a@example.com@address:203.0.113.7",  # starts with the username and an @
+    "b@address:203.0.113.7",  # another username at the same address
+]
+"""Remembered sign-ins of usernames other than ``a_a``."""
+
+
+async def test_forget_remembered_drops_every_sign_in_of_the_username_and_nothing_else(
+    log: FailedSignInLog,
+) -> None:
+    ours = ["a_a@address:203.0.113.7", "a_a@address:2001:db8::/64", "a_a@address:testclient"]
+    for key in [*ours, *THEIRS]:
+        await log.remember_sign_in(key, START)
+    await log.charge(["address:203.0.113.7", "username:a_a", "username:b"], START)
+    counts, remembered = await _state(log)
+
+    assert await log.forget_remembered("a_a") is True
+    assert await log.forget_remembered("a_a") is True  # nothing left to drop: still done
+
+    assert await _state(log) == (counts, {k: v for k, v in remembered.items() if k in THEIRS})
+    assert len(counts) == 3
+    assert sorted(remembered) == sorted([*ours, *THEIRS])
+    for key in ours:
+        assert not await log.signed_in_before(key, LATER)
+    for key in THEIRS:
+        assert await log.signed_in_before(key, LATER)
+
+
 async def test_a_sign_in_is_remembered_for_a_while(log: FailedSignInLog) -> None:
     await log.remember_sign_in("ada@address:a", START)
 
@@ -269,3 +314,46 @@ async def test_forget_waits_for_a_charge_holding_the_turn(sql_log: SqliteFailedS
     await forgetting
 
     assert await sql_log.get("username:ada") is None
+
+
+async def test_forget_remembered_that_waits_too_long_says_so_and_keeps_them(
+    sql_log: SqliteFailedSignInLog,
+) -> None:
+    impatient = SqliteFailedSignInLog(engine=sql_log.engine, turn_timeout=timedelta(seconds=0.2))
+    await impatient.remember_sign_in("ada@address:a", START)
+    await impatient.remember_sign_in("ada@address:b", START)
+    before = await _state(impatient)
+    async with impatient._turn(["known:ada@address:b"]):  # ruff: ignore[private-member-access]
+        forgotten = await impatient.forget_remembered("ada")
+
+    assert forgotten is False
+    assert await _state(impatient) == before  # all or nothing: "a" stays too
+
+
+async def test_forget_remembered_that_waits_too_long_for_another_process_says_so(
+    postgres_log: SqliteFailedSignInLog,
+) -> None:
+    impatient = SqliteFailedSignInLog(
+        engine=postgres_log.engine, turn_timeout=timedelta(seconds=0.2)
+    )
+    await impatient.remember_sign_in("ada@address:a", START)
+    before = await _state(impatient)
+    async with postgres_log._turn(["known:ada@address:a"]):  # ruff: ignore[private-member-access]
+        forgotten = await impatient.forget_remembered("ada")
+
+    assert forgotten is False  # PostgreSQL's lock_timeout ran out
+    assert await _state(impatient) == before
+
+
+async def test_forget_remembered_waits_for_a_sign_in_holding_the_turn(
+    sql_log: SqliteFailedSignInLog,
+) -> None:
+    other = SqliteFailedSignInLog(engine=sql_log.engine)  # the reset, run by the CLI
+    await sql_log.remember_sign_in("ada@address:a", START)
+    async with sql_log._turn(["known:ada@address:a"]):  # ruff: ignore[private-member-access]
+        forgetting = asyncio.create_task(other.forget_remembered("ada"))
+        await asyncio.sleep(0.2)
+        assert not forgetting.done()
+    assert await forgetting is True
+
+    assert not await sql_log.signed_in_before("ada@address:a", LATER)
