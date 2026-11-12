@@ -10,11 +10,22 @@ thread, through the ``sqlite3.connect/handle`` audit event, and raises when one 
 it. It needs no garbage collection, so it is cheap, and it also finds a connection that something
 still reaches (a ``gc.collect()`` would not finalize it yet). Keeping the connections until the
 block ends only delays a leaked connection's own warning to that point, still inside the test.
+
+When connections are still open after the block, the guard waits up to ``CLOSE_GRACE`` for them to
+close before it fails (see there). A reported leak drops its references before raising, so the
+connection is finalized in that test's teardown, not in a later test.
+
+Only connections opened inside the block are tracked. The autouse fixture runs per test, so a
+session- or module-scoped fixture is covered only for what it opens in its own setup. An engine
+such a fixture owns but a test uses lazily opens its pooled connection inside the first test that
+uses it, and that test is flagged. Open (warm) the connection in the fixture itself, or dispose the
+engine at the end of each test that uses it.
 """
 
 import sqlite3
 import sys
 import threading
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -28,6 +39,16 @@ class Opened:
     database: str
     thread: str
 
+
+CLOSE_GRACE = 2.0
+"""Seconds to wait for connections still open after a block to close, before failing.
+
+``DBOS._destroy`` shuts its executor down with ``wait=False``, so ``DBOS.destroy`` returns while a
+step already running in an executor thread still holds a system-DB connection; that thread closes it
+a moment later. A real leak stays open, so it still fails, only this much later.
+"""
+CLOSE_POLL = 0.01
+"""Seconds between checks while waiting for ``CLOSE_GRACE``."""
 
 _watching: list[list[Opened]] = []  # the open blocks, innermost last
 _database = threading.local()  # the path of the connection this thread is opening
@@ -72,13 +93,29 @@ def no_connection_left_open() -> Generator[None]:
         yield
     finally:
         _watching.remove(opened)
-    left = [each for each in opened if is_open(each.connection)]
+    left = _still_open(opened)
     opened.clear()
-    if left:
-        named = "\n".join(f"  {each.database} (opened in thread {each.thread})" for each in left)
-        message = (
-            f"{len(left)} SQLite connection(s) opened here are still open:\n{named}\n"
-            "Close them (contextlib.closing; `with sqlite3.connect()` does not close), dispose "
-            "the engine, or run the container (`async with container.running()`)."
-        )
-        raise AssertionError(message)
+    if not left:
+        return
+    named = "\n".join(f"  {each.database} (opened in thread {each.thread})" for each in left)
+    message = (
+        f"{len(left)} SQLite connection(s) opened here are still open:\n{named}\n"
+        "Close them (contextlib.closing; `with sqlite3.connect()` does not close), dispose "
+        "the engine, or run the container (`async with container.running()`)."
+    )
+    left.clear()  # finalize the leaked connections here, not when a later test collects garbage
+    raise AssertionError(message)
+
+
+def _still_open(opened: list[Opened]) -> list[Opened]:
+    """Wait up to ``CLOSE_GRACE`` for the open connections to close.
+
+    Returns:
+        The connections still open after the grace; empty at once when all are closed.
+    """
+    deadline = time.monotonic() + CLOSE_GRACE
+    left = [each for each in opened if is_open(each.connection)]
+    while left and time.monotonic() < deadline:
+        time.sleep(CLOSE_POLL)
+        left = [each for each in left if is_open(each.connection)]
+    return left
