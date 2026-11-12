@@ -10,6 +10,7 @@ The database is a SQLite file in the data directory (the default) or PostgreSQL
 
 import logging
 import os
+import secrets
 import sqlite3
 import tempfile
 import time
@@ -37,6 +38,7 @@ from exactdocs.bootstrap.constants import (
     MIN_SQLITE,
     POSTGRES_DRIVER,
     SECURE_SSLMODES,
+    SESSION_PROBE,
     SUPABASE_HOSTS,
     SUPABASE_TRANSACTION_PORT,
     WRITE_LOCK,
@@ -390,6 +392,51 @@ def _upgrade(connection: Connection, location: Path) -> None:
     if violations:
         message = f"The migration left {len(violations)} foreign key violation(s); rolled back."
         raise StartupError(message)
+
+
+async def warn_unless_session(engine: AsyncEngine) -> bool:
+    """Warn when the PostgreSQL connection loses its session state between transactions.
+
+    One pooled connection sets a session-level value (``set_config(..., false)``) in one
+    transaction and reads it back in the next. Behind a pooler in transaction mode (PgBouncer's
+    ``pool_mode = transaction``, Supabase's port 6543, another provider's) the second
+    transaction may run on another server connection, or on one the pooler reset, and the value
+    is gone. That is logged as one WARNING and the start goes on. The probe cannot prove the
+    opposite: a transaction-mode pooler with one idle server connection keeps the value, so no
+    warning is no guarantee. It opens no connection of its own (the pool's, checked out once)
+    and costs two round trips. SQLite has no session to lose: nothing is done.
+
+    Args:
+        engine: The database engine, already migrated.
+
+    Returns:
+        ``True`` when the value was lost and the warning logged.
+    """
+    if not is_postgres(engine):
+        return False
+    token = secrets.token_hex(8)
+    async with engine.connect() as connection:
+        async with connection.begin():
+            await connection.execute(
+                text("SELECT set_config(:name, :token, false)"),
+                {"name": SESSION_PROBE, "token": token},
+            )
+        async with connection.begin():
+            found = await connection.scalar(
+                text("SELECT current_setting(:name, true)"), {"name": SESSION_PROBE}
+            )
+    if found == token:
+        return False
+    logger.warning(
+        "The PostgreSQL connection (%s) lost its session state between two transactions: "
+        "EXACTDOCS_DATABASE_URL looks like a connection pooler in transaction mode, which "
+        "ExactDocs does not support (its jobs, advisory locks and prepared statements need a "
+        "session). Jobs may fail at random. Use a session connection instead: the pooler in "
+        "session mode (PgBouncer's pool_mode = session; Supabase's session pooler, port 5432) "
+        "or the direct connection to PostgreSQL.",
+        engine.url.render_as_string(hide_password=True),
+    )
+    return True
 
 
 def _upgrade_postgres(connection: Connection, location: Path) -> None:

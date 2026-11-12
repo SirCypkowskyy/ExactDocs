@@ -46,6 +46,7 @@ def serve(context: Context, url: str, name: str, env: Mapping[str, str] | None =
     """Start ``exactdocs serve`` on the database; return its base URL once it is ready.
 
     ``env`` adds settings (e.g. ``EXACTDOCS_DBOS_SYSTEM_SCHEMA``) to the process's environment.
+    The process's output goes to ``context.serve_log`` (the last one started).
     """
     data = Path(tempfile.mkdtemp(prefix=f"exactdocs-{name}-"))
     context.add_cleanup(shutil.rmtree, data, ignore_errors=True)
@@ -57,7 +58,8 @@ def serve(context: Context, url: str, name: str, env: Mapping[str, str] | None =
         "EXACTDOCS_SECRET_KEY": SECRET_KEY,
         **(env or {}),
     }
-    log = (data / "serve.log").open("w")
+    context.serve_log = data / "serve.log"
+    log = context.serve_log.open("w")
     context.add_cleanup(log.close)
     process = subprocess.Popen(  # ruff: ignore[subprocess-without-shell-equals-true]  # our own interpreter
         [sys.executable, "-c", CLI, "serve", "--port", str(port)],

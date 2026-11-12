@@ -66,6 +66,7 @@ from exactdocs.bootstrap.database import (
     is_postgres,
     migrate,
     open_database,
+    warn_unless_session,
 )
 from exactdocs.bootstrap.embedding import SaveProviderThenEmbed, requeue_daily
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
@@ -1103,6 +1104,7 @@ class Container:
             raise RuntimeError(message)
         try:
             await migrate(self.engine)
+            await warn_unless_session(self.engine)  # a transaction-mode pooler (#279)
             if self.search_choice is not None:
                 await self.search_choice.choose(create=True)
             await _warm_ai(self.retrieval, self.local, self.local_roles)
