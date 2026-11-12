@@ -869,8 +869,8 @@ MICROS_PER_USD: Final[int] = 1_000_000
 TOKENS_PER_MILLION: Final[int] = 1_000_000
 """Prices are per million tokens."""
 ESTIMATE_NOTE: Final[str] = (
-    "An estimate: tokens are counted as 4 characters per token, never by the model's tokenizer, "
-    "and the price is the bundled price list's."
+    f"An estimate: tokens are counted as {CHARS_PER_TOKEN} characters per token, never by the "
+    "model's tokenizer, and the price is the bundled price list's."
 )
 """What ``exactdocs ai estimate`` and its REST route say about their numbers."""
 TRANSIENT_STATUSES: Final[frozenset[int]] = frozenset({408, 409, 425, 429})
@@ -1386,3 +1386,37 @@ GUIDANCE_FOLDER_READS: Final[Mapping[str, str]] = MappingProxyType(
 """Read tools whose argument names an article: reading one opens its folder."""
 GUIDANCE_CHUNK_READ: Final[str] = "read_chunk"
 """The read tool whose result names the article (so the folder) it opened."""
+
+# ---------------------------------------------------------------- dtos (schema descriptions)
+JUSTIFICATION_DESCRIPTION: Final[str] = (
+    "Model output, untrusted: `agentic`: why the agent picked this chunk, in the LLM's own words "
+    f"(control characters removed, at most {MAX_JUSTIFICATION_CHARS} characters); null for the "
+    "other modes."
+)
+"""OpenAPI and MCP description of a result's ``justification``, built from the limit."""
+EXPLORED_PATH_DESCRIPTION: Final[str] = (
+    "Model output, untrusted: `agentic`: the read calls the LLM made up to the one that reached "
+    "this chunk's article, in order, e.g. `search_docs(retry)`, "
+    f"`article_outline(guide/resilience.md)` (at most {MAX_EXPLORED_STEPS}; each argument is the "
+    f"model's, control characters removed, at most {AGENT_STEP_ARGUMENT_CHARS} characters); "
+    "empty for the other modes."
+)
+"""OpenAPI and MCP description of a result's ``explored_path``, built from the limits."""
+RESOLVED_MATCHES_DESCRIPTION: Final[str] = (
+    f"Matching libraries, best first, at most {MAX_RESOLVED}; empty when nothing matches."
+)
+"""OpenAPI description of ``resolve-library-id``'s matches, built from the cap."""
+QUERY_HITS_DESCRIPTION: Final[str] = (
+    "Chunks of the default version matching the query, counted up to "
+    f"{QUERY_HITS_CAP}: enough to tell libraries apart."
+)
+"""OpenAPI description of a resolved library's ``query_hits``, built from the cap."""
+RERANK_TOP_N_DESCRIPTION: Final[str] = (
+    f"How many of its best candidates the reranker reorders (1 to {MAX_RERANK_TOP_N}); null: the "
+    f"instance's (`EXACTDOCS_AI__RERANKER__TOP_N`, {DEFAULT_RERANK_TOP_N} by default)."
+)
+"""OpenAPI description of a library's ``rerank_top_n`` setting, built from the limits."""
+ESTIMATED_TOKENS_DESCRIPTION: Final[str] = (
+    f"`characters` / {CHARS_PER_TOKEN}, rounded up: an estimate."
+)
+"""OpenAPI description of an embedding estimate's tokens, built from ``CHARS_PER_TOKEN``."""

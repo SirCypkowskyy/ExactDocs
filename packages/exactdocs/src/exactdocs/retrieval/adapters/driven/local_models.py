@@ -182,6 +182,9 @@ class LocalEmbeddings:
 
         Returns:
             One vector per text, and their tokens as the model's tokenizer counts them.
+
+        Raises:
+            EmbeddingFailedError: The model gave another number of vectors than texts.
         """
         vectors: list[tuple[float, ...]] = []
         tokens = calls = 0

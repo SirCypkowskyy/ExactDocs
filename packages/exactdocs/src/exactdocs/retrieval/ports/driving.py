@@ -89,7 +89,14 @@ class SearchAllLibraries(Protocol):
     """
 
     async def __call__(self, query: SearchAllQuery) -> SearchAllResult:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            query: The query, the filters and the limit.
+
+        Returns:
+            The results across libraries, best first, and the matches per library.
+        """
         ...
 
 
@@ -101,7 +108,14 @@ class IndexManifest(Protocol):
     """
 
     async def __call__(self, command: IndexManifestCommand) -> IndexedManifestOut:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: The manifest and the chunks of each of its articles.
+
+        Returns:
+            The chunk IDs of every article and how many chunk sets were new.
+        """
         ...
 
 
@@ -112,7 +126,14 @@ class GetChunkSets(Protocol):
     """
 
     async def __call__(self, query: GetChunkSetsQuery) -> ChunkSetsOut:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            query: The chunking config and the blobs.
+
+        Returns:
+            The stored chunks of each blob that has them.
+        """
         ...
 
 
@@ -125,7 +146,14 @@ class ReadChunk(Protocol):
     """
 
     async def __call__(self, query: ReadChunkQuery) -> ChunkOut:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            query: The chunk ID.
+
+        Returns:
+            The chunk verbatim, with its place in the article and its version.
+        """
         ...
 
 
@@ -153,7 +181,14 @@ class DiscardPendingChunks(Protocol):
     """Delete the chunk rows of manifests that never became active (never "all")."""
 
     async def __call__(self, command: DiscardPendingChunksCommand) -> RemovedChunks:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: Which manifests: by ID, by library or by age.
+
+        Returns:
+            What was deleted.
+        """
         ...
 
 
@@ -161,7 +196,14 @@ class CollectChunks(Protocol):
     """Delete chunk rows of manifests the catalog collected, then unused chunk sets."""
 
     async def __call__(self, command: CollectChunksCommand) -> RemovedChunks:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: The grace period.
+
+        Returns:
+            What was deleted.
+        """
         ...
 
 
@@ -173,7 +215,14 @@ class RemoveChunks(Protocol):
     """
 
     async def __call__(self, command: RemoveChunksCommand) -> RemovedChunks:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: The manifests the catalog deleted.
+
+        Returns:
+            What was deleted.
+        """
         ...
 
 
@@ -186,7 +235,14 @@ class ResolveLibraryId(Protocol):
     """
 
     async def __call__(self, query: ResolveLibraryIdQuery) -> ResolveLibraryIdResult:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            query: The library name and what the caller wants to look up.
+
+        Returns:
+            The matching libraries, best first.
+        """
         ...
 
 
@@ -223,7 +279,14 @@ class RetagArticles(Protocol):
     """
 
     async def __call__(self, command: RetagArticlesCommand) -> RetaggedChunks:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: The manifest and each article's current tags.
+
+        Returns:
+            How many chunk rows got other tags.
+        """
         ...
 
 
@@ -231,7 +294,11 @@ class GetSearchIndexState(Protocol):
     """Say which format the search index is in and whether ``RebuildSearchIndex`` is needed."""
 
     async def __call__(self) -> SearchIndexStateOut:
-        """Run the use case."""
+        """Run the use case.
+
+        Returns:
+            The stored and current formats, and the engine that answers.
+        """
         ...
 
 
@@ -255,7 +322,11 @@ class RebuildSearchIndex(Protocol):
     """
 
     async def __call__(self) -> RebuiltIndexOut:
-        """Run the use case."""
+        """Run the use case.
+
+        Returns:
+            The format the index is now in and how many chunks it holds.
+        """
         ...
 
 

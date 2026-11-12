@@ -152,22 +152,35 @@ class RetrievalModule:
     """Retrieval's driving ports, ready to be exposed by driving adapters."""
 
     search_docs: SearchDocs
+    """Searches one exact library version (``search_docs``)."""
     search_all_libraries: SearchAllLibraries
+    """Searches the default version of every library (``search_all_docs``)."""
     index_manifest: IndexManifest
+    """Stores the chunks of a manifest ingestion made."""
     get_chunk_sets: GetChunkSets
+    """The stored chunk sets of blobs, so ingestion does not chunk them again."""
     read_chunk: ReadChunk
+    """One chunk verbatim by its ID (``read_chunk``)."""
     article_outline: ArticleOutline
     """An article's heading tree with chunk IDs (MCP, REST, and the agentic mode)."""
     resolve_library_id: ResolveLibraryId
+    """Libraries matching a name (``resolve-library-id``)."""
     query_docs: QueryDocs
+    """Whole chunks of one version within a size budget (``query-docs``)."""
     discard_pending_chunks: DiscardPendingChunks
+    """Deletes the chunk rows of manifests the catalog holds as pending."""
     collect_chunks: CollectChunks
+    """Collects chunk rows of manifests the catalog no longer knows, and unused chunk sets."""
     remove_chunks: RemoveChunks
+    """Deletes the chunk rows of manifests the catalog deleted."""
     retag_articles: RetagArticles
+    """Copies articles' current tags onto their chunk rows."""
     get_search_index_state: GetSearchIndexState
+    """The full-text index's format, and whether a rebuild would change it."""
     get_vector_store_state: GetVectorStoreState
     """Whether the vector store can search, once an embedding model is configured."""
     rebuild_search_index: RebuildSearchIndex
+    """Rebuilds the full-text index in the current format."""
     get_library_retrieval: GetLibraryRetrieval
     """A library's retrieval mode and the one its searches use now."""
     set_library_retrieval: SetLibraryRetrieval
@@ -265,46 +278,76 @@ class RetrievalModule:
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
-        ``tracer`` observes every search and its stages; without it nothing is recorded.
-        The AI configuration: ``configured_profiles`` (the environment's and the file's,
-        read-only), ``stored_profiles`` (the REST API's; none without it), ``instance_roles``,
-        ``models`` (builds callable models; nothing can be called without it) and
-        ``secret_box`` (seals keys sent over the REST API; they are refused without it).
-        ``rerank_limits`` is the instance's reranker top N and timeouts (the defaults without it).
-        ``rerank_with`` is what reranks libraries without their own choice when both are
-        configured; ``judge`` rates candidates with the ``judge`` role (the LLM judge never
-        reranks without it).
-        ``roles`` replaces the role resolution over them (tests). ``pipelines`` adds retrieval
-        modes beside ``bm25``, which is always there. A mode can run when it has a pipeline and
-        its roles are configured, and, for the hybrid modes, when ``vectors`` (the vector store)
-        can search. The embedding jobs: ``embedding_models`` wraps the embedder the factory
-        builds (nothing is embedded without it), ``article_titles`` gives the titles embedded
-        with each chunk, ``spend`` records the usage and ``prices`` prices it;
-        ``embedding_dimensions`` and ``embedding_batch_size`` are the embedding role's settings.
-        With a vector store, ``hybrid`` runs ``HybridPipeline`` (BM25 and vectors fused), whose
-        query embedding waits at most ``query_embedding_timeout`` seconds; a ``hybrid`` entry
-        of ``pipelines`` replaces it (tests). With a vector store and ``hypotheses`` (the HyDE
-        writer), ``hybrid_hyde`` runs ``HydePipeline``: the ``llm`` role's hypothetical answer,
-        cached in ``hypothesis_cache`` under ``hyde_cache_key`` (the HMAC key of its queries;
-        without one nothing is cached), searches the vector half, and a search waits at most
-        ``hyde_timeout`` seconds for it. The collection job prunes the cache: answers older than
-        ``hyde_cache_ttl``, and those of an ``llm`` model no longer configured.
-        Cost: ``price_overrides`` are the operator's prices by ``<profile>:<model>``, ``budgets``
-        the spend limits and the LLM search rate limit, ``call_rates`` counts LLM searches per
-        caller (without it they are not rate limited).
-        Agentic search: with an ``explorer``, ``agentic`` runs ``AgenticPipeline`` within
-        ``agent_bounds``, its agent listing and reading articles through ``version_articles``,
-        each read recorded in ``agent_reads`` (the runs' trace; none by default), and, for a
-        library with repo guidance on, given the ``AGENTS.md`` / ``CLAUDE.md`` files
-        ``instruction_files`` reads for the searched manifest (RET-08); an ``agentic`` entry of
-        ``pipelines`` replaces it (tests). With ``agent_answer_cache`` and
-        ``agent_cache_key`` (the HMAC key of its questions), a question at least
-        ``agent_cache_threshold`` similar to one answered before in the same scope is answered
-        from the cache (``AgentAnswerCaching``), only when ``agent_cache_enabled`` is true (the
-        cache is opt-in); ``agent_cache_scope`` says whether callers share
-        answers (``library``) or not (``caller``). The nightly prune deletes answers older than
-        ``agent_cache_ttl``, and every answer while the cache is off. Removing a manifest, or
-        saving or forgetting a library's settings, forgets its answers, on or off.
+        A retrieval mode can run when it has a pipeline and its roles are configured, and, for
+        the hybrid modes, when ``vectors`` (the vector store) can search. ``bm25`` is always
+        there. Removing a manifest, or saving or forgetting a library's settings, forgets its
+        cached agentic answers, whether the cache is on or off.
+
+        Args:
+            searchable: Resolves a library version to the manifest a search may run on.
+            libraries: The catalog's libraries, for ``resolve-library-id``.
+            defaults: Every library's default version, for searches across libraries.
+            manifests: Which manifests the catalog holds as active or pending.
+            chunks: Stores chunk sets and the chunk rows of each manifest.
+            search: The full-text index.
+            maintenance: Reads and rebuilds the full-text index's format.
+            library_modes: Each library's retrieval mode and AI overrides.
+            roles: Replaces the role resolution over the profiles and roles below (tests).
+            configured_profiles: The provider profiles of the environment and the configuration
+                file, read-only.
+            stored_profiles: The provider profiles stored over the REST API; none without it.
+            instance_roles: The instance's model roles.
+            models: Builds callable models; nothing can be called without it.
+            secret_box: Seals keys sent over the REST API; they are refused without it.
+            instance_mode: The instance's retrieval mode; the best one configured without it.
+            rerank_limits: The instance's reranker top N and timeouts; the defaults without it.
+            rerank_with: What reranks libraries without their own choice when both are
+                configured.
+            judge: Rates candidates with the ``judge`` role; the LLM judge never reranks without
+                it.
+            pipelines: Retrieval modes beside ``bm25``; an entry replaces the built-in pipeline
+                of its mode (tests).
+            renames: Finds where a stale chunk's article went, for ``stale_chunk`` errors.
+            suggestions: Finds close article paths, for an outline of a path that is missing.
+            clock: The time; the system clock without it.
+            query_docs_token_budget: Size budget of a ``query-docs`` answer, in estimated tokens.
+            tracer: Observes every search and its stages; nothing is recorded without it.
+            vectors: The vector store; no hybrid mode runs without it.
+            embedding_models: Wraps the embedder the factory builds; nothing is embedded
+                without it.
+            article_titles: The titles embedded with each chunk.
+            spend: Records the AI usage.
+            prices: Prices the usage (the bundled price list).
+            price_overrides: The operator's prices by ``<profile>:<model>``.
+            budgets: The spend limits and the LLM search rate limit.
+            call_rates: Counts LLM searches per caller; they are not rate limited without it.
+            embedding_dimensions: The embedding role's vector size, if it sets one.
+            embedding_batch_size: How many chunks one embedding call sends.
+            query_embedding_timeout: Seconds ``hybrid`` waits for a query's embedding.
+            explorer: The agent of ``agentic`` (``AgenticPipeline``); the mode cannot run
+                without it.
+            version_articles: Lists and reads a version's articles for the agent.
+            agent_bounds: The agent's limits.
+            agent_reads: Records each read of the agent (the runs' trace); none by default.
+            hypotheses: HyDE's writer of hypothetical answers; ``hybrid_hyde`` cannot run
+                without it.
+            hypothesis_cache: Caches HyDE's answers.
+            hyde_timeout: Seconds a search waits for HyDE's answer.
+            hyde_cache_key: The HMAC key of HyDE's cached queries; nothing is cached without it.
+            hyde_cache_ttl: How long a cached HyDE answer lives; the collection job prunes older
+                ones and those of an ``llm`` model no longer configured.
+            agent_answer_cache: Caches agentic answers (``AgentAnswerCaching``).
+            agent_cache_key: The HMAC key of the cached questions; nothing is cached without it.
+            agent_cache_enabled: Whether the agentic answer cache answers (it is opt-in).
+            agent_cache_threshold: How similar a question must be to one answered before.
+            agent_cache_scope: ``library`` (callers share answers) or ``caller``.
+            agent_cache_ttl: How long a cached agentic answer lives; the nightly prune deletes
+                older ones, and every answer while the cache is off.
+            instruction_files: Reads a manifest's ``AGENTS.md`` / ``CLAUDE.md`` files for a
+                library with repo guidance on (RET-08).
+
+        Returns:
+            The module, its driving ports wired.
         """
         clock = clock or SystemClock()
         tracer = tracer or UntracedSearches()

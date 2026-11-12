@@ -141,7 +141,9 @@ class DocTarget:
     """The exact library version a search is pinned to. Version is a hard filter."""
 
     library: str
+    """The library ID, `/owner/repo`."""
     version: str
+    """The exact ref."""
 
 
 @dataclass(frozen=True, slots=True)  # conventions: allow-positional -- one-field value object
@@ -149,8 +151,14 @@ class SearchText:
     """What the agent is looking for: an identifier, an error code or a question."""
 
     value: str
+    """The text as the agent wrote it."""
 
     def __post_init__(self) -> None:
+        """Refuse blank text.
+
+        Raises:
+            EmptySearchTextError: The text is blank.
+        """
         if not self.value.strip():
             raise EmptySearchTextError
 
@@ -171,14 +179,38 @@ def model_text(text: str, limit: int) -> str:
 
 
 def _is_mark(char: str) -> bool:
+    """Tell whether a character is a combining mark.
+
+    Args:
+        char: One character.
+
+    Returns:
+        True for a Unicode mark (category M).
+    """
     return unicodedata.category(char).startswith("M")
 
 
 def _is_segment_char(char: str) -> bool:
+    """Tell whether a character belongs inside a word part.
+
+    Args:
+        char: One character.
+
+    Returns:
+        True for a letter, a digit or a combining mark.
+    """
     return char.isalnum() or _is_mark(char)
 
 
 def _is_word_char(char: str) -> bool:
+    """Tell whether a character belongs inside a word.
+
+    Args:
+        char: One character.
+
+    Returns:
+        True for a word part's characters and ``_``, ``.`` and ``-``.
+    """
     return _is_segment_char(char) or char in "_.-"
 
 
@@ -199,6 +231,12 @@ def identifier_tokens(text: str) -> str:
       With the default `unicode61` the whole tokens (`max_retries`, `--dry-run`) are lost.
     - Query tokens are alternatives: `split()` the result and OR / rank them. Do not match them
       as one phrase or AND them, or a query `retryPolicy` misses prose that says `retry policy`.
+
+    Args:
+        text: Chunk text or a query.
+
+    Returns:
+        The tokens, separated by spaces.
     """
     tokens: list[str] = []
     for is_word, run in groupby(unicodedata.normalize("NFC", text), _is_word_char):
@@ -219,7 +257,14 @@ def identifier_tokens(text: str) -> str:
 
 
 def _split_case(segment: str) -> list[str]:
-    """Split one alphanumeric run at lower->Upper, ACRONYMWord and letter<->digit boundaries."""
+    """Split one alphanumeric run at lower->Upper, ACRONYMWord and letter<->digit boundaries.
+
+    Args:
+        segment: One run of letters, digits and marks.
+
+    Returns:
+        Its parts, in order.
+    """
     parts: list[str] = []
     start = 0
     for i in range(1, len(segment)):
@@ -258,6 +303,16 @@ def chunk_id(
     unchanged article keeps its ID when the version moves to a new commit, and the same blob in
     another version gets another ID, so ``read_chunk`` names exactly one chunk. The fields are
     JSON-encoded so no separator can make two different inputs collide.
+
+    Args:
+        version_id: ``<library>/<ref>``.
+        article_path: The article's path.
+        heading_path: The chunk's heading path.
+        occurrence_index: Which heading of that text it is.
+        content_hash: Hash of the chunk's text.
+
+    Returns:
+        The chunk ID.
     """
     payload = json.dumps(
         [version_id, article_path, list(heading_path), occurrence_index, content_hash],
@@ -284,12 +339,17 @@ class Chunk:
     """One section of an article, as the chunker cut it."""
 
     heading_path: tuple[str, ...]
+    """The chunk's heading and every heading above it; empty for the preamble."""
     occurrence_index: int
     """0 for the first heading with this text, 1 for the next one, ..."""
     content: str
+    """The chunk's text, verbatim."""
     content_hash: str
+    """Hash of ``content``; part of the chunk's ID."""
     anchor: str
+    """Anchor of the chunk's heading in the article; empty when it has none."""
     code_languages: tuple[str, ...] = ()
+    """Languages of the chunk's fenced code blocks."""
     headings: tuple[ChunkHeading, ...] | None = None
     """Every heading the chunk holds, in order; ``None`` for a chunk stored before they were
     recorded. Not part of ``ChunkSet.digest``: they follow from the text and the config hash."""
@@ -300,8 +360,11 @@ class ChunkSet:
     """The ordered chunks of one blob under one chunking config; shared by every version."""
 
     blob_sha: str
+    """The git blob SHA of the article."""
     config_hash: str
+    """Hash of the chunking config the set was cut with."""
     chunks: tuple[Chunk, ...]
+    """The chunks, in reading order."""
 
     @property
     def key(self) -> ChunkSetKey:
@@ -327,14 +390,21 @@ class ManifestChunk:
     """A chunk as one manifest sees it: its ID, its place in the article and the article's tags."""
 
     chunk_id: ChunkId
+    """The chunk's ID in this version (``chunk_id``)."""
     article_path: str
+    """The article's path in the version."""
     position: int
     """0-based index in the article."""
     total: int
+    """Number of chunks of the article."""
     prev_chunk_id: ChunkId | None
+    """The chunk before it in the article; ``None`` for the first."""
     next_chunk_id: ChunkId | None
+    """The chunk after it in the article; ``None`` for the last."""
     tags: tuple[str, ...]
+    """The article's tags, copied onto the row so a search can filter on them."""
     chunk_set: ChunkSetKey
+    """The chunk set holding the text; ``position`` is its index there."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -342,11 +412,17 @@ class SectionRef:
     """A chunk of an article without its text: enough to tell sections apart."""
 
     chunk_id: ChunkId
+    """The chunk's ID."""
     position: int
+    """0-based index in the article."""
     heading_path: tuple[str, ...]
+    """The chunk's heading and every heading above it."""
     occurrence_index: int
+    """0 for the first heading with this text, 1 for the next one, ..."""
     content_hash: str
+    """Hash of the chunk's text."""
     anchor: str
+    """Anchor of the chunk's heading in the article."""
     headings: tuple[ChunkHeading, ...] | None = None
     """Every heading the chunk holds, in order; ``None`` when they were not recorded."""
 
@@ -470,10 +546,13 @@ class IndexedManifest:
     """A catalog manifest that has chunk rows. Its ID is held by value."""
 
     manifest_id: str
+    """The catalog's manifest ID."""
     version_id: str
     """`<library>/<ref>`, as in `chunk_id`"""
     library: str
+    """The library ID, lower case."""
     indexed_at: datetime
+    """When the manifest was indexed."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -481,10 +560,13 @@ class StoredChunk:
     """A chunk with its content, as ``read_chunk`` returns it."""
 
     manifest_id: str
+    """The manifest the row belongs to."""
     version_id: str
     """`<library>/<ref>` the manifest was indexed under."""
     row: ManifestChunk
+    """The chunk as the manifest sees it."""
     chunk: Chunk
+    """The chunk's content."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -492,7 +574,9 @@ class SearchHit:
     """One chunk a search found: higher ``score`` is better, scores only compare within a search."""
 
     chunk_id: ChunkId
+    """The chunk found."""
     score: float
+    """Higher is better; only comparable within one search."""
     snippet: str
     """Verbatim text of the chunk (no marker added), possibly cut at either end."""
     highlights: tuple[tuple[int, int], ...]
@@ -509,11 +593,20 @@ class ManifestHit:
     """A hit of a search over several manifests: which manifest (so which library) it came from."""
 
     manifest_id: str
+    """The manifest the hit came from."""
     hit: SearchHit
+    """The hit."""
 
 
 def search_terms(query: str) -> list[str]:
-    """Return the distinct alternatives a query is matched by: each word whole and by its parts."""
+    """Return the distinct alternatives a query is matched by: each word whole and by its parts.
+
+    Args:
+        query: The query text.
+
+    Returns:
+        The terms, in order.
+    """
     return list(dict.fromkeys(identifier_tokens(query).split()))
 
 
@@ -597,6 +690,13 @@ def highlights(text: str, terms: Collection[str]) -> tuple[tuple[int, int], ...]
 
     A word matches when one of its `identifier_tokens` is a term, so `retryPolicy` is marked for
     the query `retry`. Every search engine marks its snippets with this, so they agree.
+
+    Args:
+        text: A snippet.
+        terms: The query's terms (``search_terms``).
+
+    Returns:
+        The spans, in order.
     """
     wanted = set(terms)
     spans = []
@@ -613,7 +713,9 @@ class Removed:
     """What a discard or collection deleted."""
 
     manifests: int
+    """Manifests whose chunk rows were deleted."""
     chunk_sets: int
+    """Chunk sets deleted because no manifest used them any more."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -627,7 +729,9 @@ class SearchIndexState:
     """
 
     stored_format: int | None
+    """The format the stored index was built in; ``None`` if unknown."""
     current_format: int
+    """The format this build writes."""
     engine: SearchEngine
     """The search engine that answers."""
 
@@ -642,7 +746,9 @@ class RebuiltIndex:
     """What a rebuild left: the format it is now in and how many chunks it holds."""
 
     format: int
+    """The format the index was rebuilt in."""
     entries: int
+    """Chunks the rebuilt index holds."""
 
 
 class SearchEngine(StrEnum):
@@ -673,7 +779,20 @@ def article_chunk_rows(
     chunk_set: ChunkSet,
     tags: tuple[str, ...],
 ) -> list[ManifestChunk]:
-    """Return the rows one article contributes to a manifest, linked to their neighbours."""
+    """Return the rows one article contributes to a manifest, linked to their neighbours.
+
+    Args:
+        version_id: ``<library>/<ref>`` of the manifest's version.
+        article_path: The article's path.
+        chunk_set: The article's chunks.
+        tags: The article's tags.
+
+    Returns:
+        One row per chunk, in reading order.
+
+    Raises:
+        DuplicateChunkError: Two chunks of the article would get the same ID.
+    """
     ids = [
         chunk_id(version_id, article_path, c.heading_path, c.occurrence_index, c.content_hash)
         for c in chunk_set.chunks
@@ -711,10 +830,19 @@ class TagFilter:
     """
 
     tags: tuple[str, ...] = ()
+    """The tags, normalized; none keeps every chunk."""
     match: TagMatch = TagMatch.ANY
+    """Whether a chunk's article needs any or all of them."""
 
     def keeps(self, chunk_tags: Collection[str]) -> bool:
-        """Tell whether a chunk with these tags passes."""
+        """Tell whether a chunk with these tags passes.
+
+        Args:
+            chunk_tags: The tags of the chunk's article.
+
+        Returns:
+            True when the chunk may be ranked.
+        """
         wanted = set(self.tags)
         if self.match is TagMatch.ALL:
             return wanted <= set(chunk_tags)
@@ -1109,11 +1237,17 @@ class SearchableVersion:
     """A library version a search may run on: exactly this version's active manifest."""
 
     library: str
+    """The library ID as the catalog spells it."""
     version: str
+    """The exact ref."""
     manifest_id: str
+    """The version's active manifest, the only one a search reads."""
     commit_sha: str
+    """The commit the version was imported at."""
     repository_url: str
+    """The repository's URL, for source links."""
     host: SourceHost
+    """The repository's host, which decides how a source link is built."""
     rules: tuple[str, ...] = ()
     """The library's ``context7.json`` rules (LIB-06), untrusted repository text."""
 
@@ -1122,6 +1256,14 @@ def source_link(version: SearchableVersion, article_path: str, anchor: str) -> s
     """Link to the section at the version's commit, or ``None`` for hosts we cannot build one for.
 
     Pinned to the commit SHA, so the link keeps showing the text the search returned.
+
+    Args:
+        version: The version.
+        article_path: The article's path.
+        anchor: The section's anchor; empty for the article itself.
+
+    Returns:
+        The link, or ``None``.
     """
     return section_link(
         version.host.value, version.repository_url, version.commit_sha, article_path, anchor
@@ -1488,13 +1630,21 @@ class CatalogLibrary:
     """A library as the catalog lists it. Title and description are untrusted repository text."""
 
     id: str
+    """The library ID, `/owner/repo`."""
     title: str
+    """Display title."""
     description: str
+    """Short description."""
     source_url: str
+    """The repository's URL."""
     default_version: str | None
+    """The ref searched when a call names none; ``None`` if unset."""
     versions: tuple[str, ...]
+    """Imported refs, possibly not all of them."""
     version_count: int
+    """How many versions are imported."""
     last_imported_at: datetime | None = None
+    """When any version was last imported."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1502,7 +1652,9 @@ class VersionCounts:
     """What one version holds: articles (with at least one chunk) and chunks."""
 
     articles: int
+    """Articles with at least one chunk."""
     chunks: int
+    """Chunks."""
 
 
 class NameMatch(IntEnum):
@@ -1516,16 +1668,39 @@ class NameMatch(IntEnum):
 
 
 def _squash(text: str) -> str:
-    """Lowercase, letters and digits only: ``Next.js`` and ``nextjs`` and ``next-js`` agree."""
+    """Lowercase, letters and digits only: ``Next.js`` and ``nextjs`` and ``next-js`` agree.
+
+    Args:
+        text: A name.
+
+    Returns:
+        Its letters and digits, case-folded.
+    """
     return "".join(c for c in unicodedata.normalize("NFKC", text).casefold() if c.isalnum())
 
 
 def _words(text: str) -> set[str]:
+    """Split a text into its distinct case-folded words.
+
+    Args:
+        text: A name, title or description.
+
+    Returns:
+        The words.
+    """
     return {w for w in re.split(r"[^\w]+", unicodedata.normalize("NFKC", text).casefold()) if w}
 
 
 def _match_once(name: str, library: CatalogLibrary) -> NameMatch | None:
-    """Try the tiers best first, each only when the better ones failed (the description is dear)."""
+    """Try the tiers best first, each only when the better ones failed (the description is dear).
+
+    Args:
+        name: The name, as written or without stop words.
+        library: The library.
+
+    Returns:
+        The best tier that holds, or ``None``.
+    """
     wanted = _squash(name)
     if not wanted:
         return None
@@ -1552,6 +1727,13 @@ def name_match(name: str, library: CatalogLibrary) -> NameMatch | None:
 
     The name is tried as written and without ``STOP_WORDS``; the better match counts. A name with
     no letter or digit matches nothing. Ties are broken by ``rank_matches``.
+
+    Args:
+        name: The library name the agent wrote.
+        library: The library.
+
+    Returns:
+        How well the name matches, or ``None``.
     """
     kept = " ".join(w for w in re.split(r"[^\w]+", name) if w and w.casefold() not in STOP_WORDS)
     found = [m for n in {name, kept} if (m := _match_once(n, library)) is not None]
@@ -1563,8 +1745,11 @@ class Candidate:
     """A library whose name matched, with how many chunks of its default version match the query."""
 
     library: CatalogLibrary
+    """The library."""
     match: NameMatch
+    """How well its name matched."""
     hits: int = 0
+    """Chunks of its default version that match the query, capped."""
 
 
 def rank_matches(candidates: Sequence[Candidate]) -> list[Candidate]:
@@ -1577,9 +1762,23 @@ def rank_matches(candidates: Sequence[Candidate]) -> list[Candidate]:
     5. A closer name match (exact, then prefix).
     6. More hits.
     7. The library ID, so equal candidates always come out in the same order.
+
+    Args:
+        candidates: The libraries whose name matched.
+
+    Returns:
+        The candidates, best first.
     """
 
     def key(c: Candidate) -> tuple[int, int, int, int, int, int, str]:
+        """Sort key of a candidate: the rules above, in order.
+
+        Args:
+            c: The candidate.
+
+        Returns:
+            A tuple that sorts the better candidate first.
+        """
         return (
             int(c.match is not NameMatch.ID),
             int(c.match is NameMatch.DESCRIPTION),
@@ -1594,7 +1793,14 @@ def rank_matches(candidates: Sequence[Candidate]) -> list[Candidate]:
 
 
 def canonical_language(name: str) -> str:
-    """Return a code language in one spelling, so `TypeScript`, `ts` and `typescript` agree."""
+    """Return a code language in one spelling, so `TypeScript`, `ts` and `typescript` agree.
+
+    Args:
+        name: A language name or alias.
+
+    Returns:
+        Its one spelling.
+    """
     lowered = name.strip().lower()
     return _LANGUAGE_ALIASES.get(lowered, lowered)
 
@@ -1602,7 +1808,16 @@ def canonical_language(name: str) -> str:
 def language_first[T](
     items: Sequence[T], languages: Callable[[T], Sequence[str]], wanted: str
 ) -> list[T]:
-    """Put the items with code in ``wanted`` first; each group keeps its order (sort is stable)."""
+    """Put the items with code in ``wanted`` first; each group keeps its order (sort is stable).
+
+    Args:
+        items: The items, best first.
+        languages: The code languages of an item.
+        wanted: The language to put first.
+
+    Returns:
+        The items with code in ``wanted``, then the others.
+    """
     want = canonical_language(wanted)
     return sorted(items, key=lambda i: want not in {canonical_language(x) for x in languages(i)})
 
