@@ -26,6 +26,7 @@ from exactdocs.identity.dtos import (
     AuthenticateQuery,
     CreateFirstAdminCommand,
     LoginForTokenCommand,
+    ResetPasswordCommand,
 )
 from exactdocs.identity.errors import InvalidCredentialsError, SignInThrottledError
 from exactdocs.identity.models import FailedSignIns, address_key
@@ -179,6 +180,74 @@ async def test_a_right_password_clears_the_username_but_not_the_address(world: W
     record = await world.failures.get(f"address:{ATTACKER}")
     assert record is not None
     assert record.count == FREE_FAILURES - 1
+
+
+async def test_resetting_the_password_clears_only_that_usernames_count(world: World) -> None:
+    for n in range(FREE_FAILURES):
+        await fail(world, 1, username="ada", client=f"192.0.2.{n}")
+    await fail(world, 2, username="root")
+    with pytest.raises(SignInThrottledError):
+        await world.identity.authenticate(credentials(), client=ADMIN_HOST)
+    others = {
+        key: await world.failures.get(key)
+        for key in ["username:root", f"address:{ATTACKER}", "address:192.0.2.0"]
+    }
+
+    reset = await world.identity.reset_password(
+        ResetPasswordCommand(username=" ADA ", password=SecretStr("a brand new passphrase"))
+    )
+
+    assert (reset.account.username, reset.throttle) == ("ada", "cleared")
+    assert await world.failures.get("username:ada") is None
+    assert {key: await world.failures.get(key) for key in others} == others
+    assert all(others.values())
+    account = await world.identity.authenticate(
+        credentials(password="a brand new passphrase"), client=ADMIN_HOST
+    )
+    assert account.username == "ada"
+
+
+async def _busy(_log: InMemoryFailedSignInLog, _key: str) -> bool:
+    return False
+
+
+async def _broken(_log: InMemoryFailedSignInLog, _key: str) -> bool:
+    message = "connection lost"
+    raise OSError(message)
+
+
+@pytest.mark.parametrize(("forget", "outcome"), [(_busy, "busy"), (_broken, "failed")])
+async def test_a_reset_whose_throttle_count_cannot_be_cleared_still_changes_the_password(
+    world: World,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    forget: object,
+    outcome: str,
+) -> None:
+    for n in range(FREE_FAILURES):
+        await fail(world, 1, username="ada", client=f"192.0.2.{n}")
+    before = await world.failures.get("username:ada")
+    with monkeypatch.context() as patched:
+        patched.setattr(InMemoryFailedSignInLog, "forget", forget)
+        reset = await world.identity.reset_password(
+            ResetPasswordCommand(username="ada", password=SecretStr("a brand new passphrase"))
+        )
+
+    assert (reset.account.username, reset.throttle) == ("ada", outcome)
+    assert await world.failures.get("username:ada") == before  # still throttled, as reported
+    with pytest.raises(SignInThrottledError):
+        await world.identity.authenticate(
+            credentials(password="a brand new passphrase"), client=ADMIN_HOST
+        )
+    world.clock.advance(LONGEST_WAIT)
+    account = await world.identity.authenticate(
+        credentials(password="a brand new passphrase"), client=ADMIN_HOST
+    )
+    assert account.username == "ada"  # the new password is in place
+    if outcome == "failed":
+        (record,) = [r for r in caplog.records if "throttle failed" in r.getMessage()]
+        assert record.exc_info is None
+        assert "OSError" in record.getMessage()
 
 
 @pytest.mark.parametrize("typos", [FREE_FAILURES, FREE_FAILURES + 8], ids=["first-wait", "long"])

@@ -165,9 +165,17 @@ class InMemoryFailedSignInLog:
         """Return the record under ``key``, or ``None``."""
         return self.records.get(key)
 
-    async def forget(self, key: str) -> None:
-        """Drop the record under ``key``."""
+    async def forget(self, key: str) -> bool:
+        """Drop the record under ``key``.
+
+        Args:
+            key: The throttle key.
+
+        Returns:
+            Always ``True``: the process's memory is never busy.
+        """
         self.records.pop(key, None)
+        return True
 
     async def remember_sign_in(self, key: str, now: datetime) -> None:
         """Remember the sign-in as the most recent one, dropping the oldest when full."""

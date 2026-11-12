@@ -94,7 +94,11 @@ class IdentityModule:
                 accounts=repository, identify_caller=identify_caller
             ),
             reset_password=ResetPasswordUseCase(
-                accounts=repository, sessions=sessions, tokens=tokens, hasher=hasher
+                accounts=repository,
+                sessions=sessions,
+                tokens=tokens,
+                hasher=hasher,
+                failures=failures,
             ),
             create_token=create_token,
             login_for_token=LoginForTokenUseCase(

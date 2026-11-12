@@ -5,6 +5,7 @@ import io
 import pytest
 
 from exactdocs.bootstrap import cli
+from exactdocs.identity.adapters.driven.memory import InMemoryFailedSignInLog
 
 GOOD = "correct horse battery staple"
 
@@ -60,10 +61,40 @@ def test_reset_password_changes_the_password_and_never_prints_it(
 
     reset(monkeypatch, new + "\n", "--username", "Ada", "--password-stdin")
 
-    out = capsys.readouterr().out
-    assert "'Ada'" in out
-    assert new not in out
-    assert GOOD not in out
+    out, err = capsys.readouterr()
+    assert "Password of 'ada' changed" in out  # the stored name, as `admin create` prints it
+    assert new not in out + err
+    assert GOOD not in out + err
+    assert "warning" not in err  # the throttle was cleared: nothing to add
+
+
+async def _busy(_log: InMemoryFailedSignInLog, _key: str) -> bool:
+    return False
+
+
+async def _broken(_log: InMemoryFailedSignInLog, _key: str) -> bool:
+    message = "connection lost"
+    raise OSError(message)
+
+
+@pytest.mark.parametrize(("forget", "cause"), [(_busy, "was busy"), (_broken, "failed")])
+def test_reset_password_warns_when_the_throttle_was_not_cleared(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    forget: object,
+    cause: str,
+) -> None:
+    run(monkeypatch, GOOD + "\n", "--username", "ada", "--password-stdin")
+    monkeypatch.setattr(InMemoryFailedSignInLog, "forget", forget)
+
+    reset(monkeypatch, "a brand new passphrase\n", "--username", "ada", "--password-stdin")
+
+    out, err = capsys.readouterr()
+    assert "Password of 'ada' changed; all its sessions ended." in out
+    assert f"the password was changed, but the sign-in throttle {cause}" in err
+    assert "Run the command again to retry (that is safe)" in err
+    assert "Retry-After" in err
+    assert "Traceback" not in err
 
 
 def test_reset_password_of_an_unknown_account_names_the_problem(

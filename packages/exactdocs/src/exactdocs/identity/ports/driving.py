@@ -8,6 +8,7 @@ from exactdocs.identity.dtos import (
     CreateFirstAdminCommand,
     CreateTokenCommand,
     LoginForTokenCommand,
+    PasswordReset,
     ResetPasswordCommand,
     SessionGrant,
     SessionState,
@@ -91,8 +92,12 @@ class GetSessionState(Protocol):
 class ResetPassword(Protocol):
     """Set a new password and end every session of the account; ``UnknownAccountError`` if none."""
 
-    async def __call__(self, command: ResetPasswordCommand) -> None:
-        """Run the use case."""
+    async def __call__(self, command: ResetPasswordCommand) -> PasswordReset:
+        """Run the use case.
+
+        Returns:
+            The account, and whether its username's sign-in throttle count was cleared.
+        """
         ...
 
 

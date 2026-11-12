@@ -186,15 +186,19 @@ def _from(address: str) -> dict[str, str]:
 )
 def step_fail_alternating(context: Context, count: int, username: str) -> None:
     with httpx.Client(base_url=context.first, timeout=30) as client:
-        client.post("/api/v1/setup", json=CREDENTIALS).raise_for_status()
+        setup = client.post("/api/v1/setup", json=CREDENTIALS)
+        assert setup.status_code in {httpx.codes.CREATED, httpx.codes.CONFLICT}, setup.text
     wrong = {"username": username, "password": "not the admin's password"}
+    used = getattr(context, "failed_addresses", 0)
     for n in range(count):
         base = (context.first, context.second)[n % 2]
         # A new address each time: no address count reaches its limit, only the username's.
+        address = f"10.0.0.{used + n + 1}"
         response = httpx.post(
-            f"{base}/api/v1/session", json=wrong, headers=_from(f"10.0.0.{n + 1}"), timeout=30
+            f"{base}/api/v1/session", json=wrong, headers=_from(address), timeout=30
         )
         assert response.status_code == httpx.codes.UNAUTHORIZED, response.text
+    context.failed_addresses = used + count
 
 
 @then('the next sign-in for "{username}", from a new address, is throttled on both processes')
@@ -209,6 +213,68 @@ def step_throttled_on_both(context: Context, username: str) -> None:
         assert response.status_code == httpx.codes.TOO_MANY_REQUESTS, response.text
         assert response.json()["error"] == "rate_limited", response.text
         assert int(response.headers["retry-after"]) > 0, response.headers
+
+
+RESET = {"username": "admin", "password": "a brand new passphrase for the admin"}
+"""The admin's credentials once ``admin reset-password`` has run."""
+
+
+def _throttle_counts(url: str) -> dict[object, tuple[object, ...]]:
+    """The sign-in throttle's counts in the database, by key."""
+    rows = query_as(url, "SELECT key, failures, last_at, previous_at FROM identity_failed_sign_ins")
+    return {row[0]: row[1:] for row in rows}
+
+
+@when('the operator runs "exactdocs admin reset-password" for "{username}" on that database')
+def step_reset_on_postgres(context: Context, username: str) -> None:
+    context.counts_before = _throttle_counts(context.database_url)
+    assert f"username:{username}" in context.counts_before, context.counts_before
+    data = Path(tempfile.mkdtemp(prefix="exactdocs-cli-"))
+    context.add_cleanup(shutil.rmtree, data, ignore_errors=True)
+    env = {
+        **os.environ,
+        "EXACTDOCS_DATA_DIR": str(data / "data"),
+        "EXACTDOCS_DATABASE_URL": context.database_url,
+        "EXACTDOCS_SECRET_KEY": SECRET_KEY,
+    }
+    tokens = ["admin", "reset-password", "--username", username, "--password-stdin"]
+    done = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]  # our own interpreter
+        [sys.executable, "-c", CLI, *tokens],
+        env=env,
+        input=RESET["password"] + "\n",
+        capture_output=True,
+        text=True,
+        timeout=STARTUP_SECONDS,
+        check=False,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert RESET["password"] not in done.stdout + done.stderr
+    assert "warning" not in done.stderr, done.stderr  # the username's count was cleared
+
+
+@then(
+    'the throttle count of "{username}" is gone, '
+    "and the other usernames' and the addresses' counts are unchanged"
+)
+def step_only_username_count_gone(context: Context, username: str) -> None:
+    expected = {k: v for k, v in context.counts_before.items() if k != f"username:{username}"}
+    assert any(str(k).startswith("username:") for k in expected), expected
+    assert any(str(k).startswith("address:") for k in expected), expected
+    counts = _throttle_counts(context.database_url)
+    assert counts == expected, (counts, expected)
+
+
+@then(
+    'the next sign-in for "{username}" with the new password, from a new address, '
+    "succeeds on both processes"
+)
+def step_new_password_on_both(context: Context, username: str) -> None:
+    right = {**RESET, "username": username}
+    for n, base in enumerate((context.second, context.first)):
+        response = httpx.post(
+            f"{base}/api/v1/session", json=right, headers=_from(f"10.0.2.{n + 1}"), timeout=30
+        )
+        assert response.status_code == httpx.codes.CREATED, response.text
 
 
 @given("the database role may not create databases")
