@@ -497,6 +497,12 @@ class DbosJobWorker:
                 async with asyncio.timeout_at(deadline):
                     ours = await self._still_ours(executor_id)
             except TimeoutError:
+                log.warning(
+                    "executor slot %s was retaken but its jobs could not be checked within"
+                    " %.1f s: counting it as lost",
+                    executor_id,
+                    self.slot_check_timeout,
+                )
                 ours = False
             state = SlotState.HELD if ours else SlotState.LOST
         if state is SlotState.UNKNOWN:
