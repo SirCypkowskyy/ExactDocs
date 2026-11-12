@@ -39,7 +39,9 @@ def _within[T](what: str, call: Callable[[], T]) -> T:
 
     The call runs in a daemon thread of its own, so a stuck one is left behind and the run goes
     on to the next scenario rather than waiting for it. An error the call raises is printed by
-    ``threading.excepthook`` (into the step's captured output) and fails the step.
+    ``threading.excepthook`` (into the step's captured output) and fails the step. A start that
+    times out may still finish later in its thread; that instance is never stopped, which is
+    acceptable because the step has already failed and the run is broken anyway.
 
     Args:
         what: What the call does, for the failure message.

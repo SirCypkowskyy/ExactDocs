@@ -26,7 +26,9 @@ STDERR = 2
 """The process's standard error descriptor: behave captures ``sys.stderr``, not this."""
 SCENARIO_SECONDS = float(os.environ.get("BEHAVE_SCENARIO_TIMEOUT", "300"))
 """Longest a scenario may run, from its start to the next one's (so its cleanups count). The
-slowest whole feature takes about 35 s on CI; a hung scenario fails within this."""
+slowest whole feature takes about 35 s on CI; a hung scenario fails within this. The process
+then exits at once (status 1) after printing every thread's stack, so behave writes no JUnit
+report for that run."""
 
 fixture_repo = import_module("fixture_repo")
 databases = import_module("databases")  # raises when CI requires PostgreSQL and has none
