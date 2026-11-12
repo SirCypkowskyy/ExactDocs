@@ -3,6 +3,7 @@
 import logging
 import math
 import secrets
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from uuid import uuid7
@@ -55,6 +56,7 @@ from exactdocs.identity.models import (
     Username,
     address_key,
     hash_token,
+    known_sign_in_key,
 )
 from exactdocs.identity.ports.driven import (
     AccountRepository,
@@ -169,7 +171,7 @@ class AuthenticateUseCase:
         except InvalidUsernameError:
             username = None
         address = address_key(client) if client else None
-        known = f"{username}@{address}" if username and address else None
+        known = known_sign_in_key(username, address) if username and address else None
         now = self.clock.now()
         trusted = known is not None and await self.failures.signed_in_before(known, now)
         keys = [
@@ -355,7 +357,8 @@ class ResetPasswordUseCase:
     hasher: PasswordHasher
     """The password hasher."""
     failures: FailedSignInLog
-    """The sign-in throttle; the account's username count is dropped once the password is set."""
+    """The sign-in throttle; the account's username count and the addresses it remembers for the
+    username are dropped once the password is set."""
 
     async def __call__(self, command: ResetPasswordCommand) -> PasswordReset:
         """Set the new password, then end all the account's sessions and revoke its API tokens.
@@ -364,18 +367,23 @@ class ResetPasswordUseCase:
 
         In this order, so nobody can sign in with the old password once the sessions are gone.
         Last, the username's throttle count is dropped, so the owner can sign in with the new
-        password straight away; the client addresses' counts and other usernames' stay. This
-        only reaches the counts of other processes when the log is shared (the database-backed
-        log, on PostgreSQL); an in-memory log belongs to the process that runs the reset.
+        password straight away, and so is every address remembered for the username (an address
+        that signed in with the old password would otherwise go on skipping the username's
+        count). The CLI has no client address, so none of them is kept. The client addresses'
+        counts and other usernames' counts and remembered sign-ins stay. This only reaches other
+        processes when the log is shared (the database-backed log, on PostgreSQL); an in-memory
+        log belongs to the process that runs the reset.
 
         By then the reset itself is done, so a throttle that is busy or fails does not undo or
-        fail it: the result says so (``throttle``), and running the reset again is safe.
+        fail it: the result says so (``throttle``, the worse of the two steps), and running the
+        reset again is safe.
 
         Args:
             command: The account's username and its new password.
 
         Returns:
-            The account, and what became of its username's throttle count.
+            The account, and what became of its username's throttle count and remembered
+            sign-ins.
 
         Raises:
             UnknownAccountError: No account has that username.
@@ -390,28 +398,39 @@ class ResetPasswordUseCase:
         await self.accounts.set_password_hash(account.id, password_hash)
         await self.sessions.delete_for_account(account.id)
         await self.tokens.delete_for_account(account.id)
-        return PasswordReset(
-            account=AccountSummary.from_model(account),
-            throttle=await self._forget_throttle(f"username:{account.username}"),
+        username = str(account.username)
+        count = await self._forget_throttle(
+            lambda: self.failures.forget(f"username:{username}"),
+            "a username's count was not reset",
         )
+        remembered = await self._forget_throttle(
+            lambda: self.failures.forget_remembered(username),
+            "a username's remembered sign-ins were not forgotten",
+        )
+        # The worse of the two: either one left undone is worth a warning.
+        outcomes = {count, remembered}
+        throttle: ThrottleReset = (
+            "failed" if "failed" in outcomes else "busy" if "busy" in outcomes else "cleared"
+        )
+        return PasswordReset(account=AccountSummary.from_model(account), throttle=throttle)
 
-    async def _forget_throttle(self, key: str) -> ThrottleReset:
-        """Drop the throttle count under ``key``, reporting rather than raising a failure.
+    @staticmethod
+    async def _forget_throttle(forget: Callable[[], Awaitable[bool]], what: str) -> ThrottleReset:
+        """Await one of the throttle's forgets, reporting rather than raising a failure.
 
         Args:
-            key: The username's throttle key.
+            forget: Starts the forget; called inside the ``try``, so a forget that raises
+                before it awaits anything is reported too.
+            what: What stays when it fails, for the log.
 
         Returns:
             ``cleared``, ``busy`` (the log skipped it) or ``failed`` (the log raised).
         """
         try:
-            cleared = await self.failures.forget(key)
+            cleared = await forget()
         except Exception as error:  # ruff: ignore[blind-except] - the password changed already
             # No traceback: the reset worked, and one would read as if it had not.
-            logger.warning(
-                "Sign-in throttle failed: a username's count was not reset (%s)",
-                type(error).__name__,
-            )
+            logger.warning("Sign-in throttle failed: %s (%s)", what, type(error).__name__)
             return "failed"
         return "cleared" if cleared else "busy"
 

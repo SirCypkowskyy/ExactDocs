@@ -89,7 +89,8 @@ class ResetPasswordCommand(_Dto):
 
 
 ThrottleReset = Literal["cleared", "busy", "failed"]
-"""What became of a username's sign-in throttle count when its password was reset."""
+"""What became of a username's sign-in throttle count and remembered sign-ins when its password
+was reset."""
 
 
 class PasswordReset(_Dto):
@@ -98,10 +99,12 @@ class PasswordReset(_Dto):
     account: AccountSummary
     """The account whose password changed, with its stored (normalised) username."""
     throttle: ThrottleReset
-    """What became of the username's sign-in throttle count: ``cleared`` (or there was none),
-    ``busy`` (the throttle could not take its turn in time, so the count stays until it is
-    waited out) or ``failed`` (another error; the count may stay). Running the reset again is
-    safe in either case."""
+    """What became of the username's sign-in throttle count and of the addresses the throttle
+    remembers for it: ``cleared`` (both are gone, or there were none), ``busy`` (the throttle
+    could not take its turn in time, so the count stays until it is waited out, or the addresses
+    go on skipping the username's count until they are forgotten) or ``failed`` (another error;
+    either may stay). The worse of the two is reported. Running the reset again is safe in
+    either case."""
 
 
 class SessionGrant(_Dto):

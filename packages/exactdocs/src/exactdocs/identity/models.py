@@ -255,6 +255,39 @@ class FailedSignIns:
         )
 
 
+def known_sign_in_key(username: Username, address: str) -> str:
+    """Return the key under which the throttle remembers that an address signed into a username.
+
+    Args:
+        username: The username signed into.
+        address: The client's throttle key (``address_key``).
+
+    Returns:
+        ``<username>@address:...``.
+    """
+    return f"{username}@{address}"
+
+
+def known_sign_ins_prefix(username: str) -> str:
+    """Return what every remembered sign-in key of ``username`` starts with.
+
+    ``address_key`` always starts with ``address:``, so every remembered sign-in of
+    ``username`` starts with this, and forgetting by it never keeps one of them. It can only err
+    the other way: a username that itself holds ``@address:`` (``Username`` allows one), say
+    ``a@address:x``, starts with the prefix of ``a``, so forgetting ``a`` also forgets its
+    remembered sign-ins. That account then becomes stricter (its attempts count against its
+    username again), never more lenient. It cannot happen while there is only one account
+    (ACL-06), and the risk is too small to be worth a separate username column.
+
+    Args:
+        username: The (normalised) username.
+
+    Returns:
+        ``<username>@address:``.
+    """
+    return f"{username}@address:"
+
+
 def address_key(client: str) -> str:
     """Return the throttle key of a client address.
 
