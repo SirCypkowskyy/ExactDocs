@@ -83,6 +83,8 @@ OWN = ProviderProfile(
     origin=ProfileOrigin.CONFIGURATION,
     base_url="http://tei.internal:8080",
 )
+ON_CPU = ProviderProfile(name="cpu", kind=ProviderKind.LOCAL, origin=ProfileOrigin.CONFIGURATION)
+"""An in-process (``local``) profile a library can rerank with."""
 RERANKER = ModelRef(profile="rr", model="rerank-v3.5")
 WITH_HYBRID = InstanceRoles(reranker=RERANKER, embedding=ModelRef(profile="rr", model="embed"))
 """Roles under which ``hybrid`` can run (its stand-in pipeline falls back to BM25)."""
@@ -260,7 +262,7 @@ async def _world(
         search=index,
         maintenance=index,
         library_modes=modes,
-        configured_profiles=(RR, OWN),
+        configured_profiles=(RR, OWN, ON_CPU),
         instance_roles=roles if roles is not None else InstanceRoles(reranker=RERANKER),
         models=factory,
         rerank_limits=limits,
@@ -504,6 +506,40 @@ async def test_a_reranker_that_cannot_be_built_keeps_the_order_and_says_so(
     assert (result.reranked, result.fallback_reason) == (False, FallbackReason.RERANKER_FAILED)
     assert "could not be built (SealedTextUnreadableError)" in caplog.text
     assert not world.reranker.calls
+
+
+@pytest.mark.parametrize(
+    ("limits", "kind", "seconds"),
+    [
+        (RerankLimits(), "local", 5.0),
+        (RerankLimits(), "openai-compatible", 2.0),
+        (RerankLimits(), None, 2.0),
+        (RerankLimits(timeout=1.5), "local", 1.5),
+        (RerankLimits(timeout=1.5), "tei", 1.5),
+    ],
+)
+def test_an_unset_timeout_is_longer_for_a_local_reranker(
+    limits: RerankLimits, kind: str | None, seconds: float
+) -> None:
+    assert limits.timeout_for(kind) == seconds
+
+
+async def test_a_library_reranking_on_a_local_profile_gets_the_local_timeout(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The instance's reranker is an endpoint (2 s); the library's own runs in-process (#284).
+    world = await _world(
+        limits=RerankLimits(top_n=5, local_timeout=0.05), reranker=ScriptedReranker(hang=True)
+    )
+    await world.module.set_library_retrieval(
+        SetLibraryRetrievalCommand(library=LIB, reranker="cpu:tiny-reranker")
+    )
+
+    result = await _search(world)
+
+    assert (result.reranked, result.fallback_reason) == (False, FallbackReason.RERANKER_TIMEOUT)
+    assert world.factory.built == [("cpu", "tiny-reranker")]
+    assert "did not answer within 0.05s" in caplog.text
 
 
 async def test_building_the_reranker_counts_toward_its_timeout() -> None:

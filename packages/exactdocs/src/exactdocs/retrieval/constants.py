@@ -851,12 +851,14 @@ SPEND_COUNTERS: Final[tuple[str, ...]] = (
     "requests",
     "usd_micros",
     "unpriced",
+    "local_tokens",
 )
 """The columns of a ledger row an addition sums."""
 REPLAY_RETAIN_DAYS: Final[int] = 2
 """Replay tokens of day windows older than this many days are dropped: those days are over."""
 FREE_PROFILE_KINDS: Final[frozenset[str]] = frozenset({"local"})
-"""Kinds whose models cost nothing (in-process models): priced at zero, their tokens counted."""
+"""Kinds whose models cost nothing (in-process models): priced at zero, their tokens recorded
+(``local_tokens``) but never counted toward a token budget, and never checked against one (#284)."""
 LLM_REQUEST_LIMIT: Final[int] = 8
 """The most model requests one LLM step (HyDE, judge, an agentic search) may make
 (pydantic-ai ``UsageLimits.request_limit``)."""
@@ -996,8 +998,9 @@ text to its longest, and ONNX Runtime's working memory grows with it. Embedding 
 library with bge-small peaked at 636 MB in batches of 64 and 510 MB in batches of 16, and took
 3.2 s instead of 4.3 s (#278)."""
 LOCAL_RERANK_TIMEOUT: Final[float] = 5.0
-"""The reranker timeout when the instance's reranker runs on a ``local`` profile and none is set:
-a CPU reranks 32 long candidates in about 0.2 to 2 s, more on fewer cores."""
+"""The reranker timeout when a search's reranker (the instance's, or a library's own) runs on a
+``local`` profile and none is set: a CPU reranks 32 long candidates in about 0.2 to 2 s, more on
+fewer cores."""
 LOCAL_RERANK_BATCH: Final[int] = 8
 """Candidates a local cross-encoder scores per ONNX call: smaller batches pad less (on a 4-core CPU
 32 candidates of 2,000 characters took 2.4 s in batches of 8, 3.5 s in one batch)."""

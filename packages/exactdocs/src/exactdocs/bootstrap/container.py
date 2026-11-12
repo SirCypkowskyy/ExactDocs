@@ -145,8 +145,6 @@ from exactdocs.retrieval.adapters.driven.sqlite import (
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
 from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
 from exactdocs.retrieval.constants import (
-    DEFAULT_RERANK_TIMEOUT,
-    LOCAL_RERANK_TIMEOUT,
     PG_SEARCH_QUIET_SCANS,
 )
 from exactdocs.retrieval.models import (
@@ -244,26 +242,21 @@ def _warn_undeclared_local(configured: ConfiguredAi) -> None:
             )
 
 
-def _rerank_limits(settings: Settings, configured: ConfiguredAi) -> RerankLimits:
-    """Read the reranker's limits; an unset timeout is longer for a ``local`` reranker.
+def _rerank_limits(settings: Settings) -> RerankLimits:
+    """Read the reranker's limits; an unset timeout is resolved per search by the reranker's kind.
+
+    Retrieval gives a reranker on a ``local`` profile ``LOCAL_RERANK_TIMEOUT``, whether the
+    instance's role or a library's override names it (#284).
 
     Args:
         settings: The runtime configuration.
-        configured: The configuration (which kind of profile the instance's reranker uses).
 
     Returns:
         The limits.
     """
-    timeout = settings.ai.reranker.timeout
-    if timeout is None:
-        ref = configured.roles.reranker
-        local = ref is not None and any(
-            p.name == ref.profile and p.kind is ProviderKind.LOCAL for p in configured.profiles
-        )
-        timeout = LOCAL_RERANK_TIMEOUT if local else DEFAULT_RERANK_TIMEOUT
     return RerankLimits(
         top_n=settings.ai.reranker.top_n,
-        timeout=timeout,
+        timeout=settings.ai.reranker.timeout,
         judge_timeout=settings.ai.judge.timeout,
     )
 
@@ -564,7 +557,7 @@ def _build_read_side(
         or AiModels(remote=PydanticAiModels(keys=ai.keys, box=ai_box), local=local),
         secret_box=ai_box,
         instance_mode=settings.ai.mode,
-        rerank_limits=_rerank_limits(settings, ai),
+        rerank_limits=_rerank_limits(settings),
         rerank_with=settings.ai.rerank_with,
         judge=PydanticAiCandidateJudge(ledger=spend),
         pipelines=pipelines,

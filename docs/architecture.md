@@ -1189,10 +1189,13 @@ never reach Hub code, half the cores for ONNX Runtime and no CPU memory arena, o
 The adapters (`retrieval/adapters/driven/local_models.py`: `LocalEmbeddings`, `LocalReranker`)
 never import fastembed: they call the loaded model through small structural types, document
 batches (at most 16 texts) on a one-worker pool and query embeddings and reranks on a
-two-worker pool of their own, so a search never waits behind an embedding job; ONNX Runtime's
-errors become `EmbeddingFailedError` / `RerankerError`. `Container.running` shuts both pools down
-when it ends. An unset reranker timeout is 5 s when the instance's reranker is on a `local`
-profile, 2 s otherwise. `AiEmbeddingModels` wraps a `LocalEmbedder` handle with them and a
+two-worker pool of their own, so a search never waits behind an embedding job (up to three calls
+at once, each with half the cores); ONNX Runtime's errors become `EmbeddingFailedError` /
+`RerankerError`. `Container.running` shuts both pools down when it ends. An unset reranker
+timeout is 5 s when the search's reranker (the instance's or a library's own) is on a `local`
+profile, 2 s otherwise (`RerankLimits.timeout_for`, per search). A `local` model's tokens are
+recorded in the spend ledger's `local_tokens` and count toward no token budget, and no budget
+stops its embedding job or a search's call to it (#284). `AiEmbeddingModels` wraps a `LocalEmbedder` handle with them and a
 pydantic-ai `Embedder` with `PydanticAiEmbeddings`.
 
 **Agentic search (#98).** `AgenticPipeline` (in `use_cases`, registered for `agentic` when the

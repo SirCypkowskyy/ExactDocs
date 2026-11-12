@@ -1527,7 +1527,10 @@ class SpentOut(_Dto):
     output_tokens: int
     """Tokens received."""
     tokens: int
-    """Both: what token budgets limit."""
+    """Both, less `local_tokens`: what token budgets limit."""
+    local_tokens: int
+    """Of the input and output tokens, those of in-process (`local`) models: they cost nothing,
+    so no token budget counts them."""
     requests: int
     """Calls made."""
     usd: float
@@ -1549,6 +1552,7 @@ class SpentOut(_Dto):
             input_tokens=spent.input_tokens,
             output_tokens=spent.output_tokens,
             tokens=spent.tokens,
+            local_tokens=spent.local_tokens,
             requests=spent.requests,
             usd=spent.usd_micros / MICROS_PER_USD,
             unpriced_requests=spent.unpriced,

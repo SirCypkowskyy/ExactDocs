@@ -8,6 +8,7 @@ import json
 import logging
 import shutil
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -26,9 +27,17 @@ from exactdocs.bootstrap.local_models import LocalModels
 from exactdocs.bootstrap.models_pull import pull
 from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.retrieval.adapters.driven.local_models import LocalEmbedder
+from exactdocs.retrieval.adapters.driven.sqlite import SqliteSpendLedger
 from exactdocs.retrieval.dtos import SearchDocsQuery, SearchDocsResult
-from exactdocs.retrieval.errors import AiBudgetReachedError, ProviderUnsupportedError
-from exactdocs.retrieval.models import ModelRole, ProfileOrigin, ProviderKind, ProviderProfile
+from exactdocs.retrieval.errors import ProviderUnsupportedError
+from exactdocs.retrieval.models import (
+    ModelRole,
+    ProfileOrigin,
+    ProviderKind,
+    ProviderProfile,
+    SpendEntry,
+    SpendWindow,
+)
 from fixture_import import LIBRARY, embed_fixture, import_fixture
 from fixture_repo import DocsRepo
 from retrieval_eval.fixture import instance_spend
@@ -465,16 +474,18 @@ def _configured(ai: dict) -> ConfiguredAi:
 
 
 @pytest.mark.parametrize(
-    ("reranker", "timeout"),
+    ("reranker", "kind", "timeout"),
     [
-        ({"model": "local:Xenova/ms-marco-MiniLM-L-6-v2"}, 5.0),
-        ({"model": "local:Xenova/ms-marco-MiniLM-L-6-v2", "timeout": 1.5}, 1.5),
-        ({"model": "corp:rerank-v3.5"}, 2.0),
-        ({}, 2.0),
+        ({"model": "local:Xenova/ms-marco-MiniLM-L-6-v2"}, "local", 5.0),
+        ({"model": "local:Xenova/ms-marco-MiniLM-L-6-v2", "timeout": 1.5}, "local", 1.5),
+        ({"model": "corp:rerank-v3.5"}, "openai-compatible", 2.0),
+        # A library's own reranker on a local profile gets the local default too (#284).
+        ({"model": "corp:rerank-v3.5"}, "local", 5.0),
+        ({}, None, 2.0),
     ],
 )
 def test_an_unset_rerank_timeout_is_longer_for_a_local_reranker(
-    tmp_path: Path, reranker: dict, timeout: float
+    tmp_path: Path, reranker: dict, kind: str | None, timeout: float
 ) -> None:
     ai = {
         "providers": {
@@ -484,11 +495,9 @@ def test_an_unset_rerank_timeout_is_longer_for_a_local_reranker(
         "reranker": reranker,
     }
 
-    limits = _rerank_limits(
-        Settings(data_dir=tmp_path, ai=AiSettings.model_validate(ai)), _configured(ai)
-    )
+    limits = _rerank_limits(Settings(data_dir=tmp_path, ai=AiSettings.model_validate(ai)))
 
-    assert limits.timeout == timeout
+    assert limits.timeout_for(kind) == timeout
 
 
 def test_a_local_role_without_a_local_profile_is_warned_about_at_start(
@@ -511,7 +520,11 @@ def test_a_local_role_without_a_local_profile_is_warned_about_at_start(
 
 
 async def _embedded_and_searched(
-    docs_repo: DocsRepo, data_dir: Path, models_dir: Path, budgets: dict
+    docs_repo: DocsRepo,
+    data_dir: Path,
+    models_dir: Path,
+    budgets: dict,
+    spent: Sequence[SpendEntry] = (),
 ) -> tuple[tuple[int, float], SearchDocsResult, tuple[int, float]]:
     ai = AiSettings.model_validate(
         {
@@ -524,6 +537,7 @@ async def _embedded_and_searched(
     )
     container = Container.build(Settings(data_dir=data_dir, models_dir=models_dir, ai=ai))
     async with container.running(jobs=False):
+        await SqliteSpendLedger(engine=container.engine).add(spent)  # earlier, paid calls
         await import_fixture(container, docs_repo)
         try:
             await embed_fixture(container)
@@ -556,8 +570,33 @@ async def test_a_local_model_costs_nothing_so_a_usd_budget_starts_and_never_stop
     assert after[1] == 0
 
 
-async def test_a_token_budget_stops_the_local_embedding_job(
+async def test_a_used_up_token_budget_never_stops_local_models(
     docs_repo: DocsRepo, tmp_path: Path, models_dir: Path
 ) -> None:
-    with pytest.raises(AiBudgetReachedError):
-        await _embedded_and_searched(docs_repo, tmp_path / "data", models_dir, {"daily_tokens": 1})
+    # #284: local tokens are recorded but count toward no token budget, and a budget that paid
+    # calls used up stops neither the local embedding job nor a local query embedding or rerank.
+    budgets = {"daily_tokens": 1000, "daily_embedding_tokens": 1000}
+    today = SpendWindow.DAY.start(datetime.now(UTC))
+    spent = [
+        SpendEntry(
+            scope_kind=kind,
+            scope_id="",
+            window=SpendWindow.DAY,
+            window_start=today,
+            input_tokens=1000,
+            requests=1,
+        )
+        for kind in ("instance", "embedding")
+    ]
+
+    embedded, answer, after = await _embedded_and_searched(
+        docs_repo, tmp_path / "data", models_dir, budgets, spent
+    )
+
+    assert embedded[0] > 0  # the job's tokens are recorded (the paid ones are daily rows only)
+    assert (answer.retrieval_mode, answer.fallback_reason, answer.reranked) == (
+        "hybrid",
+        None,
+        True,
+    )
+    assert after[0] > embedded[0]  # and the query embedding's and the rerank's

@@ -581,8 +581,8 @@ class NoAgentAnswerCache:
 class PriceBook:
     """Prices models: the operator's price for a ``<profile>:<model>``, else the bundled list.
 
-    In-process models (``local``) cost nothing; their tokens are still counted. Never fetched
-    over the network.
+    In-process models (``local``) cost nothing; their tokens are still recorded, but count toward
+    no token budget (``SpendEntry.local_tokens``). Never fetched over the network.
     """
 
     listed: Prices | None = None
@@ -781,6 +781,9 @@ class AiSpend:
     ) -> None:
         """Record a call that ran outside an agent (a rerank, a query embedding).
 
+        A ``local`` model's tokens are recorded as ``local_tokens``: shown in the usage, never
+        counted toward a token budget.
+
         Args:
             scopes: (kind, ID) of each scope it counts to.
             ref: The model called.
@@ -797,6 +800,7 @@ class AiSpend:
                 output_tokens=output_tokens,
                 requests=requests,
                 price=self.prices.price(ref, profile_kind),
+                local=profile_kind in FREE_PROFILE_KINDS,
             )
         )
 
@@ -1330,11 +1334,11 @@ class Reranking:
     The reranker is the one the library resolves to (its override, else the instance's
     ``reranker`` role), built from the profile as it is now. It receives the query text and the
     candidates' chunk text only, read before the clock starts. Building the reranker and its call
-    must finish within ``limits.timeout``. A reranker that does not, that fails, answers something
-    unusable or cannot be built (a profile that cannot rerank, a key that no longer opens) never
-    fails the search: the candidates keep the mode's order, ``reranked`` stays 0, and the
-    fallback reason says why (when no other reason was given already). Failures are logged
-    without the query or any text.
+    must finish within the timeout of the profile's kind (``limits.timeout_for``). A reranker
+    that does not, that fails, answers something unusable or cannot be built (a profile that
+    cannot rerank, a key that no longer opens) never fails the search: the candidates keep the
+    mode's order, ``reranked`` stays 0, and the fallback reason says why (when no other reason
+    was given already). Failures are logged without the query or any text.
 
     The judge (#96, ``choice.reranker`` is ``judge``) is the library's ``judge`` role (its
     override, else the instance's, else the ``llm`` role), called once for all the candidates
@@ -1416,15 +1420,16 @@ class Reranking:
         Returns:
             The answer reordered, or in its own order with a fallback reason.
         """
+        timeout = await self._timeout(version.library, choice.library_ai)
         try:
-            async with asyncio.timeout(self.limits.timeout):
+            async with asyncio.timeout(timeout):
                 reranker = await self._reranker(version.library, choice.library_ai)
                 scores = await _called(reranker, query, texts)
         except TimeoutError:
             logger.warning(
                 "the reranker of %s did not answer within %ss: the search keeps its order",
                 version.library,
-                self.limits.timeout,
+                timeout,
             )
             return _fallen_back(answer, FallbackReason.RERANKER_TIMEOUT)
         except RerankerError as error:
@@ -1562,6 +1567,24 @@ class Reranking:
         except Exception as error:  # a judge problem never fails a search; re-raised as ours
             reason = f"it failed ({_kind(error)})"
             raise RerankerError(reason) from error
+
+    async def _timeout(self, library: str, ai: LibraryAi | None) -> float:
+        """Find the timeout of the library's reranker, by the profile it resolves to now.
+
+        An unset timeout is ``limits.local_timeout`` for a ``local`` profile, whether the
+        instance's role or the library's own override names it (#284).
+
+        Args:
+            library: The library searched.
+            ai: Its overrides, as read for this search.
+
+        Returns:
+            Seconds.
+        """
+        if self.limits.timeout is not None:
+            return self.limits.timeout
+        found = await self.providers.resolved(ModelRole.RERANKER, library, ai)
+        return self.limits.timeout_for(None if found is None else found[1])
 
     async def _reranker(self, library: str, ai: LibraryAi | None) -> Reranker:
         """Build the library's reranker from the profile as it is now.
@@ -5113,8 +5136,9 @@ class EmbedBatchUseCase:
         space = await runs.space(configured.target)
         if space is None or space.id != command.space_id:
             return _done()  # the model changed: its own jobs embed the version
-        if runs.spend is not None:  # before the batch: a used-up budget stops the job here
-            await runs.spend.embedding_batch(command.library)
+        local = configured.target.profile_kind in FREE_PROFILE_KINDS
+        if runs.spend is not None and not local:  # before the batch: a used-up budget stops it
+            await runs.spend.embedding_batch(command.library)  # a local model costs nothing (#284)
         vectors = runs.store()
         keys = await vectors.missing(space.id, command.manifest_id, runs.batch_size)
         sources = await runs.chunks.embedding_sources(command.manifest_id, keys)
@@ -5139,6 +5163,7 @@ class EmbedBatchUseCase:
                     requests=embedded.requests,
                     library=command.library,
                     usd_per_million=runs.price(configured),
+                    local=local,
                 )
             )
         try:
@@ -5230,19 +5255,21 @@ class ListUnembeddedVersionsUseCase:
 
         Returns:
             The versions; none when no embedding model or no vector store is configured, and
-            none of a library while a budget its embedding counts to is used up.
+            none of a library while a budget its embedding counts to is used up, unless the
+            model is a ``local`` one, which no budget stops (#284).
         """
         configured = await self.runs.configured()
         if configured is None or self.runs.vectors is None:
             return UnembeddedVersionsOut(versions=[])
         space = await self.runs.space(configured.target)
+        local = configured.target.profile_kind in FREE_PROFILE_KINDS
         spent: dict[str, bool] = {}
         versions: list[VersionRefOut] = []
         for v in await self.runs.active_versions(query.library):
             if space is not None and await self.runs.covers(space, v.manifest_id):
                 continue
             if v.library not in spent:
-                spent[v.library] = await self._spent(v.library)
+                spent[v.library] = not local and await self._spent(v.library)
             if not spent[v.library]:
                 versions.append(VersionRefOut(library=v.library, ref=v.ref))
         return UnembeddedVersionsOut(versions=versions)

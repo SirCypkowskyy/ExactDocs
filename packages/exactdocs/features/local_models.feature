@@ -22,6 +22,14 @@ Feature: Local models: hybrid search and reranking with no network at all
     Then the result says retrieval mode "hybrid" and "reranked: true"
     And nothing tried to reach the network
 
+  Scenario: Local models keep answering when the token budget is used up
+    Given ExactDocs is installed with the "local" extra and its models were pulled into the models directory
+    And paid calls have used up a daily token budget of the instance and of embedding
+    And the embedding role is "local:exactdocs-test/tiny-embedding" and the reranker role is "local:exactdocs-test/tiny-reranker"
+    When "v1.4.0" is embedded and an agent searches "how do I retry failed calls"
+    Then the result says retrieval mode "hybrid" and "reranked: true"
+    And the usage records the local tokens without counting them toward the token budget
+
   Scenario: A missing model is an error at start, not a download
     Given the embedding role is "local:BAAI/bge-small-en-v1.5" and the model is not in the models directory
     And the process has no network access

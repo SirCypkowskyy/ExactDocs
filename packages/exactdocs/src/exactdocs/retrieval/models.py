@@ -73,6 +73,7 @@ from exactdocs.retrieval.constants import (
     JUDGE_UNKNOWN_ID,
     LIBRARY_BUDGET_NOT_LIBRARY,
     LIBRARY_BUDGET_TWICE,
+    LOCAL_RERANK_TIMEOUT,
     MASK,
     MAX_EMBEDDING_DIMENSIONS,
     MAX_FLOAT32,
@@ -1196,11 +1197,31 @@ class RerankLimits:
 
     top_n: int = DEFAULT_RERANK_TOP_N
     """How many of the best candidates are reranked; a library may set its own."""
-    timeout: float = DEFAULT_RERANK_TIMEOUT
+    timeout: float | None = None
     """How long a search gives the reranker to be built and to answer, in seconds, before it keeps
-    its order; the candidates' text is read before the clock starts."""
+    its order; the candidates' text is read before the clock starts. ``None`` (not set):
+    ``local_timeout`` for a reranker on a ``local`` profile, else ``DEFAULT_RERANK_TIMEOUT``."""
+    local_timeout: float = LOCAL_RERANK_TIMEOUT
+    """The unset timeout of a reranker on a ``local`` profile, whichever role or library override
+    names it: a CPU takes longer than an endpoint."""
     judge_timeout: float = DEFAULT_JUDGE_TIMEOUT
     """The same for the judge (``[ai.judge] timeout``): an LLM call takes longer."""
+
+    def timeout_for(self, profile_kind: str | None) -> float:
+        """Give the timeout of a reranker on a profile of this kind.
+
+        Args:
+            profile_kind: The kind of the profile the search's reranker resolves to (the
+                library's override, else the instance's role); ``None`` when it does not resolve.
+
+        Returns:
+            The operator's timeout when set, else the local or the default one.
+        """
+        if self.timeout is not None:
+            return self.timeout
+        if profile_kind == ProviderKind.LOCAL.value:
+            return self.local_timeout
+        return DEFAULT_RERANK_TIMEOUT
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2731,6 +2752,10 @@ class SpendEntry:
     """Their price in millionths of a US dollar; 0 when the price is unknown."""
     unpriced: int = 0
     """Of ``requests``, those whose price is unknown (so ``usd_micros`` leaves them out)."""
+    local_tokens: int = 0
+    """Of the input and output tokens, those of in-process (``local``) models: recorded, so the
+    usage shows them, but never counted toward a token budget (``tokens``), since they cost
+    nothing (#284)."""
     token: str | None = None
     """Identifies the response the entry comes from: an entry whose token its row has already
     taken is not added again (a replayed accrual). ``None``: always added."""
@@ -2768,12 +2793,12 @@ class SpendEntry:
 
     @property
     def tokens(self) -> int:
-        """Count the tokens in both directions, which token budgets limit.
+        """Count the tokens token budgets limit: both directions, of models that cost something.
 
         Returns:
-            Input plus output tokens.
+            Input plus output tokens, less those of ``local`` models.
         """
-        return self.input_tokens + self.output_tokens
+        return self.input_tokens + self.output_tokens - self.local_tokens
 
     def plus(self, other: SpendEntry) -> SpendEntry:
         """Add another entry's counters to these (the same row).
@@ -2791,6 +2816,7 @@ class SpendEntry:
             requests=self.requests + other.requests,
             usd_micros=self.usd_micros + other.usd_micros,
             unpriced=self.unpriced + other.unpriced,
+            local_tokens=self.local_tokens + other.local_tokens,
             token=None,
         )
 
@@ -3157,6 +3183,7 @@ def spend_entries(
     output_tokens: int = 0,
     requests: int,
     price: ModelPrice | None,
+    local: bool = False,
 ) -> tuple[SpendEntry, ...]:
     """Write one call's usage as ledger entries: one per scope and UTC window.
 
@@ -3167,11 +3194,14 @@ def spend_entries(
         output_tokens: Tokens it reported receiving.
         requests: Calls made.
         price: The model's price, if known.
+        local: The model runs in this process (a ``local`` profile): its tokens are recorded as
+            ``local_tokens``, which no token budget counts.
 
     Returns:
         One entry per scope and window (day, month).
     """
     micros = 0 if price is None else price.usd_micros(input_tokens, output_tokens)
+    free = input_tokens + output_tokens if local else 0
     return tuple(
         SpendEntry(
             scope_kind=kind,
@@ -3183,6 +3213,7 @@ def spend_entries(
             requests=requests,
             usd_micros=micros,
             unpriced=requests if price is None else 0,
+            local_tokens=free,
         )
         for kind, scope_id in scopes
         for window in SpendWindow
@@ -3196,6 +3227,7 @@ def embedding_spend(
     input_tokens: int,
     requests: int,
     usd_per_million: float | None,
+    local: bool = False,
 ) -> tuple[SpendEntry, ...]:
     """Write one embedding batch's usage as ledger entries.
 
@@ -3209,6 +3241,7 @@ def embedding_spend(
         input_tokens: Tokens the provider reported.
         requests: Calls made.
         usd_per_million: The model's input price per million tokens, if known.
+        local: The model runs in this process: its tokens count toward no token budget.
 
     Returns:
         One entry per scope (embedding, instance, library) and window (day, month).
@@ -3220,6 +3253,7 @@ def embedding_spend(
         input_tokens=input_tokens,
         requests=requests,
         price=price,
+        local=local,
     )
 
 

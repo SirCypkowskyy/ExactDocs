@@ -3536,9 +3536,15 @@ export interface components {
             readonly output_tokens: number;
             /**
              * Tokens
-             * @description Both: what token budgets limit.
+             * @description Both, less `local_tokens`: what token budgets limit.
              */
             readonly tokens: number;
+            /**
+             * Local Tokens
+             * @description Of the input and output tokens, those of in-process (`local`) models: they cost nothing,
+             *     so no token budget counts them.
+             */
+            readonly local_tokens: number;
             /**
              * Requests
              * @description Calls made.
