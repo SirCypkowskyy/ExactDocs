@@ -8,12 +8,16 @@ The database is a SQLite file in the data directory (the default) or PostgreSQL
 (``EXACTDOCS_DATABASE_URL=postgresql+psycopg://...``), which several server processes can share.
 """
 
+import asyncio
+import contextlib
+import fcntl
 import logging
 import os
 import secrets
 import sqlite3
 import tempfile
 import time
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -36,6 +40,9 @@ from exactdocs.bootstrap.constants import (
     COLLATED_PREFIXES,
     LOCK_NOT_AVAILABLE,
     MIGRATION_LOCK,
+    MIGRATION_TURN_NOTICE_SECONDS,
+    MIGRATION_TURN_POLL_SECONDS,
+    MIGRATION_TURN_SUFFIX,
     MIGRATIONS,
     MIN_POSTGRES,
     MIN_SQLITE,
@@ -476,8 +483,11 @@ async def migrate(engine: AsyncEngine, *, location: Path = MIGRATIONS) -> None:
     Foreign keys are off while revisions run, because a batch alteration recreates a table and
     SQLite would otherwise apply ``ON DELETE CASCADE`` to the rows of the tables that reference
     it. ``PRAGMA foreign_key_check`` before the commit proves the revisions left no violation.
-    The transaction is ``BEGIN IMMEDIATE``: processes starting together migrate one after the
-    other (the later ones find nothing left to do) instead of failing with "database is locked".
+    Processes starting together on one SQLite file migrate one after the other (the later ones
+    find nothing left to do): each first takes the migration turn (``_migration_turn``, a file
+    lock it waits for as long as another process's migration takes), then runs the revisions in
+    a ``BEGIN IMMEDIATE`` transaction. SQLite's own wait for a lock (``BUSY_TIMEOUT_MS``) is not
+    long enough on its own: it does not depend on how fast the machine migrates (#320).
 
     On PostgreSQL the revisions run in one transaction that first takes an advisory lock (the
     same turn-taking across processes), and the text columns of ExactDocs' tables are then given
@@ -487,7 +497,8 @@ async def migrate(engine: AsyncEngine, *, location: Path = MIGRATIONS) -> None:
         async with engine.begin() as connection:
             await connection.run_sync(_upgrade_postgres, location)
         return
-    async with engine.connect() as connection:
+    # The turn comes first, so the first connection's switch to WAL is taken in turn too.
+    async with _migration_turn(engine), engine.connect() as connection:
         await connection.execution_options(begin_immediate=True)
         # Raw cursor: the pragma is a no-op inside a transaction, which SQLAlchemy would begin.
         await connection.run_sync(_pragma, "foreign_keys=OFF")
@@ -496,6 +507,45 @@ async def migrate(engine: AsyncEngine, *, location: Path = MIGRATIONS) -> None:
                 await connection.run_sync(_upgrade, location)
         finally:
             await connection.run_sync(_pragma, "foreign_keys=ON")
+
+
+@contextlib.asynccontextmanager
+async def _migration_turn(engine: AsyncEngine) -> AsyncGenerator[None]:
+    """Hold the SQLite file's migration turn: an exclusive ``flock`` on a file next to it.
+
+    A process waits for the turn for as long as another process's migration takes, however slow
+    the machine is, and without blocking the event loop: it tries the lock again every
+    ``MIGRATION_TURN_POLL_SECONDS``, so a start cancelled while it waits stops at once. The
+    kernel releases the lock of a process that dies, so a crash leaves no stale turn behind.
+    An in-memory database has no other process to wait for.
+
+    Args:
+        engine: A SQLite engine.
+
+    Yields:
+        Nothing, while this process holds the turn.
+    """
+    path = database_file(engine)
+    if path is None:
+        yield
+        return
+    turn = path.with_name(path.name + MIGRATION_TURN_SUFFIX)
+    descriptor = os.open(turn, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    try:
+        started, noticed = time.monotonic(), False
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                if not noticed and time.monotonic() - started >= MIGRATION_TURN_NOTICE_SECONDS:
+                    noticed = True
+                    logger.info("Waiting for another ExactDocs process to migrate %s.", path)
+                await asyncio.sleep(MIGRATION_TURN_POLL_SECONDS)
+            else:
+                break
+        yield  # closing the descriptor below releases the lock
+    finally:
+        os.close(descriptor)
 
 
 def _pragma(connection: Connection, pragma: str) -> None:

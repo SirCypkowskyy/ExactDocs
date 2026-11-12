@@ -16,6 +16,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, text
 from sqlalchemy.exc import IntegrityError
 
+from exactdocs.bootstrap import database
 from exactdocs.bootstrap.constants import BUSY_TIMEOUT_MS, MIGRATIONS
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.database import (
@@ -306,6 +307,52 @@ async def test_processes_starting_together_all_migrate_an_empty_database(
                 return await current_revision(container.engine)
 
         assert await asyncio.gather(*(start(c) for c in containers)) == [head()] * 8
+
+
+SLOW_REVISION = """
+import asyncio
+from sqlalchemy.util import await_
+await_(asyncio.sleep(0.6))  # holds the write lock without blocking the event loop
+"""
+
+
+async def test_a_process_waits_for_another_migration_longer_than_sqlite_waits_for_a_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A busy machine: the other process's migration outlasts SQLite's own wait (#320).
+    monkeypatch.setattr(database, "BUSY_TIMEOUT_MS", 50)
+    location = add_revision(tmp_path, SLOW_REVISION)
+    engines = [open_database(Settings()) for _ in range(3)]
+    try:
+        await asyncio.gather(*(migrate(engine, location=location) for engine in engines))
+
+        assert [await current_revision(engine) for engine in engines] == ["extra"] * 3
+    finally:
+        for engine in engines:
+            await engine.dispose()
+
+
+async def test_a_start_cancelled_while_it_waits_for_another_migration_stops_at_once(
+    tmp_path: Path,
+) -> None:
+    location = add_revision(tmp_path, SLOW_REVISION)
+    first, second = open_database(Settings()), open_database(Settings())
+    try:
+        migrating = asyncio.create_task(migrate(first, location=location))
+        await asyncio.sleep(0.2)  # the first holds the migration turn
+        waiting = asyncio.create_task(migrate(second, location=location))
+        await asyncio.sleep(0.1)
+        waiting.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(waiting, timeout=0.2)  # did not wait for the first to finish
+        await migrating
+        await migrate(second, location=location)  # the turn was given back
+
+        assert await current_revision(second) == "extra"
+    finally:
+        await first.dispose()
+        await second.dispose()
 
 
 def test_an_sqlite_older_than_the_floor_stops_startup_with_a_clear_message(
