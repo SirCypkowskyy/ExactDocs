@@ -981,6 +981,17 @@ crashed one left (it logs why).
   in it; it does **not** need `CREATEDB`: DBOS keeps its tables in the schema `dbos` of the same
   database (`EXACTDOCS_DBOS_SYSTEM_SCHEMA`), never in a database of its own. Percent-encode
   special characters of the password.
+- **Connect with a session**: directly to PostgreSQL, or through a pooler in session mode
+  (PgBouncer's `pool_mode = session`). A pooler in **transaction mode** is unsupported: it hands
+  each transaction to any server connection, and ExactDocs' jobs (DBOS's `LISTEN`, the executor
+  slots' advisory locks) and psycopg's prepared statements need the same session from one
+  statement to the next, so jobs would fail at random. Supabase's is refused at start from its URL
+  (see [Supabase](#supabase)). Any other (a self-hosted PgBouncer on 6432, another provider's, or
+  Supabase's named by its IP address) cannot be recognised from the URL: after migrating, each
+  process sets a session value in one transaction and reads it back in the next, and logs a
+  WARNING naming the session or direct connection to use when it was lost. That probe can only
+  warn, never prove a session: a transaction-mode pooler with one idle server connection keeps
+  the value, so no warning is no guarantee. The process starts either way.
 - `EXACTDOCS_SECRET_KEY` is required, the same in every process: otherwise each process would
   generate its own key and could not open the credentials another one stored.
 - Every process still has its own data directory for its git work folders and `known_hosts`;
@@ -1107,7 +1118,9 @@ ALTER ROLE exactdocs SET search_path = exactdocs, extensions;
 3. **Connect with a session**, never the pooler's transaction mode: ExactDocs' jobs (DBOS's
    `LISTEN`, the executor slots' advisory locks) and psycopg's prepared statements need the same
    session from one statement to the next. A URL on port 6543 of a Supabase host (Supavisor's or
-   the dedicated pooler's transaction mode) is refused at start, saying so. Use either
+   the dedicated pooler's transaction mode) is refused at start, saying so; the pooler named by its
+   IP address cannot be recognised from the URL, and gets only the start-up probe's WARNING (see
+   [PostgreSQL](#postgresql)), which cannot catch every case. Use either
    - the **direct connection**, `postgresql://exactdocs:<password>@db.<project-ref>.supabase.co:5432/postgres?sslmode=require`.
      It is **IPv6 only** unless the project has the IPv4 add-on: from a host or a Docker network
      without IPv6, it cannot connect; or

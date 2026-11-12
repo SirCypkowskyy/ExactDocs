@@ -175,6 +175,9 @@ SUPABASE_HOSTS: Final[tuple[str, ...]] = (".supabase.co", ".supabase.com")
 SUPABASE_TRANSACTION_PORT: Final[int] = 6543
 """The port of Supabase's poolers in transaction mode (Supavisor's and the dedicated PgBouncer's),
 which ExactDocs refuses: the session pooler and direct connections listen on 5432."""
+SESSION_PROBE: Final[str] = "exactdocs.session_probe"
+"""The session-level setting the start-up probe writes in one transaction and reads back in the
+next (#279): lost in between, the connection is a transaction-mode pooler's, not a session."""
 SECURE_SSLMODES: Final[frozenset[str]] = frozenset({"require", "verify-ca", "verify-full"})
 """``sslmode`` values that never fall back to an unencrypted connection."""
 MIN_POSTGRES: Final[int] = 140000

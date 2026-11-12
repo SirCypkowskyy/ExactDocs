@@ -37,6 +37,26 @@ jobs:
         options: >-
           --health-cmd "pg_isready -h 127.0.0.1 -U exactdocs -d exactdocs"
           --health-interval 2s --health-timeout 5s --health-retries 30
+      # #279: PgBouncer in transaction mode in front of that server (every database, as
+      # `exactdocs`), for the pooler scenario and tests (EXACTDOCS_TEST_PGBOUNCER_URL). It runs
+      # DISCARD ALL after every transaction, so session state never survives to the next one,
+      # whichever server connection that gets: the start-up probe must warn, every time.
+      pgbouncer:
+        image: edoburu/pgbouncer:v1.26.1-p0@sha256:488422e38cff912895d0d65d8963fcd306e6ac589a724398b6eb8e294e94d624
+        env:
+          DB_HOST: postgres
+          DB_USER: exactdocs
+          DB_PASSWORD: exactdocs-ci
+          AUTH_TYPE: scram-sha-256
+          POOL_MODE: transaction
+          SERVER_RESET_QUERY: DISCARD ALL
+          SERVER_RESET_QUERY_ALWAYS: "1"
+          MAX_PREPARED_STATEMENTS: "200"
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U exactdocs -d exactdocs"
+          --health-interval 2s --health-timeout 5s --health-retries 30
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
@@ -64,12 +84,16 @@ jobs:
         env:
           EXACTDOCS_TEST_POSTGRES_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/exactdocs
           EXACTDOCS_REQUIRE_POSTGRES: "1"
+          EXACTDOCS_TEST_PGBOUNCER_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.pgbouncer.ports['5432'] }}/exactdocs
+          EXACTDOCS_REQUIRE_PGBOUNCER: "1" # the pooler tests and scenario never skip here
           EXACTDOCS_TEST_PG_SEARCH: "1" # the server has pg_search: the BM25 variants run (#104)
         run: uv run pytest --cov=exactdocs --cov=exactdocs_kernel --cov-report=term-missing --junitxml=reports/pytest.xml
       - name: behave (acceptance)
         env:
           EXACTDOCS_TEST_POSTGRES_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/exactdocs
           EXACTDOCS_REQUIRE_POSTGRES: "1"
+          EXACTDOCS_TEST_PGBOUNCER_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.pgbouncer.ports['5432'] }}/exactdocs
+          EXACTDOCS_REQUIRE_PGBOUNCER: "1" # the pooler tests and scenario never skip here
           EXACTDOCS_TEST_PG_SEARCH: "1"
           EXACTDOCS_REQUIRE_SUPABASE: "1" # the @supabase scenarios never skip here
         run: uv run behave --format=progress --junit --junit-directory=reports/behave

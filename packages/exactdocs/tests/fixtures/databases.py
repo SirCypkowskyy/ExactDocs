@@ -212,3 +212,33 @@ def supabase_role() -> Generator[SupabaseRole]:
             )
             admin.execute(sql.SQL("DROP OWNED BY {} CASCADE").format(sql.Identifier(role)))
             admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
+
+
+PGBOUNCER_URL = os.environ.get("EXACTDOCS_TEST_PGBOUNCER_URL") or None
+"""PgBouncer in ``pool_mode = transaction`` in front of ``EXACTDOCS_TEST_POSTGRES_URL``'s server,
+for every database (``*``), as that URL's role (#279). It runs ``server_reset_query = DISCARD
+ALL`` after every transaction (``server_reset_query_always = 1``), so session state never
+survives from one transaction to the next, whichever server connection the next one gets. Without
+it the pooler tests are skipped; ``EXACTDOCS_REQUIRE_PGBOUNCER=1`` (CI) makes a missing URL an
+error instead."""
+if PGBOUNCER_URL is None and os.environ.get("EXACTDOCS_REQUIRE_PGBOUNCER") == "1":
+    message = "EXACTDOCS_REQUIRE_PGBOUNCER=1 but EXACTDOCS_TEST_PGBOUNCER_URL is not set"
+    raise RuntimeError(message)
+
+
+def through_pgbouncer(database: PostgresDatabase) -> str:
+    """Return the URL that reaches ``database`` through PgBouncer (``PGBOUNCER_URL``).
+
+    Args:
+        database: A database created by ``postgres_database``, as the admin role.
+
+    Returns:
+        The same database and role, on PgBouncer's host and port.
+    """
+    assert PGBOUNCER_URL is not None, "EXACTDOCS_TEST_PGBOUNCER_URL is not set"
+    pooler = make_url(PGBOUNCER_URL)
+    return (
+        make_url(database.url)
+        .set(host=pooler.host, port=pooler.port)
+        .render_as_string(hide_password=False)
+    )
