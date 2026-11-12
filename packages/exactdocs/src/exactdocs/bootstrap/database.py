@@ -14,6 +14,7 @@ import fcntl
 import logging
 import os
 import secrets
+import socket
 import sqlite3
 import tempfile
 import time
@@ -42,6 +43,7 @@ from exactdocs.bootstrap.constants import (
     MIGRATION_LOCK,
     MIGRATION_TURN_NOTICE_SECONDS,
     MIGRATION_TURN_POLL_SECONDS,
+    MIGRATION_TURN_REPEAT_SECONDS,
     MIGRATION_TURN_SUFFIX,
     MIGRATIONS,
     MIN_POSTGRES,
@@ -515,37 +517,95 @@ async def _migration_turn(engine: AsyncEngine) -> AsyncGenerator[None]:
 
     A process waits for the turn for as long as another process's migration takes, however slow
     the machine is, and without blocking the event loop: it tries the lock again every
-    ``MIGRATION_TURN_POLL_SECONDS``, so a start cancelled while it waits stops at once. The
+    ``MIGRATION_TURN_POLL_SECONDS``, so a start cancelled while it waits stops at once. A long
+    wait is logged as a warning naming the lock file and the holder, first after
+    ``MIGRATION_TURN_NOTICE_SECONDS`` and then every ``MIGRATION_TURN_REPEAT_SECONDS``. The
     kernel releases the lock of a process that dies, so a crash leaves no stale turn behind.
     An in-memory database has no other process to wait for.
+
+    ``flock`` (not ``fcntl.lockf``) on purpose: it locks per open file description, so two
+    engines of one process exclude each other as two processes do, while a POSIX record lock
+    would let every descriptor of the same process through.
 
     Args:
         engine: A SQLite engine.
 
     Yields:
         Nothing, while this process holds the turn.
+
+    Raises:
+        StartupError: The lock file cannot be opened (another user's file, a missing directory).
     """
     path = database_file(engine)
     if path is None:
         yield
         return
     turn = path.with_name(path.name + MIGRATION_TURN_SUFFIX)
-    descriptor = os.open(turn, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
     try:
-        started, noticed = time.monotonic(), False
+        descriptor = os.open(turn, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    except OSError as exc:
+        message = (
+            f"Cannot open {turn}, the lock processes take turns on to migrate: "
+            f"{exc.strerror or exc}. Run every ExactDocs command as the same user, or, with "
+            "every ExactDocs process stopped, remove the file (it only names the last holder)."
+        )
+        raise StartupError(message) from exc
+    try:
+        started = time.monotonic()
+        notice_at = started + MIGRATION_TURN_NOTICE_SECONDS
         while True:
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
-                if not noticed and time.monotonic() - started >= MIGRATION_TURN_NOTICE_SECONDS:
-                    noticed = True
-                    logger.info("Waiting for another ExactDocs process to migrate %s.", path)
+                now = time.monotonic()
+                if now >= notice_at:
+                    notice_at = now + MIGRATION_TURN_REPEAT_SECONDS
+                    logger.warning(
+                        "Waited %.0f s for another ExactDocs process (%s) to migrate %s; "
+                        "it holds %s.",
+                        now - started,
+                        _turn_holder(descriptor),
+                        path,
+                        turn,
+                    )
                 await asyncio.sleep(MIGRATION_TURN_POLL_SECONDS)
             else:
                 break
-        yield  # closing the descriptor below releases the lock
+        _write_turn_holder(descriptor, f"pid {os.getpid()} on {socket.gethostname()}")
+        try:
+            yield
+        finally:
+            _write_turn_holder(descriptor, "")  # a later waiter names no finished process
     finally:
-        os.close(descriptor)
+        os.close(descriptor)  # releases the lock
+
+
+def _write_turn_holder(descriptor: int, holder: str) -> None:
+    """Record who holds the migration turn in its lock file; a diagnostic only, never needed.
+
+    Args:
+        descriptor: The lock file, open for writing.
+        holder: Who holds the turn, or ``""`` once it is given back.
+    """
+    with contextlib.suppress(OSError):
+        os.ftruncate(descriptor, 0)
+        os.pwrite(descriptor, holder.encode(), 0)
+
+
+def _turn_holder(descriptor: int) -> str:
+    """Tell who the migration turn's lock file names as its holder, as far as it says.
+
+    Args:
+        descriptor: The lock file, open for reading.
+
+    Returns:
+        The holder (``pid <n> on <host>``), or ``"holder unknown"``.
+    """
+    try:
+        holder = os.pread(descriptor, 256, 0).decode(errors="replace").strip()
+    except OSError:
+        holder = ""
+    return holder or "holder unknown"
 
 
 def _pragma(connection: Connection, pragma: str) -> None:

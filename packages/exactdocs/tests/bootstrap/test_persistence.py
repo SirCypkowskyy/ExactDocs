@@ -1,7 +1,10 @@
 """The data directory and the migrated SQLite database."""
 
 import asyncio
+import fcntl
+import logging
 import os
+import re
 import shutil
 import sqlite3
 import stat
@@ -15,14 +18,16 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from exactdocs.bootstrap import database
-from exactdocs.bootstrap.constants import BUSY_TIMEOUT_MS, MIGRATIONS
+from exactdocs.bootstrap.constants import BUSY_TIMEOUT_MS, MIGRATION_TURN_SUFFIX, MIGRATIONS
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.database import (
     StartupError,
     alembic_config,
     current_revision,
+    database_file,
     migrate,
     open_database,
 )
@@ -297,6 +302,8 @@ async def test_a_migration_that_breaks_a_foreign_key_is_rolled_back(tmp_path: Pa
 async def test_processes_starting_together_all_migrate_an_empty_database(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # "Processes" are containers on one event loop: a real race all the same, since the
+    # migration turn is an flock, per open file description (fcntl.lockf would not be).
     # The race is in the first moments of a fresh database file, so every round gets its own.
     for round_ in range(5):
         monkeypatch.setenv("EXACTDOCS_DATA_DIR", str(tmp_path / f"round-{round_}"))
@@ -332,14 +339,36 @@ async def test_a_process_waits_for_another_migration_longer_than_sqlite_waits_fo
             await engine.dispose()
 
 
+def migration_turn(engine: AsyncEngine) -> Path:
+    path = database_file(engine)
+    assert path is not None
+    return path.with_name(path.name + MIGRATION_TURN_SUFFIX)
+
+
+def turn_taken(monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
+    """An event set as soon as a migration takes the turn (it then names itself in the file)."""
+    taken = asyncio.Event()
+    # Written the moment the flock is held.
+    write = database._write_turn_holder  # ruff: ignore[private-member-access]
+
+    def noting(descriptor: int, holder: str) -> None:
+        write(descriptor, holder)
+        if holder:
+            taken.set()
+
+    monkeypatch.setattr(database, "_write_turn_holder", noting)
+    return taken
+
+
 async def test_a_start_cancelled_while_it_waits_for_another_migration_stops_at_once(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     location = add_revision(tmp_path, SLOW_REVISION)
+    taken = turn_taken(monkeypatch)
     first, second = open_database(Settings()), open_database(Settings())
     try:
         migrating = asyncio.create_task(migrate(first, location=location))
-        await asyncio.sleep(0.2)  # the first holds the migration turn
+        await taken.wait()  # the first holds the migration turn
         waiting = asyncio.create_task(migrate(second, location=location))
         await asyncio.sleep(0.1)
         waiting.cancel()
@@ -353,6 +382,80 @@ async def test_a_start_cancelled_while_it_waits_for_another_migration_stops_at_o
     finally:
         await first.dispose()
         await second.dispose()
+
+
+class _TurnWarnings(logging.Handler):
+    """Collects the waiters' warnings, and says when a second one has come."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.WARNING)
+        self.messages: list[str] = []
+        self.repeated = asyncio.Event()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if "to migrate" in record.getMessage():
+            self.messages.append(record.getMessage())
+            if len(self.messages) >= 2:  # the first notice and one repeat
+                self.repeated.set()
+
+
+async def test_a_long_wait_for_another_migration_is_logged_again_naming_the_lock_and_holder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(database, "MIGRATION_TURN_NOTICE_SECONDS", 0.05)
+    monkeypatch.setattr(database, "MIGRATION_TURN_REPEAT_SECONDS", 0.1)
+    warnings = _TurnWarnings()
+    database.logger.addHandler(warnings)
+    engine = open_database(Settings())
+    turn = migration_turn(engine)
+    holder = os.open(turn, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(holder, fcntl.LOCK_EX)  # another process holds the turn ...
+        os.write(holder, b"pid 4242 on elsewhere")  # ... and says who it is
+        waiting = asyncio.create_task(migrate(engine))
+        await asyncio.wait_for(warnings.repeated.wait(), timeout=10)
+        os.close(holder)  # the holder lets go
+        holder = -1
+        await waiting
+
+        assert await current_revision(engine) == head()
+        assert all(str(turn) in m and "pid 4242 on elsewhere" in m for m in warnings.messages)
+        assert not turn.read_text()  # a finished migration names no holder
+    finally:
+        database.logger.removeHandler(warnings)
+        if holder >= 0:
+            os.close(holder)
+        await engine.dispose()
+
+
+async def test_a_migration_lock_in_a_missing_directory_stops_startup_naming_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("EXACTDOCS_DATA_DIR", str(tmp_path / "data"))
+    engine = open_database(Settings())
+    try:
+        shutil.rmtree(tmp_path / "data")  # gone before the first connection
+        with pytest.raises(StartupError, match=re.escape(str(migration_turn(engine)))):
+            await migrate(engine)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.skipif(
+    getattr(os, "geteuid", lambda: 1)() == 0, reason="root ignores file permissions"
+)
+async def test_a_migration_lock_of_another_user_stops_startup_naming_it() -> None:
+    engine = open_database(Settings())
+    turn = migration_turn(engine)
+    turn.touch(mode=0o000)  # as left by a command run as another user (mode 0600, not ours)
+    try:
+        with pytest.raises(StartupError, match="same user") as raised:
+            await migrate(engine)
+
+        assert str(turn) in str(raised.value)
+    finally:
+        turn.chmod(0o600)
+        await engine.dispose()
 
 
 def test_an_sqlite_older_than_the_floor_stops_startup_with_a_clear_message(

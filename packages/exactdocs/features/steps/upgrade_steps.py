@@ -166,15 +166,20 @@ def step_swapped(context: Context) -> None:
 
 @given("{count:d} processes start at the same time on one empty SQLite database")
 def step_processes_on_empty_database(context: Context, count: int) -> None:
-    data_dir = Path(tempfile.mkdtemp(prefix="exactdocs-"))
-    context.add_cleanup(shutil.rmtree, data_dir, ignore_errors=True)
-    context.containers = [Container.build(Settings(data_dir=data_dir)) for _ in range(count)]
+    # Each "process" is a container of its own on one event loop in this process: that is a real
+    # race, because the migration turn is an flock, which locks per open file description (two
+    # engines exclude each other as two processes do). A POSIX lock (fcntl.lockf) would not.
+    context.data_dir = Path(tempfile.mkdtemp(prefix="exactdocs-"))
+    context.add_cleanup(shutil.rmtree, context.data_dir, ignore_errors=True)
+    context.process_count = count  # built in the Then, after the busy machine is set up
 
 
 @given("the machine is so busy that a migration outlasts SQLite's wait for a lock")
 def step_busy_machine(context: Context) -> None:
     # SQLite gives up on a lock after 100 ms: enough for a brief lock (a checkpoint, a pool's
     # switch to WAL), shorter than migrating an empty database takes, as on a busy machine (#320).
+    # It also shrinks _enable_wal's own retry deadline to 100 ms: look there first if this
+    # scenario ever flakes on the switch to WAL rather than on the migration.
     busy = mock.patch.object(database, "BUSY_TIMEOUT_MS", 100)
     busy.start()
     context.add_cleanup(busy.stop)
@@ -190,6 +195,9 @@ def step_all_migrated(context: Context) -> None:
         # Every start runs to its end, so a failed one is reported, not left half started.
         return await asyncio.gather(*(start(c) for c in context.containers), return_exceptions=True)
 
+    # Built only now, with the busy machine's timeout patched, whenever the timeout is read.
+    settings = Settings(data_dir=context.data_dir)
+    context.containers = [Container.build(settings) for _ in range(context.process_count)]
     head = ScriptDirectory.from_config(alembic_config()).get_current_head()
     outcomes = asyncio.run(start_all())
     assert outcomes == [head] * len(context.containers), outcomes
