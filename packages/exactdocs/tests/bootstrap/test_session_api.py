@@ -80,15 +80,19 @@ async def test_signing_in_sets_an_httponly_lax_cookie_scoped_to_the_api(
 
 async def test_the_cookie_is_secure_over_https_and_when_forced(container: Container) -> None:
     await create_admin(container)
+    forced = Container.build(Settings(secure_cookies=True))
     secure_app = create_app(container)
-    forced_app = create_app(Container.build(Settings(secure_cookies=True)))
-    for app, url in ((secure_app, "https://localhost"), (forced_app, "http://localhost")):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url=url) as client:
-            response = await client.post("/api/v1/session", json=LOGIN)
+    forced_app = create_app(forced)
+    try:
+        for app, url in ((secure_app, "https://localhost"), (forced_app, "http://localhost")):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url=url) as client:
+                response = await client.post("/api/v1/session", json=LOGIN)
 
-            assert response.status_code == 201
-            assert set_cookie(response)["secure"] is True
+                assert response.status_code == 201
+                assert set_cookie(response)["secure"] is True
+    finally:
+        await forced.engine.dispose()  # never run, so nothing else releases its connections (#300)
 
 
 async def test_the_server_stores_only_a_hash_of_the_token(

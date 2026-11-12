@@ -5,7 +5,7 @@ import io
 import os
 import sqlite3
 import tempfile
-from contextlib import ExitStack, redirect_stderr, redirect_stdout
+from contextlib import ExitStack, closing, redirect_stderr, redirect_stdout
 from http import HTTPStatus
 from pathlib import Path
 from unittest.mock import patch
@@ -186,9 +186,8 @@ def step_newer_backup(context: Context) -> None:
     settings = Settings(data_dir=_data_dir(context))
     asyncio.run(store_demo_catalog(settings))
     database = settings.data_dir / "exactdocs.db"
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:  # commit, then close
         connection.execute("UPDATE alembic_version SET version_num = ?", (NEWER_REVISION,))
-    connection.close()
     context.archive = settings.data_dir.parent / "newer.tar.gz"
     code, output = _exactdocs(settings.data_dir, "backup", str(context.archive))
     assert code == 0, output

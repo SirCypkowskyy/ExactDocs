@@ -21,8 +21,12 @@ HTTP_METHODS = {"get", "put", "post", "delete", "patch"}
 
 
 @pytest.fixture
-def container() -> Container:
-    return Container.build(Settings())
+async def container() -> AsyncIterator[Container]:
+    container = Container.build(Settings())
+    yield container
+    # A test that calls the app without the client fixture never runs the container, which is
+    # what releases the engine's pooled connections (#300).
+    await container.engine.dispose()
 
 
 @pytest.fixture

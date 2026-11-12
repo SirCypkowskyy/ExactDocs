@@ -46,6 +46,15 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   still give a step's own waits a timeout, and end a `SlowDatabase` stall (`release()`) before the
   app stops.
 - Async tests need no decorator (`asyncio_mode = "auto"`). Warnings are errors (`filterwarnings = error`).
+- **Close every SQLite connection a test opens**, or the garbage collector finalizes it during a
+  later test, which then fails with "unclosed database". An autouse guard
+  (`tests/fixtures/sqlite_guard.py`) fails the test itself when a connection it opened is still open
+  at teardown. `with sqlite3.connect()` does not close: use `contextlib.closing`. A container built
+  but never run must have its engine disposed (`await container.engine.dispose()`). The guard only
+  tracks connections opened during the test, and waits up to 2 s for them to close (DBOS closes an
+  executor thread's connection a moment after `DBOS.destroy`). An engine owned by a session- or
+  module-scoped fixture but used lazily by a test is flagged at the end of the first test that
+  uses it: open (warm) its connection in the fixture itself, or dispose it after each test.
 
 ## MCP tool snapshot
 
