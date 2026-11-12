@@ -64,6 +64,9 @@ def encode_cursor(key: str) -> str:
 def decode_cursor(cursor: str) -> str:
     """Return the key a cursor stands for; ``InvalidCursorError`` when it is malformed."""
     try:
-        return b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True).decode()
+        key = b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True).decode()
     except Base64Error, UnicodeDecodeError:
         raise InvalidCursorError from None
+    if "\x00" in key:  # no key holds NUL, and PostgreSQL text refuses one with a DataError
+        raise InvalidCursorError
+    return key

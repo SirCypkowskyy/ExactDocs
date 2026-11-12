@@ -2,20 +2,20 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable, Mapping
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import event
 
 from databases import SQL_BACKENDS
 from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.ingestion.adapters.driven import sqlite as sql_adapter
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository, jobs
 from exactdocs.ingestion.constants import JobKind
 from exactdocs.ingestion.errors import VersionImportingError
-from exactdocs.ingestion.models import FileProblem, Job, JobId, JobState, ProblemCode, RefKind
+from exactdocs.ingestion.models import Job, JobId, JobState, ProblemCode, RefKind
 from exactdocs.ingestion.ports import JobRepository
 
 T0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
@@ -142,8 +142,8 @@ async def test_a_page_of_a_library_carries_its_jobs_problems(repository: JobRepo
 
 
 @pytest.mark.parametrize("backend", SQL_BACKENDS)
-async def test_a_page_of_a_library_reads_only_that_pages_rows(
-    backend: str, request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+async def test_a_page_of_a_library_is_one_select_bounded_by_the_cursor_and_limit(
+    backend: str, request: pytest.FixtureRequest
 ) -> None:
     if backend == "postgres":
         request.getfixturevalue("on_postgres")
@@ -151,25 +151,42 @@ async def test_a_page_of_a_library_reads_only_that_pages_rows(
     await migrate(engine)
     repository = SqliteJobRepository(engine=engine)
     for number in range(20):
-        await repository.add(
-            queued(f"job-{number:02}", version=f"v{number}").with_problem(
-                f"skipped-{number:02}.png", ProblemCode.BINARY, "binary file"
+        await repository.add(queued(f"job-{number:02}", version=f"v{number}"))
+    sent: list[tuple[str, list[object]]] = []
+
+    def record(*args: object) -> None:  # (conn, cursor, statement, parameters, context, many)
+        statement, parameters = str(args[2]), args[3]
+        if statement.lstrip().upper().startswith("SELECT") and "ingestion_jobs" in statement:
+            # SQLite's driver takes a tuple, psycopg a dict of named parameters
+            values = parameters.values() if isinstance(parameters, Mapping) else parameters
+            assert isinstance(values, Iterable)
+            sent.append((statement, list(values)))
+
+    event.listen(engine.sync_engine, "before_cursor_execute", record)
+    try:
+        page = await repository.list_page_for_library("/acme/payments", before="job-15", limit=4)
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", record)
+    (statement, parameters), *others = sent
+    plan: list[str] = []
+    if backend == "sqlite":
+        async with engine.connect() as connection:
+            rows = await connection.exec_driver_sql(
+                f"EXPLAIN QUERY PLAN {statement}", tuple(parameters)
             )
-        )
-    read: list[str] = []
-
-    def counting(*, path: str, code: ProblemCode, reason: str) -> FileProblem:
-        read.append(path)
-        return FileProblem(path=path, code=code, reason=reason)
-
-    # every stored problem the query brings back is read into a FileProblem
-    monkeypatch.setattr(sql_adapter, "FileProblem", counting)
-
-    page = await repository.list_page_for_library("/acme/payments", before="job-15", limit=4)
+            plan = [row.detail for row in rows]
     await engine.dispose()
 
     assert [job.id for job in page] == ["job-14", "job-13", "job-12", "job-11"]
-    assert read == [f"skipped-{n}.png" for n in (14, 13, 12, 11)]
+    assert others == []  # one query, not one per job or a second pass
+    assert "LIMIT" in statement.upper()
+    assert "ingestion_jobs.id <" in statement
+    bound = {"/acme/payments", "job-15", 4}
+    assert bound <= set(parameters)
+    assert set(parameters) - bound <= {0}  # SQLite also binds OFFSET 0
+    if backend == "sqlite":  # a range of the (library, id) index, no sort of the whole library
+        assert any("USING INDEX ingestion_jobs_library_id" in step for step in plan), plan
+        assert not any("TEMP B-TREE" in step for step in plan), plan
 
 
 async def test_the_latest_job_of_each_library_and_version_is_listed(

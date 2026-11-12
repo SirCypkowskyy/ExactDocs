@@ -77,7 +77,8 @@ jobs = Table(
     Column("created_at", Text, nullable=False),
     Column("started_at", Text),
     Column("finished_at", Text),
-    Index("ingestion_jobs_library", "library", "created_at"),
+    # A page of a library's jobs is a range of this index (`id < :before ORDER BY id DESC`).
+    Index("ingestion_jobs_library_id", "library", "id"),
     Index("ingestion_jobs_state", "state"),
     # At most one unfinished import per (library, ref): the atomic form of "version_importing".
     Index(
@@ -146,9 +147,10 @@ class SqliteJobRepository:
     ) -> Sequence[Job]:
         """Return up to ``limit`` of the library's jobs with an ID below ``before``, newest first.
 
-        A keyset query (``id < :before ORDER BY id DESC LIMIT :limit``), so only the page's
-        rows, problems included, are read. Text columns compare by code point on both
-        databases (PostgreSQL's are collated ``C`` by the migration), as Python compares str.
+        A keyset query (``id < :before ORDER BY id DESC LIMIT :limit``) that reads a range of
+        the ``(library, id)`` index, so only the page's rows, problems included, are read. Text
+        columns compare by code point on both databases (PostgreSQL's are collated ``C`` by the
+        migration), as Python compares str.
 
         Args:
             library: The library whose jobs are listed.

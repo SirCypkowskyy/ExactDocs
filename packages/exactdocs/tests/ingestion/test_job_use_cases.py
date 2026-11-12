@@ -440,8 +440,11 @@ async def test_a_page_of_jobs_is_read_from_the_repository_one_page_at_a_time() -
     assert last.next_cursor is None
 
 
-async def test_a_malformed_cursor_of_the_job_list_is_refused() -> None:
+@pytest.mark.parametrize(
+    "cursor", [pytest.param("!", id="not base64"), pytest.param("AA", id="decodes to NUL")]
+)
+async def test_a_malformed_cursor_of_the_job_list_is_refused(cursor: str) -> None:
     listing = ListLibraryJobsUseCase(jobs=InMemoryJobRepository())
 
     with pytest.raises(InvalidCursorError):
-        await listing(ListLibraryJobsQuery(library="/acme/payments", cursor="!"))
+        await listing(ListLibraryJobsQuery(library="/acme/payments", cursor=cursor))
