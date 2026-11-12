@@ -15,3 +15,10 @@ Feature: Liveness and readiness probes
   Scenario: The probes need no sign-in, even before the first account exists
     Given a fresh instance
     Then "/healthz" reports up and "/readyz" reports ready
+
+  Scenario: Liveness answers in time while the database is busy
+    Given ExactDocs is running on its own database
+    And a database statement that takes 3 seconds is running
+    When the liveness probe is called
+    Then it answers within 1 second
+    And it reports the database details as unknown
