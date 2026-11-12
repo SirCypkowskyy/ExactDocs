@@ -16,6 +16,7 @@ from typing import Protocol
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from exactdocs.bootstrap.cancellation import being_cancelled
 from exactdocs.bootstrap.constants import (
     REQUEUE_JITTER_SECONDS,
     REQUEUE_LOCK_KEY,
@@ -142,7 +143,8 @@ class RequeueLeader:
 
     A session that failed (PostgreSQL restarted, a pooler or ``idle_session_timeout`` closed it)
     is dropped and a new one opened: the lock may have gone to another process meanwhile, so it
-    is never assumed to be held.
+    is never assumed to be held. A failure that replaced a cancellation is raised instead: a
+    stopping server opens no new session (#308).
     """
 
     open_session: Callable[[], Awaitable[LockSession]]
@@ -166,7 +168,7 @@ class RequeueLeader:
                 self.leading = await self.session.holds_lock(held_before=self.leading)
             except Exception:
                 await self.drop()
-                if attempt:
+                if attempt or being_cancelled():  # no new session while the server stops (#308)
                     raise
             else:
                 return self.leading
@@ -226,7 +228,8 @@ async def requeue_nightly(
     """Run the nights of the re-queue until cancelled; a failed night is logged, not fatal.
 
     Only cancellation ends it: an error (the database went away) would otherwise end the loop
-    for good and be raised again when the server stops.
+    for good and be raised again when the server stops. An error that replaced the
+    cancellation (raised while the cancelled night unwinds) ends it too (#308).
 
     Args:
         leader: Decides whether this process queues; ``None``: it always does (SQLite).
@@ -242,6 +245,8 @@ async def requeue_nightly(
                 if leader is None or await leader.leads():
                     await queue()
             except Exception:
+                if being_cancelled():  # the error replaced the cancellation: the loop still ends
+                    raise
                 logger.exception(
                     "the midnight re-queue of embedding failed; it runs again tomorrow"
                 )

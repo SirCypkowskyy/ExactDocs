@@ -379,8 +379,13 @@ only holds each process's git work folders and `known_hosts`. What changes:
   again just after each UTC midnight, when the windows reset (`requeue_daily`: a random delay of
   up to five minutes; on PostgreSQL only the process holding a session advisory lock queues,
   since `EmbeddingQueue` checks and inserts without one atomic step). The lock is checked again
-  every night (`RequeueLeader`): a session that failed is closed and a new one opened, and a
-  failed night is logged, so the loop only ends when the server stops. Each server process keeps one
+  every night (`RequeueLeader`): a session that failed is closed and a new one opened (never while
+  the server stops), and a failed night is logged, so the loop only ends when the server stops. A failure raised while the
+  stop cancels it (a `PendingRollbackError`, or a database error during the rollback, replacing the
+  `CancelledError`) ends it too (`being_cancelled`), and the stop waits for the nightly upkeep at most
+  `UPKEEP_STOP_SECONDS` (5 s, under `docker stop`'s 10 s grace), then cancels it again and waits
+  `UPKEEP_RECANCEL_SECONDS` (1 s) more; if it still runs, it logs a warning and goes on without it, so
+  its connection may outlive the engine's dispose (a late failure of it is logged). Each server process keeps one
   pooled connection open for it (the lock lives in that session), so size the pool for it. A search uses up its
   caller's LLM rate limit only once its version resolved. `exactdocs ai estimate` counts the distinct chunks without a vector
   (`VectorIndex.pending`) with their titles at 4 characters per token, priced from the bundled
