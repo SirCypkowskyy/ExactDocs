@@ -412,11 +412,15 @@ class SqliteFailedSignInLog:
         async with self.engine.connect() as connection:
             return (await self._records(connection, [key])).get(key)
 
-    async def forget(self, key: str) -> None:
+    async def forget(self, key: str) -> bool:
         """Drop the record under ``key``.
 
         Args:
             key: The throttle key.
+
+        Returns:
+            ``True`` once no record is left (dropped, or there was none); ``False`` when the
+            key's turn did not come within ``turn_timeout`` and the record was left as it was.
         """
         try:
             # In the key's turn: a charge reading the count meanwhile would write it back after.
@@ -426,6 +430,8 @@ class SqliteFailedSignInLog:
                 )
         except _TurnTimeoutError:
             logger.warning("Sign-in throttle busy: a username's count was not reset")
+            return False
+        return True
 
     async def remember_sign_in(self, key: str, now: datetime) -> None:
         """Remember the sign-in at ``now``, pruning those too old to count.

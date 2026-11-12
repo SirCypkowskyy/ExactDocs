@@ -59,7 +59,7 @@ from exactdocs.bootstrap.models_pull import pull as pull_models
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.telemetry import start_telemetry
 from exactdocs.identity.constants import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
-from exactdocs.identity.dtos import CreateFirstAdminCommand, ResetPasswordCommand
+from exactdocs.identity.dtos import CreateFirstAdminCommand, PasswordReset, ResetPasswordCommand
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.retrieval.dtos import (
@@ -791,8 +791,15 @@ def reset_password(
 ) -> None:
     """Set a new password for an account and sign it out everywhere (lost-password recovery)."""
     name, password = _read_credentials(username, password_stdin=password_stdin, new=True)
-    _run(_reset_password(Settings(), name, password))
-    sys.stdout.write(f"Password of {name!r} changed; all its sessions ended.\n")
+    reset = _run(_reset_password(Settings(), name, password))
+    sys.stdout.write(f"Password of {reset.account.username!r} changed; all its sessions ended.\n")
+    if reset.throttle != "cleared":
+        cause = "was busy" if reset.throttle == "busy" else "failed"
+        sys.stderr.write(
+            f"exactdocs: warning: the password was changed, but the sign-in throttle {cause}, "
+            "so this username's count was not reset: sign-ins may stay throttled (429) until "
+            "Retry-After passes. Run the command again to retry (that is safe), or wait.\n"
+        )
 
 
 def _read_credentials(
@@ -848,11 +855,11 @@ async def _create_first_admin(settings: Settings, username: str, password: str) 
         return (await container.identity.create_first_admin(command)).username
 
 
-async def _reset_password(settings: Settings, username: str, password: str) -> None:
+async def _reset_password(settings: Settings, username: str, password: str) -> PasswordReset:
     container = _build(settings)
     async with container.running(jobs=False):  # the server runs the jobs
         command = ResetPasswordCommand(username=username, password=SecretStr(password))
-        await container.identity.reset_password(command)
+        return await container.identity.reset_password(command)
 
 
 @app.command
