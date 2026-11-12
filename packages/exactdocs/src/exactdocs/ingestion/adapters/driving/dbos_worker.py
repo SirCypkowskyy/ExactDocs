@@ -332,9 +332,12 @@ class DbosJobWorker:
                     watch = asyncio.create_task(
                         self._watch(executor_id, self.executors), context=contextvars.Context()
                     )
+                    watch.add_done_callback(_ignore_error)
                     background.add(watch)
                 await self._start(executor_id, tick, watch)
-                background.add(asyncio.create_task(self._resubmit(), context=contextvars.Context()))
+                resubmit = asyncio.create_task(self._resubmit(), context=contextvars.Context())
+                resubmit.add_done_callback(_ignore_error)
+                background.add(resubmit)
                 yield
             finally:
                 await self._cancel(background)
@@ -342,7 +345,10 @@ class DbosJobWorker:
             try:
                 await self._stop()
                 await self._cancel(self._forgetting)  # the next start deletes what they had left
-            finally:  # also when the stop is cancelled: DBOS must not outlive the worker
+            finally:
+                # Also when the stop is cancelled (a second stop, during ``stop_grace``): no task
+                # may outlive DBOS uncancelled. Only the wait below may be skipped then.
+                _request_cancel(self._running | self._forgetting)
                 await self._destroy_dbos()
             await self._cancel(self._running | self._forgetting)
 
@@ -364,6 +370,7 @@ class DbosJobWorker:
                 jobs and DBOS (and asked for the process to stop), and the startup was cancelled.
         """
         startup = asyncio.create_task(self._startup(executor_id, tick))
+        startup.add_done_callback(_ignore_error)
         if watch is None:
             await startup
             return
@@ -522,7 +529,9 @@ class DbosJobWorker:
         ``_HALT_JOBS_SHARE`` of it to end once cancelled, then DBOS is stopped whether they did or
         not, so a job that delays its cancellation cannot keep DBOS dequeuing jobs here. Such a
         job may still be unwinding when the process is asked to stop; its next step finds DBOS
-        gone.
+        gone. The normal teardown that follows waits for it (``stop_grace``, then until it ends):
+        a job that ignores its cancellation holds the graceful shutdown up to ``serve``'s
+        ``timeout_graceful_shutdown``, or until the restart policy kills the process.
 
         Narrow windows remain. A job DBOS dequeued but whose workflow had not started when DBOS
         stopped is neither run nor refused: it stays pending under this ID until the process
@@ -657,6 +666,7 @@ class DbosJobWorker:
         task = asyncio.current_task()
         if task is not None:
             self._running.add(task)
+            task.add_done_callback(_ignore_error)
         self.job_ids.add(job_id)
         try:
             await self.run_job(job_id)
@@ -670,6 +680,7 @@ class DbosJobWorker:
         )
         self._forgetting.add(forget)
         forget.add_done_callback(self._forgetting.discard)
+        forget.add_done_callback(_ignore_error)
 
     async def _apply_schedule(
         self, tick: Callable[[datetime, object], Coroutine[object, object, None]]
@@ -696,6 +707,7 @@ class DbosJobWorker:
         task = asyncio.current_task()
         if task is not None:
             self._running.add(task)
+            task.add_done_callback(_ignore_error)
         workflow_id = DBOS.workflow_id
         try:
             await asyncio.get_running_loop().create_task(
@@ -712,6 +724,7 @@ class DbosJobWorker:
             )
             self._forgetting.add(forget)
             forget.add_done_callback(self._forgetting.discard)
+            forget.add_done_callback(_ignore_error)
 
     @staticmethod
     async def _check(run_scheduled_checks: RunScheduledChecks) -> None:
@@ -838,19 +851,32 @@ class DbosJobWorker:
         for the tasks then, as ``gather`` does, so a task that delays its cancellation cannot
         hold its caller.
 
+        Their errors are retrieved by the ``_ignore_error`` callback each task gets when it is
+        created (or, for a job, when it starts running).
+
         Args:
             tasks: The tasks.
         """
-        if not tasks:
-            return
-        for task in tasks:
-            task.cancel()
-            task.add_done_callback(_ignore_error)
-        await asyncio.wait(tasks)
+        _request_cancel(tasks)
+        if tasks:
+            await asyncio.wait(tasks)
+
+
+def _request_cancel(tasks: set[asyncio.Task[None]]) -> None:
+    """Ask the tasks to cancel, without waiting: this cannot be interrupted half done.
+
+    Args:
+        tasks: The tasks.
+    """
+    for task in tasks:
+        task.cancel()
 
 
 def _ignore_error(task: asyncio.Task[None]) -> None:
-    """Retrieve the error a cancelled task ended with, so asyncio does not log it as unseen.
+    """Retrieve the error a task ended with, so asyncio does not log it as never retrieved.
+
+    The worker's tasks log their own errors, and a task it cancels may end with one while
+    nobody waits for it any more (its caller's wait was cut short).
 
     Args:
         task: The task, done.
