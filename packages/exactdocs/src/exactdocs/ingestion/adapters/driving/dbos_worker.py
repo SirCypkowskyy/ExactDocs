@@ -242,10 +242,35 @@ class DbosJobWorker:
                     claiming = self.monotonic()
                     executor_id = await stack.enter_async_context(self.executors.claim())
                     self._confirmed["at"] = claiming
+                    await self._confirm_claim(executor_id, self.executors)
                 async with self._dbos(executor_id):
                     yield
         finally:
             _one_per_process.release()
+
+    async def _confirm_claim(self, executor_id: str, executors: ExecutorSlots) -> None:
+        """Check the slot once just before DBOS starts, and count from there if it is still held.
+
+        ``claim`` may have waited ``claim_grace`` for a slot that left pending jobs, as long as
+        ``slot_give_up``: without this check a restarted process would start with its give-up
+        time already spent, and an outage at its first watchdog check would stop it again. The
+        clock is read before the check, so never later than the hold it confirms. Any other
+        answer leaves the claim's reading: the watchdog decides (no DBOS to halt yet here).
+
+        Args:
+            executor_id: This process's executor ID.
+            executors: The slots.
+        """
+        checking = self.monotonic()
+        try:
+            state = await asyncio.wait_for(executors.keep(), self.slot_check_timeout)
+        except TimeoutError:
+            return
+        except Exception:  # the watchdog's first check tries again
+            log.exception("could not check executor slot %s before starting", executor_id)
+            return
+        if state is SlotState.HELD:
+            self._confirmed["at"] = checking
 
     @asynccontextmanager
     async def _dbos(self, executor_id: str | None) -> AsyncGenerator[None]:
@@ -260,6 +285,7 @@ class DbosJobWorker:
         self._destroyed.clear()
         self._lost.clear()
         self._refused.clear()
+        self._suspects.clear()  # a slot counts as free only from what this run saw
         DBOS(config=self._config(executor_id))
         try:
 
@@ -284,25 +310,18 @@ class DbosJobWorker:
             DBOS.workflow(name=self.workflow)(run)
             DBOS.workflow(name=SCHEDULE_WORKFLOW)(tick)
             DBOS.launch()  # here, on the running loop: DBOS then runs workflows on it
-            await DBOS.register_queue_async(
-                self.queue,
-                worker_concurrency=self.concurrency,
-                partition_concurrency=1,
-                polling_interval_sec=self.poll_interval,
-                on_conflict="always_update",
-            )
-            await self._recover(executor_id)
-            await self._apply_schedule(tick)
-            background = {
-                asyncio.create_task(self._resubmit(), context=contextvars.Context()),
-            }
-            if executor_id is not None and self.executors is not None:
-                background.add(
-                    asyncio.create_task(
+            background: set[asyncio.Task[None]] = set()
+            try:
+                # DBOS resumes this executor's workflows from launch on: the watchdog runs from
+                # here, through the rest of the startup, not only once it is over.
+                watch = None
+                if executor_id is not None and self.executors is not None:
+                    watch = asyncio.create_task(
                         self._watch(executor_id, self.executors), context=contextvars.Context()
                     )
-                )
-            try:
+                    background.add(watch)
+                await self._start(executor_id, tick, watch)
+                background.add(asyncio.create_task(self._resubmit(), context=contextvars.Context()))
                 yield
             finally:
                 await self._cancel(background)
@@ -311,6 +330,63 @@ class DbosJobWorker:
             await self._cancel(self._forgetting)  # the next start deletes what they had left
             await self._destroy_dbos()
             await self._cancel(self._running | self._forgetting)
+
+    async def _start(
+        self,
+        executor_id: str | None,
+        tick: Callable[[datetime, object], Coroutine[object, object, None]],
+        watch: asyncio.Task[None] | None,
+    ) -> None:
+        """Register the queue, recover the unfinished jobs and apply the schedule, watched.
+
+        Args:
+            executor_id: This process's executor ID, or ``None``.
+            tick: The schedule's workflow.
+            watch: The watchdog, already running; ``None`` without ``executors``.
+
+        Raises:
+            RuntimeError: The slot was lost while the worker started: the watchdog stopped the
+                jobs and DBOS (and asked for the process to stop), and the startup was cancelled.
+        """
+        startup = asyncio.create_task(self._startup(executor_id, tick))
+        if watch is None:
+            await startup
+            return
+        try:
+            await asyncio.wait({startup, watch}, return_when=asyncio.FIRST_COMPLETED)
+        except asyncio.CancelledError:
+            await self._cancel({startup})
+            raise
+        if startup.done() and not self._lost.is_set():
+            startup.result()  # its error, if it failed
+            return
+        # Lost while starting: let the watchdog finish stopping (bounded by halt_timeout), then
+        # stop the startup, which may still be waiting on DBOS or on a recovery hook.
+        await asyncio.wait({watch})
+        await self._cancel({startup})
+        message = f"executor slot {executor_id} was lost while the job worker started"
+        raise RuntimeError(message)
+
+    async def _startup(
+        self,
+        executor_id: str | None,
+        tick: Callable[[datetime, object], Coroutine[object, object, None]],
+    ) -> None:
+        """Register the queue, recover the unfinished jobs, then apply the schedule.
+
+        Args:
+            executor_id: This process's executor ID, or ``None``.
+            tick: The schedule's workflow.
+        """
+        await DBOS.register_queue_async(
+            self.queue,
+            worker_concurrency=self.concurrency,
+            partition_concurrency=1,
+            polling_interval_sec=self.poll_interval,
+            on_conflict="always_update",
+        )
+        await self._recover(executor_id)
+        await self._apply_schedule(tick)
 
     def _config(self, executor_id: str | None) -> DBOSConfig:
         """Return DBOS's configuration: its system database, executor and limits.
@@ -345,9 +421,11 @@ class DbosJobWorker:
         meanwhile; otherwise, as when another process holds the slot, this process stops its
         jobs and asks to be stopped (``on_slot_lost``), so no job runs twice for long.
 
-        The slot was last confirmed when it was claimed (``running``), before DBOS launched and
-        the startup recovery ran: the first check comes at once, so a slot lost during a slow
-        startup is given up ``slot_give_up`` after the claim, not after the watcher started.
+        The watcher starts as soon as DBOS has launched (DBOS resumes this executor's workflows
+        from then on), while the queue is registered, the jobs recovered and the schedule
+        applied. The slot was last confirmed at the claim, or by one check just before DBOS
+        launched (``running``), so a slot lost during a slow startup is given up
+        ``slot_give_up`` after that, and the startup fails.
 
         Args:
             executor_id: This process's executor ID.
@@ -362,6 +440,8 @@ class DbosJobWorker:
                     await self.adopt_orphans(executor_id, executors)
             except Exception:  # the next round tries again
                 log.exception("could not check executor slot %s", executor_id)
+            if self._lost.is_set():  # stopped, though not every part of it went through
+                return
             await asyncio.sleep(self.slot_check_interval)
 
     async def check_slot(self, executor_id: str, executors: ExecutorSlots) -> SlotState:

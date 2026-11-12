@@ -19,11 +19,10 @@ from sqlalchemy import NullPool
 from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker, SlotState
 
 # Short production-shaped timings: given up 3 s after the last confirmed hold, and stopped by
-# 3 + 1 + 0.5 + 2 = 6.5 s, under the 8 s a slot must stay free before its jobs are adopted.
-GIVE_UP, INTERVAL, CHECK_TIMEOUT, HALT, ADOPT_GRACE, CLAIM_GRACE = 3.0, 1.0, 0.5, 2.0, 8.0, 4.0
-STARTUP = 5.0
-"""How long the startup takes after DBOS launched: longer than the give-up time."""
-DEADLINE = 20.0
+# 3 + 1 + 0.5 + 2 = 6.5 s, under the 10 s a slot must stay free before its jobs are adopted.
+GIVE_UP, INTERVAL, CHECK_TIMEOUT, HALT, ADOPT_GRACE, CLAIM_GRACE = 3.0, 1.0, 0.5, 2.0, 10.0, 4.0
+STOP_BY = GIVE_UP + INTERVAL + CHECK_TIMEOUT + HALT
+DEADLINE = 30.0
 
 
 class DyingSlot:
@@ -44,6 +43,9 @@ class DyingSlot:
     async def keep(self) -> SlotState:
         return SlotState.UNKNOWN if self.dead else SlotState.HELD
 
+    def die(self) -> None:
+        self.dead = True
+
     @asynccontextmanager
     async def orphaned(self, executor_ids: Collection[str]) -> AsyncGenerator[Collection[str]]:
         del executor_ids
@@ -61,18 +63,24 @@ def step_claims_slot(context: Context, slot: int) -> None:
 
 @given("its slot connection dies while DBOS is still starting")
 def step_slot_dies_while_starting(context: Context) -> None:
-    slot: DyingSlot = context.slot
+    context.dies_in_startup = context.slot.die
 
-    async def slow_startup(**_: object) -> None:
-        slot.dead = True
-        await asyncio.sleep(STARTUP)
+
+@given("the startup takes longer than other processes wait before adopting slot {slot:d}'s jobs")
+def step_startup_outlasts_adoption(context: Context, slot: int) -> None:
+    assert context.slot.executor_id == f"exactdocs-{slot}"
+    context.startup_ended = None
+
+    async def slow_recovery(**_: object) -> None:  # the startup's recovery, after DBOS launched
+        context.dies_in_startup()
+        await asyncio.sleep(ADOPT_GRACE + 2)
         context.startup_ended = time.monotonic()
 
-    context.recover_jobs = slow_startup
+    context.recover_jobs = slow_recovery
 
 
-@when("the watcher starts")
-def step_watcher_starts(context: Context) -> None:
+@when("the worker starts")
+def step_worker_starts(context: Context) -> None:
     slot: DyingSlot = context.slot
     stack_dir = tempfile.TemporaryDirectory(prefix="exactdocs-slots-")
     context.add_cleanup(stack_dir.cleanup)
@@ -102,22 +110,29 @@ def step_watcher_starts(context: Context) -> None:
     )
 
     async def run() -> None:
-        async with worker.running(), asyncio.timeout(DEADLINE):
-            await stopping.wait()
+        async with asyncio.timeout(DEADLINE):
+            try:
+                async with worker.running():
+                    await stopping.wait()
+            except RuntimeError as error:  # the startup fails: the slot was lost meanwhile
+                context.start_failure = error
 
+    context.start_failure = None
     asyncio.run(run())
 
 
-@then("the give-up clock counts from the claim")
-def step_clock_from_claim(context: Context) -> None:
-    # Unconfirmed since the claim for longer than the give-up time: the watcher's first check
-    # gives it up, rather than a whole give-up time after the watcher started.
-    waited = context.stopped_at - context.startup_ended
-    assert waited < GIVE_UP, f"stopped {waited:.1f} s after the startup ended"
+@then("the process stops while it is still starting")
+def step_stops_while_starting(context: Context) -> None:
+    # The watchdog runs from DBOS's launch on, through the recovery, not only after it.
+    assert context.stopped_at is not None, "the process was never stopped"
+    assert context.startup_ended is None, "the startup ran to its end"
+    assert context.start_failure is not None, "the worker started after its slot was lost"
 
 
 @then("the process stops before another process may adopt slot {slot:d}'s jobs")
 def step_stops_before_adoption(context: Context, slot: int) -> None:
     assert context.slot.executor_id == f"exactdocs-{slot}"
     since_claim = context.stopped_at - context.slot.claimed_at
-    assert since_claim < ADOPT_GRACE, f"stopped {since_claim:.1f} s after the claim"
+    # Given up GIVE_UP after the claim (the last confirmed hold), at a check, then halted.
+    assert since_claim < STOP_BY, f"stopped {since_claim:.1f} s after the claim"
+    assert since_claim < ADOPT_GRACE
