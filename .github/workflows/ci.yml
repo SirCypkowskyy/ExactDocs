@@ -35,7 +35,7 @@ jobs:
         ports:
           - 5432/tcp
         options: >-
-          --health-cmd "pg_isready -U exactdocs -d exactdocs"
+          --health-cmd "pg_isready -h 127.0.0.1 -U exactdocs -d exactdocs"
           --health-interval 2s --health-timeout 5s --health-retries 30
     steps:
       - uses: actions/checkout@v7
