@@ -139,6 +139,21 @@ class FailedSignInLog(Protocol):
         """
         ...
 
+    async def forget_remembered(self, username: str) -> bool:
+        """Forget every address remembered for ``username`` (``models.known_sign_ins_prefix``).
+
+        Other usernames' remembered sign-ins and every count stay as they are.
+
+        Args:
+            username: The (normalised) username.
+
+        Returns:
+            ``True`` once none is left (dropped, or there was none); ``False`` when the log was
+            too busy to take their turn and kept some of them (possibly all). Running it again
+            is safe and forgets the rest.
+        """
+        ...
+
     async def remember_sign_in(self, key: str, now: datetime) -> None:
         """Note that the sign-in ``key`` (a username at an address) just succeeded."""
         ...

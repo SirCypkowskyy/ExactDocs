@@ -797,8 +797,10 @@ def reset_password(
         cause = "was busy" if reset.throttle == "busy" else "failed"
         sys.stderr.write(
             f"exactdocs: warning: the password was changed, but the sign-in throttle {cause}, "
-            "so this username's count was not reset: sign-ins may stay throttled (429) until "
-            "Retry-After passes. Run the command again to retry (that is safe), or wait.\n"
+            "so its count or the addresses it remembers for this username may not have been "
+            "reset: sign-ins may stay throttled (429) until Retry-After passes, and an address "
+            "that signed in with the old password may still skip the username's count. Run the "
+            "command again to retry (that is safe), or wait.\n"
         )
 
 

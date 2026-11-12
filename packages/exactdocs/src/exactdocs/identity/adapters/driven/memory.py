@@ -7,7 +7,15 @@ from exactdocs.identity.constants import (
     MAX_FAILED_SIGN_IN_KEYS,
     REMEMBER_SIGN_INS_FOR,
 )
-from exactdocs.identity.models import Account, AccountId, ApiToken, FailedSignIns, Session, Username
+from exactdocs.identity.models import (
+    Account,
+    AccountId,
+    ApiToken,
+    FailedSignIns,
+    Session,
+    Username,
+    known_sign_ins_prefix,
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -175,6 +183,20 @@ class InMemoryFailedSignInLog:
             Always ``True``: the process's memory is never busy.
         """
         self.records.pop(key, None)
+        return True
+
+    async def forget_remembered(self, username: str) -> bool:
+        """Forget every address remembered for ``username``.
+
+        Args:
+            username: The username.
+
+        Returns:
+            Always ``True``: the process's memory is never busy.
+        """
+        prefix = known_sign_ins_prefix(username)
+        for key in [k for k in self.sign_ins if k.startswith(prefix)]:
+            del self.sign_ins[key]
         return True
 
     async def remember_sign_in(self, key: str, now: datetime) -> None:
