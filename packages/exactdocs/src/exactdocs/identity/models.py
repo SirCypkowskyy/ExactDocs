@@ -37,8 +37,15 @@ class Username:
     """A login name, compared case-insensitively: ``Admin`` and ``admin`` are the same account."""
 
     value: str
+    """The name, NFKC-normalized and case-folded."""
 
     def __post_init__(self) -> None:
+        """Normalize the name.
+
+        Raises:
+            InvalidUsernameError: The name is empty, too long or holds spaces or control
+                characters.
+        """
         # Frozen dataclass: normalise through object.__setattr__ so every instance is canonical.
         nfkc = unicodedata.normalize
         normalized = nfkc("NFKC", nfkc("NFKC", self.value).strip().casefold())  # Unicode D145
@@ -52,6 +59,11 @@ class Username:
         object.__setattr__(self, "value", normalized)
 
     def __str__(self) -> str:
+        """Return the normalized name.
+
+        Returns:
+            ``value``.
+        """
         return self.value
 
 
@@ -60,10 +72,15 @@ class Account:
     """A local account. ``password_hash`` is an encoded KDF hash, never the password."""
 
     id: AccountId
+    """Stable identifier of the account."""
     username: Username
+    """The login name."""
     password_hash: str = field(repr=False)
+    """Encoded KDF hash of the password."""
     role: Role
+    """What the account may do."""
     created_at: datetime
+    """When the account was created."""
 
 
 def hash_token(token: str) -> str:
@@ -71,6 +88,12 @@ def hash_token(token: str) -> str:
 
     Tokens are 256 random bits, so a plain SHA-256 is enough (no salt or stretching, unlike a
     password): a leaked database cannot be turned back into usable tokens.
+
+    Args:
+        token: The secret token.
+
+    Returns:
+        Its SHA-256, in hex.
     """
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -80,16 +103,31 @@ class Session:
     """A signed-in browser. Identified by the hash of its secret token, never by the token."""
 
     token_hash: str = field(repr=False)
+    """SHA-256 of the session token (see ``hash_token``)."""
     account_id: AccountId
+    """The signed-in account."""
     created_at: datetime
+    """When the account signed in."""
     last_used_at: datetime
+    """When the session last authenticated a request."""
 
     def expires_at(self) -> datetime:
-        """When the session ends if it is not used again: idle or absolute timeout, first wins."""
+        """When the session ends if it is not used again: idle or absolute timeout, first wins.
+
+        Returns:
+            The earlier of the idle and the absolute deadline.
+        """
         return min(self.last_used_at + IDLE_TIMEOUT, self.created_at + ABSOLUTE_TIMEOUT)
 
     def is_expired(self, now: datetime) -> bool:
-        """Whether the session is over at ``now``."""
+        """Whether the session is over at ``now``.
+
+        Args:
+            now: The current time.
+
+        Returns:
+            ``True`` once ``expires_at()`` has passed.
+        """
         return now >= self.expires_at()
 
 
@@ -102,20 +140,40 @@ class ApiToken:
     """
 
     id: str
+    """Stable identifier of the token."""
     account_id: AccountId
+    """The account the token acts as."""
     name: str
+    """What the owner called the token, to tell it apart."""
     token_hash: str = field(repr=False)
+    """SHA-256 of the secret (see ``hash_token``)."""
     prefix: str
+    """The first characters of the secret, shown in lists."""
     created_at: datetime
+    """When the token was created."""
     expires_at: datetime | None = None
+    """When the token stops working; ``None`` for never."""
     last_used_at: datetime | None = None
+    """When the token last authenticated a request; ``None`` if never used."""
 
     def __post_init__(self) -> None:
+        """Check the name.
+
+        Raises:
+            InvalidTokenNameError: The name is blank or too long.
+        """
         if not self.name.strip() or len(self.name) > MAX_TOKEN_NAME_LENGTH:
             raise InvalidTokenNameError(MAX_TOKEN_NAME_LENGTH)
 
     def is_expired(self, now: datetime) -> bool:
-        """Whether the token no longer works at ``now``."""
+        """Whether the token no longer works at ``now``.
+
+        Args:
+            now: The current time.
+
+        Returns:
+            ``True`` when the token has an expiry and it has passed.
+        """
         return self.expires_at is not None and now >= self.expires_at
 
 
@@ -128,21 +186,45 @@ class FailedSignIns:
     """
 
     count: int
+    """Failures counted so far."""
     last_at: datetime
+    """When the latest failure was counted."""
     previous_at: datetime | None = None
+    """``last_at`` before the latest failure; ``None`` when that failure started the count."""
 
     def is_forgotten(self, now: datetime) -> bool:
-        """Whether no failure came for long enough that the count starts over."""
+        """Whether no failure came for long enough that the count starts over.
+
+        Args:
+            now: The current time.
+
+        Returns:
+            ``True`` when ``FORGET_FAILURES_AFTER`` has passed since ``last_at``.
+        """
         return now - self.last_at >= FORGET_FAILURES_AFTER
 
     def plus_one(self, now: datetime) -> FailedSignIns:
-        """Return the record after one more failure at ``now``."""
+        """Return the record after one more failure at ``now``.
+
+        Args:
+            now: When the failure happened.
+
+        Returns:
+            The new record; a fresh count of one when the old one is forgotten.
+        """
         if self.is_forgotten(now):
             return FailedSignIns(count=1, last_at=now)
         return FailedSignIns(count=self.count + 1, last_at=now, previous_at=self.last_at)
 
     def wait(self, now: datetime) -> timedelta:
-        """How long the next attempt must wait from ``now`` (zero when it may go ahead)."""
+        """How long the next attempt must wait from ``now``.
+
+        Args:
+            now: The current time.
+
+        Returns:
+            The wait; zero when the attempt may go ahead.
+        """
         if self.count < FREE_FAILURES or self.is_forgotten(now):
             return timedelta(0)
         doublings = min(self.count - FREE_FAILURES, _MAX_DOUBLINGS)
@@ -155,6 +237,12 @@ class FailedSignIns:
         When that attempt is still the latest, the record goes back to how it was before it
         (``None`` when it started the count), so a right password does not restart the wait.
         When a later attempt came since, only the count goes down.
+
+        Args:
+            charged_at: The ``last_at`` the attempt being taken back was charged with.
+
+        Returns:
+            The record without that attempt, or ``None`` when no failure is left.
         """
         if self.last_at == charged_at:
             if self.previous_at is None or self.count <= 1:
@@ -206,6 +294,12 @@ def address_key(client: str) -> str:
     IPv4 counts per address, IPv6 per /64 (one client usually holds a whole /64, so counting per
     address would give it endless fresh counts). IPv4-mapped and NAT64 addresses count as the
     IPv4 client they carry. Anything else is used as it is.
+
+    Args:
+        client: The client address, as the transport reports it.
+
+    Returns:
+        ``address:<address or /64 network>``.
     """
     try:
         ip = ipaddress.ip_address(client)

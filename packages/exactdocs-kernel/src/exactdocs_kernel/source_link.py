@@ -6,7 +6,14 @@ from exactdocs_kernel.constants import _BLOB_PATHS, _SCP_URL
 
 
 def _web_base(repository_url: str) -> str | None:
-    """Return the repository's web page (`https://host/owner/repo`), or ``None`` without one."""
+    """Return the repository's web page (`https://host/owner/repo`).
+
+    Args:
+        repository_url: The clone URL (HTTP(S), SSH or scp-like ``git@host:path``).
+
+    Returns:
+        The web page URL, or ``None`` when the URL has no web page.
+    """
     url = repository_url.strip()
     if scp := _SCP_URL.fullmatch(url):
         scheme, host, path = "https", scp["host"], scp["path"]
@@ -29,6 +36,16 @@ def section_link(
 
     ``host`` is `github`, `gitlab`, `bitbucket`, `gitea` or `git` (no link). Pinned to the commit
     SHA, so the link keeps showing the text that was read.
+
+    Args:
+        host: The repository host kind.
+        repository_url: The repository's clone URL.
+        commit_sha: The commit the article was read at.
+        article_path: The article's path in the repository.
+        anchor: The section's heading anchor; empty to link the whole article.
+
+    Returns:
+        The link, or ``None`` when the host or URL gives no web page.
     """
     blob = _BLOB_PATHS.get(host)
     base = _web_base(repository_url)

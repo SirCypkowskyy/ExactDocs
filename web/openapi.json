@@ -11,6 +11,7 @@
           "identity"
         ],
         "summary": "Setup",
+        "description": "Create the first admin account. Refused (409) once any account exists.",
         "operationId": "identity-setup",
         "requestBody": {
           "content": {
@@ -102,6 +103,7 @@
           "identity"
         ],
         "summary": "Get Session",
+        "description": "Tell whether setup is due, nobody is signed in, or who is.",
         "operationId": "identity-get_session",
         "responses": {
           "200": {
@@ -181,6 +183,7 @@
           "identity"
         ],
         "summary": "Create Session",
+        "description": "Sign in: check the username and password and set the session cookie.",
         "operationId": "identity-create_session",
         "requestBody": {
           "content": {
@@ -288,6 +291,7 @@
           "identity"
         ],
         "summary": "Delete Session",
+        "description": "Sign out: end the session and clear its cookie. Signing out twice is not an error.",
         "operationId": "identity-delete_session",
         "responses": {
           "204": {
@@ -362,7 +366,7 @@
           "identity"
         ],
         "summary": "Login",
-        "description": "Exchange a username and password for a new API token (what ``exactdocs login`` does).",
+        "description": "Exchange a username and password for a new API token (what `exactdocs login` does). An account holds at most 50 tokens; one more is refused with `too_many_tokens` (409) until one is revoked.",
         "operationId": "identity-login",
         "requestBody": {
           "content": {
@@ -472,6 +476,7 @@
           "identity"
         ],
         "summary": "List All",
+        "description": "List the signed-in account's API tokens, newest first, without their secrets.",
         "operationId": "identity-list_all",
         "responses": {
           "200": {
@@ -556,6 +561,7 @@
           "identity"
         ],
         "summary": "Create",
+        "description": "Create an API token for the signed-in account. The secret is in this response only. An account holds at most 50 tokens; one more is refused with `too_many_tokens` (409) until one is revoked.",
         "operationId": "identity-create",
         "requestBody": {
           "content": {
@@ -652,6 +658,7 @@
           "identity"
         ],
         "summary": "Revoke",
+        "description": "Revoke one of the signed-in account's API tokens; it stops working at once.",
         "operationId": "identity-revoke",
         "security": [
           {
@@ -6604,15 +6611,18 @@
         "properties": {
           "id": {
             "type": "string",
-            "title": "Id"
+            "title": "Id",
+            "description": "Stable identifier of the account."
           },
           "username": {
             "type": "string",
-            "title": "Username"
+            "title": "Username",
+            "description": "The login name, normalised (NFKC, trimmed, case-folded): `Admin` signs in as `admin`."
           },
           "role": {
             "type": "string",
-            "title": "Role"
+            "title": "Role",
+            "description": "What the account may do; `admin` is the only role so far."
           }
         },
         "additionalProperties": false,
@@ -7202,13 +7212,15 @@
           "username": {
             "type": "string",
             "maxLength": 256,
-            "title": "Username"
+            "title": "Username",
+            "description": "Login name of the account, compared case-insensitively."
           },
           "password": {
             "type": "string",
             "maxLength": 1024,
             "format": "password",
             "title": "Password",
+            "description": "Password of the account.",
             "writeOnly": true
           }
         },
@@ -8091,7 +8103,8 @@
         "properties": {
           "username": {
             "type": "string",
-            "title": "Username"
+            "title": "Username",
+            "description": "Login name of the first admin: 1 to 64 characters once normalised (Unicode NFKC, trimmed, case-folded), no whitespace or control characters."
           },
           "password": {
             "type": "string",
@@ -8099,6 +8112,7 @@
             "minLength": 12,
             "format": "password",
             "title": "Password",
+            "description": "Password of the first admin, 12 to 1024 characters.",
             "writeOnly": true
           }
         },
@@ -8116,7 +8130,8 @@
           "name": {
             "type": "string",
             "maxLength": 256,
-            "title": "Name"
+            "title": "Name",
+            "description": "Label of the new token, to tell it apart in the token list: 1 to 64 characters once trimmed. `maxLength` (256) only caps the raw input; a name longer than 64 characters after trimming, or a blank one, is refused with `invalid_token_name` (422)."
           },
           "expires_at": {
             "anyOf": [
@@ -8128,7 +8143,8 @@
                 "type": "null"
               }
             ],
-            "title": "Expires At"
+            "title": "Expires At",
+            "description": "When the token stops working (in the future, with a timezone); omit it for no expiry."
           }
         },
         "additionalProperties": false,
@@ -9791,19 +9807,22 @@
           "username": {
             "type": "string",
             "maxLength": 256,
-            "title": "Username"
+            "title": "Username",
+            "description": "Login name of the account, compared case-insensitively."
           },
           "password": {
             "type": "string",
             "maxLength": 1024,
             "format": "password",
             "title": "Password",
+            "description": "Password of the account.",
             "writeOnly": true
           },
           "name": {
             "type": "string",
             "maxLength": 256,
-            "title": "Name"
+            "title": "Name",
+            "description": "Label of the new token, to tell it apart in the token list: 1 to 64 characters once trimmed. `maxLength` (256) only caps the raw input; a name longer than 64 characters after trimming, or a blank one, is refused with `invalid_token_name` (422)."
           },
           "expires_at": {
             "anyOf": [
@@ -9815,7 +9834,8 @@
                 "type": "null"
               }
             ],
-            "title": "Expires At"
+            "title": "Expires At",
+            "description": "When the token stops working (in the future, with a timezone); omit it for no expiry."
           }
         },
         "additionalProperties": false,
@@ -11656,7 +11676,8 @@
               "signed_out",
               "signed_in"
             ],
-            "title": "State"
+            "title": "State",
+            "description": "`setup_required` while no account exists, else whether the caller is signed in."
           },
           "account": {
             "anyOf": [
@@ -11666,7 +11687,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "The signed-in account; `null` unless `state` is `signed_in`."
           }
         },
         "additionalProperties": false,
@@ -12028,20 +12050,24 @@
         "properties": {
           "id": {
             "type": "string",
-            "title": "Id"
+            "title": "Id",
+            "description": "Stable identifier of the token, used to revoke it."
           },
           "name": {
             "type": "string",
-            "title": "Name"
+            "title": "Name",
+            "description": "Label the token was given when it was created."
           },
           "prefix": {
             "type": "string",
-            "title": "Prefix"
+            "title": "Prefix",
+            "description": "The first characters of the secret (`exd_` and four more), to recognise the token."
           },
           "created_at": {
             "type": "string",
             "format": "date-time",
-            "title": "Created At"
+            "title": "Created At",
+            "description": "When the token was created."
           },
           "expires_at": {
             "anyOf": [
@@ -12053,7 +12079,8 @@
                 "type": "null"
               }
             ],
-            "title": "Expires At"
+            "title": "Expires At",
+            "description": "When the token stops working; `null` for a token that never expires."
           },
           "last_used_at": {
             "anyOf": [
@@ -12065,11 +12092,13 @@
                 "type": "null"
               }
             ],
-            "title": "Last Used At"
+            "title": "Last Used At",
+            "description": "When the token last authenticated a request; `null` if it was never used."
           },
           "token": {
             "type": "string",
-            "title": "Token"
+            "title": "Token",
+            "description": "The token's secret, shown only this once: send it as `Authorization: Bearer <token>`."
           }
         },
         "additionalProperties": false,
@@ -12093,7 +12122,8 @@
               "$ref": "#/components/schemas/TokenSummary"
             },
             "type": "array",
-            "title": "Tokens"
+            "title": "Tokens",
+            "description": "The tokens, newest first."
           }
         },
         "additionalProperties": false,
@@ -12108,20 +12138,24 @@
         "properties": {
           "id": {
             "type": "string",
-            "title": "Id"
+            "title": "Id",
+            "description": "Stable identifier of the token, used to revoke it."
           },
           "name": {
             "type": "string",
-            "title": "Name"
+            "title": "Name",
+            "description": "Label the token was given when it was created."
           },
           "prefix": {
             "type": "string",
-            "title": "Prefix"
+            "title": "Prefix",
+            "description": "The first characters of the secret (`exd_` and four more), to recognise the token."
           },
           "created_at": {
             "type": "string",
             "format": "date-time",
-            "title": "Created At"
+            "title": "Created At",
+            "description": "When the token was created."
           },
           "expires_at": {
             "anyOf": [
@@ -12133,7 +12167,8 @@
                 "type": "null"
               }
             ],
-            "title": "Expires At"
+            "title": "Expires At",
+            "description": "When the token stops working; `null` for a token that never expires."
           },
           "last_used_at": {
             "anyOf": [
@@ -12145,7 +12180,8 @@
                 "type": "null"
               }
             ],
-            "title": "Last Used At"
+            "title": "Last Used At",
+            "description": "When the token last authenticated a request; `null` if it was never used."
           }
         },
         "additionalProperties": false,

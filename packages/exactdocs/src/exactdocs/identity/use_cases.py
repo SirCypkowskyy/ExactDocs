@@ -74,9 +74,14 @@ class GetSetupStateUseCase:
     """Implements ``ports.driving.GetSetupState``."""
 
     repository: AccountRepository
+    """Where accounts are stored."""
 
     async def __call__(self) -> SetupState:
-        """Report that setup is required until the first account exists."""
+        """Report that setup is required until the first account exists.
+
+        Returns:
+            Whether setup is still required.
+        """
         return SetupState(setup_required=not await self.repository.any_exists())
 
 
@@ -85,11 +90,24 @@ class CreateFirstAdminUseCase:
     """Implements ``ports.driving.CreateFirstAdmin``."""
 
     repository: AccountRepository
+    """Where accounts are stored."""
     hasher: PasswordHasher
+    """The password hasher."""
     clock: Clock
+    """The current time."""
 
     async def __call__(self, command: CreateFirstAdminCommand) -> AccountSummary:
-        """Create the admin, or raise ``AlreadySetUpError`` when an account exists."""
+        """Create the admin, or raise ``AlreadySetUpError`` when an account exists.
+
+        Args:
+            command: The first admin's username and password.
+
+        Returns:
+            The new account.
+
+        Raises:
+            AlreadySetUpError: An account exists already.
+        """
         if await self.repository.any_exists():
             raise AlreadySetUpError  # cheap early exit; `add_first` below is the atomic check
         username = Username(command.username)
@@ -123,14 +141,30 @@ class AuthenticateUseCase:
     """
 
     repository: AccountRepository
+    """Where accounts are stored."""
     hasher: PasswordHasher
+    """The password hasher."""
     failures: FailedSignInLog
+    """The sign-in throttle's counts."""
     clock: Clock
+    """The current time."""
 
     async def __call__(
         self, query: AuthenticateQuery, *, client: str | None = None
     ) -> AccountSummary:
-        """Return the account when the password matches; the same error for every failure."""
+        """Return the account when the password matches; the same error for every failure.
+
+        Args:
+            query: The username and password.
+            client: The caller's address, when known.
+
+        Returns:
+            The account the credentials belong to.
+
+        Raises:
+            SignInThrottledError: Too many recent failures from the address or for the username.
+            InvalidCredentialsError: The username is unknown or the password is wrong.
+        """
         password = query.password.get_secret_value()
         try:
             username: Username | None = Username(query.username)
@@ -174,8 +208,11 @@ class SignInUseCase:
     """Implements ``ports.driving.SignIn``."""
 
     authenticate: Authenticate
+    """Checks the credentials, under the sign-in throttle."""
     sessions: SessionRepository
+    """Where browser sessions are stored."""
     clock: Clock
+    """The current time."""
 
     async def __call__(
         self,
@@ -189,6 +226,14 @@ class SignInUseCase:
         The session the request arrived with (``previous_token``) is deleted, so signing in
         again does not leave a stale row behind. ``client`` is the caller's address, for the
         sign-in throttle.
+
+        Args:
+            query: The username and password.
+            previous_token: The caller's current session token, if any.
+            client: The caller's address, when known.
+
+        Returns:
+            The new session, with its secret token.
         """
         account = await self.authenticate(query, client=client)
         now = self.clock.now()
@@ -218,9 +263,14 @@ class SignOutUseCase:
     """Implements ``ports.driving.SignOut``."""
 
     sessions: SessionRepository
+    """Where browser sessions are stored."""
 
     async def __call__(self, token: str) -> None:
-        """Delete the session on the server, so a copied cookie stops working too."""
+        """Delete the session on the server, so a copied cookie stops working too.
+
+        Args:
+            token: The session token.
+        """
         await self.sessions.delete(hash_token(token))
 
 
@@ -229,11 +279,24 @@ class IdentifyCallerUseCase:
     """Implements ``ports.driving.IdentifyCaller``."""
 
     sessions: SessionRepository
+    """Where browser sessions are stored."""
     accounts: AccountRepository
+    """Where accounts are stored."""
     clock: Clock
+    """The current time."""
 
     async def __call__(self, token: str | None) -> AccountSummary:
-        """Return the owner of a live session, or raise ``NotSignedInError``."""
+        """Return the owner of a live session, or raise ``NotSignedInError``.
+
+        Args:
+            token: The session token, or ``None`` when the request carried none.
+
+        Returns:
+            The signed-in account.
+
+        Raises:
+            NotSignedInError: No token, or its session is unknown, expired or of a deleted account.
+        """
         if not token:
             raise NotSignedInError
         token_hash = hash_token(token)
@@ -259,10 +322,19 @@ class GetSessionStateUseCase:
     """Implements ``ports.driving.GetSessionState``."""
 
     accounts: AccountRepository
+    """Where accounts are stored."""
     identify_caller: IdentifyCaller
+    """Resolves the session token."""
 
     async def __call__(self, token: str | None) -> SessionState:
-        """Report the setup, signed-out or signed-in state for the token."""
+        """Report the setup, signed-out or signed-in state for the token.
+
+        Args:
+            token: The session token, or ``None`` when the request carried none.
+
+        Returns:
+            The setup and sign-in state.
+        """
         if not await self.accounts.any_exists():
             return SessionState(state="setup_required")
         try:
@@ -277,9 +349,13 @@ class ResetPasswordUseCase:
     """Implements ``ports.driving.ResetPassword``."""
 
     accounts: AccountRepository
+    """Where accounts are stored."""
     sessions: SessionRepository
+    """Where browser sessions are stored."""
     tokens: TokenRepository
+    """Where API tokens are stored."""
     hasher: PasswordHasher
+    """The password hasher."""
     failures: FailedSignInLog
     """The sign-in throttle; the account's username count and the addresses it remembers for the
     username are dropped once the password is set."""
@@ -364,10 +440,24 @@ class CreateTokenUseCase:
     """Implements ``ports.driving.CreateToken``."""
 
     tokens: TokenRepository
+    """Where API tokens are stored."""
     clock: Clock
+    """The current time."""
 
     async def __call__(self, account: AccountSummary, command: CreateTokenCommand) -> TokenGrant:
-        """Mint a token. Only its hash is stored; the secret is returned this once."""
+        """Mint a token. Only its hash is stored; the secret is returned this once.
+
+        Args:
+            account: The account the token acts as.
+            command: The token's name and expiry.
+
+        Returns:
+            The new token, with its secret.
+
+        Raises:
+            InvalidTokenExpiryError: ``expires_at`` is not in the future.
+            TooManyTokensError: The account holds ``MAX_TOKENS_PER_ACCOUNT`` tokens already.
+        """
         now = self.clock.now()
         if command.expires_at is not None and command.expires_at <= now:
             raise InvalidTokenExpiryError
@@ -393,12 +483,22 @@ class LoginForTokenUseCase:
     """Implements ``ports.driving.LoginForToken``."""
 
     authenticate: Authenticate
+    """Checks the credentials, under the sign-in throttle."""
     create_token: CreateToken
+    """Mints the token."""
 
     async def __call__(
         self, command: LoginForTokenCommand, *, client: str | None = None
     ) -> TokenGrant:
-        """Mint a token for the account the credentials belong to (``client``: see ``SignIn``)."""
+        """Mint a token for the account the credentials belong to (``client``: see ``SignIn``).
+
+        Args:
+            command: The credentials and the new token's name and expiry.
+            client: The caller's address, when known.
+
+        Returns:
+            The new token, with its secret.
+        """
         query = AuthenticateQuery(username=command.username, password=command.password)
         account = await self.authenticate(query, client=client)
         return await self.create_token(
@@ -411,9 +511,17 @@ class ListTokensUseCase:
     """Implements ``ports.driving.ListTokens``."""
 
     tokens: TokenRepository
+    """Where API tokens are stored."""
 
     async def __call__(self, account: AccountSummary) -> TokenList:
-        """List the account's tokens without their secrets."""
+        """List the account's tokens without their secrets.
+
+        Args:
+            account: The account whose tokens to list.
+
+        Returns:
+            The tokens, newest first.
+        """
         found = await self.tokens.list_for_account(AccountId(account.id))
         return TokenList(tokens=[TokenSummary.from_model(t) for t in found])
 
@@ -423,9 +531,18 @@ class RevokeTokenUseCase:
     """Implements ``ports.driving.RevokeToken``."""
 
     tokens: TokenRepository
+    """Where API tokens are stored."""
 
     async def __call__(self, account: AccountSummary, token_id: str) -> None:
-        """Delete the token, so it stops working at once."""
+        """Delete the token, so it stops working at once.
+
+        Args:
+            account: The account that owns the token.
+            token_id: The token's id.
+
+        Raises:
+            UnknownTokenError: The account has no token by this id.
+        """
         if not await self.tokens.delete(AccountId(account.id), token_id):
             raise UnknownTokenError
 
@@ -435,11 +552,24 @@ class IdentifyTokenUseCase:
     """Implements ``ports.driving.IdentifyToken``."""
 
     tokens: TokenRepository
+    """Where API tokens are stored."""
     accounts: AccountRepository
+    """Where accounts are stored."""
     clock: Clock
+    """The current time."""
 
     async def __call__(self, token: str) -> AccountSummary:
-        """Return the account the token acts as, or raise ``InvalidTokenError``."""
+        """Return the account the token acts as, or raise ``InvalidTokenError``.
+
+        Args:
+            token: The API token's secret.
+
+        Returns:
+            The account the token acts as.
+
+        Raises:
+            InvalidTokenError: The token is unknown, expired, or its account is gone.
+        """
         token_hash = hash_token(token)
         # Looked up by the hash of a random secret, like sessions: no timing to learn from.
         found = await self.tokens.get(token_hash)

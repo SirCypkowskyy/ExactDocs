@@ -13,6 +13,12 @@ def normalize_tag(raw: str) -> str | None:
     marks (Devanagari, Arabic harakat...) and ``._+-``; at most ``MAX_TAG_LENGTH`` characters.
     Commas, invisible characters and symbols never survive, so a tag fits a comma-separated
     filter. Confusables (a Cyrillic and a Latin "a") stay distinct. Idempotent.
+
+    Args:
+        raw: The tag as written.
+
+    Returns:
+        The normalized tag, or ``None`` when ``raw`` cannot be a tag.
     """
     folded = unicodedata.normalize("NFKC", unicodedata.normalize("NFKC", raw).casefold())
     tag = "-".join(folded.split())
