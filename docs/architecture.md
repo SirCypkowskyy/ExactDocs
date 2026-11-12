@@ -654,7 +654,8 @@ only its SHA-256 is stored, so a leaked database holds no usable token. A sessio
 7 days without use or 30 days in all (`models.IDLE_TIMEOUT`/`ABSOLUTE_TIMEOUT`, checked against the
 kernel `Clock`); using it writes `last_used_at` at most once an hour. Signing out deletes the row,
 so a copied cookie dies too, and `exactdocs admin reset-password` changes the hash first and then
-deletes all the account's sessions. CSRF: SameSite=Lax plus the app-wide `OriginCheck` (foreign
+deletes all the account's sessions, then drops the username's throttle count
+(`FailedSignInLog.forget`; this reaches the servers only on PostgreSQL, where the log is shared). CSRF: SameSite=Lax plus the app-wide `OriginCheck` (foreign
 `Origin` on an unsafe request is 403).
 
 "Who is the caller" is one dependency, `identity.adapters.driving.http.build_current_caller`,

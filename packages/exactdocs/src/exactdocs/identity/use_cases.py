@@ -275,6 +275,8 @@ class ResetPasswordUseCase:
     sessions: SessionRepository
     tokens: TokenRepository
     hasher: PasswordHasher
+    failures: FailedSignInLog
+    """The sign-in throttle; the account's username count is dropped once the password is set."""
 
     async def __call__(self, command: ResetPasswordCommand) -> None:
         """Set the new password, then end all the account's sessions and revoke its API tokens.
@@ -282,6 +284,10 @@ class ResetPasswordUseCase:
         A reset is the recovery after a compromise, so nothing issued before it may survive.
 
         In this order, so nobody can sign in with the old password once the sessions are gone.
+        Last, the username's throttle count is dropped, so the owner can sign in with the new
+        password straight away; the client addresses' counts and other usernames' stay. This
+        only reaches the counts of other processes when the log is shared (the database-backed
+        log, on PostgreSQL); an in-memory log belongs to the process that runs the reset.
         """
         try:
             account = await self.accounts.get(Username(command.username))
@@ -293,6 +299,7 @@ class ResetPasswordUseCase:
         await self.accounts.set_password_hash(account.id, password_hash)
         await self.sessions.delete_for_account(account.id)
         await self.tokens.delete_for_account(account.id)
+        await self.failures.forget(f"username:{account.username}")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

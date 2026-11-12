@@ -26,6 +26,7 @@ from exactdocs.identity.dtos import (
     AuthenticateQuery,
     CreateFirstAdminCommand,
     LoginForTokenCommand,
+    ResetPasswordCommand,
 )
 from exactdocs.identity.errors import InvalidCredentialsError, SignInThrottledError
 from exactdocs.identity.models import FailedSignIns, address_key
@@ -179,6 +180,30 @@ async def test_a_right_password_clears_the_username_but_not_the_address(world: W
     record = await world.failures.get(f"address:{ATTACKER}")
     assert record is not None
     assert record.count == FREE_FAILURES - 1
+
+
+async def test_resetting_the_password_clears_only_that_usernames_count(world: World) -> None:
+    for n in range(FREE_FAILURES):
+        await fail(world, 1, username="ada", client=f"192.0.2.{n}")
+    await fail(world, 2, username="root")
+    with pytest.raises(SignInThrottledError):
+        await world.identity.authenticate(credentials(), client=ADMIN_HOST)
+    others = {
+        key: await world.failures.get(key)
+        for key in ["username:root", f"address:{ATTACKER}", "address:192.0.2.0"]
+    }
+
+    await world.identity.reset_password(
+        ResetPasswordCommand(username=" ADA ", password=SecretStr("a brand new passphrase"))
+    )
+
+    assert await world.failures.get("username:ada") is None
+    assert {key: await world.failures.get(key) for key in others} == others
+    assert all(others.values())
+    account = await world.identity.authenticate(
+        credentials(password="a brand new passphrase"), client=ADMIN_HOST
+    )
+    assert account.username == "ada"
 
 
 @pytest.mark.parametrize("typos", [FREE_FAILURES, FREE_FAILURES + 8], ids=["first-wait", "long"])

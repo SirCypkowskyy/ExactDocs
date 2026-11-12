@@ -14,6 +14,14 @@ Feature: A shared instance runs on PostgreSQL with several server processes
     When 5 sign-ins for "admin" fail, each from a different address, alternating between the processes
     Then the next sign-in for "admin", from a new address, is throttled on both processes
 
+  Scenario: Resetting the password lifts the username's throttle on every process
+    Given two ExactDocs processes use the same PostgreSQL database
+    When 5 sign-ins for "admin" fail, each from a different address, alternating between the processes
+    And 2 sign-ins for "root" fail, each from a different address, alternating between the processes
+    And the operator runs "exactdocs admin reset-password" for "admin" on that database
+    Then the throttle count of "admin" is gone, and the other usernames' and the addresses' counts are unchanged
+    And the next sign-in for "admin" with the new password, from a new address, succeeds on both processes
+
   Scenario: DBOS needs no second database
     Given the database role may not create databases
     When ExactDocs starts on PostgreSQL
