@@ -231,15 +231,17 @@ into a username in the last 30 days is held to its own count only, not to the us
 others failing for the admin's username cannot lock the admin out of a machine they already
 use; a new address still waits. Behind a reverse proxy, list it in
 `EXACTDOCS_FORWARDED_ALLOW_IPS`, so the throttle counts the client's address rather than the
-proxy's. The counts are kept in the server's memory: restarting the server clears them, and
-nothing else does (`admin reset-password` runs in another process and cannot).
+proxy's. On SQLite the counts are kept in the server's memory: restarting the server clears them, and
+nothing else does (`admin reset-password` runs in another process and cannot). On PostgreSQL they
+are kept in the database, so every server process counts the same failures and a restart keeps
+them; each count is dropped once an hour has passed without a failure.
 
 The web UI signs the admin in with `POST /api/v1/session`: an HttpOnly, SameSite=Lax cookie that
 ends after 7 days without use or 30 days at most, and that only works on `/api` (never on `/mcp`).
 Lost the password? Run `exactdocs admin reset-password` on the machine (same options as
 `admin create`): it sets a new password, signs the admin out everywhere and revokes
 the API tokens. If sign-ins are throttled meanwhile (429), restart the server to clear the
-throttle.
+throttle (on SQLite; on PostgreSQL, wait out the `Retry-After`, at most 15 minutes).
 
 Then add your first library in the UI (**Add library**: URL, ref, paths) or over REST, as in the
 walkthrough above. The import runs as a background job whose progress, skipped files and problems
@@ -1006,7 +1008,9 @@ crashed one left (it logs why).
   across all processes, as on SQLite, so several processes serve more readers but do not import
   faster. A writer that waits more than 30 s for its turn gives up with an error, as SQLite does
   after its own wait.
-- Sign-in throttling counts failures per process (#253).
+- The sign-in throttle's counts live in the database (`identity_failed_sign_ins`,
+  `identity_known_sign_ins`), so failed sign-ins count the same on every process; they survive a
+  restart, and old ones are deleted whenever a new one is written.
 - Hybrid search keeps its vectors in the same database with **pgvector** (#243): one table per
   embedding model, with a `vector(<dimensions>)` column, searched exactly (cosine distance, no
   index), so any dimensions up to pgvector's 16,000 work, including those above the 2,000 an

@@ -92,6 +92,7 @@ from exactdocs.identity.adapters.driven.argon2id import Argon2idPasswordHasher
 from exactdocs.identity.adapters.driven.memory import InMemoryFailedSignInLog
 from exactdocs.identity.adapters.driven.sqlite import (
     SqliteAccountRepository,
+    SqliteFailedSignInLog,
     SqliteSessionRepository,
     SqliteTokenRepository,
 )
@@ -981,7 +982,10 @@ class Container:
                 sessions=SqliteSessionRepository(engine=engine),
                 tokens=SqliteTokenRepository(engine=engine),
                 hasher=Argon2idPasswordHasher(),
-                failures=InMemoryFailedSignInLog(),
+                # Shared by every process on PostgreSQL; one process serves on SQLite.
+                failures=SqliteFailedSignInLog(engine=engine)
+                if is_postgres(engine)
+                else InMemoryFailedSignInLog(),
                 clock=SystemClock(),
             ),
             ingestion=ingestion,

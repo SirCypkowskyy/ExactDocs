@@ -1,10 +1,13 @@
+from collections.abc import AsyncGenerator, Iterable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import (
     Column,
     ForeignKey,
+    Integer,
     MetaData,
     Table,
     Text,
@@ -14,12 +17,26 @@ from sqlalchemy import (
     literal,
     or_,
     select,
+    text,
     update,
 )
 from sqlalchemy.engine import Row
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from exactdocs.identity.models import Account, AccountId, ApiToken, Role, Session, Username
+from exactdocs.identity.constants import (
+    _SIGN_IN_LOCKS,
+    FORGET_FAILURES_AFTER,
+    REMEMBER_SIGN_INS_FOR,
+)
+from exactdocs.identity.models import (
+    Account,
+    AccountId,
+    ApiToken,
+    FailedSignIns,
+    Role,
+    Session,
+    Username,
+)
 
 # The identity tables, prefixed `identity_`. The schema itself is created by an Alembic revision
 # in `exactdocs.bootstrap`; this is only the adapter's query-side description of it.
@@ -57,6 +74,22 @@ api_tokens = Table(
     Column("expires_at", Text),
     Column("last_used_at", Text),
 )
+
+failed_sign_ins = Table(
+    "identity_failed_sign_ins",
+    metadata,
+    Column("key", Text, primary_key=True),  # `address:...` or `username:...`
+    Column("failures", Integer, nullable=False),
+    Column("last_at", Text, nullable=False),  # see `_stamp`
+    Column("previous_at", Text),
+)
+known_sign_ins = Table(
+    "identity_known_sign_ins",
+    metadata,
+    Column("key", Text, primary_key=True),  # `<username>@address:...`
+    Column("signed_in_at", Text, nullable=False),  # see `_stamp`
+)
+_lock_key = text("SELECT pg_advisory_xact_lock(:space, hashtext(:key))")
 
 
 def _stamp(moment: datetime) -> str:
@@ -283,3 +316,207 @@ def _token(row: Row[Any]) -> ApiToken:
         expires_at=_moment(row.expires_at),
         last_used_at=_moment(row.last_used_at),
     )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteFailedSignInLog:
+    """Implements ``ports.driven.FailedSignInLog`` in the database, for every process at once.
+
+    Used on PostgreSQL, where several processes serve one instance and must share the counts
+    (on SQLite one process serves, and ``InMemoryFailedSignInLog`` is enough). Each
+    read-then-write is one transaction that first takes its turn on the keys it touches: on
+    PostgreSQL a transaction-level advisory lock per key (``_SIGN_IN_LOCKS``, taken in key order
+    so two attempts cannot deadlock), on SQLite ``BEGIN IMMEDIATE``. Attempts on other keys do
+    not wait, nor do the instance's other writers (it does not take their write turn).
+
+    Old rows are pruned when one is written, without a background job: a charge deletes the
+    counts with no failure for ``FORGET_FAILURES_AFTER`` (they no longer hold anyone back), a
+    remembered sign-in those older than ``REMEMBER_SIGN_INS_FOR``. On PostgreSQL the prune skips
+    rows another attempt has locked, so it never waits for, nor deadlocks with, that attempt.
+    """
+
+    engine: AsyncEngine
+    """The database every process of the instance uses."""
+
+    async def charge(self, keys: Sequence[str], now: datetime) -> timedelta:
+        """Count one attempt against every key unless one must wait; return the longest wait.
+
+        Args:
+            keys: The throttle keys the attempt counts against.
+            now: When the attempt is made.
+
+        Returns:
+            The longest wait among the keys; when above zero nothing was counted.
+        """
+        if not keys:  # no address and no valid username: nothing to count against
+            return timedelta(0)
+        async with self._turn(keys) as connection:
+            records = await self._records(connection, keys)
+            wait = max((r.wait(now) for r in records.values()), default=timedelta(0))
+            if wait > timedelta(0):
+                return wait
+            counted = {
+                key: (
+                    records[key].plus_one(now)
+                    if key in records
+                    else FailedSignIns(count=1, last_at=now)
+                )
+                for key in dict.fromkeys(keys)
+            }
+            await self._replace(connection, counted)
+            await _prune(connection, failed_sign_ins.c.last_at, now - FORGET_FAILURES_AFTER)
+        return timedelta(0)
+
+    async def refund(self, key: str, charged_at: datetime) -> None:
+        """Take back the attempt charged under ``key`` at ``charged_at``.
+
+        Args:
+            key: The throttle key.
+            charged_at: When the attempt to take back was charged.
+        """
+        async with self._turn([key]) as connection:
+            record = (await self._records(connection, [key])).get(key)
+            if record is None:
+                return
+            if (fewer := record.refunded(charged_at)) is None:
+                await connection.execute(
+                    delete(failed_sign_ins).where(failed_sign_ins.c.key == key)
+                )
+            else:
+                await self._replace(connection, {key: fewer})
+
+    async def get(self, key: str) -> FailedSignIns | None:
+        """Return the record under ``key``, or ``None``.
+
+        Args:
+            key: The throttle key.
+
+        Returns:
+            The record, or ``None`` when there is none.
+        """
+        async with self.engine.connect() as connection:
+            return (await self._records(connection, [key])).get(key)
+
+    async def forget(self, key: str) -> None:
+        """Drop the record under ``key``.
+
+        Args:
+            key: The throttle key.
+        """
+        async with self.engine.begin() as connection:
+            await connection.execute(delete(failed_sign_ins).where(failed_sign_ins.c.key == key))
+
+    async def remember_sign_in(self, key: str, now: datetime) -> None:
+        """Remember the sign-in at ``now``, pruning those too old to count.
+
+        Args:
+            key: The sign-in (a username at an address).
+            now: When it succeeded.
+        """
+        async with self._turn([f"known:{key}"]) as connection:
+            await connection.execute(delete(known_sign_ins).where(known_sign_ins.c.key == key))
+            await connection.execute(
+                insert(known_sign_ins).values(key=key, signed_in_at=_stamp(now))
+            )
+            await _prune(connection, known_sign_ins.c.signed_in_at, now - REMEMBER_SIGN_INS_FOR)
+
+    async def signed_in_before(self, key: str, now: datetime) -> bool:
+        """Whether ``key`` succeeded within ``REMEMBER_SIGN_INS_FOR`` of ``now``.
+
+        Args:
+            key: The sign-in (a username at an address).
+            now: The moment to look back from.
+
+        Returns:
+            ``True`` when it did.
+        """
+        query = select(known_sign_ins.c.signed_in_at).where(known_sign_ins.c.key == key)
+        async with self.engine.connect() as connection:
+            last = (await connection.execute(query)).scalar()
+        return last is not None and now - datetime.fromisoformat(last) < REMEMBER_SIGN_INS_FOR
+
+    @asynccontextmanager
+    async def _turn(self, keys: Iterable[str]) -> AsyncGenerator[AsyncConnection]:
+        """Begin a transaction that holds the turn on ``keys`` until it ends.
+
+        Args:
+            keys: What the transaction reads and then writes.
+
+        Yields:
+            The connection, in its transaction.
+        """
+        async with self.engine.connect() as connection:
+            postgres = connection.dialect.name == "postgresql"
+            if not postgres:
+                await connection.execution_options(begin_immediate=True)
+            async with connection.begin():
+                if postgres:
+                    for key in sorted(set(keys)):
+                        await connection.execute(_lock_key, {"space": _SIGN_IN_LOCKS, "key": key})
+                yield connection
+
+    @staticmethod
+    async def _records(
+        connection: AsyncConnection, keys: Iterable[str]
+    ) -> dict[str, FailedSignIns]:
+        """Read the records under ``keys``.
+
+        Args:
+            connection: The connection to read with.
+            keys: The throttle keys.
+
+        Returns:
+            The records found, by key.
+        """
+        query = select(failed_sign_ins).where(failed_sign_ins.c.key.in_(list(keys)))
+        return {
+            row.key: FailedSignIns(
+                count=row.failures,
+                last_at=datetime.fromisoformat(row.last_at),
+                previous_at=_moment(row.previous_at),
+            )
+            for row in await connection.execute(query)
+        }
+
+    @staticmethod
+    async def _replace(connection: AsyncConnection, records: dict[str, FailedSignIns]) -> None:
+        """Store ``records`` in place of what their keys held.
+
+        The caller holds the turn on those keys, so nobody else writes them meanwhile.
+
+        Args:
+            connection: The connection, in the transaction holding the turn.
+            records: The records to store, by key.
+        """
+        await connection.execute(delete(failed_sign_ins).where(failed_sign_ins.c.key.in_(records)))
+        await connection.execute(
+            insert(failed_sign_ins),
+            [
+                {
+                    "key": key,
+                    "failures": record.count,
+                    "last_at": _stamp(record.last_at),
+                    "previous_at": None
+                    if record.previous_at is None
+                    else _stamp(record.previous_at),
+                }
+                for key, record in records.items()
+            ],
+        )
+
+
+async def _prune(connection: AsyncConnection, moment: Column[str], before: datetime) -> None:
+    """Delete the rows of ``moment``'s table whose ``moment`` is at or before ``before``.
+
+    On PostgreSQL rows another transaction has locked are skipped (``SKIP LOCKED``), so the prune
+    never waits: that transaction is writing them anyway. SQLite has no row locks (and renders no
+    ``FOR UPDATE``); its writers take turns.
+
+    Args:
+        connection: The connection, in the writing transaction.
+        moment: The time column the rows are aged by (its table has a ``key`` primary key).
+        before: The oldest moment kept is just after this.
+    """
+    table = moment.table
+    stale = select(table.c.key).where(moment <= _stamp(before)).with_for_update(skip_locked=True)
+    await connection.execute(delete(table).where(table.c.key.in_(stale)))

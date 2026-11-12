@@ -173,6 +173,28 @@ def step_second_serves(context: Context) -> None:
     assert slots == [(0,), (1,)], slots
 
 
+@when('{count:d} sign-ins for "{username}" fail, alternating between the processes')
+def step_fail_alternating(context: Context, count: int, username: str) -> None:
+    with httpx.Client(base_url=context.first, timeout=30) as client:
+        client.post("/api/v1/setup", json=CREDENTIALS).raise_for_status()
+    wrong = {"username": username, "password": "not the admin's password"}
+    for n in range(count):
+        base = (context.first, context.second)[n % 2]
+        response = httpx.post(f"{base}/api/v1/session", json=wrong, timeout=30)
+        assert response.status_code == httpx.codes.UNAUTHORIZED, response.text
+
+
+@then('the next sign-in for "{username}" is throttled on both processes')
+def step_throttled_on_both(context: Context, username: str) -> None:
+    right = {**CREDENTIALS, "username": username}
+    for base in (context.first, context.second):
+        # Even the right password: the attempt is refused before it is checked.
+        response = httpx.post(f"{base}/api/v1/session", json=right, timeout=30)
+        assert response.status_code == httpx.codes.TOO_MANY_REQUESTS, response.text
+        assert response.json()["error"] == "rate_limited", response.text
+        assert int(response.headers["retry-after"]) > 0, response.headers
+
+
 @given("the database role may not create databases")
 def step_role_without_createdb(context: Context) -> None:
     url = _database(context, owner_without_createdb=True)

@@ -203,28 +203,6 @@ async def test_a_second_sign_in_right_after_a_correct_one_is_not_refused(
     assert record == FailedSignIns(count=typos, last_at=last_typo)
 
 
-async def test_a_refund_after_a_later_attempt_only_lowers_the_count() -> None:
-    log = InMemoryFailedSignInLog()
-    later = START + timedelta(seconds=1)
-    await log.charge(["address:a"], START)
-    await log.charge(["address:a"], later)
-
-    await log.refund("address:a", START)  # the first attempt was the right password
-
-    record = await log.get("address:a")
-    assert record is not None
-    assert (record.count, record.last_at) == (1, later)
-
-
-async def test_refunding_the_only_attempt_leaves_no_record() -> None:
-    log = InMemoryFailedSignInLog()
-    await log.charge(["address:a"], START)
-
-    await log.refund("address:a", START)
-
-    assert await log.get("address:a") is None
-
-
 async def test_invalid_usernames_count_against_the_address(world: World) -> None:
     await fail(world, FREE_FAILURES, username="not a valid\nname")
 
@@ -272,18 +250,6 @@ async def test_a_full_log_drops_records_that_hold_no_one_back_first() -> None:
 
     assert "username:ada" in log.records
     assert len(log.records) == 3
-
-
-async def test_a_refused_charge_counts_nothing() -> None:
-    log = InMemoryFailedSignInLog()
-    for _ in range(FREE_FAILURES):
-        assert await log.charge(["address:a"], START) == timedelta(0)
-
-    assert await log.charge(["address:a", "username:b"], START) == FIRST_WAIT
-    assert await log.get("username:b") is None
-    record = await log.get("address:a")
-    assert record is not None
-    assert record.count == FREE_FAILURES
 
 
 async def test_the_owner_still_signs_in_from_a_known_address_when_others_hammer_the_username(

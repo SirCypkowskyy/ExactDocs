@@ -73,6 +73,11 @@ MAX_FAILED_SIGN_IN_KEYS: Final[int] = 10_000
 bytes a record): a flood of made-up usernames cannot grow the log without bound.
 """
 
+# ---------------------------------------------------------------- adapters.driven.sqlite
+_SIGN_IN_LOCKS: Final[int] = 0x45584449
+"""First key ("EXDI") of the two-key PostgreSQL advisory locks that make the sign-in throttle's
+read-then-write atomic across processes; the second is ``hashtext`` of the throttle key."""
+
 # ---------------------------------------------------------------- adapters.driving.http
 SESSION_COOKIE: Final[str] = "exactdocs_session"
 """Name of the web session cookie."""

@@ -544,6 +544,15 @@ erDiagram
         text token_hash UK "SHA-256, exd_ prefix"
         text expires_at
     }
+    identity_failed_sign_ins {
+        text key PK "address:... or username:..."
+        int failures
+        text last_at "pruned after an hour"
+    }
+    identity_known_sign_ins {
+        text key PK "username@address"
+        text signed_in_at "pruned after 30 days"
+    }
 
     ingestion_jobs {
         text id PK
@@ -613,10 +622,17 @@ an attempt that must wait raises `SignInThrottledError` (kernel `RateLimitedErro
 `Retry-After`) without a hash and without being counted. A right password refunds its attempt
 on the address (putting back the earlier `last_at` when no later attempt came, so the wait is
 not restarted), clears the username's count and is remembered as a known (username, address)
-pair for 30 days; from a known address, the username's count does not apply. The adapter is
-in-process memory, bounded to 10,000 counts and 10,000 pairs, and evicts counts that hold no
-one back first; several processes (TEAM-01) would each count their own, and a shared adapter
-must make `charge` atomic too.
+pair for 30 days; from a known address, the username's count does not apply. On SQLite
+(one process) the adapter is in-process memory, bounded to 10,000 counts and 10,000 pairs, and
+evicts counts that hold no one back first. On PostgreSQL, where several processes serve one
+instance (TEAM-01), it is `SqliteFailedSignInLog` (`identity_failed_sign_ins`,
+`identity_known_sign_ins`, which exist but stay empty on SQLite; portable SQL, also run on SQLite
+by the contract tests): each
+read-then-write is one transaction that first takes a transaction-level advisory lock per key
+(`_SIGN_IN_LOCKS`, in key order), so `charge` stays atomic across processes without taking the
+instance's write turn. Old rows are pruned on write, with no background job: a charge deletes
+counts quiet for `FORGET_FAILURES_AFTER`, a remembered sign-in those older than
+`REMEMBER_SIGN_INS_FOR`, skipping rows another transaction has locked (`SKIP LOCKED`).
 
 `AccountRepository.add_first` stores an account only while the table is empty, in one atomic
 statement under `BEGIN IMMEDIATE`, so two concurrent setups (or `exactdocs admin create` next to
@@ -770,7 +786,8 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
   a connection. Each process fetches in a `work/process-*` folder of its own, which it creates and
   `flock`s in one step when it starts running (then checks the locked file is still the folder's);
   a starting process removes only the folders whose lock it can take, while it holds it. The
-  sign-in throttle (`InMemoryFailedSignInLog`) stays per process.
+  sign-in throttle's counts are in the database (`SqliteFailedSignInLog`, see *Identity*), so
+  every process counts the same failures.
 - **The scheduled check (SYNC-02).** The worker also keeps a DBOS schedule
   (`exactdocs-scheduled-checks`, `EXACTDOCS_AUTO_SYNC_SCHEDULE`, a cron expression with seconds,
   every minute by default) whose workflow runs `RunScheduledChecks` outside its own workflow

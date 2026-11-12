@@ -125,9 +125,10 @@ class InMemoryTokenRepository:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryFailedSignInLog:
-    """Implements ``ports.driven.FailedSignInLog`` in the process's memory. Used in production.
+    """Implements ``ports.driven.FailedSignInLog`` in the process's memory. Used on SQLite.
 
-    A restart forgets everything, and each process counts its own (TEAM-01 would share them).
+    A restart forgets everything, and each process counts its own: on PostgreSQL, where several
+    processes serve, ``SqliteFailedSignInLog`` shares the counts instead.
     ``charge`` never awaits, so on one event loop the check and the count cannot interleave
     with another attempt's. At most ``max_keys`` counts and ``max_keys`` remembered sign-ins are
     kept. Dict order is "least recently changed first", which is also oldest ``last_at`` first.
