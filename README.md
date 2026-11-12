@@ -235,16 +235,18 @@ proxy's. On SQLite the counts are kept in the server's memory: restarting the se
 them, and nothing else does (`admin reset-password` runs in another process and cannot). On
 PostgreSQL they are kept in the database, so every server process counts the same failures and
 a restart keeps them (`admin reset-password` drops the username's count); each count is dropped
-once an hour has passed without a failure. If the
-database is too busy to count an attempt within 5 seconds, the attempt is refused (429).
+once an hour has passed without a failure. If the database is too busy to count an attempt
+within 5 seconds, the attempt is refused (429).
 
 The web UI signs the admin in with `POST /api/v1/session`: an HttpOnly, SameSite=Lax cookie that
 ends after 7 days without use or 30 days at most, and that only works on `/api` (never on `/mcp`).
 Lost the password? Run `exactdocs admin reset-password` on the machine (same options as
 `admin create`): it sets a new password, signs the admin out everywhere and revokes
 the API tokens. If sign-ins are throttled meanwhile (429): on SQLite, restart the server to
-clear the throttle; on PostgreSQL, the command already cleared the username's count, so the new
-password works straight away on every server process (the client addresses' counts stay).
+clear the throttle. On PostgreSQL the command also clears the username's count, so the new
+password works straight away on every server process (the client addresses' counts stay),
+unless it warns that the sign-in throttle was busy or failed: the password has changed all the
+same, so run the command again (that is safe) or wait out the `Retry-After`.
 
 Then add your first library in the UI (**Add library**: URL, ref, paths) or over REST, as in the
 walkthrough above. The import runs as a background job whose progress, skipped files and problems

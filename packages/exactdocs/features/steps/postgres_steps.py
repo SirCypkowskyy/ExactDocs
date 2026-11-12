@@ -249,6 +249,7 @@ def step_reset_on_postgres(context: Context, username: str) -> None:
     )
     assert done.returncode == 0, done.stdout + done.stderr
     assert RESET["password"] not in done.stdout + done.stderr
+    assert "warning" not in done.stderr, done.stderr  # the username's count was cleared
 
 
 @then(

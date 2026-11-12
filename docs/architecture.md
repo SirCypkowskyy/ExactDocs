@@ -656,8 +656,10 @@ only its SHA-256 is stored, so a leaked database holds no usable token. A sessio
 kernel `Clock`); using it writes `last_used_at` at most once an hour. Signing out deletes the row,
 so a copied cookie dies too, and `exactdocs admin reset-password` changes the hash first and then
 deletes all the account's sessions, then drops the username's throttle count
-(`FailedSignInLog.forget`; this reaches the servers only on PostgreSQL, where the log is shared). CSRF: SameSite=Lax plus the app-wide `OriginCheck` (foreign
-`Origin` on an unsafe request is 403).
+(`FailedSignInLog.forget`; this reaches the servers only on PostgreSQL, where the log is
+shared, and a busy or failing log only makes the command warn, as the reset is already done).
+CSRF: SameSite=Lax plus the app-wide `OriginCheck` (foreign `Origin` on an unsafe request is
+403).
 
 "Who is the caller" is one dependency, `identity.adapters.driving.http.build_current_caller`,
 applied to the whole protected router in `bootstrap/http.py`; new domain routers go there, and

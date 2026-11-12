@@ -67,6 +67,22 @@ class ResetPasswordCommand(_Dto):
     password: SecretStr = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
 
 
+ThrottleReset = Literal["cleared", "busy", "failed"]
+"""What became of a username's sign-in throttle count when its password was reset."""
+
+
+class PasswordReset(_Dto):
+    """The outcome of a password reset: the password, sessions and tokens are always done."""
+
+    account: AccountSummary
+    """The account whose password changed, with its stored (normalised) username."""
+    throttle: ThrottleReset
+    """What became of the username's sign-in throttle count: ``cleared`` (or there was none),
+    ``busy`` (the throttle could not take its turn in time, so the count stays until it is
+    waited out) or ``failed`` (another error; the count may stay). Running the reset again is
+    safe in either case."""
+
+
 class SessionGrant(_Dto):
     """A new session. ``token`` is the only copy of the secret; hand it to the browser."""
 

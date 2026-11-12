@@ -119,8 +119,8 @@ async def test_refunding_the_only_attempt_leaves_no_record(log: FailedSignInLog)
 async def test_forget_drops_one_record_and_tolerates_a_missing_one(log: FailedSignInLog) -> None:
     await log.charge(["address:a", "username:ada"], START)
 
-    await log.forget("username:ada")
-    await log.forget("username:ada")
+    assert await log.forget("username:ada") is True
+    assert await log.forget("username:ada") is True  # nothing left to drop: still done
 
     assert await log.get("username:ada") is None
     assert await log.get("address:a") is not None
@@ -243,6 +243,18 @@ async def test_a_charge_that_waits_too_long_for_another_process_is_refused_uncou
 
     assert wait == impatient.turn_timeout  # PostgreSQL's lock_timeout ran out: fail closed
     assert await impatient.get("address:a") is None
+
+
+async def test_a_forget_that_waits_too_long_for_its_turn_says_so_and_keeps_the_count(
+    sql_log: SqliteFailedSignInLog,
+) -> None:
+    impatient = SqliteFailedSignInLog(engine=sql_log.engine, turn_timeout=timedelta(seconds=0.2))
+    await impatient.charge(["username:ada"], START)
+    async with impatient._turn(["username:ada"]):  # ruff: ignore[private-member-access]
+        forgotten = await impatient.forget("username:ada")
+
+    assert forgotten is False
+    assert await impatient.get("username:ada") == FailedSignIns(count=1, last_at=START)
 
 
 async def test_forget_waits_for_a_charge_holding_the_turn(sql_log: SqliteFailedSignInLog) -> None:

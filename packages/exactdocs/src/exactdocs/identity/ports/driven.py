@@ -130,8 +130,13 @@ class FailedSignInLog(Protocol):
         """Return the record under ``key``, or ``None``."""
         ...
 
-    async def forget(self, key: str) -> None:
-        """Drop the record under ``key`` (nothing happens when there is none)."""
+    async def forget(self, key: str) -> bool:
+        """Drop the record under ``key`` (nothing happens when there is none).
+
+        Returns:
+            ``True`` once no record is left under ``key`` (dropped, or there was none);
+            ``False`` when the log was too busy to take the key's turn and skipped it.
+        """
         ...
 
     async def remember_sign_in(self, key: str, now: datetime) -> None:
