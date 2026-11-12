@@ -1,6 +1,9 @@
+import asyncio
+import logging
+import weakref
 from collections.abc import AsyncGenerator, Iterable, Sequence
-from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from contextlib import AsyncExitStack, asynccontextmanager
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -21,12 +24,16 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.engine import Row
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from exactdocs.identity.constants import (
+    _LOCK_NOT_AVAILABLE,
     _SIGN_IN_LOCKS,
     FORGET_FAILURES_AFTER,
+    MAX_CONCURRENT_SIGN_IN_TURNS,
     REMEMBER_SIGN_INS_FOR,
+    SIGN_IN_TURN_TIMEOUT,
 )
 from exactdocs.identity.models import (
     Account,
@@ -89,7 +96,14 @@ known_sign_ins = Table(
     Column("key", Text, primary_key=True),  # `<username>@address:...`
     Column("signed_in_at", Text, nullable=False),  # see `_stamp`
 )
-_lock_key = text("SELECT pg_advisory_xact_lock(:space, hashtext(:key))")
+# One statement takes every key's lock, in the order of the lock ids (not of the keys: two keys
+# whose `hashtext` collides share an id, and key order could then cross another attempt's).
+# PostgreSQL evaluates a volatile function in the select list after the sort.
+_lock_keys = text(
+    "SELECT pg_advisory_xact_lock(:space, h) "
+    "FROM (SELECT DISTINCT hashtext(k) AS h FROM unnest(CAST(:keys AS text[])) AS k) AS locks "
+    "ORDER BY h"
+)
 
 
 def _stamp(moment: datetime) -> str:
@@ -329,6 +343,14 @@ class SqliteFailedSignInLog:
     so two attempts cannot deadlock), on SQLite ``BEGIN IMMEDIATE``. Attempts on other keys do
     not wait, nor do the instance's other writers (it does not take their write turn).
 
+    Before taking a connection, an attempt first waits its turn in the process: one
+    ``asyncio.Lock`` per key, then one of ``max_concurrent`` slots. So a flood of attempts on one
+    username holds one connection per process, not the whole pool, and the instance's other
+    readers are not held up. Each wait (in the process, then PostgreSQL's ``lock_timeout``) lasts
+    at most ``turn_timeout``. When it runs out, ``charge`` fails closed: the attempt is refused
+    with ``turn_timeout`` as its wait and nothing is counted. ``refund``, ``forget`` and
+    ``remember_sign_in`` only make the throttle more lenient, so they are skipped (and logged).
+
     Old rows are pruned when one is written, without a background job: a charge deletes the
     counts with no failure for ``FORGET_FAILURES_AFTER`` (they no longer hold anyone back), a
     remembered sign-in those older than ``REMEMBER_SIGN_INS_FOR``. On PostgreSQL the prune skips
@@ -337,6 +359,15 @@ class SqliteFailedSignInLog:
 
     engine: AsyncEngine
     """The database every process of the instance uses."""
+    max_concurrent: int = MAX_CONCURRENT_SIGN_IN_TURNS
+    """Turns one process runs at once, each holding a connection."""
+    turn_timeout: timedelta = SIGN_IN_TURN_TIMEOUT
+    """Longest wait for a turn, in the process and then in the database."""
+    _queues: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, _TurnQueue] = field(
+        default_factory=weakref.WeakKeyDictionary, init=False, repr=False
+    )
+    """One queue per event loop: asyncio's locks bind to the first loop they wait on, and the log
+    may outlive a loop (tests, CLI), as the hasher's semaphores do."""
 
     async def charge(self, keys: Sequence[str], now: datetime) -> timedelta:
         """Count one attempt against every key unless one must wait; return the longest wait.
@@ -350,22 +381,11 @@ class SqliteFailedSignInLog:
         """
         if not keys:  # no address and no valid username: nothing to count against
             return timedelta(0)
-        async with self._turn(keys) as connection:
-            records = await self._records(connection, keys)
-            wait = max((r.wait(now) for r in records.values()), default=timedelta(0))
-            if wait > timedelta(0):
-                return wait
-            counted = {
-                key: (
-                    records[key].plus_one(now)
-                    if key in records
-                    else FailedSignIns(count=1, last_at=now)
-                )
-                for key in dict.fromkeys(keys)
-            }
-            await self._replace(connection, counted)
-            await _prune(connection, failed_sign_ins.c.last_at, now - FORGET_FAILURES_AFTER)
-        return timedelta(0)
+        try:
+            async with self._turn(keys) as connection:
+                return await self._charge(connection, keys, now)
+        except _TurnTimeoutError:
+            return self.turn_timeout  # fail closed: refused, and nothing counted
 
     async def refund(self, key: str, charged_at: datetime) -> None:
         """Take back the attempt charged under ``key`` at ``charged_at``.
@@ -374,16 +394,11 @@ class SqliteFailedSignInLog:
             key: The throttle key.
             charged_at: When the attempt to take back was charged.
         """
-        async with self._turn([key]) as connection:
-            record = (await self._records(connection, [key])).get(key)
-            if record is None:
-                return
-            if (fewer := record.refunded(charged_at)) is None:
-                await connection.execute(
-                    delete(failed_sign_ins).where(failed_sign_ins.c.key == key)
-                )
-            else:
-                await self._replace(connection, {key: fewer})
+        try:
+            async with self._turn([key]) as connection:
+                await self._refund(connection, key, charged_at)
+        except _TurnTimeoutError:
+            logger.warning("Sign-in throttle busy: an attempt was not refunded")
 
     async def get(self, key: str) -> FailedSignIns | None:
         """Return the record under ``key``, or ``None``.
@@ -403,8 +418,14 @@ class SqliteFailedSignInLog:
         Args:
             key: The throttle key.
         """
-        async with self.engine.begin() as connection:
-            await connection.execute(delete(failed_sign_ins).where(failed_sign_ins.c.key == key))
+        try:
+            # In the key's turn: a charge reading the count meanwhile would write it back after.
+            async with self._turn([key]) as connection:
+                await connection.execute(
+                    delete(failed_sign_ins).where(failed_sign_ins.c.key == key)
+                )
+        except _TurnTimeoutError:
+            logger.warning("Sign-in throttle busy: a username's count was not reset")
 
     async def remember_sign_in(self, key: str, now: datetime) -> None:
         """Remember the sign-in at ``now``, pruning those too old to count.
@@ -413,12 +434,15 @@ class SqliteFailedSignInLog:
             key: The sign-in (a username at an address).
             now: When it succeeded.
         """
-        async with self._turn([f"known:{key}"]) as connection:
-            await connection.execute(delete(known_sign_ins).where(known_sign_ins.c.key == key))
-            await connection.execute(
-                insert(known_sign_ins).values(key=key, signed_in_at=_stamp(now))
-            )
-            await _prune(connection, known_sign_ins.c.signed_in_at, now - REMEMBER_SIGN_INS_FOR)
+        try:
+            async with self._turn([f"known:{key}"]) as connection:
+                await connection.execute(delete(known_sign_ins).where(known_sign_ins.c.key == key))
+                await connection.execute(
+                    insert(known_sign_ins).values(key=key, signed_in_at=_stamp(now))
+                )
+                await _prune(connection, known_sign_ins.c.signed_in_at, now - REMEMBER_SIGN_INS_FOR)
+        except _TurnTimeoutError:
+            logger.warning("Sign-in throttle busy: a sign-in was not remembered")
 
     async def signed_in_before(self, key: str, now: datetime) -> bool:
         """Whether ``key`` succeeded within ``REMEMBER_SIGN_INS_FOR`` of ``now``.
@@ -435,6 +459,51 @@ class SqliteFailedSignInLog:
             last = (await connection.execute(query)).scalar()
         return last is not None and now - datetime.fromisoformat(last) < REMEMBER_SIGN_INS_FOR
 
+    async def _charge(
+        self, connection: AsyncConnection, keys: Sequence[str], now: datetime
+    ) -> timedelta:
+        """``charge``'s read-then-write, in the transaction holding the turn on ``keys``.
+
+        Args:
+            connection: The connection, in that transaction.
+            keys: The throttle keys the attempt counts against.
+            now: When the attempt is made.
+
+        Returns:
+            The longest wait among the keys; when above zero nothing was counted.
+        """
+        records = await self._records(connection, keys)
+        wait = max((r.wait(now) for r in records.values()), default=timedelta(0))
+        if wait > timedelta(0):
+            return wait
+        counted = {
+            key: (
+                records[key].plus_one(now)
+                if key in records
+                else FailedSignIns(count=1, last_at=now)
+            )
+            for key in dict.fromkeys(keys)
+        }
+        await self._replace(connection, counted)
+        await _prune(connection, failed_sign_ins.c.last_at, now - FORGET_FAILURES_AFTER)
+        return timedelta(0)
+
+    async def _refund(self, connection: AsyncConnection, key: str, charged_at: datetime) -> None:
+        """``refund``'s read-then-write, in the transaction holding the turn on ``key``.
+
+        Args:
+            connection: The connection, in that transaction.
+            key: The throttle key.
+            charged_at: When the attempt to take back was charged.
+        """
+        record = (await self._records(connection, [key])).get(key)
+        if record is None:
+            return
+        if (fewer := record.refunded(charged_at)) is None:
+            await connection.execute(delete(failed_sign_ins).where(failed_sign_ins.c.key == key))
+        else:
+            await self._replace(connection, {key: fewer})
+
     @asynccontextmanager
     async def _turn(self, keys: Iterable[str]) -> AsyncGenerator[AsyncConnection]:
         """Begin a transaction that holds the turn on ``keys`` until it ends.
@@ -444,16 +513,61 @@ class SqliteFailedSignInLog:
 
         Yields:
             The connection, in its transaction.
+
+        Raises:
+            _TurnTimeoutError: The turn did not come within ``turn_timeout``.
         """
-        async with self.engine.connect() as connection:
-            postgres = connection.dialect.name == "postgresql"
-            if not postgres:
-                await connection.execution_options(begin_immediate=True)
-            async with connection.begin():
-                if postgres:
-                    for key in sorted(set(keys)):
-                        await connection.execute(_lock_key, {"space": _SIGN_IN_LOCKS, "key": key})
-                yield connection
+        ordered = sorted(set(keys))
+        queue = self._queue()
+        async with AsyncExitStack() as held:
+            try:
+                async with asyncio.timeout(self.turn_timeout.total_seconds()):
+                    for key in ordered:  # in key order, so two attempts cannot deadlock here
+                        await held.enter_async_context(queue.lock(key))
+                    await held.enter_async_context(queue.connections)
+            except TimeoutError as error:
+                raise _TurnTimeoutError from error
+            async with self.engine.connect() as connection:
+                postgres = connection.dialect.name == "postgresql"
+                if not postgres:
+                    await connection.execution_options(begin_immediate=True)
+                async with connection.begin():
+                    if postgres:
+                        await self._lock(connection, ordered)
+                    yield connection
+
+    def _queue(self) -> _TurnQueue:
+        """Return this event loop's queue, making it on first use.
+
+        Returns:
+            The queue.
+        """
+        loop = asyncio.get_running_loop()
+        queue = self._queues.get(loop)
+        if queue is None:
+            queue = self._queues[loop] = _TurnQueue(
+                connections=asyncio.Semaphore(self.max_concurrent)
+            )
+        return queue
+
+    async def _lock(self, connection: AsyncConnection, keys: list[str]) -> None:
+        """Take the PostgreSQL advisory lock of every key, waiting at most ``turn_timeout``.
+
+        Args:
+            connection: The connection, in the transaction the locks last for.
+            keys: The throttle keys.
+
+        Raises:
+            _TurnTimeoutError: Another process held a lock for longer.
+        """
+        milliseconds = int(self.turn_timeout.total_seconds() * 1000)
+        await connection.execute(text(f"SET LOCAL lock_timeout = {milliseconds}"))
+        try:
+            await connection.execute(_lock_keys, {"space": _SIGN_IN_LOCKS, "keys": keys})
+        except OperationalError as error:
+            if getattr(error.orig, "sqlstate", None) != _LOCK_NOT_AVAILABLE:
+                raise
+            raise _TurnTimeoutError from error
 
     @staticmethod
     async def _records(
@@ -505,6 +619,36 @@ class SqliteFailedSignInLog:
         )
 
 
+class _TurnTimeoutError(Exception):
+    """A sign-in attempt waited ``turn_timeout`` for its turn on its keys without getting it."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _TurnQueue:
+    """Where one process's sign-in attempts wait for their turn before taking a connection."""
+
+    connections: asyncio.Semaphore
+    """Turns that may hold a connection at once."""
+    keys: weakref.WeakValueDictionary[str, asyncio.Lock] = field(
+        default_factory=weakref.WeakValueDictionary
+    )
+    """One lock per key, dropped once no attempt holds or awaits it."""
+
+    def lock(self, key: str) -> asyncio.Lock:
+        """Return the key's lock, making it if no attempt holds it.
+
+        Args:
+            key: The throttle key.
+
+        Returns:
+            The lock.
+        """
+        lock = self.keys.get(key)
+        if lock is None:
+            lock = self.keys[key] = asyncio.Lock()
+        return lock
+
+
 async def _prune(connection: AsyncConnection, moment: Column[str], before: datetime) -> None:
     """Delete the rows of ``moment``'s table whose ``moment`` is at or before ``before``.
 
@@ -520,3 +664,6 @@ async def _prune(connection: AsyncConnection, moment: Column[str], before: datet
     table = moment.table
     stale = select(table.c.key).where(moment <= _stamp(before)).with_for_update(skip_locked=True)
     await connection.execute(delete(table).where(table.c.key.in_(stale)))
+
+
+logger = logging.getLogger(__name__)

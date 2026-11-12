@@ -173,23 +173,37 @@ def step_second_serves(context: Context) -> None:
     assert slots == [(0,), (1,)], slots
 
 
-@when('{count:d} sign-ins for "{username}" fail, alternating between the processes')
+def _from(address: str) -> dict[str, str]:
+    """Headers making the request come from ``address`` (the processes trust 127.0.0.1)."""
+    return {"X-Forwarded-For": address}
+
+
+@when(
+    '{count:d} sign-ins for "{username}" fail, each from a different address, '
+    "alternating between the processes"
+)
 def step_fail_alternating(context: Context, count: int, username: str) -> None:
     with httpx.Client(base_url=context.first, timeout=30) as client:
         client.post("/api/v1/setup", json=CREDENTIALS).raise_for_status()
     wrong = {"username": username, "password": "not the admin's password"}
     for n in range(count):
         base = (context.first, context.second)[n % 2]
-        response = httpx.post(f"{base}/api/v1/session", json=wrong, timeout=30)
+        # A new address each time: no address count reaches its limit, only the username's.
+        response = httpx.post(
+            f"{base}/api/v1/session", json=wrong, headers=_from(f"10.0.0.{n + 1}"), timeout=30
+        )
         assert response.status_code == httpx.codes.UNAUTHORIZED, response.text
 
 
-@then('the next sign-in for "{username}" is throttled on both processes')
+@then('the next sign-in for "{username}", from a new address, is throttled on both processes')
 def step_throttled_on_both(context: Context, username: str) -> None:
     right = {**CREDENTIALS, "username": username}
-    for base in (context.first, context.second):
-        # Even the right password: the attempt is refused before it is checked.
-        response = httpx.post(f"{base}/api/v1/session", json=right, timeout=30)
+    for n, base in enumerate((context.first, context.second)):
+        # Even the right password: the attempt is refused before it is checked, by the shared
+        # username count alone (this address has never failed).
+        response = httpx.post(
+            f"{base}/api/v1/session", json=right, headers=_from(f"10.0.1.{n + 1}"), timeout=30
+        )
         assert response.status_code == httpx.codes.TOO_MANY_REQUESTS, response.text
         assert response.json()["error"] == "rate_limited", response.text
         assert int(response.headers["retry-after"]) > 0, response.headers

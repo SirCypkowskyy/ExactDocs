@@ -11,8 +11,8 @@ Feature: A shared instance runs on PostgreSQL with several server processes
 
   Scenario: Failed sign-ins count on every process
     Given two ExactDocs processes use the same PostgreSQL database
-    When 5 sign-ins for "admin" fail, alternating between the processes
-    Then the next sign-in for "admin" is throttled on both processes
+    When 5 sign-ins for "admin" fail, each from a different address, alternating between the processes
+    Then the next sign-in for "admin", from a new address, is throttled on both processes
 
   Scenario: DBOS needs no second database
     Given the database role may not create databases

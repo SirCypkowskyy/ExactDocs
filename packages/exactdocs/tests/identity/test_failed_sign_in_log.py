@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.pool import QueuePool
 
 from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
@@ -189,3 +190,70 @@ async def test_old_sign_ins_are_pruned_when_another_is_remembered(
     async with sql_log.engine.connect() as connection:
         rows = await connection.execute(text("SELECT key FROM identity_known_sign_ins"))
     assert {key for (key,) in rows} == {"ada@address:recent", "ada@address:new"}
+
+
+@pytest.fixture(params=[backend for backend in SQL_BACKENDS if backend == "postgres"])
+async def postgres_log(request: pytest.FixtureRequest) -> AsyncIterator[SqliteFailedSignInLog]:
+    async with _sql_log(request) as sql:
+        yield sql
+
+
+async def test_a_flood_on_one_username_leaves_the_pool_to_other_queries(
+    sql_log: SqliteFailedSignInLog,
+) -> None:
+    engine = sql_log.engine
+    other = SqliteFailedSignInLog(engine=engine)  # another process, holding the username's turn
+    async with other._turn(["username:admin"]):  # ruff: ignore[private-member-access]
+        flood = [
+            asyncio.create_task(sql_log.charge([f"address:10.0.0.{n}", "username:admin"], START))
+            for n in range(40)  # more than the pool's 5 connections and 10 of overflow
+        ]
+        await asyncio.sleep(0.2)  # every attempt is now waiting its turn
+        pool = engine.pool
+        assert isinstance(pool, QueuePool)
+        checked_out = pool.checkedout()
+        async with asyncio.timeout(1), engine.connect() as connection:
+            assert (await connection.execute(text("SELECT 1"))).scalar() == 1
+    waits = await asyncio.gather(*flood)
+
+    assert checked_out <= 2  # the holder's connection and the one attempt in the database
+    assert waits.count(timedelta(0)) == FREE_FAILURES
+
+
+async def test_a_charge_that_waits_too_long_for_its_turn_is_refused_uncounted(
+    sql_log: SqliteFailedSignInLog,
+) -> None:
+    impatient = SqliteFailedSignInLog(engine=sql_log.engine, turn_timeout=timedelta(seconds=0.2))
+    async with impatient._turn(["username:ada"]):  # ruff: ignore[private-member-access]
+        wait = await impatient.charge(["address:a", "username:ada"], START)
+
+    assert wait == impatient.turn_timeout
+    assert await impatient.get("address:a") is None
+    assert await impatient.get("username:ada") is None
+
+
+async def test_a_charge_that_waits_too_long_for_another_process_is_refused_uncounted(
+    postgres_log: SqliteFailedSignInLog,
+) -> None:
+    impatient = SqliteFailedSignInLog(
+        engine=postgres_log.engine, turn_timeout=timedelta(seconds=0.2)
+    )
+    async with postgres_log._turn(["username:ada"]):  # ruff: ignore[private-member-access]
+        wait = await impatient.charge(["address:a", "username:ada"], START)
+
+    assert wait == impatient.turn_timeout  # PostgreSQL's lock_timeout ran out: fail closed
+    assert await impatient.get("address:a") is None
+
+
+async def test_forget_waits_for_a_charge_holding_the_turn(sql_log: SqliteFailedSignInLog) -> None:
+    other = SqliteFailedSignInLog(engine=sql_log.engine)  # the right password, on another process
+    await sql_log.charge(["username:ada"], START)
+    async with sql_log._turn(["username:ada"]) as connection:  # ruff: ignore[private-member-access]
+        forgetting = asyncio.create_task(other.forget("username:ada"))
+        await asyncio.sleep(0.2)
+        assert not forgetting.done()
+        mid_charge = {"username:ada": FailedSignIns(count=2, last_at=LATER)}
+        await sql_log._replace(connection, mid_charge)
+    await forgetting
+
+    assert await sql_log.get("username:ada") is None

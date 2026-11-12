@@ -231,10 +231,11 @@ into a username in the last 30 days is held to its own count only, not to the us
 others failing for the admin's username cannot lock the admin out of a machine they already
 use; a new address still waits. Behind a reverse proxy, list it in
 `EXACTDOCS_FORWARDED_ALLOW_IPS`, so the throttle counts the client's address rather than the
-proxy's. On SQLite the counts are kept in the server's memory: restarting the server clears them, and
-nothing else does (`admin reset-password` runs in another process and cannot). On PostgreSQL they
-are kept in the database, so every server process counts the same failures and a restart keeps
-them; each count is dropped once an hour has passed without a failure.
+proxy's. On SQLite the counts are kept in the server's memory: restarting the server clears
+them, and nothing else does (`admin reset-password` runs in another process and cannot). On
+PostgreSQL they are kept in the database, so every server process counts the same failures and
+a restart keeps them; each count is dropped once an hour has passed without a failure. If the
+database is too busy to count an attempt within 5 seconds, the attempt is refused (429).
 
 The web UI signs the admin in with `POST /api/v1/session`: an HttpOnly, SameSite=Lax cookie that
 ends after 7 days without use or 30 days at most, and that only works on `/api` (never on `/mcp`).

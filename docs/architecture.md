@@ -548,6 +548,7 @@ erDiagram
         text key PK "address:... or username:..."
         int failures
         text last_at "pruned after an hour"
+        text previous_at "nullable, restored by a refund"
     }
     identity_known_sign_ins {
         text key PK "username@address"
@@ -629,8 +630,12 @@ instance (TEAM-01), it is `SqliteFailedSignInLog` (`identity_failed_sign_ins`,
 `identity_known_sign_ins`, which exist but stay empty on SQLite; portable SQL, also run on SQLite
 by the contract tests): each
 read-then-write is one transaction that first takes a transaction-level advisory lock per key
-(`_SIGN_IN_LOCKS`, in key order), so `charge` stays atomic across processes without taking the
-instance's write turn. Old rows are pruned on write, with no background job: a charge deletes
+(`_SIGN_IN_LOCKS`, all in one statement ordered by lock id), so `charge` stays atomic across
+processes without taking the instance's write turn. Before it takes a connection, an attempt
+waits in the process (an `asyncio.Lock` per key, then one of `MAX_CONCURRENT_SIGN_IN_TURNS`
+slots), so a flood on one username holds one pooled connection, not the pool. Each wait lasts
+at most `SIGN_IN_TURN_TIMEOUT` (in the process, then as `lock_timeout`); a `charge` that runs
+out fails closed (refused, uncounted), and a refund, reset or remembered sign-in is skipped. Old rows are pruned on write, with no background job: a charge deletes
 counts quiet for `FORGET_FAILURES_AFTER`, a remembered sign-in those older than
 `REMEMBER_SIGN_INS_FOR`, skipping rows another transaction has locked (`SKIP LOCKED`).
 
