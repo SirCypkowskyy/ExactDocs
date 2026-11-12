@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import math
 import struct
 import sys
@@ -75,6 +76,8 @@ from exactdocs.retrieval.ports.driven import (
     HypotheticalAnswerCache,
     SpendLedger,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1120,21 +1123,45 @@ class ReadOnlySpendLedger:
     """Implements ``ports.driven.SpendLedger`` over a database this process may not write.
 
     A stdio MCP process opens the database read-only: it reads the shared rows, so the
-    instance's and the libraries' budgets hold, and keeps what it spends itself in memory,
-    added to what it reads, for as long as it runs.
+    instance's and the libraries' budgets hold. It adds what it spends to those rows through
+    ``writer``, the one narrow writable connection it has (#274), with the same keys and replay
+    tokens as a server; when there is no writer, or a write fails, it keeps that spend in memory
+    instead, added to what it reads, for as long as it runs.
     """
 
     shared: SpendLedger
     """The instance's ``retrieval_ai_spend`` rows, read only."""
+    writer: SpendLedger | None = None
+    """The same rows over the ledger's own writable connection; ``None``: none is open."""
     local: InMemorySpendLedger = field(default_factory=InMemorySpendLedger)
-    """What this process spent."""
+    """What this process spent and could not write to the shared rows."""
 
     async def add(self, entries: Sequence[SpendEntry]) -> None:
-        """Keep the usage in this process.
+        """Add the usage to the shared rows, or keep it in this process if that fails.
+
+        A failed write never fails the AI call that spent: it is logged and counted here. An
+        entry whose replay token this process already kept is skipped before the write: the
+        failed transaction may have left the token unclaimed in the shared rows (or, on a lost
+        ``COMMIT``, claimed it), so writing it now could count it twice in what this process reads.
 
         Args:
             entries: The usage.
         """
+        kept = self.local.replays
+        entries = [e for e in entries if e.token is None or (e.token, e.key) not in kept]
+        if not entries:
+            return
+        if self.writer is not None:
+            try:
+                await self.writer.add(entries)
+            except Exception:
+                _logger.warning(
+                    "Could not add this process's AI spend to the shared ledger; it is counted "
+                    "in this process only until it exits.",
+                    exc_info=True,
+                )
+            else:
+                return
         await self.local.add(entries)
 
     async def get(self, keys: Sequence[SpendKey]) -> dict[SpendKey, SpendEntry]:

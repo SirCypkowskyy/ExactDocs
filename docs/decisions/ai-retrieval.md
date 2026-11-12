@@ -410,6 +410,20 @@ admin-only; `notes` and `off` may stay with the library's owner.
       bump that changes it fails the test instead of splitting the spend over two sets of rows.
     - A check runs before each call or batch, so a burst can overshoot by at most the calls
       already in flight.
+    - **stdio MCP processes write the ledger too** (#274, decided by the owner: a narrow
+      writable connection). `serve --stdio` opens the database read-only, and opens one more
+      engine for `retrieval_ai_spend` and `retrieval_ai_spend_replays` only, with the same keys
+      and the same replay deduplication as a server (the same `SqliteSpendLedger`). On SQLite
+      that engine opens the existing file with `mode=rw` and a `sqlite3` authorizer that denies
+      every insert, update or delete outside those two tables, every schema change, `ATTACH`, and
+      every `PRAGMA` but a read of a short allow-list (no `wal_checkpoint` or
+      `incremental_vacuum`). On PostgreSQL it is the same role without
+      `default_transaction_read_only`: the limit is the code path (only the ledger is given that
+      engine), not the database. This is the one documented exception to stdio's read-only
+      guarantee. A failed write is logged and the spend kept in the process's memory
+      (`ReadOnlySpendLedger`), so the AI call never fails for it. Rejected: handing the spend to
+      the server over its API (stdio needs no running server or token) and a queued file the
+      server imports (spend unseen until the import, and a second format to keep).
 - **Per-call limits:** pydantic-ai `UsageLimits` on every call; for the agent also
   `max_tool_calls` and Monty's resource limits.
 - **Rate limit:** LLM searches per minute per caller, enforced inside retrieval so it covers

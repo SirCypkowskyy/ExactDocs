@@ -233,4 +233,5 @@ sequenceDiagram
 ```
 
 `exactdocs serve --stdio` skips all of this: it opens the database read-only and exposes the
-read-only tools only.
+read-only tools only. Its one write is AI spend, added to the shared ledger over a second
+connection that may write that table alone (#274).

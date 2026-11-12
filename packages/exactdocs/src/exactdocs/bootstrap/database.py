@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+import aiosqlite
 from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
@@ -27,6 +28,7 @@ from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor
 from sqlalchemy.exc import ArgumentError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import ConnectionPoolEntry
+from sqlalchemy.util import await_
 
 from exactdocs.bootstrap.cancellation import being_cancelled
 from exactdocs.bootstrap.constants import (
@@ -40,6 +42,10 @@ from exactdocs.bootstrap.constants import (
     POSTGRES_DRIVER,
     SECURE_SSLMODES,
     SESSION_PROBE,
+    SPEND_LEDGER_TABLES,
+    SQLITE_READ_ACTIONS,
+    SQLITE_READ_PRAGMAS,
+    SQLITE_WRITE_ACTIONS,
     SUPABASE_HOSTS,
     SUPABASE_TRANSACTION_PORT,
     WRITE_LOCK,
@@ -110,6 +116,34 @@ def open_database(settings: Settings, *, read_only: bool = False) -> AsyncEngine
 
 
 def _open_read_only(url: URL) -> AsyncEngine:
+    """Open an existing SQLite file read-only (``mode=ro`` and ``PRAGMA query_only``).
+
+    Args:
+        url: The database URL.
+
+    Returns:
+        The engine.
+    """
+    uri = _existing_file(url, mode="ro")
+    engine = create_async_engine(uri, connect_args={"isolation_level": None})
+    event.listen(engine.sync_engine, "connect", _configure_read_only_connection)
+    event.listen(engine.sync_engine, "begin", _begin)
+    return engine
+
+
+def _existing_file(url: URL, *, mode: str) -> URL:
+    """Name an existing SQLite file as a URI opened in this mode; it is never created.
+
+    Args:
+        url: The database URL.
+        mode: SQLite's ``mode`` URI parameter (``ro`` or ``rw``).
+
+    Returns:
+        The file's URI; query parameters of ``EXACTDOCS_DATABASE_URL`` do not carry over.
+
+    Raises:
+        StartupError: The URL names an in-memory database, or no file exists.
+    """
     if not url.database or url.database == ":memory:":
         message = "Read-only access needs a database file, not an in-memory database."
         raise StartupError(message)
@@ -121,16 +155,103 @@ def _open_read_only(url: URL) -> AsyncEngine:
             "that holds it."
         )
         raise StartupError(message)
-    # Only the file is kept: query parameters of EXACTDOCS_DATABASE_URL do not carry over.
-    uri = URL.create(
+    return URL.create(
         url.drivername,
         database=path.resolve().as_uri(),
-        query={"mode": "ro", "uri": "true"},
+        query={"mode": mode, "uri": "true"},
     )
-    engine = create_async_engine(uri, connect_args={"isolation_level": None})
-    event.listen(engine.sync_engine, "connect", _configure_read_only_connection)
+
+
+def open_spend_ledger_database(settings: Settings) -> AsyncEngine:
+    """Return the one engine a read-only (``serve --stdio``) process writes with: its AI spend.
+
+    The process's other engine stays read-only. On SQLite this one opens the existing file with
+    ``mode=rw`` and an authorizer that refuses every write but to ``SPEND_LEDGER_TABLES``, every
+    schema change and attachment, and every ``PRAGMA`` but a read of ``SQLITE_READ_PRAGMAS``. On
+    PostgreSQL it connects as the same role without ``default_transaction_read_only``: only the
+    spend ledger is given it, so the limit there is this code path, not the database. No
+    connection is made yet.
+
+    Args:
+        settings: The instance's settings.
+
+    Returns:
+        The engine.
+
+    Raises:
+        StartupError: The database URL is invalid or names no existing database file.
+    """
+    try:
+        url = make_url(settings.effective_database_url)
+    except ArgumentError as exc:
+        message = "EXACTDOCS_DATABASE_URL is not a valid database URL."
+        raise StartupError(message) from exc
+    if url.get_backend_name() == "postgresql":
+        engine = create_async_engine(
+            url,
+            pool_pre_ping=True,
+            pool_size=1,  # it only adds spend, a few rows now and then
+            max_overflow=1,
+        )
+        event.listen(engine.sync_engine, "begin", _begin_postgres)
+        return engine
+    engine = create_async_engine(
+        _existing_file(url, mode="rw"), connect_args={"isolation_level": None}
+    )
+    event.listen(engine.sync_engine, "connect", _configure_spend_ledger_connection)
     event.listen(engine.sync_engine, "begin", _begin)
     return engine
+
+
+def _configure_spend_ledger_connection(
+    dbapi_connection: DBAPIConnection, record: ConnectionPoolEntry
+) -> None:
+    """Make a connection wait for locks, then allow it to write the spend ledger only.
+
+    Args:
+        dbapi_connection: SQLAlchemy's adapter over the aiosqlite connection.
+        record: The pool's record of it, which holds the aiosqlite connection itself.
+    """
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+    finally:
+        cursor.close()
+    driver = record.driver_connection
+    if not isinstance(driver, aiosqlite.Connection):
+        message = "the spend ledger's SQLite connection is not an aiosqlite connection"
+        raise TypeError(message)
+    await_(driver.set_authorizer(spend_ledger_authorizer))
+
+
+def spend_ledger_authorizer(
+    action: int,
+    first: str | None,
+    second: str | None,
+    database: str | None,
+    trigger: str | None,
+) -> int:
+    """SQLite authorizer of the spend ledger's connection: reads anywhere, writes to the ledger.
+
+    Args:
+        action: What the statement does (``sqlite3.SQLITE_*``).
+        first: The table of a read or write, or the PRAGMA's name.
+        second: The column, or the value a PRAGMA is set to.
+        database: The schema: writes go to ``main`` only, never to a ``temp`` table of the same
+            name.
+        trigger: The trigger or view the access comes from.
+
+    Returns:
+        ``SQLITE_OK`` or ``SQLITE_DENY``.
+    """
+    del trigger
+    if action in SQLITE_READ_ACTIONS:
+        return sqlite3.SQLITE_OK
+    if action in SQLITE_WRITE_ACTIONS and first in SPEND_LEDGER_TABLES and database == "main":
+        return sqlite3.SQLITE_OK
+    if action == sqlite3.SQLITE_PRAGMA and first in SQLITE_READ_PRAGMAS and second is None:
+        return sqlite3.SQLITE_OK  # only reads it
+    return sqlite3.SQLITE_DENY
 
 
 def _open_postgres(url: URL, settings: Settings, *, read_only: bool) -> AsyncEngine:
