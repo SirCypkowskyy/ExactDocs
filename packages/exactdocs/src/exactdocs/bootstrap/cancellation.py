@@ -11,6 +11,10 @@ def being_cancelled() -> bool:
     ``CancelledError``. A background loop that logs errors and goes on must stop on it all the
     same, so its ``except Exception`` re-raises when this is true (#308).
 
+    The flag also stays set after a ``CancelledError`` that was caught and not ``uncancel()``-ed
+    (``asyncio.timeout`` and ``wait_for`` do uncancel): an ordinary error after it would then end
+    the loop too. Nothing in the upkeep's path catches one that way; keep it so.
+
     Returns:
         ``True`` while the task has a cancellation request it has not taken back.
     """

@@ -56,6 +56,7 @@ from exactdocs.bootstrap.constants import (
     KNOWN_HOSTS_FILE,
     LOCAL_PROFILE,
     LOCAL_PROFILE_HINT,
+    UPKEEP_RECANCEL_SECONDS,
     UPKEEP_STOP_SECONDS,
     WORK_DIR,
 )
@@ -446,6 +447,16 @@ def vector_index(
     if sqlite_extension is None:
         return SqliteVectorIndex(engine=engine)
     return SqliteVectorIndex(engine=engine, extension=sqlite_extension)
+
+
+def _log_late_failure(task: asyncio.Task[None]) -> None:
+    """Read the failure of an upkeep the stop left behind, so it is logged, not left unread.
+
+    Args:
+        task: The upkeep, done.
+    """
+    if not task.cancelled() and (error := task.exception()) is not None:
+        logger.warning("the nightly upkeep left behind failed", exc_info=error)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1005,7 +1016,9 @@ class Container:
         """Queue the missing embedding in the background while the block runs, and every day.
 
         A start never waits for the coverage of every version; stopping cancels what is left
-        and waits for it at most ``UPKEEP_STOP_SECONDS``, then stops without it (logged).
+        and waits for it at most ``UPKEEP_STOP_SECONDS``, then cancels it again and waits at most
+        ``UPKEEP_RECANCEL_SECONDS`` more, then stops without it (logged): its connection may then
+        outlive the engine, and a late failure of it is logged, not left unread.
         Then the queueing runs again just after each UTC midnight, when the day's (and on the
         first, the month's) spend windows reset: a version an exhausted budget left unembedded
         (its job stopped with ``ai_budget_reached``) is retried then.
@@ -1022,8 +1035,16 @@ class Container:
             done, _ = await asyncio.wait({queueing}, timeout=UPKEEP_STOP_SECONDS)
             if not done:
                 logger.warning(
-                    "the nightly upkeep did not stop within %s s; the server stops without it",
+                    "the nightly upkeep did not stop within %s s; cancelling it again",
                     UPKEEP_STOP_SECONDS,
+                )
+                queueing.cancel()  # e.g. it caught the first while releasing its connection
+                done, _ = await asyncio.wait({queueing}, timeout=UPKEEP_RECANCEL_SECONDS)
+            if not done:
+                queueing.add_done_callback(_log_late_failure)
+                logger.warning(
+                    "the nightly upkeep did not stop after a second cancellation; the server "
+                    "stops without it, and its connection may outlive the engine"
                 )
             elif not queueing.cancelled() and (error := queueing.exception()) is not None:
                 logger.warning("the nightly upkeep failed while it stopped", exc_info=error)

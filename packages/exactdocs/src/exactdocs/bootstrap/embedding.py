@@ -143,7 +143,8 @@ class RequeueLeader:
 
     A session that failed (PostgreSQL restarted, a pooler or ``idle_session_timeout`` closed it)
     is dropped and a new one opened: the lock may have gone to another process meanwhile, so it
-    is never assumed to be held.
+    is never assumed to be held. A failure that replaced a cancellation is raised instead: a
+    stopping server opens no new session (#308).
     """
 
     open_session: Callable[[], Awaitable[LockSession]]
@@ -167,7 +168,7 @@ class RequeueLeader:
                 self.leading = await self.session.holds_lock(held_before=self.leading)
             except Exception:
                 await self.drop()
-                if attempt:
+                if attempt or being_cancelled():  # no new session while the server stops (#308)
                     raise
             else:
                 return self.leading

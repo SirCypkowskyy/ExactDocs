@@ -493,9 +493,13 @@ WINDOW_RESET_GRACE_SECONDS: Final[float] = 5.0
 REQUEUE_JITTER_SECONDS: Final[float] = 300.0
 """At most this many seconds more, at random, before the midnight re-queue: processes and
 instances sharing a provider do not all wake together."""
-UPKEEP_STOP_SECONDS: Final[float] = 10.0
+UPKEEP_STOP_SECONDS: Final[float] = 5.0
 """How long a stopping server waits for its cancelled nightly upkeep (embedding queueing and
-cache pruning) to end; then it logs a warning and stops without it (#308)."""
+cache pruning) to end; then it logs a warning and cancels it again (#308). Well under the 10 s
+``docker stop`` grace, so the job worker's stop and the engine's dispose still fit after it."""
+UPKEEP_RECANCEL_SECONDS: Final[float] = 1.0
+"""How long a stopping server waits for its upkeep after cancelling it a second time; then it
+stops without it (#308)."""
 REQUEUE_LOCK_KEY: Final[str] = "exactdocs:embedding:requeue"
 """The PostgreSQL advisory lock whose holder runs the midnight re-queue of embedding."""
 REQUEUE_TRY_LOCK: Final[str] = "SELECT pg_try_advisory_lock(hashtextextended(:key, 0))"
