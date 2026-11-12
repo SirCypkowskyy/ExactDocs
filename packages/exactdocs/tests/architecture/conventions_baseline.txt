@@ -1769,7 +1769,6 @@ packages/exactdocs/src/exactdocs/ingestion/adapters/driven/sqlite.py _problem do
 packages/exactdocs/src/exactdocs/ingestion/adapters/driven/sqlite.py _text function-without-docstring
 packages/exactdocs/src/exactdocs/ingestion/adapters/driven/sqlite.py _values function-without-docstring
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._apply_schedule docstring-missing-args
-packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._cancel function-without-docstring
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._check function-without-docstring
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._ended docstring-missing-args
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._ended docstring-missing-returns
@@ -1777,7 +1776,6 @@ packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJ
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._forgetting field-without-docstring
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker.run_workflow docstring-missing-args
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._running field-without-docstring
-packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker._stop function-without-docstring
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker.concurrency field-without-docstring
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker.queue field-without-docstring
 packages/exactdocs/src/exactdocs/ingestion/adapters/driving/dbos_worker.py DbosJobWorker.recover_jobs field-without-docstring

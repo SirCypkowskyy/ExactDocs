@@ -27,7 +27,6 @@ from contextlib import (
     AsyncExitStack,
     asynccontextmanager,
     closing,
-    suppress,
 )
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -43,6 +42,7 @@ from exactdocs.ingestion.constants._jobs import (
     _DONE,
     _FORGET_POLL,
     _FORGET_TRIES,
+    _HALT_JOBS_SHARE,
     _LIVE,
     _MIN_TICK_RETENTION,
     _THREADS,
@@ -167,7 +167,8 @@ class DbosJobWorker:
     """How long after its last confirmed hold the slot counts as lost while the database cannot
     be reached: a shorter outage is waited out, a longer one stops the process."""
     halt_timeout: float = 5.0
-    """Bound on stopping the jobs and DBOS once the slot is lost (``_halt``)."""
+    """Hard bound on stopping the jobs and DBOS once the slot is lost (``_halt``): the running
+    jobs get a share of it to end once cancelled, then DBOS is stopped whether they did or not."""
     adopt_grace: float = 30.0
     """With ``executors``: how long a slot must stay free before its jobs are adopted. More than
     ``slot_give_up + slot_check_interval + slot_check_timeout + halt_timeout``: a process that
@@ -338,9 +339,11 @@ class DbosJobWorker:
             finally:
                 await self._cancel(background)
         finally:
-            await self._stop()
-            await self._cancel(self._forgetting)  # the next start deletes what they had left
-            await self._destroy_dbos()
+            try:
+                await self._stop()
+                await self._cancel(self._forgetting)  # the next start deletes what they had left
+            finally:  # also when the stop is cancelled: DBOS must not outlive the worker
+                await self._destroy_dbos()
             await self._cancel(self._running | self._forgetting)
 
     async def _start(
@@ -515,6 +518,12 @@ class DbosJobWorker:
         again then, through a ``DBOSClient``: the process that now holds the ID would otherwise
         only find them when it restarts.
 
+        It ends within ``halt_timeout`` (``check_slot`` cancels it then): the running jobs get
+        ``_HALT_JOBS_SHARE`` of it to end once cancelled, then DBOS is stopped whether they did or
+        not, so a job that delays its cancellation cannot keep DBOS dequeuing jobs here. Such a
+        job may still be unwinding when the process is asked to stop; its next step finds DBOS
+        gone.
+
         Narrow windows remain. A job DBOS dequeued but whose workflow had not started when DBOS
         stopped is neither run nor refused: it stays pending under this ID until the process
         holding the ID restarts. And a job that was running when the slot was lost may have run
@@ -523,7 +532,7 @@ class DbosJobWorker:
         """
         self._lost.set()
         try:
-            await self._cancel(set(self._running))
+            await self._end_jobs()
             await self._destroy_dbos()
         except Exception:  # DBOS may still hand jobs over: queue those refused so far anyway
             log.exception("could not stop DBOS after the executor slot was lost")
@@ -533,6 +542,14 @@ class DbosJobWorker:
                 await asyncio.to_thread(self._requeue, refused)
             except Exception:
                 log.exception("could not queue jobs %s again", ", ".join(refused))
+
+    async def _end_jobs(self) -> None:
+        """Cancel the running jobs and wait ``_HALT_JOBS_SHARE`` of ``halt_timeout`` at most."""
+        try:
+            async with asyncio.timeout(self.halt_timeout * _HALT_JOBS_SHARE):
+                await self._cancel(set(self._running))
+        except TimeoutError:
+            log.warning("stopping DBOS while %d job(s) still end", len(self._running))
 
     async def _destroy_dbos(self) -> None:
         """Stop DBOS (once: ``_halt`` may have done it already) and give the loop a new pool.
@@ -807,16 +824,39 @@ class DbosJobWorker:
             log.exception("could not compact %s", self.database)
 
     async def _stop(self) -> None:
+        """Let the running jobs finish for ``stop_grace`` seconds, then cancel the rest."""
         if self._running:
             _, busy = await asyncio.wait(self._running, timeout=self.stop_grace)
             await self._cancel(busy)
 
     @staticmethod
     async def _cancel(tasks: set[asyncio.Task[None]]) -> None:
+        """Cancel the tasks and wait until they end; ignore their errors.
+
+        Only the tasks' own errors are ignored. A cancellation of the caller (a deadline such as
+        ``halt_timeout``, a second stop) ends the wait at once: ``asyncio.wait`` does not wait
+        for the tasks then, as ``gather`` does, so a task that delays its cancellation cannot
+        hold its caller.
+
+        Args:
+            tasks: The tasks.
+        """
+        if not tasks:
+            return
         for task in tasks:
             task.cancel()
-        with suppress(asyncio.CancelledError):
-            await asyncio.gather(*tasks, return_exceptions=True)
+            task.add_done_callback(_ignore_error)
+        await asyncio.wait(tasks)
+
+
+def _ignore_error(task: asyncio.Task[None]) -> None:
+    """Retrieve the error a cancelled task ended with, so asyncio does not log it as unseen.
+
+    Args:
+        task: The task, done.
+    """
+    if not task.cancelled():
+        task.exception()
 
 
 def _log_failed(task: asyncio.Task[None], what: str) -> None:

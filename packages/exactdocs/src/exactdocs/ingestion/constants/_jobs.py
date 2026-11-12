@@ -32,6 +32,9 @@ _FORGET_POLL: Final[float] = (
     0.05  # seconds between looks at a finished workflow's status, while it is recorded
 )
 """Seconds between looks at a finished workflow's status, while it is recorded."""
+_HALT_JOBS_SHARE: Final[float] = 0.5
+"""Share of ``halt_timeout`` the running jobs get to end once cancelled after a lost slot; DBOS
+is stopped and the refused jobs queued again in the rest."""
 _FORGET_TRIES: Final[int] = 200
 """Polls to wait for a cancelled workflow to finish before it is forgotten."""
 _VACUUM_ABOVE: Final[int] = 2**20
