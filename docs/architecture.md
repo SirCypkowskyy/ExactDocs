@@ -230,7 +230,12 @@ only holds each process's git work folders and `known_hosts`. What changes:
   revisions in one `BEGIN IMMEDIATE` transaction with `foreign_keys` off (a batch alteration
   recreates the table, and with the pragma on SQLite would cascade-delete the rows of tables
   that reference it) and fails, rolling back, if `PRAGMA foreign_key_check` finds a violation
-  before the commit.
+  before the commit. Processes starting together on one SQLite file take turns first on an
+  exclusive `flock` of `exactdocs.db-migration.lock`, next to the database: a process waits
+  there for as long as another one's migration takes (SQLite's own `BUSY_TIMEOUT_MS`, 5 s, is
+  too short on a busy machine, #320), and the kernel drops the lock of a process that dies. A
+  waiter logs a warning naming the lock file and its holder (pid and host, written into the file)
+  after 5 s and then every minute; a lock file it cannot open stops startup naming it.
 - **Version storage (catalog):** a version's articles are a **manifest** (`catalog_manifests`,
   `catalog_manifest_entries`: path, blob SHA, title, tags, front matter, size) over article
   content shared by git blob SHA (`catalog_article_contents`, stored once). A manifest is

@@ -319,6 +319,9 @@ SQLite write lock, a stdio call that spent can wait up to 5 s for it before fall
 migrated the database, upgrade the stdio command too. Manage libraries through the server. Run it as the same user as the server: with the server
 stopped, SQLite creates `exactdocs.db-wal` and `-shm` next to the database (the directory must be
 writable for that), and files owned by another user can stop the server from starting later.
+The same goes for every other command (all but `serve --stdio` migrate): the first one creates
+`exactdocs.db-migration.lock` next to the database (mode 0600), the lock processes starting
+together take turns on to migrate, and a server that cannot open it stops with an error naming it.
 `--host`, `--port` and `--reload` are HTTP-only and rejected with `--stdio`.
 
 ## MCP tools
