@@ -5,14 +5,14 @@ rename row held the link, so a version where nothing moved broke the chain. Mani
 before keep the link their renames give; one without renames has none until it is re-imported.
 
 Revision ID: 4ffb525052ed
-Revises: 97095cfef767
+Revises: f91e59c59169
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "4ffb525052ed"
-down_revision = "97095cfef767"
+down_revision = "f91e59c59169"
 branch_labels = None
 depends_on = None
 

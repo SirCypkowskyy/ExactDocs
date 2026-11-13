@@ -9,7 +9,7 @@ from databases import SQL_BACKENDS
 from exactdocs.bootstrap.database import alembic_config, migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 
-BEFORE, AFTER = "97095cfef767", "4ffb525052ed"
+BEFORE, AFTER = "f91e59c59169", "4ffb525052ed"
 # (manifest ID, ref, kind, the version its renames come from: none without renames)
 MANIFESTS = [
     ("m-tag", "v1.4.0", "tag", "v1.3.0"),
