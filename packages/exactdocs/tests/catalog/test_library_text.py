@@ -218,7 +218,9 @@ async def test_an_edit_between_the_import_read_and_write_survives() -> None:
     )
 
     assert await texts(catalog) == ("Payments SDK", "Text.")
-    assert (await repository.get(LibraryId(LIBRARY))).title_edited  # ty: ignore[unresolved-attribute]
+    library = await repository.get(LibraryId(LIBRARY))
+    assert library is not None
+    assert library.title_edited
 
 
 @pytest.mark.parametrize(
