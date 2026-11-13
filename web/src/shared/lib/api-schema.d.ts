@@ -1559,7 +1559,7 @@ export interface components {
             readonly totalSnippets: number;
             /**
              * Versions
-             * @description Imported refs, possibly not all of them.
+             * @description Imported refs, sorted: the default version and the most recently imported ones, possibly not all.
              */
             readonly versions: readonly string[];
             /**
@@ -1689,8 +1689,7 @@ export interface components {
             readonly article_path: string;
             /**
              * Heading Path
-             * @description The chunk's heading and every heading above it, outermost first; empty for the text before
-             *     the first heading.
+             * @description The chunk's heading and those above it, outermost first; empty before the first heading.
              */
             readonly heading_path: readonly string[];
             /**
@@ -2549,8 +2548,7 @@ export interface components {
             readonly article_path: string;
             /**
              * Heading Path
-             * @description The chunk's heading and every heading above it, outermost first; empty for the text before
-             *     the first heading.
+             * @description The chunk's heading and those above it, outermost first; empty before the first heading.
              */
             readonly heading_path: readonly string[];
             /**
@@ -3629,8 +3627,7 @@ export interface components {
             readonly article_path: string;
             /**
              * Heading Path
-             * @description The chunk's heading and every heading above it, outermost first; empty for the text before
-             *     the first heading.
+             * @description The chunk's heading and those above it, outermost first; empty before the first heading.
              */
             readonly heading_path: readonly string[];
             /**

@@ -7613,7 +7613,7 @@
             },
             "type": "array",
             "title": "Versions",
-            "description": "Imported refs, possibly not all of them."
+            "description": "Imported refs, sorted: the default version and the most recently imported ones, possibly not all."
           },
           "lastUpdateDate": {
             "anyOf": [
@@ -7834,7 +7834,7 @@
             },
             "type": "array",
             "title": "Heading Path",
-            "description": "The chunk's heading and every heading above it, outermost first; empty for the text before\nthe first heading."
+            "description": "The chunk's heading and those above it, outermost first; empty before the first heading."
           },
           "anchor": {
             "type": "string",
@@ -9496,7 +9496,7 @@
             },
             "type": "array",
             "title": "Heading Path",
-            "description": "The chunk's heading and every heading above it, outermost first; empty for the text before\nthe first heading."
+            "description": "The chunk's heading and those above it, outermost first; empty before the first heading."
           },
           "anchor": {
             "type": "string",
@@ -11601,7 +11601,7 @@
             },
             "type": "array",
             "title": "Heading Path",
-            "description": "The chunk's heading and every heading above it, outermost first; empty for the text before\nthe first heading."
+            "description": "The chunk's heading and those above it, outermost first; empty before the first heading."
           },
           "anchor": {
             "type": "string",

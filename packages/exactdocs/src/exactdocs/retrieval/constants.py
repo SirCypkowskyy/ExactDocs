@@ -1420,3 +1420,13 @@ ESTIMATED_TOKENS_DESCRIPTION: Final[str] = (
     f"`characters` / {CHARS_PER_TOKEN}, rounded up: an estimate."
 )
 """OpenAPI description of an embedding estimate's tokens, built from ``CHARS_PER_TOKEN``."""
+C7_VERSIONS_DESCRIPTION: Final[str] = (
+    "Imported refs, sorted: the default version and the most recently imported ones, possibly "
+    "not all."
+)
+"""OpenAPI description of a Context7 library's ``versions``: which refs the summary lists."""
+LIBRARY_VERSIONS_DESCRIPTION: Final[str] = (
+    "Imported refs, sorted: the default version and the most recently imported ones, possibly "
+    "not all; `version_count` counts them all."
+)
+"""Schema description of a resolved library's ``versions``; it also names ``version_count``."""

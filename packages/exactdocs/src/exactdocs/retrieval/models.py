@@ -308,7 +308,7 @@ def chunk_id(
         version_id: ``<library>/<ref>``.
         article_path: The article's path.
         heading_path: The chunk's heading path.
-        occurrence_index: Which heading of that text it is.
+        occurrence_index: Its index among chunks with the same heading path.
         content_hash: Hash of the chunk's text.
 
     Returns:
@@ -341,7 +341,7 @@ class Chunk:
     heading_path: tuple[str, ...]
     """The chunk's heading and every heading above it; empty for the preamble."""
     occurrence_index: int
-    """0 for the first heading with this text, 1 for the next one, ..."""
+    """Among chunks with the same heading path: 0, 1, ... in reading order."""
     content: str
     """The chunk's text, verbatim."""
     content_hash: str
@@ -418,7 +418,7 @@ class SectionRef:
     heading_path: tuple[str, ...]
     """The chunk's heading and every heading above it."""
     occurrence_index: int
-    """0 for the first heading with this text, 1 for the next one, ..."""
+    """Among chunks with the same heading path: 0, 1, ... in reading order."""
     content_hash: str
     """Hash of the chunk's text."""
     anchor: str
@@ -1640,7 +1640,8 @@ class CatalogLibrary:
     default_version: str | None
     """The ref searched when a call names none; ``None`` if unset."""
     versions: tuple[str, ...]
-    """Imported refs, possibly not all of them."""
+    """Imported refs, sorted: the default version and the most recently imported ones, possibly
+    not all; ``version_count`` counts them all."""
     version_count: int
     """How many versions are imported."""
     last_imported_at: datetime | None = None

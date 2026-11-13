@@ -13,6 +13,7 @@ from pydantic.alias_generators import to_camel
 from exactdocs.retrieval.adapters.driving.mcp import format_docs
 from exactdocs.retrieval.constants import (
     _AT_VERSION,
+    C7_VERSIONS_DESCRIPTION,
     CHARS_PER_TOKEN,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_RETRIES,
@@ -230,8 +231,8 @@ class C7Library(_Camel):
     """Always `finalized`: only imported libraries are listed."""
     total_snippets: int
     """Chunks of the default version."""
-    versions: list[str]
-    """Imported refs, possibly not all of them."""
+    versions: list[str] = Field(description=C7_VERSIONS_DESCRIPTION)
+    """Imported refs: its schema description is ``C7_VERSIONS_DESCRIPTION``."""
     last_update_date: datetime | None = Field(default=None)
     """When any version was last imported."""
     source_url: str

@@ -377,7 +377,9 @@ class InMemorySearchIndex:
     async def search_many(
         self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter, limit: int
     ) -> Sequence[ManifestHit]:
-        """Return the best matches of any of the manifests (scores are plain term counts).
+        """Return the best matches of any of the manifests.
+
+        Scores are term counts, heading matches weighted 10x, as in ``search``.
 
         Args:
             manifest_ids: The manifests searched.

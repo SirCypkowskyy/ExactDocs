@@ -23,6 +23,7 @@ from exactdocs.retrieval.constants import (
     ESTIMATED_TOKENS_DESCRIPTION,
     EXPLORED_PATH_DESCRIPTION,
     JUSTIFICATION_DESCRIPTION,
+    LIBRARY_VERSIONS_DESCRIPTION,
     MAX_EMBEDDING_DIMENSIONS,
     MAX_KEY,
     MAX_MODEL_NAME,
@@ -219,8 +220,7 @@ class SearchResultOut(_Dto):
     article_path: str
     """Path of the chunk's article in the repository, e.g. `docs/guide/auth.md`."""
     heading_path: list[str]
-    """The chunk's heading and every heading above it, outermost first; empty for the text before
-    the first heading."""
+    """The chunk's heading and those above it, outermost first; empty before the first heading."""
     anchor: str
     """Anchor of the chunk's heading in the article; empty when it has none."""
     position: int
@@ -412,7 +412,7 @@ class ChunkIn(_Dto):
     heading_path: list[str]
     """The chunk's heading and every heading above it; empty for the text before the first one."""
     occurrence_index: int = Field(ge=0)
-    """0 for the first heading with this text in the article, 1 for the next one, and so on."""
+    """Among the article's chunks with the same heading path: 0, 1, ... in reading order."""
     content: str
     """The chunk's text, verbatim."""
     content_hash: str = Field(min_length=1)
@@ -504,7 +504,7 @@ class SetChunkOut(_Dto):
     heading_path: list[str]
     """The chunk's heading and every heading above it; empty for the text before the first one."""
     occurrence_index: int
-    """0 for the first heading with this text in the article, 1 for the next one, and so on."""
+    """Among the article's chunks with the same heading path: 0, 1, ... in reading order."""
     content: str
     """The chunk's text, verbatim."""
     content_hash: str
@@ -714,8 +714,7 @@ class ChunkOut(_Dto):
     article_path: str
     """Path of the chunk's article in the repository."""
     heading_path: list[str]
-    """The chunk's heading and every heading above it, outermost first; empty for the text before
-    the first heading."""
+    """The chunk's heading and those above it, outermost first; empty before the first heading."""
     anchor: str
     """Anchor of the chunk's heading in the article; empty when it has none."""
     content: str
@@ -903,8 +902,8 @@ class LibraryMatchOut(_Dto):
     """The repository's URL."""
     default_version: str
     """The ref searched when a call names none."""
-    versions: list[str]
-    """Imported refs, possibly not all of them; `version_count` counts them all."""
+    versions: list[str] = Field(description=LIBRARY_VERSIONS_DESCRIPTION)
+    """Imported refs: its schema description is ``LIBRARY_VERSIONS_DESCRIPTION``."""
     version_count: int
     """How many versions are imported."""
     last_imported_at: datetime | None = Field(default=None)

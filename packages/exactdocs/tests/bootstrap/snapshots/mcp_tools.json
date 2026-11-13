@@ -783,7 +783,7 @@
           "type": "string"
         },
         "heading_path": {
-          "description": "The chunk's heading and every heading above it, outermost first; empty for the text before\nthe first heading.",
+          "description": "The chunk's heading and those above it, outermost first; empty before the first heading.",
           "items": {
             "type": "string"
           },
@@ -1093,7 +1093,7 @@
                 "type": "array"
               },
               "heading_path": {
-                "description": "The chunk's heading and every heading above it, outermost first; empty for the text before\nthe first heading.",
+                "description": "The chunk's heading and those above it, outermost first; empty before the first heading.",
                 "items": {
                   "type": "string"
                 },
@@ -1441,7 +1441,7 @@
                 "type": "array"
               },
               "heading_path": {
-                "description": "The chunk's heading and every heading above it, outermost first; empty for the text before\nthe first heading.",
+                "description": "The chunk's heading and those above it, outermost first; empty before the first heading.",
                 "items": {
                   "type": "string"
                 },

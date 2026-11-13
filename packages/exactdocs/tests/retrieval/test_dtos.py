@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from exactdocs.retrieval.adapters.driving.http import LibraryRetrievalIn
+from exactdocs.retrieval.adapters.driving.http import C7Library, LibraryRetrievalIn
 from exactdocs.retrieval.constants import (
     AGENT_STEP_ARGUMENT_CHARS,
     CHARS_PER_TOKEN,
@@ -18,6 +18,7 @@ from exactdocs.retrieval.constants import (
     QUERY_HITS_CAP,
 )
 from exactdocs.retrieval.dtos import (
+    ChunkOut,
     EmbeddingEstimateOut,
     LibraryMatchOut,
     ResolveLibraryIdResult,
@@ -67,3 +68,21 @@ def test_an_embedding_estimate_names_the_characters_per_token() -> None:
 
     assert f"`characters` / {CHARS_PER_TOKEN}" in description
     assert f"{CHARS_PER_TOKEN} characters per token" in ESTIMATE_NOTE
+
+
+@pytest.mark.parametrize("model", [LibraryMatchOut, C7Library])
+def test_a_libraries_versions_description_says_which_refs_are_listed(
+    model: type[BaseModel],
+) -> None:
+    description = field_schema(model, "versions")["description"]
+
+    assert "the default version and the most recently imported ones" in description
+    assert "possibly not all" in description
+
+
+@pytest.mark.parametrize("model", [SearchResultOut, ChunkOut])
+def test_a_heading_path_description_reads_as_one_line(model: type[BaseModel]) -> None:
+    description = field_schema(model, "heading_path")["description"]
+
+    assert "\n" not in description
+    assert description.endswith("empty before the first heading.")
