@@ -187,7 +187,11 @@ class SuiteReport(_Model):
 
 
 def _percentile(values: Sequence[float], share: float) -> float:
-    """Nearest-rank percentile; 0 for no values."""
+    """Nearest-rank percentile; 0 for no values.
+
+    Returns:
+        The percentile, or 0 for no values.
+    """
     if not values:
         return 0.0
     ordered = sorted(values)
@@ -330,7 +334,11 @@ _RERANK_ROLES: Final[dict[RerankWith, ModelRole]] = {
 
 
 def _roles_used(mode: EvalMode, reranker: RerankWith | None) -> frozenset[ModelRole]:
-    """The model roles a search in ``mode`` calls: its own, and the one that reranks it, if any."""
+    """The model roles a search in ``mode`` calls: its own, and the one that reranks it, if any.
+
+    Returns:
+        Those roles.
+    """
     rerank = set() if reranker is None else {_RERANK_ROLES[reranker]}
     return mode.mode.roles | rerank
 
@@ -347,6 +355,9 @@ def _not_running(
     Whether a mode may run is decided per model role, not per tier: every role the search would
     call (its own, and the reranker or the judge that reranks it) must be one that runs on this
     machine (``local_roles``), unless ``allow_providers`` lets it call a hosted model.
+
+    Returns:
+        The outcome, or the ``ran`` placeholder when the mode may run.
     """
     configured = frozenset(status.configured_roles)
     if mode.mode not in status.available_modes:
@@ -731,7 +742,11 @@ def judge(
 def _lowered(
     outcomes: Sequence[ModeOutcome], baseline: Mapping[str, float], stored: Mapping[str, float]
 ) -> list[str]:
-    """Problems for each gating mode whose stored recall@5 is below the reference baseline's."""
+    """Problems for each gating mode whose stored recall@5 is below the reference baseline's.
+
+    Returns:
+        One problem per lowered mode; empty when none is.
+    """
     problems = []
     for outcome in outcomes:
         name = outcome.mode.value
@@ -754,6 +769,9 @@ def _unbacked(
 
     A stored value above the measured one always fails; with ``exact`` (a reset baseline, which
     becomes the next bar), one below it fails too.
+
+    Returns:
+        One problem per unbacked mode; empty when every mode is backed.
     """
     problems = []
     for outcome in outcomes:

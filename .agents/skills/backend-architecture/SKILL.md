@@ -32,8 +32,10 @@ Full reasoning: `docs/architecture.md`. Reference implementation: `packages/exac
 - Every dataclass and pydantic field has an attribute docstring; DTO bases set
   `use_attribute_docstrings=True`, so it becomes the OpenAPI / MCP description.
 - Private by default (`_name`); public API re-exported from `__init__.py` / `__all__`.
-- `conventions_baseline.txt` lists docstrings existing code still lacks. Never add to it; delete
-  a line when you fix it (the test fails on stale lines).
+- `test_conventions.py` fails on any function in `packages/*/src` without a complete docstring.
+  Ruff (pydoclint `DOC201`/`DOC501`) fails on any docstring in `packages/*/src`, `deploy/` and
+  `evals/` that omits a returned value or a raised exception. Tests and behave features are
+  exempt from `DOC` along with the other `D` rules (`per-file-ignores` in `pyproject.toml`).
 
 ## Add a use case to an existing domain
 

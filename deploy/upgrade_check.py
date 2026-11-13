@@ -128,7 +128,11 @@ class Api:
 
 
 def wait_healthy(api: Api, server: subprocess.Popen[bytes]) -> dict:
-    """Wait until the server is ready (its database answers), then return its health details."""
+    """Wait until the server is ready (its database answers), then return its health details.
+
+    Returns:
+        The parsed /api/health answer.
+    """
     for _ in range(240):
         if server.poll() is not None:
             sys.exit(f"the server exited early with {server.returncode}")
@@ -147,7 +151,11 @@ def wait_healthy(api: Api, server: subprocess.Popen[bytes]) -> dict:
 
 
 def _ready(url: str) -> bool:
-    """Ask /readyz; a release from before the probes (404) is ready once /api/health answers."""
+    """Ask /readyz; a release from before the probes (404) is ready once /api/health answers.
+
+    Returns:
+        Whether the server answered as ready.
+    """
     try:
         with urllib.request.urlopen(f"{url}/readyz", timeout=3):  # ruff: ignore[suspicious-url-open-usage]
             return True
@@ -203,6 +211,9 @@ def differences(
 
     Keys only one side has are not compared, nor the keys of ``skip``, which apply to this level
     only, never to nested objects.
+
+    Returns:
+        One line per changed value, naming its key path, old and new value.
     """
     if isinstance(old, dict) and isinstance(new, dict):
         return [
@@ -346,7 +357,11 @@ def check_reindex(api: Api, cmd: list[str], env: dict[str, str]) -> None:
 
 
 def main() -> int:
-    """Run the check; exit non-zero with the reason at the first difference."""
+    """Run the check; exit non-zero with the reason at the first difference.
+
+    Returns:
+        The exit code: 0 when nothing changed, else 1.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--wheels", type=Path)
     parser.add_argument(
