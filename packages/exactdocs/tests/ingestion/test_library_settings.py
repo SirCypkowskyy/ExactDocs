@@ -42,6 +42,7 @@ from exactdocs.ingestion.errors import (
 from exactdocs.ingestion.models import (
     ChunkingConfig,
     ImportedRef,
+    ImportedTags,
     ImportSource,
     Job,
     JobId,
@@ -679,6 +680,7 @@ class Store:
     manual: dict[str, tuple[str, ...]] = field(default_factory=dict)
     writes: list[tuple[str, dict[str, tuple[str, ...]]]] = field(default_factory=list)
     failing: set[str] = field(default_factory=set)
+    sources: dict[str, ImportedTags] = field(default_factory=dict)
 
     async def stored_tags(self, library: str, ref: str) -> StoredTags | None:
         del library
@@ -687,14 +689,18 @@ class Store:
         return self.versions.get(ref)
 
     async def set_imported_tags(
-        self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]
+        self, manifest_id: str, tags: Mapping[str, ImportedTags]
     ) -> dict[str, tuple[str, ...]]:
-        self.writes.append((manifest_id, dict(tags)))
+        written = {p: t.tags for p, t in tags.items()}
+        self.writes.append((manifest_id, written))
+        self.sources.update(tags)
         for ref, stored in self.versions.items():
             if stored.manifest_id == manifest_id:
-                articles = tuple(replace(a, tags=tags.get(a.path, a.tags)) for a in stored.articles)
+                articles = tuple(
+                    replace(a, tags=written.get(a.path, a.tags)) for a in stored.articles
+                )
                 self.versions[ref] = replace(stored, articles=articles)
-        return {p: (*t, *self.manual.get(p, ())) for p, t in tags.items()}
+        return {p: (*t, *self.manual.get(p, ())) for p, t in written.items()}
 
 
 @dataclass
@@ -768,6 +774,9 @@ async def test_retag_sends_every_article_its_new_tags_and_every_tag_to_the_chunk
     assert index.retagged == [("m1", wanted | {"docs/api/auth.md": ("api", "auth", "mine")})]
     assert progress.reports == [(0, 2), (1, 2), (2, 2)]  # "main" serves nothing: skipped
     assert progress.counters[-1] == (0, 3)  # nothing chunked, every stored article reused
+    assert store.sources["docs/api/auth.md"] == ImportedTags(
+        tags=("api", "auth"), front_matter=("auth",), rules=("api",)
+    )
 
 
 async def test_a_rerun_heals_chunks_the_catalog_was_retagged_without(sources):
@@ -852,4 +861,6 @@ def test_front_matter_tags_are_derived_like_the_parser_does(front_matter, tags):
 def test_a_stored_article_is_retagged_with_rule_tags_first():
     rules = TagRule.many([("docs/**", "docs")])
 
-    assert article("docs/a.md", front_matter={"tags": ["b"]}).retagged(rules) == ("docs", "b")
+    assert article("docs/a.md", front_matter={"tags": ["b"]}).retagged(rules) == ImportedTags(
+        tags=("docs", "b"), front_matter=("b",), rules=("docs",)
+    )

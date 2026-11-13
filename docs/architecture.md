@@ -250,7 +250,10 @@ only holds each process's git work folders and `known_hosts`. What changes:
   article path (`SetManualTags`). A manifest entry keeps `tags` as every tag of the article (what
   listings filter and count), `manual_tags` (each with the path it was set on, which is where it is
   changed), and `imported_tags` while it has manual ones, so removing
-  them brings back exactly what the import gave. An entry gets the manual tags of its path and of every
+  them brings back exactly what the import gave. `front_matter_tags` and `rule_tags` record where
+  the imported tags come from (#215), so readers get each tag's origins (`ManifestEntry.tag_origins`)
+  without the client re-deriving them; both are NULL in entries stored before, whose imported tags
+  read as `imported` until the next import or tag-rule change of their version writes them. An entry gets the manual tags of its path and of every
   path the rename maps trace it back to, version by version (`ManualTagger`). Retrieval keeps a copy
   of the tags on each chunk row; ingestion's `TagArticle` (REST `PUT/DELETE .../tags?path=`) has the
   catalog re-tag the pending and active manifests and then the chunk rows (`RetagArticles`, an
@@ -484,6 +487,8 @@ erDiagram
         json tags "every tag: imported and manual"
         json manual_tags "tag and the path it was set on"
         json imported_tags "only while manual tags are set"
+        json front_matter_tags "imported from front matter; NULL: not recorded"
+        json rule_tags "imported from path rules; NULL: not recorded"
         json front_matter
     }
     catalog_article_contents {

@@ -1827,8 +1827,44 @@ def article_tags(path: str, declared: Sequence[str], rules: Sequence[TagRule]) -
     Returns:
         The article's imported tags.
     """
-    ruled = (rule.tag for rule in rules if rule.selection.selects(path))
-    return tuple(dict.fromkeys((*ruled, *declared)))[:MAX_TAGS]
+    return imported_tags(path, declared, rules).tags
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ImportedTags:
+    """An article's imported tags, and which of them come from the front matter and path rules.
+
+    A tag both give is in both. The catalog keeps the sources so readers can tell them apart.
+    """
+
+    tags: tuple[str, ...]
+    """Every imported tag: path rules first, then front matter, at most ``MAX_TAGS``."""
+    front_matter: tuple[str, ...] = ()
+    """Declared in the front matter, normalized."""
+    rules: tuple[str, ...] = ()
+    """Given by the library's tag rules that match the article's path."""
+
+
+def imported_tags(path: str, declared: Sequence[str], rules: Sequence[TagRule]) -> ImportedTags:
+    """Combine the tags of the rules matching ``path`` with the front-matter ones, keeping both.
+
+    See ``article_tags`` for how they combine.
+
+    Args:
+        path: The article's repository path.
+        declared: Its front-matter tags.
+        rules: The library's tag rules.
+
+    Returns:
+        The article's imported tags and their sources.
+    """
+    ruled = tuple(dict.fromkeys(rule.tag for rule in rules if rule.selection.selects(path)))
+    front_matter = tuple(dict.fromkeys(declared))
+    return ImportedTags(
+        tags=tuple(dict.fromkeys((*ruled, *front_matter)))[:MAX_TAGS],
+        front_matter=front_matter,
+        rules=ruled,
+    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2232,7 +2268,10 @@ class ImportedArticle:
     title: str
     """The article's title."""
     tags: tuple[str, ...]
-    """The imported tags: path rules first, then front matter."""
+    """The tags its chunks carry: imported (path rules first, then front matter), and once the
+    catalog has the article, the manual ones too."""
+    imported: ImportedTags
+    """The imported tags, and which come from the front matter and which from path rules."""
     front_matter: dict[str, Any]
     """The front matter as loaded."""
     content: str
@@ -2436,16 +2475,16 @@ class StoredArticleTags:
     tags: tuple[str, ...]
     """Imported: path rules and front matter (manual tags are kept apart)."""
 
-    def retagged(self, rules: Sequence[TagRule]) -> tuple[str, ...]:
+    def retagged(self, rules: Sequence[TagRule]) -> ImportedTags:
         """Return the imported tags the article gets under ``rules`` (as an import would).
 
         Args:
             rules: The library's tag rules.
 
         Returns:
-            The imported tags.
+            The imported tags and their sources.
         """
-        return article_tags(self.path, front_matter_tags(self.front_matter)[0], rules)
+        return imported_tags(self.path, front_matter_tags(self.front_matter)[0], rules)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

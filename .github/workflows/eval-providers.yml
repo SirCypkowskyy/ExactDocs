@@ -15,13 +15,29 @@ name: Retrieval eval (real providers)
 #   repository secret      EVAL_PROVIDER_API_KEY
 #
 # Blank variables count as unset. Roles left empty stay unset, and the modes that need them are
-# reported `unavailable`.
+# reported `unavailable`. With the `benchmark` input, the retrieval benchmark's hosted
+# configurations also run on the golden set (job `benchmark`, `just retrieval-bench`).
 
 on:
   workflow_dispatch:
     inputs:
       args:
         description: Extra arguments for the eval runner (e.g. --modes hybrid)
+        required: false
+        default: ""
+      benchmark:
+        description: >-
+          Also run the retrieval benchmark's hosted configurations on the golden set
+          (docs/evals.md#the-retrieval-benchmark)
+        type: boolean
+        required: false
+        default: false
+      benchmark_configs:
+        description: Benchmark configurations (names or patterns, comma-separated)
+        required: false
+        default: "bm25,*+judge,*:hosted*"
+      benchmark_args:
+        description: Extra arguments for the benchmark (e.g. --chunkings default,h2)
         required: false
         default: ""
 
@@ -34,6 +50,13 @@ permissions:
 
 env:
   FORCE_COLOR: "1"
+  EXACTDOCS_AI__PROVIDERS__EVAL__KIND: ${{ vars.EVAL_PROVIDER_KIND }}
+  EXACTDOCS_AI__PROVIDERS__EVAL__BASE_URL: ${{ vars.EVAL_PROVIDER_BASE_URL }}
+  EXACTDOCS_AI__PROVIDERS__EVAL__API_VERSION: ${{ vars.EVAL_PROVIDER_API_VERSION }}
+  EVAL_EMBEDDING_MODEL: ${{ vars.EVAL_EMBEDDING_MODEL }}
+  EVAL_RERANKER_MODEL: ${{ vars.EVAL_RERANKER_MODEL }}
+  EVAL_LLM_MODEL: ${{ vars.EVAL_LLM_MODEL }}
+  EVAL_JUDGE_MODEL: ${{ vars.EVAL_JUDGE_MODEL }}
 
 jobs:
   eval:
@@ -42,13 +65,6 @@ jobs:
     timeout-minutes: 60
     environment: eval-providers # its protection rules decide who may spend the keys
     env:
-      EXACTDOCS_AI__PROVIDERS__EVAL__KIND: ${{ vars.EVAL_PROVIDER_KIND }}
-      EXACTDOCS_AI__PROVIDERS__EVAL__BASE_URL: ${{ vars.EVAL_PROVIDER_BASE_URL }}
-      EXACTDOCS_AI__PROVIDERS__EVAL__API_VERSION: ${{ vars.EVAL_PROVIDER_API_VERSION }}
-      EVAL_EMBEDDING_MODEL: ${{ vars.EVAL_EMBEDDING_MODEL }}
-      EVAL_RERANKER_MODEL: ${{ vars.EVAL_RERANKER_MODEL }}
-      EVAL_LLM_MODEL: ${{ vars.EVAL_LLM_MODEL }}
-      EVAL_JUDGE_MODEL: ${{ vars.EVAL_JUDGE_MODEL }}
       EXACTDOCS_AI__RERANK_WITH: ${{ vars.EVAL_RERANK_WITH || 'cross_encoder' }}
       EXTRA_ARGS: ${{ inputs.args }}
     steps:
@@ -85,5 +101,60 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           name: retrieval-eval-providers
+          path: reports/evals/
+          retention-days: 30
+
+  # The retrieval benchmark's hosted part (#347): hybrid on the hosted embedding model, the LLM
+  # judge over every base, HyDE and agentic, at every chunking configuration, next to BM25 so the
+  # summary's recommendation compares them. The `+ce` and local `+judge` configurations need the
+  # local models too, pulled as in the release's eval job. Several hours on the runner's CPU with
+  # every chunking; narrow it with benchmark_args (e.g. --chunkings default).
+  benchmark:
+    name: Retrieval benchmark with real providers
+    if: ${{ inputs.benchmark }}
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    timeout-minutes: 360
+    environment: eval-providers # its protection rules decide who may spend the keys
+    env:
+      EXACTDOCS_MODELS_DIR: ${{ github.workspace }}/.models
+      BENCH_CONFIGS: ${{ inputs.benchmark_configs }}
+      BENCH_ARGS: ${{ inputs.benchmark_args }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked
+      - name: Configure the roles (<profile>:<model>, profile `eval`)
+        run: |
+          for role in embedding llm judge; do
+            upper=$(echo "$role" | tr '[:lower:]' '[:upper:]')
+            model_var="EVAL_${upper}_MODEL"
+            if [ -n "${!model_var}" ]; then
+              echo "EXACTDOCS_AI__${upper}__MODEL=eval:${!model_var}" >> "$GITHUB_ENV"
+            fi
+          done
+      - uses: actions/cache@v6
+        with:
+          path: .models
+          key: retrieval-bench-models-${{ hashFiles('packages/exactdocs/evals/retrieval_eval/retrieval_bench_cli.py') }}
+      - name: Pull the local models (skipped when the cache has them)
+        run: >-
+          uv run exactdocs models pull BAAI/bge-small-en-v1.5 Xenova/ms-marco-MiniLM-L-6-v2
+          snowflake/snowflake-arctic-embed-s BAAI/bge-base-en-v1.5
+      - name: Retrieval benchmark (just retrieval-bench --allow-providers)
+        env:
+          EXACTDOCS_AI__PROVIDERS__EVAL__API_KEY: ${{ secrets.EVAL_PROVIDER_API_KEY }}
+        run: |
+          # shellcheck disable=SC2086 # BENCH_ARGS is a list of arguments
+          uv run python packages/exactdocs/evals/run_retrieval_bench.py --allow-providers \
+            --configs "$BENCH_CONFIGS" --out reports/evals/retrieval-bench $BENCH_ARGS
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: retrieval-bench-providers
           path: reports/evals/
           retention-days: 30

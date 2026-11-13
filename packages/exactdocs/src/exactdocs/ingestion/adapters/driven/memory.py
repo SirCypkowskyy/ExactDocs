@@ -13,6 +13,7 @@ from exactdocs.ingestion.models import (
     Credential,
     GitRename,
     ImportedRef,
+    ImportedTags,
     ImportedVersion,
     ImportSource,
     Job,
@@ -354,13 +355,13 @@ class NoStoredTags:
         raise NotImplementedError
 
     async def set_imported_tags(
-        self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]
+        self, manifest_id: str, tags: Mapping[str, ImportedTags]
     ) -> Mapping[str, tuple[str, ...]]:
         """Not expected to be called.
 
         Args:
             manifest_id: The manifest.
-            tags: Tags by article path.
+            tags: Imported tags with their sources, by article path.
 
         Returns:
             Nothing: it always raises.

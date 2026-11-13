@@ -457,6 +457,40 @@ class ManifestState(StrEnum):
 type ContentKey = tuple[str, int]  # (git blob SHA, content version)
 
 
+class TagOrigin(StrEnum):
+    """Where a tag of an article comes from; a tag may come from several places at once."""
+
+    FRONT_MATTER = "front_matter"
+    """Declared in the article's front matter."""
+    PATH_RULE = "path_rule"
+    """Given by one of the library's tag rules, whose pattern matches the article's path."""
+    IMPORTED = "imported"
+    """Imported, from the front matter or a path rule; which one was not recorded (a manifest
+    stored before the origins were). A re-import or a change of the tag rules records it."""
+    MANUAL = "manual"
+    """Set by hand on the article's path, or on one it was renamed from."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TagSources:
+    """The imported tags of an article, by source: what an import combined into its tags."""
+
+    front_matter: tuple[str, ...] = ()
+    """Declared in the front matter, normalized."""
+    rules: tuple[str, ...] = ()
+    """Given by the library's tag rules that match the article's path."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ImportedTags:
+    """An article's imported tags, and where they come from when that is known."""
+
+    tags: tuple[str, ...]
+    """Every imported tag, as the import combined and capped them."""
+    sources: TagSources | None = None
+    """Where they come from; ``None`` when it was not recorded."""
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ManifestEntry:
     """One article of a manifest: where it lives, and which shared content it points at.
@@ -482,6 +516,8 @@ class ManifestEntry:
     """Bytes of the content."""
     manual_tags: tuple[ManualTag, ...] = ()
     """Set by hand for this path, or for a path it was renamed from (see ``ManualTags``)."""
+    sources: TagSources | None = None
+    """Where ``tags`` come from; ``None`` in a manifest stored before that was recorded."""
 
     def __post_init__(self) -> None:
         """Check the path and the blob SHA.
@@ -498,6 +534,34 @@ class ManifestEntry:
         """What readers see and filter by: the imported tags, then the manual ones they lack."""
         manual = dict.fromkeys(t.tag for t in self.manual_tags if t.tag not in self.tags)
         return (*self.tags, *manual)
+
+    @property
+    def tag_origins(self) -> tuple[tuple[str, tuple[TagOrigin, ...]], ...]:
+        """Every tag of ``all_tags``, in that order, with where it comes from.
+
+        The origins of a tag are in ``TagOrigin`` order. Only a tag among the imported ``tags``
+        has a source (one the cap left out has none); an imported tag no recorded source names
+        (``sources`` is ``None``, or does not list it) is ``IMPORTED``.
+        """
+        sources = self.sources or TagSources()
+        manual = {t.tag for t in self.manual_tags}
+        found: list[tuple[str, tuple[TagOrigin, ...]]] = []
+        for tag in self.all_tags:
+            imported = tag in self.tags
+            origins = [
+                TagOrigin.FRONT_MATTER if imported and tag in sources.front_matter else None,
+                TagOrigin.PATH_RULE if imported and tag in sources.rules else None,
+            ]
+            if imported and not any(origins):
+                origins.append(TagOrigin.IMPORTED)
+            origins.append(TagOrigin.MANUAL if tag in manual else None)
+            found.append((tag, tuple(o for o in origins if o is not None)))
+        return tuple(found)
+
+    @property
+    def imported(self) -> ImportedTags:
+        """The imported tags with their sources."""
+        return ImportedTags(tags=self.tags, sources=self.sources)
 
     @property
     def content_key(self) -> ContentKey:

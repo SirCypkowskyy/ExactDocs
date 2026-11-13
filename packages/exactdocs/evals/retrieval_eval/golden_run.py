@@ -7,15 +7,22 @@ and ``run_golden`` scores the whole set with the suite's evaluators and ``evalua
 ingestion benchmark (#346) runs BM25 this way; the retrieval benchmark (#347) can run any mode.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
 from pydantic_evals import Dataset
 
+from exactdocs.retrieval.models import RerankWith
 from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question, RetrievalDataset
-from retrieval_eval.evaluators import Cost, SectionMatch, VersionAndRank, same_section
+from retrieval_eval.evaluators import (
+    Cost,
+    SectionMatch,
+    StayedInVersion,
+    VersionAndRank,
+    same_section,
+)
 from retrieval_eval.golden import Corpus
-from retrieval_eval.retrievers import Retriever, SearchDocsRetriever
+from retrieval_eval.retrievers import RecordedReads, Retriever, SearchDocsRetriever
 from retrieval_eval.suite import MODES, EvalMode, ModeOutcome, RetrievalUnderTest, evaluate_mode
 
 type HeldHeadings = Callable[[Hit], frozenset[tuple[str, ...]]]
@@ -48,13 +55,22 @@ class GoldenRetriever:
         return await retriever.answer(question)
 
 
-def golden_retriever(retrieval: RetrievalUnderTest, corpus: Corpus, mode: str) -> GoldenRetriever:
+def golden_retriever(
+    retrieval: RetrievalUnderTest,
+    corpus: Corpus,
+    mode: str,
+    *,
+    spent: Callable[[], Awaitable[tuple[int, float]]] | None = None,
+    reads: RecordedReads | None = None,
+) -> GoldenRetriever:
     """Build the retriever that asks each project's library in one mode.
 
     Args:
         retrieval: The app's retrieval module, with the corpus imported (``import_corpus``).
         corpus: The corpus: each project's library and pinned commits.
         mode: The retrieval mode.
+        spent: Reads the instance's spend so far, for the cost per question.
+        reads: The agentic explorer's reads, so each run's trace is checked.
 
     Returns:
         The retriever.
@@ -67,6 +83,8 @@ def golden_retriever(retrieval: RetrievalUnderTest, corpus: Corpus, mode: str) -
                 library=project.library,
                 mode=mode,
                 commits={v.name: v.commit for v in project.versions},
+                spent=spent,
+                reads=reads,
             )
             for project in corpus.projects
         }
@@ -114,6 +132,7 @@ async def run_golden(
     *,
     mode: EvalMode = MODES[0],
     matches: SectionMatch = same_section,
+    reranker: RerankWith | None = None,
 ) -> ModeOutcome:
     """Run the golden set through a retriever and score it as the suite scores a mode.
 
@@ -122,14 +141,16 @@ async def run_golden(
         retriever: Answers each question (``golden_retriever``).
         mode: The mode it answers in, for the outcome (BM25 by default).
         matches: When a hit counts as the expected section.
+        reranker: What reranks the searches, if anything: a case with results that was not
+            reranked counts in ``rerank_fallbacks``.
 
     Returns:
         The mode's outcome: recall@1/5/10 and MRR over the answerable cases, the wrong-version
-        cases, the misses.
+        cases, the agentic runs that read outside their version, the misses.
     """
     scored = Dataset[Question, Answer, CaseInfo](
         name=dataset.name,
         cases=list(dataset.cases),
-        evaluators=[VersionAndRank(matches=matches), Cost()],
+        evaluators=[VersionAndRank(matches=matches), StayedInVersion(), Cost()],
     )
-    return await evaluate_mode(scored, mode, retriever)
+    return await evaluate_mode(scored, mode, retriever, reranker=reranker)

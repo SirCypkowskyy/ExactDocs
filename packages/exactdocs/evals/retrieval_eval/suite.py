@@ -186,8 +186,12 @@ class SuiteReport(_Model):
     """The full-text search engine that answered (`fts5`, `pg_search`, `postgres_fts`)."""
 
 
-def _percentile(values: Sequence[float], share: float) -> float:
+def percentile(values: Sequence[float], share: float) -> float:
     """Nearest-rank percentile; 0 for no values.
+
+    Args:
+        values: The values.
+        share: The percentile, as a share (0.95 for p95).
 
     Returns:
         The percentile, or 0 for no values.
@@ -233,8 +237,8 @@ def metrics_of(report: EvaluationReport[Question, Answer, CaseInfo]) -> ModeMetr
         recall_at_10=round(_mean(_score(c, recall_key(10)) for c in answerable), _DIGITS),
         mrr=round(_mean(_score(c, RECIPROCAL_RANK) for c in answerable), _DIGITS),
         wrong_version_rate=round(len(wrong) / questions if questions else 0.0, _DIGITS),
-        latency_p50_ms=round(_percentile(latencies, 0.5), 3),
-        latency_p95_ms=round(_percentile(latencies, 0.95), 3),
+        latency_p50_ms=round(percentile(latencies, 0.5), 3),
+        latency_p95_ms=round(percentile(latencies, 0.95), 3),
         tokens_per_question=round(_mean(_score(c, TOKENS) for c in cases), 1),
         usd_per_question=round(_mean(_score(c, USD) for c in cases), _USD_DIGITS),
     )

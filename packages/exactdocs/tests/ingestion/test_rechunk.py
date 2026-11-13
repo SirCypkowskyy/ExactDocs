@@ -21,6 +21,7 @@ from exactdocs.ingestion.models import (
     CopiedArticle,
     CopiedVersion,
     ImportedRef,
+    ImportedTags,
     ImportedVersion,
     ImportSource,
     Job,
@@ -123,16 +124,18 @@ class Tags:
     log: list[str]
     manual: dict[str, tuple[str, ...]] = field(default_factory=dict)
     written: dict[str, dict[str, tuple[str, ...]]] = field(default_factory=dict)
+    sources: dict[str, dict[str, ImportedTags]] = field(default_factory=dict)
 
     async def stored_tags(self, library: str, ref: str) -> None:
         raise NotImplementedError
 
     async def set_imported_tags(
-        self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]
+        self, manifest_id: str, tags: Mapping[str, ImportedTags]
     ) -> dict[str, tuple[str, ...]]:
         self.log.append(f"tag {manifest_id}")
-        self.written[manifest_id] = dict(tags)
-        return {p: (*t, *self.manual.get(p, ())) for p, t in tags.items()}
+        self.written[manifest_id] = {p: t.tags for p, t in tags.items()}
+        self.sources[manifest_id] = dict(tags)
+        return {p: (*t.tags, *self.manual.get(p, ())) for p, t in tags.items()}
 
 
 @dataclass
@@ -311,6 +314,9 @@ async def test_the_copies_get_the_tags_the_rules_give_now_and_keep_manual_ones(w
     indexed = {a.path: a.tags for a in world.index.indexed["v1.0.0-copy1"].articles}
     assert indexed["docs/guide.md"] == ("mine",)
     assert indexed["docs/api/auth.md"] == ("api", "auth")
+    assert world.tags.sources["v1.0.0-copy1"]["docs/api/auth.md"] == ImportedTags(
+        tags=("api", "auth"), front_matter=("auth",), rules=("api",)
+    )
 
 
 async def test_a_blob_chunked_with_the_new_config_before_is_not_cut_again(world):

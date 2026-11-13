@@ -719,6 +719,44 @@
           "description": "Link to the file at the commit; null when the host is unknown.",
           "title": "Source Url"
         },
+        "tag_origins": {
+          "description": "Every tag of `tags`, in the same order, with where it comes from. A tag can have several\norigins, e.g. a path rule and a hand edit.",
+          "items": {
+            "additionalProperties": false,
+            "description": "One tag of an article, and every place it comes from.",
+            "properties": {
+              "origins": {
+                "description": "Where it comes from, at least one: `front_matter`, `path_rule`, `imported` (front matter\nor a path rule, not recorded which: a version imported before origins were kept), `manual`\n(set by hand; `manual_tags` says on which path).",
+                "items": {
+                  "description": "Where a tag of an article comes from; a tag may come from several places at once.",
+                  "enum": [
+                    "front_matter",
+                    "path_rule",
+                    "imported",
+                    "manual"
+                  ],
+                  "title": "TagOrigin",
+                  "type": "string"
+                },
+                "title": "Origins",
+                "type": "array"
+              },
+              "tag": {
+                "description": "The tag, as in `tags`.",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tag",
+              "origins"
+            ],
+            "title": "TagOriginsInfo",
+            "type": "object"
+          },
+          "title": "Tag Origins",
+          "type": "array"
+        },
         "tags": {
           "description": "Every tag: from front matter, path rules and by hand.",
           "items": {
@@ -742,6 +780,7 @@
         "path",
         "title",
         "tags",
+        "tag_origins",
         "manual_tags",
         "size",
         "front_matter",

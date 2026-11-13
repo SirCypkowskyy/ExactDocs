@@ -66,3 +66,11 @@ Feature: Users tag articles by hand, and manual tags follow renames
     When the user adds the version "v1.3.0"
     Then "docs/guide/install.md" in "v1.4.0" is tagged "legacy"
     And searching "v1.4.0" for "docker" with the tag "legacy" finds only "docs/guide/install.md"
+
+  Scenario: An article says where its tags come from
+    Given a library whose path rule tags "docs/guide/**" with "guides"
+    And "docs/guide/install.md" declares the tags "guide" and "install" in its front matter
+    And the user has tagged "docs/guide/install.md" with "guides" by hand
+    When an agent reads "docs/guide/install.md"
+    Then "guide" and "install" are listed as front-matter tags
+    And "guides" is listed as both a path-rule tag and a manual tag
