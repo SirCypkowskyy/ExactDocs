@@ -52,7 +52,7 @@ RUN pnpm build
 # Built natively on the build platform and cross-installed for the target one (wheels for
 # TARGETARCH): Python 3.14 crashes under QEMU user-mode emulation, and native is much faster.
 # The venv's interpreter symlink points at /usr/local/bin/python3, present in the runtime image.
-FROM --platform=$BUILDPLATFORM ghcr.io/astral-sh/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff AS uv
+FROM --platform=$BUILDPLATFORM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 AS uv
 FROM --platform=$BUILDPLATFORM python:3.14-slim-trixie@sha256:f1b121a95d6295f7291a0fda8280f747efd657bd055e7c1f156936ed2dc5a112 AS builder
 COPY --from=uv /uv /uvx /usr/local/bin/
 ARG TARGETARCH
