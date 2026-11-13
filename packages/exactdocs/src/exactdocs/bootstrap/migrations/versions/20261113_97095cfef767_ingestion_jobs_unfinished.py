@@ -17,6 +17,9 @@ down_revision = "3d8919f935dd"
 branch_labels = None
 depends_on = None
 
+# Must match ``exactdocs.ingestion.constants.UNFINISHED_JOBS_SQL`` byte for byte: SQLite uses a
+# partial index only for a query whose condition is spelled exactly like the index's. A revision is
+# frozen, so it spells the literal rather than importing the constant, which may change later.
 UNFINISHED = "state IN ('queued', 'running')"
 
 

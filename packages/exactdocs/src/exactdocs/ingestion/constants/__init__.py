@@ -40,6 +40,7 @@ from exactdocs.ingestion.constants._jobs import (
 )
 from exactdocs.ingestion.constants._known_hosts import PINNED
 from exactdocs.ingestion.constants._models import (
+    ABOVE_EVERY_JOB_ID,
     ACTIVE_JOB_STATES,
     ANY,
     ARTICLE_SUFFIXES,
@@ -121,6 +122,7 @@ from exactdocs.ingestion.constants._use_cases import (
 )
 
 __all__ = [
+    "ABOVE_EVERY_JOB_ID",
     "ACTIVE_JOB_STATES",
     "ALLOWED_PROTOCOLS",
     "ANY",

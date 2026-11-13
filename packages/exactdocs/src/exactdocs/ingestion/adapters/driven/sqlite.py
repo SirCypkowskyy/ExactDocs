@@ -18,6 +18,7 @@ from sqlalchemy import (
     insert,
     select,
     text,
+    tuple_,
     update,
 )
 from sqlalchemy.dialects import postgresql, sqlite
@@ -27,6 +28,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from exactdocs.ingestion.constants import (
+    ABOVE_EVERY_JOB_ID,
     ACTIVE_JOB_STATES,
     IMPORT_KINDS,
     LEGACY_CODES,
@@ -83,7 +85,7 @@ jobs = Table(
     Column("created_at", Text, nullable=False),
     Column("started_at", Text),
     Column("finished_at", Text),
-    # A page of a library's jobs is a range of this index (`id < :before ORDER BY id DESC`).
+    # A page of a library's jobs is a range of this index (see `list_page_for_library`).
     Index("ingestion_jobs_library_id", "library", "id"),
     Index("ingestion_jobs_state", "state"),
     # A library's unfinished jobs, newest first, without reading its finished ones (#329).
@@ -209,10 +211,18 @@ class SqliteJobRepository:
     ) -> Sequence[Job]:
         """Return up to ``limit`` of the library's jobs with an ID below ``before``, newest first.
 
-        A keyset query (``id < :before ORDER BY id DESC LIMIT :limit``) that reads a range of
-        the ``(library, id)`` index, so only the page's rows, problems included, are read. Text
-        columns compare by code point on both databases (PostgreSQL's are collated ``C`` by the
-        migration), as Python compares str.
+        A keyset query that reads a range of the ``(library, id)`` index, so only the page's
+        rows, problems included, are read. Text columns compare by code point on both databases
+        (PostgreSQL's are collated ``C`` by the migration), as Python compares str.
+
+        It is spelled ``library >= :l AND (library, id) < (:l, :before) ORDER BY library DESC,
+        id DESC``, which selects the same rows as ``library = :l AND id < :before ORDER BY id
+        DESC`` (#330). With ``library = :l`` PostgreSQL drops ``library`` from the sort order, so
+        a backward walk of the primary key that filters on the library serves the order as well;
+        for an old library behind many newer jobs of others it can look cheaper than the index
+        and read every one of those jobs. Without the equality only ``(library, id)`` gives the
+        order, and the row comparison bounds both ends of the range. The first page is bounded
+        by ``ABOVE_EVERY_JOB_ID``, so it and later pages are one statement with one plan.
 
         Args:
             library: The library whose jobs are listed.
@@ -222,10 +232,16 @@ class SqliteJobRepository:
         Returns:
             The page, highest ID first.
         """
-        query = select(jobs).where(jobs.c.library == library)
-        if before is not None:
-            query = query.where(jobs.c.id < before)
-        query = query.order_by(jobs.c.id.desc()).limit(limit)
+        bound = ABOVE_EVERY_JOB_ID if before is None else before
+        query = (
+            select(jobs)
+            .where(
+                jobs.c.library >= library,
+                tuple_(jobs.c.library, jobs.c.id) < tuple_(library, bound),
+            )
+            .order_by(jobs.c.library.desc(), jobs.c.id.desc())
+            .limit(limit)
+        )
         async with self.engine.connect() as connection:
             return [_job(row) for row in await connection.execute(query)]
 
