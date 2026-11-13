@@ -818,7 +818,7 @@ def _sources() -> Iterable[Path]:
 # only the docstring rules may appear in it. Emptying it is tracked in its own issue.
 BASELINE = Path(__file__).parent / "conventions_baseline.txt"
 # The most entries the baseline may hold. Lower it when you delete lines; never raise it.
-BASELINE_CEILING = 2118
+BASELINE_CEILING = 1265
 BASELINE_RULES = {
     "function-without-docstring",
     "docstring-missing-args",

@@ -41,39 +41,82 @@ class InMemoryLibraryRepository:
     """Implements ``ports.driven.LibraryRepository``. For tests."""
 
     libraries: MutableMapping[LibraryId, Library] = field(default_factory=dict)
+    """The libraries, by ID."""
     manual_tags: dict[LibraryId, dict[str, tuple[str, ...]]] = field(default_factory=dict)
+    """Each library's manual tags, by the path they were set on."""
 
     @classmethod
     def of(cls, libraries: Iterable[Library]) -> Self:
-        """Create a repository pre-filled with ``libraries``."""
+        """Create a repository pre-filled with ``libraries``.
+
+        Args:
+            libraries: The libraries.
+
+        Returns:
+            The repository.
+        """
         return cls(libraries={lib.id: lib for lib in libraries})
 
     async def list_all(self) -> Sequence[Library]:
-        """Return every library."""
+        """Return every library.
+
+        Returns:
+            The libraries with their versions.
+        """
         return tuple(self.libraries.values())
 
     async def get(self, library_id: LibraryId) -> Library | None:
-        """Return the library with this ID, or ``None``."""
+        """Return the library with this ID, or ``None``.
+
+        Args:
+            library_id: The library ID.
+
+        Returns:
+            The library with its versions, or ``None``.
+        """
         return self.libraries.get(library_id)
 
     async def add(self, library: Library) -> None:
-        """Store a new library; raises ``LibraryAlreadyExistsError`` if the ID is taken."""
+        """Store a new library; raises ``LibraryAlreadyExistsError`` if the ID is taken.
+
+        Args:
+            library: The new library.
+
+        Raises:
+            LibraryAlreadyExistsError: The library ID is taken.
+        """
         if library.id in self.libraries:
             raise LibraryAlreadyExistsError(library.id.value)
         # pinned and given rules only later
         self.libraries[library.id] = replace(library, pinned_version=None, rules=())
 
     async def delete(self, library_id: LibraryId) -> None:
-        """Remove the library, if present."""
+        """Remove the library, if present.
+
+        Args:
+            library_id: The library.
+        """
         self.libraries.pop(library_id, None)
         self.manual_tags.pop(library_id, None)
 
     async def get_manual_tags(self, library_id: LibraryId) -> Mapping[str, tuple[str, ...]]:
-        """Return the library's manual tags by path."""
+        """Return the library's manual tags by path.
+
+        Args:
+            library_id: The library.
+
+        Returns:
+            The manual tags, by the path they were set on.
+        """
         return dict(self.manual_tags.get(library_id, {}))
 
     async def set_manual_tags(self, library_id: LibraryId, tags: ManualTags) -> None:
-        """Replace one path's manual tags; none forgets the path."""
+        """Replace one path's manual tags; none forgets the path.
+
+        Args:
+            library_id: The library.
+            tags: The path and its new tags.
+        """
         if library_id not in self.libraries:
             return
         by_path = self.manual_tags.setdefault(library_id, {})
@@ -83,7 +126,11 @@ class InMemoryLibraryRepository:
             by_path.pop(tags.path, None)
 
     async def save(self, library: Library) -> None:
-        """Store the library; versions it already has are kept as they are, new ones are added."""
+        """Store the library; versions it already has are kept as they are, new ones are added.
+
+        Args:
+            library: The library, with its versions.
+        """
         stored = self.libraries.get(library.id)
         known = {v.ref: v for v in stored.versions} if stored else {}
         merged = known | {v.ref: v for v in library.versions if v.ref not in known}
@@ -95,14 +142,25 @@ class InMemoryLibraryRepository:
         )
 
     async def set_settings(self, library_id: LibraryId, settings: LibrarySettings) -> None:
-        """Replace the library's settings."""
+        """Replace the library's settings.
+
+        Args:
+            library_id: The library.
+            settings: The new settings.
+        """
         if (stored := self.libraries.get(library_id)) is not None:
             self.libraries[library_id] = replace(stored, settings=settings)
 
     async def set_text(
         self, library_id: LibraryId, *, title: str | None, description: str | None
     ) -> None:
-        """Set the given fields and mark them as edited."""
+        """Set the given fields and mark them as edited.
+
+        Args:
+            library_id: The library.
+            title: The new title; ``None`` leaves it.
+            description: The new description; ``None`` leaves it.
+        """
         if (stored := self.libraries.get(library_id)) is None:
             return
         changes: dict[str, str | bool] = {}
@@ -113,7 +171,15 @@ class InMemoryLibraryRepository:
         self.libraries[library_id] = replace(stored, **changes)
 
     async def pin_default(self, library_id: LibraryId, ref: VersionRef | None) -> bool:
-        """Pin ``ref`` if the library has that version; ``None`` unpins."""
+        """Pin ``ref`` if the library has that version; ``None`` unpins.
+
+        Args:
+            library_id: The library.
+            ref: The exact ref to pin; ``None`` unpins.
+
+        Returns:
+            Whether anything was written.
+        """
         stored = self.libraries.get(library_id)
         if stored is None or (ref is not None and all(v.ref != ref for v in stored.versions)):
             return False
@@ -123,7 +189,14 @@ class InMemoryLibraryRepository:
     async def follow_readme(
         self, library_id: LibraryId, *, title: str, description: str, rules: Sequence[str]
     ) -> None:
-        """Set the fields no user edited, and the rules."""
+        """Set the fields no user edited, and the rules.
+
+        Args:
+            library_id: The library.
+            title: The title, unless a user edited it.
+            description: The description, unless a user edited it.
+            rules: The library's rules.
+        """
         if (stored := self.libraries.get(library_id)) is None:
             return
         self.libraries[library_id] = replace(
@@ -139,9 +212,13 @@ class InMemoryManifestRepository:
     """Implements ``ports.driven.ManifestRepository``. For tests; activation moves a version."""
 
     libraries: InMemoryLibraryRepository
+    """The libraries the manifests belong to; activation moves their versions."""
     manifests: dict[ManifestId, Manifest] = field(default_factory=dict)
+    """The manifests, by ID, with their entries, renames and images."""
     contents: dict[ContentKey, str] = field(default_factory=dict)
+    """The article texts, by content key."""
     images: dict[str, StoredImage] = field(default_factory=dict)
+    """The image bytes, by blob SHA."""
 
     async def add(
         self,
@@ -151,7 +228,18 @@ class InMemoryManifestRepository:
         images: Mapping[str, StoredImage] | None = None,
         version_must_exist: bool = False,
     ) -> None:
-        """Store a pending manifest, its texts and image blobs; stored ones stay as they are."""
+        """Store a pending manifest, its texts and image blobs; stored ones stay as they are.
+
+        Args:
+            manifest: The pending manifest, with its entries and renames.
+            contents: The article texts, by content key.
+            images: The image bytes, by blob SHA.
+            version_must_exist: Refuse unless the version is already imported.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog.
+            VersionNotFoundError: The library has no such version.
+        """
         library = self.libraries.libraries.get(manifest.library)
         if library is None:
             raise LibraryNotFoundError(str(manifest.library))
@@ -164,23 +252,52 @@ class InMemoryManifestRepository:
         self.manifests[manifest.id] = manifest
 
     async def get(self, manifest_id: ManifestId) -> Manifest | None:
-        """Return the manifest without its entries, or ``None``."""
+        """Return the manifest without its entries, or ``None``.
+
+        Args:
+            manifest_id: The manifest.
+
+        Returns:
+            The manifest, or ``None``.
+        """
         found = self.manifests.get(manifest_id)
         return _light(found) if found else None
 
     async def get_many(self, manifest_ids: Collection[ManifestId]) -> Mapping[ManifestId, Manifest]:
-        """Return the manifests (without entries) that exist, by ID; unknown IDs are left out."""
+        """Return the manifests (without entries) that exist, by ID; unknown IDs are left out.
+
+        Args:
+            manifest_ids: The manifests.
+
+        Returns:
+            The manifests found, by ID.
+        """
         return {i: _light(self.manifests[i]) for i in manifest_ids if i in self.manifests}
 
     async def get_active(self, library_id: LibraryId, ref: VersionRef) -> Manifest | None:
-        """Return the version's active manifest without its entries, or ``None``."""
+        """Return the version's active manifest without its entries, or ``None``.
+
+        Args:
+            library_id: The library.
+            ref: The exact ref.
+
+        Returns:
+            The active manifest, or ``None``.
+        """
         found = self._active(library_id, ref)
         return _light(found) if found else None
 
     async def get_active_many(
         self, versions: Sequence[tuple[LibraryId, VersionRef]]
     ) -> Mapping[tuple[LibraryId, VersionRef], Manifest]:
-        """Return the active manifests (without entries) of these versions, by (library, ref)."""
+        """Return the active manifests (without entries) of these versions, by (library, ref).
+
+        Args:
+            versions: The versions, as ``(library, ref)``.
+
+        Returns:
+            The active manifests found, by version.
+        """
         found = {v: await self.get_active(*v) for v in versions}
         return {v: m for v, m in found.items() if m is not None}
 
@@ -193,7 +310,18 @@ class InMemoryManifestRepository:
         after: str | None,
         limit: int,
     ) -> Sequence[ManifestEntry]:
-        """Return up to ``limit`` entries inside ``prefix`` sorted by path, after the path."""
+        """Return up to ``limit`` entries inside ``prefix`` sorted by path, after the path.
+
+        Args:
+            manifest_id: The manifest.
+            prefix: Only paths inside this directory; empty: every path.
+            tags: Only entries that pass this filter.
+            after: Only paths after this one; ``None`` from the start.
+            limit: The most entries returned.
+
+        Returns:
+            The entries, sorted by path.
+        """
         found = self.manifests.get(manifest_id)
         entries = found.entries if found else ()
         inside = (
@@ -206,7 +334,14 @@ class InMemoryManifestRepository:
         return tuple(later[:limit])
 
     async def list_live(self, library_id: LibraryId) -> Sequence[Manifest]:
-        """Return the library's pending and active manifests, without entries."""
+        """Return the library's pending and active manifests, without entries.
+
+        Args:
+            library_id: The library.
+
+        Returns:
+            The pending and active manifests.
+        """
         live = {ManifestState.PENDING, ManifestState.ACTIVE}
         return tuple(
             _light(m)
@@ -217,7 +352,15 @@ class InMemoryManifestRepository:
     async def set_manual_tags(
         self, manifest_id: ManifestId, tags: Mapping[str, tuple[ManualTag, ...]]
     ) -> Mapping[str, tuple[str, ...]]:
-        """Set each entry's manual tags; report the entries that have or had some."""
+        """Set each entry's manual tags; report the entries that have or had some.
+
+        Args:
+            manifest_id: The manifest.
+            tags: The manual tags of each path; a path left out gets none.
+
+        Returns:
+            The tags of each entry touched, by path.
+        """
         found = self.manifests.get(manifest_id)
         if found is None:
             return {}
@@ -236,7 +379,16 @@ class InMemoryManifestRepository:
         path: str,
         direction: RenameDirection = RenameDirection.FORWARD,
     ) -> ManifestRename | None:
-        """Return the rename of the old path, or (``BACK``) the first one into the new path."""
+        """Return the rename of the old path, or (``BACK``) the first one into the new path.
+
+        Args:
+            manifest_id: The manifest.
+            path: The old path (``FORWARD``) or the new one (``BACK``).
+            direction: Which way to follow the path.
+
+        Returns:
+            The rename, or ``None``.
+        """
         found = self.manifests.get(manifest_id)
         renames = sorted(found.renames, key=lambda r: r.old_path) if found else []
         back = direction is RenameDirection.BACK
@@ -245,14 +397,27 @@ class InMemoryManifestRepository:
     async def list_renames(
         self, manifest_id: ManifestId, *, limit: int
     ) -> Sequence[ManifestRename]:
-        """Return up to ``limit`` renames of the manifest, sorted by old path."""
+        """Return up to ``limit`` renames of the manifest, sorted by old path.
+
+        Args:
+            manifest_id: The manifest.
+            limit: The most renames returned.
+
+        Returns:
+            The renames, sorted by old path.
+        """
         found = self.manifests.get(manifest_id)
         return tuple(sorted(found.renames, key=lambda r: r.old_path))[:limit] if found else ()
 
     async def replace_renames(
         self, manifest_id: ManifestId, renames: Sequence[ManifestRename]
     ) -> None:
-        """Keep the renames into the manifest's entries, one per old path, as its whole map."""
+        """Keep the renames into the manifest's entries, one per old path, as its whole map.
+
+        Args:
+            manifest_id: The manifest.
+            renames: The new rename map.
+        """
         found = self.manifests.get(manifest_id)
         if found is None:
             return
@@ -264,12 +429,28 @@ class InMemoryManifestRepository:
         self.manifests[manifest_id] = replace(found, renames=tuple(kept.values()))
 
     async def list_paths(self, manifest_id: ManifestId, *, limit: int) -> Sequence[str]:
-        """Return up to ``limit`` article paths of the manifest, sorted."""
+        """Return up to ``limit`` article paths of the manifest, sorted.
+
+        Args:
+            manifest_id: The manifest.
+            limit: The most paths returned.
+
+        Returns:
+            The paths, sorted.
+        """
         found = self.manifests.get(manifest_id)
         return tuple(sorted(e.path for e in found.entries))[:limit] if found else ()
 
     async def count_tags(self, manifest_id: ManifestId, *, limit: int) -> Sequence[tuple[str, int]]:
-        """Return up to ``limit`` ``(tag, article count)`` pairs, most used first, then by name."""
+        """Return up to ``limit`` ``(tag, article count)`` pairs, most used first, then by name.
+
+        Args:
+            manifest_id: The manifest.
+            limit: The most tags returned.
+
+        Returns:
+            The tags with their article counts.
+        """
         found = self.manifests.get(manifest_id)
         counts = Counter(tag for e in found.entries for tag in e.all_tags) if found else Counter()
         return tuple(sorted(counts.items(), key=lambda item: (-item[1], item[0])))[:limit]
@@ -277,7 +458,16 @@ class InMemoryManifestRepository:
     async def get_article(
         self, library_id: LibraryId, ref: VersionRef, path: str
     ) -> StoredArticle | None:
-        """Return one article of the version's active manifest, or ``None``."""
+        """Return one article of the version's active manifest, or ``None``.
+
+        Args:
+            library_id: The library.
+            ref: The exact ref.
+            path: The article's path.
+
+        Returns:
+            The article with its text, or ``None``.
+        """
         manifest = self._active(library_id, ref)
         entry = next((e for e in manifest.entries if e.path == path), None) if manifest else None
         if manifest is None or entry is None:
@@ -292,14 +482,38 @@ class InMemoryManifestRepository:
     async def get_image(
         self, library_id: LibraryId, ref: VersionRef, path: str, *, with_data: bool = True
     ) -> StoredImage | None:
-        """Return the image at ``path`` of the version's active manifest, or ``None``."""
+        """Return the image at ``path`` of the version's active manifest, or ``None``.
+
+        Args:
+            library_id: The library.
+            ref: The exact ref.
+            path: The image's path.
+            with_data: Whether to read the bytes.
+
+        Returns:
+            The image, or ``None``.
+        """
         manifest = self._active(library_id, ref)
         held = next((i for i in manifest.images if i.path == path), None) if manifest else None
         found = self.images.get(held.blob_sha) if held else None
         return found if found is None or with_data else replace(found, data=b"")
 
     async def activate(self, manifest_id: ManifestId, *, at: datetime) -> Version:
-        """Make a pending manifest the version's active one; all or nothing."""
+        """Make a pending manifest the version's active one; all or nothing.
+
+        Args:
+            manifest_id: The manifest.
+            at: When it is activated: the version's new ``imported_at``.
+
+        Returns:
+            The version as it is now.
+
+        Raises:
+            ManifestNotFoundError: No manifest has this ID.
+            LibraryNotFoundError: The library is not in the catalog.
+            ManifestNotPendingError: The manifest was superseded.
+            ManifestOutdatedError: A newer manifest of the version is active.
+        """
         manifest = self.manifests.get(manifest_id)
         if manifest is None:
             raise ManifestNotFoundError(manifest_id)
@@ -345,7 +559,16 @@ class InMemoryManifestRepository:
         library_id: LibraryId | None,
         created_before: datetime | None,
     ) -> int:
-        """Delete the pending manifests that match every given filter."""
+        """Delete the pending manifests that match every given filter.
+
+        Args:
+            manifest_id: Only this manifest; ``None``: any.
+            library_id: Only manifests of this library; ``None``: any.
+            created_before: Only manifests stored before this time; ``None``: any.
+
+        Returns:
+            How many manifests were deleted.
+        """
         doomed = [
             m.id
             for m in self.manifests.values()
@@ -359,7 +582,14 @@ class InMemoryManifestRepository:
         return len(doomed)
 
     async def collect_garbage(self, *, superseded_before: datetime) -> GarbageCollected:
-        """Delete manifests superseded before the cutoff, then texts no manifest uses."""
+        """Delete manifests superseded before the cutoff, then texts no manifest uses.
+
+        Args:
+            superseded_before: The cutoff.
+
+        Returns:
+            How many manifests, texts and images were deleted.
+        """
         old = [
             m.id
             for m in self.manifests.values()
@@ -380,7 +610,19 @@ class InMemoryManifestRepository:
         return GarbageCollected(manifests=len(old), contents=len(unused), images=len(loose))
 
     async def remove_version(self, library_id: LibraryId, ref: VersionRef) -> Sequence[ManifestId]:
-        """Delete the version row and every manifest of the ref."""
+        """Delete the version row and every manifest of the ref.
+
+        Args:
+            library_id: The library.
+            ref: The exact ref.
+
+        Returns:
+            The deleted manifest IDs.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog.
+            VersionNotFoundError: The library has no such version.
+        """
         library = self.libraries.libraries.get(library_id)
         if library is None:
             raise LibraryNotFoundError(str(library_id))
@@ -397,7 +639,17 @@ class InMemoryManifestRepository:
         return doomed
 
     async def remove_library(self, library_id: LibraryId) -> Sequence[ManifestId]:
-        """Delete the library and all its manifests."""
+        """Delete the library and all its manifests.
+
+        Args:
+            library_id: The library.
+
+        Returns:
+            The deleted manifest IDs.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog.
+        """
         if library_id not in self.libraries.libraries:
             raise LibraryNotFoundError(str(library_id))
         doomed = [m.id for m in self.manifests.values() if m.library == library_id]
@@ -408,6 +660,15 @@ class InMemoryManifestRepository:
         return doomed
 
     def _active(self, library_id: LibraryId, ref: VersionRef) -> Manifest | None:
+        """Find the version's active manifest, with its entries.
+
+        Args:
+            library_id: The library.
+            ref: The exact ref.
+
+        Returns:
+            The active manifest, or ``None``.
+        """
         return next(
             (
                 m
@@ -419,7 +680,14 @@ class InMemoryManifestRepository:
 
 
 def _light(manifest: Manifest) -> Manifest:
-    """Return the manifest as ``get`` does: without entries, renames and images."""
+    """Return the manifest as ``get`` does: without entries, renames and images.
+
+    Args:
+        manifest: The manifest as stored.
+
+    Returns:
+        The manifest without entries, renames, images or instruction files.
+    """
     return replace(manifest, entries=(), renames=(), images=(), instructions=())
 
 
@@ -428,11 +696,20 @@ class InMemoryImportedTags:
     """Implements ``ports.driven.ImportedTagWriter`` on an ``InMemoryManifestRepository``."""
 
     repository: InMemoryManifestRepository
+    """The manifests."""
 
     async def set_imported_tags(
         self, manifest_id: ManifestId, tags: Mapping[str, tuple[str, ...]]
     ) -> Mapping[str, tuple[str, ...]]:
-        """Replace the imported tags of the named entries; report every one of them."""
+        """Replace the imported tags of the named entries; report every one of them.
+
+        Args:
+            manifest_id: The manifest.
+            tags: The new imported tags, by path.
+
+        Returns:
+            The tags of each given entry the manifest has, by path.
+        """
         found = self.repository.manifests.get(manifest_id)
         if found is None:
             return {}
@@ -468,6 +745,7 @@ class InMemoryStoredArticles:
     """Implements ``ports.driven.StoredArticleFinder`` on an ``InMemoryManifestRepository``."""
 
     repository: InMemoryManifestRepository
+    """The manifests and their texts."""
 
     async def find_articles(
         self,
@@ -476,7 +754,17 @@ class InMemoryStoredArticles:
         content_version: int,
         files: Collection[tuple[str, str]],
     ) -> Sequence[StoredArticle]:
-        """Return the first entry of the library's manifests stored for each file."""
+        """Return the first entry of the library's manifests stored for each file.
+
+        Args:
+            library_id: The library.
+            ref: The version being imported, looked in first; ``None``: none.
+            content_version: The parser version the texts must be stored by.
+            files: The files, as ``(path, blob SHA)``.
+
+        Returns:
+            One stored article per file found.
+        """
         del ref  # an optimisation of the SQL lookup: any manifest gives the same article
         wanted, found = set(files), {}
         for manifest in self.repository.manifests.values():
@@ -502,6 +790,7 @@ class InMemoryManifestCopier:
     """Implements ``ports.driven.ManifestCopier`` on an ``InMemoryManifestRepository``."""
 
     repository: InMemoryManifestRepository
+    """The manifests and their texts."""
 
     async def copy_active(
         self,
@@ -512,7 +801,21 @@ class InMemoryManifestCopier:
         at: datetime,
         content_version: int,
     ) -> tuple[Manifest, Sequence[StoredArticle]] | None:
-        """Store a pending copy of the active manifest; see the port."""
+        """Store a pending copy of the active manifest; see the port.
+
+        Args:
+            library_id: The library.
+            ref: The exact ref.
+            new_id: The copy's ID.
+            at: The copy's creation time.
+            content_version: The parser version the texts must be stored by.
+
+        Returns:
+            The copy and its articles, or ``None``.
+
+        Raises:
+            StoredContentOutdatedError: An entry was stored by another parser version.
+        """
         found = next(
             (
                 m
