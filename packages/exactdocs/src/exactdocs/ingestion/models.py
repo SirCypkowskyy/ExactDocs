@@ -36,6 +36,7 @@ from exactdocs.ingestion.constants import (
     DEFAULT_CHUNKER,
     DEFAULT_INTERVAL_MINUTES,
     DEFAULT_KEEP_LAST,
+    DEFAULT_MAX_SECTION_CHARS,
     FLAT_HOSTS,
     GLOB_CHARS,
     HEADS,
@@ -1303,7 +1304,12 @@ class ChunkingConfig:
     longer than ``max_chars`` is cut again at its deeper headings, and sections shorter than
     ``min_chars`` are merged with the next one (the last with the one before) while the merged
     chunk stays within ``max_chars``: never inside a block, never with the text before the first
-    heading. ``None`` means no upper bound. ``chunker`` is one of ``CHUNKERS``.
+    heading. ``max_section_chars`` bounds every chunk the same way, and a section still longer
+    than it is split at its top-level blocks (#141): never inside a code fence, table or list, so
+    a single block longer than it stays whole. ``None`` means no upper bound. ``chunker`` is one
+    of ``CHUNKERS``. A ``max_chars`` or ``min_chars`` above ``max_section_chars`` has no effect:
+    the settings API refuses one (``refuse_sizes_above_section_bound``), but a config stored
+    before the bound existed still loads.
     """
 
     split_depth: int = MAX_HEADING_LEVEL
@@ -1312,6 +1318,9 @@ class ChunkingConfig:
     """Shorter chunks are merged; 0 merges none."""
     max_chars: int | None = None
     """Longer chunks are cut again at deeper headings; ``None``: no bound."""
+    max_section_chars: int | None = DEFAULT_MAX_SECTION_CHARS
+    """Longer chunks are cut again at deeper headings, then at top-level blocks; ``None``: no
+    bound."""
     chunker: str = DEFAULT_CHUNKER
     """Which chunker cuts."""
 
@@ -1330,12 +1339,39 @@ class ChunkingConfig:
         if self.max_chars is not None and not 1 <= self.max_chars <= MAX_CHUNK_CHARS:
             reason = f"max_chars must be between 1 and {MAX_CHUNK_CHARS}"
             raise InvalidChunkingConfigError(reason)
+        if self.max_section_chars is not None and not (
+            1 <= self.max_section_chars <= MAX_CHUNK_CHARS
+        ):
+            reason = f"max_section_chars must be between 1 and {MAX_CHUNK_CHARS}"
+            raise InvalidChunkingConfigError(reason)
         if self.max_chars is not None and self.max_chars < self.min_chars:
             reason = "max_chars must not be smaller than min_chars"
             raise InvalidChunkingConfigError(reason)
         if self.chunker not in CHUNKERS:
             reason = f"chunker must be one of {', '.join(sorted(CHUNKERS))}"
             raise InvalidChunkingConfigError(reason)
+
+    def refuse_sizes_above_section_bound(self) -> None:
+        """Refuse a ``max_chars`` or ``min_chars`` that ``max_section_chars`` would make void.
+
+        No chunk is longer than ``max_section_chars`` (but a single block), so a bigger
+        ``max_chars`` never cuts and a bigger ``min_chars`` never merges. Only new settings are
+        checked: a config stored before the bound existed is not refused when it is read.
+
+        Raises:
+            InvalidChunkingConfigError: ``max_chars`` or ``min_chars`` is above
+                ``max_section_chars``.
+        """
+        bound = self.max_section_chars
+        if bound is None:
+            return
+        for name, value in (("max_chars", self.max_chars), ("min_chars", self.min_chars)):
+            if value is not None and value > bound:
+                reason = (
+                    f"{name} must be at most {bound}: no chunk is longer than that, unless a "
+                    "single block is"
+                )
+                raise InvalidChunkingConfigError(reason)
 
 
 def chunking_config_hash(config: ChunkingConfig, engine: str = "") -> str:
@@ -1350,6 +1386,9 @@ def chunking_config_hash(config: ChunkingConfig, engine: str = "") -> str:
     names ``MERGED_HEADINGS_VERSION``: its chunks record those headings, and a set cut before
     they did is cut again instead of reused. The others cut at every heading (``max_chars`` only
     cuts whole sections), so their chunk sets already tell every heading and keep their hash.
+    ``max_section_chars`` is named whenever it bounds the chunks (#141), so the default config's
+    hash changed with it and changes again with ``DEFAULT_MAX_SECTION_CHARS``; a config without
+    it cuts as before #141 and keeps the hash it had.
 
     Args:
         config: The chunking settings.
@@ -1364,6 +1403,8 @@ def chunking_config_hash(config: ChunkingConfig, engine: str = "") -> str:
         fields.extend(extra)
     if config.split_depth < MAX_HEADING_LEVEL or config.min_chars:  # it can merge headings
         fields.append(f"headings-{MERGED_HEADINGS_VERSION}")
+    if config.max_section_chars is not None:
+        fields.append(f"sections-{config.max_section_chars}")
     payload = json.dumps(fields, separators=(",", ":"))
     return hashlib.sha256(payload.encode()).hexdigest()[:32]
 
@@ -1387,7 +1428,11 @@ class ArticleChunk:
     heading_path: tuple[str, ...]
     """Empty for the text before the first heading."""
     occurrence_index: int
-    """Among chunks with the same heading path: 0, 1, ..."""
+    """Among sections with the same heading path: 0, 1, ...; every part of a split section has
+    its section's."""
+    part: int = 0
+    """Among the parts of a section split at its blocks (#141): 0, 1, ...; 0 for a section that
+    is not split."""
     position: int
     """0-based index in the article."""
     content: str
@@ -2326,7 +2371,8 @@ class ImportedVersion:
     refresh: bool = False
     """The version must still exist when it is stored (a re-sync never re-creates a removed one)."""
     renamed_from: str | None = None
-    """The ref whose commit ``renames`` were detected against; ``None`` when none were."""
+    """The ref whose commit ``renames`` were detected against, also when nothing moved (the
+    version this one follows); ``None`` when no version was compared."""
     renames: tuple[GitRename, ...] = ()
     """Renames from ``renamed_from``'s commit to this one, Markdown files only."""
     origin: VersionOrigin = VersionOrigin.MANUAL

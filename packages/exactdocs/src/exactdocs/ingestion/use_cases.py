@@ -1588,6 +1588,8 @@ class UpdateLibrarySettingsUseCase:
                 chunker=wanted.chunker,
             )
         )
+        if sent is not None:
+            sent.refuse_sizes_above_section_bound()
         async with self.locks.of(library):
             change, chunking, refs, job_id = await self._update(library, selection, tag_rules, sent)
         return UpdatedLibrarySettings(
@@ -2443,7 +2445,8 @@ class ImportVersionUseCase:
             articles: The version's articles.
 
         Returns:
-            The ref the renames start from and the renames, or ``(None, ())``.
+            The ref the renames start from (also when nothing moved) and the renames, or
+            ``(None, ())`` when no version was compared.
         """
         if self.renames is None or job.version is None or job.commit_sha is None:
             return None, ()
@@ -2471,20 +2474,24 @@ class ImportVersionUseCase:
                     refs=[*refs, *_full_refs(before.kind, before.ref)],
                     credential=credential,
                 ),
-                [],
+                None,
             )
         )
         paths = {article.path for article in articles}
         kept = [
             rename
-            for rename in found
+            for rename in found or ()
             if rename.new_path in paths
             and rename.old_path != rename.new_path
             and rename.old_path.isprintable()  # not a stray byte (a surrogate) or a control
             and source.selection.selects(rename.old_path)
         ]
         result = compose_renames(earlier, kept, paths) if unordered else tuple(kept)
-        return (before.ref, result) if result else (None, ())
+        if found is None and not result:
+            return None, ()  # git could not compare the two commits: no link is known
+        # Also when nothing moved: the link tells the catalog which version this one follows,
+        # so a path can be followed across several versions (#201).
+        return before.ref, result
 
     async def _renew_newer(
         self,

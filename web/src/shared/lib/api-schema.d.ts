@@ -428,7 +428,12 @@ export interface paths {
         };
         /**
          * Get Renamed Path
-         * @description Follow `path` one hop across the renames git saw when `ref` was imported.
+         * @description Follow `path` across the renames git saw when versions were imported.
+         *
+         *     With `from`, `path` is from that version, and the rename maps between it and `ref` are
+         *     followed hop by hop (older to newer or back): `new_path` is its path in `ref`. Versions
+         *     with no import link between them (another branch, a version removed in between) give
+         *     `null`. Without `from`, one hop across the renames git saw when `ref` was imported.
          *
          *     `renamed` is `null` when it was not moved (or no renames are known). An unknown library
          *     or version, or a version without an active manifest, is a 404 instead.
@@ -1949,15 +1954,16 @@ export interface components {
             /**
              * Min Chars
              * @description A chunk shorter than this is merged with the next one (the last with the one before), within
-             *     `max_chars`; the text before the first heading is never merged.
+             *     `max_chars`; the text before the first heading is never merged. At most 8,000 when sent: no
+             *     chunk is longer.
              * @default 0
              */
             readonly min_chars: number;
             /**
              * Max Chars
              * @description A chunk longer than this is cut again at its deeper headings; never inside a code block or
-             *     table, so a section without deeper headings stays whole. Null: no bound. At least
-             *     `min_chars`.
+             *     table. Null: no bound. At least `min_chars`, and at most 8,000 when sent: whatever the
+             *     settings, a section longer than 8,000 characters is split between its top-level blocks.
              */
             readonly max_chars?: number | null;
             /**
@@ -3793,6 +3799,9 @@ export interface components {
         /**
          * RenamedPath
          * @description `old_path` of version `from_ref` is `new_path` in `ref`, as git saw it.
+         *
+         *     Asked with `from`, the move may span several versions, in either order of import:
+         *     `old_path` is the path asked about and `new_path` its path in `ref`.
          */
         readonly RenamedPath: {
             /**
@@ -3802,7 +3811,7 @@ export interface components {
             readonly library: string;
             /**
              * Ref
-             * @description The version whose import saw the move.
+             * @description The version whose import saw the move; with `from`, the version asked about.
              */
             readonly ref: string;
             /**
@@ -6970,11 +6979,13 @@ export interface operations {
     readonly "catalog-get_renamed_path": {
         readonly parameters: {
             readonly query: {
-                /** @description `forward`: the article's path in the version imported before `ref`. `back`: its path in `ref`. */
+                /** @description With `from`: the article's path in `from`. Otherwise `forward`: its path in the version imported before `ref`; `back`: its path in `ref`. */
                 readonly path: string;
                 readonly ref?: string | null;
-                /** @description `forward` (default): old to new path; `back`: new to old. */
+                /** @description `forward` (default): old to new path; `back`: new to old. Ignored with `from`. */
                 readonly direction?: components["schemas"]["RenameDirection"];
+                /** @description The exact imported ref `path` is from: the renames of every version between it and `ref` are followed, either way. None: one hop by `direction`. */
+                readonly from?: string | null;
             };
             readonly header?: never;
             readonly path: {

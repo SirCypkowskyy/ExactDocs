@@ -192,16 +192,19 @@ class ListTags(Protocol):
 class ResolveRenamedPath(Protocol):
     """Follow a path across the renames git detected when the version was imported.
 
-    ``FORWARD``: where did ``path`` of the previous version go in ``ref``? ``BACK``: where was
-    ``path`` of ``ref`` in the previous version? ``None`` when the version's manifest has no
-    such rename (or none were detected). It is one hop: callers follow a file across several
-    versions by asking once per version and chaining the answers (a version that was never
-    imported breaks the chain). A tag's map covers the previous numeric tag. A branch's map
-    builds up over its syncs: renames are kept, chained (A to B, then B to C gives A to C) and
-    dropped when their target is gone.
+    With ``from_ref``: where is ``path`` of ``from_ref`` in ``ref``? Each version names the one
+    it follows (its map was detected against it), and the maps of every version between the
+    two are followed hop by hop, whichever was imported first. Versions with no such link
+    between them (another branch, a version removed in between) give ``None``.
 
-    Raises ``LibraryNotFoundError`` / ``VersionNotFoundError`` for an unknown target and
-    ``ArticleNotFoundError`` when the version has no active manifest.
+    Without it, one hop. ``FORWARD``: where did ``path`` of the previous version go in ``ref``?
+    ``BACK``: where was ``path`` of ``ref`` in the previous version? ``None`` when the version's
+    manifest has no such rename (or none were detected). A tag's map covers the previous
+    numeric tag. A branch's map builds up over its syncs: renames are kept, chained (A to B,
+    then B to C gives A to C) and dropped when their target is gone.
+
+    Raises ``LibraryNotFoundError`` / ``VersionNotFoundError`` for an unknown target or
+    ``from_ref`` and ``ArticleNotFoundError`` when the version has no active manifest.
     """
 
     async def __call__(self, query: ResolveRenamedPathQuery) -> RenamedPath | None:

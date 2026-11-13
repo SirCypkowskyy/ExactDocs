@@ -2072,6 +2072,7 @@ class IndexManifestUseCase:
                         Chunk(
                             heading_path=tuple(c.heading_path),
                             occurrence_index=c.occurrence_index,
+                            part=c.part,
                             content=c.content,
                             content_hash=c.content_hash,
                             anchor=c.anchor,
@@ -2251,10 +2252,13 @@ def _nearest(sections: Sequence[SectionRef], position: int) -> SectionRef | None
 def _pick(current: Sequence[SectionRef], was: Chunk, position: int) -> SectionRef | None:
     """Pick the section of ``current`` that ``was`` became, or ``None`` if unsure.
 
-    In order: same headings and same text; same headings and occurrence (text edited); same text
-    anywhere. Several equal candidates go to the nearest position, and a tie names no section:
-    an ambiguous answer is better than a wrong ID. The occurrence alone is not trusted with the
-    text unchecked, since an inserted duplicate heading shifts it onto another section.
+    In order: same headings and same text; same section (headings and occurrence: text edited);
+    same text anywhere. Several equal candidates go to the nearest position, and a tie names no
+    section: an ambiguous answer is better than a wrong ID. The occurrence alone is not trusted
+    with the text unchecked, since an inserted duplicate heading shifts it onto another section.
+    A section is ``(heading_path, occurrence_index)`` whether or not it is split into parts
+    (#141): of the same section, the same part is picked, else its first part, which holds the
+    heading. So a section that grows past the size bound and is split moves no other section.
 
     Known limit: if a duplicate heading is inserted above *and* the old section's text is
     edited too, the occurrence step lands on the inserted section. The match is then marked
@@ -2272,8 +2276,8 @@ def _pick(current: Sequence[SectionRef], was: Chunk, position: int) -> SectionRe
     same_text = [s for s in current if s.content_hash == was.content_hash]
     if both := [s for s in same_headings if s in same_text]:
         return _nearest(both, position)
-    if edited := [s for s in same_headings if s.occurrence_index == was.occurrence_index]:
-        return edited[0]
+    if section := [s for s in same_headings if s.occurrence_index == was.occurrence_index]:
+        return next((s for s in section if s.part == was.part), section[0])
     return _nearest(same_text, position)
 
 
@@ -2302,6 +2306,7 @@ class GetChunkSetsUseCase:
                     SetChunkOut(
                         heading_path=list(c.heading_path),
                         occurrence_index=c.occurrence_index,
+                        part=c.part,
                         content=c.content,
                         content_hash=c.content_hash,
                         anchor=c.anchor,

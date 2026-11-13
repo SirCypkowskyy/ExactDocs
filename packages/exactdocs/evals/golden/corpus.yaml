@@ -1,0 +1,80 @@
+# The golden-set corpus (#345): upstream documentation pinned to one commit per version.
+#
+# Nothing of these repositories is vendored here. `just golden-validate` and `just golden-import`
+# fetch each pinned commit (--depth 1) into a cache outside the repository and read it from there.
+# Tags were resolved to commits with `git ls-remote --tags <repository>` (the peeled `^{}` commit
+# of an annotated tag); a version is pinned by its commit, the tag name is only its label.
+#
+# Licences: none of these projects ships a separate licence for its documentation; the repository
+# licence below covers the docs tree too (checked at the pinned commits: no LICENSE or licence
+# notice under the docs path). Attribution is the copyright line of that licence.
+#
+# Per project: `include` / `exclude` are the library's import paths (PathSelection patterns, as
+# `exactdocs` takes them); a case may only name an article they select.
+projects:
+- id: starlette
+  title: Starlette
+  repository: https://github.com/encode/starlette
+  include: [docs/]
+  licence: BSD-3-Clause
+  attribution: Copyright © 2018, Encode OSS Ltd.
+  notes: Small Markdown guide (MkDocs), one page per topic; 1.0 removed the deprecated startup and
+    shutdown handlers, so the versions disagree on lifespan.
+  versions:
+  - {name: 0.27.0, commit: 0c4b68ac4e179a788e38bac28f299dcad0f36e99}
+  - {name: 0.52.1, commit: e5b8a5d200504a2608bed11fe6f66b1d20b9ae2c}
+  - {name: 1.10.0, commit: 8aa828ceaff764a2e57932fb42fdf105a47c4c83}
+
+- id: pydantic
+  title: Pydantic
+  repository: https://github.com/pydantic/pydantic
+  include: [docs/]
+  licence: MIT
+  attribution: Copyright (c) 2017 to present Pydantic Services Inc. and individual contributors.
+  notes: Large Markdown guide (MkDocs). v1.10 pulls its code examples in with include directives
+    (not in the Markdown), v2 has them inline; v2's API pages under docs/api/ are mkdocstrings
+    stubs with little text. v1 -> v2 moved and renamed most pages (usage/ -> concepts/).
+  versions:
+  - {name: v1.10.22, commit: 5e6e87f7da283d8d13965d0186c88acdd531eda9}
+  - {name: v2.5.3, commit: 9f58e785a5f1f2c34437f6e9b6adcd5b969e0df4}
+  - {name: v2.14.3, commit: ea492e04654ab7f7a1f9287ea912419452ead4dd}
+
+- id: tanstack-query
+  title: TanStack Query
+  repository: https://github.com/TanStack/query
+  include: [docs/]
+  licence: MIT
+  attribution: Copyright (c) 2021-present Tanner Linsley
+  notes: Markdown guides and API reference, one tree per framework (React, Vue, Solid, Svelte,
+    later Angular), so many near-duplicate pages. v4 -> v5 renamed options (cacheTime -> gcTime);
+    between v5.0.0 and v5.90.3 every page moved from docs/<framework>/ to docs/framework/<framework>/.
+  versions:
+  - {name: v4.36.1, commit: 6532ed3cbe49f04b3cb31f80ea88b5886416d51a}
+  - {name: v5.0.0, commit: 3be9b4580ef8face761e354e5dc57bb56c9ff4a1}
+  - {name: v5.90.3, commit: 4d8da1e29e97ad5b0c151822d4962849515b4478}
+
+- id: zod
+  title: Zod
+  repository: https://github.com/colinhacks/zod
+  include: [README.md, packages/docs/content/]
+  licence: MIT
+  attribution: Copyright (c) 2025 Colin McDonnell
+  notes: v3 documents everything in one very long README.md; v4 is an MDX site (JSX components,
+    imports, tabs) under packages/docs/content/, where the root README.md is a short summary.
+  versions:
+  - {name: v3.23.8, commit: ca42965df46b2f7e2747db29c40a26bcb32a51d5}
+  - {name: v4.0.17, commit: cc63f950158db212c5e9b75e7d22faca851ea624}
+  - {name: v4.6.7, commit: b500a2ee95134f81d74da7911d7378dd2853d042}
+
+- id: electron
+  title: Electron
+  repository: https://github.com/electron/electron
+  include: [docs/]
+  licence: MIT
+  attribution: Copyright (c) Electron contributors; Copyright (c) 2013-2020 GitHub Inc.
+  notes: Large hand-written API reference (docs/api/, one page per module with long method and
+    event lists) plus tutorials; docs/breaking-changes.md lists what each major version changed.
+  versions:
+  - {name: v30.0.0, commit: c37c7fd3c48d686e4b98431aaf1a1187f603e758}
+  - {name: v38.0.0, commit: 79433861fe10e4f7841153461fd3778b400a4c0b}
+  - {name: v45.3.2, commit: 9ee9e7718172287d068cee397097c2d79a137eec}

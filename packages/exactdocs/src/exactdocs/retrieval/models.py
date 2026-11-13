@@ -296,29 +296,38 @@ def chunk_id(
     heading_path: Sequence[str],
     occurrence_index: int,
     content_hash: str,
+    part: int = 0,
 ) -> ChunkId:
     """Return the ID of a chunk inside one version, a pure function of where and what it is.
 
     ``version_id`` is ``<library>/<ref>`` (`/acme/payments/main`). The same section of an
     unchanged article keeps its ID when the version moves to a new commit, and the same blob in
     another version gets another ID, so ``read_chunk`` names exactly one chunk. The fields are
-    JSON-encoded so no separator can make two different inputs collide.
+    JSON-encoded so no separator can make two different inputs collide. ``part`` is in the payload
+    only when it is above 0, so a chunk that is a whole section keeps the ID it had before
+    sections could be split (#141).
 
     Args:
         version_id: ``<library>/<ref>``.
         article_path: The article's path.
         heading_path: The chunk's heading path.
-        occurrence_index: Its index among chunks with the same heading path.
+        occurrence_index: Its section's index among sections with the same heading path.
         content_hash: Hash of the chunk's text.
+        part: Its index among the parts of its section; 0 for a section not split.
 
     Returns:
         The chunk ID.
     """
-    payload = json.dumps(
-        [version_id, article_path, list(heading_path), occurrence_index, content_hash],
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
+    fields: list[object] = [
+        version_id,
+        article_path,
+        list(heading_path),
+        occurrence_index,
+        content_hash,
+    ]
+    if part:
+        fields.append(part)
+    payload = json.dumps(fields, ensure_ascii=False, separators=(",", ":"))
     return ChunkId(hashlib.sha256(payload.encode()).hexdigest()[:32])
 
 
@@ -341,7 +350,8 @@ class Chunk:
     heading_path: tuple[str, ...]
     """The chunk's heading and every heading above it; empty for the preamble."""
     occurrence_index: int
-    """Among chunks with the same heading path: 0, 1, ... in reading order."""
+    """Among sections with the same heading path: 0, 1, ... in reading order; every part of a
+    split section has its section's, so ``(heading_path, occurrence_index)`` names a section."""
     content: str
     """The chunk's text, verbatim."""
     content_hash: str
@@ -353,6 +363,9 @@ class Chunk:
     headings: tuple[ChunkHeading, ...] | None = None
     """Every heading the chunk holds, in order; ``None`` for a chunk stored before they were
     recorded. Not part of ``ChunkSet.digest``: they follow from the text and the config hash."""
+    part: int = 0
+    """Among the parts of a section split at its blocks (#141): 0, 1, ...; 0 for a section not
+    split. Part of the chunk's ID when above 0."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -379,7 +392,9 @@ class ChunkSet:
         chunker changes. The repository compares digests so a forgotten bump fails loudly.
         """
         parts = [
+            # ``part`` only when above 0: a set stored before parts existed keeps its digest
             [list(c.heading_path), c.occurrence_index, c.content_hash, c.anchor]
+            + ([c.part] if c.part else [])
             for c in self.chunks
         ]
         return hashlib.sha256(json.dumps(parts, separators=(",", ":")).encode()).hexdigest()
@@ -418,13 +433,15 @@ class SectionRef:
     heading_path: tuple[str, ...]
     """The chunk's heading and every heading above it."""
     occurrence_index: int
-    """Among chunks with the same heading path: 0, 1, ... in reading order."""
+    """Among sections with the same heading path: 0, 1, ... in reading order."""
     content_hash: str
     """Hash of the chunk's text."""
     anchor: str
     """Anchor of the chunk's heading in the article."""
     headings: tuple[ChunkHeading, ...] | None = None
     """Every heading the chunk holds, in order; ``None`` when they were not recorded."""
+    part: int = 0
+    """Among the parts of its section: 0, 1, ...; 0 for a section not split."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -794,7 +811,9 @@ def article_chunk_rows(
         DuplicateChunkError: Two chunks of the article would get the same ID.
     """
     ids = [
-        chunk_id(version_id, article_path, c.heading_path, c.occurrence_index, c.content_hash)
+        chunk_id(
+            version_id, article_path, c.heading_path, c.occurrence_index, c.content_hash, c.part
+        )
         for c in chunk_set.chunks
     ]
     if len(set(ids)) != len(ids):

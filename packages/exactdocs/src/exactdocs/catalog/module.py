@@ -212,8 +212,9 @@ class CatalogModule:
 
         ``imported_tags`` rewrites the imported tags of the manifests ``manifests`` stores,
         ``copier`` copies them and ``stored_articles`` finds their articles by what they were
-        imported from. ``article_titles`` looks titles up by path for other domains; without
-        it none are known. ``instruction_files`` reads the instruction files ``manifests``
+        imported from. ``article_titles`` looks titles up by path for other domains and
+        confirms a path followed across versions; without it none are known (and no such path
+        is confirmed). ``instruction_files`` reads the instruction files ``manifests``
         stores; without it none are read.
 
         Args:
@@ -230,6 +231,7 @@ class CatalogModule:
             The module, every driving port wired.
         """
         clock = clock or SystemClock()
+        titles = article_titles or _NoTitles()
         tagger = ManualTagger(repository=repository, manifests=manifests)
         return cls(
             list_libraries=ListLibrariesUseCase(repository=repository),
@@ -238,7 +240,7 @@ class CatalogModule:
             get_library=GetLibraryUseCase(repository=repository),
             resolve_version=ResolveVersionUseCase(repository=repository),
             resolve_renamed_path=ResolveRenamedPathUseCase(
-                repository=repository, manifests=manifests
+                repository=repository, manifests=manifests, titles=titles
             ),
             list_renames=ListRenamesUseCase(repository=repository, manifests=manifests),
             store_manifest=StoreManifestUseCase(
@@ -256,7 +258,7 @@ class CatalogModule:
             ),
             collect_garbage=CollectGarbageUseCase(manifests=manifests, clock=clock),
             get_manifest_states=GetManifestStatesUseCase(manifests=manifests),
-            get_article_titles=GetArticleTitlesUseCase(titles=article_titles or _NoTitles()),
+            get_article_titles=GetArticleTitlesUseCase(titles=titles),
             get_active_manifest=GetActiveManifestUseCase(
                 repository=repository, manifests=manifests
             ),

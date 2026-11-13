@@ -98,6 +98,8 @@ async def test_unchanged_settings_answer_200_without_a_job(client: httpx.AsyncCl
         ({"tag_rules": [{"pattern": "docs/**", "tag": "!!"}]}, "invalid_tag"),
         ({"include_paths": "docs/"}, "validation_error"),
         ({"chunking": {"min_chars": 50, "max_chars": 10}}, "invalid_chunking_config"),
+        ({"chunking": {"max_chars": 8001}}, "invalid_chunking_config"),
+        ({"chunking": {"min_chars": 8001}}, "invalid_chunking_config"),
         ({"chunking": {"split_level": 7}}, "validation_error"),
     ],
 )
@@ -108,6 +110,15 @@ async def test_invalid_settings_are_422_and_nothing_changes(
 
     assert (response.status_code, response.json()["error"]) == (422, error)
     assert (await client.get(PATH)).json()["settings"]["exclude_paths"] == []
+
+
+async def test_a_size_above_the_section_bound_says_what_the_bound_is(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.put(f"{PATH}/settings", json={"chunking": {"max_chars": 20_000}})
+
+    assert response.status_code == 422
+    assert "max_chars must be at most 8000" in response.json()["message"]
 
 
 async def test_an_unknown_library_is_404(client: httpx.AsyncClient) -> None:
