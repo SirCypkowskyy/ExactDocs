@@ -559,6 +559,9 @@ Model endpoints are **provider profiles**, named once and used by every role as
 (`uvx --from 'exactdocs[ai]' exactdocs serve`). Nothing of it is imported, and nothing is sent
 anywhere, while no profile is configured.
 
+Which configuration to pick for no models, local models or hosted models, with the benchmark
+numbers behind it, is on [Recommended defaults](https://sircypkowskyy.github.io/ExactDocs/benchmark/defaults/).
+
 ```toml
 # EXACTDOCS_CONFIG_FILE=/etc/exactdocs/exactdocs.toml
 [ai.providers.corp]                     # a company gateway speaking the OpenAI API

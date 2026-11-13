@@ -27,6 +27,15 @@ nav = [
     { "Retrieval evals" = "evals.md" },
     { "Branching and releases" = "releasing.md" },
   ] },
+  { "Benchmark" = [
+    "benchmark/index.md",
+    { "Golden set" = "benchmark/golden-set.md" },
+    { "Method" = "benchmark/method.md" },
+    { "Ingestion results" = "benchmark/ingestion.md" },
+    { "Retrieval results" = "benchmark/retrieval.md" },
+    { "Agent results" = "benchmark/agent.md" },
+    { "Recommended defaults" = "benchmark/defaults.md" },
+  ] },
 ]
 
 [project.theme]
