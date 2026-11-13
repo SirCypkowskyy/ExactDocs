@@ -73,6 +73,14 @@ bdd *args:
 eval *args:
     uv run python packages/exactdocs/evals/run_retrieval_eval.py {{ args }}
 
+# Golden set: fetch the pinned corpus and check every case's sections exist (docs/evals.md)
+golden-validate *args:
+    uv run python packages/exactdocs/evals/run_golden.py validate {{ args }}
+
+# Golden set: fetch and import every pinned version with the real importer; records the commits
+golden-import *args:
+    uv run python packages/exactdocs/evals/run_golden.py import {{ args }}
+
 # Web unit tests (vitest)
 web-test:
     cd {{ web }} && pnpm test

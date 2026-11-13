@@ -1,0 +1,80 @@
+# Golden-set cases for TanStack Query (corpus.yaml: tanstack-query). Format and rules:
+# docs/evals.md#the-golden-set. Check with `just golden-validate --projects tanstack-query`.
+# Name the React page: the other frameworks' pages hold only code that replaces the React page's
+# examples on the website (front matter `ref:`), not the prose.
+name: tanstack-query
+cases:
+- name: 'tanstack-query v5.0.0: What happened to the cacheTime option?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'What happened to the cacheTime option?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v5.0.0, article: docs/react/guides/migrating-to-v5.md, heading_path: [Breaking Changes, Rename cacheTime to gcTime]}
+    reference: v5 renames `cacheTime` to `gcTime` ("garbage collect" time); it only applies once a
+      query is unused, after which its data is garbage collected.
+    facts:
+    - cacheTime is renamed to gcTime
+    - it only takes effect once a query is no longer used
+    - after that time the unused data is garbage collected
+
+- name: 'tanstack-query v4.36.1: What is the default cacheTime of useQuery?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'What is the default cacheTime of useQuery?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v4.36.1, article: docs/react/reference/useQuery.md, heading_path: []}
+    reference: '`cacheTime` defaults to 5 minutes (`5 * 60 * 1000`), or `Infinity` during SSR; it is
+      how long unused or inactive cache data stays in memory.'
+    facts:
+    - cacheTime defaults to 5 minutes (5 * 60 * 1000 ms)
+    - it is Infinity during SSR
+    - Infinity disables garbage collection
+
+- name: 'tanstack-query v5.90.3: How do I refresh the todos list after a mutation succeeds?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'How do I refresh the todos list after a mutation succeeds?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/framework/react/guides/invalidations-from-mutations.md, heading_path: []}
+    reference: >-
+      In `useMutation`'s `onSuccess`, call `queryClient.invalidateQueries({ queryKey: ['todos'] })`;
+      returning its promise keeps the mutation pending until the data is updated.
+    facts:
+    - invalidate in the onSuccess option of useMutation
+    - call queryClient.invalidateQueries with the todos query key
+    - returning the promise from onSuccess keeps the mutation pending until it resolves
+
+- name: 'tanstack-query v5.90.3: Why does my query refetch every time the window gets focus?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'Why does my query refetch every time the window gets focus?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/framework/react/guides/important-defaults.md, heading_path: []}
+    reference: Cached data is stale by default, and stale queries refetch in the background when the
+      window is refocused; set `staleTime` (or `refetchOnWindowFocus`) to change it.
+    facts:
+    - cached data is considered stale by default
+    - stale queries are refetched when the window is refocused
+    - a longer staleTime avoids the refetches
+
+- name: 'tanstack-query v4.36.1: How do I limit how many pages an infinite query keeps with maxPages?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'How do I limit how many pages an infinite query keeps with maxPages?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The TanStack Query v4 documentation has no maxPages option.

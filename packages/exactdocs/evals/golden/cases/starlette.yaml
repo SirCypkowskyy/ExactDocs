@@ -1,0 +1,93 @@
+# Golden-set cases for Starlette (corpus.yaml: starlette). Format and rules: docs/evals.md#the-golden-set.
+# Check with `just golden-validate --projects starlette`.
+name: starlette
+cases:
+- name: 'starlette 1.10.0: How do I run code when the application starts up and when it shuts down?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'How do I run code when the application starts up and when it shuts down?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/lifespan.md, heading_path: []}
+    reference: Pass an async context manager as `lifespan=` to `Starlette(...)`; the code before its
+      `yield` runs at startup and the code after it at shutdown.
+    facts:
+    - an async context manager is passed as the lifespan argument of Starlette
+    - code before the yield runs at startup, code after it at shutdown
+    - no request is served until the lifespan has run
+
+- name: 'starlette 1.10.0: Can I still register startup handlers with on_startup or @app.on_event?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'Can I still register startup handlers with on_startup or @app.on_event?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/release-notes.md, heading_path: ['1.0.0rc1 (February 23, 2026)', Removed]}
+    reference: No. 1.0.0rc1 removed the `on_startup` and `on_shutdown` parameters, the `on_event()`
+      decorator and `add_event_handler()`; use the `lifespan` parameter instead.
+    facts:
+    - on_startup and on_shutdown were removed in 1.0.0rc1
+    - the on_event() decorator was removed too
+    - the lifespan parameter replaces them
+
+- name: 'starlette 0.52.1: What is the default max_age of SessionMiddleware?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'What is the default max_age of SessionMiddleware?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/middleware.md, heading_path: [SessionMiddleware]}
+    reference: '`max_age` is the session expiry in seconds and defaults to 2 weeks; `None` keeps the
+      cookie for the browser session.'
+    facts:
+    - max_age is the session expiry time in seconds
+    - it defaults to 2 weeks
+    - None makes the cookie last as long as the browser session
+
+- name: 'starlette 0.52.1: Since when can lifespan state be read as request.state["key"]?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'Since when can lifespan state be read as request.state["key"]?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/lifespan.md, heading_path: [Accessing State]}
+    reference: Dictionary-style access to the state was introduced in Starlette 0.52.0 (January
+      2026), with `Request` generic over the state type for type safety.
+    facts:
+    - dictionary-style state access was introduced in 0.52.0
+    - Request is generic over the state type, so the access is typed
+
+- name: 'starlette 0.52.1: How do I create an HTTP client once at startup and use it in my request handlers?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'How do I create an HTTP client once at startup and use it in my request handlers?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/lifespan.md, heading_path: [Lifespan State]}
+    - {version: '0.52.1', article: docs/requests.md, heading_path: [Request, Other state]}
+    reference: Create the client in the lifespan and yield it in a state dict; handlers read it from
+      `request.state`, which receives a shallow copy of that state.
+    facts:
+    - the lifespan yields a dictionary of state
+    - handlers read the state from request.state
+    - the request gets a shallow copy of the lifespan state
+
+- name: 'starlette 0.27.0: How do I send a 103 Early Hints response?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'How do I send a 103 Early Hints response?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The Starlette 0.27.0 documentation does not cover Early Hints.

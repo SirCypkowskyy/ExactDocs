@@ -1,0 +1,77 @@
+# Golden-set cases for Pydantic (corpus.yaml: pydantic). Format and rules: docs/evals.md#the-golden-set.
+# Check with `just golden-validate --projects pydantic`.
+name: pydantic
+cases:
+- name: 'pydantic v2.5.3: What is orm_mode called in Pydantic V2?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'What is orm_mode called in Pydantic V2?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/migration.md, heading_path: [Migration guide, Changes to config]}
+    reference: '`orm_mode` is renamed to `from_attributes`, and config is now set as a
+      `model_config` dict instead of a nested `class Config`.'
+    facts:
+    - orm_mode is renamed to from_attributes
+    - config is set with a model_config dict; class Config is deprecated
+
+- name: 'pydantic v1.10.22: How do I create a model from an ORM object?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'How do I create a model from an ORM object?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v1.10.22, article: docs/usage/models.md, heading_path: [ORM Mode (aka Arbitrary Class Instances)]}
+    reference: Set `orm_mode = True` in the model's `Config` and build the instance with
+      `Model.from_orm(obj)`.
+    facts:
+    - the Config property orm_mode must be set to True
+    - the from_orm constructor creates the instance
+
+- name: 'pydantic v2.14.3: How do I add a check that runs after Pydantic has validated a field?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'How do I add a check that runs after Pydantic has validated a field?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/concepts/validators.md, heading_path: [Field validators]}
+    reference: Use an after validator, either `Annotated[int, AfterValidator(func)]` or a
+      `@field_validator('field', mode='after')` class method; it returns the validated value and
+      raises `ValueError` to reject it.
+    facts:
+    - after validators run after Pydantic's internal validation
+    - they are declared with AfterValidator in Annotated or with @field_validator(mode='after')
+    - the validator must return the validated value
+
+- name: 'pydantic v2.14.3: What is the difference between strict mode and lax mode?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'What is the difference between strict mode and lax mode?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/concepts/strict_mode.md, heading_path: []}
+    reference: By default (lax mode) Pydantic coerces values, such as the string '123' to the int
+      123; strict mode errors instead when the data is not of the right type, though JSON input
+      may get looser rules.
+    facts:
+    - lax mode is the default and coerces values when possible
+    - strict mode raises a validation error instead of coercing
+    - strict mode may allow looser rules for JSON input, such as strings for dates
+
+- name: 'pydantic v1.10.22: How do I include a property in serialization with @computed_field?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'How do I include a property in serialization with @computed_field?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The Pydantic v1.10 documentation has no computed_field.

@@ -1,0 +1,77 @@
+# Golden-set cases for Electron (corpus.yaml: electron). Format and rules: docs/evals.md#the-golden-set.
+# Check with `just golden-validate --projects electron`.
+name: electron
+cases:
+- name: 'electron v45.3.2: How do I send a one-way message from a renderer to the main process?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'How do I send a one-way message from a renderer to the main process?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v45.3.2, article: docs/tutorial/ipc.md, heading_path: [Inter-Process Communication, 'Pattern 1: Renderer to main (one-way)']}
+    reference: Expose `ipcRenderer.send` to the renderer through a preload script and listen for the
+      channel in the main process with `ipcMain.on`.
+    facts:
+    - the renderer sends with ipcRenderer.send
+    - the main process listens with ipcMain.on on the same channel
+    - ipcRenderer.send is exposed to the renderer through a preload script
+
+- name: 'electron v38.0.0: Which macOS versions does Electron 38 run on?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'Which macOS versions does Electron 38 run on?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/breaking-changes.md, heading_path: [Breaking Changes, Planned Breaking API Changes (38.0), 'Removed: macOS 11 support']}
+    reference: Electron 38 drops macOS 11 (Big Sur); it needs macOS 12 (Monterey) or later.
+    facts:
+    - macOS 11 Big Sur is no longer supported
+    - macOS 12 Monterey or later is required from v38.0.0
+
+- name: 'electron v38.0.0: Which names can I pass to app.getPath?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'Which names can I pass to app.getPath?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/api/app.md, heading_path: [app, Methods, app.getPath(name)]}
+    reference: Names include home, appData, userData, sessionData, temp, exe, desktop, documents,
+      downloads, logs and crashDumps among others; it returns the path as a string and throws on
+      failure.
+    facts:
+    - userData is the appData directory appended with the app's name
+    - sessionData points to userData by default
+    - it returns a string and throws an Error on failure
+
+- name: 'electron v30.0.0: What is context isolation and is it enabled by default?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'What is context isolation and is it enabled by default?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v30.0.0, article: docs/tutorial/context-isolation.md, heading_path: [Context Isolation, 'What is it?']}
+    reference: Context isolation runs preload scripts and Electron's internals in a separate context
+      from the loaded website, so the page cannot reach them; it has been on by default since
+      Electron 12.
+    facts:
+    - preload scripts and Electron internals run in a context separate from the website
+    - the website cannot access the preload's window object
+    - it has been enabled by default since Electron 12
+
+- name: 'electron v30.0.0: How do I show an image in a BaseWindow with ImageView?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'How do I show an image in a BaseWindow with ImageView?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The Electron v30.0.0 documentation has no ImageView.

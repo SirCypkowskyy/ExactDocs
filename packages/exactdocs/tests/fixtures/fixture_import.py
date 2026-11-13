@@ -49,19 +49,16 @@ def commits(docs_repo: DocsRepo) -> dict[str, str]:
     return {ref: git("rev-parse", f"{ref}^{{commit}}", cwd=docs_repo.path) for ref in VERSIONS}
 
 
-async def import_fixture(container: Container, docs_repo: DocsRepo) -> None:
-    """Create the library and import every version into ``container``, which must be running."""
-    await container.catalog.create_library(
-        CreateLibraryCommand(
-            id=LIBRARY,
-            title="Docs",
-            source_url=docs_repo.file_url,
-            host=HostKind.GIT,
-            default_branch="main",
-            include_paths=["docs/"],
-        )
-    )
-    importer = ImportVersionUseCase(
+def importer(container: Container) -> ImportVersionUseCase:
+    """The real import use case, wired to ``container``'s catalog and retrieval as jobs are.
+
+    Args:
+        container: The container the versions are imported into.
+
+    Returns:
+        The use case; call it with a queued import ``Job`` and a ``JobProgress``.
+    """
+    return ImportVersionUseCase(
         gateway=GitCli.locate(),
         chunker=MarkdownChunker(),
         sources=CatalogLibrarySources(
@@ -85,6 +82,21 @@ async def import_fixture(container: Container, docs_repo: DocsRepo) -> None:
         ),
         vault=InMemoryCredentialVault(),
     )
+
+
+async def import_fixture(container: Container, docs_repo: DocsRepo) -> None:
+    """Create the library and import every version into ``container``, which must be running."""
+    await container.catalog.create_library(
+        CreateLibraryCommand(
+            id=LIBRARY,
+            title="Docs",
+            source_url=docs_repo.file_url,
+            host=HostKind.GIT,
+            default_branch="main",
+            include_paths=["docs/"],
+        )
+    )
+    run = importer(container)
     shas = commits(docs_repo)
     for ref, kind in VERSIONS.items():
         job = Job.queued(
@@ -96,7 +108,7 @@ async def import_fixture(container: Container, docs_repo: DocsRepo) -> None:
             ref_kind=kind,
             now=SystemClock().now(),
         )
-        await importer(job, _Progress())
+        await run(job, _Progress())
 
 
 async def embed_fixture(container: Container) -> int:

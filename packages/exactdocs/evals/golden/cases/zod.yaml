@@ -1,0 +1,80 @@
+# Golden-set cases for Zod (corpus.yaml: zod). Format and rules: docs/evals.md#the-golden-set.
+# Check with `just golden-validate --projects zod`.
+# v3: everything is in README.md (no H1, so paths start at the H2). v4: MDX pages under
+# packages/docs/content/ have their title in front matter, so paths start at the H2 too.
+name: zod
+cases:
+- name: 'zod v3.23.8: How do I validate data without throwing on failure?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'How do I validate data without throwing on failure?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v3.23.8, article: README.md, heading_path: [Schema methods, .safeParse]}
+    reference: >-
+      Use `.safeParse(data)`, which returns `{ success: true, data }` or
+      `{ success: false, error: ZodError }` instead of throwing.
+    facts:
+    - .safeParse does not throw when validation fails
+    - it returns success true with data, or success false with a ZodError
+    - the result is a discriminated union on success
+
+- name: 'zod v4.6.7: How do I turn a string input into a number before validating it?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'How do I turn a string input into a number before validating it?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/api.mdx, heading_path: [Primitives, Coercion]}
+    reference: Use `z.coerce.number()`, which calls `Number(input)` before validating; its input type
+      is `unknown` unless a generic parameter is given.
+    facts:
+    - z.coerce.number() coerces the input with Number(input)
+    - the input type of a coerced schema is unknown by default
+
+- name: 'zod v4.0.17: What should I use instead of .strict() and .passthrough() on objects?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'What should I use instead of .strict() and .passthrough() on objects?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v4.0.17, article: packages/docs/content/v4/changelog.mdx, heading_path: [z.object(), deprecates .strict() and .passthrough()]}
+    reference: Zod 4 deprecates them in favour of the top-level `z.strictObject()` and
+      `z.looseObject()`; the methods remain as legacy and will not be removed.
+    facts:
+    - .strict() is replaced by z.strictObject()
+    - .passthrough() is replaced by z.looseObject()
+    - the old methods remain available as legacy
+
+- name: 'zod v4.6.7: How do I get error messages in French and print a ZodError as readable text?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'How do I get error messages in French and print a ZodError as readable text?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/error-customization.mdx, heading_path: [Internationalization]}
+    - {version: v4.6.7, article: packages/docs/content/error-formatting.mdx, heading_path: [z.prettifyError()]}
+    reference: Load the `fr` locale with `z.config(...)` (locales come from `zod/locales`), then
+      `z.prettifyError(error)` returns a human-readable string of the issues.
+    facts:
+    - locales are applied with z.config
+    - built-in locales are exported from zod/locales
+    - z.prettifyError returns a human-readable string of the error
+
+- name: 'zod v3.23.8: How do I validate a File object with z.file()?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'How do I validate a File object with z.file()?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The Zod v3.23.8 documentation has no z.file() schema.
