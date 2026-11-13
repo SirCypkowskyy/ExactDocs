@@ -3,7 +3,7 @@
 import hashlib
 import json
 from pathlib import Path
-from typing import Final, Literal
+from typing import Final, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_evals import Dataset
@@ -27,6 +27,8 @@ class Question(_Model):
     """Only articles so tagged (the ranking table's tag-filtered queries)."""
     tags_match: Literal["any", "all"] = "any"
     """Whether a chunk needs any or all of ``tags``."""
+    project: str | None = None
+    """The golden-set project (``golden/corpus.yaml``) asked about; ``None``: the fixture."""
 
 
 class Hit(_Model):
@@ -81,13 +83,28 @@ class Answer(_Model):
     """The library asked, when the retriever records the run's trace."""
     reads: list[TracedRead] | None = None
     """The agentic run's trace: every read it made; ``None`` when no trace was recorded."""
+    reference: str | None = None
+    """Golden set: a short reference answer, as the pinned docs give it (for an unanswerable
+    case, that this version does not cover it)."""
+    facts: list[str] = Field(default_factory=list)
+    """Golden set: the short facts a correct answer must contain; empty when unanswerable."""
+
+
+type GoldenKind = Literal[
+    "identifier-lookup", "how-to", "conceptual", "version-change", "cross-page", "unanswerable"
+]
+"""What a golden-set case asks (docs/evals.md#the-golden-set); ``unanswerable``: the pinned
+version does not answer it, so it expects no section."""
+GOLDEN_KINDS: Final[frozenset[str]] = frozenset(get_args(GoldenKind.__value__))
+"""Every golden-set kind."""
 
 
 class CaseInfo(_Model):
-    """Where a case comes from."""
+    """Where a case comes from, or (golden set) what kind of question it is."""
 
-    kind: Literal["identifier", "question"]
-    """``identifier``: the fixture's expected-queries.yaml; ``question``: natural language."""
+    kind: Literal["identifier", "question"] | GoldenKind
+    """Fixture: ``identifier`` (the fixture's expected-queries.yaml) or ``question`` (natural
+    language). Golden set: exactly one of ``GoldenKind``."""
 
 
 type RetrievalDataset = Dataset[Question, Answer, CaseInfo]
