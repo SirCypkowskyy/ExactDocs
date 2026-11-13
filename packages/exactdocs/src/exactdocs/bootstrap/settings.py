@@ -466,9 +466,10 @@ class Settings(BaseSettings):
     """
     secret_key: SecretStr | None = None
     """Encrypts the stored tokens and deploy keys of private repositories. It must be random and
-    at least `MIN_SECRET_KEY_LENGTH` characters long (`openssl rand -base64 32` is). Unset: a random key is generated into
-    `<data dir>/secret.key` (mode 0600) on first run. Without the key the credentials cannot be
-    read: libraries keep serving their docs and ask for the token again (`credentials_required`).
+    at least `MIN_SECRET_KEY_LENGTH` characters long (`openssl rand -base64 32` is). Unset: a
+    random key is generated into `<data dir>/secret.key` (mode 0600) on first run. Without the
+    key the credentials cannot be read: libraries keep serving their docs and ask for the token
+    again (`credentials_required`).
     """
     secret_key_previous: SecretStr | None = None
     """The key that was `secret_key` before a rotation: credentials sealed with it still open,
