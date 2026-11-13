@@ -9,6 +9,7 @@ from sqlalchemy import Connection, inspect
 from databases import SQL_BACKENDS
 from exactdocs.bootstrap.database import alembic_config, migrate, open_database
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.ingestion.constants import UNFINISHED_JOBS_SQL
 
 BEFORE, AFTER = "3d8919f935dd", "97095cfef767"
 NAME = "ingestion_jobs_unfinished"
@@ -70,7 +71,11 @@ async def test_a_library_s_unfinished_jobs_are_indexed_apart_and_the_revision_go
     assert after is not None
     assert after["columns"] == ["library", "id"]
     assert not after["unique"]
-    # Each database spells the condition its own way; both name the two unfinished states.
-    assert "queued" in after["where"]
-    assert "running" in after["where"]
+    if backend == "sqlite":
+        # SQLite keeps the condition as written; the query must spell it the same, byte for byte.
+        assert after["where"] == UNFINISHED_JOBS_SQL
+    else:
+        # PostgreSQL normalizes it (``state = ANY (ARRAY[...])``); it names the same states.
+        assert "queued" in after["where"]
+        assert "running" in after["where"]
     assert before is None

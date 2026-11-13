@@ -2,18 +2,21 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Iterable, Mapping
+from collections.abc import AsyncIterator, Generator, Iterable, Mapping
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
-from databases import SQL_BACKENDS
+from databases import ADMIN_URL, SQL_BACKENDS, PostgresDatabase
 from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository, jobs
-from exactdocs.ingestion.constants import JobKind
+from exactdocs.ingestion.constants import ABOVE_EVERY_JOB_ID, JobKind
 from exactdocs.ingestion.errors import VersionImportingError
 from exactdocs.ingestion.models import Job, JobId, JobState, ProblemCode, RefKind
 from exactdocs.ingestion.ports import JobRepository
@@ -141,9 +144,45 @@ async def test_a_page_of_a_library_carries_its_jobs_problems(repository: JobRepo
     ]
 
 
+@contextmanager
+def selects_of_jobs(engine: AsyncEngine) -> Generator[list[tuple[str, Any]]]:
+    """Record the SELECTs of ``ingestion_jobs`` sent while the block runs.
+
+    Yields:
+        ``(statement, parameters)`` per SELECT, parameters as the driver got them (SQLite's a
+        tuple, psycopg's a dict of named parameters).
+    """
+    sent: list[tuple[str, Any]] = []
+
+    def record(*args: object) -> None:  # (conn, cursor, statement, parameters, context, many)
+        statement, parameters = str(args[2]), args[3]
+        if statement.lstrip().upper().startswith("SELECT") and "ingestion_jobs" in statement:
+            sent.append((statement, parameters))
+
+    event.listen(engine.sync_engine, "before_cursor_execute", record)
+    try:
+        yield sent
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", record)
+
+
+def _values(parameters: object) -> set[object]:
+    values = parameters.values() if isinstance(parameters, Mapping) else parameters
+    assert isinstance(values, Iterable)
+    return set(values)
+
+
+@pytest.mark.parametrize(
+    ("before", "expected"),
+    [
+        (None, ["job-19", "job-18", "job-17", "job-16"]),
+        ("job-15", ["job-14", "job-13", "job-12", "job-11"]),
+    ],
+    ids=["first page", "later page"],
+)
 @pytest.mark.parametrize("backend", SQL_BACKENDS)
 async def test_a_page_of_a_library_is_one_select_bounded_by_the_cursor_and_limit(
-    backend: str, request: pytest.FixtureRequest
+    backend: str, before: str | None, expected: list[str], request: pytest.FixtureRequest
 ) -> None:
     if backend == "postgres":
         request.getfixturevalue("on_postgres")
@@ -152,41 +191,103 @@ async def test_a_page_of_a_library_is_one_select_bounded_by_the_cursor_and_limit
     repository = SqliteJobRepository(engine=engine)
     for number in range(20):
         await repository.add(queued(f"job-{number:02}", version=f"v{number}"))
-    sent: list[tuple[str, list[object]]] = []
-
-    def record(*args: object) -> None:  # (conn, cursor, statement, parameters, context, many)
-        statement, parameters = str(args[2]), args[3]
-        if statement.lstrip().upper().startswith("SELECT") and "ingestion_jobs" in statement:
-            # SQLite's driver takes a tuple, psycopg a dict of named parameters
-            values = parameters.values() if isinstance(parameters, Mapping) else parameters
-            assert isinstance(values, Iterable)
-            sent.append((statement, list(values)))
-
-    event.listen(engine.sync_engine, "before_cursor_execute", record)
-    try:
-        page = await repository.list_page_for_library("/acme/payments", before="job-15", limit=4)
-    finally:
-        event.remove(engine.sync_engine, "before_cursor_execute", record)
+    with selects_of_jobs(engine) as sent:
+        page = await repository.list_page_for_library("/acme/payments", before=before, limit=4)
     (statement, parameters), *others = sent
     plan: list[str] = []
     if backend == "sqlite":
         async with engine.connect() as connection:
-            rows = await connection.exec_driver_sql(
-                f"EXPLAIN QUERY PLAN {statement}", tuple(parameters)
-            )
+            rows = await connection.exec_driver_sql(f"EXPLAIN QUERY PLAN {statement}", parameters)
             plan = [row.detail for row in rows]
     await engine.dispose()
 
-    assert [job.id for job in page] == ["job-14", "job-13", "job-12", "job-11"]
+    assert [job.id for job in page] == expected
     assert others == []  # one query, not one per job or a second pass
     assert "LIMIT" in statement.upper()
-    assert "ingestion_jobs.id <" in statement
-    bound = {"/acme/payments", "job-15", 4}
-    assert bound <= set(parameters)
-    assert set(parameters) - bound <= {0}  # SQLite also binds OFFSET 0
+    # The first page is bounded too, so both pages are one statement with one plan.
+    bound = {"/acme/payments", before or ABOVE_EVERY_JOB_ID, 4}
+    assert bound <= _values(parameters)
+    assert _values(parameters) - bound <= {0}  # SQLite also binds OFFSET 0
     if backend == "sqlite":  # a range of the (library, id) index, no sort of the whole library
         assert any("USING INDEX ingestion_jobs_library_id" in step for step in plan), plan
         assert not any("TEMP B-TREE" in step for step in plan), plan
+
+
+async def test_a_page_never_holds_a_neighbouring_library_s_jobs(repository: JobRepository) -> None:
+    # Libraries whose IDs sort just before and just after this one, with newer and older jobs.
+    await repository.add(queued("job-0", library="/acme/pay", version="v0"))
+    await repository.add(queued("job-1", version="v1"))
+    await repository.add(queued("job-2", library="/acme/payments-old"))
+    await repository.add(queued("job-3", version="v3"))
+    await repository.add(queued("job-4", library="/acme/payments/"))
+    await repository.add(queued("job-5", library="/acme/pay", version="v5"))
+
+    first = await repository.list_page_for_library("/acme/payments", before=None, limit=10)
+    later = await repository.list_page_for_library("/acme/payments", before="job-3", limit=10)
+    above = await repository.list_page_for_library("/acme/payments", before="zzz", limit=10)
+
+    assert [job.id for job in first] == ["job-3", "job-1"]
+    assert [job.id for job in later] == ["job-1"]
+    assert [job.id for job in above] == ["job-3", "job-1"]
+
+
+SKEWED_JOBS = 3000
+"""Jobs in the skewed data set: enough for PostgreSQL's planner to weigh the indexes, few enough
+for CI."""
+
+
+@pytest.mark.skipif(ADMIN_URL is None, reason="needs EXACTDOCS_TEST_POSTGRES_URL")
+async def test_every_page_of_an_old_large_library_is_a_range_of_its_index_on_postgresql(
+    on_postgres: PostgresDatabase,
+) -> None:
+    # #330: one library holds 10% of the jobs, every one among the oldest 20% of IDs, and its
+    # name sorts after the others'. A backward walk of the primary key that filters on the
+    # library looks cheap to the planner here but reads every newer job of the other libraries.
+    del on_postgres
+    old = "/zeta/archive"
+    engine = open_database(Settings())
+    await migrate(engine)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO ingestion_jobs"
+                    " (id, kind, library, state, done, total, problems, created_at)"
+                    " SELECT 'job-' || lpad(n::text, 5, '0'), 'import',"
+                    "  CASE WHEN n <= :total / 5 AND n % 2 = 0 THEN :old"
+                    "   ELSE '/acme/library-' || (n % 50) END,"
+                    "  'succeeded', 0, 0, '[]', '2026-01-01T00:00:00.000000+00:00'"
+                    " FROM generate_series(1, :total) AS n"
+                ),
+                {"old": old, "total": SKEWED_JOBS},
+            )
+            await connection.exec_driver_sql("ANALYZE ingestion_jobs")
+        repository = SqliteJobRepository(engine=engine)
+        plans: list[str] = []
+        pages: list[list[str]] = []
+        for before in (None, "job-00300"):
+            with selects_of_jobs(engine) as sent:
+                page = await repository.list_page_for_library(old, before=before, limit=20)
+            pages.append([job.id for job in page])
+            ((statement, parameters),) = sent
+            async with engine.connect() as connection:
+                rows = await connection.exec_driver_sql(
+                    f"EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF) {statement}",
+                    parameters,
+                )
+                plans.append("\n".join(row[0] for row in rows))
+    finally:
+        await engine.dispose()
+
+    newest = SKEWED_JOBS // 5
+    assert pages == [
+        [f"job-{n:05}" for n in range(newest, newest - 40, -2)],
+        [f"job-{n:05}" for n in range(298, 258, -2)],
+    ]
+    for plan in plans:
+        assert "ingestion_jobs_library_id" in plan, plan
+        assert "ingestion_jobs_pkey" not in plan, plan
+        assert "Filter" not in plan, plan  # no other library's row is read and dropped
 
 
 async def test_a_library_lists_only_its_unfinished_jobs_newest_first(

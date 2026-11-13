@@ -252,6 +252,16 @@ UNFINISHED_JOBS_SQL: Final[str] = (
 )
 """``ACTIVE_JOB_STATES`` as a literal SQL condition: the partial index of unfinished jobs and the
 query that reads it say the same, which a bound parameter could not prove to SQLite's planner.
+
+It must match ``UNFINISHED`` in the migration ``97095cfef767`` (which creates that index) byte for
+byte: SQLite uses a partial index only for a query that spells its condition exactly like the
+index's, so a condition that differs (another state, another order) silently stops the index
+being used.
+"""
+ABOVE_EVERY_JOB_ID: Final[str] = "\U0010ffff"
+"""The first page's cursor in the SQL job repository: the last Unicode code point sorts after
+every job ID (a UUID string), by code point in Python and SQLite and byte-wise in PostgreSQL's
+``C`` collation alike, so the first page is bounded like the pages after it (#330).
 """
 
 # ---------------------------------------------------------------- hosts and refs
