@@ -325,7 +325,7 @@ flowchart LR
     gh -->|"docs/**, zensical.toml (PRs: any .md)"| docs
     gh -->|tag| rel
     rel -->|after each release, weekly, on demand| ret
-    docs -->|push to main| pages["GitHub Pages"]
+    docs -->|"push to main, release tag, manual run"| pages["GitHub Pages"]
     rel --> pypi["PyPI (trusted publishing)"]
     rel --> ghcr["ghcr.io images (base, -ai, -local), multi-arch, signed"]
     rel --> ghrel["GitHub Release"]

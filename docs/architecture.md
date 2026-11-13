@@ -829,7 +829,7 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
   - **Start.** Recovery (`sort_workflows`) deletes or recovers only the workflows of this process's
     executor and of free slots: a live process's workflows, of any `STEPS_VERSION`, are never
     touched, and `RecoverJobs` leaves their jobs alone. A release that changes `STEPS_VERSION`
-    still needs every process stopped before the upgrade (README, *Upgrading*): an older process
+    still needs every process stopped before the upgrade ([Deployment](deployment.md#upgrading)): an older process
     would keep running jobs the new build cannot resume.
   - **Scheduled ticks.** DBOS starts a tick only if its workflow ID (`sched-<name>-<time>`) is new,
     and each process's scheduler may come up to a tenth of an interval late. On PostgreSQL the
