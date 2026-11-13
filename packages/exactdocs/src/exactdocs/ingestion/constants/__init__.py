@@ -105,6 +105,7 @@ from exactdocs.ingestion.constants._models import (
     TAGS,
     UNEXPECTED_BACKOFF_CAP,
     UNEXPECTED_ERROR,
+    UNFINISHED_JOBS_SQL,
     ChunkerName,
     JobKind,
 )
@@ -220,6 +221,7 @@ __all__ = [
     "TIMEOUT_SECONDS",
     "UNEXPECTED_BACKOFF_CAP",
     "UNEXPECTED_ERROR",
+    "UNFINISHED_JOBS_SQL",
     "WATCH_SECONDS",
     "WORKFLOW",
     "ChunkerName",

@@ -46,6 +46,7 @@ from exactdocs.ingestion.models import (
 )
 from exactdocs.ingestion.module import IngestionModule
 from exactdocs_kernel import NotFoundError
+from unfinished_jobs import UnfinishedOnly, finished_imports
 
 LIBRARY = "/acme/docs"
 OLD, NEW, NEWER, TAG = "a" * 40, "b" * 40, "d" * 40, "c" * 40
@@ -682,6 +683,25 @@ async def test_a_tag_being_imported_is_not_queued_twice(
         await module.reimport_version(reimport())
 
     assert len(jobs.jobs) == 1
+
+
+@pytest.mark.parametrize("jobs", [UnfinishedOnly.of(finished_imports(LIBRARY, 500, version="v1"))])
+async def test_a_tag_being_imported_is_told_from_the_unfinished_jobs_alone(
+    module: IngestionModule,
+    remote: Remote,
+    versions: list[ImportedRef],
+    jobs: InMemoryJobRepository,
+) -> None:
+    versions[:] = [tag("v1")]
+    remote.tags["v1"] = NEW
+    await module.reimport_version(reimport())
+    remote.credentials.clear()
+
+    with pytest.raises(VersionImportingError):
+        await module.reimport_version(reimport())
+
+    assert remote.credentials == []  # refused before the remote was asked
+    assert len(await jobs.list_unfinished_for_library(LIBRARY)) == 1
 
 
 async def test_two_simultaneous_confirmations_queue_one_import(

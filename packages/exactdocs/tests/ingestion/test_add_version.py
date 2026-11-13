@@ -29,6 +29,7 @@ from exactdocs.ingestion.models import (
 )
 from exactdocs.ingestion.module import IngestionModule
 from exactdocs_kernel import NotFoundError, SystemClock
+from unfinished_jobs import UnfinishedOnly, finished_imports
 
 MAIN, OLD, NEW = "a" * 40, "b" * 40, "c" * 40
 REFS = RemoteRefs(
@@ -160,6 +161,20 @@ async def test_a_finished_import_does_not_block_the_ref(
     again = await module.add_version(AddVersionCommand(library="/acme/orders", ref="v1.3.0"))
 
     assert again.job_id != first.job_id
+
+
+@pytest.mark.parametrize("jobs", [UnfinishedOnly.of(finished_imports("/acme/orders", 500))])
+async def test_a_busy_ref_is_told_from_the_unfinished_jobs_alone(
+    module: IngestionModule, jobs: InMemoryJobRepository
+) -> None:
+    await module.add_version(AddVersionCommand(library="/acme/orders", ref="v1.3.0"))
+
+    with pytest.raises(VersionImportingError):
+        await module.add_version(AddVersionCommand(library="/acme/orders", ref="v1.3.0"))
+    accepted = await module.add_version(AddVersionCommand(library="/acme/orders", ref="main"))
+
+    assert accepted.job_id in jobs.jobs
+    assert len(await jobs.list_unfinished_for_library("/acme/orders")) == 2
 
 
 async def test_a_sha_that_is_already_a_version_is_refused_naming_it(

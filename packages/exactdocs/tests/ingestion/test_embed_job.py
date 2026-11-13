@@ -28,6 +28,7 @@ from exactdocs.ingestion.models import (
 from exactdocs.ingestion.module import IngestionModule
 from exactdocs.ingestion.ports.driven import JobProgress
 from exactdocs.ingestion.use_cases import EmbedAfterJob, EmbeddingQueue, EmbedVersionUseCase
+from unfinished_jobs import UnfinishedOnly, finished_imports
 
 T0 = datetime(2026, 11, 7, 12, 0, tzinfo=UTC)
 LIB = "/acme/payments"
@@ -189,6 +190,17 @@ async def test_a_new_space_queues_every_other_version_once() -> None:
 
     assert [(j.kind, j.version) for j in world.runner.submitted] == [(EMBED_JOB, "v2")]
     assert "queue the other versions" in world.steps.ran
+
+
+async def test_an_embedding_queued_already_is_found_among_the_unfinished_jobs() -> None:
+    embedder = Embedder(missing={(LIB, "v1"): 1, (LIB, "v2"): 1})
+    world = World(embedder, jobs=UnfinishedOnly.of(finished_imports(LIB, 500, version="v1")))
+    await world.jobs.add(_job(ref="v1", state=JobState.QUEUED))
+
+    queued = await world.queue(LIB)
+
+    assert queued == 1
+    assert [(j.kind, j.version) for j in world.runner.submitted] == [(EMBED_JOB, "v2")]
 
 
 async def test_a_running_embed_job_does_not_count_as_queued() -> None:

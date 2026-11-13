@@ -247,6 +247,12 @@ ACTIVE_JOB_STATES: Final[frozenset[str]] = frozenset({"queued", "running"})
 """A job in one of these states (``JobState`` values) is unfinished: at most one import per
 (library, ref) may be.
 """
+UNFINISHED_JOBS_SQL: Final[str] = (
+    "state IN (" + ", ".join(f"'{state}'" for state in sorted(ACTIVE_JOB_STATES)) + ")"
+)
+"""``ACTIVE_JOB_STATES`` as a literal SQL condition: the partial index of unfinished jobs and the
+query that reads it say the same, which a bound parameter could not prove to SQLite's planner.
+"""
 
 # ---------------------------------------------------------------- hosts and refs
 KNOWN_HOSTS: Final[dict[str, str]] = {

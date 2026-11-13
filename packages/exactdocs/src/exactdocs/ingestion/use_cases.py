@@ -1032,7 +1032,7 @@ class AddVersionUseCase:
             for ref, version in existing.items():
                 if version.commit_sha == resolved.commit_sha:
                     raise CommitImportedError(library, version.commit_sha, ref)
-        if resolved.name in _busy_refs(await self.jobs.list_for_library(library)):
+        if resolved.name in _busy_refs(await self.jobs.list_unfinished_for_library(library)):
             raise VersionImportingError(library, resolved.name)
         if sent is not None:
             # Before queueing, because the job reads it; the ref was found with it just now.
@@ -1045,7 +1045,7 @@ def _busy_refs(jobs: Sequence[Job]) -> dict[str, Job]:
     """Return the library's unfinished import jobs by ref.
 
     Args:
-        jobs: The library's jobs.
+        jobs: The library's jobs; its unfinished ones are enough.
 
     Returns:
         Each queued or running import, by its version's ref.
@@ -1399,7 +1399,7 @@ class ReimportVersionUseCase:
             raise UnknownVersionError(library, command.ref)
         if current.kind is not RefKind.TAG:
             raise NotATagError(current.ref, current.kind.value)
-        if current.ref in _busy_refs(await self.jobs.list_for_library(library)):
+        if current.ref in _busy_refs(await self.jobs.list_unfinished_for_library(library)):
             raise VersionImportingError(library, current.ref)
         credential: Credential | None = None
         try:
@@ -1631,7 +1631,7 @@ class UpdateLibrarySettingsUseCase:
             refs = [v.ref for v in await self.sources.imported_versions(library)]
             jobs = await self.jobs.list_for_library(library)
             change = _wider(change, _unhealed(jobs))  # a smaller job would hide that failure
-            job_id = await self._queue(library, change, jobs) if refs or _busy_refs(jobs) else None
+            job_id = await self._queue(library, change) if refs or _busy_refs(jobs) else None
         except BaseException:
             try:
                 await self.settings.save(
@@ -1652,26 +1652,26 @@ class UpdateLibrarySettingsUseCase:
             The change, the versions' refs and the job's ID; ``None``, ``[]``, ``None`` when
             nothing failed.
         """
-        jobs = await self.jobs.list_for_library(library)  # newest first
-        change = _unhealed(jobs)
+        change = _unhealed(await self.jobs.list_for_library(library))  # newest first
         if change is None:
             return None, [], None
         refs = [v.ref for v in await self.sources.imported_versions(library)]
-        return change, refs, await self._queue(library, change, jobs)
+        return change, refs, await self._queue(library, change)
 
-    async def _queue(self, library: str, change: SettingsChange, jobs: Sequence[Job]) -> str:
+    async def _queue(self, library: str, change: SettingsChange) -> str:
         """Queue the job of a change, or reuse a queued one that does at least as much.
+
+        Only the library's unfinished jobs are read: a job to reuse is one still waiting.
 
         Args:
             library: The library ID.
             change: What the versions need.
-            jobs: The library's jobs, newest first.
 
         Returns:
             The job's ID.
         """
         reusable = {kind for kind, done in _job_changes().items() if done.reach >= change.reach}
-        for job in jobs:
+        for job in await self.jobs.list_unfinished_for_library(library):  # newest first
             if job.kind in reusable and job.state is JobState.QUEUED:
                 return job.id
         queued = await self.enqueue_job(
@@ -3648,9 +3648,8 @@ async def _refuse_while_importing(jobs: JobRepository, library: str, version: st
     Raises:
         ImportInProgressError: An import of it is queued or running.
     """
-    # ponytail: loads all of the library's jobs; a "has unfinished jobs" query if that grows.
-    for job in await jobs.list_for_library(library):
-        if job.state in ACTIVE_JOB_STATES and (
+    for job in await jobs.list_unfinished_for_library(library):
+        if (
             job.kind in LIBRARY_KINDS  # re-processes every version, this one too
             or (job.kind in IMPORT_KINDS and (version is None or job.version == version))
         ):
@@ -3673,7 +3672,7 @@ async def _queue_collection(
         The collection job's ID; ``None`` when it could not be queued.
     """
     try:
-        for job in await jobs.list_for_library(removed.library):
+        for job in await jobs.list_unfinished_for_library(removed.library):
             if job.kind == COLLECT_JOB and job.state is JobState.QUEUED:
                 return job.id
         job = await enqueue_job(EnqueueJobCommand(kind=COLLECT_JOB, library=removed.library))
@@ -4232,7 +4231,7 @@ class EmbeddingQueue:
             if version.library not in waiting:
                 waiting[version.library] = {
                     job.version
-                    for job in await self.jobs.list_for_library(version.library)
+                    for job in await self.jobs.list_unfinished_for_library(version.library)
                     if job.kind == EMBED_JOB and job.state is JobState.QUEUED
                 }
             if version.ref in waiting[version.library]:

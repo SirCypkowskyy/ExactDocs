@@ -24,6 +24,7 @@ from exactdocs.ingestion.dtos import (
 from exactdocs.ingestion.errors import ImportInProgressError
 from exactdocs.ingestion.models import AccessToken, Collected, Removed
 from exactdocs_kernel import NotFoundError, SystemClock
+from unfinished_jobs import UnfinishedOnly, finished_imports
 
 LIBRARY = "/acme/payments"
 
@@ -94,8 +95,14 @@ class World:
             assert await self.jobs.claim_next(SystemClock().now()) is not None
 
 
-def build(*, with_collect: bool = True, broken_index: bool = False) -> World:
-    jobs, catalog, index, calls = InMemoryJobRepository(), Catalog(), Index(broken=broken_index), []
+def build(
+    *,
+    with_collect: bool = True,
+    broken_index: bool = False,
+    jobs: InMemoryJobRepository | None = None,
+) -> World:
+    jobs = InMemoryJobRepository() if jobs is None else jobs
+    catalog, index, calls = Catalog(), Index(broken=broken_index), []
     vault = InMemoryCredentialVault(
         credentials={
             LIBRARY: AccessToken(token="ghp_s3cretvalue"),
@@ -342,3 +349,21 @@ async def test_a_second_removal_reuses_the_collection_that_is_still_waiting() ->
     await world.module.run_next_job()
     third = await world.module.remove_version(RemoveVersionCommand(library=LIBRARY, ref="v3"))
     assert third.collection_job_id != first.collection_job_id  # the first one has run
+
+
+@pytest.mark.parametrize("running", [False, True])
+async def test_a_removal_is_refused_or_done_from_the_unfinished_jobs_alone(running: bool) -> None:
+    world = build(jobs=UnfinishedOnly.of(finished_imports(LIBRARY, 500, version="v2")))
+    await world.import_job("v3", running=running)
+
+    with pytest.raises(ImportInProgressError):
+        await world.module.remove_version(RemoveVersionCommand(library=LIBRARY, ref="v3"))
+    with pytest.raises(ImportInProgressError):
+        await world.module.remove_library(RemoveLibraryCommand(library=LIBRARY))
+    first = await world.module.remove_version(RemoveVersionCommand(library=LIBRARY, ref="v2"))
+    second = await world.module.remove_version(RemoveVersionCommand(library=LIBRARY, ref="v1"))
+
+    assert world.catalog.removed == [(LIBRARY, "v2"), (LIBRARY, "v1")]
+    # Queueing the collection swallows errors: a reused job shows it read the unfinished ones.
+    assert first.collection_job_id is not None
+    assert second.collection_job_id == first.collection_job_id

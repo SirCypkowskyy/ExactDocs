@@ -52,6 +52,7 @@ async def test_a_library_s_jobs_are_indexed_by_id_and_the_revision_goes_back(
     await migrate(engine)
     try:
         async with engine.begin() as connection:
+            await connection.run_sync(_alembic, "downgrade", AFTER)  # later revisions add more
             after = await connection.run_sync(_library_indexes)
             await connection.run_sync(_alembic, "downgrade", BEFORE)
             before = await connection.run_sync(_library_indexes)
