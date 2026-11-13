@@ -591,6 +591,7 @@ class IngestionModule:
         checkpoints: Checkpoints | None = None,
         webhooks: WebhookSecrets | None = None,
         webhook_deliveries: WebhookDeliveries | None = None,
+        wrap_handler: Callable[[JobKind, JobHandler], JobHandler] | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -609,7 +610,9 @@ class IngestionModule:
         through ``checkpoints``) and makes every job that stores chunks queue the embedding of
         what it stored. ``webhooks`` keeps the libraries' push webhook secrets and
         ``webhook_deliveries`` the deliveries seen; the ``push`` job they queue is always
-        registered (it syncs one branch or auto-imports after one tag).
+        registered (it syncs one branch or auto-imports after one tag). ``wrap_handler`` wraps
+        that ``push`` handler, which is built here (for example in a span, as the given
+        ``handlers`` already are).
 
         Args:
             jobs: Where jobs are stored.
@@ -635,6 +638,7 @@ class IngestionModule:
             checkpoints: Makes the ``embed`` job's batches durable steps.
             webhooks: Where webhook secrets are kept; None: no library can have one.
             webhook_deliveries: Where deliveries are remembered; None: none is.
+            wrap_handler: Wraps the ``push`` handler, given its kind; None: it runs as built.
 
         Returns:
             The module.
@@ -685,7 +689,7 @@ class IngestionModule:
         )
         secrets = webhooks or _NoWebhooks()
         deliveries = webhook_deliveries or _NoDeliveries()
-        kinds[PUSH_JOB] = PushJobUseCase(
+        push = PushJobUseCase(
             sync_library=sync_library,
             sources=sources or none,
             remote=remote,
@@ -699,6 +703,7 @@ class IngestionModule:
                 remove_version=remove_version,
             ),
         )
+        kinds[PUSH_JOB] = push if wrap_handler is None else wrap_handler(PUSH_JOB, push)
         return cls(
             add_library=AddLibraryUseCase(
                 remote=remote,

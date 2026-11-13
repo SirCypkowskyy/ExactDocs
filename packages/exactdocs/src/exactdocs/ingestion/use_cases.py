@@ -4623,8 +4623,8 @@ class ReceiveWebhookUseCase:
             return WebhookReceipt(status="duplicate")
         try:
             return await self._queue(library, event)
-        except Exception:
-            await self.deliveries.forget(delivery)  # the forge's retry is acted on
+        except BaseException:  # a cancellation too: the forge's retry is acted on
+            await _forget_shielded(self.deliveries, delivery)
             raise
 
     async def _queue(self, library: str, event: PushEvent) -> WebhookReceipt:
@@ -4656,6 +4656,30 @@ class ReceiveWebhookUseCase:
                 continue  # a push of this ref already waits: it lists the remote when it runs
             job_ids.append(job.id)
         return WebhookReceipt(status="queued", job_ids=job_ids)
+
+
+async def _forget_shielded(deliveries: WebhookDeliveries, delivery: WebhookDelivery) -> None:
+    """Forget a delivery nothing was queued for; the cancellation that got here cannot stop it.
+
+    Run as a task of its own and shielded, as ``_discard_shielded`` is. A failure is logged,
+    never hides the cause.
+
+    Args:
+        deliveries: The deliveries accepted lately.
+        delivery: The delivery to forget.
+    """
+
+    async def forget() -> None:
+        """Forget, logging a failure instead of raising it."""
+        try:
+            await deliveries.forget(delivery)
+        except Exception:
+            log.exception("could not forget the webhook delivery %s", delivery.delivery_id)
+
+    cleanup = asyncio.ensure_future(forget())
+    _cleanups.add(cleanup)
+    cleanup.add_done_callback(_cleanups.discard)
+    await asyncio.shield(cleanup)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

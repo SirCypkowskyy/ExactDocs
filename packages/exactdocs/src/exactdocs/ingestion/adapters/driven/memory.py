@@ -70,7 +70,7 @@ class InMemoryJobRepository:
             for other in self.jobs.values():
                 queued = other.kind == PUSH_JOB and other.state is JobState.QUEUED
                 if queued and (other.library, other.version, other.ref_kind) == key:
-                    raise PushQueuedError(job.library, job.version or "")
+                    raise PushQueuedError(job.library, job.version or "", job.ref_kind or "ref")
         self.jobs[job.id] = job
 
     async def save(self, job: Job) -> None:
@@ -143,12 +143,15 @@ class InMemoryJobRepository:
     async def list_latest(self) -> Sequence[Job]:
         """Return the newest job of every (library, version), ordered by library and version.
 
+        ``push`` jobs are left out: they name a ref but say nothing about how its version fared.
+
         Returns:
             One job per pair; the jobs without a version count as one pair per library.
         """
         newest: dict[tuple[str, str | None], Job] = {}
         for job in sorted(self.jobs.values(), key=lambda job: job.id):
-            newest[job.library, job.version] = job
+            if job.kind != PUSH_JOB:  # names a ref, says nothing about how the version fared
+                newest[job.library, job.version] = job
         return sorted(newest.values(), key=lambda job: (job.library, job.version or ""))
 
     async def delete_for(self, library: str, version: str | None = None) -> None:

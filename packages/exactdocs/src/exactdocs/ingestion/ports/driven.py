@@ -122,6 +122,8 @@ class JobRepository(Protocol):
     async def list_latest(self) -> Sequence[Job]:
         """Return the newest job of every (library, version), ordered by library and version.
 
+        ``push`` jobs are left out: they name a ref but say nothing about how its version fared.
+
         Returns:
             One job per pair; the jobs without a version count as one pair per library.
         """

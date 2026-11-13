@@ -1251,7 +1251,9 @@ job, within a second when the library has no other job running. A burst of pushe
 queues one job; a redelivered webhook (same delivery ID, remembered for 7 days) answers
 `duplicate`. Every refusal (no or a wrong signature, SHA-1 signatures, an unknown forge, a
 library without a webhook, no such library) is the same 401 `invalid_signature`; a body above
-5 MiB is 413. ExactDocs does not rate-limit the route: put a per-address limit on it in your
+5 MiB is 413. The host name in the webhook URL (the one the forge calls) must be in
+`EXACTDOCS_ALLOWED_HOSTS`, or every delivery gets a 400 `Invalid host header` before it reaches
+the webhook. ExactDocs does not rate-limit the route: put a per-address limit on it in your
 reverse proxy if it is reachable from the internet. Gitea and Forgejo send GitHub-compatible
 headers but are not tested.
 

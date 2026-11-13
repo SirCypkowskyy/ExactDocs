@@ -705,19 +705,20 @@ class WebhookSecretUnreadableError(DomainError):
 
 
 class PushQueuedError(ConflictError):
-    """A ``push`` job of this (library, ref) already waits: the new push joins it."""
+    """A ``push`` job of this (library, ref, ref kind) already waits: the new push joins it."""
 
     code = "push_queued"
 
-    def __init__(self, library: str, ref: str) -> None:
-        """Name the library and the ref.
+    def __init__(self, library: str, ref: str, kind: str) -> None:
+        """Name the library, the ref and its kind (a branch and a tag may share a name).
 
         Args:
             library: The library ID.
             ref: The pushed branch or tag.
+            kind: ``branch`` or ``tag``.
         """
-        super().__init__(f"a sync of {ref!r} in library {library!r} is already queued")
-        self.library, self.ref = library, ref
+        super().__init__(f"a sync of {kind} {ref!r} in library {library!r} is already queued")
+        self.library, self.ref, self.kind = library, ref, kind
 
 
 class AutoImportFailedError(DomainError):

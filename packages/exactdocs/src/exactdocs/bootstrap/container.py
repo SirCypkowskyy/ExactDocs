@@ -79,7 +79,7 @@ from exactdocs.bootstrap.search_engine import PostgresSearchChoice
 from exactdocs.bootstrap.secret_box import FernetSecretBox, derived_key, read_key_file
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.telemetry import agent_reads as telemetry_agent_reads
-from exactdocs.bootstrap.telemetry import search_tracer, traced_jobs
+from exactdocs.bootstrap.telemetry import search_tracer, traced_job, traced_jobs
 from exactdocs.bootstrap.workdirs import held, new_work_root, sweep_abandoned_work
 from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driven.sqlite import (
@@ -1030,6 +1030,7 @@ class Container:
                 engine=engine, box=_secret_box(settings, WEBHOOK_SECRETS_PURPOSE)
             ),
             webhook_deliveries=SqliteWebhookDeliveries(engine=engine),
+            wrap_handler=traced_job(settings),  # the `push` handler, built inside the module
         )
         return cls(
             settings=settings,

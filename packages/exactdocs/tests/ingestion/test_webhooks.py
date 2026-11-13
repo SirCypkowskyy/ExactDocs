@@ -1,5 +1,6 @@
 """Push webhooks (TEAM-03): verification, payloads, routing, the receiving use case, the job."""
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -18,7 +19,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
     NoIndex,
     NoRemovals,
 )
-from exactdocs.ingestion.constants import IMPORT_JOB, PUSH_JOB, REFRESH_JOB
+from exactdocs.ingestion.constants import IMPORT_JOB, PUSH_JOB, REFRESH_JOB, JobKind
 from exactdocs.ingestion.dtos import ReceiveWebhookCommand, WebhookQuery
 from exactdocs.ingestion.errors import (
     InvalidWebhookPayloadError,
@@ -52,6 +53,7 @@ from exactdocs.ingestion.models import (
     webhook_provider,
 )
 from exactdocs.ingestion.module import IngestionModule
+from exactdocs.ingestion.ports.driven import JobHandler, JobProgress
 from exactdocs_kernel import NotFoundError
 
 GITHUB, GITLAB, BITBUCKET = (
@@ -594,17 +596,19 @@ async def test_a_signed_delivery_without_an_id_records_nothing(world: World) -> 
 
 
 class FailingOnce:
-    """An ``AutoSyncStore`` with no schedule whose first read fails, as a locked database would."""
+    """An ``AutoSyncStore`` with no schedule whose first read fails, as a locked database would.
 
-    def __init__(self) -> None:
-        self.failed = False
+    Or is cancelled there, as a request whose client went away is.
+    """
+
+    def __init__(self, error: BaseException) -> None:
+        self.error: BaseException | None = error
 
     async def get(self, library: str) -> AutoSync | None:
         del library
-        if not self.failed:
-            self.failed = True
-            message = "database is locked"
-            raise RuntimeError(message)
+        if self.error is not None:
+            error, self.error = self.error, None
+            raise error
         return None
 
     async def save(self, auto_sync: AutoSync) -> None:
@@ -620,7 +624,12 @@ class FailingOnce:
         return []
 
 
-async def test_a_delivery_that_could_not_be_queued_is_forgotten_for_the_retry(clock) -> None:
+@pytest.mark.parametrize(
+    "error", [RuntimeError("database is locked"), asyncio.CancelledError()], ids=type
+)
+async def test_a_delivery_that_could_not_be_queued_is_forgotten_for_the_retry(
+    clock, error: BaseException
+) -> None:
     jobs = InMemoryJobRepository()
     secrets = InMemoryWebhookSecrets()
     deliveries = InMemoryWebhookDeliveries()
@@ -636,13 +645,13 @@ async def test_a_delivery_that_could_not_be_queued_is_forgotten_for_the_retry(cl
         ),
         removals=NoRemovals(),
         index=NoIndex(),
-        auto_syncs=FailingOnce(),
+        auto_syncs=FailingOnce(error),
         webhooks=secrets,
         webhook_deliveries=deliveries,
     )
     secret = (await module.set_webhook(WebhookQuery(library=LIBRARY))).secret
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(type(error)):
         await module.receive_webhook(push(secret))
     assert not deliveries.deliveries
 
@@ -686,6 +695,42 @@ async def test_the_push_job_syncs_the_pushed_branch_only(world: World) -> None:
     (refresh,) = of_kind(world, REFRESH_JOB)
     assert (refresh.version, refresh.commit_sha, refresh.state) == ("main", NEW, JobState.QUEUED)
     assert world.remote.listed == 1
+
+
+async def test_the_push_handler_runs_inside_the_given_wrapper(world: World, clock) -> None:
+    ran: list[tuple[JobKind, str]] = []
+
+    def wrap(kind: JobKind, handler: JobHandler) -> JobHandler:
+        async def wrapped(job: Job, progress: JobProgress, /) -> None:
+            ran.append((kind, job.id))
+            await handler(job, progress)
+
+        return wrapped
+
+    module = IngestionModule.build(
+        jobs=world.jobs,
+        clock=clock,
+        remote=world.remote,
+        library_ids=None,  # ty: ignore[invalid-argument-type]
+        libraries=None,  # ty: ignore[invalid-argument-type]
+        sources=InMemoryLibrarySources(
+            sources={LIBRARY: SOURCE}, versions={LIBRARY: world.versions}
+        ),
+        removals=NoRemovals(),
+        index=NoIndex(),
+        handlers={IMPORT_JOB: _noop, REFRESH_JOB: _noop},
+        webhooks=world.secrets,
+        webhook_deliveries=world.deliveries,
+        wrap_handler=wrap,
+    )
+    secret = (await module.set_webhook(WebhookQuery(library=LIBRARY))).secret
+    await module.receive_webhook(push(secret))
+
+    assert await module.run_next_job()
+
+    (pushed,) = of_kind(world, PUSH_JOB)
+    assert ran == [(PUSH_JOB, pushed.id)]
+    assert pushed.state is JobState.SUCCEEDED
 
 
 async def test_a_push_of_a_branch_that_did_not_move_queues_nothing(world: World) -> None:

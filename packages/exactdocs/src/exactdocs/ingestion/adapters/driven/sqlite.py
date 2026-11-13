@@ -166,7 +166,7 @@ class SqliteJobRepository:
             if job.kind in IMPORT_KINDS and job.state in ACTIVE_JOB_STATES and job.version:
                 raise VersionImportingError(job.library, job.version) from error
             if job.kind == PUSH_JOB and job.state is JobState.QUEUED and job.version:
-                raise PushQueuedError(job.library, job.version) from error
+                raise PushQueuedError(job.library, job.version, job.ref_kind or "ref") from error
             raise
 
     async def save(self, job: Job) -> None:
@@ -267,12 +267,18 @@ class SqliteJobRepository:
     async def list_latest(self) -> Sequence[Job]:
         """Return the newest job of every (library, version), ordered by library and version.
 
+        ``push`` jobs are left out: they name a ref but say nothing about how its version fared.
+
         Returns:
             One job per pair; the jobs without a version count as one pair per library.
         """
         # One grouped query (job IDs are time-ordered, so max(id) is the newest); NULL versions
-        # group together.
-        newest = select(func.max(jobs.c.id)).group_by(jobs.c.library, jobs.c.version)
+        # group together. A `push` job names a ref but says nothing about how the version fared.
+        newest = (
+            select(func.max(jobs.c.id))
+            .where(jobs.c.kind != PUSH_JOB)
+            .group_by(jobs.c.library, jobs.c.version)
+        )
         query = (
             select(jobs)
             .where(jobs.c.id.in_(newest))
@@ -839,6 +845,8 @@ class SqliteWebhookDeliveries:
                 received_at=_text(delivery.received_at),
             )
             .on_conflict_do_nothing()
+            # preserve_rowcount: an INSERT's rowcount is only kept on request (psycopg reports -1).
+            .execution_options(preserve_rowcount=True)
         )
         async with self.engine.begin() as connection:
             await connection.execute(

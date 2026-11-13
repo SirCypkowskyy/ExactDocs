@@ -548,8 +548,9 @@ decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
   failure keeps the error's own code (`no_articles`, `commit_unavailable`, ...) or is
   `unexpected`. Jobs that failed before codes were recorded have `error_code: null`.
   `GET /jobs/latest` is the newest job of every library version in one call (`{"jobs": [...]}`,
-  with `skipped` instead of the problem list), which the library list uses to show freshness and
-  sync errors without a request per library. `GET /libraries/{owner}/{repo}/jobs` pages one
+  with `skipped` instead of the problem list; a `push` job never counts, its outcome shows through
+  the sync it queued), which the library list uses to show freshness and sync errors without a
+  request per library. `GET /libraries/{owner}/{repo}/jobs` pages one
   library's jobs, newest first.
 - **Private repositories**: a `credential` (`{"kind": "token", ...}` or `{"kind": "ssh_key", ...}`)
   is accepted by `POST /repositories/check`, `POST /repositories/refs`, `POST /repositories/preview`, `POST /libraries` and `POST /libraries/{owner}/{repo}/versions`,
