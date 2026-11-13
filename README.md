@@ -449,8 +449,11 @@ sections again at deeper headings, `min_chars` merges tiny ones) with
 `PUT /api/v1/libraries/{owner}/{repo}/settings` (left out, the stored chunking is kept); every
 version is then re-chunked from the stored text, without fetching, and keeps serving its old
 chunks until the new ones are in place. Whatever the settings, a section longer than 8,000
-characters (about 2,000 tokens) is split between its top-level blocks, never inside a code block
-or table, into parts that keep its heading path.
+characters (about 2,000 tokens) is split between its top-level blocks, never inside a code block,
+table or MDX component, into parts that keep its heading path; a `max_chars` or `min_chars` above
+8,000 is refused (422). The bundled local embedding model (bge-small, 512 tokens) embeds only
+about the first 1,800 characters of a chunk; full-text search, reranking and the agent see all
+of it.
 
 ## Configuration
 
@@ -936,6 +939,10 @@ model = "local:Xenova/ms-marco-MiniLM-L-6-v2"
 # timeout: unset means 5 s for a reranker on a `local` profile, the instance's or a library's
 # own (2 s otherwise): a CPU reranks 32 long candidates in about 0.2 to 2 s, more with fewer cores
 ```
+
+bge-small reads at most 512 tokens, so a chunk longer than about 1,800 characters (chunks go up
+to 8,000) is embedded from its title, heading path and first 1,800 characters or so; full-text
+search, reranking and the agent still see all of it.
 
 The `-local` image has both default models already, so the same settings in its environment are
 all it needs, even with no network at all (CI runs it with `--network none`):

@@ -366,10 +366,27 @@ def test_every_setting_keeps_every_invariant_of_small_documents(any_chunker: Chu
             chunks = any_chunker.chunk(parse_article("a.md", body))
             assert {c.heading_path for c in chunks} <= _real_paths(body) | {()}, body
             assert [c.position for c in chunks] == list(range(len(chunks)))
-            seen: dict[tuple[str, ...], int] = {}
-            for chunk in chunks:  # occurrence indexes count up per heading path
-                assert chunk.occurrence_index == seen.get(chunk.heading_path, 0), body
-                seen[chunk.heading_path] = chunk.occurrence_index + 1
+            _check_identities(chunks, body)
+
+
+def _check_identities(chunks: Sequence[ArticleChunk], body: str) -> None:
+    """Occurrences count sections per heading path; parts count up within a section."""
+    seen: dict[tuple[str, ...], int] = {}
+    before: ArticleChunk | None = None
+    for chunk in chunks:
+        if chunk.part:  # a later part of the section the chunk before started or continued
+            assert before is not None, body
+            assert (chunk.heading_path, chunk.occurrence_index, chunk.part) == (
+                before.heading_path,
+                before.occurrence_index,
+                before.part + 1,
+            ), body
+        else:
+            assert chunk.occurrence_index == seen.get(chunk.heading_path, 0), body
+            seen[chunk.heading_path] = chunk.occurrence_index + 1
+        before = chunk
+    keys = [(c.heading_path, c.occurrence_index, c.part) for c in chunks]
+    assert len(set(keys)) == len(keys), body
 
 
 TINY = "# A\n\na\n\n## B\n\nb\n\n## C\n\n" + "c" * 60 + "\n\n## D\n\nd\n"
@@ -435,6 +452,26 @@ def test_a_long_section_without_deeper_headings_stays_whole() -> None:
 def test_chunking_settings_out_of_range_are_a_domain_error(kwargs: dict[str, Any]) -> None:
     with pytest.raises(InvalidChunkingConfigError):
         ChunkingConfig(**kwargs)
+
+
+@pytest.mark.parametrize("kwargs", [{"max_chars": 101}, {"min_chars": 101}, {"min_chars": 200}])
+def test_sizes_above_the_section_bound_are_refused_as_new_settings(kwargs: dict[str, Any]) -> None:
+    config = ChunkingConfig(max_section_chars=100, **kwargs)  # one stored before still loads
+
+    with pytest.raises(InvalidChunkingConfigError, match="must be at most 100"):
+        config.refuse_sizes_above_section_bound()
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        ChunkingConfig(max_section_chars=100, min_chars=100, max_chars=100),
+        ChunkingConfig(max_section_chars=None, min_chars=50_000, max_chars=90_000),
+        ChunkingConfig(),
+    ],
+)
+def test_sizes_within_the_section_bound_are_accepted(config: ChunkingConfig) -> None:
+    config.refuse_sizes_above_section_bound()
 
 
 def _hash(*fields: object) -> str:
@@ -608,10 +645,15 @@ def test_a_section_longer_than_the_bound_is_split_at_its_blocks_within_it() -> N
     assert all(len(c.content) <= 100 for c in parts)
     assert "".join(c.content for c in parts) == "# A\n\n" + _paragraphs(10)
     assert all(c.content.startswith(("# A\n", "0")) for c in parts)  # each starts with a block
-    assert [c.occurrence_index for c in parts] == list(range(len(parts)))
+    assert [c.occurrence_index for c in parts] == [0] * len(parts)  # one section
+    assert [c.part for c in parts] == list(range(len(parts)))
     assert {c.anchor for c in parts} == {"a"}
     assert chunks[-1].heading_path == ("B",)
-    assert (chunks[-1].occurrence_index, chunks[-1].content) == (0, "# B\n\nb\n")
+    assert (chunks[-1].occurrence_index, chunks[-1].part, chunks[-1].content) == (
+        0,
+        0,
+        "# B\n\nb\n",
+    )
     _check_never_split(MarkdownChunker(ChunkingConfig(max_section_chars=100)), body)
 
 
@@ -649,11 +691,30 @@ def test_a_table_longer_than_the_bound_is_never_split() -> None:
 
 
 def test_a_single_block_longer_than_the_bound_stays_whole() -> None:
-    body = "# A\n\n" + "word " * 500 + "\n"
+    body = "# A\n\nShort.\n\n" + "word " * 500 + "\n"
     chunks = _chunks(ChunkingConfig(max_section_chars=100), body)
 
-    assert [c.content for c in chunks] == ["# A\n\n", "word " * 500 + "\n"]
-    assert [c.occurrence_index for c in chunks] == [0, 1]
+    assert [c.content for c in chunks] == ["# A\n\nShort.\n\n", "word " * 500 + "\n"]
+    assert [(c.occurrence_index, c.part) for c in chunks] == [(0, 0), (0, 1)]
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        "```python\n" + "".join(f"x_{i} = {i}\n\n" for i in range(40)) + "```\n",
+        "| key | value |\n|-----|-------|\n" + "".join(f"| k{i} | v{i} |\n" for i in range(40)),
+        "word " * 500 + "\n",
+    ],
+    ids=["fence", "table", "paragraph"],
+)
+def test_a_heading_is_never_left_alone_before_a_block_longer_than_the_bound(block: str) -> None:
+    body = "## Reference\n\n" + block + "\nAfter.\n"
+    chunks = _chunks(ChunkingConfig(max_section_chars=100), body)
+
+    assert chunks[0].content == "## Reference\n\n" + block + "\n"  # heading and block together
+    assert _records(chunks)[0] == [(("Reference",), "reference", True)]
+    assert [c.content for c in chunks[1:]] == ["After.\n"]
+    assert "".join(c.content for c in chunks) == body
 
 
 def test_nested_blocks_split_only_between_top_level_ones() -> None:
@@ -662,7 +723,7 @@ def test_nested_blocks_split_only_between_top_level_ones() -> None:
     body = "# A\n\n" + items + "Between.\n\n" + quote
     chunks = _chunks(ChunkingConfig(max_section_chars=40), body)
 
-    assert any(c.content == items for c in chunks)  # the list is one top-level block
+    assert chunks[0].content == "# A\n\n" + items  # the list is one block, after the heading
     assert any(c.content.startswith("> quoted 0") and "> quoted 19" in c.content for c in chunks)
 
 
@@ -680,20 +741,39 @@ def test_the_ids_of_parts_are_unique_and_the_same_on_every_run() -> None:
     body = "# A\n\n" + _paragraphs(30) + "# A\n\n" + _paragraphs(30) + "# A\n\nlast\n"
     config = ChunkingConfig(max_section_chars=200)
 
-    def identities() -> list[tuple[tuple[str, ...], int, str]]:
+    def identities() -> list[tuple[tuple[str, ...], int, int, str]]:
         """What a chunk ID is made of, for each chunk."""
-        return [(c.heading_path, c.occurrence_index, c.content_hash) for c in _chunks(config, body)]
+        return [
+            (c.heading_path, c.occurrence_index, c.part, c.content_hash)
+            for c in _chunks(config, body)
+        ]
 
     first = identities()
     assert first == identities()
-    assert len({(path, occurrence) for path, occurrence, _ in first}) == len(first)
-    assert [o for _, o, _ in first] == list(range(len(first)))
-    # The repeated heading takes the occurrence after the parts of the one before it.
+    assert len({(path, occurrence, part) for path, occurrence, part, _ in first}) == len(first)
+    # Each repeated heading is the next occurrence, however many parts the one before has.
     chunks = _chunks(config, body)
-    starts = [c.occurrence_index for c in chunks if c.content.startswith("# A\n")]
-    assert starts[0] == 0
-    assert starts[1] > 1
-    assert starts[2] == len(chunks) - 1
+    assert [c.occurrence_index for c in chunks if c.content.startswith("# A\n")] == [0, 1, 2]
+    assert all(c.part == 0 for c in chunks if c.content.startswith("# A\n"))
+    assert max(c.part for c in chunks) > 1
+    _check_identities(chunks, body)
+
+
+def test_splitting_a_section_changes_no_later_section_with_the_same_heading() -> None:
+    second = "## Example\n\nB\n"
+    small = "## Example\n\nA\n\n" + second
+    large = "## Example\n\n" + _paragraphs(10) + second
+    config = ChunkingConfig(max_section_chars=100)
+
+    before = _chunks(config, small)[-1]
+    after = _chunks(config, large)[-1]
+    assert len(_chunks(config, large)) > 2  # the first section was split
+    assert (before.heading_path, before.occurrence_index, before.part, before.content_hash) == (
+        after.heading_path,
+        after.occurrence_index,
+        after.part,
+        after.content_hash,
+    )
 
 
 def test_the_text_before_the_first_heading_is_split_but_never_merged() -> None:
@@ -703,7 +783,9 @@ def test_the_text_before_the_first_heading_is_split_but_never_merged() -> None:
     preamble = [c for c in chunks if not c.heading_path]
     assert len(preamble) > 1
     assert preamble[0].content.startswith("\n\n0000 ")  # the blank lines ride with the first
-    assert [c.occurrence_index for c in preamble] == list(range(len(preamble)))
+    assert [(c.occurrence_index, c.part) for c in preamble] == [
+        (0, i) for i in range(len(preamble))
+    ]
     assert "".join(c.content for c in preamble) == "\n\n" + _paragraphs(10)
     assert chunks[-1].heading_path == ("A",)
 
@@ -741,3 +823,70 @@ def test_a_section_within_the_bound_is_not_split() -> None:
     body = "# A\n\n" + _paragraphs(3)
 
     assert [c.content for c in _chunks(ChunkingConfig(max_section_chars=len(body)), body)] == [body]
+
+
+MDX_TABS = """<Tabs>
+<TabItem value="npm">
+
+```bash
+npm install acme
+```
+
+Then run it.
+
+</TabItem>
+<TabItem value="yarn">
+
+```bash
+yarn add acme
+```
+
+</TabItem>
+</Tabs>
+"""
+
+
+def test_an_mdx_component_holding_blank_lines_is_never_split() -> None:
+    body = "## Install\n\nIntro.\n\n" + MDX_TABS + "\nAfter.\n\nMore after.\n"
+    chunks = _chunks(ChunkingConfig(max_section_chars=15), body)
+
+    (holding,) = [c for c in chunks if "<Tabs>" in c.content]
+    assert MDX_TABS in holding.content
+    assert "".join(c.content for c in chunks) == body
+    assert chunks[-1].content == "More after.\n"  # cuts come back once the component closes
+    _check_identities(chunks, body)
+
+
+def test_a_closing_tag_inside_a_paragraph_still_closes_the_component() -> None:
+    component = "<Note>\n\nFirst paragraph.\n\nSecond paragraph.\n</Note>\n"
+    body = "## A\n\nIntro.\n\n" + component + "\nAfter.\n"
+    chunks = _chunks(ChunkingConfig(max_section_chars=20), body)
+
+    assert [c.content for c in chunks] == ["## A\n\nIntro.\n\n", component + "\n", "After.\n"]
+
+
+def test_block_html_holding_blank_lines_is_never_split_but_inline_and_void_tags_do_not_count():
+    details = "<details>\n<summary>More</summary>\n\nHidden text.\n\nMore hidden.\n\n</details>\n"
+    inline = "A <span>word</span> and an image <img src='x.png'> and <br/>.\n"
+    body = "## A\n\n" + inline + "\n" + details + "\n<Tab />\n\nEnd paragraph here.\n"
+    chunks = _chunks(ChunkingConfig(max_section_chars=20), body)
+
+    (holding,) = [c for c in chunks if "<details>" in c.content]
+    assert details in holding.content
+    assert chunks[-1].content == "End paragraph here.\n"
+    assert "".join(c.content for c in chunks) == body
+
+
+def test_a_component_never_closed_keeps_only_the_rest_of_its_section_whole() -> None:
+    body = "## A\n\n<Tabs>\n\n" + _paragraphs(5) + "## B\n\n" + _paragraphs(5)
+    chunks = _chunks(ChunkingConfig(max_section_chars=100), body)
+
+    assert len([c for c in chunks if c.heading_path == ("A",)]) == 1
+    assert len([c for c in chunks if c.heading_path == ("B",)]) > 1
+
+
+def test_a_tag_in_an_html_comment_does_not_count() -> None:
+    body = "## A\n\n<!-- <Tabs>\n\nnot open -->\n\n" + _paragraphs(5)
+    chunks = _chunks(ChunkingConfig(max_section_chars=100), body)
+
+    assert len(chunks) > 1

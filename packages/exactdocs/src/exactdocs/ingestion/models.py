@@ -1307,7 +1307,9 @@ class ChunkingConfig:
     heading. ``max_section_chars`` bounds every chunk the same way, and a section still longer
     than it is split at its top-level blocks (#141): never inside a code fence, table or list, so
     a single block longer than it stays whole. ``None`` means no upper bound. ``chunker`` is one
-    of ``CHUNKERS``.
+    of ``CHUNKERS``. A ``max_chars`` or ``min_chars`` above ``max_section_chars`` has no effect:
+    the settings API refuses one (``refuse_sizes_above_section_bound``), but a config stored
+    before the bound existed still loads.
     """
 
     split_depth: int = MAX_HEADING_LEVEL
@@ -1348,6 +1350,28 @@ class ChunkingConfig:
         if self.chunker not in CHUNKERS:
             reason = f"chunker must be one of {', '.join(sorted(CHUNKERS))}"
             raise InvalidChunkingConfigError(reason)
+
+    def refuse_sizes_above_section_bound(self) -> None:
+        """Refuse a ``max_chars`` or ``min_chars`` that ``max_section_chars`` would make void.
+
+        No chunk is longer than ``max_section_chars`` (but a single block), so a bigger
+        ``max_chars`` never cuts and a bigger ``min_chars`` never merges. Only new settings are
+        checked: a config stored before the bound existed is not refused when it is read.
+
+        Raises:
+            InvalidChunkingConfigError: ``max_chars`` or ``min_chars`` is above
+                ``max_section_chars``.
+        """
+        bound = self.max_section_chars
+        if bound is None:
+            return
+        for name, value in (("max_chars", self.max_chars), ("min_chars", self.min_chars)):
+            if value is not None and value > bound:
+                reason = (
+                    f"{name} must be at most {bound}: no chunk is longer than that, unless a "
+                    "single block is"
+                )
+                raise InvalidChunkingConfigError(reason)
 
 
 def chunking_config_hash(config: ChunkingConfig, engine: str = "") -> str:
@@ -1404,7 +1428,11 @@ class ArticleChunk:
     heading_path: tuple[str, ...]
     """Empty for the text before the first heading."""
     occurrence_index: int
-    """Among chunks with the same heading path: 0, 1, ..."""
+    """Among sections with the same heading path: 0, 1, ...; every part of a split section has
+    its section's."""
+    part: int = 0
+    """Among the parts of a section split at its blocks (#141): 0, 1, ...; 0 for a section that
+    is not split."""
     position: int
     """0-based index in the article."""
     content: str

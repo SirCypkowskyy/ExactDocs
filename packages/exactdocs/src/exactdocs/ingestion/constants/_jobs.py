@@ -17,8 +17,8 @@ settings" and added the steps of ``rechunk`` (#67); ``jobs-5`` counted the artic
 taken as stored (#164); ``jobs-6`` gave ``ArticleChunk`` its heading records (#251); ``jobs-7``
 added the steps of ``embed`` (#91); ``jobs-8`` added the import's "fetch the instruction files"
 and ``ImportedVersion.instructions`` (#101); ``jobs-9`` gave ``ChunkingConfig`` its
-``max_section_chars`` (#141). A workflow of another version is not resumed: its job
-starts over from the beginning.
+``max_section_chars`` and ``ArticleChunk`` its ``part`` (#141). A workflow of another version is
+not resumed: its job starts over from the beginning.
 """
 
 EMBED_ATTEMPTS: Final[int] = 4
