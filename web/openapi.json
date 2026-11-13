@@ -1122,6 +1122,7 @@
           "catalog"
         ],
         "summary": "List All",
+        "description": "List the libraries, sorted by ID, a page at a time.",
         "operationId": "catalog-list_all",
         "security": [
           {
@@ -1140,9 +1141,11 @@
               "type": "integer",
               "maximum": 200,
               "minimum": 1,
+              "description": "How many libraries per page.",
               "default": 50,
               "title": "Limit"
-            }
+            },
+            "description": "How many libraries per page."
           },
           {
             "name": "cursor",
@@ -1157,8 +1160,10 @@
                   "type": "null"
                 }
               ],
+              "description": "Opaque: only ever a `next_cursor`; absent for the first page.",
               "title": "Cursor"
-            }
+            },
+            "description": "Opaque: only ever a `next_cursor`; absent for the first page."
           }
         ],
         "responses": {
@@ -1357,6 +1362,7 @@
           "catalog"
         ],
         "summary": "Get One",
+        "description": "Read a library: its settings, every imported version and its default version.",
         "operationId": "catalog-get_one",
         "security": [
           {
@@ -1693,6 +1699,7 @@
           "catalog"
         ],
         "summary": "Get Version",
+        "description": "Resolve an exact ref (or a unique short commit SHA) of a library to its version.",
         "operationId": "catalog-get_version",
         "security": [
           {
@@ -1929,6 +1936,7 @@
           "catalog"
         ],
         "summary": "List Version Articles",
+        "description": "List a version's articles (no ref: the default version), sorted by path.",
         "operationId": "catalog-list_version_articles",
         "security": [
           {
@@ -2128,6 +2136,7 @@
           "catalog"
         ],
         "summary": "List Version Tags",
+        "description": "List the most used tags of a version's articles (no ref: the default version).",
         "operationId": "catalog-list_version_tags",
         "security": [
           {
@@ -2500,6 +2509,7 @@
           "catalog"
         ],
         "summary": "Get One Article",
+        "description": "Read one article of a version (no ref: the default version), verbatim as imported.",
         "operationId": "catalog-get_one_article",
         "security": [
           {
@@ -6944,27 +6954,33 @@
           },
           "library": {
             "type": "string",
-            "title": "Library"
+            "title": "Library",
+            "description": "Library ID, `/owner/repo`."
           },
           "ref": {
             "type": "string",
-            "title": "Ref"
+            "title": "Ref",
+            "description": "The exact ref that answered (the default version when none was asked)."
           },
           "commit_sha": {
             "type": "string",
-            "title": "Commit Sha"
+            "title": "Commit Sha",
+            "description": "The commit the version was imported at."
           },
           "manifest_id": {
             "type": "string",
-            "title": "Manifest Id"
+            "title": "Manifest Id",
+            "description": "ID of the manifest that serves the version."
           },
           "path": {
             "type": "string",
-            "title": "Path"
+            "title": "Path",
+            "description": "Path of the article in the repository, e.g. `docs/guide/auth.md`."
           },
           "title": {
             "type": "string",
-            "title": "Title"
+            "title": "Title",
+            "description": "The article's title; untrusted repository text."
           },
           "tags": {
             "items": {
@@ -6984,12 +7000,14 @@
           },
           "size": {
             "type": "integer",
-            "title": "Size"
+            "title": "Size",
+            "description": "Bytes of the article's text."
           },
           "front_matter": {
             "additionalProperties": true,
             "type": "object",
-            "title": "Front Matter"
+            "title": "Front Matter",
+            "description": "The article's front matter, parsed; untrusted repository data."
           },
           "source_url": {
             "anyOf": [
@@ -7005,7 +7023,8 @@
           },
           "content": {
             "type": "string",
-            "title": "Content"
+            "title": "Content",
+            "description": "The article's Markdown, verbatim as imported."
           }
         },
         "additionalProperties": false,
@@ -7038,26 +7057,31 @@
           },
           "library": {
             "type": "string",
-            "title": "Library"
+            "title": "Library",
+            "description": "Library ID, `/owner/repo`."
           },
           "ref": {
             "type": "string",
-            "title": "Ref"
+            "title": "Ref",
+            "description": "The exact ref that answered (the default version when none was asked)."
           },
           "commit_sha": {
             "type": "string",
-            "title": "Commit Sha"
+            "title": "Commit Sha",
+            "description": "The commit the version was imported at."
           },
           "manifest_id": {
             "type": "string",
-            "title": "Manifest Id"
+            "title": "Manifest Id",
+            "description": "ID of the manifest that serves the version."
           },
           "articles": {
             "items": {
               "$ref": "#/components/schemas/ArticleSummary"
             },
             "type": "array",
-            "title": "Articles"
+            "title": "Articles",
+            "description": "The articles of this page, sorted by path."
           },
           "next_cursor": {
             "anyOf": [
@@ -7178,22 +7202,26 @@
         "properties": {
           "path": {
             "type": "string",
-            "title": "Path"
+            "title": "Path",
+            "description": "Path of the article in the repository, e.g. `docs/guide/auth.md`."
           },
           "title": {
             "type": "string",
-            "title": "Title"
+            "title": "Title",
+            "description": "The article's title; untrusted repository text."
           },
           "tags": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Tags"
+            "title": "Tags",
+            "description": "Every tag: from front matter, path rules and by hand."
           },
           "size": {
             "type": "integer",
-            "title": "Size"
+            "title": "Size",
+            "description": "Bytes of the article's text."
           }
         },
         "additionalProperties": false,
@@ -7969,11 +7997,13 @@
         "properties": {
           "split_level": {
             "type": "integer",
-            "title": "Split Level"
+            "title": "Split Level",
+            "description": "The deepest heading that starts a chunk: 2 cuts at `#` and `##` only."
           },
           "min_chars": {
             "type": "integer",
-            "title": "Min Chars"
+            "title": "Min Chars",
+            "description": "A chunk shorter than this is merged with the next one, within `max_chars`; 0 merges none."
           },
           "max_chars": {
             "anyOf": [
@@ -7984,11 +8014,13 @@
                 "type": "null"
               }
             ],
-            "title": "Max Chars"
+            "title": "Max Chars",
+            "description": "A chunk longer than this is cut again at its deeper headings; null: no bound."
           },
           "chunker": {
             "type": "string",
-            "title": "Chunker"
+            "title": "Chunker",
+            "description": "Which chunker cuts, e.g. `markdown`."
           }
         },
         "additionalProperties": false,
@@ -9005,22 +9037,27 @@
         "properties": {
           "id": {
             "type": "string",
-            "title": "Id"
+            "title": "Id",
+            "description": "Library ID, `/owner/repo`."
           },
           "title": {
             "type": "string",
-            "title": "Title"
+            "title": "Title",
+            "description": "Display name; untrusted repository text unless an owner typed it."
           },
           "description": {
             "type": "string",
-            "title": "Description"
+            "title": "Description",
+            "description": "What the library is; untrusted repository text unless an owner typed it."
           },
           "source_url": {
             "type": "string",
-            "title": "Source Url"
+            "title": "Source Url",
+            "description": "The repository's URL."
           },
           "host": {
-            "$ref": "#/components/schemas/HostKind"
+            "$ref": "#/components/schemas/HostKind",
+            "description": "What kind of server hosts the repository; `git` is any other one."
           },
           "default_branch": {
             "anyOf": [
@@ -9031,17 +9068,20 @@
                 "type": "null"
               }
             ],
-            "title": "Default Branch"
+            "title": "Default Branch",
+            "description": "The repository's default branch; null until an import finds it."
           },
           "settings": {
-            "$ref": "#/components/schemas/LibrarySettingsOut"
+            "$ref": "#/components/schemas/LibrarySettingsOut",
+            "description": "Import settings, for every version of the library."
           },
           "versions": {
             "items": {
               "$ref": "#/components/schemas/VersionOut"
             },
             "type": "array",
-            "title": "Versions"
+            "title": "Versions",
+            "description": "Every imported version, sorted by ref."
           },
           "default_version": {
             "anyOf": [
@@ -9052,7 +9092,8 @@
                 "type": "null"
               }
             ],
-            "title": "Default Version"
+            "title": "Default Version",
+            "description": "The ref `/owner/repo` resolves to; null while no version is imported."
           },
           "default_pinned": {
             "type": "boolean",
@@ -9132,7 +9173,8 @@
               "$ref": "#/components/schemas/LibrarySummary"
             },
             "type": "array",
-            "title": "Libraries"
+            "title": "Libraries",
+            "description": "The libraries of this page."
           },
           "next_cursor": {
             "anyOf": [
@@ -9685,24 +9727,28 @@
               "type": "string"
             },
             "type": "array",
-            "title": "Include Paths"
+            "title": "Include Paths",
+            "description": "Folders, files or globs to import; empty: every Markdown file."
           },
           "exclude_paths": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Exclude Paths"
+            "title": "Exclude Paths",
+            "description": "Folders, files or globs to leave out; they win over `include_paths`."
           },
           "tag_rules": {
             "items": {
               "$ref": "#/components/schemas/TagRuleOut"
             },
             "type": "array",
-            "title": "Tag Rules"
+            "title": "Tag Rules",
+            "description": "Tags given to articles by path, on top of their front-matter tags."
           },
           "chunking": {
-            "$ref": "#/components/schemas/ChunkingOut"
+            "$ref": "#/components/schemas/ChunkingOut",
+            "description": "How the articles are cut into chunks."
           }
         },
         "additionalProperties": false,
@@ -9720,15 +9766,18 @@
         "properties": {
           "id": {
             "type": "string",
-            "title": "Id"
+            "title": "Id",
+            "description": "Library ID, `/owner/repo`."
           },
           "title": {
             "type": "string",
-            "title": "Title"
+            "title": "Title",
+            "description": "Display name; untrusted repository text unless an owner typed it."
           },
           "description": {
             "type": "string",
-            "title": "Description"
+            "title": "Description",
+            "description": "What the library is; untrusted repository text unless an owner typed it."
           },
           "default_version": {
             "anyOf": [
@@ -9739,7 +9788,8 @@
                 "type": "null"
               }
             ],
-            "title": "Default Version"
+            "title": "Default Version",
+            "description": "The ref `/owner/repo` resolves to; null while no version is imported."
           },
           "default_pinned": {
             "type": "boolean",
@@ -9748,7 +9798,8 @@
           },
           "source_url": {
             "type": "string",
-            "title": "Source Url"
+            "title": "Source Url",
+            "description": "The repository's URL."
           },
           "refs": {
             "items": {
@@ -9896,7 +9947,8 @@
         "properties": {
           "tag": {
             "type": "string",
-            "title": "Tag"
+            "title": "Tag",
+            "description": "The tag in its normal form: case-folded, inner spaces as `-`."
           },
           "path": {
             "type": "string",
@@ -11050,7 +11102,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "The move; null when git saw none for that path."
           }
         },
         "additionalProperties": false,
@@ -11074,23 +11127,28 @@
         "properties": {
           "library": {
             "type": "string",
-            "title": "Library"
+            "title": "Library",
+            "description": "Library ID, `/owner/repo`."
           },
           "ref": {
             "type": "string",
-            "title": "Ref"
+            "title": "Ref",
+            "description": "The version whose import saw the move."
           },
           "from_ref": {
             "type": "string",
-            "title": "From Ref"
+            "title": "From Ref",
+            "description": "The version `old_path` is from; for a branch, the branch itself."
           },
           "old_path": {
             "type": "string",
-            "title": "Old Path"
+            "title": "Old Path",
+            "description": "The path in `from_ref`."
           },
           "new_path": {
             "type": "string",
-            "title": "New Path"
+            "title": "New Path",
+            "description": "The path in `ref`."
           },
           "similarity": {
             "type": "integer",
@@ -11274,19 +11332,23 @@
         "properties": {
           "ref": {
             "type": "string",
-            "title": "Ref"
+            "title": "Ref",
+            "description": "The ref as imported, e.g. `v1.4.0`, `main` or a commit SHA; case-sensitive."
           },
           "kind": {
-            "$ref": "#/components/schemas/exactdocs__catalog__models__RefKind"
+            "$ref": "#/components/schemas/exactdocs__catalog__models__RefKind",
+            "description": "Whether the ref is a tag, a branch or a commit."
           },
           "commit_sha": {
             "type": "string",
-            "title": "Commit Sha"
+            "title": "Commit Sha",
+            "description": "The full commit SHA the ref resolved to at its last import."
           },
           "imported_at": {
             "type": "string",
             "format": "date-time",
-            "title": "Imported At"
+            "title": "Imported At",
+            "description": "When the version was last imported."
           },
           "is_default": {
             "type": "boolean",
@@ -11300,7 +11362,8 @@
           },
           "library": {
             "type": "string",
-            "title": "Library"
+            "title": "Library",
+            "description": "Library ID, `/owner/repo`."
           }
         },
         "additionalProperties": false,
@@ -11973,11 +12036,13 @@
         "properties": {
           "tag": {
             "type": "string",
-            "title": "Tag"
+            "title": "Tag",
+            "description": "The tag in its normal form: case-folded, inner spaces as `-`."
           },
           "count": {
             "type": "integer",
-            "title": "Count"
+            "title": "Count",
+            "description": "How many articles of the version carry it."
           }
         },
         "additionalProperties": false,
@@ -11999,15 +12064,18 @@
           },
           "library": {
             "type": "string",
-            "title": "Library"
+            "title": "Library",
+            "description": "Library ID, `/owner/repo`."
           },
           "ref": {
             "type": "string",
-            "title": "Ref"
+            "title": "Ref",
+            "description": "The exact ref that answered (the default version when none was asked)."
           },
           "commit_sha": {
             "type": "string",
-            "title": "Commit Sha"
+            "title": "Commit Sha",
+            "description": "The commit the version was imported at."
           },
           "tags": {
             "items": {
@@ -12064,11 +12132,13 @@
         "properties": {
           "pattern": {
             "type": "string",
-            "title": "Pattern"
+            "title": "Pattern",
+            "description": "Glob over article paths, e.g. `docs/api/**`."
           },
           "tag": {
             "type": "string",
-            "title": "Tag"
+            "title": "Tag",
+            "description": "The tag a matching article gets."
           }
         },
         "additionalProperties": false,
@@ -12340,19 +12410,23 @@
         "properties": {
           "ref": {
             "type": "string",
-            "title": "Ref"
+            "title": "Ref",
+            "description": "The ref as imported, e.g. `v1.4.0`, `main` or a commit SHA; case-sensitive."
           },
           "kind": {
-            "$ref": "#/components/schemas/exactdocs__catalog__models__RefKind"
+            "$ref": "#/components/schemas/exactdocs__catalog__models__RefKind",
+            "description": "Whether the ref is a tag, a branch or a commit."
           },
           "commit_sha": {
             "type": "string",
-            "title": "Commit Sha"
+            "title": "Commit Sha",
+            "description": "The full commit SHA the ref resolved to at its last import."
           },
           "imported_at": {
             "type": "string",
             "format": "date-time",
-            "title": "Imported At"
+            "title": "Imported At",
+            "description": "When the version was last imported."
           },
           "is_default": {
             "type": "boolean",

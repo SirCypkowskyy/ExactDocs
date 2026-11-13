@@ -106,3 +106,11 @@ RESOURCE_LIST_TTL: Final[float] = 30.0
 """Seconds one built list is reused, so paging builds it once."""
 LIST_LIBRARIES_LIMIT: Final[int] = 20
 """Each library brings its versions: keep the default page small."""
+
+# ---------------------------------------------------------------- dtos (schema descriptions)
+TAG_LIST_DESCRIPTION: Final[str] = f"Most used first, then by name; at most {MAX_TAG_FACETS}."
+"""OpenAPI description of a version's ``tags`` list, built from ``MAX_TAG_FACETS``."""
+SIMILARITY_DESCRIPTION: Final[str] = (
+    f"Percent of the content kept; {MAX_SIMILARITY} is a move unchanged."
+)
+"""OpenAPI description of a rename's ``similarity``, built from ``MAX_SIMILARITY``."""

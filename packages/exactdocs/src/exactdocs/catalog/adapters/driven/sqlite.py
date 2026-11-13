@@ -236,18 +236,37 @@ class SqliteLibraryRepository:
     """Implements ``ports.driven.LibraryRepository`` with SQLAlchemy Core on SQLite."""
 
     engine: AsyncEngine
+    """The database holding the catalog's tables (SQLite or PostgreSQL)."""
 
     async def list_all(self) -> Sequence[Library]:
-        """Return every library."""
+        """Return every library.
+
+        Returns:
+            The libraries with their versions.
+        """
         return await self._load()
 
     async def get(self, library_id: LibraryId) -> Library | None:
-        """Return the library with this ID, or ``None``."""
+        """Return the library with this ID, or ``None``.
+
+        Args:
+            library_id: The library ID.
+
+        Returns:
+            The library with its versions, or ``None``.
+        """
         found = await self._load(libraries.c.id == library_id.value)
         return next(iter(found), None)
 
     async def add(self, library: Library) -> None:
-        """Insert the library; the primary key decides whether the ID is taken."""
+        """Insert the library; the primary key decides whether the ID is taken.
+
+        Args:
+            library: The new library.
+
+        Raises:
+            LibraryAlreadyExistsError: The library ID is taken.
+        """
         try:
             async with self.engine.begin() as connection:
                 await connection.execute(
@@ -258,7 +277,11 @@ class SqliteLibraryRepository:
             raise LibraryAlreadyExistsError(library.id.value) from None
 
     async def delete(self, library_id: LibraryId) -> None:
-        """Remove the library; its versions and manifests go with it (foreign keys cascade)."""
+        """Remove the library; its versions and manifests go with it (foreign keys cascade).
+
+        Args:
+            library_id: The library.
+        """
         async with self.engine.begin() as connection:
             await connection.execute(delete(libraries).where(libraries.c.id == library_id.value))
 
@@ -267,6 +290,9 @@ class SqliteLibraryRepository:
 
         Activating a manifest also writes version rows, so a library saved from an older read
         must not overwrite or drop them: existing rows are left alone (insert or ignore).
+
+        Args:
+            library: The library, with its versions.
         """
         async with self.engine.begin() as connection:
             values = _library_values(library)
@@ -278,7 +304,12 @@ class SqliteLibraryRepository:
             await _insert_versions(connection, library)
 
     async def set_settings(self, library_id: LibraryId, settings: LibrarySettings) -> None:
-        """Update only the settings column."""
+        """Update only the settings column.
+
+        Args:
+            library_id: The library.
+            settings: The new settings.
+        """
         async with self.engine.begin() as connection:
             await connection.execute(
                 update(libraries)
@@ -289,7 +320,13 @@ class SqliteLibraryRepository:
     async def set_text(
         self, library_id: LibraryId, *, title: str | None, description: str | None
     ) -> None:
-        """Update only the given columns and their edited flags."""
+        """Update only the given columns and their edited flags.
+
+        Args:
+            library_id: The library.
+            title: The new title; ``None`` leaves it.
+            description: The new description; ``None`` leaves it.
+        """
         values: dict[str, str | bool] = {}
         if title is not None:
             values |= {"title": title, "title_edited": True}
@@ -303,7 +340,15 @@ class SqliteLibraryRepository:
             )
 
     async def pin_default(self, library_id: LibraryId, ref: VersionRef | None) -> bool:
-        """One UPDATE; with a ref it applies only while that version row exists."""
+        """One UPDATE; with a ref it applies only while that version row exists.
+
+        Args:
+            library_id: The library.
+            ref: The exact ref to pin; ``None`` unpins.
+
+        Returns:
+            Whether anything was written.
+        """
         where = [libraries.c.id == library_id.value]
         if ref is not None:
             where.append(
@@ -323,7 +368,14 @@ class SqliteLibraryRepository:
     async def follow_readme(
         self, library_id: LibraryId, *, title: str, description: str, rules: Sequence[str]
     ) -> None:
-        """One UPDATE that keeps every field whose edited flag is set, and sets the rules."""
+        """One UPDATE that keeps every field whose edited flag is set, and sets the rules.
+
+        Args:
+            library_id: The library.
+            title: The title, unless a user edited it.
+            description: The description, unless a user edited it.
+            rules: The library's rules.
+        """
         async with self.engine.begin() as connection:
             await connection.execute(
                 update(libraries)
@@ -339,7 +391,14 @@ class SqliteLibraryRepository:
             )
 
     async def get_manual_tags(self, library_id: LibraryId) -> Mapping[str, tuple[str, ...]]:
-        """Return the library's manual tags by path."""
+        """Return the library's manual tags by path.
+
+        Args:
+            library_id: The library.
+
+        Returns:
+            The manual tags, by the path they were set on.
+        """
         query = select(manual_tags.c.path, manual_tags.c.tags).where(
             manual_tags.c.library_id == library_id.value
         )
@@ -348,7 +407,12 @@ class SqliteLibraryRepository:
             return {row.path: tuple(json.loads(row.tags)) for row in rows}
 
     async def set_manual_tags(self, library_id: LibraryId, tags: ManualTags) -> None:
-        """Upsert the path's row, or delete it for no tags; the library's row must exist."""
+        """Upsert the path's row, or delete it for no tags; the library's row must exist.
+
+        Args:
+            library_id: The library.
+            tags: The path and its new tags.
+        """
         where = (manual_tags.c.library_id == library_id.value, manual_tags.c.path == tags.path)
         async with self.engine.begin() as connection:
             if not tags.tags:
@@ -367,6 +431,14 @@ class SqliteLibraryRepository:
             )
 
     async def _load(self, *where: ColumnElement[bool]) -> Sequence[Library]:
+        """Read the libraries that match, with their versions, in one connection.
+
+        Args:
+            where: Conditions on the libraries table; none reads every library.
+
+        Returns:
+            The libraries.
+        """
         chosen = select(libraries.c.id).where(*where)
         async with self.engine.connect() as connection:
             rows = (await connection.execute(select(*_library_columns).where(*where))).all()
@@ -406,11 +478,26 @@ class SqliteLibraryRepository:
 
 
 def _iso(moment: datetime) -> str:
-    """UTC ISO 8601, so stored timestamps compare as text."""
+    """UTC ISO 8601, so stored timestamps compare as text.
+
+    Args:
+        moment: A timezone-aware time.
+
+    Returns:
+        The time in UTC, as ISO 8601 text.
+    """
     return moment.astimezone(UTC).isoformat()
 
 
 def _entry(row: Row) -> ManifestEntry:
+    """Read an entry row; the imported tags are ``tags`` unless manual tags were added.
+
+    Args:
+        row: A row of the entries table.
+
+    Returns:
+        The entry.
+    """
     imported = row.tags if row.imported_tags is None else row.imported_tags
     return ManifestEntry(
         path=row.path,
@@ -427,7 +514,14 @@ def _entry(row: Row) -> ManifestEntry:
 
 
 def _tag_columns(entry: ManifestEntry) -> dict[str, str | None]:
-    """Return the three tag columns of an entry row (see the table)."""
+    """Return the three tag columns of an entry row (see the table).
+
+    Args:
+        entry: The entry.
+
+    Returns:
+        ``tags`` (every tag), ``manual_tags`` (JSON) and ``imported_tags`` (only with manual tags).
+    """
     return {
         "tags": json.dumps(entry.all_tags),
         "manual_tags": json.dumps([{"tag": t.tag, "path": t.path} for t in entry.manual_tags]),
@@ -510,8 +604,14 @@ class SqliteManifestRepository:
     """Implements ``ports.driven.ManifestRepository`` with SQLAlchemy Core on SQLite."""
 
     engine: AsyncEngine
+    """The database holding the catalog's tables (SQLite or PostgreSQL)."""
 
     def _write(self) -> AbstractAsyncContextManager[AsyncConnection]:
+        """Open a write transaction that takes the write lock up front.
+
+        Returns:
+            The transaction, as an async context manager yielding its connection.
+        """
         # BEGIN IMMEDIATE: a transaction that reads before it writes takes the write lock up
         # front instead of failing with "database is locked" when it upgrades later.
         return self.engine.execution_options(begin_immediate=True).begin()
@@ -524,7 +624,17 @@ class SqliteManifestRepository:
         images: Mapping[str, StoredImage] | None = None,
         version_must_exist: bool = False,
     ) -> None:
-        """Store a pending manifest, its texts and image blobs; stored ones stay as they are."""
+        """Store a pending manifest, its texts and image blobs; stored ones stay as they are.
+
+        Args:
+            manifest: The pending manifest, with its entries and renames.
+            contents: The article texts, by content key.
+            images: The image bytes, by blob SHA.
+            version_must_exist: Refuse unless the version is already imported.
+
+        Raises:
+            VersionNotFoundError: The library has no such version.
+        """
         async with self._write() as connection:
             if version_must_exist:
                 found = await connection.execute(
@@ -618,7 +728,16 @@ class SqliteManifestRepository:
         path: str,
         direction: RenameDirection = RenameDirection.FORWARD,
     ) -> ManifestRename | None:
-        """Return the rename of the old path, or (``BACK``) the first one into the new path."""
+        """Return the rename of the old path, or (``BACK``) the first one into the new path.
+
+        Args:
+            manifest_id: The manifest.
+            path: The old path (``FORWARD``) or the new one (``BACK``).
+            direction: Which way to follow the path.
+
+        Returns:
+            The rename, or ``None``.
+        """
         back = direction is RenameDirection.BACK
         column = manifest_renames.c.new_path if back else manifest_renames.c.old_path
         return await self._one_rename(manifest_id, column == path)
@@ -626,7 +745,15 @@ class SqliteManifestRepository:
     async def list_renames(
         self, manifest_id: ManifestId, *, limit: int
     ) -> Sequence[ManifestRename]:
-        """Return up to ``limit`` renames of the manifest, sorted by old path."""
+        """Return up to ``limit`` renames of the manifest, sorted by old path.
+
+        Args:
+            manifest_id: The manifest.
+            limit: The most renames returned.
+
+        Returns:
+            The renames, sorted by old path.
+        """
         async with self.engine.connect() as connection:
             rows = await connection.execute(
                 select(manifest_renames)
@@ -639,7 +766,12 @@ class SqliteManifestRepository:
     async def replace_renames(
         self, manifest_id: ManifestId, renames: Sequence[ManifestRename]
     ) -> None:
-        """Delete the manifest's renames, then add those into its entries; one transaction."""
+        """Delete the manifest's renames, then add those into its entries; one transaction.
+
+        Args:
+            manifest_id: The manifest.
+            renames: The new rename map.
+        """
         wanted = sorted({r.new_path for r in renames})
         async with self._write() as connection:
             await connection.execute(
@@ -676,6 +808,15 @@ class SqliteManifestRepository:
     async def _one_rename(
         self, manifest_id: ManifestId, *where: ColumnElement[bool]
     ) -> ManifestRename | None:
+        """Read the first rename of the manifest, by old path, that matches.
+
+        Args:
+            manifest_id: The manifest.
+            where: More conditions on the renames table.
+
+        Returns:
+            The rename, or ``None``.
+        """
         async with self.engine.connect() as connection:
             row = (
                 await connection.execute(
@@ -688,11 +829,25 @@ class SqliteManifestRepository:
         return None if row is None else _rename(row)
 
     async def get(self, manifest_id: ManifestId) -> Manifest | None:
-        """Return the manifest without its entries, or ``None``."""
+        """Return the manifest without its entries, or ``None``.
+
+        Args:
+            manifest_id: The manifest.
+
+        Returns:
+            The manifest, or ``None``.
+        """
         return await self._load(manifests.c.id == manifest_id)
 
     async def get_many(self, manifest_ids: Collection[ManifestId]) -> Mapping[ManifestId, Manifest]:
-        """Return the manifests (without entries) that exist, by ID; unknown IDs are left out."""
+        """Return the manifests (without entries) that exist, by ID; unknown IDs are left out.
+
+        Args:
+            manifest_ids: The manifests.
+
+        Returns:
+            The manifests found, by ID.
+        """
         ids = list(manifest_ids)
         found: dict[ManifestId, Manifest] = {}
         async with self.engine.connect() as connection:
@@ -703,7 +858,15 @@ class SqliteManifestRepository:
         return found
 
     async def get_active(self, library_id: LibraryId, ref: VersionRef) -> Manifest | None:
-        """Return the version's active manifest without its entries, or ``None``."""
+        """Return the version's active manifest without its entries, or ``None``.
+
+        Args:
+            library_id: The library.
+            ref: The exact ref.
+
+        Returns:
+            The active manifest, or ``None``.
+        """
         return await self._load(
             manifests.c.library_id == library_id.value,
             manifests.c.ref == ref.value,
@@ -711,7 +874,14 @@ class SqliteManifestRepository:
         )
 
     async def list_live(self, library_id: LibraryId) -> Sequence[Manifest]:
-        """Return the library's pending and active manifests, without entries."""
+        """Return the library's pending and active manifests, without entries.
+
+        Args:
+            library_id: The library.
+
+        Returns:
+            The pending and active manifests.
+        """
         query = select(manifests).where(
             manifests.c.library_id == library_id.value,
             manifests.c.state.in_([ManifestState.PENDING.value, ManifestState.ACTIVE.value]),
@@ -726,6 +896,13 @@ class SqliteManifestRepository:
 
         Entries without manual tags before or after are not read: on a large version only the
         few tagged ones cost anything.
+
+        Args:
+            manifest_id: The manifest.
+            tags: The manual tags of each path; a path left out gets none.
+
+        Returns:
+            The tags of each entry touched, by path.
         """
         entries = manifest_entries.c
         query = select(manifest_entries).where(
@@ -749,7 +926,14 @@ class SqliteManifestRepository:
     async def get_active_many(
         self, versions: Sequence[tuple[LibraryId, VersionRef]]
     ) -> Mapping[tuple[LibraryId, VersionRef], Manifest]:
-        """Return the active manifests (without entries) of these versions, by (library, ref)."""
+        """Return the active manifests (without entries) of these versions, by (library, ref).
+
+        Args:
+            versions: The versions, as ``(library, ref)``.
+
+        Returns:
+            The active manifests found, by version.
+        """
         found: dict[tuple[LibraryId, VersionRef], Manifest] = {}
         async with self.engine.connect() as connection:
             for start in range(0, len(versions), 400):  # two bound variables per version
@@ -774,7 +958,18 @@ class SqliteManifestRepository:
         after: str | None,
         limit: int,
     ) -> Sequence[ManifestEntry]:
-        """Return up to ``limit`` entries inside ``prefix`` sorted by path, after the path."""
+        """Return up to ``limit`` entries inside ``prefix`` sorted by path, after the path.
+
+        Args:
+            manifest_id: The manifest.
+            prefix: Only paths inside this directory; empty: every path.
+            tags: Only entries that pass this filter.
+            after: Only paths after this one; ``None`` from the start.
+            limit: The most entries returned.
+
+        Returns:
+            The entries, sorted by path.
+        """
         query = select(manifest_entries).where(manifest_entries.c.manifest_id == manifest_id)
         path = manifest_entries.c.path
         if prefix:
@@ -791,7 +986,15 @@ class SqliteManifestRepository:
         return tuple(_entry(row) for row in rows)
 
     async def list_paths(self, manifest_id: ManifestId, *, limit: int) -> Sequence[str]:
-        """Return up to ``limit`` article paths of the manifest, sorted."""
+        """Return up to ``limit`` article paths of the manifest, sorted.
+
+        Args:
+            manifest_id: The manifest.
+            limit: The most paths returned.
+
+        Returns:
+            The paths, sorted.
+        """
         query = (
             select(manifest_entries.c.path)
             .where(manifest_entries.c.manifest_id == manifest_id)
@@ -802,7 +1005,15 @@ class SqliteManifestRepository:
             return tuple((await connection.execute(query)).scalars())
 
     async def count_tags(self, manifest_id: ManifestId, *, limit: int) -> Sequence[tuple[str, int]]:
-        """Return up to ``limit`` ``(tag, article count)`` pairs, most used first, then by name."""
+        """Return up to ``limit`` ``(tag, article count)`` pairs, most used first, then by name.
+
+        Args:
+            manifest_id: The manifest.
+            limit: The most tags returned.
+
+        Returns:
+            The tags with their article counts.
+        """
         # ponytail: scans the manifest's entries; add a tag side table with the one planned for
         # the tag filter (see `_tag_condition`) when versions are large enough to notice.
         query = _count_tags[self.engine.dialect.name]
@@ -813,7 +1024,16 @@ class SqliteManifestRepository:
     async def get_article(
         self, library_id: LibraryId, ref: VersionRef, path: str
     ) -> StoredArticle | None:
-        """Return one article of the version's active manifest, or ``None``."""
+        """Return one article of the version's active manifest, or ``None``.
+
+        Args:
+            library_id: The library.
+            ref: The exact ref.
+            path: The article's path.
+
+        Returns:
+            The article with its text, or ``None``.
+        """
         query = (
             select(
                 manifests.c.id, manifests.c.commit_sha, manifest_entries, article_contents.c.content
@@ -850,7 +1070,17 @@ class SqliteManifestRepository:
     async def get_image(
         self, library_id: LibraryId, ref: VersionRef, path: str, *, with_data: bool = True
     ) -> StoredImage | None:
-        """Return the image at ``path`` of the version's active manifest, or ``None``."""
+        """Return the image at ``path`` of the version's active manifest, or ``None``.
+
+        Args:
+            library_id: The library.
+            ref: The exact ref.
+            path: The image's path.
+            with_data: Whether to read the bytes.
+
+        Returns:
+            The image, or ``None``.
+        """
         joined = manifests.join(manifest_images, manifest_images.c.manifest_id == manifests.c.id)
         query = (
             select(
@@ -875,7 +1105,20 @@ class SqliteManifestRepository:
         return StoredImage(blob_sha=row.blob_sha, content_type=row.content_type, data=row.data)
 
     async def activate(self, manifest_id: ManifestId, *, at: datetime) -> Version:
-        """Make a pending manifest the version's active one, in one transaction."""
+        """Make a pending manifest the version's active one, in one transaction.
+
+        Args:
+            manifest_id: The manifest.
+            at: When it is activated: the version's new ``imported_at``.
+
+        Returns:
+            The version as it is now.
+
+        Raises:
+            ManifestNotFoundError: No manifest has this ID.
+            ManifestNotPendingError: The manifest was superseded.
+            ManifestOutdatedError: A newer manifest of the version is active.
+        """
         async with self._write() as connection:
             row = (
                 await connection.execute(select(manifests).where(manifests.c.id == manifest_id))
@@ -925,7 +1168,16 @@ class SqliteManifestRepository:
         library_id: LibraryId | None,
         created_before: datetime | None,
     ) -> int:
-        """Delete the pending manifests that match every given filter."""
+        """Delete the pending manifests that match every given filter.
+
+        Args:
+            manifest_id: Only this manifest; ``None``: any.
+            library_id: Only manifests of this library; ``None``: any.
+            created_before: Only manifests stored before this time; ``None``: any.
+
+        Returns:
+            How many manifests were deleted.
+        """
         doomed = delete(manifests).where(manifests.c.state == ManifestState.PENDING.value)
         if manifest_id is not None:
             doomed = doomed.where(manifests.c.id == manifest_id)
@@ -937,7 +1189,14 @@ class SqliteManifestRepository:
             return (await connection.execute(doomed)).rowcount
 
     async def collect_garbage(self, *, superseded_before: datetime) -> GarbageCollected:
-        """Delete manifests superseded before the cutoff, then texts and images no manifest uses."""
+        """Delete manifests superseded before the cutoff, then texts and images no manifest uses.
+
+        Args:
+            superseded_before: The cutoff.
+
+        Returns:
+            How many manifests, texts and images were deleted.
+        """
         async with self._write() as connection:
             old = await connection.execute(
                 delete(manifests).where(
@@ -963,7 +1222,18 @@ class SqliteManifestRepository:
         )
 
     async def remove_version(self, library_id: LibraryId, ref: VersionRef) -> Sequence[ManifestId]:
-        """Delete the version row and the manifests of the ref (their entries cascade)."""
+        """Delete the version row and the manifests of the ref (their entries cascade).
+
+        Args:
+            library_id: The library.
+            ref: The exact ref.
+
+        Returns:
+            The deleted manifest IDs.
+
+        Raises:
+            VersionNotFoundError: The library has no such version.
+        """
         async with self._write() as connection:
             version = (
                 library_versions.c.library_id == library_id.value,
@@ -985,7 +1255,17 @@ class SqliteManifestRepository:
             return [ManifestId(row.id) for row in ids]
 
     async def remove_library(self, library_id: LibraryId) -> Sequence[ManifestId]:
-        """Delete the library; its versions, manifests and entries cascade."""
+        """Delete the library; its versions, manifests and entries cascade.
+
+        Args:
+            library_id: The library.
+
+        Returns:
+            The deleted manifest IDs.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog.
+        """
         async with self._write() as connection:
             ids = [
                 ManifestId(row.id)
@@ -1001,6 +1281,14 @@ class SqliteManifestRepository:
             return ids
 
     async def _load(self, *where: ColumnElement[bool]) -> Manifest | None:
+        """Read the first manifest that matches, without its entries.
+
+        Args:
+            where: Conditions on the manifests table.
+
+        Returns:
+            The manifest, or ``None``.
+        """
         async with self.engine.connect() as connection:
             row = (await connection.execute(select(manifests).where(*where))).first()
         if row is None:
@@ -1009,6 +1297,14 @@ class SqliteManifestRepository:
 
 
 def _rename(row: Row) -> ManifestRename:
+    """Read a rename row.
+
+    Args:
+        row: A row of the renames table.
+
+    Returns:
+        The rename.
+    """
     return ManifestRename(
         from_ref=VersionRef(row.from_ref),
         old_path=row.old_path,
@@ -1018,6 +1314,14 @@ def _rename(row: Row) -> ManifestRename:
 
 
 def _manifest(row: Row) -> Manifest:
+    """Read a manifest row, without its entries.
+
+    Args:
+        row: A row of the manifests table.
+
+    Returns:
+        The manifest.
+    """
     return Manifest(
         id=ManifestId(row.id),
         library=LibraryId(row.library_id),
@@ -1032,6 +1336,15 @@ def _manifest(row: Row) -> Manifest:
 
 
 async def _stored_version(connection: AsyncConnection, manifest: Row) -> Version:
+    """Read the version a manifest row belongs to.
+
+    Args:
+        connection: The open connection.
+        manifest: A row of the manifests table.
+
+    Returns:
+        The version as stored.
+    """
     row = (
         await connection.execute(
             select(library_versions).where(
@@ -1050,7 +1363,14 @@ async def _stored_version(connection: AsyncConnection, manifest: Row) -> Version
 
 
 def _origin(stored: str) -> VersionOrigin:
-    """Read a stored origin; an unknown one (a newer release) counts as ``manual``: kept."""
+    """Read a stored origin; an unknown one (a newer release) counts as ``manual``: kept.
+
+    Args:
+        stored: The stored value.
+
+    Returns:
+        The origin.
+    """
     try:
         return VersionOrigin(stored)
     except ValueError:
@@ -1058,6 +1378,14 @@ def _origin(stored: str) -> VersionOrigin:
 
 
 def _library_values(library: Library) -> dict[str, str | bool | None]:
+    """Return the columns of a library row that ``add`` and ``save`` write.
+
+    Args:
+        library: The library.
+
+    Returns:
+        The values by column; the pin and the rules are not among them.
+    """
     return {
         "title": library.title,
         "description": library.description,
@@ -1071,7 +1399,12 @@ def _library_values(library: Library) -> dict[str, str | bool | None]:
 
 
 async def _insert_versions(connection: AsyncConnection, library: Library) -> None:
-    """Add the library's versions; rows that exist are left alone (insert or ignore)."""
+    """Add the library's versions; rows that exist are left alone (insert or ignore).
+
+    Args:
+        connection: The open transaction.
+        library: The library with its versions.
+    """
     if library.versions:
         await connection.execute(
             _conflict_insert(connection, library_versions).on_conflict_do_nothing(),
@@ -1094,6 +1427,7 @@ class SqliteImportedTags:
     """Implements ``ports.driven.ImportedTagWriter`` on the catalog's SQLite tables."""
 
     engine: AsyncEngine
+    """The database holding the catalog's tables (SQLite or PostgreSQL)."""
 
     async def set_imported_tags(
         self, manifest_id: ManifestId, tags: Mapping[str, tuple[str, ...]]
@@ -1101,6 +1435,13 @@ class SqliteImportedTags:
         """Read the named entries in batches, write those whose tags change; one transaction.
 
         Every named entry is reported, changed or not (see the port).
+
+        Args:
+            manifest_id: The manifest.
+            tags: The new imported tags, by path.
+
+        Returns:
+            The tags of each given entry the manifest has, by path.
         """
         entries = manifest_entries.c
         paths = list(tags)
@@ -1187,6 +1528,7 @@ class SqliteStoredArticles:
     """Implements ``ports.driven.StoredArticleFinder`` on the catalog's SQLite tables."""
 
     engine: AsyncEngine
+    """The database holding the catalog's tables (SQLite or PostgreSQL)."""
 
     async def find_articles(
         self,
@@ -1202,6 +1544,15 @@ class SqliteStoredArticles:
         ``ix_catalog_manifest_entries_content`` (blob_sha, content_version; it exists for the
         garbage collection), one manifest per file (``LIMIT 1``), never once per manifest that
         holds them. Texts are read once per blob.
+
+        Args:
+            library_id: The library.
+            ref: The version being imported, looked in first; ``None``: none.
+            content_version: The parser version the texts must be stored by.
+            files: The files, as ``(path, blob SHA)``.
+
+        Returns:
+            One stored article per file found.
         """
         asked = set(files)
         found: dict[tuple[str, str], Row] = {}
@@ -1241,6 +1592,14 @@ class SqliteStoredArticles:
         files: Sequence[tuple[str, str]],
         query: Callable[[Sequence[tuple[str, str]]], Select],
     ) -> None:
+        """Run ``query`` over the files in batches, keeping the first row found per file.
+
+        Args:
+            connection: The open connection.
+            found: The rows found so far, by ``(path, blob SHA)``; filled in place.
+            files: The files to look up, as ``(path, blob SHA)``.
+            query: Builds the statement for one batch.
+        """
         for start in range(0, len(files), _FILES_PER_QUERY):
             rows = await connection.execute(query(files[start : start + _FILES_PER_QUERY]))
             for row in rows.all():
@@ -1250,10 +1609,26 @@ class SqliteStoredArticles:
 def _in_manifest(
     manifest_id: str, content_version: int
 ) -> Callable[[Sequence[tuple[str, str]]], Select]:
-    """Entries of one manifest, by primary key: ``(manifest_id, path)``."""
+    """Entries of one manifest, by primary key: ``(manifest_id, path)``.
+
+    Args:
+        manifest_id: The manifest.
+        content_version: The parser version the texts must be stored by.
+
+    Returns:
+        Builds the statement for one batch of files.
+    """
     entries = manifest_entries.c
 
     def query(files: Sequence[tuple[str, str]]) -> Select:
+        """Select the batch's entries of the manifest, with the manifest's ID and commit.
+
+        Args:
+            files: The batch, as ``(path, blob SHA)``.
+
+        Returns:
+            The statement.
+        """
         return (
             select(manifests.c.id, manifests.c.commit_sha, manifest_entries)
             .select_from(manifests.join(manifest_entries, entries.manifest_id == manifests.c.id))
@@ -1276,10 +1651,25 @@ def _in_library(
     Each file picks one manifest with a correlated ``LIMIT 1`` over
     ``ix_catalog_manifest_entries_content``, so a file the library holds in hundreds of
     manifests costs one index probe, not one row per manifest.
+
+    Args:
+        library_id: The library.
+        content_version: The parser version the texts must be stored by.
+
+    Returns:
+        Builds the statement for one batch of files.
     """
     entries = manifest_entries.c
 
     def query(files: Sequence[tuple[str, str]]) -> Select:
+        """Select one entry per file of the batch, with its manifest's ID and commit.
+
+        Args:
+            files: The batch, as ``(path, blob SHA)``.
+
+        Returns:
+            The statement.
+        """
         # A CTE: SQLite cannot name the columns of a VALUES subquery (``AS wanted (path, ...)``).
         wanted = (
             values(column("path", Text), column("blob_sha", Text), name="wanted")
@@ -1315,6 +1705,16 @@ def _in_library(
 async def _texts(
     connection: AsyncConnection, shas: Collection[str], content_version: int
 ) -> dict[str, str]:
+    """Read the texts of these blobs, in batches.
+
+    Args:
+        connection: The open connection.
+        shas: The blob SHAs.
+        content_version: The parser version the texts must be stored by.
+
+    Returns:
+        The text of each blob found, by blob SHA.
+    """
     asked, texts = list(shas), {}
     for start in range(0, len(asked), _PATHS_PER_QUERY):
         rows = await connection.execute(
@@ -1332,6 +1732,7 @@ class SqliteManifestCopier:
     """Implements ``ports.driven.ManifestCopier`` on the catalog's SQLite tables."""
 
     engine: AsyncEngine
+    """The database holding the catalog's tables (SQLite or PostgreSQL)."""
 
     async def copy_active(
         self,
@@ -1342,7 +1743,21 @@ class SqliteManifestCopier:
         at: datetime,
         content_version: int,
     ) -> tuple[Manifest, Sequence[StoredArticle]] | None:
-        """Copy the rows of the active manifest with ``INSERT ... SELECT``; one transaction."""
+        """Copy the rows of the active manifest with ``INSERT ... SELECT``; one transaction.
+
+        Args:
+            library_id: The library.
+            ref: The exact ref.
+            new_id: The copy's ID.
+            at: The copy's creation time.
+            content_version: The parser version the texts must be stored by.
+
+        Returns:
+            The copy and its articles, or ``None``.
+
+        Raises:
+            StoredContentOutdatedError: An entry was stored by another parser version.
+        """
         # BEGIN IMMEDIATE, as in ``SqliteManifestRepository._write``: it reads, then writes.
         async with self.engine.execution_options(begin_immediate=True).begin() as connection:
             row = (
