@@ -288,12 +288,21 @@ async def _confirmed_removals(
     now: datetime,
     pending_too: bool,
 ) -> list[str]:
-    """Import asyncioPick the manifests safe to remove, asking the catalog twice.
+    """Pick the manifests safe to remove, asking the catalog twice.
 
     Removable: pending in the catalog (when ``pending_too``), or unknown to it and older than
     the grace period. Everything else stays, including a status we cannot name. The second
     question comes right before the delete and narrows the window in which a manifest could
     be activated; it cannot close it, as that would take a transaction across both domains.
+
+    Args:
+        manifests: What the catalog says about manifests.
+        candidates: The indexed manifests that matched the caller's filters.
+        now: The current time, for the grace period.
+        pending_too: Whether manifests the catalog holds as pending may go too.
+
+    Returns:
+        The IDs of the manifests to remove.
     """
     unknown_before = now - UNKNOWN_MANIFEST_GRACE
     survivors = list(candidates)
@@ -1767,9 +1776,11 @@ class SearchDocsUseCase:
     """Implements ``ports.driving.SearchDocs``."""
 
     versions: SearchableVersions
+    """Resolves the asked version to the manifest the search reads."""
     modes: RetrievalModes
     """Picks the mode and runs its pipeline."""
     chunks: ChunkRepository
+    """Reads the hits' chunks."""
     tracer: SearchTracer = field(default_factory=UntracedSearches)
     """Observes the search and its stages (traces); records nothing by default."""
 
@@ -1816,6 +1827,9 @@ class SearchDocsUseCase:
 
         Returns:
             The results of the one version searched.
+
+        Raises:
+            VersionNotIndexedError: The version is not imported or has no active manifest.
         """
         mode = choice.mode.value
         with self.tracer.span(f"{SEARCH_DOCS}.version", mode=mode):
@@ -1879,9 +1893,13 @@ class SearchAllLibrariesUseCase:
     """Implements ``ports.driving.SearchAllLibraries``."""
 
     defaults: DefaultVersions
+    """Every library's default version."""
     versions: SearchableVersions
+    """Resolves a ``library`` filter to its default version."""
     search: SearchIndex
+    """The full-text index, searched over all manifests at once."""
     chunks: ChunkRepository
+    """Reads the hits' chunks."""
     tracer: SearchTracer = field(default_factory=UntracedSearches)
     """Observes the search and its stages (traces); records nothing by default."""
 
@@ -1890,6 +1908,12 @@ class SearchAllLibrariesUseCase:
 
         There is no ``mode`` (BM25 only until E11), unlike ``search_docs``. With ``library`` set
         every library is still resolved: the counts stay global, which a facet needs.
+
+        Args:
+            query: The query, the filters and the limit.
+
+        Returns:
+            The results across libraries and the matches per library.
         """
         text = SearchText(value=query.query)
         mode = RetrievalMode.BM25.value
@@ -1908,6 +1932,9 @@ class SearchAllLibrariesUseCase:
 
         Returns:
             The results across the libraries, with a facet per library.
+
+        Raises:
+            VersionNotIndexedError: ``library`` has no readable default version.
         """
         tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
         with self.tracer.span("search_all_libraries.versions", mode=mode):
@@ -1980,13 +2007,22 @@ class IndexManifestUseCase:
     """Implements ``ports.driving.IndexManifest``."""
 
     chunks: ChunkRepository
+    """Stores the rows and chunk sets."""
     search: SearchIndex
+    """Indexes the new chunk sets."""
     clock: Clock
+    """Stamps the manifest's indexing time."""
 
     async def __call__(self, command: IndexManifestCommand) -> IndexedManifestOut:
         """Compute the chunk IDs, store the rows plus the new chunk sets, and make them searchable.
 
         Call it between the catalog's store (pending) and its activate, never after.
+
+        Args:
+            command: The manifest and its articles' chunks.
+
+        Returns:
+            The chunk IDs by article and how many chunk sets were new.
         """
         library = command.library.lower()
         manifest = IndexedManifest(
@@ -2015,7 +2051,15 @@ class IndexManifestUseCase:
     def _build(
         command: IndexManifestCommand, manifest: IndexedManifest
     ) -> tuple[dict[ChunkSetKey, ChunkSet], list[ManifestChunk]]:
-        """Make the chunk sets and rows: CPU-bound (chunk IDs are hashed), so run in a thread."""
+        """Make the chunk sets and rows: CPU-bound (chunk IDs are hashed), so run in a thread.
+
+        Args:
+            command: The manifest and its articles' chunks.
+            manifest: The manifest being indexed.
+
+        Returns:
+            The chunk sets by key, and the manifest's rows.
+        """
         chunk_sets: dict[ChunkSetKey, ChunkSet] = {}
         rows: list[ManifestChunk] = []
         for article in command.articles:
@@ -2058,12 +2102,27 @@ class ReadChunkUseCase:
     """Implements ``ports.driving.ReadChunk``."""
 
     versions: SearchableVersions
+    """Resolves the chunk's version to its active manifest."""
     manifests: ActiveManifests
+    """What the catalog says about the manifests that hold the chunk."""
     chunks: ChunkRepository
+    """Reads the chunk and the manifests that hold it."""
     renames: RenamedPaths | None = None
+    """Where a stale chunk's article went; without it only the old path is tried."""
 
     async def __call__(self, query: ReadChunkQuery) -> ChunkOut:
-        """Serve the chunk from its version's active manifest, or say why it cannot be served."""
+        """Serve the chunk from its version's active manifest, or say why it cannot be served.
+
+        Args:
+            query: The chunk ID.
+
+        Returns:
+            The chunk.
+
+        Raises:
+            StaleChunkError: The ID is of a superseded manifest of a version that still exists.
+            ChunkNotFoundError: No version serves the ID (unknown, still pending, or collected).
+        """
         chunk_id = ChunkId(query.chunk_id)
         holders = await self.chunks.manifests_with_chunk(chunk_id)
         # The ID is a hash of the version it was issued for, so all holders share one version_id.
@@ -2102,6 +2161,14 @@ class ReadChunkUseCase:
         The article is the old path, or where the rename map put it. The rename map covers one hop
         (the active manifest against the version before it), so an ID several re-syncs old whose
         article moved earlier gets no location. The section is then picked by ``_pick``.
+
+        Args:
+            version: The version now, with its active manifest; ``None`` when it has none.
+            chunk_id: The stale chunk ID.
+            old_manifest: The manifest that held the chunk.
+
+        Returns:
+            Where the section is now, or ``None`` when not even the article is found.
         """
         old = await self.chunks.get(old_manifest, chunk_id)
         if version is None or old is None:
@@ -2166,7 +2233,15 @@ class ArticleOutlineUseCase:
 
 
 def _nearest(sections: Sequence[SectionRef], position: int) -> SectionRef | None:
-    """Return the section nearest to ``position``; ``None`` when two are equally near."""
+    """Return the section nearest to ``position``; ``None`` when two are equally near.
+
+    Args:
+        sections: The candidate sections.
+        position: The old chunk's position.
+
+    Returns:
+        The nearest section, or ``None``.
+    """
     ranked = sorted(sections, key=lambda s: abs(s.position - position))
     if len(ranked) > 1 and abs(ranked[0].position - position) == abs(ranked[1].position - position):
         return None
@@ -2184,6 +2259,14 @@ def _pick(current: Sequence[SectionRef], was: Chunk, position: int) -> SectionRe
     Known limit: if a duplicate heading is inserted above *and* the old section's text is
     edited too, the occurrence step lands on the inserted section. The match is then marked
     ``text_changed``, so the agent is told to re-check it.
+
+    Args:
+        current: The sections of the article in the active manifest.
+        was: The stale chunk.
+        position: Its position in the old article.
+
+    Returns:
+        The section, or ``None``.
     """
     same_headings = [s for s in current if s.heading_path == was.heading_path]
     same_text = [s for s in current if s.content_hash == was.content_hash]
@@ -2199,9 +2282,17 @@ class GetChunkSetsUseCase:
     """Implements ``ports.driving.GetChunkSets``."""
 
     chunks: ChunkRepository
+    """Reads the stored chunk sets."""
 
     async def __call__(self, query: GetChunkSetsQuery) -> ChunkSetsOut:
-        """Look the sets up by (blob, config); sets that were never stored are left out."""
+        """Look the sets up by (blob, config); sets that were never stored are left out.
+
+        Args:
+            query: The chunking config and the blobs.
+
+        Returns:
+            The stored chunks of each blob that has them.
+        """
         found = await self.chunks.get_sets(
             [(sha, query.config_hash) for sha in dict.fromkeys(query.blob_shas)]
         )
@@ -2263,15 +2354,25 @@ class DiscardPendingChunksUseCase:
     """Implements ``ports.driving.DiscardPendingChunks``."""
 
     manifests: ActiveManifests
+    """What the catalog says about the manifests."""
     chunks: ChunkRepository
+    """Finds and deletes the chunk rows."""
     clock: Clock
+    """The time, for the grace period and ``older_than_seconds``."""
     hypotheses: HypotheticalAnswerCache = field(default_factory=NoHypothesisCache)
     """HyDE's cached answers: those of a removed manifest go with its chunks."""
     answers: AgentAnswerCache = field(default_factory=NoAgentAnswerCache)
     """The agentic answer cache: the answers of a removed manifest go with its chunks."""
 
     async def __call__(self, command: DiscardPendingChunksCommand) -> RemovedChunks:
-        """Delete rows of matching manifests the catalog holds as pending, or dropped long ago."""
+        """Delete rows of matching manifests the catalog holds as pending, or dropped long ago.
+
+        Args:
+            command: Which manifests: by ID, by library or by age.
+
+        Returns:
+            What was deleted.
+        """
         now = self.clock.now()
         older = command.older_than_seconds
         candidates = await self.chunks.find_manifests(
@@ -2291,8 +2392,11 @@ class CollectChunksUseCase:
     """
 
     manifests: ActiveManifests
+    """What the catalog says about the manifests."""
     chunks: ChunkRepository
+    """Finds and deletes the chunk rows and unused sets."""
     clock: Clock
+    """The time, for the grace period."""
     hypotheses: HypotheticalAnswerCache = field(default_factory=NoHypothesisCache)
     """HyDE's cached answers: those of a removed manifest go with its chunks."""
     answers: AgentAnswerCache = field(default_factory=NoAgentAnswerCache)
@@ -2301,7 +2405,14 @@ class CollectChunksUseCase:
     """Prunes HyDE's cache by age and model; without it the cache is not pruned here."""
 
     async def __call__(self, command: CollectChunksCommand) -> RemovedChunks:
-        """Run after the catalog's collection: its superseded manifests are gone, so are ours."""
+        """Run after the catalog's collection: its superseded manifests are gone, so are ours.
+
+        Args:
+            command: The grace period.
+
+        Returns:
+            What was deleted.
+        """
         now = self.clock.now()
         cutoff = now - timedelta(seconds=command.grace_seconds)
         candidates = await self.chunks.find_manifests(
@@ -2382,14 +2493,23 @@ class RemoveChunksUseCase:
     """Implements ``ports.driving.RemoveChunks``."""
 
     manifests: ActiveManifests
+    """What the catalog still knows: those manifests are kept."""
     chunks: ChunkRepository
+    """Deletes the chunk rows and unused sets."""
     hypotheses: HypotheticalAnswerCache = field(default_factory=NoHypothesisCache)
     """HyDE's cached answers: those of a removed manifest go with its chunks."""
     answers: AgentAnswerCache = field(default_factory=NoAgentAnswerCache)
     """The agentic answer cache: the answers of a removed manifest go with its chunks."""
 
     async def __call__(self, command: RemoveChunksCommand) -> RemovedChunks:
-        """Remove what the catalog has forgotten; keep every manifest it still knows."""
+        """Remove what the catalog has forgotten; keep every manifest it still knows.
+
+        Args:
+            command: The manifests the catalog deleted.
+
+        Returns:
+            What was deleted.
+        """
         asked = list(dict.fromkeys(command.manifest_ids))
         known = await self.manifests.statuses(asked)
         gone = [i for i in asked if i not in known]
@@ -2401,9 +2521,17 @@ class RetagArticlesUseCase:
     """Implements ``ports.driving.RetagArticles``."""
 
     chunks: ChunkRepository
+    """Holds the chunk rows' tag copies."""
 
     async def __call__(self, command: RetagArticlesCommand) -> RetaggedChunks:
-        """Overwrite the tag copies of the named articles' chunk rows."""
+        """Overwrite the tag copies of the named articles' chunk rows.
+
+        Args:
+            command: The manifest and each article's current tags.
+
+        Returns:
+            How many chunk rows got other tags.
+        """
         tags = {a.path: tuple(dict.fromkeys(a.tags)) for a in command.articles}
         return RetaggedChunks(chunks=await self.chunks.set_tags(command.manifest_id, tags))
 
@@ -2413,9 +2541,14 @@ class GetSearchIndexStateUseCase:
     """Implements ``ports.driving.GetSearchIndexState``."""
 
     maintenance: SearchIndexMaintenance
+    """Reads the index's format."""
 
     async def __call__(self) -> SearchIndexStateOut:
-        """Report the stored format against the current one."""
+        """Report the stored format against the current one.
+
+        Returns:
+            The stored and current formats, and the engine.
+        """
         return SearchIndexStateOut.from_model(await self.maintenance.state())
 
 
@@ -2449,9 +2582,14 @@ class RebuildSearchIndexUseCase:
     """Implements ``ports.driving.RebuildSearchIndex``."""
 
     maintenance: SearchIndexMaintenance
+    """Rebuilds the index."""
 
     async def __call__(self) -> RebuiltIndexOut:
-        """Build the new index beside the old one, then swap it in."""
+        """Build the new index beside the old one, then swap it in.
+
+        Returns:
+            The format the index is now in and how many chunks it holds.
+        """
         return RebuiltIndexOut.from_model(await self.maintenance.rebuild())
 
 
@@ -2460,14 +2598,25 @@ class ResolveLibraryIdUseCase:
     """Implements ``ports.driving.ResolveLibraryId``."""
 
     libraries: Libraries
+    """The catalog's libraries, matched by name."""
     versions: SearchableVersions
+    """Resolves each match's default version."""
     search: SearchIndex
+    """Counts each default version's chunks matching the query."""
     chunks: ChunkRepository
+    """Counts each default version's articles and chunks."""
     tracer: SearchTracer = field(default_factory=UntracedSearches)
     """Observes the search and its stages (traces); records nothing by default."""
 
     async def __call__(self, query: ResolveLibraryIdQuery) -> ResolveLibraryIdResult:
-        """Match the name, then let the default versions' hits for ``query`` re-rank the matches."""
+        """Match the name, then let the default versions' hits for ``query`` re-rank the matches.
+
+        Args:
+            query: The library name and what the caller wants to look up.
+
+        Returns:
+            The matching libraries, best first.
+        """
         # Both refuse blank text the same way (EmptySearchTextError).
         text, name = SearchText(value=query.query), SearchText(value=query.library_name)
         mode = RetrievalMode.BM25.value
@@ -2532,6 +2681,12 @@ class ResolveLibraryIdUseCase:
         """Take the best names that have a readable default version, ``MAX_RESOLVED`` at most.
 
         Libraries with nothing imported are dropped before the cut, so they cost no slot.
+
+        Args:
+            named: The libraries whose name matched, best name first.
+
+        Returns:
+            Each kept library with its match and default version.
         """
         found: list[tuple[CatalogLibrary, NameMatch, SearchableVersion]] = []
         for start in range(0, len(named), MAX_RESOLVED):
@@ -2544,7 +2699,14 @@ class ResolveLibraryIdUseCase:
 
 
 def _cost(section: DocSectionOut) -> int:
-    """Characters a section takes in the payload: its parts plus the fixed framing."""
+    """Characters a section takes in the payload: its parts plus the fixed framing.
+
+    Args:
+        section: The section.
+
+    Returns:
+        Its size in characters.
+    """
     pointer = len(POINTER_TEXT) if section.too_large else 0
     return (
         SECTION_FRAMING_CHARS
@@ -2561,6 +2723,13 @@ def _pack(sections: Sequence[DocSectionOut], room: int) -> list[DocSectionOut]:
 
     A chunk is never cut. One that merely finds the room used up is skipped, and a smaller one
     after it may still fit.
+
+    Args:
+        sections: The sections, best first.
+        room: The characters left for them.
+
+    Returns:
+        The sections kept, in order, some of them pointers.
     """
     used, kept = 0, []
     for section in sections:
@@ -2575,6 +2744,13 @@ def _fit_rules(rules: Sequence[str], room: int) -> list[str]:
     """Take the library's rules in order until one does not fit ``room``; they precede any chunk.
 
     The agent sees a prefix of what the authors wrote, never a later rule without an earlier one.
+
+    Args:
+        rules: The library's rules, in order.
+        room: The characters the rules may take.
+
+    Returns:
+        The leading rules that fit.
     """
     used, kept = RULES_FRAMING_CHARS, []
     for rule in rules:
@@ -2590,10 +2766,13 @@ class QueryDocsUseCase:
     """Implements ``ports.driving.QueryDocs``."""
 
     versions: SearchableVersions
+    """Resolves the library ID to the version's active manifest."""
     modes: RetrievalModes
     """Picks the mode (the library's, else the instance's) and runs its pipeline."""
     chunks: ChunkRepository
+    """Reads the hits' chunks."""
     token_budget: int = DEFAULT_QUERY_DOCS_TOKEN_BUDGET
+    """Size budget of an answer, in estimated tokens."""
     tracer: SearchTracer = field(default_factory=UntracedSearches)
     """Observes the search and its stages (traces); records nothing by default."""
 
@@ -2650,6 +2829,9 @@ class QueryDocsUseCase:
 
         Returns:
             The packed sections of the one version searched.
+
+        Raises:
+            VersionNotIndexedError: The version is not imported or has no active manifest.
         """
         mode = choice.mode.value
         with self.tracer.span(f"{QUERY_DOCS}.version", mode=mode):
@@ -2771,6 +2953,9 @@ class GetLibraryRetrievalUseCase:
 
         Returns:
             Its setting, the effective mode and the modes available.
+
+        Raises:
+            UnknownLibraryError: There is no such library.
         """
         library = await self.libraries.canonical_id(query.library)
         if library is None:

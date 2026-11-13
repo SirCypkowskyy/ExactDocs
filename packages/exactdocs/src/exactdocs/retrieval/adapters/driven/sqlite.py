@@ -263,7 +263,14 @@ ai_spend_replays = Table(
 
 
 def _iso(moment: datetime) -> str:
-    """UTC ISO 8601, so stored timestamps compare as text."""
+    """UTC ISO 8601, so stored timestamps compare as text.
+
+    Args:
+        moment: A timezone-aware time.
+
+    Returns:
+        The time in UTC, ISO 8601.
+    """
     return moment.astimezone(UTC).isoformat()
 
 
@@ -272,9 +279,14 @@ class SqliteChunkRepository:
     """Implements ``ports.driven.ChunkRepository`` with SQLAlchemy Core on SQLite."""
 
     engine: AsyncEngine
+    """The application database."""
 
     def _write(self) -> AbstractAsyncContextManager[AsyncConnection]:
-        # BEGIN IMMEDIATE: see the catalog's manifest repository.
+        """Begin a write transaction with BEGIN IMMEDIATE (see the catalog's manifest repository).
+
+        Returns:
+            The transaction's connection, as a context manager.
+        """
         return self.engine.execution_options(begin_immediate=True).begin()
 
     async def add(
@@ -283,7 +295,19 @@ class SqliteChunkRepository:
         chunk_sets: Mapping[ChunkSetKey, ChunkSet],
         rows: Sequence[ManifestChunk],
     ) -> int | None:
-        """Store rows and the new chunk sets; ``None`` when the manifest is already indexed."""
+        """Store rows and the new chunk sets; ``None`` when the manifest is already indexed.
+
+        Args:
+            manifest: The manifest indexed.
+            chunk_sets: The chunk sets its rows point at, by key.
+            rows: The manifest's chunk rows.
+
+        Returns:
+            How many chunk sets were new; ``None`` when the manifest was already indexed.
+
+        Raises:
+            ChunkSetMismatchError: A stored set under one of the keys holds other chunks.
+        """
         async with self._write() as connection:
             if await connection.scalar(
                 select(exists().where(indexed_manifests.c.manifest_id == manifest.manifest_id))
@@ -361,7 +385,14 @@ class SqliteChunkRepository:
             return len(new)
 
     async def get_sets(self, keys: Sequence[ChunkSetKey]) -> Mapping[ChunkSetKey, ChunkSet]:
-        """Return the stored chunk sets among ``keys``, with their chunks in order."""
+        """Return the stored chunk sets among ``keys``, with their chunks in order.
+
+        Args:
+            keys: The (blob SHA, config hash) keys.
+
+        Returns:
+            The stored sets, by key.
+        """
         found: dict[ChunkSetKey, list[Chunk]] = {}
         async with self.engine.connect() as connection:
             for start in range(0, len(keys), 400):  # two bound variables per key
@@ -392,13 +423,29 @@ class SqliteChunkRepository:
         }
 
     async def get(self, manifest_id: str, chunk_id: ChunkId) -> StoredChunk | None:
-        """Return one chunk of the manifest with its content, or ``None``."""
+        """Return one chunk of the manifest with its content, or ``None``.
+
+        Args:
+            manifest_id: The manifest.
+            chunk_id: The chunk.
+
+        Returns:
+            The chunk with its row, or ``None`` when the manifest has no such chunk.
+        """
         return (await self.get_many(manifest_id, [chunk_id])).get(chunk_id)
 
     async def get_many(
         self, manifest_id: str, chunk_ids: Sequence[ChunkId]
     ) -> Mapping[ChunkId, StoredChunk]:
-        """Return the chunks of the manifest that exist, by ID, in one query."""
+        """Return the chunks of the manifest that exist, by ID, in one query.
+
+        Args:
+            manifest_id: The manifest.
+            chunk_ids: The chunks.
+
+        Returns:
+            The chunks found, by ID; missing ones are left out.
+        """
         if not chunk_ids:
             return {}
         query = _stored_chunks().where(
@@ -412,7 +459,14 @@ class SqliteChunkRepository:
     async def get_across(
         self, wanted: Mapping[str, Collection[ChunkId]]
     ) -> Mapping[tuple[str, ChunkId], StoredChunk]:
-        """Return the chunks that exist, by (manifest ID, chunk ID), in one query."""
+        """Return the chunks that exist, by (manifest ID, chunk ID), in one query.
+
+        Args:
+            wanted: The chunk IDs wanted, by manifest ID.
+
+        Returns:
+            The chunks found, by (manifest ID, chunk ID).
+        """
         if not wanted:
             return {}
         # Chunk IDs hash their version, so the cross product of the two lists holds little more
@@ -433,7 +487,15 @@ class SqliteChunkRepository:
         }
 
     async def article(self, manifest_id: str, article_path: str) -> Sequence[SectionRef]:
-        """Return the sections of one article in order: one indexed query, no chunk text."""
+        """Return the sections of one article in order: one indexed query, no chunk text.
+
+        Args:
+            manifest_id: The manifest.
+            article_path: The article's path.
+
+        Returns:
+            The article's sections, in reading order.
+        """
         query = (
             _stored_chunks()
             .with_only_columns(
@@ -467,7 +529,14 @@ class SqliteChunkRepository:
         ]
 
     async def counts(self, manifest_id: str) -> VersionCounts:
-        """Count the manifest's articles and chunks."""
+        """Count the manifest's articles and chunks.
+
+        Args:
+            manifest_id: The manifest.
+
+        Returns:
+            Its article and chunk counts.
+        """
         query = select(func.count(distinct(manifest_chunks.c.article_path)), func.count()).where(
             manifest_chunks.c.manifest_id == manifest_id
         )
@@ -476,7 +545,14 @@ class SqliteChunkRepository:
         return VersionCounts(articles=articles, chunks=chunk_count)
 
     async def manifests_with_chunk(self, chunk_id: ChunkId) -> Sequence[IndexedManifest]:
-        """Return every indexed manifest that has a row for this chunk ID (any status)."""
+        """Return every indexed manifest that has a row for this chunk ID (any status).
+
+        Args:
+            chunk_id: The chunk ID.
+
+        Returns:
+            The manifests that have a row for it.
+        """
         query = (
             select(indexed_manifests)
             .join(manifest_chunks, manifest_chunks.c.manifest_id == indexed_manifests.c.manifest_id)
@@ -489,7 +565,16 @@ class SqliteChunkRepository:
     async def find_manifests(
         self, *, manifest_id: str | None, library: str | None, indexed_before: datetime | None
     ) -> Sequence[IndexedManifest]:
-        """Return the indexed manifests that match every given filter."""
+        """Return the indexed manifests that match every given filter.
+
+        Args:
+            manifest_id: Only this manifest, if given.
+            library: Only manifests of this library (lower case), if given.
+            indexed_before: Only manifests indexed before this time, if given.
+
+        Returns:
+            The matching manifests.
+        """
         query = select(indexed_manifests)
         if manifest_id is not None:
             query = query.where(indexed_manifests.c.manifest_id == manifest_id)
@@ -502,7 +587,14 @@ class SqliteChunkRepository:
         return tuple(_manifest(r) for r in found)
 
     async def remove(self, manifest_ids: Collection[str]) -> Removed:
-        """Delete these manifests' rows, then every chunk set no row points at."""
+        """Delete these manifests' rows, then every chunk set no row points at.
+
+        Args:
+            manifest_ids: The manifests to delete.
+
+        Returns:
+            How many manifests and chunk sets were deleted.
+        """
         async with self._write() as connection:
             gone = 0
             for batch in _batches(list(manifest_ids)):
@@ -524,7 +616,15 @@ class SqliteChunkRepository:
         return Removed(manifests=gone, chunk_sets=unused.rowcount)
 
     async def set_tags(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> int:
-        """One UPDATE per article: its rows are found by the (manifest, path) index."""
+        """One UPDATE per article: its rows are found by the (manifest, path) index.
+
+        Args:
+            manifest_id: The manifest.
+            tags: Each article path's tags now.
+
+        Returns:
+            How many rows were changed.
+        """
         if not tags:
             return 0
         statement = (
@@ -598,7 +698,11 @@ class SqliteChunkRepository:
 
 
 def _stored_chunks() -> Select[Any]:
-    """Manifest rows joined with their chunk and version, ready for a WHERE."""
+    """Manifest rows joined with their chunk and version, ready for a WHERE.
+
+    Returns:
+        The select, without a WHERE.
+    """
     return select(manifest_chunks, chunks, indexed_manifests.c.version_id).select_from(
         manifest_chunks.join(
             indexed_manifests, indexed_manifests.c.manifest_id == manifest_chunks.c.manifest_id
@@ -612,6 +716,15 @@ def _stored_chunks() -> Select[Any]:
 
 
 def _stored(manifest_id: str, row: Row[Any]) -> StoredChunk:
+    """Map a row of ``_stored_chunks`` to a stored chunk.
+
+    Args:
+        manifest_id: The manifest the row was read for.
+        row: The row.
+
+    Returns:
+        The chunk with its manifest row.
+    """
     return StoredChunk(
         manifest_id=manifest_id,
         version_id=row.version_id,
@@ -669,6 +782,14 @@ def _headings(stored: str | None) -> tuple[ChunkHeading, ...] | None:
 
 
 def _manifest(row: Row[Any]) -> IndexedManifest:
+    """Map a ``retrieval_indexed_manifests`` row.
+
+    Args:
+        row: The row.
+
+    Returns:
+        The indexed manifest.
+    """
     return IndexedManifest(
         manifest_id=row.manifest_id,
         version_id=row.version_id,
@@ -678,7 +799,15 @@ def _manifest(row: Row[Any]) -> IndexedManifest:
 
 
 def _batches(items: list[str], size: int = 500) -> list[list[str]]:
-    """Slices small enough for SQLite's bound-variable limit."""
+    """Slices small enough for SQLite's bound-variable limit.
+
+    Args:
+        items: The values to bind.
+        size: The most values per slice.
+
+    Returns:
+        The slices, in order.
+    """
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 

@@ -85,8 +85,11 @@ class InMemoryChunkRepository:
     """Implements ``ports.driven.ChunkRepository`` with dictionaries."""
 
     chunk_sets: dict[ChunkSetKey, ChunkSet] = field(default_factory=dict)
+    """Stored chunk sets, by (blob SHA, config hash)."""
     manifests: dict[str, IndexedManifest] = field(default_factory=dict)
+    """Indexed manifests, by ID."""
     rows: dict[str, dict[ChunkId, ManifestChunk]] = field(default_factory=dict)
+    """Each manifest's chunk rows, by chunk ID."""
 
     async def add(
         self,
@@ -94,7 +97,19 @@ class InMemoryChunkRepository:
         chunk_sets: Mapping[ChunkSetKey, ChunkSet],
         rows: Sequence[ManifestChunk],
     ) -> int | None:
-        """Store rows and the new chunk sets; ``None`` when the manifest is already indexed."""
+        """Store rows and the new chunk sets; ``None`` when the manifest is already indexed.
+
+        Args:
+            manifest: The manifest indexed.
+            chunk_sets: The chunk sets its rows point at, by key.
+            rows: The manifest's chunk rows.
+
+        Returns:
+            How many chunk sets were new; ``None`` when the manifest was already indexed.
+
+        Raises:
+            ChunkSetMismatchError: A stored set under one of the keys holds other chunks.
+        """
         if manifest.manifest_id in self.manifests:
             return None
         for key, value in chunk_sets.items():
@@ -107,11 +122,26 @@ class InMemoryChunkRepository:
         return len(new)
 
     async def get_sets(self, keys: Sequence[ChunkSetKey]) -> Mapping[ChunkSetKey, ChunkSet]:
-        """Return the stored chunk sets among ``keys``."""
+        """Return the stored chunk sets among ``keys``.
+
+        Args:
+            keys: The (blob SHA, config hash) keys.
+
+        Returns:
+            The stored sets, by key.
+        """
         return {key: self.chunk_sets[key] for key in keys if key in self.chunk_sets}
 
     async def get(self, manifest_id: str, chunk_id: ChunkId) -> StoredChunk | None:
-        """Return one chunk of the manifest with its content, or ``None``."""
+        """Return one chunk of the manifest with its content, or ``None``.
+
+        Args:
+            manifest_id: The manifest.
+            chunk_id: The chunk.
+
+        Returns:
+            The chunk with its row, or ``None`` when the manifest has no such chunk.
+        """
         row = self.rows.get(manifest_id, {}).get(chunk_id)
         if row is None:
             return None
@@ -122,21 +152,44 @@ class InMemoryChunkRepository:
     async def get_many(
         self, manifest_id: str, chunk_ids: Sequence[ChunkId]
     ) -> Mapping[ChunkId, StoredChunk]:
-        """Return the chunks of the manifest that exist, by ID; missing IDs are left out."""
+        """Return the chunks of the manifest that exist, by ID; missing IDs are left out.
+
+        Args:
+            manifest_id: The manifest.
+            chunk_ids: The chunks.
+
+        Returns:
+            The chunks found, by ID; missing ones are left out.
+        """
         found = {i: await self.get(manifest_id, i) for i in chunk_ids}
         return {i: c for i, c in found.items() if c is not None}
 
     async def get_across(
         self, wanted: Mapping[str, Collection[ChunkId]]
     ) -> Mapping[tuple[str, ChunkId], StoredChunk]:
-        """Return the chunks that exist, by (manifest ID, chunk ID)."""
+        """Return the chunks that exist, by (manifest ID, chunk ID).
+
+        Args:
+            wanted: The chunk IDs wanted, by manifest ID.
+
+        Returns:
+            The chunks found, by (manifest ID, chunk ID).
+        """
         found = {
             (m, i): await self.get(m, i) for m, ids in wanted.items() for i in dict.fromkeys(ids)
         }
         return {key: c for key, c in found.items() if c is not None}
 
     async def article(self, manifest_id: str, article_path: str) -> Sequence[SectionRef]:
-        """Return the sections of one article of the manifest in order, without their text."""
+        """Return the sections of one article of the manifest in order, without their text.
+
+        Args:
+            manifest_id: The manifest.
+            article_path: The article's path.
+
+        Returns:
+            The article's sections, in reading order.
+        """
         rows = sorted(
             (r for r in self.rows.get(manifest_id, {}).values() if r.article_path == article_path),
             key=lambda r: r.position,
@@ -158,18 +211,41 @@ class InMemoryChunkRepository:
         return found
 
     async def counts(self, manifest_id: str) -> VersionCounts:
-        """Count the manifest's articles and chunks."""
+        """Count the manifest's articles and chunks.
+
+        Args:
+            manifest_id: The manifest.
+
+        Returns:
+            Its article and chunk counts.
+        """
         rows = self.rows.get(manifest_id, {}).values()
         return VersionCounts(articles=len({r.article_path for r in rows}), chunks=len(rows))
 
     async def manifests_with_chunk(self, chunk_id: ChunkId) -> Sequence[IndexedManifest]:
-        """Return every indexed manifest that has a row for this chunk ID (any status)."""
+        """Return every indexed manifest that has a row for this chunk ID (any status).
+
+        Args:
+            chunk_id: The chunk ID.
+
+        Returns:
+            The manifests that have a row for it.
+        """
         return [self.manifests[i] for i, rows in self.rows.items() if chunk_id in rows]
 
     async def find_manifests(
         self, *, manifest_id: str | None, library: str | None, indexed_before: datetime | None
     ) -> Sequence[IndexedManifest]:
-        """Return the indexed manifests that match every given filter."""
+        """Return the indexed manifests that match every given filter.
+
+        Args:
+            manifest_id: Only this manifest, if given.
+            library: Only manifests of this library (lower case), if given.
+            indexed_before: Only manifests indexed before this time, if given.
+
+        Returns:
+            The matching manifests.
+        """
         return [
             m
             for m in self.manifests.values()
@@ -179,7 +255,14 @@ class InMemoryChunkRepository:
         ]
 
     async def remove(self, manifest_ids: Collection[str]) -> Removed:
-        """Delete these manifests' rows, then every chunk set no row points at."""
+        """Delete these manifests' rows, then every chunk set no row points at.
+
+        Args:
+            manifest_ids: The manifests to delete.
+
+        Returns:
+            How many manifests and chunk sets were deleted.
+        """
         # O(all rows) per call: a test double, not a place to optimise.
         gone = [i for i in manifest_ids if self.manifests.pop(i, None) is not None]
         for manifest_id in gone:
@@ -191,7 +274,15 @@ class InMemoryChunkRepository:
         return Removed(manifests=len(gone), chunk_sets=len(unused))
 
     async def set_tags(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> int:
-        """Replace the tags of the named articles' rows of the manifest."""
+        """Replace the tags of the named articles' rows of the manifest.
+
+        Args:
+            manifest_id: The manifest.
+            tags: Each article path's tags now.
+
+        Returns:
+            How many rows were changed.
+        """
         rows = self.rows.get(manifest_id, {})
         changed = {
             chunk_id: replace(row, tags=tags[row.article_path])
@@ -239,18 +330,34 @@ class InMemorySearchIndex:
     """
 
     chunks: InMemoryChunkRepository
+    """The repository whose chunk rows and sets are searched."""
     indexed: set[ChunkSetKey] = field(default_factory=set)
+    """The chunk sets indexed so far."""
     stored_format: int = MEMORY_FORMAT
     """Set it lower to stand for an index from an older build."""
 
     async def index(self, chunk_set: ChunkSet) -> None:
-        """Remember the set; the text itself is read from the repository."""
+        """Remember the set; the text itself is read from the repository.
+
+        Args:
+            chunk_set: The stored chunk set.
+        """
         self.indexed.add(chunk_set.key)
 
     async def search(
         self, manifest_id: str, query: str, tag_filter: TagFilter, limit: int
     ) -> Sequence[SearchHit]:
-        """Return this manifest's best matches, ties broken by chunk ID."""
+        """Return this manifest's best matches, ties broken by chunk ID.
+
+        Args:
+            manifest_id: The manifest searched.
+            query: The query text.
+            tag_filter: Which tags a chunk's article must carry.
+            limit: The most hits.
+
+        Returns:
+            The hits, best first.
+        """
         terms = search_terms(query)
         hits: list[SearchHit] = []
         for row in self.chunks.rows.get(manifest_id, {}).values():
@@ -270,7 +377,19 @@ class InMemorySearchIndex:
     async def search_many(
         self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter, limit: int
     ) -> Sequence[ManifestHit]:
-        """Return the best matches of any of the manifests (scores are plain term counts)."""
+        """Return the best matches of any of the manifests.
+
+        Scores are term counts, heading matches weighted 10x, as in ``search``.
+
+        Args:
+            manifest_ids: The manifests searched.
+            query: The query text.
+            tag_filter: Which tags a chunk's article must carry.
+            limit: The most hits.
+
+        Returns:
+            The hits, best first, each naming its manifest.
+        """
         found = [
             ManifestHit(manifest_id=m, hit=h)
             for m in dict.fromkeys(manifest_ids)
@@ -280,7 +399,11 @@ class InMemorySearchIndex:
         return found[:limit]
 
     async def state(self) -> SearchIndexState:
-        """Return the format the index was "built" in and the current one."""
+        """Return the format the index was "built" in and the current one.
+
+        Returns:
+            The stored and current formats and the engine.
+        """
         return SearchIndexState(
             stored_format=self.stored_format,
             current_format=MEMORY_FORMAT,
@@ -288,7 +411,11 @@ class InMemorySearchIndex:
         )
 
     async def rebuild(self) -> RebuiltIndex:
-        """Index every stored chunk set again (one step: nothing can search in between)."""
+        """Index every stored chunk set again (one step: nothing can search in between).
+
+        Returns:
+            The new index's format and how many chunks it holds.
+        """
         self.indexed.clear()
         self.indexed.update(self.chunks.chunk_sets)
         self.stored_format = MEMORY_FORMAT
@@ -298,7 +425,16 @@ class InMemorySearchIndex:
     async def count_many(
         self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter
     ) -> Mapping[str, int]:
-        """Return how many chunks of each manifest match (reference only: it scores every chunk)."""
+        """Return how many chunks of each manifest match (reference only: it scores every chunk).
+
+        Args:
+            manifest_ids: The manifests searched.
+            query: The query text.
+            tag_filter: Which tags a chunk's article must carry.
+
+        Returns:
+            How many chunks match, by manifest ID.
+        """
         counts = {
             m: len(await self.search(m, query, tag_filter, sys.maxsize))
             for m in dict.fromkeys(manifest_ids)
@@ -307,6 +443,17 @@ class InMemorySearchIndex:
 
 
 def _hit(chunk_id: ChunkId, score: float, content: str, terms: list[str]) -> SearchHit:
+    """Build a hit with a snippet around the first match and its highlights.
+
+    Args:
+        chunk_id: The chunk.
+        score: Its score.
+        content: Its text.
+        terms: The query's terms.
+
+    Returns:
+        The hit.
+    """
     marks = highlights(content, terms)
     start = max(0, marks[0][0] - 40) if marks else 0
     snippet = content[start : start + 160]
@@ -320,9 +467,14 @@ class InMemoryDefaultVersions:
     """Implements ``ports.driven.DefaultVersions`` with a fixed list."""
 
     versions: Sequence[SearchableVersion] = ()
+    """The default versions, in any order."""
 
     async def all(self) -> Sequence[SearchableVersion]:
-        """Return the versions sorted by library."""
+        """Return the versions sorted by library.
+
+        Returns:
+            The versions, sorted by library ID.
+        """
         return sorted(self.versions, key=lambda v: v.library)
 
 
@@ -331,9 +483,14 @@ class InMemoryLibraries:
     """Implements ``ports.driven.Libraries`` with a fixed list."""
 
     libraries: Sequence[CatalogLibrary] = ()
+    """The libraries, with or without a default version."""
 
     async def all(self) -> Sequence[CatalogLibrary]:
-        """Return the libraries that have a default version."""
+        """Return the libraries that have a default version.
+
+        Returns:
+            The libraries that have a default version.
+        """
         return [lib for lib in self.libraries if lib.default_version is not None]
 
     async def canonical_id(self, library: str) -> str | None:

@@ -72,6 +72,14 @@ _insert = text(
 
 
 def _statements(template: str) -> dict[object, Any]:
+    """Prepare one statement per tag-match condition from an SQL template.
+
+    Args:
+        template: The SQL, with ``{tags}`` where the tag condition goes.
+
+    Returns:
+        The statements by tag match (``None``: no tag filter), ``manifests`` expanding.
+    """
     return {
         match: text(template.format(tags=sql)).bindparams(bindparam("manifests", expanding=True))
         for match, sql in TAG_CONDITIONS.items()
@@ -82,7 +90,16 @@ _searches, _counts = _statements(_SEARCH), _statements(_COUNT)
 
 
 def fts_row(rowid: int, heading_path: Sequence[str], content: str) -> dict[str, object]:
-    """Return the values of one `retrieval_search` row (migrations freeze their own copy)."""
+    """Return the values of one `retrieval_search` row (migrations freeze their own copy).
+
+    Args:
+        rowid: The chunk's row ID in ``retrieval_chunks``.
+        heading_path: The chunk's heading path.
+        content: The chunk's text.
+
+    Returns:
+        The row's column values, by name.
+    """
     full = " / ".join(heading_path)
     return {
         "rowid": rowid,
@@ -94,6 +111,14 @@ def fts_row(rowid: int, heading_path: Sequence[str], content: str) -> dict[str, 
 
 
 def _rows(chunks: Sequence[Any]) -> list[dict[str, object]]:
+    """Turn ``retrieval_chunks`` rows into ``retrieval_search`` rows.
+
+    Args:
+        chunks: The chunk rows.
+
+    Returns:
+        The values of each index row.
+    """
     return [fts_row(c.id, json.loads(c.heading_path), c.content) for c in chunks]
 
 
@@ -102,6 +127,12 @@ def _match(query: str) -> str | None:
 
     Words only hold letters, digits, marks and ``-_.``, so they are quoted for good measure and
     nothing a user typed can reach FTS5's query syntax (`NEAR`, `*`, `"`, `(`, `col:`).
+
+    Args:
+        query: The query text.
+
+    Returns:
+        The FTS5 query, or ``None``.
     """
     return " OR ".join('"' + term.replace('"', '""') + '"' for term in search_terms(query)) or None
 
@@ -115,13 +146,18 @@ class SqliteSearchIndex:
     """
 
     engine: AsyncEngine
+    """The application database."""
     rebuild_batch: int = REBUILD_BATCH
+    """Chunks indexed per write transaction while a rebuild fills the new index."""
 
     async def index(self, chunk_set: ChunkSet) -> None:
         """Index the chunks of this set that have no entry yet.
 
         One write transaction per set (about 3 ms): thousands of new sets take seconds. Batch
         them behind this method if import time ever shows it.
+
+        Args:
+            chunk_set: The stored chunk set.
         """
         async with self.engine.execution_options(begin_immediate=True).begin() as connection:
             missing = await connection.execute(
@@ -141,14 +177,34 @@ class SqliteSearchIndex:
     async def search(
         self, manifest_id: str, query: str, tag_filter: TagFilter, limit: int
     ) -> Sequence[SearchHit]:
-        """Return the manifest's best matches; the manifest's rows decide what is visible."""
+        """Return the manifest's best matches; the manifest's rows decide what is visible.
+
+        Args:
+            manifest_id: The manifest searched.
+            query: The query text.
+            tag_filter: Which tags a chunk's article must carry.
+            limit: The most hits.
+
+        Returns:
+            The hits, best first.
+        """
         found = await self.search_many([manifest_id], query, tag_filter, limit)
         return [f.hit for f in found]
 
     async def search_many(
         self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter, limit: int
     ) -> Sequence[ManifestHit]:
-        """Return the best matches of any of the manifests: one query, one global BM25 scale."""
+        """Return the best matches of any of the manifests: one query, one global BM25 scale.
+
+        Args:
+            manifest_ids: The manifests searched.
+            query: The query text.
+            tag_filter: Which tags a chunk's article must carry.
+            limit: The most hits.
+
+        Returns:
+            The hits, best first, each naming its manifest.
+        """
         match = _match(query)
         if match is None or not manifest_ids:
             return []
@@ -179,7 +235,16 @@ class SqliteSearchIndex:
     async def count_many(
         self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter
     ) -> Mapping[str, int]:
-        """Return the number of matching chunks per manifest, in one query."""
+        """Return the number of matching chunks per manifest, in one query.
+
+        Args:
+            manifest_ids: The manifests searched.
+            query: The query text.
+            tag_filter: Which tags a chunk's article must carry.
+
+        Returns:
+            How many chunks match, by manifest ID.
+        """
         match = _match(query)
         if match is None or not manifest_ids:
             return {}
@@ -191,7 +256,11 @@ class SqliteSearchIndex:
             return {row.manifest_id: row.matches for row in found}
 
     async def state(self) -> SearchIndexState:
-        """Return the format recorded with the index and the one this build writes."""
+        """Return the format recorded with the index and the one this build writes.
+
+        Returns:
+            The stored and current formats and the engine.
+        """
         async with self.engine.connect() as connection:
             stored = await connection.scalar(text("SELECT format FROM retrieval_search_format"))
         return SearchIndexState(
@@ -199,7 +268,11 @@ class SqliteSearchIndex:
         )
 
     async def rebuild(self) -> RebuiltIndex:
-        """Build ``retrieval_search_next`` of every stored chunk, then swap it in (`swap`)."""
+        """Build ``retrieval_search_next`` of every stored chunk, then swap it in (`swap`).
+
+        Returns:
+            The new index's format and how many chunks it holds.
+        """
         await self.build_next()
         return await self.swap()
 
@@ -237,6 +310,9 @@ class SqliteSearchIndex:
         """Add what was indexed since `build_next` began, then replace the index in one step.
 
         One write transaction: a search sees the old index or the new one, never a mix.
+
+        Returns:
+            The format the index is now in and how many chunks it holds.
         """
         async with self._writing() as connection:
             missing = (await connection.execute(_not_in_next)).all()
@@ -261,12 +337,27 @@ class SqliteSearchIndex:
         return RebuiltIndex(format=FORMAT, entries=entries or 0)
 
     def _writing(self) -> AbstractAsyncContextManager[AsyncConnection]:
+        """Begin a write transaction with BEGIN IMMEDIATE, so it never fails to upgrade a lock.
+
+        Returns:
+            The transaction's connection, as a context manager.
+        """
         return self.engine.execution_options(begin_immediate=True).begin()
 
     @staticmethod
     def _params(
         match: str, manifest_ids: Sequence[str], tag_filter: TagFilter
     ) -> dict[str, object]:
+        """Bind the parameters of a search or count statement.
+
+        Args:
+            match: The FTS5 query.
+            manifest_ids: The manifests searched.
+            tag_filter: Which tags a chunk's article must carry.
+
+        Returns:
+            The parameters, with ``tags`` as JSON when the filter has tags.
+        """
         params: dict[str, object] = {"match": match, "manifests": list(manifest_ids)}
         if tag_filter.tags:
             params["tags"] = json.dumps(list(tag_filter.tags))
