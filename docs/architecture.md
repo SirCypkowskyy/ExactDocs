@@ -660,7 +660,8 @@ the unique `username` column, so a race for one name stores one account. `Role` 
 operator: manages accounts) or `user`; library roles are E12-05. A disabled account
 (`identity_accounts.disabled_at`) is refused at sign-in (after the password check, with the same
 `invalid_credentials`, so the answer reveals nothing), by `IdentifyCaller` and by `IdentifyToken`;
-disabling also deletes its sessions and tokens. `set_disabled_at` checks for another enabled admin
+disabling also deletes its sessions and tokens, and enabling deletes them again first (one stored
+while disabled raced the disable and must not come back). `set_disabled_at` checks for another enabled admin
 and disables in one `begin_immediate` transaction, so the last one can never be disabled, even by
 two concurrent requests. New usernames may not hold `@address:`, the separator of the throttle's
 remembered-sign-in keys (`known_sign_ins_prefix`), so one account's keys never prefix another's. `bootstrap/rest.py:SetupGuard` answers

@@ -60,6 +60,17 @@ export function explainUserError(error: unknown): string {
       return "Only an admin can manage user accounts.";
   }
   if (error.status === 401) return "Your session ended. Sign in again to manage users.";
-  if (error.status === 422) return "That password isn't accepted. Check it and try again.";
+  if (error.status === 422) return explainInvalidRequest(error);
   return `Something went wrong (${error.status}). Try again.`;
+}
+
+/** A 422 without a domain code: name the field the server refused, with its reason. */
+function explainInvalidRequest(error: HttpError): string {
+  const [first] = error.fields;
+  const field = first?.loc.at(-1);
+  if (first && (field === "username" || field === "password")) {
+    return `That ${field} isn't accepted: ${first.msg}.`;
+  }
+  if (first) return `The server refused ${String(field)}: ${first.msg}.`;
+  return `The server refused the request: ${error.message}.`;
 }

@@ -573,9 +573,10 @@ class SetUserDisabledUseCase:
 
         Disabling marks the account first, so a sign-in, a session or a token checked from
         then on is refused; then every session of the account ends and every token is
-        revoked, so nothing issued before survives an enable either. Enabling lets the account
-        sign in again, with its password unchanged. An unknown account is refused with
-        ``UnknownAccountError``.
+        revoked, so nothing issued before survives an enable either. Enabling first ends any
+        session or token stored while the account was disabled (one that raced the disable),
+        then lets the account sign in again, with its password unchanged. An unknown account is
+        refused with ``UnknownAccountError``.
 
         Args:
             command: The account (its username or id), and whether to disable or enable it.
@@ -592,12 +593,24 @@ class SetUserDisabledUseCase:
         if command.disabled == account.is_disabled:
             return UserSummary.from_model(account)
         disabled_at = self.clock.now() if command.disabled else None
+        if not command.disabled:
+            # Nothing can be issued legitimately while the account is disabled; a session or
+            # token stored then raced the disable and must not come back to life now.
+            await self._end_sessions_and_tokens(account.id)
         if not await self.accounts.set_disabled_at(account.id, disabled_at):
             raise LastOperatorError
         if command.disabled:
-            await self.sessions.delete_for_account(account.id)
-            await self.tokens.delete_for_account(account.id)
+            await self._end_sessions_and_tokens(account.id)
         return UserSummary.from_model(replace(account, disabled_at=disabled_at))
+
+    async def _end_sessions_and_tokens(self, account_id: AccountId) -> None:
+        """End every session of the account and revoke every token it holds.
+
+        Args:
+            account_id: The account.
+        """
+        await self.sessions.delete_for_account(account_id)
+        await self.tokens.delete_for_account(account_id)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

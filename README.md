@@ -1234,9 +1234,12 @@ Like `admin create`, these open the database directly (in Docker:
 page of the web UI (`/users`; the API is `/api/v1/users`, see `docs/rest-api.md`), which other
 accounts neither see nor reach (403). A disabled account cannot sign in (it gets the same answer
 as a wrong password), and its sessions and tokens are refused at once. The last enabled admin
-cannot be disabled. A reset also clears the username's sign-in throttle, as
-`admin reset-password` does. Until library roles arrive, every signed-in account may read and
-change every library and the AI settings; only managing accounts is reserved to admins.
+cannot be disabled. An enable ends any session or token stored while the account was disabled,
+so nothing that raced the disable comes back. The Users page offers no reset of your own
+password, since it would sign you out; use `exactdocs user reset-password <you>` or ask another
+admin. A reset also clears the username's sign-in throttle, as `admin reset-password` does. Until
+library roles arrive, every signed-in account may read and change every library and the AI
+settings; only managing accounts is reserved to admins.
 
 ### Planned
 

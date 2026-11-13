@@ -171,6 +171,20 @@ describe("users page", () => {
     expect(screen.getByRole("status")).toHaveTextContent(/bob changed.*signed out/);
   });
 
+  it("offers no password reset of the operator's own account, which would sign them out", async () => {
+    stubApi();
+    renderPage();
+    const list = await screen.findByRole("list", { name: "User accounts" });
+    const [ada, bob] = within(list).getAllByRole("listitem") as [HTMLElement, HTMLElement];
+    expect(ada).toHaveTextContent(/\(you\)/);
+    expect(
+      within(ada).queryByRole("button", { name: /reset the password/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(bob).getByRole("button", { name: "Reset the password of bob" }),
+    ).toBeInTheDocument();
+  });
+
   it("says plainly when the API refuses a non-operator", async () => {
     vi.stubGlobal(
       "fetch",
@@ -198,8 +212,31 @@ describe("user form rules", () => {
       explainUserError(new HttpError(status, "/v1/users", error ? { error } : undefined));
     expect(refused(401)).toMatch(/session ended/);
     expect(refused(404, "unknown_account")).toMatch(/no longer exists/);
-    expect(refused(422)).toMatch(/password/);
     expect(refused(500)).toMatch(/500/);
     expect(explainUserError(new TypeError("offline"))).toMatch(/can't reach/i);
+  });
+
+  it("names the field a validation error is about, not always the password", () => {
+    const invalid = (loc: string[], msg: string) =>
+      explainUserError(
+        new HttpError(422, "/v1/users", {
+          error: "validation_error",
+          detail: "request is invalid",
+          fields: [{ loc, msg, type: "string_too_long" }],
+        }),
+      );
+    expect(invalid(["body", "username"], "String should have at most 256 characters")).toBe(
+      "That username isn't accepted: String should have at most 256 characters.",
+    );
+    expect(invalid(["body", "password"], "Value error, too short")).toMatch(/^That password/);
+    expect(invalid(["body", "role"], "Input should be 'admin' or 'user'")).toMatch(/refused role/);
+    expect(
+      explainUserError(
+        new HttpError(422, "/v1/users", {
+          error: "validation_error",
+          detail: "request is invalid",
+        }),
+      ),
+    ).toMatch(/request is invalid/);
   });
 });

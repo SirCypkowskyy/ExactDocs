@@ -32,7 +32,14 @@ from exactdocs.identity.errors import (
     UnknownAccountError,
     UsernameTakenError,
 )
-from exactdocs.identity.models import Account, AccountId, Session, Username, hash_token
+from exactdocs.identity.models import (
+    Account,
+    AccountId,
+    ApiToken,
+    Session,
+    Username,
+    hash_token,
+)
 from exactdocs.identity.module import IdentityModule
 
 HORSE = "correct horse battery staple"
@@ -263,22 +270,69 @@ async def test_disabling_locks_the_user_out_at_once(world: World) -> None:
     assert world.tokens.tokens == {}
 
 
-async def test_a_session_that_raced_the_disable_is_refused(world: World) -> None:
-    created = await create(world)
-    await disable(world, "bob")
-    # A sign-in that checked the password just before the disable stores its session after it.
+async def store_raced_session(world: World, account_id: str, secret: str) -> None:
+    """Store a session the way a sign-in that checked the password before the disable would."""
     await world.sessions.add(
         Session(
-            token_hash=hash_token("raced"),
-            account_id=AccountId(created.id),
+            token_hash=hash_token(secret),
+            account_id=AccountId(account_id),
             created_at=world.clock.now(),
             last_used_at=world.clock.now(),
         )
     )
 
+
+async def store_raced_token(world: World, account_id: str, secret: str) -> None:
+    """Store a token the way a token login that checked the password before the disable would."""
+    await world.tokens.add(
+        ApiToken(
+            id=f"raced-{secret}",
+            account_id=AccountId(account_id),
+            name="raced",
+            token_hash=hash_token(secret),
+            prefix=secret[:4],
+            created_at=world.clock.now(),
+        )
+    )
+
+
+async def test_a_session_that_raced_the_disable_is_refused(world: World) -> None:
+    created = await create(world)
+    await disable(world, "bob")
+    # A sign-in that checked the password just before the disable stores its session after it.
+    await store_raced_session(world, created.id, "raced")
+
     with pytest.raises(NotSignedInError):
         await world.identity.identify_caller("raced")
     assert world.sessions.sessions == {}
+
+
+async def test_a_token_that_raced_the_disable_is_refused(world: World) -> None:
+    created = await create(world)
+    await disable(world, "bob")
+    # A token login that checked the password just before the disable stores its token after it.
+    await store_raced_token(world, created.id, "raced-token")
+
+    with pytest.raises(InvalidTokenError):
+        await world.identity.identify_token("raced-token")
+
+
+async def test_a_session_or_token_that_raced_the_disable_does_not_survive_the_enable(
+    world: World,
+) -> None:
+    created = await create(world)
+    await disable(world, "bob")
+    await store_raced_session(world, created.id, "raced-session")
+    await store_raced_token(world, created.id, "raced-token")
+
+    await disable(world, "bob", disabled=False)
+
+    with pytest.raises(NotSignedInError):
+        await world.identity.identify_caller("raced-session")
+    with pytest.raises(InvalidTokenError):
+        await world.identity.identify_token("raced-token")
+    assert world.sessions.sessions == {}
+    assert world.tokens.tokens == {}
 
 
 async def test_disabling_twice_or_enabling_an_enabled_user_changes_nothing(world: World) -> None:

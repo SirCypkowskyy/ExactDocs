@@ -121,13 +121,16 @@ export function UsersPage({ currentUserId }: { currentUserId: string }) {
                     </p>
                   </div>
                   <div className="flex gap-1">
-                    <Button
-                      variant="ghost"
-                      aria-label={`Reset the password of ${user.username}`}
-                      onClick={() => setResetting(user)}
-                    >
-                      Reset password
-                    </Button>
+                    {/* A reset ends every session of the account, the operator's own included. */}
+                    {!you && (
+                      <Button
+                        variant="ghost"
+                        aria-label={`Reset the password of ${user.username}`}
+                        onClick={() => setResetting(user)}
+                      >
+                        Reset password
+                      </Button>
+                    )}
                     {user.disabled ? (
                       <Button
                         variant="ghost"
