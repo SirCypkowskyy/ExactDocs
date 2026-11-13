@@ -7,7 +7,7 @@ together with the job kinds it supports. ``import_job`` builds the import's hand
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Self
+from typing import Never, Self
 
 from exactdocs.ingestion.constants import (
     COLLECT_JOB,
@@ -32,13 +32,10 @@ from exactdocs.ingestion.models import (
     AutoSync,
     ChunkingConfig,
     Credential,
-    FetchedFile,
     GitRename,
     ImportedRef,
-    ImportSource,
     Job,
     PathSelection,
-    TaggedPath,
     TagRule,
 )
 from exactdocs.ingestion.ports.driven import (
@@ -144,15 +141,40 @@ from exactdocs_kernel import Clock, NotFoundError
 class _NoLibrarySources:
     """The default ``sources`` of ``build``: no library is known, so no version can be added."""
 
-    async def get(self, library: str) -> ImportSource:
+    async def get(self, library: str) -> Never:
+        """Refuse: no library is known.
+
+        Args:
+            library: The library ID.
+
+        Raises:
+            NotFoundError: Always.
+        """
         message = f"library {library!r} not found"
         raise NotFoundError(message)
 
     async def imported_versions(self, library: str) -> list[ImportedRef]:
+        """Refuse: no library is known.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            Never: ``get`` raises ``NotFoundError``.
+        """
         await self.get(library)
         return []
 
     async def renames_of(self, library: str, ref: str) -> list[GitRename]:
+        """Know no renames.
+
+        Args:
+            library: The library ID.
+            ref: The version's ref.
+
+        Returns:
+            No renames.
+        """
         del library, ref
         return []
 
@@ -161,6 +183,15 @@ class _InlineSteps:
     """``Checkpoints`` that only run each step: for work done inside another durable step."""
 
     async def step[T](self, name: str, run: Callable[[], Awaitable[T]], /) -> T:
+        """Run the step; nothing is recorded.
+
+        Args:
+            name: The step's name.
+            run: Runs the step.
+
+        Returns:
+            What ``run`` returned.
+        """
         del name
         return await run()
 
@@ -175,6 +206,17 @@ class _NoSettings:
         tag_rules: Sequence[TagRule],
         chunking: ChunkingConfig,
     ) -> None:
+        """Refuse: no library is known.
+
+        Args:
+            library: The library ID.
+            selection: The paths to import.
+            tag_rules: Tags given to articles by path.
+            chunking: How articles are cut into chunks.
+
+        Raises:
+            NotFoundError: Always.
+        """
         del selection, tag_rules, chunking
         message = f"library {library!r} not found"
         raise NotFoundError(message)
@@ -183,7 +225,17 @@ class _NoSettings:
 class _NoManualTags:
     """The default ``manual_tags`` of ``build``: no library is known, so none can be tagged."""
 
-    async def set_tags(self, library: str, path: str, tags: Sequence[str]) -> TaggedPath:
+    async def set_tags(self, library: str, path: str, tags: Sequence[str]) -> Never:
+        """Refuse: no library is known.
+
+        Args:
+            library: The library ID.
+            path: The article's path.
+            tags: The manual tags.
+
+        Raises:
+            NotFoundError: Always.
+        """
         del path, tags
         message = f"library {library!r} not found"
         raise NotFoundError(message)
@@ -195,13 +247,32 @@ class _NoTree:
     (Not ``MissingGit``: the core does not import adapters.)
     """
 
-    async def list_files(self, repository: object, commit_sha: str, **_: object) -> list[str]:
+    async def list_files(self, repository: object, commit_sha: str, **_: object) -> Never:
+        """Refuse: there is no git.
+
+        Args:
+            repository: The repository.
+            commit_sha: The commit.
+            **_: The port's other arguments.
+
+        Raises:
+            GitNotInstalledError: Always.
+        """
         del repository, commit_sha
         raise GitNotInstalledError
 
-    async def read_file(
-        self, repository: object, commit_sha: str, path: str, **_: object
-    ) -> FetchedFile:
+    async def read_file(self, repository: object, commit_sha: str, path: str, **_: object) -> Never:
+        """Refuse: there is no git.
+
+        Args:
+            repository: The repository.
+            commit_sha: The commit.
+            path: The file's name.
+            **_: The port's other arguments.
+
+        Raises:
+            GitNotInstalledError: Always.
+        """
         del repository, commit_sha, path
         raise GitNotInstalledError
 
@@ -210,15 +281,45 @@ class _NoCredentials:
     """The default ``vault`` of ``build``: nothing is kept, so only public repositories work."""
 
     async def save(self, library: str, scope: str, credential: Credential) -> None:
+        """Keep nothing.
+
+        Args:
+            library: The library ID.
+            scope: Where the credential may be offered.
+            credential: The token or deploy key.
+        """
         del library, scope, credential
 
     async def load(self, library: str, scope: str) -> Credential | None:
+        """Find nothing.
+
+        Args:
+            library: The library ID.
+            scope: The library's credential scope.
+
+        Returns:
+            Always ``None``: no library has a credential.
+        """
         del library, scope
+        return None
 
     async def delete(self, library: str) -> None:
+        """Forget nothing: nothing is kept.
+
+        Args:
+            library: The library ID.
+        """
         del library
 
     async def has(self, library: str) -> bool:
+        """Tell that the library has no credential.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            Always False.
+        """
         del library
         return False
 
@@ -227,18 +328,51 @@ class _NoAutoSyncs:
     """The default ``auto_syncs`` of ``build``: nothing is kept, so no library is checked."""
 
     async def get(self, library: str) -> AutoSync | None:
+        """Find nothing.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            Always ``None``: no library is checked on its own.
+        """
         del library
+        return None
 
     async def save(self, auto_sync: AutoSync) -> None:
+        """Keep nothing.
+
+        Args:
+            auto_sync: The schedule.
+        """
         del auto_sync
 
     async def delete(self, library: str) -> None:
+        """Forget nothing: nothing is kept.
+
+        Args:
+            library: The library ID.
+        """
         del library
 
     async def list_all(self) -> list[AutoSync]:
+        """List no schedule.
+
+        Returns:
+            No schedules.
+        """
         return []
 
     async def record_check(self, read: AutoSync, checked: AutoSync) -> bool:
+        """Store nothing.
+
+        Args:
+            read: The schedule as the check read it.
+            checked: The same schedule with the check's result.
+
+        Returns:
+            Always False: no schedule is stored.
+        """
         del read, checked
         return False
 
@@ -247,6 +381,11 @@ class _NoSwitch:
     """The default ``schedule_switch`` of ``build``: no tick to turn on or off."""
 
     async def turn(self, *, on: bool) -> None:
+        """Do nothing: there is no tick.
+
+        Args:
+            on: Whether the tick should run.
+        """
         del on
 
 
@@ -254,6 +393,11 @@ class _NoRunner:
     """The default ``runner`` of ``build``: jobs wait in the repository for ``RunNextJob``."""
 
     async def submit(self, job: Job) -> None:
+        """Do nothing: the job waits in the repository.
+
+        Args:
+            job: The queued job.
+        """
         del job
 
 
@@ -262,32 +406,57 @@ class IngestionModule:
     """The ingestion's driving ports, ready to be exposed by driving adapters."""
 
     add_library: AddLibrary
+    """Creates a library from a git URL and queues its first import."""
     add_version: AddVersion
+    """Pins another ref of a library and queues its import."""
     check_repository: CheckRepository
+    """Validates a git URL and proposes a library ID, saving nothing."""
     disable_auto_sync: DisableAutoSync
+    """Turns a library's scheduled check off."""
     enqueue_job: EnqueueJob
+    """Queues a job of a registered kind."""
     get_auto_sync: GetAutoSync
+    """Reads a library's scheduled check."""
     get_job: GetJob
+    """Reads one job."""
     get_library_access: GetLibraryAccess
+    """Says whether a library has a stored credential."""
     list_latest_jobs: ListLatestJobs
+    """Lists the newest job of every (library, version)."""
     list_library_jobs: ListLibraryJobs
+    """Lists a page of a library's jobs."""
     list_repository_refs: ListRepositoryRefs
+    """Lists a repository's branches and tags."""
     preview_repository: PreviewRepository
+    """Lists the files an import would take, importing nothing."""
     queue_embedding: QueueEmbedding
     """Queues the ``embed`` jobs of the versions not fully embedded."""
     recover_jobs: RecoverJobs
+    """On start: cleans up after interrupted jobs and hands the queued ones to the runner."""
     reimport_version: ReimportVersion
+    """Re-imports a tag version that moved upstream."""
     remove_library: RemoveLibrary
+    """Removes a library and its versions, and queues the job that frees their content."""
     remove_version: RemoveVersion
+    """Removes a version, and queues the job that frees its content."""
     run_job: RunJob
+    """Runs one job to its end."""
     run_next_job: RunNextJob
+    """Runs the next job that may run, if any."""
     run_scheduled_checks: RunScheduledChecks
+    """Runs one tick of the scheduled checks."""
     set_auto_sync: SetAutoSync
+    """Turns a library's scheduled check on, or changes it."""
     submit_queued_jobs: SubmitQueuedJobs
+    """Hands every queued job to the runner again."""
     switch_schedule: SwitchSchedule
+    """Turns the tick on while any library has a schedule, off otherwise."""
     sync_library: SyncLibrary
+    """Re-syncs a library's branch versions."""
     tag_article: TagArticle
+    """Sets the manual tags of an article path for every version of its library."""
     update_library_settings: UpdateLibrarySettings
+    """Replaces a library's paths, tag rules and chunking and re-processes its versions."""
 
     @classmethod
     def build(
@@ -331,6 +500,36 @@ class IngestionModule:
         adds the ``embed`` job (one version embedded in the background, a durable step per batch
         through ``checkpoints``) and makes every job that stores chunks queue the embedding of
         what it stored.
+
+        Args:
+            jobs: Where jobs are stored.
+            clock: Tells the time.
+            remote: Lists a repository's refs.
+            tree: Lists a commit's files and reads its root files; None: no git for previews.
+            library_ids: Tells which library IDs are taken.
+            libraries: Where new libraries go.
+            sources: Where a library's articles come from; None: no library is known.
+            removals: Removes versions and libraries from the catalog.
+            index: Where chunks are stored and searched.
+            vault: Where credentials are kept; None: only public repositories work.
+            handlers: What runs each job kind.
+            recovery_hooks: What cleans up after an interrupted job, by kind.
+            runner: What runs queued jobs; None: they wait for ``run_next_job``.
+            manual_tags: Where manual tags are kept; None: no library can be tagged.
+            tag_locks: The locks ``import_job`` got; required with ``manual_tags``.
+            settings_locks: Order the settings edits of one library.
+            auto_syncs: Where the scheduled checks are kept.
+            schedule_switch: Turns the tick on or off.
+            settings: Where edited settings are stored; None: no library can be edited.
+            embedder: Embeds versions; None: no ``embed`` job.
+            checkpoints: Makes the ``embed`` job's batches durable steps.
+
+        Returns:
+            The module.
+
+        Raises:
+            TypeError: ``manual_tags`` without ``tag_locks``, or ``settings`` without the
+                ``reprocess``, ``rechunk`` and ``retag`` handlers.
         """
         if manual_tags is not None and tag_locks is None:
             message = "manual_tags needs the tag_locks given to import_job"
@@ -484,6 +683,30 @@ def import_job(
     chunked); without it an interrupted import starts over. ``guidance`` says which libraries
     keep their ``AGENTS.md`` / ``CLAUDE.md`` files with each version (RET-08), read with
     ``files``; without both none do.
+
+    Args:
+        gateway: Fetches a commit's files.
+        chunker: Cuts articles into chunks.
+        sources: Where a library's articles come from.
+        versions: Publishes versions into the catalog.
+        index: Where chunks are stored and searched.
+        vault: Where credentials are kept; None: only public repositories work.
+        max_article_bytes: The most bytes one article may have.
+        max_import_bytes: The most bytes of text one import may take.
+        renames: Tells which files git sees as renamed; None: no renames are followed.
+        stored: What earlier imports stored; None: every file is parsed.
+        max_image_bytes: The most bytes one image may have.
+        max_images_bytes: The most bytes a version's images may add up to.
+        tag_locks: Lets tagging and an import's activation take turns.
+        imported_tags: The imported tags of what a version serves, for ``retag``.
+        copier: Copies what a version serves, for ``rechunk``.
+        checkpoints: Makes the import's steps durable.
+        batch_files: Files parsed and chunked per durable step.
+        guidance: Which libraries keep their instruction files.
+        files: Reads the instruction files.
+
+    Returns:
+        The handlers and the recovery hooks, by job kind.
     """
     importer = ImportVersionUseCase(
         gateway=gateway,
@@ -537,5 +760,13 @@ def import_job(
 def collect_job(
     *, collectors: Sequence[Collector], grace_seconds: int = DEFAULT_GRACE_SECONDS
 ) -> Mapping[JobKind, JobHandler]:
-    """Return the ``handlers`` entry that makes the module free unused content, in this order."""
+    """Return the ``handlers`` entry that makes the module free unused content, in this order.
+
+    Args:
+        collectors: What frees what each domain no longer needs, run in order.
+        grace_seconds: How long something stays after it became unused.
+
+    Returns:
+        The ``collect`` handler.
+    """
     return {COLLECT_JOB: CollectGarbageUseCase(collectors=collectors, grace_seconds=grace_seconds)}

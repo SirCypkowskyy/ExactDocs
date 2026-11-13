@@ -48,19 +48,40 @@ class JobRepository(Protocol):
 
         Raises ``VersionImportingError`` when it is an unfinished import of a (library, ref)
         that already has one: the repository enforces this atomically.
+
+        Args:
+            job: The new job.
         """
         ...
 
     async def save(self, job: Job) -> None:
-        """Replace the stored job that has the same ID."""
+        """Replace the stored job that has the same ID.
+
+        Args:
+            job: The job as it is now.
+        """
         ...
 
     async def get(self, job_id: JobId) -> Job | None:
-        """Return the job, or ``None``."""
+        """Return the job, or ``None``.
+
+        Args:
+            job_id: The job's ID.
+
+        Returns:
+            The job with its problems, or ``None`` when no job has this ID.
+        """
         ...
 
     async def list_for_library(self, library: str) -> Sequence[Job]:
-        """Return the library's jobs, newest first (job IDs are time-ordered)."""
+        """Return the library's jobs, newest first (job IDs are time-ordered).
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            Every job of the library, with its problems.
+        """
         ...
 
     async def list_page_for_library(
@@ -80,19 +101,36 @@ class JobRepository(Protocol):
         ...
 
     async def list_latest(self) -> Sequence[Job]:
-        """Return the newest job of every (library, version), ordered by library and version."""
+        """Return the newest job of every (library, version), ordered by library and version.
+
+        Returns:
+            One job per pair; the jobs without a version count as one pair per library.
+        """
         ...
 
     async def delete_for(self, library: str, version: str | None = None) -> None:
-        """Delete the library's jobs (only those of ``version`` when given). Not running ones."""
+        """Delete the library's jobs (only those of ``version`` when given). Not running ones.
+
+        Args:
+            library: The library ID.
+            version: Only the jobs of this ref; ``None`` deletes every job of the library.
+        """
         ...
 
     async def list_running(self) -> Sequence[Job]:
-        """Return every job in the ``running`` state."""
+        """Return every job in the ``running`` state.
+
+        Returns:
+            The running jobs.
+        """
         ...
 
     async def list_queued(self) -> Sequence[Job]:
-        """Return every job in the ``queued`` state, oldest first."""
+        """Return every job in the ``queued`` state, oldest first.
+
+        Returns:
+            The queued jobs.
+        """
         ...
 
     async def claim_next(self, now: datetime) -> Job | None:
@@ -100,6 +138,12 @@ class JobRepository(Protocol):
 
         Returns it in the ``running`` state with ``started_at`` set, or ``None`` when nothing
         may run. This is what keeps two jobs of one library from ever running together.
+
+        Args:
+            now: The time recorded as the job's ``started_at``.
+
+        Returns:
+            The started job, or ``None``.
         """
         ...
 
@@ -108,19 +152,40 @@ class JobProgress(Protocol):
     """What a running job reports to; stored soon (not at every call), and at the job's end."""
 
     async def report(self, *, done: int, total: int) -> None:
-        """``done`` of ``total`` files processed."""
+        """``done`` of ``total`` files processed.
+
+        Args:
+            done: Files processed so far.
+            total: Files to process in all.
+        """
         ...
 
     async def problem(self, path: str, code: ProblemCode, reason: str) -> None:
-        """Record a problem with a file (skipped or imported with a note); the job goes on."""
+        """Record a problem with a file (skipped or imported with a note); the job goes on.
+
+        Args:
+            path: The file's repository path.
+            code: What kind of problem it is.
+            reason: What happened, in words for users.
+        """
         ...
 
     async def chunking(self, *, chunked: int, reused: int) -> None:
-        """``chunked`` articles were cut into chunks, ``reused`` took the chunks stored before."""
+        """``chunked`` articles were cut into chunks, ``reused`` took the chunks stored before.
+
+        Args:
+            chunked: Articles cut into chunks by this import.
+            reused: Articles whose chunks were already stored under the same chunking.
+        """
         ...
 
     async def parsing(self, *, parsed: int, taken: int) -> None:
-        """Record how many articles were parsed and how many taken as an import stored them."""
+        """Record how many articles were parsed and how many taken as an import stored them.
+
+        Args:
+            parsed: Articles parsed by this import.
+            taken: Articles whose parsed text an earlier import stored, taken as they were.
+        """
         ...
 
 
@@ -132,6 +197,9 @@ class JobRunner(Protocol):
 
         Best effort, never raises: a job that cannot be handed over now stays queued and is
         handed over again when the runner starts (see ``RecoverJobs``).
+
+        Args:
+            job: The queued job.
         """
         ...
 
@@ -147,6 +215,13 @@ class Checkpoints(Protocol):
         again from its start. A job must therefore take the same steps in the same order on
         every run, and a step must be safe to run twice (its writes keyed by content). Results
         are stored, so they must be plain, picklable data.
+
+        Args:
+            name: The step's name, unique within the job.
+            run: Runs the step.
+
+        Returns:
+            What ``run`` returned, now or on the run that completed the step.
         """
         ...
 
@@ -155,7 +230,12 @@ class JobHandler(Protocol):
     """Runs jobs of one kind. Raising fails the job; the error text is shown to users."""
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
-        """Run the job from the beginning."""
+        """Run the job from the beginning.
+
+        Args:
+            job: The job, in the ``running`` state.
+            progress: Where the job reports its progress and problems.
+        """
         ...
 
 
@@ -163,7 +243,11 @@ class RecoveryHook(Protocol):
     """Cleans up after a job of one kind that was ``running`` when the app stopped."""
 
     async def __call__(self, job: Job, /) -> None:
-        """Undo what the interrupted run left half done."""
+        """Undo what the interrupted run left half done.
+
+        Args:
+            job: The job that was interrupted.
+        """
         ...
 
 
@@ -182,6 +266,14 @@ class GitRemote(Protocol):
         URL or the command line). Raises ``NotAGitRepositoryError``,
         ``RepositoryUnreachableError`` (including a timeout), ``RepositoryAuthRequiredError`` or
         ``HostKeyChangedError``.
+
+        Args:
+            repository: The repository.
+            *patterns: Ref patterns to list (``HEAD``, ``refs/tags/*``...); every ref when empty.
+            credential: The library's credential, if any.
+
+        Returns:
+            The refs found, with the default branch when ``HEAD`` was asked for.
         """
         ...
 
@@ -189,6 +281,12 @@ class GitRemote(Protocol):
         """Return the ``SHA256:...`` fingerprint of the SSH host key remembered for the host.
 
         ``None`` for a URL that is not SSH, or when no key is known (yet).
+
+        Args:
+            repository: The repository.
+
+        Returns:
+            The fingerprint, or ``None``.
         """
         ...
 
@@ -219,6 +317,16 @@ class GitGateway(Protocol):
         ``RepositoryUnreachableError`` (including a timeout), ``RepositoryAuthRequiredError``,
         ``NotAGitRepositoryError``, ``CommitUnavailableError``, ``HostKeyChangedError`` or
         ``RepositoryTooLargeError``.
+
+        Args:
+            repository: The repository.
+            commit_sha: The full SHA of the commit to check out.
+            selection: Which files to check out.
+            refs: Full ref names to try when a bare SHA is refused.
+            credential: The library's credential, if any.
+
+        Returns:
+            An async context manager that yields the folder of the checked-out files.
         """
         ...
 
@@ -238,6 +346,17 @@ class GitGateway(Protocol):
         is checked out, not even the README, and the download is bounded by ``max_bytes``:
         ``RepositoryTooLargeError`` when a server sends more. Paths are literal, never patterns.
         A path the commit does not have is simply absent from the folder.
+
+        Args:
+            repository: The repository.
+            commit_sha: The full SHA of the commit.
+            paths: Literal repository paths.
+            max_bytes: The most bytes the download may bring in.
+            refs: Full ref names to try when a bare SHA is refused.
+            credential: The library's credential, if any.
+
+        Returns:
+            An async context manager that yields the folder of the checked-out files.
         """
         ...
 
@@ -298,6 +417,16 @@ class RenameSource(Protocol):
         download is bounded by the size cap and the deadline). Raises what
         ``GitGateway.fetch`` raises (callers treat any failure as "no renames known").
         ``refs`` are tried only when the server refuses a request for a bare SHA.
+
+        Args:
+            repository: The repository.
+            old_sha: The commit the version served before.
+            new_sha: The commit it serves now.
+            refs: Full ref names to try when a bare SHA is refused.
+            credential: The library's credential, if any.
+
+        Returns:
+            Each rename, old path to new path, with how similar the two files are.
         """
         ...
 
@@ -324,6 +453,15 @@ class RepositoryTree(Protocol):
         (lossy-decoded, any characters). ``refs`` and ``credential`` are as in ``GitGateway.fetch``.
         Raises what ``GitGateway.fetch`` raises, ``TreeTooLargeError`` for a listing over the
         output cap and ``PreviewBusyError`` when no preview slot frees up in time.
+
+        Args:
+            repository: The repository.
+            commit_sha: The full SHA of the commit.
+            refs: Full ref names to try when a bare SHA is refused.
+            credential: The library's credential, if any.
+
+        Returns:
+            Every file's path, folders left out.
         """
         ...
 
@@ -343,6 +481,17 @@ class RepositoryTree(Protocol):
         is an empty ``FetchedFile``; one that is not a regular file (a link, a folder) or is
         larger than ``max_bytes`` has a ``problem`` and no data (a larger one is cut off while
         it downloads). Raises what ``list_files`` raises.
+
+        Args:
+            repository: The repository.
+            commit_sha: The full SHA of the commit.
+            path: A file name at the repository's root.
+            max_bytes: The most the file may be.
+            refs: Full ref names to try when a bare SHA is refused.
+            credential: The library's credential, if any.
+
+        Returns:
+            The file's bytes, or why it was not read.
         """
         ...
 
@@ -351,7 +500,14 @@ class LibraryIds(Protocol):
     """What ingestion needs to know about the catalog, in its own words."""
 
     async def is_taken(self, library_id: ProposedId) -> bool:
-        """Tell whether a library with this ``/owner/repo`` ID already exists."""
+        """Tell whether a library with this ``/owner/repo`` ID already exists.
+
+        Args:
+            library_id: The ID a new library would get.
+
+        Returns:
+            True when the catalog has a library with that ID, in any letter case.
+        """
         ...
 
 
@@ -367,6 +523,12 @@ class Chunker(Protocol):
         """Return a chunker that cuts with a library's ``config`` (its own ``config_hash``).
 
         Raises ``InvalidChunkingConfigError`` for a ``config.chunker`` it does not provide.
+
+        Args:
+            config: The library's chunking settings.
+
+        Returns:
+            A chunker for that config; this one is unchanged.
         """
         ...
 
@@ -376,6 +538,12 @@ class Chunker(Protocol):
         An empty body has no chunks. This is CPU-bound and synchronous: the import use case
         should call it through ``asyncio.to_thread``. ``max_chars`` bounds a chunk only where
         a heading allows a cut: a section without deeper headings stays whole, however long.
+
+        Args:
+            article: The parsed article.
+
+        Returns:
+            The chunks, in order.
         """
         ...
 
@@ -387,11 +555,21 @@ class NewLibraries(Protocol):
         """Store the library and return its canonical ID.
 
         Raises a conflict when the ID is taken and a validation error when it is not a valid ID.
+
+        Args:
+            library: What to add.
+
+        Returns:
+            The library's ID as stored.
         """
         ...
 
     async def discard(self, library_id: str) -> None:
-        """Remove a library that was just added and has no versions (the undo of ``add``)."""
+        """Remove a library that was just added and has no versions (the undo of ``add``).
+
+        Args:
+            library_id: The ID ``add`` returned.
+        """
         ...
 
 
@@ -402,15 +580,36 @@ class LibrarySources(Protocol):
         """Return the library's versions (ref, kind, commit SHA); raises ``NotFoundError``.
 
         ``library`` is a canonical (lower-case) ID.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            Every imported version.
         """
         ...
 
     async def get(self, library: str) -> ImportSource:
-        """Return the repository and path selection of a library; raises when it is unknown."""
+        """Return the repository and path selection of a library; raises when it is unknown.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            Where the library's articles come from and how they are selected, tagged and cut.
+        """
         ...
 
     async def renames_of(self, library: str, ref: str) -> Sequence[GitRename]:
-        """Return the rename map the version serves now (empty when it has none or is unknown)."""
+        """Return the rename map the version serves now (empty when it has none or is unknown).
+
+        Args:
+            library: The library ID.
+            ref: The version's ref.
+
+        Returns:
+            The renames, old path to new path.
+        """
         ...
 
 
@@ -427,6 +626,12 @@ class LibrarySettingsStore(Protocol):
         """Replace the library's paths, tag rules and chunking; raises if it is unknown.
 
         Imports read them when they run, so every import queued or running after this uses them.
+
+        Args:
+            library: The library ID.
+            selection: The paths to import.
+            tag_rules: Tags given to articles by path.
+            chunking: How articles are cut into chunks.
         """
         ...
 
@@ -441,6 +646,14 @@ class VersionCopier(Protocol):
         version is unknown or serves nothing. Raises ``StoredTextOutdatedError``, copying
         nothing, when the articles were stored by another parser version than
         ``content_version``: their text is not what the parser gives now.
+
+        Args:
+            library: The library ID.
+            ref: The version's ref.
+            content_version: The parser version the copied text must have been stored by.
+
+        Returns:
+            The pending copy, or ``None``.
         """
         ...
 
@@ -452,6 +665,13 @@ class ImportedTagStore(Protocol):
         """Return the active manifest of the version with its articles' tag sources.
 
         ``None`` when the library or the version is unknown, or the version serves nothing.
+
+        Args:
+            library: The library ID.
+            ref: The version's ref.
+
+        Returns:
+            The manifest's ID and the tag sources of each article, or ``None``.
         """
         ...
 
@@ -461,6 +681,13 @@ class ImportedTagStore(Protocol):
         Only what differs is written; manual tags are kept. Returns every tag (imported and
         manual) of each given article the manifest has, changed or not: the chunk index must
         get the same.
+
+        Args:
+            manifest_id: The manifest.
+            tags: The new imported tags, by article path.
+
+        Returns:
+            Every tag of each given article, by path.
         """
         ...
 
@@ -492,6 +719,15 @@ class StoredArticleSource(Protocol):
 
         Files nothing was stored for that way are left out. The importer asks for at most 500
         files per call.
+
+        Args:
+            library: The library ID.
+            ref: The version being imported.
+            parser_version: Only text stored by this parser version is returned.
+            files: ``(path, blob SHA)`` of each file the import found.
+
+        Returns:
+            One stored article per file found, with its parsed text.
         """
         ...
 
@@ -500,11 +736,22 @@ class VersionPublisher(Protocol):
     """Publishes a version into the catalog in two steps: store (invisible), then activate."""
 
     async def store(self, version: ImportedVersion) -> str:
-        """Store the version's articles as a pending manifest; return its ID. Nothing is served."""
+        """Store the version's articles as a pending manifest; return its ID. Nothing is served.
+
+        Args:
+            version: The imported version with its articles.
+
+        Returns:
+            The pending manifest's ID.
+        """
         ...
 
     async def activate(self, manifest_id: str) -> None:
-        """Make the pending manifest what its version serves, all at once."""
+        """Make the pending manifest what its version serves, all at once.
+
+        Args:
+            manifest_id: The pending manifest.
+        """
         ...
 
     async def apply_manual_tags(self, manifest_id: str) -> ArticleTags:
@@ -512,6 +759,12 @@ class VersionPublisher(Protocol):
 
         Returns the articles that carry manual tags, with every tag they carry: the chunk index
         must get the same.
+
+        Args:
+            manifest_id: The pending manifest.
+
+        Returns:
+            Every tag of each article that has manual tags, by path.
         """
         ...
 
@@ -524,6 +777,15 @@ class VersionPublisher(Protocol):
         manifest of the library is re-tagged (later versions follow the map too). Returns, per
         manifest ID, the articles that carry manual tags (or carried some) with their tags now,
         for the chunk index; empty when ``ref`` serves nothing.
+
+        Args:
+            library: The library ID.
+            ref: The version whose rename map is replaced.
+            from_ref: The version the renames start from.
+            renames: The renames, old path to new path.
+
+        Returns:
+            The re-tagged articles, by manifest ID.
         """
         ...
 
@@ -543,11 +805,23 @@ class VersionPublisher(Protocol):
         ``context7.json`` rules (empty without a usable file). The catalog decides what to do
         with them: it only takes the default version's, and never replaces a title or
         description a user edited.
+
+        Args:
+            library: The library ID.
+            ref: The activated version.
+            title: The title found, or ``None``.
+            description: The description found, or ``None``.
+            rules: The ``context7.json`` rules.
         """
         ...
 
     async def discard(self, *, manifest_id: str | None, library: str) -> None:
-        """Delete the library's pending manifests (only ``manifest_id``'s when given)."""
+        """Delete the library's pending manifests (only ``manifest_id``'s when given).
+
+        Args:
+            manifest_id: Only this pending manifest; ``None`` discards all of the library's.
+            library: The library ID.
+        """
         ...
 
 
@@ -557,26 +831,52 @@ class ChunkIndex(Protocol):
     async def known(
         self, config_hash: str, blob_shas: Sequence[str]
     ) -> Mapping[str, tuple[ArticleChunk, ...]]:
-        """Return the stored chunks of blobs chunked under ``config_hash``; others are left out."""
+        """Return the stored chunks of blobs chunked under ``config_hash``; others are left out.
+
+        Args:
+            config_hash: The chunker's ``config_hash``.
+            blob_shas: Git blob SHAs of the articles.
+
+        Returns:
+            The chunks, by blob SHA.
+        """
         ...
 
     async def index(self, manifest_id: str, version: ImportedVersion) -> None:
-        """Store and index the version's chunks of a pending manifest (before it is activated)."""
+        """Store and index the version's chunks of a pending manifest (before it is activated).
+
+        Args:
+            manifest_id: The pending manifest.
+            version: The imported version with its chunked articles.
+        """
         ...
 
     async def retag(self, manifest_id: str, tags: ArticleTags) -> None:
-        """Make the chunks of these articles of the manifest carry these tags; no re-chunking."""
+        """Make the chunks of these articles of the manifest carry these tags; no re-chunking.
+
+        Args:
+            manifest_id: The manifest.
+            tags: Every tag of each article, by path.
+        """
         ...
 
     async def discard(self, *, manifest_id: str | None, library: str) -> None:
         """Delete the library's pending chunks (only ``manifest_id``'s when given).
 
         Call it before the catalog's discard: it needs the catalog to still say "pending".
+
+        Args:
+            manifest_id: Only this pending manifest's; ``None`` discards all of the library's.
+            library: The library ID.
         """
         ...
 
     async def remove(self, manifest_ids: Sequence[str]) -> None:
-        """Delete the chunks of manifests the catalog has just deleted (and unused chunk sets)."""
+        """Delete the chunks of manifests the catalog has just deleted (and unused chunk sets).
+
+        Args:
+            manifest_ids: The deleted manifests.
+        """
         ...
 
 
@@ -584,11 +884,26 @@ class Removals(Protocol):
     """Removes versions and libraries from the catalog (in ingestion's words)."""
 
     async def remove_version(self, library: str, ref: str) -> Removed:
-        """Delete the version and its manifests at once; raises ``NotFoundError`` if unknown."""
+        """Delete the version and its manifests at once; raises ``NotFoundError`` if unknown.
+
+        Args:
+            library: The library ID.
+            ref: The version's ref.
+
+        Returns:
+            The manifests deleted, for the chunk index.
+        """
         ...
 
     async def remove_library(self, library: str) -> Removed:
-        """Delete the library, its versions and manifests; raises ``NotFoundError`` if unknown."""
+        """Delete the library, its versions and manifests; raises ``NotFoundError`` if unknown.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            The manifests deleted, for the chunk index.
+        """
         ...
 
 
@@ -596,14 +911,27 @@ class Collector(Protocol):
     """Frees what one domain no longer needs; the collection job runs them in order."""
 
     async def collect(self, *, grace_seconds: int) -> Collected:
-        """Delete what is unused and older than the grace period; say how many things."""
+        """Delete what is unused and older than the grace period; say how many things.
+
+        Args:
+            grace_seconds: How long something stays after it became unused.
+
+        Returns:
+            How many things of each kind were deleted.
+        """
 
 
 class CredentialVault(Protocol):
     """Where the credentials of private libraries are kept (encrypted at rest)."""
 
     async def save(self, library: str, scope: str, credential: Credential) -> None:
-        """Store the library's credential for ``scope`` (``RepositoryUrl.credential_scope``)."""
+        """Store the library's credential for ``scope`` (``RepositoryUrl.credential_scope``).
+
+        Args:
+            library: The library ID.
+            scope: Where the credential may be offered.
+            credential: The token or deploy key.
+        """
         ...
 
     async def load(self, library: str, scope: str) -> Credential | None:
@@ -611,15 +939,33 @@ class CredentialVault(Protocol):
 
         Raises ``CredentialsRequiredError`` when one is stored but cannot be read (the secret
         key is not the one it was sealed with) or was stored for another ``scope``.
+
+        Args:
+            library: The library ID.
+            scope: The library's ``credential_scope`` now.
+
+        Returns:
+            The credential, or ``None``.
         """
         ...
 
     async def delete(self, library: str) -> None:
-        """Forget the library's credential (nothing happens when it has none)."""
+        """Forget the library's credential (nothing happens when it has none).
+
+        Args:
+            library: The library ID.
+        """
         ...
 
     async def has(self, library: str) -> bool:
-        """Whether the library has a stored credential (without opening it)."""
+        """Whether the library has a stored credential (without opening it).
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            True when one is stored, readable or not.
+        """
         ...
 
 
@@ -627,7 +973,14 @@ class SecretBox(Protocol):
     """Authenticated encryption of one short text with the instance's secret key."""
 
     def seal(self, plaintext: str) -> str:
-        """Return the text encrypted, as printable characters."""
+        """Return the text encrypted, as printable characters.
+
+        Args:
+            plaintext: The text to seal.
+
+        Returns:
+            The sealed text.
+        """
         ...
 
     def open(self, sealed: str) -> str:
@@ -636,6 +989,12 @@ class SecretBox(Protocol):
         Raises ``exactdocs_kernel.SealedTextUnreadableError`` when it cannot be read (another
         secret key or purpose sealed it, or it was altered); the vault reports that as
         ``CredentialsRequiredError``.
+
+        Args:
+            sealed: What ``seal`` returned.
+
+        Returns:
+            The plaintext.
         """
         ...
 
@@ -648,6 +1007,14 @@ class ManualTagStore(Protocol):
 
         Raises a not-found error for an unknown library and a validation error for a bad path or
         tag.
+
+        Args:
+            library: The library ID.
+            path: The article's repository path.
+            tags: The new manual tags; empty removes them.
+
+        Returns:
+            The path with its manual tags now.
         """
         ...
 
@@ -656,11 +1023,22 @@ class AutoSyncStore(Protocol):
     """Where the libraries' scheduled checks are kept (``AutoSync``, one per library)."""
 
     async def get(self, library: str) -> AutoSync | None:
-        """Return the library's schedule, or ``None`` when it is not checked on its own."""
+        """Return the library's schedule, or ``None`` when it is not checked on its own.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            The schedule, or ``None``.
+        """
         ...
 
     async def save(self, auto_sync: AutoSync) -> None:
-        """Store the schedule, replacing the library's earlier one."""
+        """Store the schedule, replacing the library's earlier one.
+
+        Args:
+            auto_sync: The schedule.
+        """
         ...
 
     async def record_check(self, read: AutoSync, checked: AutoSync) -> bool:
@@ -669,15 +1047,30 @@ class AutoSyncStore(Protocol):
         ``checked``'s ``checked_at`` and ``last_error`` are stored in one atomic step only when
         the stored ``revision`` and ``checked_at`` are ``read``'s: a schedule saved or removed
         meanwhile is left alone.
+
+        Args:
+            read: The schedule as the check read it.
+            checked: The same schedule with the check's result.
+
+        Returns:
+            True when the result was stored.
         """
         ...
 
     async def delete(self, library: str) -> None:
-        """Forget the library's schedule (nothing happens when it has none)."""
+        """Forget the library's schedule (nothing happens when it has none).
+
+        Args:
+            library: The library ID.
+        """
         ...
 
     async def list_all(self) -> Sequence[AutoSync]:
-        """Return every stored schedule, by library."""
+        """Return every stored schedule, by library.
+
+        Returns:
+            The schedules.
+        """
         ...
 
 
@@ -688,6 +1081,9 @@ class ScheduleSwitch(Protocol):
         """Make the tick run (``on``) or stop; best effort, never raises.
 
         The worker sets it again from the stored schedules when it starts.
+
+        Args:
+            on: True makes the tick run, False stops it.
         """
         ...
 

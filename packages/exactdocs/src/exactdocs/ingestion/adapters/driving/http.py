@@ -5,6 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 
+from exactdocs.ingestion.constants import SET_AUTO_SYNC_DESCRIPTION
 from exactdocs.ingestion.dtos import (
     AddedLibrary,
     AddedVersion,
@@ -71,7 +72,13 @@ from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, MAX_PATH
 async def _session_for(
     require_session: Callable[[Request], Awaitable[object]], credential: object, request: Request
 ) -> None:
-    """Demand a signed-in session when the request carries a credential."""
+    """Demand a signed-in session when the request carries a credential.
+
+    Args:
+        require_session: Refuses (401) a request without a session cookie.
+        credential: The credential the request carries, if any.
+        request: The HTTP request.
+    """
     if credential is not None:
         await require_session(request)
 
@@ -100,6 +107,27 @@ def build_router(
     ``require_session`` refuses (401) a request that is not signed in with a session cookie. A
     request that carries a ``credential`` needs one: an API token (an MCP client's, say) may
     read and add public docs, but must not set or replace what is used to read a private repo.
+
+    Args:
+        get_job: Reads one job.
+        get_library_access: Says whether a library has a stored credential.
+        list_latest_jobs: Lists the newest job of every (library, version).
+        list_library_jobs: Lists a page of a library's jobs.
+        check_repository: Validates a git URL.
+        list_repository_refs: Lists a repository's branches and tags.
+        preview_repository: Lists the files an import would take.
+        add_library: Creates a library and queues its import.
+        add_version: Pins another ref of a library and queues its import.
+        remove_version: Removes a version.
+        remove_library: Removes a library.
+        sync_library: Re-syncs a library's branch versions.
+        reimport_version: Re-imports a tag version that moved upstream.
+        tag_article: Sets an article path's manual tags.
+        update_library_settings: Replaces a library's settings.
+        require_session: Refuses (401) a request without a session cookie.
+
+    Returns:
+        The router, with the job, removal, manual-tag and settings routes included.
     """
     router = APIRouter(tags=["ingestion"])
     router.include_router(_manual_tags_router(tag_article))
@@ -110,6 +138,13 @@ def build_router(
         """Check a git URL (nothing is saved); the URL is never echoed back.
 
         A `credential` needs a signed-in session, not an API token.
+
+        Args:
+            command: The URL and, optionally, the library ID and credential.
+            request: The HTTP request, for the caller's session.
+
+        Returns:
+            What a new library from the repository would look like.
         """
         await _session_for(require_session, command.credential, request)
         return await check_repository(command)
@@ -121,6 +156,12 @@ def build_router(
         """List the tags and branches of a public repository (the URL is never echoed back).
 
         A private repository uses `POST /repositories/refs`: a credential never goes in a URL.
+
+        Args:
+            url: The repository URL.
+
+        Returns:
+            The repository's refs.
         """
         return await list_repository_refs(ListRepositoryRefsQuery(url=url))
 
@@ -168,9 +209,16 @@ def build_router(
 
         Only the commit's tree is fetched, plus the root `context7.json` alone (no other file
         content), and nothing is stored. Without paths, the file's folders and exclusions are
-        applied (see `include_paths`, `exclude_paths`, `context7`). `files` has at most 1000
-        paths; `total` counts all matches and `truncated` says they were cut. Paths are
+        applied (see `include_paths`, `exclude_paths`, `context7`). `files` lists the first
+        matching paths; `total` counts all matches and `truncated` says they were cut. Paths are
         untrusted text. A `credential` needs a signed-in session, not an API token.
+
+        Args:
+            command: The URL, the ref and the paths.
+            request: The HTTP request, for the caller's session.
+
+        Returns:
+            The files the import would take.
         """
         await _session_for(require_session, command.credential, request)
         return await preview_repository(command)
@@ -201,6 +249,14 @@ def build_router(
         `Location` is the new library. Without paths, those of the repository's `context7.json`
         are taken; if every preview slot stays busy so it cannot be read, the answer is 429
         `preview_busy` and nothing is stored.
+
+        Args:
+            command: The repository, the ref, the paths and the settings.
+            request: The HTTP request, for the caller's session and the `Location`.
+            response: The HTTP response, for the `Location` header.
+
+        Returns:
+            The new library and its queued import.
         """
         await _session_for(require_session, command.credential, request)
         added = await add_library(command)
@@ -227,6 +283,16 @@ def build_router(
         """Import another version of the library with the library's own settings.
 
         The import is queued: `Location` is its job. A ref the library already has is a 409.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository name.
+            body: The ref and, optionally, a credential.
+            request: The HTTP request, for the caller's session and the job's URL.
+            response: The HTTP response, for the `Location` header.
+
+        Returns:
+            The pinned version and its queued import.
         """
         await _session_for(require_session, body.credential, request)
         added = await add_version(
@@ -264,6 +330,16 @@ def build_router(
         tag still names the commit the version serves, 422 `ref_deleted` when the tag is gone
         upstream, 409 `version_importing` when an import of it is queued or running, and the 422
         codes of reading a repository (`repository_unreachable`, `credentials_required`, ...).
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository name.
+            body: The tag version.
+            request: The HTTP request, for the job's URL.
+            response: The HTTP response, for the `Location` header.
+
+        Returns:
+            The commits the version moves between and the queued import.
         """
         reimported = await reimport_version(
             ReimportVersionCommand(library=f"/{owner}/{repo}".lower(), ref=body.ref)
@@ -308,6 +384,15 @@ def build_router(
         Other codes are possible: `host_key_changed` (the SSH host key changed, possibly a man
         in the middle) and `git_not_installed`; any 422 means nothing was fetched. The failed
         jobs recorded for it are named in the message.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository name.
+            request: The HTTP request, for the jobs' URLs.
+            response: The HTTP response, for the status and the `Location` header.
+
+        Returns:
+            What happened to each version.
         """
         synced = await sync_library(SyncLibraryCommand(library=f"/{owner}/{repo}".lower()))
         queued = [v.job_id for v in synced.versions if v.status is SyncStatus.QUEUED]
@@ -333,21 +418,51 @@ def _read_router(
     list_library_jobs: ListLibraryJobs,
     get_library_access: GetLibraryAccess,
 ) -> APIRouter:
-    """Build the GET routes: jobs and whether a library is private."""
+    """Build the GET routes: jobs and whether a library is private.
+
+    Args:
+        get_job: Reads one job.
+        list_latest_jobs: Lists the newest job of every (library, version).
+        list_library_jobs: Lists a page of a library's jobs.
+        get_library_access: Says whether a library has a stored credential.
+
+    Returns:
+        The router.
+    """
     router = APIRouter(tags=["ingestion"])
 
     @router.get("/jobs/latest", name="list_latest_jobs")
     async def latest() -> LatestJobs:
-        """List the newest job of every library version, in one call (no per-library requests)."""
+        """List the newest job of every library version, in one call (no per-library requests).
+
+        Returns:
+            The newest job of each (library, version).
+        """
         return await list_latest_jobs()
 
     @router.get("/jobs/{job_id}", name="get_job")
     async def get_one(job_id: str) -> JobSummary:
+        """Read a job: its state, its progress and the problems of its files.
+
+        Args:
+            job_id: The job ID.
+
+        Returns:
+            The job.
+        """
         return await get_job(GetJobQuery(job_id=job_id))
 
     @router.get("/libraries/{owner}/{repo}/access", name="get_library_access")
     async def access(owner: str, repo: str) -> LibraryAccess:
-        """Say whether the library's repository is private (it has a stored credential)."""
+        """Say whether the library's repository is private (it has a stored credential).
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository name.
+
+        Returns:
+            Whether the library is private.
+        """
         return await get_library_access(GetLibraryAccessQuery(library=f"/{owner}/{repo}"))
 
     @router.get("/libraries/{owner}/{repo}/jobs", name="list_library_jobs")
@@ -357,6 +472,17 @@ def _read_router(
         limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
         cursor: str | None = None,
     ) -> JobList:
+        """List the library's jobs, newest first, a page at a time.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository name.
+            limit: How many jobs the page holds at most.
+            cursor: The `next_cursor` of the previous page; none for the first page.
+
+        Returns:
+            The page and the cursor of the next one.
+        """
         return await list_library_jobs(
             ListLibraryJobsQuery(library=f"/{owner}/{repo}", limit=limit, cursor=cursor)
         )
@@ -365,7 +491,15 @@ def _read_router(
 
 
 def _removal_router(remove_version: RemoveVersion, remove_library: RemoveLibrary) -> APIRouter:
-    """Build the DELETE routes for a version and for a whole library."""
+    """Build the DELETE routes for a version and for a whole library.
+
+    Args:
+        remove_version: Removes a version.
+        remove_library: Removes a library.
+
+    Returns:
+        The router.
+    """
     router = APIRouter(tags=["ingestion"])
 
     @router.delete("/libraries/{owner}/{repo}", name="remove_library")
@@ -373,6 +507,13 @@ def _removal_router(remove_version: RemoveVersion, remove_library: RemoveLibrary
         """Remove a library and all its versions at once; a job frees the content.
 
         Refused with 409 `import_in_progress` while an import of the library is queued or running.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository name.
+
+        Returns:
+            What was removed and the job that frees the content.
         """
         return await remove_library(RemoveLibraryCommand(library=f"/{owner}/{repo}"))
 
@@ -384,6 +525,17 @@ def _removal_router(remove_version: RemoveVersion, remove_library: RemoveLibrary
         Refused with 409 `import_in_progress` while an import of that version is queued or
         running. Removing the default version moves the default; removing the last leaves the
         library without versions.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository name.
+            ref: The version's ref; it may hold slashes.
+
+        Returns:
+            What was removed, the default version now and the job that frees the content.
+
+        Raises:
+            HTTPException: 404 for a ref that ends with a slash: another URL.
         """
         if ref.endswith("/"):  # `/versions/v1.4.0/` is another URL, not a malformed ref
             raise HTTPException(status_code=404)
@@ -403,7 +555,14 @@ _ArticlePath = Annotated[
 
 
 def _manual_tags_router(tag_article: TagArticle) -> APIRouter:
-    """Build the routes that set and remove the tags users give an article path by hand."""
+    """Build the routes that set and remove the tags users give an article path by hand.
+
+    Args:
+        tag_article: Sets an article path's manual tags.
+
+    Returns:
+        The router.
+    """
     router = APIRouter(tags=["ingestion"])
 
     # Next to the catalog's `GET .../tags` (a version's tag counts): these write the library's.
@@ -417,6 +576,15 @@ def _manual_tags_router(tag_article: TagArticle) -> APIRouter:
         path rules) of the article at `path` in every version, and of the article git saw it
         renamed to in later versions. Listings, tag counts and search see them on return; nothing
         is imported or chunked again.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository name.
+            path: The article's path.
+            body: The new manual tags.
+
+        Returns:
+            The path with its manual tags now.
         """
         return await tag_article(
             TagArticleCommand(library=f"/{owner}/{repo}", path=path, tags=body.tags)
@@ -428,7 +596,13 @@ def _manual_tags_router(tag_article: TagArticle) -> APIRouter:
         status_code=status.HTTP_204_NO_CONTENT,
     )
     async def remove_path_tags(owner: str, repo: str, path: _ArticlePath) -> None:
-        """Remove every manual tag of an article path; the imported tags stay."""
+        """Remove every manual tag of an article path; the imported tags stay.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository name.
+            path: The article's path.
+        """
         await tag_article(TagArticleCommand(library=f"/{owner}/{repo}", path=path, tags=[]))
 
     return router
@@ -437,30 +611,43 @@ def _manual_tags_router(tag_article: TagArticle) -> APIRouter:
 def build_auto_sync_router(
     *, get_auto_sync: GetAutoSync, set_auto_sync: SetAutoSync, disable_auto_sync: DisableAutoSync
 ) -> APIRouter:
-    """Build the routes of a library's scheduled check (SYNC-02)."""
+    """Build the routes of a library's scheduled check (SYNC-02).
+
+    Args:
+        get_auto_sync: Reads a library's scheduled check.
+        set_auto_sync: Turns it on, or changes it.
+        disable_auto_sync: Turns it off.
+
+    Returns:
+        The router.
+    """
     router = APIRouter(tags=["ingestion"])
     path = "/libraries/{owner}/{repo}/auto-sync"
 
     @router.get(path, name="get_auto_sync")
     async def get_schedule(owner: str, repo: str) -> AutoSyncOut:
-        """Say how the library is checked on its own (`enabled` false: never) and how it went."""
+        """Say how the library is checked on its own (`enabled` false: never) and how it went.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository name.
+
+        Returns:
+            The library's schedule.
+        """
         return await get_auto_sync(GetAutoSyncQuery(library=f"/{owner}/{repo}"))
 
-    @router.put(path, name="set_auto_sync")
+    @router.put(path, name="set_auto_sync", description=SET_AUTO_SYNC_DESCRIPTION)
     async def set_schedule(owner: str, repo: str, body: AutoSyncIn) -> AutoSyncOut:
-        """Check the library on its own every `interval_minutes`, starting at the next tick.
+        """Check the library on its own; the route's description is ``SET_AUTO_SYNC_DESCRIPTION``.
 
-        Each check asks the repository for its refs once. Tags matching `tag_pattern` that have
-        a version order (`v1.4.0`, `2.1`; pre-releases do not) are imported as `auto` versions,
-        oldest first, and only the newest `keep_last` `auto` versions are kept: older ones are
-        removed once their replacements are versions. Versions added by hand (`manual`) and the
-        pinned default are never removed and do not count. A tag whose import failed for good
-        (`no_articles`, `import_too_large`) is tried again only once it moves; after repeated
-        `unexpected` failures it backs off (doubling, at most a day); other failures are tried at
-        the next check. An `auto` version removed by hand comes back
-        while it is among the newest `keep_last`. With `sync_branches`, every branch version is
-        re-synced as `POST .../sync` would. Send the whole set: what is left out takes its
-        default. What a check could not do is its `last_error`.
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository name.
+            body: The whole schedule.
+
+        Returns:
+            The schedule as stored.
         """
         return await set_auto_sync(
             SetAutoSyncCommand(library=f"/{owner}/{repo}", **body.model_dump())
@@ -468,14 +655,29 @@ def build_auto_sync_router(
 
     @router.delete(path, name="disable_auto_sync")
     async def disable_schedule(owner: str, repo: str) -> AutoSyncOut:
-        """Stop checking the library on its own; every version, `auto` ones too, stays."""
+        """Stop checking the library on its own; every version, `auto` ones too, stays.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository name.
+
+        Returns:
+            The schedule, now off.
+        """
         return await disable_auto_sync(DisableAutoSyncCommand(library=f"/{owner}/{repo}"))
 
     return router
 
 
 def _settings_router(update_library_settings: UpdateLibrarySettings) -> APIRouter:
-    """Build the route that edits a library's paths, tag rules and chunking."""
+    """Build the route that edits a library's paths, tag rules and chunking.
+
+    Args:
+        update_library_settings: Replaces a library's settings.
+
+    Returns:
+        The router.
+    """
     router = APIRouter(tags=["ingestion"])
 
     @router.put(
@@ -516,6 +718,16 @@ def _settings_router(update_library_settings: UpdateLibrarySettings) -> APIRoute
         job when the settings are unchanged and the last re-processing did not fail (or there
         is no version yet: imports to come use them). 422 for an invalid pattern, tag or chunking
         setting (nothing is stored), 404 for an unknown library.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository name.
+            body: The whole set of paths and tag rules, and the chunking.
+            request: The HTTP request, for the job's URL.
+            response: The HTTP response, for the status and the `Location` header.
+
+        Returns:
+            The settings as stored and the job, if one was queued.
         """
         updated = await update_library_settings(
             UpdateLibrarySettingsCommand(

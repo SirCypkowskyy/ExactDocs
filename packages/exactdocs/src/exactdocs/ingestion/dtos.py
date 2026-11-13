@@ -17,6 +17,8 @@ from exactdocs.ingestion.constants import (
     MAX_TAG_PATTERN,
     MAX_TAG_RULES,
     MIN_INTERVAL_MINUTES,
+    PREVIEW_FILES_DESCRIPTION,
+    REFS_TRUNCATED_DESCRIPTION,
 )
 from exactdocs.ingestion.constants._dtos import (
     _CONTEXT7,
@@ -52,7 +54,9 @@ class FileProblemSummary(_Dto):
     """A problem with a file: skipped (`is_skip`) or imported with a note. `code` is stable."""
 
     path: str
+    """The file's repository path; empty for a problem of the whole import."""
     code: ProblemCode
+    """What kind of problem it is."""
     reason: str
     """A sentence for people; may change, branch on `code`."""
     is_skip: bool
@@ -60,7 +64,14 @@ class FileProblemSummary(_Dto):
 
     @classmethod
     def from_model(cls, problem: FileProblem) -> Self:
-        """Map a domain value."""
+        """Map a domain value.
+
+        Args:
+            problem: The problem.
+
+        Returns:
+            The problem at the boundary.
+        """
         return cls(
             path=problem.path,
             code=problem.code,
@@ -73,15 +84,27 @@ class JobSummary(_Dto):
     """A job and how far it got. ``total`` is 0 until the job knows its size."""
 
     id: str
+    """The job ID, for `/jobs/{id}`."""
     kind: str
+    """What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect` or
+    `embed`.
+    """
     library: str
+    """The library ID, `/owner/repo`."""
     version: str | None
+    """The ref of the version the job is for; null for a job of the whole library."""
     commit_sha: str | None
     """The commit `version` was pinned to, if any."""
     state: JobState
+    """`queued` and `running` jobs are unfinished; `succeeded` and `failed` ones are done."""
     done: int
+    """How much of `total` is done."""
     total: int
+    """The job's size, 0 until it is known: files for an import, versions for `reprocess`,
+    `retag` and `rechunk`, chunks for `embed`, cleanup steps for `collect`.
+    """
     problems: list[FileProblemSummary]
+    """The files skipped or imported with a note."""
     chunked: int
     """Chunk sets cut by an import: one per distinct new file content."""
     reused: int
@@ -94,16 +117,28 @@ class JobSummary(_Dto):
     are derived again).
     """
     error: str | None
+    """Why the job failed, for people; null unless it failed."""
     error_code: str | None = Field(description=ERROR_CODE)
+    """The stable code of `error`; its schema description is ``ERROR_CODE``."""
     origin: VersionOrigin = Field(default=VersionOrigin.MANUAL)
     """`auto` when the scheduled check queued it, `manual` otherwise."""
     created_at: datetime
+    """When the job was queued."""
     started_at: datetime | None
+    """When the job last started running; null while it waits."""
     finished_at: datetime | None
+    """When the job ended; null while it is unfinished."""
 
     @classmethod
     def from_model(cls, job: Job) -> Self:
-        """Map a domain entity to its boundary representation."""
+        """Map a domain entity to its boundary representation.
+
+        Args:
+            job: The job.
+
+        Returns:
+            The job at the boundary, with its problems.
+        """
         return cls(
             id=job.id,
             kind=job.kind,
@@ -131,12 +166,20 @@ class JobList(_Dto):
     """A page of the jobs of one library, newest first."""
 
     jobs: list[JobSummary]
+    """The jobs, highest ID (newest) first."""
     next_cursor: str | None
     """Pass as `cursor` to get the next page; null on the last page."""
 
     @classmethod
     def from_page(cls, page: Page[Job]) -> Self:
-        """Map a page of domain entities."""
+        """Map a page of domain entities.
+
+        Args:
+            page: The jobs and the cursor of the next page.
+
+        Returns:
+            The page at the boundary.
+        """
         return cls(
             jobs=[JobSummary.from_model(job) for job in page.items], next_cursor=page.next_cursor
         )
@@ -146,23 +189,46 @@ class LatestJob(_Dto):
     """The newest job of one version of a library, light enough to list for every library."""
 
     id: str
+    """The job ID, for `/jobs/{id}`."""
     kind: str
+    """What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect` or
+    `embed`.
+    """
     library: str
+    """The library ID, `/owner/repo`."""
     version: str | None
+    """The ref of the version the job is for; null for a job of the whole library."""
     state: JobState
+    """`queued` and `running` jobs are unfinished; `succeeded` and `failed` ones are done."""
     done: int
+    """How much of `total` is done."""
     total: int
+    """The job's size, 0 until it is known: files for an import, versions for `reprocess`,
+    `retag` and `rechunk`, chunks for `embed`, cleanup steps for `collect`.
+    """
     skipped: int
     """How many files the job skipped; see `/jobs/{id}`."""
     error: str | None
+    """Why the job failed, for people; null unless it failed."""
     error_code: str | None = Field(description=ERROR_CODE)
+    """The stable code of `error`; its schema description is ``ERROR_CODE``."""
     created_at: datetime
+    """When the job was queued."""
     started_at: datetime | None
+    """When the job last started running; null while it waits."""
     finished_at: datetime | None
+    """When the job ended; null while it is unfinished."""
 
     @classmethod
     def from_model(cls, job: Job) -> Self:
-        """Map a domain entity, keeping the count of skipped files, not the files."""
+        """Map a domain entity, keeping the count of skipped files, not the files.
+
+        Args:
+            job: The job.
+
+        Returns:
+            The job at the boundary, without its problems.
+        """
         return cls(
             id=job.id,
             kind=job.kind,
@@ -184,15 +250,20 @@ class LatestJobs(_Dto):
     """The newest job of every (library, version), ordered by library and version."""
 
     jobs: list[LatestJob]
+    """One job per (library, version); the jobs of a whole library count as one version."""
 
 
 class EnqueueJobCommand(_Dto):
     """Queue a job of ``kind`` for a library (and optionally one version of it)."""
 
     kind: str = Field(min_length=1)
+    """What the job does; a kind no handler is registered for is refused."""
     library: str = Field(min_length=1)
+    """The library ID, `/owner/repo`."""
     version: str | None = Field(default=None, min_length=1)
+    """The ref of the version the job is for; null for a job of the whole library."""
     commit_sha: str | None = Field(default=None, min_length=1)
+    """The commit `version` is pinned to, if any."""
     ref_kind: RefKind | None = Field(default=None)
     """What `version` is."""
     origin: VersionOrigin = Field(default=VersionOrigin.MANUAL)
@@ -203,40 +274,52 @@ class GetJobQuery(_Dto):
     """Look up one job by its ID."""
 
     job_id: str = Field(min_length=1)
+    """The job ID."""
 
 
 class ListLibraryJobsQuery(_Dto):
     """One page of a library's jobs: ``limit`` items after the ``cursor`` of the previous page."""
 
     library: str = Field(min_length=1)
+    """The library ID, `/owner/repo`."""
     limit: Annotated[int, Field(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT
+    """How many jobs the page holds at most."""
     cursor: str | None = None
+    """The `next_cursor` of the previous page; null for the first page."""
 
 
 class GetLibraryAccessQuery(_Dto):
     """Ask whether a library needs a credential to be read from its repository."""
 
     library: str = Field(min_length=1)
+    """The library ID, `/owner/repo`."""
 
 
 class LibraryAccess(_Dto):
     """Whether the library's repository is private: it has a stored credential (token or key)."""
 
     private: bool
+    """True when a token or deploy key is stored for the library."""
 
 
 class AccessTokenIn(_Dto):
     """An HTTPS access token for a private repository. Write-only: no response repeats it."""
 
     kind: Literal["token"]
+    """Always `token`."""
     token: SecretStr = Field(max_length=8192)
+    """The token, on one line."""
     username: str | None = Field(default=None, max_length=100)
     """What the host expects next to the token; default `x-access-token` (GitHub, GitLab). Bitbucket
     repository tokens use `x-token-auth`.
     """
 
     def to_model(self) -> Credential:
-        """Validate and convert to the domain value."""
+        """Validate and convert to the domain value.
+
+        Returns:
+            The access token.
+        """
         extra = {} if self.username is None else {"username": self.username}
         return AccessToken(token=self.token.get_secret_value(), **extra)
 
@@ -245,10 +328,16 @@ class DeployKeyIn(_Dto):
     """An SSH deploy key (private part, no passphrase). Write-only: no response repeats it."""
 
     kind: Literal["ssh_key"]
+    """Always `ssh_key`."""
     private_key: SecretStr = Field(max_length=32768)
+    """The private key as its file holds it, BEGIN and END lines included."""
 
     def to_model(self) -> Credential:
-        """Validate and convert to the domain value."""
+        """Validate and convert to the domain value.
+
+        Returns:
+            The deploy key.
+        """
         return DeployKey(private_key=self.private_key.get_secret_value())
 
 
@@ -261,6 +350,7 @@ class CheckRepositoryCommand(_Dto):
     url: str = Field(min_length=1, max_length=2048)
     """HTTPS, HTTP, SSH (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials."""
     credential: CredentialIn | None = Field(default=None, description=_CREDENTIAL_DESCRIPTION)
+    """A credential to try the URL with; its schema description is ``_CREDENTIAL_DESCRIPTION``."""
 
 
 class CheckedRepository(_Dto):
@@ -282,7 +372,9 @@ class TagRuleIn(_Dto):
     """Articles whose path matches `pattern` (a glob like `docs/api/**`) get `tag`."""
 
     pattern: str = Field(min_length=1, max_length=256)
+    """Glob over article paths, e.g. `docs/api/**`."""
     tag: str = Field(min_length=1, max_length=200)
+    """The tag a matching article gets; normalized like every tag (lower-case, trimmed)."""
 
 
 class AddLibraryCommand(_Dto):
@@ -293,6 +385,7 @@ class AddLibraryCommand(_Dto):
         max_length=2048,
         description=CheckRepositoryCommand.model_fields["url"].description,
     )
+    """The repository URL; its schema description is ``CheckRepositoryCommand.url``'s."""
     library_id: str | None = Field(default=None, min_length=1, max_length=200)
     """`/owner/repo`; omitted: the one proposed from the URL."""
     ref: str | None = Field(default=None, min_length=1, max_length=255)
@@ -304,21 +397,35 @@ class AddLibraryCommand(_Dto):
     tag_rules: list[TagRuleIn] = Field(default_factory=list, max_length=MAX_TAG_RULES)
     """Tags for articles by path; they are added to the front-matter tags."""
     credential: CredentialIn | None = Field(default=None, description=_CREDENTIAL_DESCRIPTION)
+    """The library's credential; its schema description is ``_CREDENTIAL_DESCRIPTION``."""
 
 
 class _PinnedImport(_Dto):
     """A ref pinned to its commit and the import queued for it."""
 
     library_id: str
+    """The library ID, `/owner/repo`."""
     ref: str
     """The tag or branch name, or the full SHA of a commit."""
     ref_kind: RefKind
+    """Whether the ref is a tag, a branch or a commit."""
     commit_sha: str
+    """The full SHA of the commit the ref was pinned to: what the import takes."""
     job_id: str
+    """The queued import (`/jobs/{id}`)."""
 
     @classmethod
     def of(cls, library_id: str, resolved: ResolvedRef, job: JobSummary) -> Self:
-        """Combine the pieces of a queued import."""
+        """Combine the pieces of a queued import.
+
+        Args:
+            library_id: The library ID.
+            resolved: The ref and its commit.
+            job: The queued import.
+
+        Returns:
+            The pinned import.
+        """
         return cls(
             library_id=library_id,
             ref=resolved.name,
@@ -332,6 +439,7 @@ class PreviousVersionOut(_Dto):
     """An older tag the repository's `context7.json` offers for import."""
 
     tag: str
+    """The tag, as git names it."""
     title: str
     """Its display title; empty when the file gives none."""
 
@@ -344,12 +452,19 @@ class Context7Out(_Dto):
     """
 
     project_title: str | None
+    """Its `projectTitle`; null when it has none."""
     description: str | None
+    """Its `description`; null when it has none."""
     folders: list[str]
+    """Its `folders`: the folders to import."""
     exclude_folders: list[str]
+    """Its `excludeFolders`."""
     exclude_files: list[str]
+    """Its `excludeFiles`."""
     include_paths: list[str]
+    """`folders` as ExactDocs include patterns."""
     exclude_paths: list[str]
+    """`excludeFolders` and `excludeFiles` as ExactDocs exclude patterns."""
     rules: list[str]
     """Shown to agents with every `query-docs` answer."""
     previous_versions: list[PreviousVersionOut]
@@ -361,7 +476,14 @@ class Context7Out(_Dto):
 
     @classmethod
     def from_model(cls, config: Context7Config) -> Self:
-        """Map a parsed file."""
+        """Map a parsed file.
+
+        Args:
+            config: The parsed ``context7.json``.
+
+        Returns:
+            The file at the boundary.
+        """
         selection = config.selection
         return cls(
             project_title=config.project_title,
@@ -385,8 +507,11 @@ class AddedLibrary(_PinnedImport):
     include_paths: list[str] = Field(default_factory=list)
     """The library's paths: the ones sent, else those of `context7.json`."""
     exclude_paths: list[str] = Field(default_factory=list)
+    """The library's exclusions: the ones sent, else those of `context7.json`."""
     context7: Context7Out | None = Field(default=None, description=_CONTEXT7)
+    """The repository's `context7.json`; its schema description is ``_CONTEXT7``."""
     context7_warning: str | None = Field(default=None, description=_CONTEXT7_WARNING)
+    """Why `context7.json` is ignored; its schema description is ``_CONTEXT7_WARNING``."""
 
 
 class AddVersionBody(_Dto):
@@ -399,6 +524,9 @@ class AddVersionBody(_Dto):
         description=_CREDENTIAL_DESCRIPTION + " Replaces the library's stored credential; "
         "needed again when it answers `credentials_required`.",
     )
+    """A credential for the version's import; its schema description is built from
+    ``_CREDENTIAL_DESCRIPTION``.
+    """
 
 
 class AddVersionCommand(AddVersionBody):
@@ -430,13 +558,17 @@ class ReimportedVersion(_Dto):
     """The tag version whose re-import is queued, and the commits it moves between."""
 
     library_id: str
+    """The library ID, `/owner/repo`."""
     ref: str
+    """The tag."""
     ref_kind: RefKind
+    """Always `tag`: only a tag version is re-imported."""
     previous_commit_sha: str
     """The commit the version served until now."""
     commit_sha: str
     """The commit the tag names now, which the import takes."""
     job_id: str
+    """The queued import (`/jobs/{id}`)."""
 
 
 class ListRepositoryRefsQuery(_Dto):
@@ -447,6 +579,7 @@ class ListRepositoryRefsQuery(_Dto):
         max_length=2048,
         description=CheckRepositoryCommand.model_fields["url"].description,
     )
+    """The repository URL; its schema description is ``CheckRepositoryCommand.url``'s."""
     credential: CredentialIn | None = Field(default=None, description=_CREDENTIAL_DESCRIPTION)
     """The credential of a private repository; it is used for this call only, never stored."""
 
@@ -455,17 +588,22 @@ class RefOut(_Dto):
     """A tag or branch and the commit it points at."""
 
     name: str
+    """The tag or branch name, without `refs/tags/` or `refs/heads/`."""
     commit_sha: str
+    """The full SHA of the commit it points at; for an annotated tag, the tagged commit."""
 
 
 class RepositoryRefs(_Dto):
-    """What a repository offers as a ref, for the picker. Sorted by name, 1000 of each at most."""
+    """What a repository offers as a ref, for the picker: its branches and its tags, by name."""
 
     default_branch: str | None
+    """The branch `HEAD` points at; null when the repository has none."""
     branches: list[RefOut]
+    """The branches, sorted by name."""
     tags: list[RefOut]
-    truncated: bool
-    """True when branches or tags were cut at 1000 each."""
+    """The tags, sorted by name."""
+    truncated: bool = Field(description=REFS_TRUNCATED_DESCRIPTION)
+    """Whether a list was cut; its schema description is ``REFS_TRUNCATED_DESCRIPTION``."""
 
 
 class PreviewRepositoryCommand(_Dto):
@@ -476,21 +614,26 @@ class PreviewRepositoryCommand(_Dto):
         max_length=2048,
         description=CheckRepositoryCommand.model_fields["url"].description,
     )
+    """The repository URL; its schema description is ``CheckRepositoryCommand.url``'s."""
     ref: str | None = Field(
         default=None,
         min_length=1,
         max_length=255,
         description=AddLibraryCommand.model_fields["ref"].description,
     )
+    """The ref to preview; its schema description is ``AddLibraryCommand.ref``'s."""
     include_paths: list[str] = Field(
         default_factory=list,
         description=AddLibraryCommand.model_fields["include_paths"].description,
     )
+    """The paths to import; its schema description is ``AddLibraryCommand.include_paths``'."""
     exclude_paths: list[str] = Field(
         default_factory=list,
         description=AddLibraryCommand.model_fields["exclude_paths"].description,
     )
+    """The paths to leave out; its schema description is ``AddLibraryCommand.exclude_paths``'."""
     credential: CredentialIn | None = Field(default=None, description=_CREDENTIAL_DESCRIPTION)
+    """A credential for this preview only; its schema description is ``_CREDENTIAL_DESCRIPTION``."""
 
 
 class RepositoryPreview(_Dto):
@@ -499,11 +642,11 @@ class RepositoryPreview(_Dto):
     ref: str
     """The tag or branch name, or the full SHA of a commit."""
     ref_kind: RefKind
+    """Whether the ref is a tag, a branch or a commit."""
     commit_sha: str
-    files: list[str]
-    """Sorted repository-relative paths, at most 1000. Untrusted text: show it as text, never as
-    markup or a link target.
-    """
+    """The full SHA of the commit the ref names now: the tree that was listed."""
+    files: list[str] = Field(description=PREVIEW_FILES_DESCRIPTION)
+    """The first matching paths; its schema description is ``PREVIEW_FILES_DESCRIPTION``."""
     total: int
     """How many files match, also those not listed."""
     truncated: bool
@@ -511,8 +654,11 @@ class RepositoryPreview(_Dto):
     include_paths: list[str] = Field(default_factory=list)
     """The paths applied: the ones sent, else those of `context7.json`."""
     exclude_paths: list[str] = Field(default_factory=list)
+    """The exclusions applied: the ones sent, else those of `context7.json`."""
     context7: Context7Out | None = Field(default=None, description=_CONTEXT7)
+    """The repository's `context7.json`; its schema description is ``_CONTEXT7``."""
     context7_warning: str | None = Field(default=None, description=_CONTEXT7_WARNING)
+    """Why `context7.json` is ignored; its schema description is ``_CONTEXT7_WARNING``."""
 
 
 class RemoveVersionCommand(_Dto):
@@ -521,6 +667,7 @@ class RemoveVersionCommand(_Dto):
     library: str = Field(min_length=1)
     """`/owner/repo`, any letter case."""
     ref: str = Field(min_length=1)
+    """The version's ref, as imported (case-sensitive)."""
 
 
 class RemoveLibraryCommand(_Dto):
@@ -543,6 +690,7 @@ class TagArticleCommand(ManualTagsIn):
     library: str = Field(min_length=1)
     """`/owner/repo`, any letter case."""
     path: str = Field(min_length=1, max_length=MAX_PATH)
+    """The article's repository path, e.g. `docs/install.md`."""
 
 
 class TaggedArticle(_Dto):
@@ -552,14 +700,18 @@ class TaggedArticle(_Dto):
     """
 
     library: str
+    """The library ID, `/owner/repo`."""
     path: str
+    """The article's repository path."""
     tags: list[str]
+    """The path's manual tags, normalized; empty when it has none."""
 
 
 class RemovalResult(_Dto):
     """A removal is done for readers when this is returned; the disk is freed by a job."""
 
     library: str
+    """The library ID, `/owner/repo`."""
     ref: str | None
     """The removed version; null when a library was removed."""
     default_version: str | None
@@ -579,8 +731,11 @@ class SyncedVersion(_Dto):
     """What the re-sync did with one version of the library."""
 
     ref: str
+    """The version's ref."""
     ref_kind: RefKind
+    """Whether the ref is a tag, a branch or a commit."""
     status: SyncStatus
+    """`queued`, `up_to_date`, `importing`, `pinned` or `failed`; see each value."""
     previous_commit_sha: str
     """The commit the version served before."""
     commit_sha: str
@@ -604,7 +759,9 @@ class SyncedLibrary(_Dto):
     """The outcome per version; ``queued`` ones have an import to poll by ``job_id``."""
 
     library_id: str
+    """The library ID, `/owner/repo`."""
     versions: list[SyncedVersion]
+    """Every version of the library."""
 
 
 class ChunkingIn(_Dto):
@@ -626,7 +783,14 @@ class ChunkingIn(_Dto):
 
     @classmethod
     def of(cls, config: ChunkingConfig) -> Self:
-        """Map the domain value object."""
+        """Map the domain value object.
+
+        Args:
+            config: The library's chunking settings.
+
+        Returns:
+            The settings at the boundary.
+        """
         return cls.model_validate(
             {
                 "split_level": config.split_depth,
@@ -679,12 +843,17 @@ class AutoSyncOut(_Dto):
     """A library's scheduled check, and how the last one went."""
 
     library: str
+    """The library ID, `/owner/repo`."""
     enabled: bool
     """False when the library is never checked on its own."""
     tag_pattern: str | None
+    """The glob over tag names whose matching tags become `auto` versions; null imports no tag."""
     keep_last: int
+    """How many `auto` versions are kept, the newest."""
     interval_minutes: int
+    """How often the library is checked."""
     sync_branches: bool
+    """Whether every branch version is re-synced at each check."""
     checked_at: datetime | None
     """When the last check ended."""
     next_check_at: datetime | None
@@ -694,7 +863,14 @@ class AutoSyncOut(_Dto):
 
     @classmethod
     def from_model(cls, auto_sync: AutoSync) -> Self:
-        """Map a domain value (an enabled check)."""
+        """Map a domain value (an enabled check).
+
+        Args:
+            auto_sync: The library's schedule.
+
+        Returns:
+            The schedule at the boundary.
+        """
         return cls(
             library=auto_sync.library,
             enabled=True,
@@ -709,7 +885,14 @@ class AutoSyncOut(_Dto):
 
     @classmethod
     def disabled(cls, library: str) -> Self:
-        """Describe a library that is never checked on its own."""
+        """Describe a library that is never checked on its own.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            A disabled schedule with the default settings.
+        """
         return cls.from_model(AutoSync(library=library)).model_copy(
             update={"enabled": False, "next_check_at": None}
         )
@@ -737,15 +920,18 @@ class LibrarySettingsIn(_Dto):
         default_factory=list,
         description=AddLibraryCommand.model_fields["include_paths"].description,
     )
+    """The paths to import; its schema description is ``AddLibraryCommand.include_paths``'."""
     exclude_paths: list[str] = Field(
         default_factory=list,
         description=AddLibraryCommand.model_fields["exclude_paths"].description,
     )
+    """The paths to leave out; its schema description is ``AddLibraryCommand.exclude_paths``'."""
     tag_rules: list[TagRuleIn] = Field(
         default_factory=list,
         max_length=MAX_TAG_RULES,
         description=AddLibraryCommand.model_fields["tag_rules"].description,
     )
+    """Tags for articles by path; its schema description is ``AddLibraryCommand.tag_rules``'."""
     chunking: ChunkingIn | None = Field(default=None)
     """Left out or null: the stored chunking is kept (unlike paths and tag rules)."""
 
@@ -761,10 +947,15 @@ class UpdatedLibrarySettings(_Dto):
     """The settings as stored (normalized) and the job that brings every version in line."""
 
     library_id: str
+    """The library ID, `/owner/repo`."""
     include_paths: list[str]
+    """The paths to import, as stored."""
     exclude_paths: list[str]
+    """The paths to leave out, as stored."""
     tag_rules: list[TagRuleIn]
+    """The tag rules, as stored (tags normalized, duplicates dropped)."""
     chunking: ChunkingIn
+    """The chunking, as stored."""
     reprocess: SettingsChange | None
     """`paths`: the selection changed, every version is fetched again at its commit; `chunking`: the
     chunking changed (perhaps the tag rules too), every version is re-chunked and re-tagged from

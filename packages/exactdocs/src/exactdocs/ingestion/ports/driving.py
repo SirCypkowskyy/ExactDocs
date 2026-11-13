@@ -48,7 +48,14 @@ class EnqueueJob(Protocol):
     """Queue a job; raises ``UnknownJobKindError`` when no handler is registered for its kind."""
 
     async def __call__(self, command: EnqueueJobCommand) -> JobSummary:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: The job's kind, library and version.
+
+        Returns:
+            The queued job.
+        """
         ...
 
 
@@ -56,7 +63,14 @@ class GetJob(Protocol):
     """Fetch one job; raises ``JobNotFoundError`` when it does not exist."""
 
     async def __call__(self, query: GetJobQuery) -> JobSummary:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            query: The job's ID.
+
+        Returns:
+            The job.
+        """
         ...
 
 
@@ -64,7 +78,14 @@ class GetLibraryAccess(Protocol):
     """Say whether a library is private (has a stored credential)."""
 
     async def __call__(self, query: GetLibraryAccessQuery) -> LibraryAccess:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            query: The library.
+
+        Returns:
+            Whether it has a stored credential.
+        """
         ...
 
 
@@ -72,7 +93,14 @@ class ListLibraryJobs(Protocol):
     """List a page of a library's jobs, newest first."""
 
     async def __call__(self, query: ListLibraryJobsQuery) -> JobList:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            query: The library, the page size and where the page starts.
+
+        Returns:
+            The page, and the cursor of the next one.
+        """
         ...
 
 
@@ -80,7 +108,11 @@ class ListLatestJobs(Protocol):
     """List the newest job of every (library, version)."""
 
     async def __call__(self) -> LatestJobs:
-        """Run the use case."""
+        """Run the use case.
+
+        Returns:
+            The newest job of each (library, version).
+        """
         ...
 
 
@@ -92,6 +124,9 @@ class RecoverJobs(Protocol):
 
         Jobs whose ID is in ``resuming`` are left as they are: the runner already has them and
         resumes them from their last durable step.
+
+        Args:
+            resuming: IDs of the jobs the runner resumes on its own.
         """
         ...
 
@@ -113,6 +148,9 @@ class RunJob(Protocol):
         The caller makes sure that no other job of the library runs meanwhile. A job found
         ``running`` is resumed: its recovery hook runs, its progress starts over and its
         handler's completed durable steps (``Checkpoints``) are not done again.
+
+        Args:
+            job_id: The job's ID.
         """
         ...
 
@@ -121,7 +159,11 @@ class RunNextJob(Protocol):
     """Run the next job that may run to its end, or do nothing."""
 
     async def __call__(self) -> bool:
-        """Return whether a job ran (``False``: nothing was waiting)."""
+        """Return whether a job ran (``False``: nothing was waiting).
+
+        Returns:
+            True when a job ran, whether it succeeded or failed.
+        """
         ...
 
 
@@ -134,7 +176,14 @@ class CheckRepository(Protocol):
     """
 
     async def __call__(self, command: CheckRepositoryCommand) -> CheckedRepository:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: The pasted URL and, optionally, the library ID and credential to use.
+
+        Returns:
+            The host, the proposed library ID, the default branch and the SSH host key.
+        """
         ...
 
 
@@ -146,7 +195,14 @@ class AddLibrary(Protocol):
     """
 
     async def __call__(self, command: AddLibraryCommand) -> AddedLibrary:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: The repository, the ref, the paths and the settings of the new library.
+
+        Returns:
+            The new library and its queued import.
+        """
         ...
 
 
@@ -158,7 +214,14 @@ class AddVersion(Protocol):
     """
 
     async def __call__(self, command: AddVersionCommand) -> AddedVersion:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: The library and the ref to add.
+
+        Returns:
+            The pinned version and its queued import.
+        """
         ...
 
 
@@ -173,7 +236,14 @@ class ReimportVersion(Protocol):
     """
 
     async def __call__(self, command: ReimportVersionCommand) -> ReimportedVersion:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: The library and the tag version.
+
+        Returns:
+            The commit the tag names now and the queued import.
+        """
         ...
 
 
@@ -181,7 +251,14 @@ class ListRepositoryRefs(Protocol):
     """List a repository's branches and tags; raises what ``CheckRepository`` raises."""
 
     async def __call__(self, query: ListRepositoryRefsQuery) -> RepositoryRefs:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            query: The repository URL and, optionally, a credential.
+
+        Returns:
+            The default branch, the branches and the tags.
+        """
         ...
 
 
@@ -193,7 +270,14 @@ class PreviewRepository(Protocol):
     """
 
     async def __call__(self, command: PreviewRepositoryCommand) -> RepositoryPreview:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: The repository, the ref and the paths an import would use.
+
+        Returns:
+            The files an import would take and the ones it would leave out.
+        """
         ...
 
 
@@ -207,7 +291,14 @@ class RemoveVersion(Protocol):
     """
 
     async def __call__(self, command: RemoveVersionCommand) -> RemovalResult:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: The library and the version to remove.
+
+        Returns:
+            What was removed, the default version now and the queued collection job.
+        """
         ...
 
 
@@ -219,7 +310,14 @@ class RemoveLibrary(Protocol):
     """
 
     async def __call__(self, command: RemoveLibraryCommand) -> RemovalResult:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: The library to remove.
+
+        Returns:
+            What was removed, the default version now and the queued collection job.
+        """
         ...
 
 
@@ -236,7 +334,14 @@ class SyncLibrary(Protocol):
     """
 
     async def __call__(self, command: SyncLibraryCommand) -> SyncedLibrary:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: The library to sync.
+
+        Returns:
+            What happened to each version.
+        """
         ...
 
 
@@ -250,7 +355,15 @@ class SyncLibraryFromRefs(Protocol):
     async def __call__(
         self, command: SyncLibraryCommand, *, refs: RemoteRefs | None = None
     ) -> SyncedLibrary:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: The library to sync.
+            refs: The refs the remote advertised; ``None`` lists them now.
+
+        Returns:
+            What happened to each version.
+        """
         ...
 
 
@@ -267,7 +380,14 @@ class TagArticle(Protocol):
     """
 
     async def __call__(self, command: TagArticleCommand) -> TaggedArticle:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: The library, the article path and its new manual tags.
+
+        Returns:
+            The path with its manual tags now.
+        """
         ...
 
 
@@ -278,7 +398,14 @@ class GetAutoSync(Protocol):
     """
 
     async def __call__(self, query: GetAutoSyncQuery) -> AutoSyncOut:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            query: The library.
+
+        Returns:
+            The library's schedule.
+        """
         ...
 
 
@@ -290,7 +417,14 @@ class SetAutoSync(Protocol):
     """
 
     async def __call__(self, command: SetAutoSyncCommand) -> AutoSyncOut:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: The library and its schedule.
+
+        Returns:
+            The schedule as stored.
+        """
         ...
 
 
@@ -301,7 +435,14 @@ class DisableAutoSync(Protocol):
     """
 
     async def __call__(self, command: DisableAutoSyncCommand) -> AutoSyncOut:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: The library.
+
+        Returns:
+            The schedule, now off.
+        """
         ...
 
 
@@ -316,7 +457,11 @@ class RunScheduledChecks(Protocol):
     """
 
     async def __call__(self) -> ScheduledChecks:
-        """Run the use case."""
+        """Run the use case.
+
+        Returns:
+            The libraries checked, the imports queued and the versions removed.
+        """
         ...
 
 
@@ -344,7 +489,14 @@ class UpdateLibrarySettings(Protocol):
     """
 
     async def __call__(self, command: UpdateLibrarySettingsCommand) -> UpdatedLibrarySettings:
-        """Run the use case."""
+        """Run the use case.
+
+        Args:
+            command: The library and its new settings.
+
+        Returns:
+            The settings as stored and the queued job, if any.
+        """
         ...
 
 

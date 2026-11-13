@@ -20,7 +20,15 @@ log = logging.getLogger(__name__)
 
 
 def enqueue_options(job_id: str, library: str) -> EnqueueOptions:
-    """Return the options that queue the workflow of a job (the same ones on every start)."""
+    """Return the options that queue the workflow of a job (the same ones on every start).
+
+    Args:
+        job_id: The job's ID, used as the workflow's ID.
+        library: The job's library, the queue's partition key.
+
+    Returns:
+        The options naming ``WORKFLOW``, ``QUEUE`` and the steps version.
+    """
     return EnqueueOptions(
         workflow_name=WORKFLOW,
         queue_name=QUEUE,
@@ -39,6 +47,9 @@ class DbosJobQueue:
         Queuing an ID that already has a workflow returns that one, so this is idempotent. It
         is queued outside the context of any running workflow: a job that queues another (an
         import queuing ``embed`` jobs) gets a workflow of its own, not a child step.
+
+        Args:
+            job: The job to run.
         """
         try:
             await asyncio.get_running_loop().create_task(
@@ -58,6 +69,13 @@ class DbosCheckpoints:
         """Run ``run`` as a DBOS step: its result is stored and returned again on a resume.
 
         Outside a workflow (a job run inline by ``RunNextJob``) the step just runs.
+
+        Args:
+            name: The step's name in the workflow's history.
+            run: Runs the step.
+
+        Returns:
+            What ``run`` returned, or the stored result on a resume.
         """
         if DBOS.workflow_id is None:
             return await run()
@@ -65,6 +83,11 @@ class DbosCheckpoints:
         # DBOS tells coroutine functions apart from plain ones by their definition, so a lambda
         # that returns an awaitable is wrapped in one.
         async def call() -> T:
+            """Await ``run`` from a coroutine function DBOS recognizes as one.
+
+            Returns:
+                What ``run`` returned.
+            """
             return await run()
 
         return await DBOS.run_step_async({"name": name}, call)
@@ -79,10 +102,19 @@ class DbosScheduleSwitch:
     """
 
     def __init__(self, schedule: str = SCHEDULE) -> None:
+        """Switch one schedule.
+
+        Args:
+            schedule: The DBOS schedule's name.
+        """
         self.schedule = schedule
 
     async def turn(self, *, on: bool) -> None:
-        """Resume (``on``) or pause the schedule; nothing is written when it already is so."""
+        """Resume (``on``) or pause the schedule; nothing is written when it already is so.
+
+        Args:
+            on: True resumes the schedule, False pauses it.
+        """
         try:
             found = await DBOS.get_schedule_async(self.schedule)
             if found is None or (found["status"] == "ACTIVE") == on:

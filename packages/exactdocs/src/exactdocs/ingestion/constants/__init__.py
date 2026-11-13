@@ -4,7 +4,12 @@ Each is ``Final`` and documented (see *Python conventions* in docs/architecture.
 re-exported here; private ones are imported from their topic module by their only user.
 """
 
-from exactdocs.ingestion.constants._dtos import ERROR_CODE
+from exactdocs.ingestion.constants._dtos import (
+    ERROR_CODE,
+    PREVIEW_FILES_DESCRIPTION,
+    REFS_TRUNCATED_DESCRIPTION,
+    SET_AUTO_SYNC_DESCRIPTION,
+)
 from exactdocs.ingestion.constants._git import (
     ALLOWED_PROTOCOLS,
     FETCH_TIMEOUT_SECONDS,
@@ -192,12 +197,14 @@ __all__ = [
     "PEELED",
     "PERMANENT_IMPORT_FAILURES",
     "PINNED",
+    "PREVIEW_FILES_DESCRIPTION",
     "PREVIEW_WAIT_SECONDS",
     "QUEUE",
     "README_DESCRIPTION_MAX",
     "README_TITLE_MAX",
     "RECHUNK_JOB",
     "REFRESH_JOB",
+    "REFS_TRUNCATED_DESCRIPTION",
     "RENAME_LIMIT",
     "RENAME_TIMEOUT_SECONDS",
     "REPROCESS_JOB",
@@ -206,6 +213,7 @@ __all__ = [
     "SAVE_EVERY_SECONDS",
     "SCHEDULE",
     "SCHEDULE_WORKFLOW",
+    "SET_AUTO_SYNC_DESCRIPTION",
     "STALE_MARGIN_SECONDS",
     "STEPS_VERSION",
     "TAGS",

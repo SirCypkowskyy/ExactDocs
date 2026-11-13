@@ -27,14 +27,17 @@ class _Section:
     """The lines from one top-level heading to the next (``level`` 0: before the first)."""
 
     level: int
+    """Heading level 1-6 (``#`` to ``######``); 0 for the text before the first heading."""
     path: tuple[str, ...]
     """Every heading above it, whatever the split level."""
     anchor: str
+    """GitHub-style slug of the heading; empty before the first heading."""
     start: int
     """First line."""
     end: int
     """One past the last line."""
     languages: list[str] = field(default_factory=list)
+    """Languages of the fenced code blocks in it, in order of first appearance."""
     size: int = 0
     """Characters."""
 
@@ -44,14 +47,21 @@ class _Piece:
     """Consecutive sections that become one chunk; named after the first."""
 
     sections: list[_Section]
+    """The sections, in document order."""
     size: int
     """Characters."""
 
     @property
     def first(self) -> _Section:
+        """The section the chunk is named after."""
         return self.sections[0]
 
     def add(self, other: _Piece) -> None:
+        """Append another piece's sections to this one.
+
+        Args:
+            other: The piece that follows this one.
+        """
         self.sections.extend(other.sections)
         self.size += other.size
 
@@ -69,6 +79,11 @@ class MarkdownChunker:
     """
 
     def __init__(self, config: ChunkingConfig | None = None) -> None:
+        """Cut with ``config``.
+
+        Args:
+            config: The chunking settings; None for the defaults.
+        """
         self._config = config or ChunkingConfig()
 
     @property
@@ -79,14 +94,31 @@ class MarkdownChunker:
         )
 
     def configured(self, config: ChunkingConfig) -> MarkdownChunker:
-        """Return a chunker that cuts with ``config``; see the ``Chunker`` port."""
+        """Return a chunker that cuts with ``config``; see the ``Chunker`` port.
+
+        Args:
+            config: A library's chunking settings.
+
+        Returns:
+            A new chunker; this one is unchanged.
+
+        Raises:
+            InvalidChunkingConfigError: ``config`` names a chunker other than ``markdown``.
+        """
         if config.chunker != DEFAULT_CHUNKER:
             reason = f"unsupported chunker {config.chunker!r}"
             raise InvalidChunkingConfigError(reason)
         return MarkdownChunker(config)
 
     def chunk(self, article: ParsedArticle) -> Sequence[ArticleChunk]:
-        """Cut ``article`` at its headings; see the ``Chunker`` port."""
+        """Cut ``article`` at its headings; see the ``Chunker`` port.
+
+        Args:
+            article: The parsed article; its body is what is cut.
+
+        Returns:
+            The chunks in order; their contents add up to the body.
+        """
         body = article.body
         lines = _LINE.findall(body)
         skip = 0  # broken front matter stays in the body, but is not Markdown to cut at
@@ -141,7 +173,14 @@ class MarkdownChunker:
         return tuple(chunks)
 
     def _pieces(self, sections: list[_Section]) -> list[_Piece]:
-        """Group the sections by split level, cut what is too long, merge what is too short."""
+        """Group the sections by split level, cut what is too long, merge what is too short.
+
+        Args:
+            sections: Every top-level section of the body, in order.
+
+        Returns:
+            The pieces that become chunks, in order.
+        """
         config = self._config
         grouped: list[_Piece] = []
         for section in sections:
@@ -164,11 +203,27 @@ class MarkdownChunker:
         return self._merged(pieces) if config.min_chars else pieces
 
     def _merged(self, pieces: list[_Piece]) -> list[_Piece]:
-        """Merge pieces under ``min_chars`` with the next one, the last with the one before."""
+        """Merge pieces under ``min_chars`` with the next one, the last with the one before.
+
+        Args:
+            pieces: The pieces after grouping and cutting.
+
+        Returns:
+            The pieces after merging, in order.
+        """
         config = self._config
         limit = config.max_chars
 
         def fits(a: _Piece, b: _Piece) -> bool:
+            """Tell whether two pieces together stay within ``max_chars``.
+
+            Args:
+                a: The first piece.
+                b: The piece after it.
+
+            Returns:
+                True when there is no ``max_chars`` or their sizes add up to at most it.
+            """
             return limit is None or a.size + b.size <= limit
 
         merged: list[_Piece] = []
@@ -191,7 +246,16 @@ class MarkdownChunker:
 
 
 def _sections(tokens: list[Token], line_count: int, skip: int) -> list[_Section]:
-    """Cut the body at every top-level heading; each section knows its full heading path."""
+    """Cut the body at every top-level heading; each section knows its full heading path.
+
+    Args:
+        tokens: The body's markdown-it tokens.
+        line_count: How many lines the body has.
+        skip: Lines of malformed front matter at the start, where no heading or fence counts.
+
+    Returns:
+        The text before the first heading (level 0), then one section per top-level heading.
+    """
     sections = [_Section(level=0, path=(), anchor="", start=0, end=line_count)]
     stack: list[tuple[int, str]] = []
     anchors: set[str] = set()
@@ -221,7 +285,14 @@ def _sections(tokens: list[Token], line_count: int, skip: int) -> list[_Section]
 
 
 def _plain(inline: Token) -> str:
-    """Heading text without markup: ``The `x` *option*`` -> ``The x option``."""
+    """Heading text without markup: ``The `x` *option*`` -> ``The x option``.
+
+    Args:
+        inline: The heading's inline token.
+
+    Returns:
+        The heading's text, stripped.
+    """
     parts = []
     for child in inline.children or ():
         if child.type in {"text", "code_inline"} or (child.type == "image" and child.content):
@@ -235,6 +306,13 @@ def _anchor(text: str, used: set[str]) -> str:
     """GitHub's slug (github-slugger): lower-case, no punctuation, dashes for spaces.
 
     A taken slug gets ``-1``, ``-2``... until it is unused, and every issued slug is remembered.
+
+    Args:
+        text: The heading's plain text.
+        used: Slugs already issued in this article; the new one is added.
+
+    Returns:
+        The slug, unique within the article.
     """
     base = _ANCHOR_DROP.sub("", text.lower()).replace(" ", "-")
     slug, n = base, 0
