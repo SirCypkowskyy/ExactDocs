@@ -317,7 +317,7 @@ flowchart LR
         subgraph vms ["LXD runner VMs: exactdocs-runner-1, -2"]
             ci["CI<br/>python, web, image, image variants, uvx + browser e2e"]
             docs["Docs<br/>Mermaid check, zensical build --strict"]
-            rel["Release<br/>meta, web, python, pypi-kernel, pypi, image-scan, image, github-release"]
+            rel["Release<br/>meta, eval, web, python, pypi-kernel, pypi, image-scan, image, github-release"]
             ret["GHCR retention"]
         end
     end
@@ -337,11 +337,16 @@ flowchart LR
 `.github/workflows/release.yml`, on the self-hosted GB10 runners:
 
 1. **meta**: validates tag shape and branch, derives version/channel.
-2. **web**: `pnpm build`.
-3. **python**: bundles the UI into the wheel, `uv build --all-packages`, `twine check`, runs the
+2. **eval**: the retrieval eval ([Retrieval evals](evals.md#when-it-runs)), which pull requests
+   do not run: the model-free gates on SQLite and on ParadeDB's pg_search against the
+   `baseline.json` of the tagged tree, the suite's end-to-end tests (`pytest -m eval`), then
+   hybrid and rerank on the default local models, report-only. `pypi-kernel` and `image` need
+   it, so a failing gate publishes nothing.
+3. **web**: `pnpm build`.
+4. **python**: bundles the UI into the wheel, `uv build --all-packages`, `twine check`, runs the
    wheel the way `uvx` would.
-4. **pypi-kernel**, then **pypi**: `uv publish` with **trusted publishing** (OIDC, no stored token).
-5. **image-scan**, then **image**, once per variant (`base`, `ai`, `local`): each variant is
+5. **pypi-kernel**, then **pypi**: `uv publish` with **trusted publishing** (OIDC, no stored token).
+6. **image-scan**, then **image**, once per variant (`base`, `ai`, `local`): each variant is
    built natively, checked against its size budget (`deploy/check_artifacts.py`) and scanned
    (see *Image scan*); only when all three pass, each is built multi-arch (`linux/amd64`,
    `linux/arm64`), pushed with its tags (suffix `-ai` / `-local`), with SBOM + provenance
@@ -349,7 +354,7 @@ flowchart LR
    QEMU for amd64; the Python stages cross-build natively, and the `-local` models are pulled
    natively (once per platform, the second from the build's cache mount). `DEBIAN_REFRESH` (the
    date) is set once in **meta**, so the push rebuilds exactly the layers that were scanned. Each variant has its own GitHub Actions cache scope (`exactdocs-<variant>`).
-6. **github-release**: creates or updates the release with the distributions.
+7. **github-release**: creates or updates the release with the distributions.
 
 ## One-time setup
 
