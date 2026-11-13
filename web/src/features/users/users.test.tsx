@@ -71,7 +71,7 @@ describe("users page", () => {
     stubApi();
     renderPage();
     const list = await screen.findByRole("list", { name: "User accounts" });
-    const [ada, bob] = within(list).getAllByRole("listitem");
+    const [ada, bob] = within(list).getAllByRole("listitem") as [HTMLElement, HTMLElement];
     expect(ada).toHaveTextContent(/ada\s*\(you\)/);
     expect(ada).toHaveTextContent(/Admin · Active/);
     expect(bob).toHaveTextContent(/User · Active/);
