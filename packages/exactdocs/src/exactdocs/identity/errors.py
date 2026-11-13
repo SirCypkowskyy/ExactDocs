@@ -110,11 +110,15 @@ class LastOperatorError(ConflictError):
 
 
 class NotAnOperatorError(ForbiddenError):
-    """The caller is signed in, but only an admin manages accounts."""
+    """The caller is signed in, but only an admin may do this."""
 
-    def __init__(self) -> None:
-        """Create the error with its fixed message."""
-        super().__init__("only an admin manages user accounts")
+    def __init__(self, action: str = "manages user accounts") -> None:
+        """Say what only an admin does.
+
+        Args:
+            action: What was refused, e.g. ``manages user accounts``.
+        """
+        super().__init__(f"only an admin {action}")
 
 
 class InvalidTokenNameError(ValidationError):

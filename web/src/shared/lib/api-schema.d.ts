@@ -819,6 +819,78 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/sources/schema": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Sources Schema
+         * @description Return the JSON Schema of `exactdocs.sources.yaml` (also in `docs/schemas/`).
+         */
+        readonly get: operations["ingestion-get_sources_schema"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/sources/plan": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Plan Sources
+         * @description Compare a sources file (sent as JSON) with the instance; nothing is written or queued.
+         *
+         *     `create` lists the declared libraries that do not exist; `update`, per library, each
+         *     managed setting that changes, the refs to add, the scheduled-check change, the job the
+         *     settings change queues and the `manual` versions the file does not declare; `unchanged`
+         *     and `undeclared` the rest. A setting an entry leaves out is not managed. `errors` lists
+         *     entries apply leaves alone (`source_mismatch`: the ID exists with another URL). The git
+         *     remote is not asked: a ref that does not exist fails at apply. 422 for an invalid file.
+         */
+        readonly post: operations["ingestion-plan_sources"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/sources/apply": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Apply Sources
+         * @description Plan again, then create, update and (only with `prune`) remove, library by library.
+         *
+         *     A created library imports its first ref, then its other refs are added, then its
+         *     scheduled check is set. Settings are written only when they change, so applying the
+         *     same file again (even while its imports run) writes nothing. One library failing does
+         *     not stop the others: its outcome has `error`. Without `prune` nothing is removed.
+         */
+        readonly post: operations["ingestion-apply_sources"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/repositories/check": {
         readonly parameters: {
             readonly query?: never;
@@ -1180,6 +1252,18 @@ export interface components {
              * @description A token (https URL) or deploy key (ssh URL) for a private repository. It is stored encrypted, offered only to the repository's own host and never returned.
              */
             readonly credential?: (components["schemas"]["AccessTokenIn"] | components["schemas"]["DeployKeyIn"]) | null;
+            /**
+             * @description How articles are cut into chunks; stored before the import is queued. Null: the
+             *     defaults.
+             */
+            readonly chunking?: components["schemas"]["ChunkingIn"] | null;
+            /**
+             * Context7 Paths
+             * @description Without paths, take those of the repository's root `context7.json`; false: no paths mean
+             *     every `.md`/`.mdx` file.
+             * @default true
+             */
+            readonly context7_paths: boolean;
         };
         /**
          * AddVersionBody
@@ -1299,6 +1383,38 @@ export interface components {
          * @enum {string}
          */
         readonly AnthropicPlatform: "api" | "vertex" | "foundry" | "bedrock";
+        /**
+         * AppliedSources
+         * @description The plan that was applied and what was done, library by library.
+         */
+        readonly AppliedSources: {
+            /** @description The plan, computed again at apply time. */
+            readonly plan: components["schemas"]["SourcesPlanOut"];
+            /**
+             * Results
+             * @description Created, then updated or unchanged, then removed libraries, then the plan's errors.
+             */
+            readonly results: readonly components["schemas"]["LibraryOutcome"][];
+            /**
+             * Failed
+             * @description How many libraries have an `error`.
+             */
+            readonly failed: number;
+        };
+        /**
+         * ApplySourcesCommand
+         * @description Plan again, then apply the plan library by library; only `prune` removes anything.
+         */
+        readonly ApplySourcesCommand: {
+            /** @description The file, as JSON (the server never parses YAML). */
+            readonly sources: components["schemas"]["SourcesFile"];
+            /**
+             * Prune
+             * @description Mark undeclared libraries and `manual` versions as removed by apply.
+             * @default false
+             */
+            readonly prune: boolean;
+        };
         /**
          * Article
          * @description One article with its Markdown, verbatim as imported.
@@ -1522,6 +1638,16 @@ export interface components {
              * @description Password of the account.
              */
             readonly password: string;
+        };
+        /**
+         * AutoSyncChange
+         * @description The managed scheduled check as it is and as declared; null is off.
+         */
+        readonly AutoSyncChange: {
+            /** @description As it is; null: off. */
+            readonly before: components["schemas"]["AutoSyncIn"] | null;
+            /** @description As declared; null: off. */
+            readonly after: components["schemas"]["AutoSyncIn"] | null;
         };
         /**
          * AutoSyncIn
@@ -1945,6 +2071,16 @@ export interface components {
              * @description Languages of the chunk's fenced code blocks.
              */
             readonly code_languages: readonly string[];
+        };
+        /**
+         * ChunkingChange
+         * @description The managed chunking as stored and as declared.
+         */
+        readonly ChunkingChange: {
+            /** @description As stored. */
+            readonly before: components["schemas"]["ChunkingIn"];
+            /** @description As declared. */
+            readonly after: components["schemas"]["ChunkingIn"];
         };
         /**
          * ChunkingIn
@@ -2764,6 +2900,38 @@ export interface components {
             readonly next_cursor: string | null;
         };
         /**
+         * LibraryOutcome
+         * @description What apply did with one library.
+         */
+        readonly LibraryOutcome: {
+            /**
+             * Library Id
+             * @description The library ID, `/owner/repo`.
+             */
+            readonly library_id: string;
+            /**
+             * Action
+             * @description What was done; `failed`: nothing was (an error of the plan, or the first write failed).
+             * @enum {string}
+             */
+            readonly action: "created" | "updated" | "unchanged" | "removed" | "failed";
+            /**
+             * Jobs
+             * @description The jobs queued (`/jobs/{id}`): imports, re-processing, the collection of removed content.
+             */
+            readonly jobs: readonly string[];
+            /**
+             * Error Code
+             * @description The stable code of what failed, e.g. `unknown_ref`; null when nothing did.
+             */
+            readonly error_code?: string | null;
+            /**
+             * Error
+             * @description What failed, for people; a library created or updated before it stays so.
+             */
+            readonly error?: string | null;
+        };
+        /**
          * LibraryPatch
          * @description The fields a user may change; at least one must be given.
          */
@@ -3133,6 +3301,47 @@ export interface components {
             readonly last_imported_at: string | null;
         };
         /**
+         * LibraryUpdateOut
+         * @description What apply changes in an existing library; null or empty: nothing of that kind.
+         */
+        readonly LibraryUpdateOut: {
+            /**
+             * Library Id
+             * @description The library ID, `/owner/repo`.
+             */
+            readonly library_id: string;
+            /** @description The include paths, when they change. */
+            readonly include_paths: components["schemas"]["PathsChange"] | null;
+            /** @description The exclude paths, when they change. */
+            readonly exclude_paths: components["schemas"]["PathsChange"] | null;
+            /** @description The tag rules, when they change. */
+            readonly tag_rules: components["schemas"]["TagRulesChange"] | null;
+            /** @description The chunking, when it changes. */
+            readonly chunking: components["schemas"]["ChunkingChange"] | null;
+            /**
+             * Refs To Add
+             * @description Declared refs that are neither versions nor being imported: each queues an import.
+             */
+            readonly refs_to_add: readonly string[];
+            /** @description The scheduled check, when it is turned on, off or changed. */
+            readonly auto_sync: components["schemas"]["AutoSyncChange"] | null;
+            /**
+             * Job Kind
+             * @description The job the settings change queues: `reprocess`, `rechunk` or `retag`; null: none.
+             */
+            readonly job_kind: string | null;
+            /**
+             * Undeclared Versions
+             * @description `manual` versions the file does not declare (`auto` ones belong to the schedule).
+             */
+            readonly undeclared_versions: readonly string[];
+            /**
+             * Remove Undeclared Versions
+             * @description True with `prune`: apply removes `undeclared_versions`.
+             */
+            readonly remove_undeclared_versions: boolean;
+        };
+        /**
          * ListRepositoryRefsQuery
          * @description Ask a repository for its tags and branches (a private one with a credential).
          */
@@ -3426,6 +3635,36 @@ export interface components {
              * @enum {string}
              */
             readonly throttle: "cleared" | "busy" | "failed";
+        };
+        /**
+         * PathsChange
+         * @description A managed path list as stored and as declared.
+         */
+        readonly PathsChange: {
+            /**
+             * Before
+             * @description As stored.
+             */
+            readonly before: readonly string[];
+            /**
+             * After
+             * @description As declared, normalized.
+             */
+            readonly after: readonly string[];
+        };
+        /**
+         * PlanSourcesCommand
+         * @description Compare a sources file with the instance; nothing is changed.
+         */
+        readonly PlanSourcesCommand: {
+            /** @description The file, as JSON (the server never parses YAML). */
+            readonly sources: components["schemas"]["SourcesFile"];
+            /**
+             * Prune
+             * @description Mark undeclared libraries and `manual` versions as removed by apply.
+             * @default false
+             */
+            readonly prune: boolean;
         };
         /**
          * PreviewRepositoryCommand
@@ -4245,6 +4484,138 @@ export interface components {
          */
         readonly SettingsChange: "paths" | "chunking" | "tags";
         /**
+         * SourceErrorOut
+         * @description A declared library that cannot be reconciled; apply leaves it alone.
+         */
+        readonly SourceErrorOut: {
+            /**
+             * Library Id
+             * @description The declared library ID.
+             */
+            readonly library_id: string;
+            /**
+             * Error
+             * @description A stable machine code: `source_mismatch` (the ID exists with another repository URL).
+             */
+            readonly error: string;
+            /**
+             * Detail
+             * @description What is wrong, for people.
+             */
+            readonly detail: string;
+        };
+        /**
+         * SourceLibrary
+         * @description One library of a sources file. A setting left out is not managed: never compared or changed.
+         *
+         *     `include_paths`, `exclude_paths` and `tag_rules` are compared as sets, after the server's
+         *     normalization (a reordered list or a tag in other letter case is no change).
+         */
+        readonly SourceLibrary: {
+            /**
+             * Url
+             * @description HTTPS, HTTP, SSH (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.
+             */
+            readonly url: string;
+            /**
+             * Id
+             * @description `/owner/repo`, any letter case; left out: the ID derived from `url`, as when a library is
+             *     added.
+             */
+            readonly id?: string | null;
+            /**
+             * Refs
+             * @description The versions to have: tags, branches or full 40-character commit SHAs (a short SHA is
+             *     refused). The first one is imported when the library is created.
+             */
+            readonly refs: readonly string[];
+            /**
+             * Include Paths
+             * @description Folders, files or globs to import; empty: every `.md`/`.mdx` file (the repository's
+             *     `context7.json` does not fill in a managed empty list). Left out: not managed.
+             */
+            readonly include_paths?: readonly string[] | null;
+            /**
+             * Exclude Paths
+             * @description Folders, files or globs to leave out; they win. Left out: not managed.
+             */
+            readonly exclude_paths?: readonly string[] | null;
+            /**
+             * Tag Rules
+             * @description Tags for articles by path, as a whole set. Left out: not managed.
+             */
+            readonly tag_rules?: readonly components["schemas"]["TagRuleIn"][] | null;
+            /** @description How articles are cut into chunks. Left out: not managed. */
+            readonly chunking?: components["schemas"]["ChunkingIn"] | null;
+            /**
+             * Auto Sync
+             * @description The scheduled check, as a whole (what it leaves out takes its default); `false` turns it
+             *     off. Left out: not managed.
+             */
+            readonly auto_sync?: components["schemas"]["AutoSyncIn"] | false | null;
+        };
+        /**
+         * SourcesFile
+         * @description `exactdocs.sources.yaml`: the libraries an instance should have, for code review.
+         *
+         *     It holds no credential: a private library is added in the UI with its credential first,
+         *     then managed by the file.
+         */
+        readonly SourcesFile: {
+            /**
+             * Version
+             * @description The file format's version: 1.
+             * @constant
+             */
+            readonly version: 1;
+            /**
+             * Libraries
+             * @description The declared libraries, each ID once.
+             */
+            readonly libraries?: readonly components["schemas"]["SourceLibrary"][];
+        };
+        /**
+         * SourcesPlanOut
+         * @description The difference between a sources file and the instance.
+         */
+        readonly SourcesPlanOut: {
+            /**
+             * Create
+             * @description Declared libraries that do not exist, normalized and with their ID.
+             */
+            readonly create: readonly components["schemas"]["SourceLibrary"][];
+            /**
+             * Update
+             * @description Existing libraries that differ from their declaration, or have undeclared versions.
+             */
+            readonly update: readonly components["schemas"]["LibraryUpdateOut"][];
+            /**
+             * Unchanged
+             * @description Existing libraries that match their declaration.
+             */
+            readonly unchanged: readonly string[];
+            /**
+             * Undeclared
+             * @description Libraries the file does not declare.
+             */
+            readonly undeclared: readonly components["schemas"]["UndeclaredLibraryOut"][];
+            /**
+             * Errors
+             * @description Declared libraries that cannot be reconciled.
+             */
+            readonly errors: readonly components["schemas"]["SourceErrorOut"][];
+            /**
+             * Prune
+             * @description Whether apply removes undeclared libraries and `manual` versions.
+             */
+            readonly prune: boolean;
+            /**
+             * Changes
+             * @description Whether apply would change anything (false: it calls no write).
+             */
+            readonly changes: boolean;
+        };
+        /**
          * SpaceState
          * @description Where an embedding space is in its life.
          * @enum {string}
@@ -4491,6 +4862,22 @@ export interface components {
             readonly tag: string;
         };
         /**
+         * TagRulesChange
+         * @description The managed tag rules as stored and as declared.
+         */
+        readonly TagRulesChange: {
+            /**
+             * Before
+             * @description As stored.
+             */
+            readonly before: readonly components["schemas"]["TagRuleIn"][];
+            /**
+             * After
+             * @description As declared, normalized.
+             */
+            readonly after: readonly components["schemas"]["TagRuleIn"][];
+        };
+        /**
          * TaggedArticle
          * @description The manual tags of a path as stored: every version's article at that path carries them.
          *
@@ -4602,6 +4989,27 @@ export interface components {
              * @description When the token last authenticated a request; `null` if it was never used.
              */
             readonly last_used_at: string | null;
+        };
+        /**
+         * UndeclaredLibraryOut
+         * @description A library of the instance that the file does not declare.
+         */
+        readonly UndeclaredLibraryOut: {
+            /**
+             * Library Id
+             * @description The library ID, `/owner/repo`.
+             */
+            readonly library_id: string;
+            /**
+             * Source Url
+             * @description Its repository.
+             */
+            readonly source_url: string;
+            /**
+             * Will Be Removed
+             * @description True with `prune`: apply removes it.
+             */
+            readonly will_be_removed: boolean;
         };
         /**
          * UpdatedLibrarySettings
@@ -8526,6 +8934,238 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-get_sources_schema": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-plan_sources": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PlanSourcesCommand"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SourcesPlanOut"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-apply_sources": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ApplySourcesCommand"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AppliedSources"];
+                };
             };
             /** @description The request cannot be processed (error code in `error`). */
             readonly 400: {

@@ -337,8 +337,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `results` has each library's `action`, `jobs` and `error`. Settings the file leaves out are not
   managed. 422 for an invalid file (an unknown key, a short SHA, a duplicate ID) or a setting the
   server cannot store (`invalid_sources`, naming the entry). `GET /sources/schema` returns the
-  file's JSON Schema (committed as `docs/schemas/exactdocs.sources.schema.json`). Every caller
-  may use them, like the other library routes, until accounts get roles.
+  file's JSON Schema (committed as `docs/schemas/exactdocs.sources.schema.json`). Operators
+  only: the account's role must be `admin` (403 `forbidden` otherwise), signed in with a session
+  or an API token (the CLI and CI only have tokens).
 - **Re-importing a moved tag**: `POST /libraries/{owner}/{repo}/versions/reimport` (`{"ref"}`;
   the ref is in the body because a ref may hold slashes, so nothing could follow it in the path)
   is the confirmation a `tag_moved` asks for. The tag is checked against the remote again and a

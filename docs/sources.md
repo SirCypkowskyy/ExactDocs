@@ -30,6 +30,9 @@ sources-schema` regenerates it; a test fails when it drifts) and served at
 (VS Code's YAML extension, for one) complete and check the file. Point the modeline at a local copy
 or your instance's URL if you prefer.
 
+Only operators (accounts with the `admin` role) may plan or apply a sources file, with a session
+or an API token; anyone else gets 403 (CLI exit code 5).
+
 ## What the file says
 
 - `version: 1` and `libraries`, a list of at most 300 entries. Unknown keys are refused, so a typo

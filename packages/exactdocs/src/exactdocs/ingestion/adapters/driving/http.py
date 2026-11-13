@@ -3,7 +3,7 @@
 from collections.abc import Awaitable, Callable
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
 from exactdocs.ingestion.constants import SET_AUTO_SYNC_DESCRIPTION
 from exactdocs.ingestion.dtos import (
@@ -110,6 +110,7 @@ def build_router(
     plan_sources: PlanSources,
     apply_sources: ApplySources,
     require_session: Callable[[Request], Awaitable[object]],
+    require_operator: Callable[..., Awaitable[object]],
 ) -> APIRouter:
     """Expose adding a library, the repository checks and the job read side.
 
@@ -136,6 +137,8 @@ def build_router(
         plan_sources: Compares a sources file with the instance.
         apply_sources: Applies a sources file.
         require_session: Refuses (401) a request without a session cookie.
+        require_operator: Refuses (403) a caller that is not an operator; a session or an
+            API token may call (the CLI and CI only have tokens).
 
     Returns:
         The router, with the job, removal, manual-tag, settings and sources routes included.
@@ -143,7 +146,13 @@ def build_router(
     router = APIRouter(tags=["ingestion"])
     router.include_router(_manual_tags_router(tag_article))
     router.include_router(_settings_router(update_library_settings))
-    router.include_router(_sources_router(plan_sources=plan_sources, apply_sources=apply_sources))
+    router.include_router(
+        _sources_router(
+            plan_sources=plan_sources,
+            apply_sources=apply_sources,
+            require_operator=require_operator,
+        )
+    )
 
     @router.post("/repositories/check")
     async def check(command: CheckRepositoryCommand, request: Request) -> CheckedRepository:
@@ -758,17 +767,23 @@ def _settings_router(update_library_settings: UpdateLibrarySettings) -> APIRoute
     return router
 
 
-def _sources_router(*, plan_sources: PlanSources, apply_sources: ApplySources) -> APIRouter:
-    """Build the routes of the sources file (`exactdocs.sources.yaml`, TEAM-02).
+def _sources_router(
+    *,
+    plan_sources: PlanSources,
+    apply_sources: ApplySources,
+    require_operator: Callable[..., Awaitable[object]],
+) -> APIRouter:
+    """Build the routes of the sources file (`exactdocs.sources.yaml`, TEAM-02): operators only.
 
     Args:
         plan_sources: Compares a sources file with the instance.
         apply_sources: Applies it.
+        require_operator: Refuses (403) a caller that is not an operator.
 
     Returns:
         The router.
     """
-    router = APIRouter(tags=["ingestion"])
+    router = APIRouter(tags=["ingestion"], dependencies=[Depends(require_operator)])
 
     @router.get("/sources/schema", name="get_sources_schema")
     async def schema() -> dict[str, object]:

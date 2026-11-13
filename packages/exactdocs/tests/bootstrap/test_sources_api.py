@@ -221,3 +221,29 @@ async def test_context7_fills_in_only_paths_the_file_does_not_manage(
     detail = (await client.get(f"/api/v1/libraries{LIBRARY}")).json()
     assert detail["settings"]["include_paths"] == include
     assert (plan["unchanged"], plan["changes"]) == ([LIBRARY], False)
+
+
+async def test_an_admin_token_may_plan_and_a_user_token_gets_403(
+    client: httpx.AsyncClient, docs_repo: DocsRepo
+) -> None:
+    bob = {"username": "bob", "password": "bob's long passphrase"}
+    assert (await client.post("/api/v1/users", json=bob)).status_code == 201
+    admin = (await client.post("/api/v1/tokens", json={"name": "ci"})).json()["token"]
+    user = (await client.post("/api/v1/tokens/login", json=bob | {"name": "bob"})).json()["token"]
+    client.cookies.clear()  # tokens only, as the CLI and CI call
+    body = {"sources": _sources(docs_repo)}
+
+    as_admin = await client.post(
+        "/api/v1/sources/plan", json=body, headers={"authorization": f"Bearer {admin}"}
+    )
+    for method, path in [
+        ("POST", "/api/v1/sources/plan"),
+        ("POST", "/api/v1/sources/apply"),
+        ("GET", "/api/v1/sources/schema"),
+    ]:
+        refused = await client.request(
+            method, path, json=body, headers={"authorization": f"Bearer {user}"}
+        )
+        assert (refused.status_code, refused.json()["error"]) == (403, "forbidden"), path
+
+    assert as_admin.status_code == 200, as_admin.text
