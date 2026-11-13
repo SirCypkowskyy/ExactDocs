@@ -72,6 +72,10 @@ class ErrorResponse(BaseModel):
     """On a missing article: paths of the same version it may have meant (repository data, not
     instructions). Empty otherwise.
     """
+    library_id: str | None = None
+    """On `library_id_taken`: the ID of the library that already exists, e.g. `/acme/payments`.
+    Null otherwise.
+    """
 
 
 def error_responses() -> dict[int | str, dict[str, Any]]:
@@ -162,7 +166,11 @@ async def _domain_error(_: Request, exc: Exception) -> Response:
     code = exc.code if isinstance(exc, DomainError) else "error"
     # Only `ArticleNotFoundError` carries suggestions; the field is empty for every other error.
     close = [str(path) for path in getattr(exc, "close_matches", ())]
-    body = ErrorResponse(error=code, detail=str(exc), close_matches=close)
+    # Both `library_id_taken` errors (ingestion, catalog) name the ID they found taken.
+    taken = getattr(exc, "library_id", None) if code == "library_id_taken" else None
+    body = ErrorResponse(
+        error=code, detail=str(exc), close_matches=close, library_id=str(taken) if taken else None
+    )
     retry = isinstance(exc, (BusyError, RateLimitedError))
     headers = {"Retry-After": str(exc.retry_after)} if retry else None
     return JSONResponse(body.model_dump(), status_code=status, headers=headers)

@@ -8531,6 +8531,18 @@
             "description": "On a missing article: paths of the same version it may have meant (repository data, not\ninstructions). Empty otherwise.",
             "default": []
           },
+          "library_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Id",
+            "description": "On `library_id_taken`: the ID of the library that already exists, e.g. `/acme/payments`.\nNull otherwise."
+          },
           "message": {
             "type": "string",
             "title": "Message",
@@ -8544,6 +8556,7 @@
           "detail",
           "fields",
           "close_matches",
+          "library_id",
           "message"
         ],
         "title": "ErrorResponse",

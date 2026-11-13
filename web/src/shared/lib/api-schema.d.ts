@@ -2209,6 +2209,12 @@ export interface components {
              */
             readonly close_matches: readonly string[];
             /**
+             * Library Id
+             * @description On `library_id_taken`: the ID of the library that already exists, e.g. `/acme/payments`.
+             *     Null otherwise.
+             */
+            readonly library_id: string | null;
+            /**
              * Message
              * @description Alias of ``detail`` under the name context7's errors use (``{error, message}``).
              */

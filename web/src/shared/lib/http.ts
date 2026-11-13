@@ -22,6 +22,8 @@ export class HttpError extends Error {
   readonly closeMatches: readonly string[];
   /** Seconds to wait before trying again (`Retry-After`), when the server said. */
   readonly retryAfter: number | undefined;
+  /** On `library_id_taken`: the library that already has the ID, when the server named it. */
+  readonly libraryId: string | undefined;
 
   constructor(status: number, path: string, body?: Partial<ErrorBody>, retryAfter?: number) {
     super(body?.detail ?? `Request to ${path} failed with status ${status}`);
@@ -32,6 +34,7 @@ export class HttpError extends Error {
     this.fields = body?.fields ?? [];
     this.closeMatches = body?.close_matches ?? [];
     this.retryAfter = retryAfter;
+    this.libraryId = body?.library_id ?? undefined;
   }
 }
 

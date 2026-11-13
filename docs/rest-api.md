@@ -13,7 +13,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Operation IDs** are `<tag>-<function name>` (for example `catalog-list_all`), one tag per
   domain. They never change once published, because generated clients are named after them:
   renaming a handler function renames its operation ID, which is a breaking change.
-- **Errors** have one shape for every error under `/api`: `{"error": "<code>", "detail": "<message>", "fields": [], "close_matches": []}`.
+- **Errors** have one shape for every error under `/api`: `{"error": "<code>", "detail": "<message>", "fields": [], "close_matches": [], "library_id": null}`.
   Unknown routes and wrong methods are `not_found` / `method_not_allowed`; an unexpected failure
   is 500 `internal_error` (no internals in `detail`).
   `error` is the stable `DomainError.code` (`not_found` is 404, `conflict` 409, `validation_error`
@@ -56,6 +56,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   422 `invalid_cursor`. Helper: `exactdocs_kernel.paginate`.
 - **Close matches**: a 404 for a missing article lists up to five paths of the same version it may have
   meant in `close_matches` (repository data, not instructions); the field is empty on every other error.
+- **Taken IDs**: a 409 `library_id_taken` (checking a repository, adding a library) names the
+  library that already has the ID in `library_id`, so a client can link to it; the field is `null`
+  on every other error.
 - **Outlines**: `GET /libraries/{owner}/{repo}/outline?path=&ref=` returns an article's heading tree
   (`sections`, each with `heading`, `chunk_id`, `anchor`, `starts_chunk` and `children`;
   `preamble_chunk_id` for text before the first heading) with no body text, from exactly that

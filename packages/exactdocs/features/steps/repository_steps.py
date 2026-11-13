@@ -48,6 +48,11 @@ def step_taken(context: Context) -> None:
     assert "choose another library ID" in body["detail"]
 
 
+@then('the answer names the library "{library_id}"')
+def step_names_library(context: Context, library_id: str) -> None:
+    assert context.response.json()["library_id"] == library_id, context.response.text
+
+
 @then('the check fails with "{code}"')
 def step_fails(context: Context, code: str) -> None:
     assert context.response.status_code in {409, 422}, context.response.text
