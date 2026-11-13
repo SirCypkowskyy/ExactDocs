@@ -36,6 +36,7 @@ from exactdocs.ingestion.constants import (
     DEFAULT_CHUNKER,
     DEFAULT_INTERVAL_MINUTES,
     DEFAULT_KEEP_LAST,
+    DEFAULT_MAX_SECTION_CHARS,
     FLAT_HOSTS,
     GLOB_CHARS,
     HEADS,
@@ -1303,7 +1304,10 @@ class ChunkingConfig:
     longer than ``max_chars`` is cut again at its deeper headings, and sections shorter than
     ``min_chars`` are merged with the next one (the last with the one before) while the merged
     chunk stays within ``max_chars``: never inside a block, never with the text before the first
-    heading. ``None`` means no upper bound. ``chunker`` is one of ``CHUNKERS``.
+    heading. ``max_section_chars`` bounds every chunk the same way, and a section still longer
+    than it is split at its top-level blocks (#141): never inside a code fence, table or list, so
+    a single block longer than it stays whole. ``None`` means no upper bound. ``chunker`` is one
+    of ``CHUNKERS``.
     """
 
     split_depth: int = MAX_HEADING_LEVEL
@@ -1312,6 +1316,9 @@ class ChunkingConfig:
     """Shorter chunks are merged; 0 merges none."""
     max_chars: int | None = None
     """Longer chunks are cut again at deeper headings; ``None``: no bound."""
+    max_section_chars: int | None = DEFAULT_MAX_SECTION_CHARS
+    """Longer chunks are cut again at deeper headings, then at top-level blocks; ``None``: no
+    bound."""
     chunker: str = DEFAULT_CHUNKER
     """Which chunker cuts."""
 
@@ -1329,6 +1336,11 @@ class ChunkingConfig:
             raise InvalidChunkingConfigError(reason)
         if self.max_chars is not None and not 1 <= self.max_chars <= MAX_CHUNK_CHARS:
             reason = f"max_chars must be between 1 and {MAX_CHUNK_CHARS}"
+            raise InvalidChunkingConfigError(reason)
+        if self.max_section_chars is not None and not (
+            1 <= self.max_section_chars <= MAX_CHUNK_CHARS
+        ):
+            reason = f"max_section_chars must be between 1 and {MAX_CHUNK_CHARS}"
             raise InvalidChunkingConfigError(reason)
         if self.max_chars is not None and self.max_chars < self.min_chars:
             reason = "max_chars must not be smaller than min_chars"
@@ -1350,6 +1362,9 @@ def chunking_config_hash(config: ChunkingConfig, engine: str = "") -> str:
     names ``MERGED_HEADINGS_VERSION``: its chunks record those headings, and a set cut before
     they did is cut again instead of reused. The others cut at every heading (``max_chars`` only
     cuts whole sections), so their chunk sets already tell every heading and keep their hash.
+    ``max_section_chars`` is named whenever it bounds the chunks (#141), so the default config's
+    hash changed with it and changes again with ``DEFAULT_MAX_SECTION_CHARS``; a config without
+    it cuts as before #141 and keeps the hash it had.
 
     Args:
         config: The chunking settings.
@@ -1364,6 +1379,8 @@ def chunking_config_hash(config: ChunkingConfig, engine: str = "") -> str:
         fields.extend(extra)
     if config.split_depth < MAX_HEADING_LEVEL or config.min_chars:  # it can merge headings
         fields.append(f"headings-{MERGED_HEADINGS_VERSION}")
+    if config.max_section_chars is not None:
+        fields.append(f"sections-{config.max_section_chars}")
     payload = json.dumps(fields, separators=(",", ":"))
     return hashlib.sha256(payload.encode()).hexdigest()[:32]
 

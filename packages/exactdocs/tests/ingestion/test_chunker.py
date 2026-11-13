@@ -30,8 +30,16 @@ CONFIGS = [
     ChunkingConfig(split_depth=1, max_chars=200),
     ChunkingConfig(split_depth=2, min_chars=50, max_chars=120),
     ChunkingConfig(min_chars=models.MAX_CHUNK_CHARS),
+    ChunkingConfig(max_section_chars=None),
+    ChunkingConfig(max_section_chars=1),
+    ChunkingConfig(max_section_chars=120),
+    ChunkingConfig(min_chars=100, max_section_chars=150),
+    ChunkingConfig(split_depth=2, max_chars=300, max_section_chars=200),
 ]
-CONFIG_IDS = [f"h{c.split_depth}-min{c.min_chars}-max{c.max_chars}-{c.chunker}" for c in CONFIGS]
+CONFIG_IDS = [
+    f"h{c.split_depth}-min{c.min_chars}-max{c.max_chars}-section{c.max_section_chars}-{c.chunker}"
+    for c in CONFIGS
+]
 TESTS = Path(__file__).parents[1]
 ARTICLES = sorted(
     [
@@ -419,6 +427,8 @@ def test_a_long_section_without_deeper_headings_stays_whole() -> None:
         {"max_chars": 0},
         {"min_chars": 10, "max_chars": 9},
         {"max_chars": models.MAX_CHUNK_CHARS + 1},
+        {"max_section_chars": 0},
+        {"max_section_chars": models.MAX_CHUNK_CHARS + 1},
         {"chunker": "chonkie"},
     ],
 )
@@ -427,18 +437,37 @@ def test_chunking_settings_out_of_range_are_a_domain_error(kwargs: dict[str, Any
         ChunkingConfig(**kwargs)
 
 
-def test_the_default_config_hash_is_the_one_stored_before_sizes_existed() -> None:
-    engine = f"markdown-it-py {markdown_it.__version__}"
+def _hash(*fields: object) -> str:
+    """The config hash of a payload that starts with the parser and chunker versions."""
     payload = json.dumps(
-        [models.PARSER_VERSION, models.CHUNKER_VERSION, 6, engine], separators=(",", ":")
+        [models.PARSER_VERSION, models.CHUNKER_VERSION, *fields], separators=(",", ":")
     )
+    return hashlib.sha256(payload.encode()).hexdigest()[:32]
 
-    assert MarkdownChunker().config_hash == hashlib.sha256(payload.encode()).hexdigest()[:32]
+
+def test_without_a_section_bound_the_default_config_keeps_the_hash_from_before_sizes_existed():
+    engine = f"markdown-it-py {markdown_it.__version__}"
+    unbounded = MarkdownChunker(ChunkingConfig(max_section_chars=None))
+
+    assert unbounded.config_hash == _hash(6, engine)
+
+
+def test_the_default_config_hash_names_the_default_section_bound() -> None:
+    engine = f"markdown-it-py {markdown_it.__version__}"
+    default = f"sections-{models.DEFAULT_MAX_SECTION_CHARS}"
+
+    assert MarkdownChunker().config_hash == _hash(6, engine, default)
 
 
 @pytest.mark.parametrize(
     "config",
-    [ChunkingConfig(min_chars=1), ChunkingConfig(max_chars=500), ChunkingConfig(split_depth=3)],
+    [
+        ChunkingConfig(min_chars=1),
+        ChunkingConfig(max_chars=500),
+        ChunkingConfig(split_depth=3),
+        ChunkingConfig(max_section_chars=4000),
+        ChunkingConfig(max_section_chars=None),
+    ],
 )
 def test_every_setting_changes_the_config_hash(config: ChunkingConfig) -> None:
     assert MarkdownChunker().configured(config).config_hash != MarkdownChunker().config_hash
@@ -515,11 +544,16 @@ def test_every_setting_records_every_heading_the_default_one_cuts_at(
 
     every = [(c.heading_path, c.anchor) for c in default if c.heading_path]
     assert [(h[0], h[1]) for r in _records(chunks) for h in r] == every
+    earlier: set[tuple[tuple[str, ...], str]] = set()  # headings recorded by the chunks so far
     for chunk, records in zip(chunks, _records(chunks), strict=True):
         starting = [(p, a) for p, a, starts in records if starts]
-        expected = [(chunk.heading_path, chunk.anchor)] if chunk.heading_path else []
-        assert starting == expected, records
-        assert not records or records[0][2] == bool(chunk.heading_path)
+        if chunk.heading_path and not starting:  # a part after the first of a split section
+            assert (chunk.heading_path, chunk.anchor) in earlier, records
+        else:
+            expected = [(chunk.heading_path, chunk.anchor)] if chunk.heading_path else []
+            assert starting == expected, records
+            assert not records or records[0][2] == bool(chunk.heading_path)
+        earlier |= {(p, a) for p, a, _ in records}
 
 
 def test_a_setting_that_can_merge_headings_changes_the_hash_it_had_before_heading_records() -> None:
@@ -539,13 +573,10 @@ def test_a_setting_that_cannot_merge_headings_keeps_the_hash_it_had_before_headi
     max_chars: int,
 ) -> None:
     engine = f"markdown-it-py {markdown_it.__version__}"
-    before = json.dumps(
-        [models.PARSER_VERSION, models.CHUNKER_VERSION, 6, engine, 0, max_chars, "markdown"],
-        separators=(",", ":"),
-    )
+    config = ChunkingConfig(max_chars=max_chars, max_section_chars=None)
 
-    hashed = MarkdownChunker().configured(ChunkingConfig(max_chars=max_chars)).config_hash
-    assert hashed == hashlib.sha256(before.encode()).hexdigest()[:32]
+    hashed = MarkdownChunker().configured(config).config_hash
+    assert hashed == _hash(6, engine, 0, max_chars, "markdown")
 
 
 @pytest.mark.parametrize("max_chars", [1, 50, 500])
@@ -554,3 +585,159 @@ def test_max_chars_alone_never_merges_headings(path: Path, max_chars: int) -> No
     chunks = MarkdownChunker(ChunkingConfig(max_chars=max_chars)).chunk(_parse(path))
 
     assert all(h.starts_chunk for c in chunks for h in c.headings or ())
+
+
+# ------------------------------------------------------------------ sections split at blocks (#141)
+
+
+def _paragraphs(count: int, width: int = 40) -> str:
+    """``count`` numbered paragraphs of ``width`` characters each, plus their blank line."""
+    return "".join(f"{i:04d} {'p' * (width - 6)}\n\n" for i in range(count))
+
+
+def _chunks(config: ChunkingConfig, body: str) -> Sequence[ArticleChunk]:
+    return MarkdownChunker(config).chunk(parse_article("a.md", body))
+
+
+def test_a_section_longer_than_the_bound_is_split_at_its_blocks_within_it() -> None:
+    body = "# A\n\n" + _paragraphs(10) + "# B\n\nb\n"
+    chunks = _chunks(ChunkingConfig(max_section_chars=100), body)
+    parts = [c for c in chunks if c.heading_path == ("A",)]
+
+    assert len(parts) > 1
+    assert all(len(c.content) <= 100 for c in parts)
+    assert "".join(c.content for c in parts) == "# A\n\n" + _paragraphs(10)
+    assert all(c.content.startswith(("# A\n", "0")) for c in parts)  # each starts with a block
+    assert [c.occurrence_index for c in parts] == list(range(len(parts)))
+    assert {c.anchor for c in parts} == {"a"}
+    assert chunks[-1].heading_path == ("B",)
+    assert (chunks[-1].occurrence_index, chunks[-1].content) == (0, "# B\n\nb\n")
+    _check_never_split(MarkdownChunker(ChunkingConfig(max_section_chars=100)), body)
+
+
+def test_parts_fill_up_to_the_bound() -> None:
+    body = "# A\n\n" + _paragraphs(9)  # the heading block is 5 characters, each paragraph 41
+    chunks = _chunks(ChunkingConfig(max_section_chars=100), body)
+
+    assert [len(c.content) for c in chunks] == [5 + 41 * 2, 41 * 2, 41 * 2, 41 * 2, 41]
+
+
+def test_a_code_fence_longer_than_the_bound_is_never_split() -> None:
+    fence = "```python\n" + "".join(f"line_{i} = {i}\n\n" for i in range(50)) + "```\n"
+    body = "# A\n\nBefore.\n\n" + fence + "\nAfter.\n"
+    chunks = _chunks(ChunkingConfig(max_section_chars=60), body)
+
+    holding = [c for c in chunks if "```" in c.content]
+    assert len(holding) == 1
+    assert holding[0].content == fence + "\n"  # the block alone, longer than the bound
+    assert holding[0].code_languages == ("python",)
+    assert holding[0].heading_path == ("A",)
+    assert [c.code_languages for c in chunks if c is not holding[0]] == [(), ()]
+    assert "".join(c.content for c in chunks) == body
+
+
+def test_a_table_longer_than_the_bound_is_never_split() -> None:
+    table = "| key | value |\n|-----|-------|\n" + "".join(f"| k{i} | v{i} |\n" for i in range(40))
+    body = "# A\n\nIntro.\n\n" + table + "\nOutro.\n"
+    chunks = _chunks(ChunkingConfig(max_section_chars=50), body)
+
+    (holding,) = [c for c in chunks if "| key |" in c.content]
+    assert table in holding.content
+    assert holding.content.count("|-----|") == 1
+    assert "| k39 | v39 |" in holding.content
+    _check_never_split(MarkdownChunker(ChunkingConfig(max_section_chars=50)), body)
+
+
+def test_a_single_block_longer_than_the_bound_stays_whole() -> None:
+    body = "# A\n\n" + "word " * 500 + "\n"
+    chunks = _chunks(ChunkingConfig(max_section_chars=100), body)
+
+    assert [c.content for c in chunks] == ["# A\n\n", "word " * 500 + "\n"]
+    assert [c.occurrence_index for c in chunks] == [0, 1]
+
+
+def test_nested_blocks_split_only_between_top_level_ones() -> None:
+    items = "".join(f"- item {i}\n\n  more of item {i}\n\n" for i in range(20))
+    quote = "".join(f"> quoted {i}\n>\n" for i in range(20))
+    body = "# A\n\n" + items + "Between.\n\n" + quote
+    chunks = _chunks(ChunkingConfig(max_section_chars=40), body)
+
+    assert any(c.content == items for c in chunks)  # the list is one top-level block
+    assert any(c.content.startswith("> quoted 0") and "> quoted 19" in c.content for c in chunks)
+
+
+def test_only_the_first_part_records_the_heading() -> None:
+    body = "# A\n\n" + _paragraphs(10) + "## B\n\nb\n"
+    chunks = _chunks(ChunkingConfig(max_section_chars=100), body)
+
+    records = _records(chunks)
+    assert records[0] == [(("A",), "a", True)]
+    assert all(r == [] for r in records[1:-1])
+    assert records[-1] == [(("A", "B"), "b", True)]
+
+
+def test_the_ids_of_parts_are_unique_and_the_same_on_every_run() -> None:
+    body = "# A\n\n" + _paragraphs(30) + "# A\n\n" + _paragraphs(30) + "# A\n\nlast\n"
+    config = ChunkingConfig(max_section_chars=200)
+
+    def identities() -> list[tuple[tuple[str, ...], int, str]]:
+        """What a chunk ID is made of, for each chunk."""
+        return [(c.heading_path, c.occurrence_index, c.content_hash) for c in _chunks(config, body)]
+
+    first = identities()
+    assert first == identities()
+    assert len({(path, occurrence) for path, occurrence, _ in first}) == len(first)
+    assert [o for _, o, _ in first] == list(range(len(first)))
+    # The repeated heading takes the occurrence after the parts of the one before it.
+    chunks = _chunks(config, body)
+    starts = [c.occurrence_index for c in chunks if c.content.startswith("# A\n")]
+    assert starts[0] == 0
+    assert starts[1] > 1
+    assert starts[2] == len(chunks) - 1
+
+
+def test_the_text_before_the_first_heading_is_split_but_never_merged() -> None:
+    body = "\n\n" + _paragraphs(10) + "# A\n\na\n"
+    chunks = _chunks(ChunkingConfig(min_chars=90, max_section_chars=100), body)
+
+    preamble = [c for c in chunks if not c.heading_path]
+    assert len(preamble) > 1
+    assert preamble[0].content.startswith("\n\n0000 ")  # the blank lines ride with the first
+    assert [c.occurrence_index for c in preamble] == list(range(len(preamble)))
+    assert "".join(c.content for c in preamble) == "\n\n" + _paragraphs(10)
+    assert chunks[-1].heading_path == ("A",)
+
+
+def test_deeper_headings_cut_a_group_longer_than_the_bound_before_its_blocks_do() -> None:
+    body = "# A\n\n" + _paragraphs(2) + "## B\n\n" + _paragraphs(2) + "## C\n\nc\n"
+    chunks = _chunks(ChunkingConfig(split_depth=1, max_section_chars=100), body)
+
+    assert [c.heading_path for c in chunks] == [("A",), ("A", "B")]
+    assert all(
+        h.starts_chunk == (h.heading_path == c.heading_path)
+        for c in chunks
+        for h in c.headings or ()
+    )
+
+
+def test_merging_never_makes_a_chunk_longer_than_the_section_bound() -> None:
+    chunks = _chunks(ChunkingConfig(min_chars=20, max_section_chars=40), TINY)
+
+    assert [c.heading_path for c in chunks] == [("A",), ("A", "C"), ("A", "D")]
+    assert all(len(c.content) <= 40 or c.heading_path == ("A", "C") for c in chunks)
+
+
+def test_the_default_bound_splits_a_huge_section_and_none_keeps_it_whole() -> None:
+    body = "# A\n\n" + _paragraphs(1000, width=200)  # about 200,000 characters
+
+    default = _chunks(ChunkingConfig(), body)
+    assert len(default) > 1
+    assert all(len(c.content) <= models.DEFAULT_MAX_SECTION_CHARS for c in default)
+    assert {c.heading_path for c in default} == {("A",)}
+    assert [c.content for c in _chunks(ChunkingConfig(max_section_chars=None), body)] == [body]
+
+
+def test_a_section_within_the_bound_is_not_split() -> None:
+    body = "# A\n\n" + _paragraphs(3)
+
+    assert [c.content for c in _chunks(ChunkingConfig(max_section_chars=len(body)), body)] == [body]

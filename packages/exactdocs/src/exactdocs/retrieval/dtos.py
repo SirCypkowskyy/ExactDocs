@@ -423,7 +423,8 @@ class ChunkIn(_Dto):
     """Languages of the chunk's fenced code blocks."""
     headings: list[ChunkHeadingIn] | None = None
     """Every heading the chunk holds, in order, the one it is named after first; null: not
-    recorded (a chunk set stored before heading records existed)."""
+    recorded (a chunk set stored before heading records existed). A part after the first of a
+    section split at its blocks holds no heading of its own, so none of its records starts it."""
 
     @model_validator(mode="after")
     def _headings_match_the_chunk(self) -> Self:
@@ -433,15 +434,15 @@ class ChunkIn(_Dto):
             The chunk unchanged.
 
         Raises:
-            ValueError: A record other than the first starts the chunk, or the first one is not
-                the chunk's own heading.
+            ValueError: A record other than the first starts the chunk, or the one that starts
+                it is not the chunk's own heading. None starting it is a continued part.
         """
         if self.headings is None:
             return self
-        starting = [h for h in self.headings if h.starts_chunk]
-        own = [(self.heading_path, self.anchor)] if self.heading_path else []
-        if [(h.heading_path, h.anchor) for h in starting] != own or (
-            starting and not self.headings[0].starts_chunk
+        starting = [(h.heading_path, h.anchor) for h in self.headings if h.starts_chunk]
+        own = (self.heading_path, self.anchor)
+        if starting and (
+            not self.heading_path or starting != [own] or not self.headings[0].starts_chunk
         ):
             message = "the first heading record, and only it, is the chunk's own heading"
             raise ValueError(message)

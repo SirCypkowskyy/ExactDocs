@@ -873,8 +873,8 @@ that last step, which is one transaction in the catalog.
   retried by that job.
 - **Per-library chunking (E4-05).** A library's settings hold its chunking (`split_level`,
   `min_chars`, `max_chars`, `chunker`; `ChunkingConfig`), and `Chunker.configured(config)` gives
-  the chunker an import cuts with; the config hash keys its chunk sets (the default config keeps
-  the hash it had before the sizes existed). Editing it queues a `rechunk` job: per version, the
+  the chunker an import cuts with; the config hash keys its chunk sets. Editing it queues a
+  `rechunk` job: per version, the
   catalog's `CopyManifest` copies the active manifest into a pending one in one transaction
   (entries with their tags, images, renames; `INSERT ... SELECT`) and returns the stored text;
   ingestion re-derives the imported tags (`SetImportedTags` on the copy), takes the chunk sets
@@ -905,10 +905,25 @@ that last step, which is one transaction in the catalog.
   chunks stored before) and travel back through `GetChunkSets`, but are not part of the set's
   digest (a set stored without them and one cut again with them share a key; the first write
   wins). A config that cannot merge headings (split level h6 and no `min_chars`; `max_chars` only
-  cuts whole sections) keeps its hash; the others' hash names `MERGED_HEADINGS_VERSION`, so their
+  cuts whole sections) kept its hash (until #141 added the section bound, below); the others' hash names `MERGED_HEADINGS_VERSION`, so their
   chunk sets are cut again, with the records, when a version is imported at a new commit (a
   re-sync of an unmoved version re-cuts nothing) or when the library's chunking is changed, which
   queues a `rechunk` of every version. Until then their outlines list each chunk's first heading.
+- **Long sections (#141).** `ChunkingConfig.max_section_chars` (default 8,000 characters,
+  `DEFAULT_MAX_SECTION_CHARS`: about 2,000 tokens at retrieval's `CHARS_PER_TOKEN`, the same as
+  what a reranker and the search agent are given of a chunk) bounds every chunk: groups of
+  sections are cut at deeper headings and merges stop there, as with `max_chars`, and a section
+  still longer is split between its top-level blocks (markdown-it tokens at level 0), parts as
+  long as fit, so a fence, table or list is never cut and a single longer block is a chunk of its
+  own. The parts keep the section's heading path and anchor and take the next occurrence indexes,
+  so chunk IDs stay unique and are the same on every run; only the first records the heading
+  (`ChunkIn` accepts a headed chunk none of whose records starts it). The bound is in the config
+  hash whenever it is set, so the default config's hash changed with #141: on upgrade, nothing is
+  re-cut at once and stored versions keep serving their chunks, but a version imported at a new
+  commit, a re-import, or a `rechunk` (a chunking change) cuts every article again instead of
+  reusing chunk sets, and libraries with embeddings embed the new chunks. A config without the
+  bound (`None`) cuts as before and keeps its hash. The chunker runs in `asyncio.to_thread` in
+  both the import and the re-chunk (`_cut`).
 - **Reuse.** Content is keyed by git blob SHA and the parser version, chunk sets by blob SHA and
   the chunking config, so a blob that an earlier import chunked is not chunked again. The
   stored chunks are read back through retrieval's `GetChunkSets`. Parsing is skipped too (#164)

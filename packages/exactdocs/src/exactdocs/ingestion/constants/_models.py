@@ -124,7 +124,15 @@ CHUNKERS: Final[frozenset[str]] = frozenset({DEFAULT_CHUNKER})
 dropped (#27: its Markdown recipe needs the Hugging Face Hub and the network).
 """
 MAX_CHUNK_CHARS: Final[int] = 1_000_000
-"""Upper bound of ``min_chars`` and ``max_chars``: bigger is no bound at all (a whole article)."""
+"""Upper bound of ``min_chars``, ``max_chars`` and ``max_section_chars``: bigger is no bound at
+all (a whole article)."""
+DEFAULT_MAX_SECTION_CHARS: Final[int] = 8_000
+"""Longest chunk the chunking makes by default, in characters, unless a single block is longer
+(#141). About 2,000 tokens at retrieval's estimate of 4 characters per token, and the most of a
+chunk retrieval sends a reranker or gives the search agent (``MAX_RERANK_DOCUMENT_CHARS``,
+``AGENT_CHUNK_CHARS``), so neither cuts a default chunk. Dense text (1.5 characters per token)
+stays within hosted embedding models' input (8,191 tokens for OpenAI's). It is in the config hash,
+so changing it cuts every library again at its next import or re-chunk."""
 _SHA_PREFIX: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{7,64}")
 """An abbreviated or full commit SHA."""
 ARTICLE_SUFFIXES: Final[tuple[str, ...]] = (".md", ".mdx")

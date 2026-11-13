@@ -448,7 +448,9 @@ Each library chooses its split level (`h1`...`h6`) and chunk sizes (`max_chars` 
 sections again at deeper headings, `min_chars` merges tiny ones) with
 `PUT /api/v1/libraries/{owner}/{repo}/settings` (left out, the stored chunking is kept); every
 version is then re-chunked from the stored text, without fetching, and keeps serving its old
-chunks until the new ones are in place.
+chunks until the new ones are in place. Whatever the settings, a section longer than 8,000
+characters (about 2,000 tokens) is split between its top-level blocks, never inside a code block
+or table, into parts that keep its heading path.
 
 ## Configuration
 

@@ -2,12 +2,14 @@
 
 Chonkie (named in the issue) was not used: its Markdown recipe downloads rules from the Hugging
 Face Hub, and its ``MarkdownChef`` mis-detects fences inside block quotes. Chunks are cut only at
-top-level headings, so a fence, table or any other block can never be split.
+top-level headings, or between top-level blocks of a section too long for ``max_section_chars``,
+so a fence, table or any other block can never be split.
 """
 
 import hashlib
+import itertools
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import markdown_it
 from markdown_it import MarkdownIt
@@ -36,10 +38,19 @@ class _Section:
     """First line."""
     end: int
     """One past the last line."""
-    languages: list[str] = field(default_factory=list)
-    """Languages of the fenced code blocks in it, in order of first appearance."""
+    fences: list[tuple[int, str]] = field(default_factory=list)
+    """First line and language of each fenced code block that names one, in order."""
+    blocks: list[int] = field(default_factory=list)
+    """First line of each top-level block in it, in order (the heading first)."""
     size: int = 0
     """Characters."""
+    continued: bool = False
+    """True for a part after the first of a section split at its blocks: it has no heading line."""
+
+    @property
+    def languages(self) -> list[str]:
+        """Languages of the fenced code blocks in its lines, in order, repeats included."""
+        return [lang for line, lang in self.fences if self.start <= line < self.end]
 
 
 @dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- grows as lines come
@@ -70,12 +81,17 @@ class MarkdownChunker:
     """The default ``Chunker`` (``markdown``): cuts at top-level headings, see ``ChunkingConfig``.
 
     Every top-level heading starts a section. Sections whose heading is deeper than the split
-    level join the one before (their parent); a chunk longer than ``max_chars`` is cut again at
-    the sections it is made of; then chunks shorter than ``min_chars`` are merged with the next
-    (the last with the one before) while the result stays within ``max_chars``. The text before
-    the first heading is never merged. A chunk is named after its first heading: a cut below the
-    split level names the deeper heading, a merge keeps the first one's name. Each chunk records
-    every heading it holds (``ArticleChunk.headings``), the one it is named after first.
+    level join the one before (their parent); a chunk longer than ``max_chars`` or
+    ``max_section_chars`` is cut again at the sections it is made of; a section still longer than
+    ``max_section_chars`` is split at its top-level blocks into parts as long as fit (a block
+    longer than it is a part of its own); then chunks shorter than ``min_chars`` are merged with
+    the next (the last with the one before) while the result stays within both bounds. The text
+    before the first heading is never merged. A chunk is named after its first heading: a cut
+    below the split level names the deeper heading, a merge keeps the first one's name, and every
+    part of a split section keeps the section's heading path and anchor, the parts after the first
+    taking the next occurrence indexes. Each chunk records every heading it holds
+    (``ArticleChunk.headings``), the one it is named after first; a part after the first holds
+    none of its own.
     """
 
     def __init__(self, config: ChunkingConfig | None = None) -> None:
@@ -125,12 +141,13 @@ class MarkdownChunker:
         if any(p.startswith("malformed front matter") for p in article.problems):
             skip = len(_LINE.findall(body[: models.malformed_front_matter_length(body)]))
         sections = _sections(_markdown.parse(body), len(lines), skip)
+        offsets = list(itertools.accumulate((len(line) for line in lines), initial=0))
         for section in sections:
-            section.size = sum(len(line) for line in lines[section.start : section.end])
+            section.size = offsets[section.end] - offsets[section.start]
         seen: dict[tuple[str, ...], int] = {}
         chunks = []
         blank = ""  # blank text before the first heading rides along with that heading's chunk
-        for piece in self._pieces(sections):
+        for piece in self._pieces(sections, offsets):
             content = blank + "".join(lines[piece.first.start : piece.sections[-1].end])
             blank = ""
             if not content.strip():
@@ -155,6 +172,7 @@ class MarkdownChunker:
                         )
                         for s in piece.sections
                         if s.level  # the text before the first heading has none
+                        and not s.continued  # nor a part after the first of a split section
                     ),
                 )
             )
@@ -172,16 +190,18 @@ class MarkdownChunker:
             )
         return tuple(chunks)
 
-    def _pieces(self, sections: list[_Section]) -> list[_Piece]:
+    def _pieces(self, sections: list[_Section], offsets: list[int]) -> list[_Piece]:
         """Group the sections by split level, cut what is too long, merge what is too short.
 
         Args:
             sections: Every top-level section of the body, in order.
+            offsets: Characters before each line of the body, and the body's length last.
 
         Returns:
             The pieces that become chunks, in order.
         """
         config = self._config
+        limit = _bound(config.max_chars, config.max_section_chars)
         grouped: list[_Piece] = []
         for section in sections:
             if grouped and section.level > config.split_depth:
@@ -190,16 +210,25 @@ class MarkdownChunker:
                 grouped.append(_Piece(sections=[section], size=section.size))
         pieces: list[_Piece] = []
         for piece in grouped:
-            if config.max_chars is None or piece.size <= config.max_chars:
+            if limit is None or piece.size <= limit:
                 pieces.append(piece)
                 continue
             cut: list[_Piece] = []
             for section in piece.sections:
-                if cut and cut[-1].size + section.size <= config.max_chars:
+                if cut and cut[-1].size + section.size <= limit:
                     cut[-1].add(_Piece(sections=[section], size=section.size))
                 else:
                     cut.append(_Piece(sections=[section], size=section.size))
             pieces.extend(cut)
+        ceiling = config.max_section_chars
+        if ceiling is not None:  # a piece still too long is one section: split it at its blocks
+            pieces = [
+                part
+                for piece in pieces
+                for part in (
+                    _parts(piece.first, ceiling, offsets) if piece.size > ceiling else [piece]
+                )
+            ]
         return self._merged(pieces) if config.min_chars else pieces
 
     def _merged(self, pieces: list[_Piece]) -> list[_Piece]:
@@ -212,17 +241,17 @@ class MarkdownChunker:
             The pieces after merging, in order.
         """
         config = self._config
-        limit = config.max_chars
+        limit = _bound(config.max_chars, config.max_section_chars)
 
         def fits(a: _Piece, b: _Piece) -> bool:
-            """Tell whether two pieces together stay within ``max_chars``.
+            """Tell whether two pieces together stay within ``max_chars`` and ``max_section_chars``.
 
             Args:
                 a: The first piece.
                 b: The piece after it.
 
             Returns:
-                True when there is no ``max_chars`` or their sizes add up to at most it.
+                True when there is no bound or their sizes add up to at most the smaller one.
             """
             return limit is None or a.size + b.size <= limit
 
@@ -245,6 +274,66 @@ class MarkdownChunker:
         return merged
 
 
+def _bound(*limits: int | None) -> int | None:
+    """Return the smallest of the given size bounds.
+
+    Args:
+        *limits: Bounds in characters; ``None`` is no bound.
+
+    Returns:
+        The smallest bound, or ``None`` when none is set.
+    """
+    return min((limit for limit in limits if limit is not None), default=None)
+
+
+def _parts(section: _Section, ceiling: int, offsets: list[int]) -> list[_Piece]:
+    """Split a section at its top-level blocks into the fewest parts within ``ceiling``, in order.
+
+    Each part takes the blocks that follow while they fit; a block longer than ``ceiling`` is a
+    part of its own. The blank lines after a block stay with it, and the lines before the first
+    block (blank) with the first part, so every part starts with a block.
+
+    Args:
+        section: A section longer than ``ceiling``.
+        ceiling: The most characters a part may hold.
+        offsets: Characters before each line of the body, and the body's length last.
+
+    Returns:
+        One piece per part; the parts after the first are marked ``continued``.
+    """
+    inside = [line for line in section.blocks if section.start <= line < section.end]
+    cuts = [*inside[1:], section.end]  # never before the first block: that part would be blank
+    parts: list[_Piece] = []
+    start = end = section.start
+    for cut in cuts:
+        if end > start and offsets[cut] - offsets[start] > ceiling:
+            parts.append(_part(section, start, end, offsets, continued=bool(parts)))
+            start = end
+        end = cut
+    parts.append(_part(section, start, end, offsets, continued=bool(parts)))
+    return parts
+
+
+def _part(
+    section: _Section, start: int, end: int, offsets: list[int], *, continued: bool
+) -> _Piece:
+    """Make the piece of one part of a split section.
+
+    Args:
+        section: The section split.
+        start: The part's first line.
+        end: One past its last line.
+        offsets: Characters before each line of the body, and the body's length last.
+        continued: Whether it is a part after the first (it has no heading line then).
+
+    Returns:
+        The piece, named after the section.
+    """
+    size = offsets[end] - offsets[start]
+    part = replace(section, start=start, end=end, size=size, continued=continued)
+    return _Piece(sections=[part], size=size)
+
+
 def _sections(tokens: list[Token], line_count: int, skip: int) -> list[_Section]:
     """Cut the body at every top-level heading; each section knows its full heading path.
 
@@ -260,10 +349,13 @@ def _sections(tokens: list[Token], line_count: int, skip: int) -> list[_Section]
     stack: list[tuple[int, str]] = []
     anchors: set[str] = set()
     for i, token in enumerate(tokens):
+        opens = token.level == 0 and token.nesting >= 0 and token.type != "heading_open"
+        if opens and token.map and token.map[0] >= skip:
+            sections[-1].blocks.append(token.map[0])  # a top-level block (a heading: below)
         if token.type == "fence" and token.map and token.map[0] >= skip:
             match = _LANGUAGE.search(token.info.split(maxsplit=1)[0]) if token.info else None
-            if match and match[0] not in sections[-1].languages:
-                sections[-1].languages.append(match[0])
+            if match:
+                sections[-1].fences.append((token.map[0], match[0]))
         elif token.type == "heading_open" and token.map and token.map[0] >= skip:
             text = _plain(tokens[i + 1])
             anchor = _anchor(text, anchors)  # every heading takes a slug, as on GitHub
@@ -279,6 +371,7 @@ def _sections(tokens: list[Token], line_count: int, skip: int) -> list[_Section]
                     anchor=anchor,
                     start=token.map[0],
                     end=line_count,
+                    blocks=[token.map[0]],
                 )
             )
     return sections

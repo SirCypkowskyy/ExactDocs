@@ -128,8 +128,14 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   stays within `max_chars`, and the text before the first heading is never merged (a merged
   chunk keeps the heading path and anchor of its first section, so a hit in a later section of
   it links to that first heading); `max_chars`
-  must not be smaller than `min_chars` (both at most 1,000,000). `markdown` (markdown-it-py) is
-  the only chunker. Every version is then re-processed by **one** job, at the commit it serves (a
+  must not be smaller than `min_chars` (both at most 1,000,000). Whatever the settings, a chunk
+  is at most 8,000 characters (about 2,000 tokens; `max_section_chars` in `ChunkingConfig`, not
+  yet a setting): a longer group of sections is cut again at its deeper headings and merges stop
+  there, and a section still longer is split between its top-level blocks (never inside a code
+  block, table or list, so only a single block longer than that makes a longer chunk); every part
+  keeps the section's heading path and anchor, the parts after the first take the next
+  occurrence indexes, and only the first records the heading in the outline. `markdown`
+  (markdown-it-py) is the only chunker. Every version is then re-processed by **one** job, at the commit it serves (a
   branch is not synced): changed paths queue a `reprocess` job that fetches each version again
   and re-imports it (unchanged blobs reuse their chunks); a changed chunking (paths unchanged)
   queues a `rechunk` job that copies what each version serves into a new manifest, re-derives

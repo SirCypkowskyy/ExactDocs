@@ -3,7 +3,7 @@
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from exactdocs.retrieval.adapters.driving.http import C7Library, LibraryRetrievalIn
 from exactdocs.retrieval.constants import (
@@ -18,6 +18,8 @@ from exactdocs.retrieval.constants import (
     QUERY_HITS_CAP,
 )
 from exactdocs.retrieval.dtos import (
+    ChunkHeadingIn,
+    ChunkIn,
     ChunkOut,
     EmbeddingEstimateOut,
     LibraryMatchOut,
@@ -86,3 +88,41 @@ def test_a_heading_path_description_reads_as_one_line(model: type[BaseModel]) ->
 
     assert "\n" not in description
     assert description.endswith("empty before the first heading.")
+
+
+def _chunk(heading_path: list[str], headings: list[tuple[list[str], str, bool]]) -> ChunkIn:
+    return ChunkIn(
+        heading_path=heading_path,
+        occurrence_index=1,
+        content="more text\n",
+        content_hash="h",
+        anchor="guide" if heading_path else "",
+        headings=[ChunkHeadingIn(heading_path=p, anchor=a, starts_chunk=s) for p, a, s in headings],
+    )
+
+
+@pytest.mark.parametrize(
+    "headings",
+    [[], [(["Guide", "Install"], "install", False)]],
+    ids=["holding-none", "holding-a-merged-heading"],
+)
+def test_a_part_after_the_first_of_a_split_section_needs_no_heading_record_of_its_own(
+    headings: list[tuple[list[str], str, bool]],
+) -> None:
+    assert _chunk(["Guide"], headings).heading_path == ["Guide"]
+
+
+@pytest.mark.parametrize(
+    ("heading_path", "headings"),
+    [
+        (["Guide"], [(["Other"], "other", True)]),
+        (["Guide"], [(["Guide", "Install"], "install", False), (["Guide"], "guide", True)]),
+        ([], [(["Guide"], "guide", True)]),
+    ],
+    ids=["another-heading-starts-it", "not-the-first-record", "text-before-the-first-heading"],
+)
+def test_a_heading_record_that_contradicts_the_chunk_is_refused(
+    heading_path: list[str], headings: list[tuple[list[str], str, bool]]
+) -> None:
+    with pytest.raises(ValidationError, match="the chunk's own heading"):
+        _chunk(heading_path, headings)
