@@ -5,7 +5,8 @@
 #   tag on develop  vX.Y.Z.devN   -> PyPI X.Y.Z.devN     ghcr X.Y.Z.devN, X.Y.Z.devN-<sha7>, dev
 #                                    (pre-release: pip/uvx skip it unless asked with --prerelease)
 # Every image tag also comes as -ai and -local (X.Y.Z-ai, latest-local, dev-ai, ...): the three
-# variants of deploy/Dockerfile (#246). See docs/releasing.md.
+# variants of deploy/Dockerfile (#246). Nothing is published before the retrieval eval passes
+# (job `eval`, docs/evals.md). See docs/releasing.md.
 name: Release
 
 on:
@@ -62,6 +63,117 @@ jobs:
             echo "refresh=$(date -u +%F)"
           } >> "$GITHUB_OUTPUT"
           echo "### $channel release $version from $branch" >> "$GITHUB_STEP_SUMMARY"
+
+  # The retrieval eval (docs/evals.md) runs here, not on pull requests: nothing is published
+  # unless it passes (`pypi-kernel` and `image` need it). Model-free gates first: wrong-version
+  # rate 0 for every mode, BM25 recall@5 within 2 points of the baseline.json committed in this
+  # tag's tree (--ratchet: that file must be recorded for this dataset), on SQLite with hybrid on
+  # the term-hash stand-in, then on ParadeDB's pg_search; then the suite's end-to-end tests
+  # (pytest -m eval). Last, hybrid and rerank on the real default local models, report-only.
+  eval:
+    name: Retrieval eval
+    needs: meta
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: paradedb/paradedb:0.26.3-pg17@sha256:950f68abebc78e28fd2ecfc8ed915aa29d07b5dd8cba25b2f513ca4e211dda70
+        env:
+          POSTGRES_USER: exactdocs
+          POSTGRES_PASSWORD: exactdocs-release
+          POSTGRES_DB: exactdocs
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U exactdocs -d exactdocs"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      FORCE_COLOR: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked
+      - name: Retrieval eval (BM25 gating, hybrid on term-hash)
+        run: >-
+          uv run python packages/exactdocs/evals/run_retrieval_eval.py
+          --offline-embedding --ratchet --report reports/evals/retrieval.json
+      # A database of its own with the extension, so the app chooses pg_search at start as a
+      # ParadeDB deployment does; --expect-engine fails the step if it fell back to PostgreSQL
+      # full-text search instead.
+      - name: Retrieval eval on pg_search (BM25, gating)
+        env:
+          ADMIN_URL: postgresql://exactdocs:exactdocs-release@127.0.0.1:${{ job.services.postgres.ports['5432'] }}
+          EXACTDOCS_SECRET_KEY: eval-only-secret-key-0123456789abcdefgh
+        run: |
+          uv run python - <<'PY'
+          import os
+          import psycopg
+          admin = os.environ["ADMIN_URL"]
+          with psycopg.connect(f"{admin}/exactdocs", autocommit=True) as connection:
+              connection.execute("CREATE DATABASE exactdocs_eval")
+          with psycopg.connect(f"{admin}/exactdocs_eval", autocommit=True) as connection:
+              connection.execute("CREATE EXTENSION IF NOT EXISTS pg_search CASCADE")
+          PY
+          EXACTDOCS_DATABASE_URL="${ADMIN_URL/postgresql:/postgresql+psycopg:}/exactdocs_eval" \
+            uv run python packages/exactdocs/evals/run_retrieval_eval.py \
+            --expect-engine pg_search --report reports/evals/retrieval-pg-search.json
+      - name: The suite end to end (pytest -m eval)
+        run: uv run pytest -m eval packages/exactdocs/tests/evals --junitxml=reports/pytest-eval.xml
+      # Report-only from here (continue-on-error): a failed pull or a model's numbers never stop
+      # the release; a wrong version (rate above 0) still shows as a failed step. The models are
+      # cached between releases under a key named after the pinned revisions, so a new pin gets a
+      # new cache and a warm run contacts no Hub. A mode becomes a default only when it beats
+      # BM25's recall@5 by 5 points with no wrong version (`default-eligible` in the summary).
+      - name: Use the default local models from here on
+        run: |
+          {
+            echo "EXACTDOCS_MODELS_DIR=$GITHUB_WORKSPACE/.models"
+            echo "EXACTDOCS_TEST_MODELS_DIR=$GITHUB_WORKSPACE/.models"
+            echo "EXACTDOCS_AI__PROVIDERS__LOCAL__KIND=local"
+            echo "EXACTDOCS_AI__EMBEDDING__MODEL=local:BAAI/bge-small-en-v1.5"
+          } >> "$GITHUB_ENV"
+      - name: Name the models cache after the pinned revisions
+        id: models-key
+        run: >-
+          uv run python -c "from exactdocs.bootstrap.constants import PINNED_MODEL_REVISIONS as p;
+          print('key=local-models-' + '-'.join(m.replace('/', '_') + '@' + r[:12] for m, r in
+          sorted(p.items())))" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: .models
+          key: ${{ steps.models-key.outputs.key }}
+      - name: Pull the default models (skipped when the cache has them)
+        continue-on-error: true
+        run: uv run exactdocs models pull
+      - name: The default models embed and rerank with sockets blocked
+        continue-on-error: true
+        run: uv run pytest -p no:cacheprovider packages/exactdocs/tests/bootstrap/test_local_models_real.py
+      - name: Retrieval eval, hybrid on bge-small (local embedding, report-only)
+        continue-on-error: true
+        run: >-
+          uv run python packages/exactdocs/evals/run_retrieval_eval.py
+          --configured-models --local-roles embedding --modes bm25,hybrid
+          --report reports/evals/local-hybrid.json
+      # On a runner's CPU 32 long candidates can take more than the 2 s default, so the timeout is
+      # raised: a reranker that timed out would not be measured (`rerank_fallbacks` must be 0).
+      - name: Retrieval eval, reranked by MiniLM (local reranker, report-only)
+        continue-on-error: true
+        env:
+          EXACTDOCS_AI__RERANKER__MODEL: local:Xenova/ms-marco-MiniLM-L-6-v2
+          EXACTDOCS_AI__RERANKER__TIMEOUT: "30"
+        run: >-
+          uv run python packages/exactdocs/evals/run_retrieval_eval.py
+          --configured-models --local-roles embedding,reranker --modes bm25,hybrid
+          --report reports/evals/local-rerank.json
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: retrieval-eval
+          path: reports/
+          retention-days: 30
 
   web:
     name: Build web UI
@@ -125,7 +237,7 @@ jobs:
   # pins exactdocs-kernel==<same version>.
   pypi-kernel:
     name: Publish exactdocs-kernel to PyPI
-    needs: [meta, python]
+    needs: [meta, python, eval]
     runs-on: [self-hosted, linux, ARM64, exactdocs]
     environment:
       name: pypi
@@ -201,7 +313,7 @@ jobs:
 
   image:
     name: Publish image to ghcr.io (${{ matrix.variant }})
-    needs: [meta, image-scan]
+    needs: [meta, image-scan, eval]
     runs-on: [self-hosted, linux, ARM64, exactdocs]
     timeout-minutes: 90
     permissions:

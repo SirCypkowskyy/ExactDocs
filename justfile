@@ -57,7 +57,7 @@ lint:
     uv run ty check
     cd {{ web }} && pnpm lint
 
-# Python tests: unit, integration, architecture (pass extra pytest args)
+# Python tests: unit, integration, architecture (pass extra pytest args; `just test -m eval`: the slow eval tests)
 test *args:
     uv run pytest {{ args }}
 
@@ -69,7 +69,7 @@ arch:
 bdd *args:
     uv run behave {{ args }}
 
-# Retrieval eval suite: modes compared on the fixture docs repository (docs/evals.md); `just eval --help`
+# Retrieval eval suite (runs on releases, not in CI): modes compared on the fixture docs repository (docs/evals.md); `just eval --help`
 eval *args:
     uv run python packages/exactdocs/evals/run_retrieval_eval.py {{ args }}
 

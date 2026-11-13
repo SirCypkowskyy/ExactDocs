@@ -42,7 +42,7 @@ issue of the milestone points here instead of deciding these again. The short fo
 | Offline | Nothing configured: nothing imported, nothing sent. `-local`: no network needed at all |
 | Cost | Token and USD budgets per instance, library and user, daily and monthly, in one database table: harness `SpendLimits` (over a `BatchSpendStore`) for LLM agents, retrieval's own check for embeddings and rerankers; rate limits inside retrieval; a limit degrades search, never fails it |
 | Telemetry | pydantic-ai's OpenTelemetry instrumentation with `include_content=False`; `gen_ai.*` metrics without library, user or query labels |
-| Evals | Pydantic Evals on the fixture libraries; wrong-version rate 0 is a hard gate; real local models in CI, LLMs only with test models or by hand |
+| Evals | Pydantic Evals on the fixture libraries; wrong-version rate 0 is a hard gate; run on releases and locally, not on PRs (#367); real local models at release, LLMs only with test models or by hand |
 | Sign-in (Teams) | Several named providers: `oidc` (ADFS included), `oauth2`, `github` (GHE base URL, org and team membership via the GitHub API) |
 
 ## Databases
@@ -459,12 +459,14 @@ admin-only; `notes` and `off` may stay with the library's owner.
   fixture library's expected queries plus natural-language questions, each with the expected
   version, article path and heading (#90).
 - **Metrics per mode:** recall@1/5/10, MRR, **wrong-version rate**, p50 and p95 latency, tokens and
-  USD per question, as a JSON report and a CI job summary.
-- **Tiers.** Every PR runs BM25 (gating). A CI job with `[local]` and cached ONNX models runs
-  `hybrid` and rerank for real, without any secret (report-only on PRs, compared with the
-  baseline stored on `develop`). LLM modes run in tests with `TestModel` / `FunctionModel`; with a
-  real provider only by a manual `workflow_dispatch` that has the key. No live endpoint is ever
-  needed for CI to pass.
+  USD per question, as a JSON report and a job summary.
+- **Tiers.** Every release runs BM25 (gating) before anything is published; pull requests do
+  not run the suite (#367: it made every CI run longer), so a ranking regression is caught at
+  release time, and a contributor who changes ranking runs `just eval` first. The same release
+  job runs `hybrid` and rerank for real with `[local]` and cached ONNX models, without any secret
+  (report-only, compared with the baseline committed in the tagged tree). LLM modes run in tests
+  with `TestModel` / `FunctionModel`; with a real provider only by a manual `workflow_dispatch`
+  that has the key. No live endpoint is ever needed for CI or a release to pass.
 - **Gates.** Wrong-version rate must be 0 for every mode; recall@5 may not drop more than 2 points
   below the baseline. A mode becomes a default only when it beats BM25 recall@5 by at least
   5 points with wrong-version rate 0. Agentic runs are also checked from their traces (#99).

@@ -46,7 +46,7 @@ MAX_RECALL_DROP_POINTS: Final[float] = 2.0
 DEFAULT_MARGIN_POINTS: Final[float] = 5.0
 """How far a mode's recall@5 must beat BM25's, in points, before it may become a default."""
 BASELINE_FILE: Final[Path] = Path(__file__).with_name("baseline.json")
-"""The stored baseline; CI compares with the copy on ``develop``."""
+"""The stored baseline; the release compares with the copy in its own tree."""
 _REPO: Final[Path] = BASELINE_FILE.parents[4]
 """The repository root, so paths in a summary read the same on every machine."""
 _EPSILON: Final[float] = 1e-9
@@ -61,11 +61,11 @@ class Tier(StrEnum):
     """Where a mode runs for real (docs/evals.md, *Tiers*)."""
 
     EVERY_PR = "every_pr"
-    """Model-free: runs on every pull request and gates it."""
+    """Model-free and gating: runs at every release (the name predates #367, when PRs ran it)."""
     LOCAL = "local"
-    """Local models (the ``[local]`` extra): runs without secrets, report-only on pull requests."""
+    """Local models (the ``[local]`` extra): runs without secrets at every release, report-only."""
     PROVIDER = "provider"
-    """Usually a hosted LLM: by hand (``--allow-providers``), never in CI's pull request jobs.
+    """Usually a hosted LLM: by hand (``--allow-providers``), never in CI or the release.
 
     The tier says where a mode is expected to run; whether a run may call a model is decided per
     role (``run_modes``' ``local_roles``), so a hosted embedding model is not called either.
@@ -531,7 +531,7 @@ def compare(
 ) -> Comparison:
     """Decide what a run on the dataset ``fingerprint`` is measured against.
 
-    On the reference's dataset (CI: ``develop``'s), recall@5 is compared with the reference and,
+    On the reference's dataset (e.g. ``develop``'s), recall@5 is compared with the reference and,
     with ``ratchet``, the branch's stored baseline may not be lower. When the dataset changed, the
     numbers are not comparable: the branch's baseline, recorded for this dataset, is the bar
     instead, and the reset is reported. A stored recall@5 the branch raised, or reset to, must be
@@ -539,9 +539,9 @@ def compare(
 
     Args:
         fingerprint: The dataset's fingerprint now.
-        reference: The baseline to compare with (CI: the copy on ``develop``).
+        reference: The baseline to compare with (e.g. the copy on ``develop``).
         branch: The branch's own ``baseline.json``.
-        ratchet: Hold the branch's baseline to the reference (CI); a branch baseline recorded
+        ratchet: Hold the branch's baseline to the reference; a branch baseline recorded
             for another dataset then fails.
 
     Returns:
@@ -613,7 +613,7 @@ def baseline_of(report: SuiteReport) -> str:
         for o in report.modes
         if o.metrics is not None
     }
-    note = "Written by `just eval --write-baseline`; CI compares with the copy on develop."
+    note = "Written by `just eval --write-baseline`; the release gates on it (docs/evals.md)."
     data = {"note": note, "dataset": report.fingerprint, "modes": modes}
     return json.dumps(data, indent=2) + "\n"
 

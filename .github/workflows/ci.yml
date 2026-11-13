@@ -103,63 +103,6 @@ jobs:
           EXACTDOCS_TEST_POSTGRES_URL="$EXACTDOCS_TEST_SUPABASE_URL" EXACTDOCS_REQUIRE_POSTGRES=1 \
             uv run pytest packages/exactdocs/tests/retrieval/ranking -k postgres_fts \
             --junitxml=reports/pytest-supabase-ranking.xml
-      # docs/evals.md: the baseline the eval compares with is develop's, so a pull request cannot
-      # lower its own bar. Checked out on its own (that file, and the dataset it was measured on),
-      # so the workspace clone is never changed, and a failed fetch fails the job instead of
-      # falling back.
-      - name: Check out develop's eval baseline
-        uses: actions/checkout@v7
-        with:
-          ref: develop
-          path: .develop-baseline
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: |
-            packages/exactdocs/evals/retrieval_eval/baseline.json
-            packages/exactdocs/evals/retrieval_eval/dataset.yaml
-          sparse-checkout-cone-mode: false
-      # Every mode on the fixture, model-free; BM25 gates: wrong-version rate 0, recall@5 within
-      # 2 points of develop's baseline, and the branch's baseline.json not below develop's
-      # (--ratchet). When the dataset's fingerprint differs from develop's baseline, the branch's
-      # baseline is the bar, the reset is a warning annotation, and develop's dataset is run too,
-      # gated against develop's baseline (docs/evals.md, Changing the dataset). Hosted models are
-      # never called here (no secrets). Hybrid runs report-only on the in-process term-hash
-      # embedding (--offline-embedding): its wrong-version rate must still be 0.
-      - name: Retrieval eval (BM25 gating, hybrid on term-hash)
-        run: |
-          baseline=packages/exactdocs/evals/retrieval_eval/baseline.json
-          dataset=packages/exactdocs/evals/retrieval_eval/dataset.yaml
-          flags=(--offline-embedding --baseline "$RUNNER_TEMP/baseline.json" --report reports/evals/retrieval.json)
-          if git -C .develop-baseline cat-file -e "HEAD:$baseline"; then
-            cp ".develop-baseline/$baseline" "$RUNNER_TEMP/baseline.json"
-            flags+=(--ratchet --reference-dataset ".develop-baseline/$dataset")
-          else
-            echo "::warning::develop has no $baseline yet; comparing with this branch's own"
-            echo "> **Warning:** develop has no eval baseline yet, so this run compares with the branch's own \`baseline.json\`." >> "$GITHUB_STEP_SUMMARY"
-            cp "$baseline" "$RUNNER_TEMP/baseline.json"
-          fi
-          uv run python packages/exactdocs/evals/run_retrieval_eval.py "${flags[@]}"
-      # The same BM25 gates with pg_search answering (#104), against this branch's baseline (the
-      # step above checked it against develop's): a database of its own with the extension, so
-      # the app chooses pg_search at start as a ParadeDB deployment does; --expect-engine fails
-      # the step if it fell back to PostgreSQL full-text search instead.
-      - name: Retrieval eval on pg_search (BM25, gating)
-        env:
-          ADMIN_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}
-          EXACTDOCS_SECRET_KEY: eval-only-secret-key-0123456789abcdefgh
-        run: |
-          uv run python - <<'PY'
-          import os
-          import psycopg
-          admin = os.environ["ADMIN_URL"]
-          with psycopg.connect(f"{admin}/exactdocs", autocommit=True) as connection:
-              connection.execute("CREATE DATABASE exactdocs_eval")
-          with psycopg.connect(f"{admin}/exactdocs_eval", autocommit=True) as connection:
-              connection.execute("CREATE EXTENSION IF NOT EXISTS pg_search CASCADE")
-          PY
-          EXACTDOCS_DATABASE_URL="${ADMIN_URL/postgresql:/postgresql+psycopg:}/exactdocs_eval" \
-            uv run python packages/exactdocs/evals/run_retrieval_eval.py \
-            --expect-engine pg_search --report reports/evals/retrieval-pg-search.json
       - name: Stop supabase/postgres
         if: ${{ always() }}
         run: docker rm -f "exactdocs-supabase-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null || true
@@ -168,89 +111,6 @@ jobs:
         with:
           name: python-reports
           path: reports/
-          retention-days: 14
-
-  # docs/evals.md, Tiers: hybrid and rerank on the real default local models (#245), on the
-  # [local] extra and ONNX Runtime, with the models cached between runs (`models pull` skips
-  # what the cache restored, so a warm run contacts no Hub). No secret. Report-only: the job
-  # never fails a pull request; its summary compares with develop's baseline, and a wrong
-  # version (rate above 0) shows as a failed step. A mode becomes a default only when it beats
-  # BM25's recall@5 by 5 points with no wrong version (`default-eligible` in the summary).
-  local-models-eval:
-    name: Retrieval eval (local models, report-only)
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
-    timeout-minutes: 30
-    continue-on-error: true
-    env:
-      EXACTDOCS_MODELS_DIR: ${{ github.workspace }}/.models
-      EXACTDOCS_TEST_MODELS_DIR: ${{ github.workspace }}/.models
-      EXACTDOCS_AI__PROVIDERS__LOCAL__KIND: local
-      EXACTDOCS_AI__EMBEDDING__MODEL: local:BAAI/bge-small-en-v1.5
-    steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
-        with:
-          enable-cache: true
-      - name: Install (with the [local] extra, through the dev group)
-        run: uv sync --locked
-      - name: Name the models cache after the pinned revisions
-        id: models-key
-        # From PINNED_MODEL_REVISIONS itself, so a new pin gets a new cache: a pull skips what is
-        # there, so nothing else (a dependency bump) needs one.
-        run: >-
-          uv run python -c "from exactdocs.bootstrap.constants import PINNED_MODEL_REVISIONS as p;
-          print('key=local-models-' + '-'.join(m.replace('/', '_') + '@' + r[:12] for m, r in
-          sorted(p.items())))" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v6
-        with:
-          path: .models
-          key: ${{ steps.models-key.outputs.key }}
-      - name: Pull the default models (skipped when the cache has them)
-        run: uv run exactdocs models pull
-      - name: The default models embed and rerank with sockets blocked
-        run: uv run pytest -p no:cacheprovider packages/exactdocs/tests/bootstrap/test_local_models_real.py
-      - name: Check out develop's eval baseline
-        uses: actions/checkout@v7
-        with:
-          ref: develop
-          path: .develop-baseline
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: |
-            packages/exactdocs/evals/retrieval_eval/baseline.json
-          sparse-checkout-cone-mode: false
-      - name: Baseline to compare with
-        run: |
-          baseline=packages/exactdocs/evals/retrieval_eval/baseline.json
-          if [ -f ".develop-baseline/$baseline" ]; then
-            cp ".develop-baseline/$baseline" "$RUNNER_TEMP/baseline.json"
-          else
-            echo "::warning::develop has no $baseline yet; comparing with this branch's own"
-            cp "$baseline" "$RUNNER_TEMP/baseline.json"
-          fi
-      # Hybrid against BM25: the numbers that decide whether hybrid may become a default.
-      - name: Retrieval eval, hybrid on bge-small (local embedding)
-        run: >-
-          uv run python packages/exactdocs/evals/run_retrieval_eval.py
-          --configured-models --local-roles embedding --modes bm25,hybrid
-          --baseline "$RUNNER_TEMP/baseline.json" --report reports/evals/local-hybrid.json
-      # Both modes reranked by the local cross-encoder. On a runner's CPU 32 long candidates can
-      # take more than the 2 s default, so the timeout is raised here: a reranker that timed out
-      # would not be measured (`rerank_fallbacks` must be 0).
-      - name: Retrieval eval, reranked by MiniLM (local reranker)
-        if: ${{ !cancelled() }}
-        env:
-          EXACTDOCS_AI__RERANKER__MODEL: local:Xenova/ms-marco-MiniLM-L-6-v2
-          EXACTDOCS_AI__RERANKER__TIMEOUT: "30"
-        run: >-
-          uv run python packages/exactdocs/evals/run_retrieval_eval.py
-          --configured-models --local-roles embedding,reranker --modes bm25,hybrid
-          --baseline "$RUNNER_TEMP/baseline.json" --report reports/evals/local-rerank.json
-      - uses: actions/upload-artifact@v7
-        if: ${{ !cancelled() }}
-        with:
-          name: local-models-eval
-          path: reports/evals/
           retention-days: 14
 
   web:
@@ -527,8 +387,8 @@ jobs:
             --entrypoint python exactdocs:ci-ai - < deploy/check_sqlite_vec.py
       # The scenario of #246: no network at all, the fixture imported and searched in hybrid
       # mode with the default embedding model and reranker of the image. The reranker's timeout
-      # is raised as in the local-models eval: a runner's CPU may take more than 5 s for 32
-      # long candidates, and a timed-out rerank would say `reranked: false`.
+      # is raised as in the release's local-models eval: a runner's CPU may take more than 5 s
+      # for 32 long candidates, and a timed-out rerank would say `reranked: false`.
       - name: -local with --network none searches hybrid, reranked
         if: ${{ !cancelled() }}
         run: |

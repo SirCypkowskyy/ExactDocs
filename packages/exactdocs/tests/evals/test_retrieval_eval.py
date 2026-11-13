@@ -1,4 +1,8 @@
-"""The retrieval eval suite: its dataset, its metrics, its gates, and BM25 on the real import."""
+"""The retrieval eval suite: its dataset, its metrics, its gates, and BM25 on the real import.
+
+Tests that import the fixture and run the suite end to end are marked ``eval``: the default run
+skips them, the release runs them, and ``uv run pytest -m eval`` runs them locally (docs/evals.md).
+"""
 
 import json
 import re
@@ -414,6 +418,7 @@ def test_the_summary_has_a_row_per_mode_and_the_verdict() -> None:
 # ---------------------------------------------------------------- the app, for real
 
 
+@pytest.mark.eval
 async def test_bm25_on_the_fixture_meets_the_stored_baseline_and_reports_the_rest(
     docs_repo: DocsRepo, tmp_path: Path
 ) -> None:
@@ -463,6 +468,7 @@ class Silent:
         return PipelineAnswer(mode=self.mode, hits=(), candidates=0, reranked=0, complete=True)
 
 
+@pytest.mark.eval
 async def test_a_new_mode_plugs_in_and_hosted_ones_stay_off_without_permission(
     docs_repo: DocsRepo, tmp_path: Path
 ) -> None:
@@ -493,6 +499,7 @@ async def test_a_new_mode_plugs_in_and_hosted_ones_stay_off_without_permission(
         assert pipelines[hosted].calls == []
 
 
+@pytest.mark.eval
 async def test_a_local_tier_mode_on_a_hosted_model_is_skipped_without_permission(
     docs_repo: DocsRepo, tmp_path: Path
 ) -> None:
@@ -519,6 +526,7 @@ async def test_a_local_tier_mode_on_a_hosted_model_is_skipped_without_permission
     assert next(o for o in allowed.modes if o.mode is RetrievalMode.HYBRID).status == "ran"
 
 
+@pytest.mark.eval
 async def test_a_configured_reranker_is_evaluated_only_with_permission(
     docs_repo: DocsRepo, tmp_path: Path
 ) -> None:
@@ -598,6 +606,7 @@ class LeakingResponses:
         return search
 
 
+@pytest.mark.eval
 async def test_a_chunk_of_another_version_in_a_real_answer_fails_the_suite(
     docs_repo: DocsRepo, tmp_path: Path
 ) -> None:
@@ -645,6 +654,7 @@ class OtherVersionPipeline:
         )
 
 
+@pytest.mark.eval
 async def test_the_app_drops_a_pipeline_hit_of_another_version_before_it_is_answered(
     docs_repo: DocsRepo, tmp_path: Path
 ) -> None:
@@ -677,6 +687,7 @@ async def test_the_app_drops_a_pipeline_hit_of_another_version_before_it_is_answ
     assert hybrid.metrics.recall_at_10 > 0
 
 
+@pytest.mark.eval
 def test_the_command_writes_the_json_report_and_the_job_summary(tmp_path: Path) -> None:
     summary = tmp_path / "summary.md"
     summary.write_text("earlier step\n", encoding="utf-8")
@@ -705,6 +716,7 @@ def test_the_command_refuses_a_baseline_it_was_given_that_does_not_exist(tmp_pat
     assert main(["--baseline", str(tmp_path / "typo.json")]) == 2
 
 
+@pytest.mark.eval
 def test_the_command_fails_when_the_branch_lowers_the_baseline(tmp_path: Path) -> None:
     higher = tmp_path / "develop.json"
     data = {"dataset": fingerprint(load_dataset()), "modes": {"bm25": {"recall_at_5": 0.99}}}
@@ -720,6 +732,7 @@ def test_the_command_fails_when_the_branch_lowers_the_baseline(tmp_path: Path) -
     assert any("the baseline only moves up" in p for p in report["problems"])
 
 
+@pytest.mark.eval
 def test_the_command_resets_the_baseline_when_develop_measured_another_dataset(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -744,6 +757,7 @@ def test_the_command_resets_the_baseline_when_develop_measured_another_dataset(
     assert "::warning title=Eval baseline reset::the dataset changed" in capsys.readouterr().out
 
 
+@pytest.mark.eval
 @pytest.mark.parametrize(("develop_recall", "code"), [(0.92, 0), (0.99, 1)])
 def test_on_a_reset_the_reference_dataset_is_still_gated_against_the_reference_baseline(
     tmp_path: Path, develop_recall: float, code: int
@@ -774,6 +788,7 @@ def test_the_command_refuses_a_reference_dataset_that_does_not_exist(tmp_path: P
     assert main(["--reference-dataset", str(tmp_path / "typo.yaml")]) == 2
 
 
+@pytest.mark.eval
 async def test_a_case_the_fixture_cannot_answer_fails_loudly(
     docs_repo: DocsRepo, tmp_path: Path
 ) -> None:
@@ -999,6 +1014,7 @@ def test_a_mode_without_any_baseline_gets_no_per_mode_warning() -> None:
     assert judge("retrieval", 10, [_ran(BM25, 0.9)], Comparison()).warnings == []
 
 
+@pytest.mark.eval
 async def test_another_search_engine_than_the_expected_one_fails_the_suite(
     docs_repo: DocsRepo, tmp_path: Path
 ) -> None:
@@ -1014,6 +1030,7 @@ async def test_another_search_engine_than_the_expected_one_fails_the_suite(
 # ---------------------------------------------------------------- hybrid on the stand-in embedding
 
 
+@pytest.mark.eval
 async def test_hybrid_is_reported_against_bm25_on_the_offline_embedding(
     docs_repo: DocsRepo, tmp_path: Path
 ) -> None:
@@ -1056,6 +1073,7 @@ def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart(content=f"The documentation says: {question}")])
 
 
+@pytest.mark.eval
 @pytest.mark.parametrize(
     "chat",
     [
@@ -1124,6 +1142,7 @@ def _lexical_judge(messages: list[ModelMessage], info: AgentInfo) -> ModelRespon
     return ModelResponse(parts=[ToolCallPart(tool.name, {"response": ratings})])
 
 
+@pytest.mark.eval
 async def test_the_judge_reranker_runs_through_the_suite_on_a_stand_in(
     docs_repo: DocsRepo, tmp_path: Path
 ) -> None:
@@ -1148,6 +1167,7 @@ async def test_the_judge_reranker_runs_through_the_suite_on_a_stand_in(
     assert "the LLM judge failed or timed out on 0" in markdown(report)
 
 
+@pytest.mark.eval
 async def test_a_hosted_judge_is_skipped_unless_allowed(
     docs_repo: DocsRepo, tmp_path: Path
 ) -> None:
@@ -1187,6 +1207,7 @@ def scripted_agentic_container(
     )
 
 
+@pytest.mark.eval
 async def test_agentic_is_evaluated_on_a_scripted_model_and_stays_in_the_version(
     docs_repo: DocsRepo, tmp_path: Path
 ) -> None:
@@ -1217,6 +1238,7 @@ async def test_agentic_is_evaluated_on_a_scripted_model_and_stays_in_the_version
     assert (agentic.eligible_as_default, agentic.not_judged) == (None, "scripted model")
 
 
+@pytest.mark.eval
 def test_the_command_runs_hybrid_offline_and_says_it_is_a_stand_in(tmp_path: Path) -> None:
     summary = tmp_path / "summary.md"
 
@@ -1346,6 +1368,7 @@ class StrayingPipeline:
         )
 
 
+@pytest.mark.eval
 async def test_the_suite_reads_the_app_s_trace_of_every_agentic_run(
     docs_repo: DocsRepo, tmp_path: Path
 ) -> None:

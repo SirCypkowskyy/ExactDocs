@@ -182,7 +182,13 @@ pythonpath = [
     "packages/exactdocs/tests/fixtures",  # fixture_repo.py
     "packages/exactdocs/evals",  # retrieval_eval, the retrieval eval suite
 ]
-addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+addopts = [
+    "-ra", "--strict-markers", "--strict-config", "--import-mode=importlib",
+    "-m", "not eval",  # docs/evals.md: the release runs them; `uv run pytest -m eval` locally
+]
+markers = [
+    "eval: runs the retrieval eval suite end to end on the imported fixture (slow); skipped by default",
+]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 xfail_strict = true
