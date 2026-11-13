@@ -280,11 +280,17 @@ only holds each process's git work folders and `known_hosts`. What changes:
   again, or re-import it when it moved (`versions/reimport`).
   The map (`from_ref`, old path, new path, similarity) is stored with the new version's manifest
   (`catalog_manifest_renames`, indexed both ways), so it is replaced, collected and removed with
-  it. It is read through the `ResolveRenamedPath` port (forward: old to new; back: new to old),
-  `ListRenames`, and REST `GET /libraries/{owner}/{repo}/renamed-path`. **One hop only:** a file
-  moved over several versions is followed by asking once per version and chaining the answers (a
-  version that was never imported breaks the chain). Detection never fails an import: any error
-  means "no renames known" (a branch keeps its earlier map). Cost, measured on `fastapi/fastapi`
+  it; so is the link to the version it was detected against (`catalog_manifests.renamed_from`),
+  kept also when nothing moved. It is read through the `ResolveRenamedPath` port (forward: old to
+  new; back: new to old), `ListRenames`, and REST `GET /libraries/{owner}/{repo}/renamed-path`.
+  **Across several versions** (`from`, #201): the library's active manifests are read in one
+  query, the links are walked from the newer of the two versions back to the older (at most
+  `MAX_RENAME_HOPS`), then one indexed rename lookup per version crossed moves the path. No link
+  between the two (branches, a version removed in between, a version without one) is "did not
+  move", and so is a rename that names another version than the link (a manifest with one is
+  refused when stored). A path the chain ends at is confirmed with one lookup in the target's
+  articles: renamed and then dropped is "did not move" too, never a path of another version.
+  Detection never fails an import: any error means "no renames known" (a branch keeps its earlier map). Cost, measured on `fastapi/fastapi`
   0.100.0 to 0.115.0 (about 1,400 Markdown files, 12 renames, 4 of them exact): fetching the two
   trees (`--depth=1 --filter=blob:none`, no checkout) takes about 1 s and 250 KB, and
   `git diff-tree -M --diff-filter=R` over a case-insensitive `*.md`/`*.mdx` pathspec then fetches

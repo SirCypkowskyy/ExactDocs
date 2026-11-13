@@ -41,3 +41,21 @@ Feature: Renames between versions are detected from git
     When the user adds the version "v1.4.0"
     Then the import succeeds
     And the rename map of "v1.4.0" has nothing for "docs/guide/setup.md"
+
+  Scenario: A path is followed to a version that skips the one that renamed it
+    Given "/acme/payments" has the versions "v1.2.0", "v1.3.0" and "v1.4.0", imported in that order
+    And "v1.4.0" renamed "guide/setup.md" of "v1.3.0" to "guide/install.md"
+    When I ask where "guide/setup.md" of "v1.2.0" is in "v1.4.0"
+    Then the answer is "guide/install.md"
+
+  Scenario: A path is followed back to a version before the one that renamed it
+    Given "/acme/payments" has the versions "v1.2.0", "v1.3.0" and "v1.4.0", imported in that order
+    And "v1.4.0" renamed "guide/setup.md" of "v1.3.0" to "guide/install.md"
+    When I ask where "guide/install.md" of "v1.4.0" is in "v1.2.0"
+    Then the answer is "guide/setup.md"
+
+  Scenario: A path that was never renamed did not move across several versions
+    Given "/acme/payments" has the versions "v1.2.0", "v1.3.0" and "v1.4.0", imported in that order
+    And "v1.4.0" renamed "guide/setup.md" of "v1.3.0" to "guide/install.md"
+    When I ask where "guide/auth.md" of "v1.2.0" is in "v1.4.0"
+    Then the answer is that it did not move

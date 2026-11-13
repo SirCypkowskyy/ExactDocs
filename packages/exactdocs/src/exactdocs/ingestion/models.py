@@ -2371,7 +2371,8 @@ class ImportedVersion:
     refresh: bool = False
     """The version must still exist when it is stored (a re-sync never re-creates a removed one)."""
     renamed_from: str | None = None
-    """The ref whose commit ``renames`` were detected against; ``None`` when none were."""
+    """The ref whose commit ``renames`` were detected against, also when nothing moved (the
+    version this one follows); ``None`` when no version was compared."""
     renames: tuple[GitRename, ...] = ()
     """Renames from ``renamed_from``'s commit to this one, Markdown files only."""
     origin: VersionOrigin = VersionOrigin.MANUAL

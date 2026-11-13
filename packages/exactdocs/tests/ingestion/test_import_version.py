@@ -1147,6 +1147,20 @@ async def test_renames_since_the_previous_version_are_stored_with_the_new_one(
     assert source.asked == [(OLD, SHA, ["refs/tags/v1.4.0", "refs/tags/v1.3.0"])]
 
 
+async def test_a_version_where_nothing_moved_still_names_the_version_it_follows(
+    tmp_path: Path,
+) -> None:
+    world = build_world(
+        tmp_path, {"docs/install.md": INSTALL.encode()}, renames=FakeRenames(), imported=[V13]
+    )
+
+    await world.run(make_job("v1.4.0"), world.progress)
+
+    (version,) = world.catalog.stored
+    # The link lets a path be followed across this version to newer ones (#201).
+    assert (version.renamed_from, version.renames) == ("v1.3.0", ())
+
+
 async def test_only_renames_into_imported_articles_from_selected_paths_are_kept(
     tmp_path: Path,
 ) -> None:

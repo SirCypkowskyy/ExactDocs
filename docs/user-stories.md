@@ -185,7 +185,7 @@ The CLI has only its local commands (`serve`, `admin create`, `admin reset-passw
 - **[BRW-03]** As a user, I want a "view on GitHub/Bitbucket/..." link on every article with the exact commit, because I sometimes need the surrounding code or history.
     - Acceptance: the link points at the file at the imported commit SHA, not at the branch head.
 - **[BRW-04]** As a user, I want to switch between imported versions of a library (e.g. `v1.3` and `v1.4`), because I work on projects pinned to different versions.
-    - Acceptance: a version picker lists imported refs and marks the default version; switching keeps the same article path when it exists, else falls back to the version's root. *MVP-2:* follows renames detected by git (one hop: from or to the version that renamed the article; multi-hop is #201).
+    - Acceptance: a version picker lists imported refs and marks the default version; switching keeps the same article path when it exists, else falls back to the version's root. *MVP-2:* follows renames detected by git, also across versions the switch skips (v1.2.0 to v1.4.0 when v1.4.0 renamed the article; one lookup per target version, #201).
 - **[BRW-05]** As a user, I want a home page listing my libraries with title, versions, article count, tags, last sync time and sync errors, because I need to see what is available and how fresh it is.
     - Acceptance: each library shows URL, refs, commit SHAs, article count and last sync status with the error if it failed.
 
