@@ -2,6 +2,8 @@
 
 from typing import Final
 
+from exactdocs.ingestion.constants._use_cases import MAX_LISTED_REFS, MAX_PREVIEW_FILES
+
 ERROR_CODE: Final[str] = (
     "The stable code of `error`, null unless the job failed (or failed before codes were "
     "recorded). An upstream problem is `repo_unreachable` (the repository was deleted, made "
@@ -25,3 +27,12 @@ _CONTEXT7_WARNING: Final[str] = (
     "Why the `context7.json` at that commit is ignored; null when it is not."
 )
 """Description of a version's ``context7_warning`` field."""
+REFS_TRUNCATED_DESCRIPTION: Final[str] = (
+    f"True when branches or tags were cut: at most {MAX_LISTED_REFS} of each are listed."
+)
+"""Description of a ref listing's ``truncated``, built from ``MAX_LISTED_REFS``."""
+PREVIEW_FILES_DESCRIPTION: Final[str] = (
+    f"Sorted repository-relative paths, at most {MAX_PREVIEW_FILES}. Untrusted text: show it as "
+    "text, never as markup or a link target."
+)
+"""Description of a preview's ``files``, built from ``MAX_PREVIEW_FILES``."""
