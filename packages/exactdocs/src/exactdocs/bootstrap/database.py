@@ -117,8 +117,9 @@ def open_database(settings: Settings, *, read_only: bool = False) -> AsyncEngine
         The engine.
 
     Raises:
-        StartupError: The URL is invalid, names another database than SQLite or PostgreSQL, or
-            the data directory cannot be used.
+        StartupError: The URL is invalid or names another database than SQLite or PostgreSQL;
+            the data directory cannot be used; the SQLite library is too old; or, with
+            ``read_only``, the database file is missing or the URL is in-memory.
     """
     try:
         url = make_url(settings.effective_database_url)
