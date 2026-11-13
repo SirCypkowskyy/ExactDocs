@@ -21,7 +21,9 @@ pytestmark = pytest.mark.usefixtures("demo_catalog")
 URL = "/api/v1/libraries/acme/payments/renamed-path"
 
 
-async def publish(container: Container, ref: str, commit: str, *renames: RenameIn) -> None:
+async def publish(
+    container: Container, ref: str, commit: str, *renames: RenameIn, after: str | None = None
+) -> None:
     stored = await container.catalog.store_manifest(
         StoreManifestCommand(
             library="/acme/payments",
@@ -38,6 +40,7 @@ async def publish(container: Container, ref: str, commit: str, *renames: RenameI
                 )
             ],
             renames=list(renames),
+            renamed_from=after,
         )
     )
     await container.catalog.activate_manifest(
@@ -56,7 +59,8 @@ async def client(demo_catalog: dict[str, str]) -> AsyncIterator[httpx.AsyncClien
             cookies=demo_catalog,
         ) as client,
     ):
-        await publish(container, "v1.3.0", "d")
+        await publish(container, "v1.2.0", "c")
+        await publish(container, "v1.3.0", "d", after="v1.2.0")  # nothing moved
         await publish(
             container,
             "v1.4.0",
@@ -87,6 +91,36 @@ async def test_a_moved_path_is_followed_forward_and_back(client: httpx.AsyncClie
     }
     assert (forward.status_code, forward.json()) == (200, {"renamed": expected})
     assert (back.status_code, back.json()) == (200, {"renamed": expected})
+
+
+async def test_with_from_the_renames_between_two_versions_are_followed_both_ways(
+    client: httpx.AsyncClient,
+) -> None:
+    forward = await client.get(
+        URL, params={"ref": "v1.4.0", "from": "v1.2.0", "path": "guide/setup.md"}
+    )
+    back = await client.get(
+        URL, params={"ref": "v1.2.0", "from": "v1.4.0", "path": "guide/install.md"}
+    )
+    still = await client.get(URL, params={"ref": "v1.4.0", "from": "v1.2.0", "path": "guide/a.md"})
+    unknown = await client.get(URL, params={"ref": "v1.4.0", "from": "v9", "path": "a.md"})
+
+    assert (forward.status_code, forward.json()) == (
+        200,
+        {
+            "renamed": {
+                "library": "/acme/payments",
+                "ref": "v1.4.0",
+                "from_ref": "v1.2.0",
+                "old_path": "guide/setup.md",
+                "new_path": "guide/install.md",
+                "similarity": 84,
+            }
+        },
+    )
+    assert back.json()["renamed"]["new_path"] == "guide/setup.md"
+    assert (still.status_code, still.json()) == (200, {"renamed": None})
+    assert unknown.status_code == 404
 
 
 async def test_a_blank_ref_means_the_default_version(client: httpx.AsyncClient) -> None:

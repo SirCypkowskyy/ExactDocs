@@ -15,7 +15,7 @@ from exactdocs.catalog.adapters.driven.memory import (
     InMemoryManifestRepository,
     InMemoryStoredArticles,
 )
-from exactdocs.catalog.constants import MAX_INSTRUCTION_FILE_CHARS
+from exactdocs.catalog.constants import MAX_INSTRUCTION_FILE_CHARS, MAX_RENAME_HOPS
 from exactdocs.catalog.dtos import (
     ActivateManifestCommand,
     ArticleIn,
@@ -652,6 +652,213 @@ async def test_impossible_renames_are_refused_when_stored(world: World) -> None:
         )
     with pytest.raises(ValueError, match="less than or equal to 100"):
         RenameIn(from_ref="v1", old_path="a.md", new_path="b.md", similarity=101)
+
+
+# ---------------------------------------------------------------- across several versions (#201)
+
+
+def commit_of(ref: str) -> str:
+    return hashlib.sha1(ref.encode(), usedforsecurity=False).hexdigest()
+
+
+async def linked(
+    world: World,
+    ref: str,
+    after: str | None,
+    *paths: str,
+    renames: tuple[tuple[str, str], ...] = (),
+    kind: RefKind = RefKind.TAG,
+    similarity: int = 84,
+) -> None:
+    """Import ``ref`` (its articles at ``paths``) as the version that follows ``after``."""
+    stored = command(ref, commit_of(ref), *(article(p, f"{ref} {p}") for p in paths))
+    await world.catalog.store_manifest(
+        stored.model_copy(
+            update={
+                "kind": kind,
+                "renamed_from": after,
+                "renames": [
+                    RenameIn(from_ref=after or ref, old_path=o, new_path=n, similarity=similarity)
+                    for o, n in renames
+                ],
+            }
+        )
+    )
+    pending = await world.manifests.list_live(LibraryId("/acme/payments"))
+    (manifest,) = [m for m in pending if m.ref == VersionRef(ref) and m.state.value == "pending"]
+    await world.catalog.activate_manifest(ActivateManifestCommand(manifest_id=manifest.id))
+
+
+async def path_in(world: World, path: str, from_ref: str, ref: str) -> str | None:
+    found = await world.catalog.resolve_renamed_path(
+        ResolveRenamedPathQuery(library="/Acme/Payments", ref=ref, path=path, from_ref=from_ref)
+    )
+    return None if found is None else found.new_path
+
+
+async def three_versions(world: World) -> None:
+    """v1.2.0, v1.3.0 (nothing moved), v1.4.0 (renamed guide/setup.md), imported in order."""
+    await linked(world, "v1.2.0", None, "guide/setup.md", "guide/auth.md")
+    await linked(world, "v1.3.0", "v1.2.0", "guide/setup.md", "guide/auth.md")
+    await linked(
+        world,
+        "v1.4.0",
+        "v1.3.0",
+        "guide/install.md",
+        "guide/auth.md",
+        renames=(("guide/setup.md", "guide/install.md"),),
+    )
+
+
+async def test_a_path_is_followed_across_a_version_where_nothing_moved(world: World) -> None:
+    await three_versions(world)
+
+    found = await world.catalog.resolve_renamed_path(
+        ResolveRenamedPathQuery(
+            library="/Acme/Payments", ref="v1.4.0", path="guide/setup.md", from_ref="v1.2.0"
+        )
+    )
+
+    assert found is not None
+    assert (found.ref, found.from_ref, found.old_path, found.new_path, found.similarity) == (
+        "v1.4.0",
+        "v1.2.0",
+        "guide/setup.md",
+        "guide/install.md",
+        84,
+    )
+    assert await path_in(world, "guide/install.md", "v1.4.0", "v1.2.0") == "guide/setup.md"
+    assert await path_in(world, "guide/auth.md", "v1.2.0", "v1.4.0") is None  # did not move
+    assert await path_in(world, "guide/setup.md", "v1.2.0", "v1.2.0") is None  # same version
+
+
+async def test_one_hop_with_from_answers_as_the_one_hop_lookup_did(world: World) -> None:
+    await three_versions(world)
+
+    forward = await world.catalog.resolve_renamed_path(
+        ResolveRenamedPathQuery(
+            library="/Acme/Payments", ref="v1.4.0", path="guide/setup.md", from_ref="v1.3.0"
+        )
+    )
+
+    assert forward == await where_did(world, "guide/setup.md")
+    assert await path_in(world, "guide/install.md", "v1.4.0", "v1.3.0") == "guide/setup.md"
+
+
+async def test_a_rename_on_every_hop_resolves_to_the_last_name_both_ways(world: World) -> None:
+    await linked(world, "v1.0.0", None, "a.md")
+    await linked(world, "v1.1.0", "v1.0.0", "b.md", renames=(("a.md", "b.md"),), similarity=90)
+    await linked(world, "v1.2.0", "v1.1.0", "c.md", renames=(("b.md", "c.md"),), similarity=70)
+
+    found = await world.catalog.resolve_renamed_path(
+        ResolveRenamedPathQuery(
+            library="/Acme/Payments", ref="v1.2.0", path="a.md", from_ref="v1.0.0"
+        )
+    )
+
+    assert found is not None
+    assert (found.new_path, found.similarity) == ("c.md", 70)  # the weakest move of the chain
+    assert await path_in(world, "c.md", "v1.2.0", "v1.0.0") == "a.md"
+    assert await path_in(world, "b.md", "v1.1.0", "v1.2.0") == "c.md"
+    assert await path_in(world, "c.md", "v1.2.0", "v1.1.0") == "b.md"
+
+
+async def test_versions_without_an_import_link_did_not_move(world: World) -> None:
+    await three_versions(world)
+    # A branch's map is its own (it names the branch itself): it links to no tag.
+    await linked(
+        world,
+        "main",
+        "main",
+        "guide/install.md",
+        renames=(("guide/setup.md", "guide/install.md"),),
+        kind=RefKind.BRANCH,
+    )
+    # A tag whose renames were never detected against anything.
+    await linked(world, "v2.0.0", None, "guide/install.md")
+
+    assert await path_in(world, "guide/setup.md", "v1.2.0", "main") is None
+    assert await path_in(world, "guide/install.md", "main", "v1.2.0") is None
+    assert await path_in(world, "guide/setup.md", "v1.2.0", "v2.0.0") is None
+    assert await path_in(world, "guide/install.md", "v2.0.0", "v1.2.0") is None
+
+
+async def test_a_version_removed_in_between_breaks_the_chain(world: World) -> None:
+    await three_versions(world)
+    await world.catalog.remove_version(RemoveVersionCommand(library="/Acme/Payments", ref="v1.3.0"))
+
+    assert await path_in(world, "guide/setup.md", "v1.2.0", "v1.4.0") is None
+    assert await path_in(world, "guide/install.md", "v1.4.0", "v1.2.0") is None
+
+
+async def test_a_rename_against_another_version_than_the_link_is_not_followed(
+    world: World,
+) -> None:
+    await three_versions(world)
+    # v1.5.0 follows v1.4.0, yet its only rename names v1.2.0: never answer with that path.
+    stored = command(
+        "v1.5.0", commit_of("v1.5.0"), article("guide/start.md", "start"), kind=RefKind.TAG
+    )
+    await world.catalog.store_manifest(
+        stored.model_copy(
+            update={
+                "renamed_from": "v1.4.0",
+                "renames": [
+                    RenameIn(
+                        from_ref="v1.2.0",
+                        old_path="guide/install.md",
+                        new_path="guide/start.md",
+                        similarity=60,
+                    )
+                ],
+            }
+        )
+    )
+    (pending,) = [
+        m
+        for m in await world.manifests.list_live(LibraryId("/acme/payments"))
+        if m.state.value == "pending"
+    ]
+    await world.catalog.activate_manifest(ActivateManifestCommand(manifest_id=pending.id))
+
+    assert await path_in(world, "guide/setup.md", "v1.2.0", "v1.5.0") == "guide/install.md"
+
+
+async def test_an_unknown_from_version_is_an_error(world: World) -> None:
+    await three_versions(world)
+
+    with pytest.raises(VersionNotFoundError):
+        await path_in(world, "guide/setup.md", "v9", "v1.4.0")
+
+
+async def test_the_walk_is_bounded(world: World) -> None:
+    await linked(world, "v1.0.0", None, "a.md")
+    previous = "v1.0.0"
+    for minor in range(1, MAX_RENAME_HOPS + 2):
+        ref = f"v1.{minor}.0"
+        await linked(world, ref, previous, "a.md")
+        previous = ref
+    last = previous
+
+    await world.catalog.store_manifest(
+        command("v9.0.0", commit_of("v9.0.0"), article("z.md"), kind=RefKind.TAG).model_copy(
+            update={
+                "renamed_from": last,
+                "renames": [
+                    RenameIn(from_ref=last, old_path="a.md", new_path="z.md", similarity=50)
+                ],
+            }
+        )
+    )
+    (pending,) = [
+        m
+        for m in await world.manifests.list_live(LibraryId("/acme/payments"))
+        if m.state.value == "pending"
+    ]
+    await world.catalog.activate_manifest(ActivateManifestCommand(manifest_id=pending.id))
+
+    assert await path_in(world, "a.md", "v1.2.0", "v9.0.0") == "z.md"  # within the bound
+    assert await path_in(world, "a.md", "v1.0.0", "v9.0.0") is None  # farther than the bound
 
 
 # ---------------------------------------------------------------- instruction files (RET-08)

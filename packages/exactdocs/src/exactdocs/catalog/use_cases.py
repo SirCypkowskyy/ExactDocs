@@ -1,13 +1,15 @@
 """Catalog use cases. Each one satisfies a driving port structurally, without inheriting it."""
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from uuid import uuid4
 
 from exactdocs.catalog.constants import (
+    MAX_RENAME_HOPS,
     MAX_RENAMES,
+    MAX_SIMILARITY,
     MAX_SUGGESTION_SCAN,
     MAX_TAG_FACETS,
     TAG_SOURCE_PAGE,
@@ -60,6 +62,7 @@ from exactdocs.catalog.dtos import (
     RemoveLibraryCommand,
     RemoveVersionCommand,
     RenamedPath,
+    RenameIn,
     RenameList,
     RenamesReplaced,
     ReplaceRenamesCommand,
@@ -102,8 +105,10 @@ from exactdocs.catalog.models import (
     ManifestImage,
     ManifestInstruction,
     ManifestRename,
+    ManifestState,
     ManualTags,
     ParsedId,
+    RenameDirection,
     StoredImage,
     TagRule,
     TagSelection,
@@ -492,6 +497,7 @@ class StoreManifestUseCase:
                 )
                 for r in command.renames
             ),
+            renamed_from=_renamed_from(command.renamed_from, command.renames),
             entries=tuple(
                 sorted(
                     (
@@ -849,6 +855,7 @@ class ReplaceRenamesUseCase:
                 )
                 for r in command.renames
             ],
+            renamed_from=_renamed_from(command.renamed_from, command.renames),
         )
         by_path = await self.repository.get_manual_tags(library_id)
         retagged = [
@@ -976,6 +983,52 @@ async def _renames_manifest(
     return str(found.id), str(version.ref), manifest.id
 
 
+def _renamed_from(given: str | None, renames: Sequence[RenameIn]) -> VersionRef | None:
+    """Return the version a rename map was detected against.
+
+    Args:
+        given: The version the caller named, if any.
+        renames: The map; each rename names the version it came from.
+
+    Returns:
+        ``given``, else the version of the first rename, else ``None``.
+    """
+    if given is not None:
+        return VersionRef(given)
+    return VersionRef(renames[0].from_ref) if renames else None
+
+
+def _chain(
+    active: Mapping[VersionRef, Manifest], *, newer: VersionRef, older: VersionRef
+) -> list[Manifest] | None:
+    """Follow the links from ``newer`` back to ``older``: the manifests whose maps are crossed.
+
+    Each manifest names the version it follows (``Manifest.renamed_from``). The walk stops at a
+    manifest without a link, at a branch (its link is itself), at a version that has no active
+    manifest any more, and after ``MAX_RENAME_HOPS`` links (which also ends any cycle).
+
+    Args:
+        active: The library's active manifests, by ref.
+        newer: The version the walk starts from.
+        older: The version it must reach.
+
+    Returns:
+        The manifests from ``newer`` on, newest first, each linked to the next; ``None`` when
+        ``older`` is not reached.
+    """
+    hops: list[Manifest] = []
+    at = active.get(newer)
+    while at is not None and len(hops) < MAX_RENAME_HOPS:
+        link = at.renamed_from
+        if link is None or link == at.ref:
+            return None
+        hops.append(at)
+        if link == older:
+            return hops
+        at = active.get(link)
+    return None
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ResolveRenamedPathUseCase:
     """Implements ``ports.driving.ResolveRenamedPath``."""
@@ -988,8 +1041,10 @@ class ResolveRenamedPathUseCase:
     async def __call__(self, query: ResolveRenamedPathQuery) -> RenamedPath | None:
         """Look the path up in the renames stored with the version's active manifest.
 
+        With ``from_ref``, every map between that version and ``ref`` is followed instead.
+
         Args:
-            query: The version, the path and the direction.
+            query: The version, the path and the direction or the version the path is from.
 
         Returns:
             The move, or ``None`` when git saw none.
@@ -997,8 +1052,67 @@ class ResolveRenamedPathUseCase:
         library, ref, manifest = await _renames_manifest(
             self.repository, self.manifests, query.library, query.ref
         )
+        if query.from_ref is not None:
+            _, start = await _find_version(
+                self.repository, LibraryId(library), VersionRef(query.from_ref)
+            )
+            return await self._across(library, VersionRef(ref), start.ref, query.path)
         rename = await self.manifests.find_rename(manifest, query.path, query.direction)
         return None if rename is None else RenamedPath.from_model(library, ref, rename)
+
+    async def _across(
+        self, library: str, to: VersionRef, start: VersionRef, path: str
+    ) -> RenamedPath | None:
+        """Follow ``path`` of ``start`` to ``to`` along the links between them, either way.
+
+        The library's active manifests are read in one query; then one rename lookup per
+        version crossed, at most ``MAX_RENAME_HOPS``. Versions not linked (another branch, a
+        version removed in between, a chain too long) give ``None``: the path did not move, as
+        far as anyone knows. A rename recorded against another version than the link is not
+        followed, so the answer is never a path of another version.
+
+        Args:
+            library: The library ID.
+            to: The version the path is wanted in.
+            start: The version the path is from.
+            path: The path in ``start``.
+
+        Returns:
+            The move from ``start`` to ``to``, or ``None`` when the path did not move.
+        """
+        if start == to:
+            return None
+        active = {
+            m.ref: m
+            for m in await self.manifests.list_live(LibraryId(library))
+            if m.state is ManifestState.ACTIVE
+        }
+        hops = _chain(active, newer=to, older=start)
+        direction = RenameDirection.FORWARD
+        if hops is None:
+            hops = _chain(active, newer=start, older=to)
+            direction = RenameDirection.BACK
+        if hops is None:
+            return None
+        if direction is RenameDirection.FORWARD:
+            hops.reverse()  # oldest first: the path moves forward through each newer map
+        at, similarity = path, MAX_SIMILARITY
+        for manifest in hops:
+            rename = await self.manifests.find_rename(manifest.id, at, direction)
+            if rename is None or rename.from_ref != manifest.renamed_from:
+                continue
+            at = rename.new_path if direction is RenameDirection.FORWARD else rename.old_path
+            similarity = min(similarity, rename.similarity)
+        if at == path:
+            return None
+        return RenamedPath(
+            library=library,
+            ref=str(to),
+            from_ref=str(start),
+            old_path=path,
+            new_path=at,
+            similarity=similarity,
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

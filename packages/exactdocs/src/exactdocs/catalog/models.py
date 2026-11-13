@@ -724,6 +724,10 @@ class Manifest:
     """When a newer manifest replaced it; starts the grace period before collection."""
     renames: tuple[ManifestRename, ...] = ()
     """Files moved since an earlier version; not loaded with the manifest (``find_rename``)."""
+    renamed_from: VersionRef | None = None
+    """The version ``renames`` were detected against, also when nothing moved: the version this
+    one follows, a link in the chain a path is followed along across versions. ``None`` when no
+    version was compared; a branch's is the branch itself (its map builds up over its syncs)."""
     origin: VersionOrigin = VersionOrigin.MANUAL
     """What its activation gives the version when it creates it (an existing one keeps its own)."""
     instructions: tuple[ManifestInstruction, ...] = ()
@@ -754,7 +758,9 @@ class Manifest:
         olds = [rename.old_path for rename in self.renames]
         if len(set(olds)) != len(olds):
             raise DuplicateRenameError(next(p for p in olds if olds.count(p) > 1))
-        if self.kind is RefKind.TAG and any(r.from_ref == self.ref for r in self.renames):
+        if self.kind is RefKind.TAG and (
+            self.renamed_from == self.ref or any(r.from_ref == self.ref for r in self.renames)
+        ):
             raise SelfRenameError(str(self.ref))  # a branch's map builds up over its syncs
         image_paths = [image.path for image in self.images]
         if len(set(image_paths)) != len(image_paths):
