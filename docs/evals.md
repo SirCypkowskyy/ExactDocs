@@ -364,12 +364,120 @@ Pitfalls the corpus shows:
 - **Zod v4 MDX**: a JSX tag on its own line (`</Tab>`) directly before a code fence, and MDX
   comments `{/* ... */}` around fences, make CommonMark pair the fences wrongly, so some real
   headings come out as code (`## The error param` in `error-customization.mdx`). Such a section
-  cannot be named until the importer handles it (#346); the validation refuses it.
+  cannot be named until the importer handles it; the validation refuses it, and the ingestion
+  benchmark counts such headings in `headings_missed`.
 - **Pydantic v1.10** pulls its code examples in with `{!.tmp_examples/...!}`: the code is not in
   the imported text, only the prose is. Its v2 API pages (`docs/api/`) are mkdocstrings stubs.
 - **Unanswerable** means the pinned docs do not answer it at all: search the whole docs tree at
   that commit (`git grep`) before writing one; a third-party page that mentions the name is enough
   to make it answerable.
+
+## The ingestion benchmark
+
+Retrieval can only return what ingestion produced. The ingestion benchmark (#346) measures what
+the importer makes of the golden corpus under several chunking configurations, and the BM25 recall
+each one leads to. It needs no model.
+
+```bash
+just ingestion-bench --offline                      # every configuration, every project
+just ingestion-bench --configs default,h2 --projects zod
+just ingestion-bench --out packages/exactdocs/evals/results   # refresh the recorded run
+just ingestion-bench --offline --check              # fail when something got worse than the recorded run
+```
+
+For each configuration it imports every pinned version with the real importer into its own
+model-free instance (the same path as `golden-import`, with the library's chunking settings set
+first), reads back the chunks the importer stored, and compares them with the source at the pinned
+commit. Then it runs the whole golden set through BM25, each question in its project's library.
+It writes `ingestion.json` and `ingestion.md` to `reports/evals/` (or `--out`) and prints the
+summary. The whole corpus takes about a minute per configuration.
+
+The recorded run is in
+[`packages/exactdocs/evals/results/`](https://github.com/SirCypkowskyy/ExactDocs/tree/develop/packages/exactdocs/evals/results)
+(`reports/` is not committed). `--check` compares a run with it: in every configuration both
+measured, coverage may not drop, the integrity and heading counts (`articles_without_chunks`,
+`cuts_in_*`, `lost_chars`, `empty_heading_paths`, `wrong_heading_paths`, `headings_missed`,
+`headings_extra`) may not rise, and BM25 recall@5 may not drop more than 2 points. A run on
+another golden set (another fingerprint) or other projects fails until the run is recorded again.
+When a change to the importer improves the numbers, record the run in the same pull request.
+
+Like the retrieval eval, it runs on releases, not on pull requests: the release workflow's
+*Retrieval eval* job runs `--check` (step *Ingestion benchmark*) and a regression stops the
+release. If you change the parser, the chunker or the import path, run `just ingestion-bench
+--offline --check` before you open the pull request. Pull request CI only runs the benchmark's
+quick tests (`tests/evals/test_ingestion.py`, `ingestion_bench.feature`) on a tiny local corpus.
+
+### Configurations
+
+| Name | Settings | What it does |
+|---|---|---|
+| `default` | split level 6, no merging, no bound | today's default: every heading starts a chunk |
+| `h2` | split level 2 | only `#` and `##` start a chunk; deeper sections stay inside their parent |
+| `h3-max-4000` | split level 3, `max_chars` 4,000 | `#` to `###` start a chunk; a longer one is cut again at deeper headings |
+| `merge-400` | `min_chars` 400, `max_chars` 4,000 | every heading starts a chunk, then a chunk under 400 characters is merged with the next while the result stays within 4,000 |
+
+They are `CONFIGURATIONS` in `retrieval_eval/ingestion_cli.py`. The section ceiling of #141
+(splitting a long section at block boundaries) is not one of them yet: it is not exposed in the
+library settings.
+
+### Metrics
+
+Each metric is reported per project and version, and in total per configuration. The checks of
+block structure use the benchmark's own line reader, not the importer's parser: where the parser
+reads a fence, a heading or an indented block differently (MDX, MkDocs), the two disagree and the
+disagreement is counted. The reader knows fenced code (backticks or tildes, closed by the same
+marker at least as long), ATX and setext headings, pipe-table rows and list items; it does not
+know HTML blocks, MDX or indented code, on purpose.
+
+| Metric | Definition |
+|---|---|
+| `coverage` | share of the golden set's distinct expected sections that start at least one chunk: a chunk's heading path is the section's. `missing_sections` lists every other one, marked `(held)` when it is still a heading inside a bigger chunk; `held_sections` counts those that start a chunk or are held |
+| `cuts_in_code_fence` | chunks that end inside a fenced code block (the line reader, fed the article's chunks in order, is inside a fence after the chunk) |
+| `cuts_in_table`, `cuts_in_list` | chunks whose last line and the next chunk's first line are both table rows, or both belong to a list |
+| `lost_chars` of `source_chars` | non-whitespace characters of the source (the file at the pinned commit, a symlink followed one hop as a reader of the repository sees it, front matter left out) that are in no chunk; each chunk is looked for verbatim after the previous one's match |
+| `tokens_p50`, `tokens_p95`, `tokens_max` | chunk size in estimated tokens, `ceil(characters / 4)` (retrieval's `CHARS_PER_TOKEN`); nearest-rank percentiles |
+| `small_chunks`, `small_share` | chunks under 50 tokens (`MIN_USEFUL_TOKENS`, about a heading and a sentence or two) |
+| `multi_top_chunks`, `multi_top_share` | chunks holding more than one top-level heading (a heading whose path has one element: the H1, or the H2s of a page without H1) |
+| `empty_heading_paths` | chunks with an empty heading path: text before the first heading, or an article with no heading |
+| `wrong_heading_paths` | chunks whose heading path holds an empty heading or markup that should have become plain text: `{#id}`, `[#id]`, `[text][ref]`, `[text](url)`, `{/*`, `{!` (not an HTML tag: a heading's code span may hold one); examples in `wrong_heading_examples` |
+| `headings_missed`, `headings_extra` | per article, how many fewer (more) headings the chunks record than the line reader finds outside fenced code, summed |
+| `articles_without_chunks` | selected files the importer stored no chunk for |
+| `articles_without_h1` | readable, non-empty files with no level-1 heading |
+| `unexpanded_includes` | chunks holding an include the docs build expands and Markdown does not (`{!file!}`, `--8<--`) |
+| `mkdocs_blocks_as_code` | MkDocs admonitions and content tabs (`!!!`, `???`, `===`) whose 4-space-indented body Markdown reads as an indented code block |
+
+`examples` keeps up to ten article keys (`<project> <version>:<path>`) per article-level metric.
+Next to them, per configuration, `bm25` holds recall@1/5/10, MRR, the wrong-version rate and the
+misses of the golden set's answerable cases, with the suite's own evaluators.
+
+**Matching a hit across chunking depths.** A configuration that cuts coarser or finer than the
+golden set's sections would otherwise lose every hit to a heading path that no longer exists. So a
+returned chunk of the expected version and article answers the expected section when its heading
+path is the expected one; or the expected path is a non-empty prefix of it (a finer cut: the chunk
+is part of the section); or its path is a prefix of the expected one and the chunk holds the
+expected heading (a coarser cut merged the section into it). `recall_at_5_exact` is recall@5 with
+only the exact heading path, for comparison. The rule is `golden_run.nested_match`.
+
+### The JSON report
+
+`ingestion.json` is the source the published results (#349) are built from; its layout is stable
+and `schema_version` changes when a field is renamed or removed.
+
+- `schema_version`, `golden` (the golden set's fingerprint), `cases`, `projects`,
+  `min_useful_tokens`, `chars_per_token`;
+- `configurations`: one entry per configuration with `name`, `about`, `chunking` (the library
+  settings: `split_level`, `min_chars`, `max_chars`, `chunker`), `totals` (the metrics above over
+  the whole corpus), `bm25` (`answerable`, `recall_at_1`, `recall_at_5`, `recall_at_10`, `mrr`,
+  `recall_at_5_exact`, `wrong_version_rate`, `misses`, `errors`) and `versions` (per `project` and
+  `version`: `library`, `commit` and the same `metrics`).
+
+### Running more retrieval modes on the golden set
+
+`retrieval_eval/golden_run.py` is the golden set's multi-library runner: `golden_retriever` sends
+each question to its project's library through the suite's `SearchDocsRetriever`, and
+`run_golden` scores the whole set with the suite's evaluators and `evaluate_mode`, with the exact
+or the nested match rule. The ingestion benchmark runs BM25 through it; any mode can run the same
+way.
 
 ## The agent benchmark
 

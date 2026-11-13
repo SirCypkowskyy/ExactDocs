@@ -16,6 +16,7 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
 | Architecture | pytest + **ArchUnitPython** | `packages/exactdocs/tests/architecture/` | boundaries in `docs/architecture.md` | fast |
 | Web | vitest + Testing Library | `web/src/**/*.test.tsx` | components and query logic of a feature | fast |
 | Retrieval eval | Pydantic Evals, `just eval` | `packages/exactdocs/evals/` (tests in `tests/evals/`; the end-to-end ones are marked `eval`) | recall, wrong-version rate, latency and cost per retrieval mode; gates in docs/evals.md; runs on releases, not in CI | minutes |
+| Ingestion benchmark | `just ingestion-bench` (needs the golden corpus cache) | `packages/exactdocs/evals/retrieval_eval/ingestion*.py` (tests in `tests/evals/test_ingestion.py`) | coverage, cut blocks, chunk sizes and heading paths per chunking configuration, with BM25 recall; `--check` against `evals/results/ingestion.json`; runs on releases, not in CI | about a minute per configuration |
 
 ## Rules of thumb
 
