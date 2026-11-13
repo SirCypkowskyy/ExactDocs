@@ -27,9 +27,14 @@ AccountId = NewType("AccountId", str)
 
 
 class Role(StrEnum):
-    """What an account may do. Only ``admin`` exists until more users arrive (ACL-06)."""
+    """What an account may do on the instance (library roles are another matter, E12-05).
+
+    ``admin`` is an operator: besides everything a user does, it manages the local accounts.
+    The first account is always one. ``user`` signs in and uses the instance, nothing more.
+    """
 
     ADMIN = "admin"
+    USER = "user"
 
 
 @dataclass(frozen=True, slots=True)  # conventions: allow-positional -- one-field value object
@@ -81,6 +86,26 @@ class Account:
     """What the account may do."""
     created_at: datetime
     """When the account was created."""
+    disabled_at: datetime | None = None
+    """When an operator disabled the account; ``None`` while it may sign in."""
+
+    @property
+    def is_disabled(self) -> bool:
+        """Whether the account is locked out: no sign-in, no session, no token works for it.
+
+        Returns:
+            ``True`` once an operator disabled it, until one enables it again.
+        """
+        return self.disabled_at is not None
+
+    @property
+    def is_operator(self) -> bool:
+        """Whether the account manages the instance's local accounts.
+
+        Returns:
+            ``True`` for an ``admin``.
+        """
+        return self.role is Role.ADMIN
 
 
 def hash_token(token: str) -> str:
@@ -276,8 +301,9 @@ def known_sign_ins_prefix(username: str) -> str:
     the other way: a username that itself holds ``@address:`` (``Username`` allows one), say
     ``a@address:x``, starts with the prefix of ``a``, so forgetting ``a`` also forgets its
     remembered sign-ins. That account then becomes stricter (its attempts count against its
-    username again), never more lenient. It cannot happen while there is only one account
-    (ACL-06), and the risk is too small to be worth a separate username column.
+    username again), never more lenient. An account created by an operator cannot hold
+    ``RESERVED_IN_USERNAME`` (``CreateUser`` refuses it), so it only matters for a first admin
+    named that way, and the risk is too small to be worth a separate username column.
 
     Args:
         username: The (normalised) username.

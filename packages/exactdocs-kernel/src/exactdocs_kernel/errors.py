@@ -54,6 +54,12 @@ class UnauthenticatedError(DomainError):
     code = "unauthenticated"
 
 
+class ForbiddenError(DomainError):
+    """The caller is known, but may not do this."""
+
+    code = "forbidden"
+
+
 class RateLimitedError(DomainError):
     """The caller asked too often; it may try again after ``retry_after`` seconds."""
 

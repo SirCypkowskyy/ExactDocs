@@ -1,4 +1,4 @@
-"""REST adapter for identity: the first-run setup, the browser session and "who is the caller"."""
+"""REST adapter for identity: setup, sessions, "who is the caller", tokens and the users page."""
 
 from collections.abc import Awaitable, Callable
 from typing import Annotated
@@ -12,27 +12,40 @@ from exactdocs.identity.constants import (
     CREATE_TOKEN_DESCRIPTION,
     LOGIN_FOR_TOKEN_DESCRIPTION,
     SESSION_COOKIE,
+    USERS_DESCRIPTION,
 )
 from exactdocs.identity.dtos import (
     AccountSummary,
     AuthenticateQuery,
     CreateFirstAdminCommand,
     CreateTokenCommand,
+    CreateUserCommand,
     LoginForTokenCommand,
+    NewPassword,
+    PasswordReset,
+    ResetPasswordCommand,
     SessionState,
+    SetUserDisabledCommand,
     TokenGrant,
     TokenList,
+    UserList,
+    UserSummary,
 )
-from exactdocs.identity.errors import InvalidTokenError
+from exactdocs.identity.errors import InvalidTokenError, NotAnOperatorError
+from exactdocs.identity.models import Role
 from exactdocs.identity.ports.driving import (
     CreateFirstAdmin,
     CreateToken,
+    CreateUser,
     GetSessionState,
     IdentifyCaller,
     IdentifyToken,
     ListTokens,
+    ListUsers,
     LoginForToken,
+    ResetPassword,
     RevokeToken,
+    SetUserDisabled,
     SignIn,
     SignOut,
 )
@@ -208,6 +221,120 @@ def build_tokens_router(
             account: The signed-in account.
         """
         await revoke_token(account, token_id)
+
+    return router
+
+
+def build_users_router(
+    *,
+    list_users: ListUsers,
+    create_user: CreateUser,
+    set_user_disabled: SetUserDisabled,
+    reset_password: ResetPassword,
+    session_caller: CurrentCaller,
+) -> APIRouter:
+    """Expose ``/users``: the operator's users page. There is no self-signup route.
+
+    Every route needs a signed-in session (an API token is refused with 401, as for ``/tokens``:
+    a leaked token must not be able to create accounts) of an ``admin``; anyone else gets 403.
+
+    Args:
+        list_users: The driving port that lists the accounts.
+        create_user: The driving port that creates an account.
+        set_user_disabled: The driving port that disables or enables an account.
+        reset_password: The driving port that sets an account's password.
+        session_caller: The dependency that requires a signed-in session.
+
+    Returns:
+        The router.
+    """
+
+    async def operator(account: Annotated[AccountSummary, Depends(session_caller)]) -> None:
+        """Let only an operator through.
+
+        Args:
+            account: The signed-in account.
+
+        Raises:
+            NotAnOperatorError: The account is not an ``admin``.
+        """
+        if account.role != Role.ADMIN.value:
+            raise NotAnOperatorError
+
+    router = APIRouter(tags=["identity"], dependencies=[Depends(operator)])
+
+    @router.get(
+        "/users",
+        description=f"List every local account, disabled ones included, oldest first. "
+        f"{USERS_DESCRIPTION}",
+    )
+    async def get_users() -> UserList:
+        """List every local account, disabled ones included, oldest first.
+
+        Returns:
+            The accounts.
+        """
+        return await list_users()
+
+    @router.post("/users", status_code=201)
+    async def add_user(command: CreateUserCommand) -> UserSummary:
+        """Create a local account with a password the operator passes on to its owner.
+
+        Operators only, with a session (see `GET /users`).
+
+        Args:
+            command: The new account's username, password and role.
+
+        Returns:
+            The new account.
+        """
+        return await create_user(command)
+
+    @router.post("/users/{user_id}/disable")
+    async def disable_user(user_id: str) -> UserSummary:
+        """Disable an account: its sessions end, its tokens are revoked, and it cannot sign in.
+
+        The last enabled admin cannot be disabled (409 `last_operator`). Disabling a disabled
+        account changes nothing. Operators only, with a session (see `GET /users`).
+
+        Args:
+            user_id: The account's id.
+
+        Returns:
+            The account as it is now.
+        """
+        return await set_user_disabled(SetUserDisabledCommand(id=user_id, disabled=True))
+
+    @router.post("/users/{user_id}/enable")
+    async def enable_user(user_id: str) -> UserSummary:
+        """Let a disabled account sign in again, with its password unchanged.
+
+        Its revoked API tokens stay revoked. Operators only, with a session (see `GET /users`).
+
+        Args:
+            user_id: The account's id.
+
+        Returns:
+            The account as it is now.
+        """
+        return await set_user_disabled(SetUserDisabledCommand(id=user_id, disabled=False))
+
+    @router.put("/users/{user_id}/password")
+    async def set_user_password(user_id: str, body: NewPassword) -> PasswordReset:
+        """Set a new password: every session of the account ends and its tokens are revoked.
+
+        The username's sign-in throttle count is dropped too, so its owner can sign in with the
+        new password at once (`throttle` says whether that worked). Operators only, with a
+        session (see `GET /users`).
+
+        Args:
+            user_id: The account's id.
+            body: The new password.
+
+        Returns:
+            The account, and what became of its sign-in throttle count.
+        """
+        return await reset_password(ResetPasswordCommand(id=user_id, password=body.password))
 
     return router
 

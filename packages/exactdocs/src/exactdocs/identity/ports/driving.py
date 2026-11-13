@@ -7,14 +7,18 @@ from exactdocs.identity.dtos import (
     AuthenticateQuery,
     CreateFirstAdminCommand,
     CreateTokenCommand,
+    CreateUserCommand,
     LoginForTokenCommand,
     PasswordReset,
     ResetPasswordCommand,
     SessionGrant,
     SessionState,
     SetupState,
+    SetUserDisabledCommand,
     TokenGrant,
     TokenList,
+    UserList,
+    UserSummary,
 )
 
 
@@ -128,6 +132,56 @@ class GetSessionState(Protocol):
 
         Returns:
             The setup and sign-in state.
+        """
+        ...
+
+
+class ListUsers(Protocol):
+    """Every local account, for an operator."""
+
+    async def __call__(self) -> UserList:
+        """Run the use case.
+
+        Returns:
+            The accounts, oldest first.
+        """
+        ...
+
+
+class CreateUser(Protocol):
+    """Create a further local account (operators only; there is no self-signup).
+
+    Raises ``NotSetUpError`` before the first admin exists, ``UsernameTakenError`` for a taken
+    name and ``ReservedUsernameError`` for a name the sign-in throttle needs for itself.
+    """
+
+    async def __call__(self, command: CreateUserCommand) -> UserSummary:
+        """Run the use case.
+
+        Args:
+            command: The new account's username, password and role.
+
+        Returns:
+            The new account.
+        """
+        ...
+
+
+class SetUserDisabled(Protocol):
+    """Disable an account, ending its sessions and revoking its tokens, or enable it again.
+
+    Raises ``UnknownAccountError`` when there is no such account, and ``LastOperatorError``
+    rather than disable the last enabled admin.
+    """
+
+    async def __call__(self, command: SetUserDisabledCommand) -> UserSummary:
+        """Run the use case.
+
+        Args:
+            command: The account, and whether to disable or enable it.
+
+        Returns:
+            The account as it is now.
         """
         ...
 

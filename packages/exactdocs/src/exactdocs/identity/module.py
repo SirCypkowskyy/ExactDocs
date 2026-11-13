@@ -17,14 +17,17 @@ from exactdocs.identity.ports.driving import (
     Authenticate,
     CreateFirstAdmin,
     CreateToken,
+    CreateUser,
     GetSessionState,
     GetSetupState,
     IdentifyCaller,
     IdentifyToken,
     ListTokens,
+    ListUsers,
     LoginForToken,
     ResetPassword,
     RevokeToken,
+    SetUserDisabled,
     SignIn,
     SignOut,
 )
@@ -32,14 +35,17 @@ from exactdocs.identity.use_cases import (
     AuthenticateUseCase,
     CreateFirstAdminUseCase,
     CreateTokenUseCase,
+    CreateUserUseCase,
     GetSessionStateUseCase,
     GetSetupStateUseCase,
     IdentifyCallerUseCase,
     IdentifyTokenUseCase,
     ListTokensUseCase,
+    ListUsersUseCase,
     LoginForTokenUseCase,
     ResetPasswordUseCase,
     RevokeTokenUseCase,
+    SetUserDisabledUseCase,
     SignInUseCase,
     SignOutUseCase,
 )
@@ -66,6 +72,12 @@ class IdentityModule:
     """Tell the UI whether setup is due and who is signed in."""
     reset_password: ResetPassword
     """Set a new password for an account (operators only)."""
+    list_users: ListUsers
+    """List every local account (operators only)."""
+    create_user: CreateUser
+    """Create a further local account (operators only; there is no self-signup)."""
+    set_user_disabled: SetUserDisabled
+    """Disable or enable an account (operators only)."""
     create_token: CreateToken
     """Create an API token for the caller."""
     login_for_token: LoginForToken
@@ -124,6 +136,13 @@ class IdentityModule:
                 tokens=tokens,
                 hasher=hasher,
                 failures=failures,
+            ),
+            list_users=ListUsersUseCase(accounts=repository),
+            create_user=CreateUserUseCase(
+                accounts=repository, hasher=hasher, failures=failures, clock=clock
+            ),
+            set_user_disabled=SetUserDisabledUseCase(
+                accounts=repository, sessions=sessions, tokens=tokens, clock=clock
             ),
             create_token=create_token,
             login_for_token=LoginForTokenUseCase(
