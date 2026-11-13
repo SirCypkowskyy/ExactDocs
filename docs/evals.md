@@ -561,11 +561,14 @@ side, so the `cross-page` row says how often the whole answer came back, not onl
 
 **"No answer".** `search_docs` has no explicit no-answer signal: a result carries a `score` that is
 "only comparable within one search", and no mode applies a relevance threshold. The only signal a
-caller can read is an empty result list. BM25 returns nothing when no term of the question is in
-the version; `hybrid` always returns the nearest chunks, so it never signals no answer; the judge
-reorders and never drops; `agentic` may answer with no chunk. The benchmark therefore counts an
-empty result as "signalled no answer", and reports how often an answerable case came back empty
-too, so a configuration that returns nothing more often is not rewarded for it.
+caller can read is an empty result list. BM25 returns nothing only when no term of the question is
+in the version; `hybrid` always returns the nearest chunks; the cross-encoder and the judge reorder
+and never drop; `agentic` answers with the chunks the agent picks. The benchmark counts an empty
+result as "signalled no answer", and reports how often an answerable case came back empty too, so
+a configuration that returns nothing more often is not rewarded for it. In the recorded run no
+configuration signalled no answer for any of the 54 unanswerable cases (0%), while all of them
+returned nothing of another version: a caller cannot tell an unanswerable question from an
+answerable one by the result list today.
 
 ### The recommendation
 
@@ -597,8 +600,34 @@ yet"; for hosted models that means a real-providers run is needed.
 - `recommendations`: per `budget`, the `configuration`, `chunking`, `usd_per_1000_questions` and
   the `reasons`.
 
-The recorded run is `packages/exactdocs/evals/results/retrieval.json` and `retrieval.md`
-(below: what it covers). `schema_version` changes when a field is renamed or removed.
+The recorded run is `packages/exactdocs/evals/results/retrieval.json` and `retrieval.md`.
+`schema_version` changes when a field is renamed or removed.
+
+### The recorded run
+
+Measured on an Apple M-series laptop (10 cores) with no network, on the whole golden set, in about
+1 h 40 min. A full local matrix (three embedding models, each with and without the cross-encoder,
+at four chunkings) would take about six hours on that CPU, so it ran on this subset:
+
+- `bm25` and `hybrid:bge-small-en-v1.5` at every chunking configuration;
+- `bm25+ce` at `default` and `h2`; `hybrid:bge-small-en-v1.5+ce` at `default`;
+- `hybrid:snowflake-arctic-embed-s` at `default` (the second local embedding model);
+- `hybrid:bge-base-en-v1.5` did not run (about 50 minutes of embedding per chunking there);
+- every hosted configuration is listed as skipped: it needs a real-providers run.
+
+```bash
+EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
+  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@default,bm25+ce@h2,hybrid:bge-small-en-v1.5+ce@default,hybrid:snowflake-arctic-embed-s@default,*+judge,*:hosted*' \
+  --out packages/exactdocs/evals/results
+```
+
+Embedding the whole corpus took 17 minutes with bge-small at `default` (8 at `h2`, 13 at
+`h3-max-4000`, 11 at `merge-400`) and 16 with arctic-embed-s; the cross-encoder adds about
+1.4 s per question (32 candidates). What it found: BM25 is best at `h3-max-4000` (recall@5 81.7%);
+hybrid on bge-small reaches 84.6% at `default`, 3 points more, under the 5-point margin, so BM25
+stays the default for both the no-model and the local budget; the cross-encoder adds as much as
+hybrid at `default` and loses recall at `h2`, whose chunks are longer than its window;
+arctic-embed-s is below BM25 (75.3%).
 
 ### Running it with local models
 
@@ -610,8 +639,8 @@ EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline
 ```
 
 The pull is the only step that needs the network; the models then run on the CPU (ONNX Runtime,
-half the cores per call). Embedding the corpus dominates the run time: see the recorded run's
-`index` seconds per model and chunking.
+half the cores per call). Embedding the corpus dominates the run time (`index` seconds per model
+and chunking in the report), then the cross-encoder; see the recorded run above.
 
 ### Running the hosted part
 
