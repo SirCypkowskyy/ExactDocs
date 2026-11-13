@@ -1227,7 +1227,6 @@ class GetManifestStatesUseCase:
             [ManifestId(i) for i in dict.fromkeys(query.manifest_ids)]
         )
         return ManifestStates(states={i: m.state for i, m in found.items()})
-        return ManifestStates(states={m.id: m.state for m in found if m is not None})
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
