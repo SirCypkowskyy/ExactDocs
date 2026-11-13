@@ -225,7 +225,9 @@ async def test_the_apps_own_origin_may_sign_in_and_out(client: httpx.AsyncClient
     assert (await client.delete("/api/v1/session", headers=own)).status_code == 204
 
 
-async def test_only_setup_and_the_session_routes_are_open(client: httpx.AsyncClient) -> None:
+async def test_only_setup_the_session_routes_and_the_push_webhook_are_open(
+    client: httpx.AsyncClient,
+) -> None:
     spec = (await client.get("/api/v1/openapi.json")).json()
     methods = {"get", "put", "post", "delete", "patch"}
 
@@ -242,6 +244,7 @@ async def test_only_setup_and_the_session_routes_are_open(client: httpx.AsyncCli
         ("POST", "/api/v1/session"),
         ("DELETE", "/api/v1/session"),
         ("POST", "/api/v1/tokens/login"),
+        ("POST", "/api/v1/webhooks/{owner}/{repo}"),  # the library's webhook secret instead
     }
     assert spec["components"]["securitySchemes"]["SessionCookie"]["in"] == "cookie"
 
