@@ -146,7 +146,9 @@ def no_psycopg_connection_left_open() -> Generator[None]:
     message = (
         f"{len(left)} psycopg connection(s) opened here are still open:\n{named}\n"
         "Close them (`with psycopg.connect(...)`), dispose the engine, or run the container "
-        "(`async with container.running()`)."
+        "(`async with container.running()`).\n"
+        "The guard has closed them, so a pooled engine that still holds one may report "
+        '"the connection is closed" once in a later test: that comes from this leak.'
     )
     # Close them here: something else (a pool record) may still hold them, and a later test
     # would then get their "deleted while still open" warning when the garbage collector runs.
