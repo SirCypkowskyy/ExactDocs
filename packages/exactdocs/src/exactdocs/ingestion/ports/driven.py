@@ -38,6 +38,8 @@ from exactdocs.ingestion.models import (
     TaggedPath,
     TagRule,
     VersionToEmbed,
+    Webhook,
+    WebhookDelivery,
 )
 
 
@@ -48,7 +50,9 @@ class JobRepository(Protocol):
         """Store a new job.
 
         Raises ``VersionImportingError`` when it is an unfinished import of a (library, ref)
-        that already has one: the repository enforces this atomically.
+        that already has one, and ``PushQueuedError`` when it is a queued ``push`` of a
+        (library, ref, ref kind) that already has one queued: the repository enforces both
+        atomically.
 
         Args:
             job: The new job.
@@ -117,6 +121,8 @@ class JobRepository(Protocol):
 
     async def list_latest(self) -> Sequence[Job]:
         """Return the newest job of every (library, version), ordered by library and version.
+
+        ``push`` jobs are left out: they name a ref but say nothing about how its version fared.
 
         Returns:
             One job per pair; the jobs without a version count as one pair per library.
@@ -1175,5 +1181,86 @@ class LibraryLocks(Protocol):
 
         Returns:
             An async context manager that holds the lock while it is entered.
+        """
+        ...
+
+
+class WebhookSecrets(Protocol):
+    """Where the libraries' webhook secrets are kept (sealed at rest, one per library)."""
+
+    async def save(self, webhook: Webhook) -> None:
+        """Store the library's webhook, replacing the one it had.
+
+        Args:
+            webhook: The library's webhook and its secret.
+        """
+        ...
+
+    async def get(self, library: str) -> Webhook | None:
+        """Return the library's webhook with its secret, or ``None`` when it has none.
+
+        Raises ``WebhookSecretUnreadableError`` when one is stored but does not open (the
+        instance's secret key is not the one it was sealed with).
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            The webhook, or ``None``.
+        """
+        ...
+
+    async def created_at(self, library: str) -> datetime | None:
+        """Say when the library's webhook was created, without opening its secret.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            When it was created, or ``None`` when the library has none.
+        """
+        ...
+
+    async def delete(self, library: str) -> None:
+        """Forget the library's webhook (nothing happens when it has none).
+
+        Args:
+            library: The library ID.
+        """
+        ...
+
+
+class WebhookDeliveries(Protocol):
+    """The deliveries accepted lately, so a redelivery is answered ``duplicate``."""
+
+    async def record(self, delivery: WebhookDelivery, *, prune_before: datetime) -> bool:
+        """Remember the delivery unless it is known; say whether it was new.
+
+        Atomic across processes (``INSERT ... ON CONFLICT DO NOTHING`` on PostgreSQL): of two
+        concurrent records of one (library, provider, delivery ID), exactly one is new.
+        Deliveries received before ``prune_before`` are forgotten in the same write.
+
+        Args:
+            delivery: The delivery.
+            prune_before: Older deliveries are forgotten.
+
+        Returns:
+            True when it was not known.
+        """
+        ...
+
+    async def forget(self, delivery: WebhookDelivery) -> None:
+        """Forget the delivery, so the forge's retry of it is acted on.
+
+        Args:
+            delivery: The delivery whose job could not be queued.
+        """
+        ...
+
+    async def delete_for(self, library: str) -> None:
+        """Forget every delivery of the library.
+
+        Args:
+            library: The library ID.
         """
         ...

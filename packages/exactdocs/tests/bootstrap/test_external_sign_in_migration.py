@@ -14,7 +14,7 @@ from exactdocs.bootstrap.database import (
 )
 from exactdocs.bootstrap.settings import Settings
 
-BEFORE, AFTER = "767adfc01f8a", "b7e4c1a9d305"
+BEFORE, AFTER = "bc0d89570be4", "b7e4c1a9d305"
 TABLES = {"identity_external_identities", "identity_account_groups", "identity_sign_in_attempts"}
 
 

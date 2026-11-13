@@ -27,8 +27,10 @@ from exactdocs.catalog.adapters.driving import http as catalog_http
 from exactdocs.identity.adapters.driving import http as identity_http
 from exactdocs.identity.constants import SESSION_COOKIE
 from exactdocs.identity.dtos import AccountSummary
+from exactdocs.identity.models import Role
 from exactdocs.ingestion.adapters.driving import http as ingestion_http
 from exactdocs.retrieval.adapters.driving import http as retrieval_http
+from exactdocs_kernel import ForbiddenError
 
 
 def _include_session_routers(v1: APIRouter, container: Container) -> identity_http.CurrentCaller:
@@ -149,7 +151,8 @@ def create_app(container: Container) -> FastAPI:
         app.include_router(build_metrics_router(token=settings.metrics_token))
 
     v1 = APIRouter(prefix="/v1", responses=error_responses())
-    # Reachable without a caller: setup, sign-in/state/out, token login. A test pins this list.
+    # Reachable without a caller: setup, sign-in/state/out, token login (and the webhook route of
+    # `_include_sync_triggers`). A test pins this list.
     v1.include_router(
         identity_http.build_router(
             create_first_admin=container.identity.create_first_admin,
@@ -260,14 +263,7 @@ def create_app(container: Container) -> FastAPI:
             update_library_settings=container.ingestion.update_library_settings,
         )
     )
-    protected.include_router(
-        ingestion_http.build_auto_sync_router(
-            get_auto_sync=container.ingestion.get_auto_sync,
-            set_auto_sync=container.ingestion.set_auto_sync,
-            disable_auto_sync=container.ingestion.disable_auto_sync,
-        )
-    )
-    v1.include_router(protected)
+    _include_sync_triggers(container, v1=v1, protected=protected, session_caller=session_caller)
     api.include_router(v1)
     app.include_router(api)
 
@@ -285,6 +281,63 @@ def create_app(container: Container) -> FastAPI:
         # SPA: `index.html` only for HTML navigation requests; API and assets keep real 404s.
         app.frontend("/", directory=WEB_DIST, fallback="index.html")
     return app
+
+
+def _include_sync_triggers(
+    container: Container,
+    *,
+    v1: APIRouter,
+    protected: APIRouter,
+    session_caller: identity_http.CurrentCaller,
+) -> None:
+    """Add what starts a sync without a person (the scheduled check, push webhooks), then mount.
+
+    The routes that set a webhook secret are for operators, as ``/users`` is: an ``admin``
+    signed in with a session cookie (an API token is refused with 401, anyone else with 403),
+    since the answer of `PUT` reveals the secret. ``protected`` is then added to ``v1``, and
+    after it the route a forge pushes to, which needs no caller, only the library's webhook
+    secret (checked by the domain).
+
+    Args:
+        container: The wired application.
+        v1: The ``/api/v1`` router, reachable without a caller.
+        protected: The routes that need a caller; complete once this returns.
+        session_caller: The dependency that requires a signed-in session.
+    """
+
+    async def require_operator(request: Request) -> None:
+        """Let only an ``admin`` signed in with a session cookie through.
+
+        Args:
+            request: The HTTP request, for its session cookie.
+
+        Raises:
+            ForbiddenError: The account is not an ``admin``.
+        """
+        account = await session_caller(request.cookies.get(SESSION_COOKIE))
+        if account.role != Role.ADMIN.value:
+            message = "only an admin manages a library's webhook"
+            raise ForbiddenError(message)
+
+    protected.include_router(
+        ingestion_http.build_auto_sync_router(
+            get_auto_sync=container.ingestion.get_auto_sync,
+            set_auto_sync=container.ingestion.set_auto_sync,
+            disable_auto_sync=container.ingestion.disable_auto_sync,
+        )
+    )
+    protected.include_router(
+        ingestion_http.build_webhook_settings_router(
+            get_webhook=container.ingestion.get_webhook,
+            set_webhook=container.ingestion.set_webhook,
+            disable_webhook=container.ingestion.disable_webhook,
+            require_operator=require_operator,
+        )
+    )
+    v1.include_router(protected)
+    v1.include_router(
+        ingestion_http.build_webhook_router(receive_webhook=container.ingestion.receive_webhook)
+    )
 
 
 def _mount_mcp(app: FastAPI, mcp_app: Starlette) -> None:

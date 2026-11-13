@@ -6,14 +6,14 @@ sealed refresh token and when its access ends; ``identity_account_groups`` holds
 groups at its provider; ``identity_sign_in_attempts`` keeps a started sign-in until its callback.
 
 Revision ID: b7e4c1a9d305
-Revises: 767adfc01f8a
+Revises: bc0d89570be4
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "b7e4c1a9d305"
-down_revision = "767adfc01f8a"
+down_revision = "bc0d89570be4"
 branch_labels = None
 depends_on = None
 

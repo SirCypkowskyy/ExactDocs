@@ -219,6 +219,8 @@ OPEN_ROUTES = {
     ("GET", "/api/v1/auth/{provider}/start"),
     ("GET", "/api/v1/auth/{provider}/callback"),
     ("GET", "/api/v1/openapi.json"),
+    # A forge's push: no caller, only the library's webhook secret (answers 401 without it).
+    ("POST", "/api/v1/webhooks/{owner}/{repo}"),
 }
 
 

@@ -17,7 +17,7 @@ from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository, jobs
 from exactdocs.ingestion.constants import ABOVE_EVERY_JOB_ID, JobKind
-from exactdocs.ingestion.errors import VersionImportingError
+from exactdocs.ingestion.errors import PushQueuedError, VersionImportingError
 from exactdocs.ingestion.models import Job, JobId, JobState, ProblemCode, RefKind
 from exactdocs.ingestion.ports import JobRepository
 
@@ -517,3 +517,40 @@ async def test_a_second_unfinished_import_of_a_ref_is_refused_but_a_finished_one
 
     await repository.add(queued("j2"))
     await repository.add(queued("j4").failed("boom", T0))  # nor are they refused
+
+
+def push(job_id: str, ref: str = "main", kind: RefKind = RefKind.BRANCH) -> Job:
+    return Job.queued(
+        job_id=JobId(job_id),
+        kind=JobKind("push"),
+        library="/acme/payments",
+        version=ref,
+        ref_kind=kind,
+        now=T0,
+    )
+
+
+async def test_a_push_job_is_never_a_version_s_latest_job(repository: JobRepository) -> None:
+    await repository.add(queued("1", version="main").started(T0).succeeded(T0))
+    await repository.add(push("2").started(T0))  # newer, but says nothing about the version
+    await repository.add(push("3", ref="v2.1.0", kind=RefKind.TAG).started(T0).failed("x", T0))
+
+    latest = await repository.list_latest()
+
+    assert [(j.version, j.id) for j in latest] == [("main", "1")]
+
+
+async def test_a_second_queued_push_of_a_ref_is_refused_but_a_running_one_lets_it_in(
+    repository: JobRepository,
+) -> None:
+    await repository.add(push("p1"))
+    with pytest.raises(PushQueuedError, match="sync of branch 'main'"):
+        await repository.add(push("p2"))
+    await repository.add(push("p3", ref="next"))  # another branch
+    await repository.add(push("p4", kind=RefKind.TAG))  # a tag of the same name
+    await repository.add(queued("j1", version="main"))  # an import of the ref is no push
+
+    await repository.save(push("p1").started(T0))  # it lists the remote: a later push may wait
+    await repository.add(push("p2"))
+    with pytest.raises(PushQueuedError):
+        await repository.add(push("p5"))

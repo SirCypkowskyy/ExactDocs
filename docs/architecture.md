@@ -83,7 +83,9 @@ architecture test checks it), so none depends on another's adapter to seal a sec
   in another. Ingestion's repository credentials use `CREDENTIALS_KEY_PURPOSE`
   (`b"exactdocs credentials v1"`, in `bootstrap/constants.py`), the context they were always
   sealed with: never change it, or every stored credential becomes unreadable. A new use takes a
-  new context (`b"exactdocs <use> v1"`), and rotating the secret key covers every use at once.
+  new context (`b"exactdocs <use> v1"`, e.g. the push webhook secrets' `WEBHOOK_SECRETS_PURPOSE`,
+  `b"exactdocs webhook secrets v1"`, sealed by `SqliteWebhookSecrets`), and rotating the secret
+  key covers every use at once.
 - **A neutral error.** `open` raises `exactdocs_kernel.SealedTextUnreadableError` for a text of
   another key or purpose, or one that was altered. It is not a `DomainError` and never reaches a
   client: the adapter that opened the text translates it into its own domain's error (the
@@ -574,7 +576,7 @@ erDiagram
 
     ingestion_jobs {
         text id PK
-        text kind "import, refresh, reprocess, rechunk, retag, collect"
+        text kind "import, refresh, reprocess, rechunk, retag, collect, embed, push"
         text library "by value"
         text version "ref, by value"
         text state "queued, running, succeeded, failed"
@@ -592,6 +594,17 @@ erDiagram
         int keep_last
         int interval_minutes
         text checked_at
+    }
+    ingestion_webhooks {
+        text library PK "by value"
+        text sealed "Fernet-encrypted secret"
+        text created_at
+    }
+    ingestion_webhook_deliveries {
+        text library PK
+        text provider PK "github, gitlab, bitbucket"
+        text delivery_id PK
+        text received_at "pruned after 7 days"
     }
 ```
 
@@ -918,6 +931,24 @@ timestamps; `GET /api/v1/jobs/{id}` and `GET /api/v1/libraries/{owner}/{repo}/jo
   tick that meets one still running does nothing, and a check is recorded by a compare-and-set
   on the `revision` and `checked_at` it read (`AutoSyncStore.record_check`), so a save made
   meanwhile is kept. With both a pattern and `sync_branches`, the refs are listed once.
+- **Push webhooks (TEAM-03).** `ReceiveWebhook` is the only use case a request without a
+  caller reaches besides sign-in. The driving adapter reads the raw body (capped at
+  `MAX_WEBHOOK_BYTES`, 413 before any lookup) and the headers, and the use case does the rest
+  with pure functions of `models.py` on the standard library: `webhook_provider` (by the event
+  header), `verify_webhook` (HMAC-SHA256 or GitLab's token, every comparison
+  `hmac.compare_digest`), `parse_push` (delivery ID and ref names only) and `route_push`. The
+  secret is read by library (`WebhookSecrets`); a library without one, or unknown, is checked
+  against a random key all the same, so every refusal costs one indexed read and one HMAC,
+  writes nothing, and reads alike (401 `invalid_signature`). An accepted delivery is recorded in
+  `ingestion_webhook_deliveries` (`INSERT ... ON CONFLICT DO NOTHING` on its primary key: one
+  winner across processes; rows older than `WEBHOOK_DELIVERY_TTL` pruned in the same write) and
+  forgotten again if queueing fails, so the forge's retry works. Each routed ref queues a `push`
+  job (`version` the ref, `ref_kind` branch or tag); the partial unique index
+  `ingestion_jobs_queued_push` keeps one *queued* push per (library, ref, kind), so a burst
+  coalesces (`PushQueuedError`) while a push that arrives after the job started queues the next.
+  `PushJobUseCase` runs `SyncLibrary` with `refs` (that branch only) or, for a tag, the tag
+  part of the scheduled check (`AutoImports`, shared with `RunScheduledChecks`) without
+  recording a check. Being a job, it waits behind the library's running job.
 - `RunNextJob` (claim the oldest queued job whose library has none running, in one atomic
   statement, and run it inline) remains for tests that drive jobs one at a time.
 
