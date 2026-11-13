@@ -3,6 +3,7 @@
 import hashlib
 import itertools
 import json
+import random
 import re
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -17,6 +18,7 @@ from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.errors import InvalidChunkingConfigError
 from exactdocs.ingestion.models import ArticleChunk, ChunkingConfig, parse_article
 from exactdocs.ingestion.ports import Chunker
+from exactdocs.retrieval.models import Chunk, ChunkSet, article_chunk_rows
 
 ADAPTERS: list[Callable[[ChunkingConfig], Chunker]] = [MarkdownChunker]
 # Every kind of setting a library can choose (LIB-09): the guarantees hold for each of them.
@@ -34,6 +36,7 @@ CONFIGS = [
     ChunkingConfig(max_section_chars=1),
     ChunkingConfig(max_section_chars=120),
     ChunkingConfig(min_chars=100, max_section_chars=150),
+    ChunkingConfig(min_chars=30, max_section_chars=60),
     ChunkingConfig(split_depth=2, max_chars=300, max_section_chars=200),
 ]
 CONFIG_IDS = [
@@ -890,3 +893,105 @@ def test_a_tag_in_an_html_comment_does_not_count() -> None:
     chunks = _chunks(ChunkingConfig(max_section_chars=100), body)
 
     assert len(chunks) > 1
+
+
+def test_inline_html_in_running_text_does_not_stop_the_split() -> None:
+    for opening in (
+        "The method returns a Promise<Response> object.\n\n",
+        "Wrap it in <Note> tags.\n\n",
+        "A <details> block follows.\n\n",
+        "Returns a\nPromise<Response> or <Note> when\nit fails.\n\n",  # mid-line, not first
+    ):
+        body = "## A\n\n" + opening + _paragraphs(40)
+        chunks = _chunks(ChunkingConfig(max_section_chars=1000), body)
+
+        assert len(chunks) > 1, opening
+        assert all(len(c.content) <= 1000 for c in chunks), opening
+        assert "".join(c.content for c in chunks) == body
+
+
+def test_a_tag_that_starts_a_line_of_a_paragraph_still_opens_a_component() -> None:
+    body = "## A\n\nIntro.\n<Note>\n\n" + _paragraphs(5) + "Closing words.\n</Note>\n\nAfter.\n"
+    chunks = _chunks(ChunkingConfig(max_section_chars=60), body)
+
+    (holding,) = [c for c in chunks if "<Note>" in c.content]
+    assert "</Note>" in holding.content
+    assert chunks[-1].content == "After.\n"
+
+
+def _rows(chunks: Sequence[ArticleChunk]) -> None:
+    """Index the chunks as one article of a manifest; raises when two get the same ID."""
+    chunk_set = ChunkSet(
+        blob_sha="b",
+        config_hash="h",
+        chunks=tuple(
+            Chunk(
+                heading_path=c.heading_path,
+                occurrence_index=c.occurrence_index,
+                part=c.part,
+                content=c.content,
+                content_hash=c.content_hash,
+                anchor=c.anchor,
+            )
+            for c in chunks
+        ),
+    )
+    article_chunk_rows("/o/r/main", "a.md", chunk_set, ())
+
+
+FENCE_60 = "```\n" + "c\n" * 40 + "```\n\n"
+
+
+def test_the_first_part_of_a_split_section_is_never_merged_into_the_chunk_before() -> None:
+    body = "# A\n\nshort\n\n# B\n\nb\n\n" + FENCE_60 + "# B\n\nb2\n\n" + FENCE_60
+    chunks = _chunks(ChunkingConfig(max_section_chars=60, min_chars=30), body)
+
+    assert [(c.heading_path, c.occurrence_index, c.part, c.content) for c in chunks] == [
+        (("A",), 0, 0, "# A\n\nshort\n\n"),
+        (("B",), 0, 0, "# B\n\nb\n\n"),
+        (("B",), 0, 1, FENCE_60),
+        (("B",), 1, 0, "# B\n\nb2\n\n"),
+        (("B",), 1, 1, FENCE_60),
+    ]
+    _check_identities(chunks, body)
+    _rows(chunks)  # no DuplicateChunkError: the two fences are two chunk IDs
+
+
+def test_a_repeated_heading_after_a_merge_takes_the_next_occurrence_for_every_part() -> None:
+    body = "# A\n\nshort\n\n# A\n\nshort2\n\n" + FENCE_60
+    chunks = _chunks(ChunkingConfig(max_section_chars=60, min_chars=30), body)
+
+    assert [(c.heading_path, c.occurrence_index, c.part) for c in chunks] == [
+        (("A",), 0, 0),
+        (("A",), 1, 0),
+        (("A",), 1, 1),
+    ]
+    _check_identities(chunks, body)
+
+
+_RANDOM_BLOCKS: list[Callable[[random.Random], str]] = [
+    lambda r: "word " * r.randint(1, 30) + "\n\n",
+    lambda r: "```py\n" + "x = 1\n\n" * r.randint(1, 20) + "```\n\n",
+    lambda r: "| a |\n|---|\n" + "| b |\n" * r.randint(1, 10) + "\n",
+    lambda _: "- a\n\n  more\n\n- b\n\n",
+    lambda r: "<Tabs>\n<TabItem>\n\n" + "word " * r.randint(1, 20) + "\n\n</TabItem>\n</Tabs>\n\n",
+    lambda _: "Returns Promise<Response> here.\n\n",
+    lambda r: f"{'#' * r.randint(1, 3)} {r.choice('AB')}\n\n",
+    lambda r: f"{'#' * r.randint(1, 3)} {r.choice('AB')}\n\n",
+]
+
+
+def test_random_documents_keep_every_invariant_whatever_min_chars_merges() -> None:
+    rng = random.Random(141)  # ruff: ignore[suspicious-non-cryptographic-random-usage]
+    for _ in range(400):
+        body = "".join(rng.choice(_RANDOM_BLOCKS)(rng) for _ in range(rng.randint(1, 25)))
+        config = ChunkingConfig(
+            max_section_chars=rng.randint(1, 400),
+            min_chars=rng.randint(1, 100),
+            split_depth=rng.randint(1, 6),
+        )
+        chunker = MarkdownChunker(config)
+        _check_never_split(chunker, body)
+        chunks = chunker.chunk(parse_article("a.md", body))
+        _check_identities(chunks, f"{config}\n{body}")
+        _rows(chunks)

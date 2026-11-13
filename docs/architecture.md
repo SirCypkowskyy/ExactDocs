@@ -917,26 +917,29 @@ that last step, which is one transaction in the catalog.
   own. A heading is never left alone: the first part holds it and the block after it. Nor is an
   MDX component or block HTML element cut (`<Tabs>` ... `</Tabs>`, `<details>`): CommonMark ends
   an HTML block at a blank line, so the chunker counts the open JSX components and block tags
-  across top-level HTML blocks (and the inline HTML of top-level paragraphs) and cuts nowhere
-  while one is open; the count starts again at each top-level heading, so a tag never closed
-  keeps only the rest of its section whole.
+  across top-level HTML blocks (and the tags that start a line of a top-level paragraph, not
+  those in running text such as `Promise<Response>`) and cuts nowhere while one is open; the
+  count starts again at each top-level heading, so a tag never closed keeps only the rest of its
+  section whole.
 - **Chunk identity of parts (#141).** A section is `(heading_path, occurrence_index)`: the
-  occurrence counts sections with that heading path, whether or not they are split. Its parts
-  share both and are numbered by `part` (`ArticleChunk.part`, `ChunkIn.part`, `Chunk.part`,
-  `retrieval_chunks.part`, 0 for a whole section), which is in the chunk ID and the set digest
-  only when above 0, so a section that is not split keeps the ID and digest it had before, and a
-  section growing past the bound changes no later section's ID. Only the first part records the
-  heading (`ChunkIn` refuses a starting record on a part above 0, and a first part without its
-  own). A stale ID's moved-section lookup (`_pick`) matches the same section, then the same part
-  of it, else its first part. Part IDs are not edit-stable: parts are packed greedily from the
-  start of the section, so a paragraph inserted near the top moves every later part boundary,
-  and every part of that section gets a new ID (and is embedded again). The bound is in the
-  config hash whenever it is set, so the default config's hash changed with #141: on upgrade,
-  nothing is re-cut at once and stored versions keep serving their chunks, but a version
-  imported at a new commit, a re-import, or a `rechunk` (a chunking change) cuts every article
-  again instead of reusing chunk sets, and libraries with embeddings embed the new chunks. A
-  config without the bound (`None`) cuts as before and keeps its hash. The chunker runs in
-  `asyncio.to_thread` in both the import and the re-chunk (`_cut`).
+  occurrence counts the chunks that start a section with that heading path, so a section merged
+  into the chunk before (by `min_chars` or `split_depth`) takes none. The first part of a split
+  section is never merged into the chunk before, so a split section always starts a chunk and
+  takes an occurrence. Its parts follow that chunk, share both and are numbered by `part`
+  (`ArticleChunk.part`, `ChunkIn.part`, `Chunk.part`, `retrieval_chunks.part`, 0 for a whole
+  section), which is in the chunk ID and the set digest only when above 0, so a section that is
+  not split keeps the ID and digest it had before, and a section growing past the bound changes no
+  later section's ID. Only the first part records the heading (`ChunkIn` refuses a starting record
+  on a part above 0, and a first part without its own). A stale ID's moved-section lookup
+  (`_pick`) matches the same section, then the same part of it, else its first part. Part IDs are
+  not edit-stable: parts are packed greedily from the start of the section, so a paragraph
+  inserted near the top moves every later part boundary, and every part of that section gets a new
+  ID (and is embedded again). The bound is in the config hash whenever it is set, so the default
+  config's hash changed with #141: on upgrade, nothing is re-cut at once and stored versions keep
+  serving their chunks, but a version imported at a new commit, a re-import, or a `rechunk` (a
+  chunking change) cuts every article again instead of reusing chunk sets, and libraries with
+  embeddings embed the new chunks. A config without the bound (`None`) cuts as before and keeps
+  its hash. The chunker runs in `asyncio.to_thread` in both the import and the re-chunk (`_cut`).
 - **Sizes above the bound.** The settings API refuses a `max_chars` or `min_chars` above the
   bound (422 `invalid_chunking_config`, `ChunkingConfig.refuse_sizes_above_section_bound`): such
   a `max_chars` would never cut and such a `min_chars` never merge. A config stored before the

@@ -59,6 +59,8 @@ class _Section:
     part: int = 0
     """Index of the part among the parts of a section split at its blocks; 0 for the first (or a
     section not split). A part after the first has no heading line."""
+    split: bool = False
+    """Whether this is a part of a section split at its blocks (``part`` says which)."""
 
     @property
     def languages(self) -> list[str]:
@@ -80,6 +82,11 @@ class _Piece:
         """The section the chunk is named after."""
         return self.sections[0]
 
+    @property
+    def opens_split_section(self) -> bool:
+        """Whether it is the first part of a split section, which must start a chunk."""
+        return self.first.split and not self.first.part
+
     def add(self, other: _Piece) -> None:
         """Append another piece's sections to this one.
 
@@ -99,12 +106,14 @@ class MarkdownChunker:
     ``max_section_chars`` is split at its top-level blocks into parts as long as fit (a block
     longer than it is a part of its own); then chunks shorter than ``min_chars`` are merged with
     the next (the last with the one before) while the result stays within both bounds. The text
-    before the first heading is never merged. A chunk is named after its first heading: a cut
-    below the split level names the deeper heading, a merge keeps the first one's name, and every
-    part of a split section keeps the section's heading path, anchor and occurrence index and is
-    numbered by ``part``, so splitting a section changes no other section's identity. Each chunk
-    records every heading it holds (``ArticleChunk.headings``), the one it is named after first;
-    a part after the first holds none of its own.
+    before the first heading, and the first part of a split section, are never merged into the
+    chunk before, so a split section's parts follow the chunk that starts it. A chunk is named
+    after its first heading: a cut below the split level names the deeper heading, a merge keeps
+    the first one's name, and every part of a split section keeps the section's heading path,
+    anchor and occurrence index and is numbered by ``part``, so splitting a section changes no
+    other section's identity. Each chunk records every heading it holds
+    (``ArticleChunk.headings``), the one it is named after first; a part after the first holds
+    none of its own.
     """
 
     def __init__(self, config: ChunkingConfig | None = None) -> None:
@@ -278,6 +287,7 @@ class MarkdownChunker:
             if (
                 last is not None
                 and last.first.level  # the text before the first heading stays on its own
+                and not piece.opens_split_section  # its parts take its identity: keep it a chunk
                 and last.size < config.min_chars
                 and fits(last, piece)
             ):
@@ -286,7 +296,12 @@ class MarkdownChunker:
                 merged.append(piece)
         if len(merged) > 1:
             tail, before = merged[-1], merged[-2]
-            if tail.size < config.min_chars and before.first.level and fits(before, tail):
+            if (
+                tail.size < config.min_chars
+                and before.first.level
+                and not tail.opens_split_section
+                and fits(before, tail)
+            ):
                 before.add(merged.pop())
         return merged
 
@@ -348,7 +363,8 @@ def _part(section: _Section, start: int, end: int, offsets: list[int], *, part: 
     """
     size = offsets[end] - offsets[start]
     return _Piece(
-        sections=[replace(section, start=start, end=end, size=size, part=part)], size=size
+        sections=[replace(section, start=start, end=end, size=size, part=part, split=True)],
+        size=size,
     )
 
 
@@ -356,9 +372,10 @@ def _sections(tokens: list[Token], line_count: int, skip: int) -> list[_Section]
     """Cut the body at every top-level heading; each section knows its full heading path.
 
     A top-level block inside an open MDX component or block HTML element (``_html_depth``) is
-    not recorded as a block start, so no part is cut there. The count starts again at every
-    top-level heading, which cuts there anyway, so a tag never closed only keeps the rest of its
-    own section whole.
+    not recorded as a block start, so no part is cut there. Tags count in HTML blocks and at the
+    start of a line of a top-level paragraph (``_line_start_html``), not in running text. The
+    count starts again at every top-level heading, which cuts there anyway, so a tag never closed
+    only keeps the rest of its own section whole.
 
     Args:
         tokens: The body's markdown-it tokens.
@@ -382,8 +399,7 @@ def _sections(tokens: list[Token], line_count: int, skip: int) -> list[_Section]
         if counted and token.level == 0 and token.type == "html_block":
             depth = max(0, depth + _html_depth(token.content))
         elif counted and token.type == "inline" and _opens_top_paragraph(tokens[i - 1]):
-            html = "".join(c.content for c in token.children or () if c.type == "html_inline")
-            depth = max(0, depth + _html_depth(html))  # a tag that could not start an HTML block
+            depth = max(0, depth + _html_depth(_line_start_html(token)))
         if token.type == "fence" and token.map and token.map[0] >= skip:
             match = _LANGUAGE.search(token.info.split(maxsplit=1)[0]) if token.info else None
             if match:
@@ -419,6 +435,33 @@ def _opens_top_paragraph(token: Token) -> bool:
         True for a ``paragraph_open`` at level 0.
     """
     return token.type == "paragraph_open" and token.level == 0
+
+
+def _line_start_html(inline: Token) -> str:
+    """The inline HTML of the lines of a paragraph that start with a tag.
+
+    Such a tag could not start an HTML block (``</TabItem>`` right after a paragraph line). A
+    tag in running text (``returns Promise<Response>``, ``wrap it in <Note> tags``) is prose, not
+    a component, and does not count; a line that starts with one counts whole, so ``<Kbd>C</Kbd>``
+    opens nothing.
+
+    Args:
+        inline: A paragraph's inline token.
+
+    Returns:
+        The tags of those lines, joined.
+    """
+    html: list[str] = []
+    counts = at_start = True
+    for child in inline.children or ():
+        if child.type in {"softbreak", "hardbreak"}:
+            at_start = True
+            continue
+        if at_start:
+            counts, at_start = child.type == "html_inline", False
+        if counts and child.type == "html_inline":
+            html.append(child.content)
+    return "".join(html)
 
 
 def _html_depth(html: str) -> int:
