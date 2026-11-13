@@ -1208,6 +1208,53 @@ or `POST /api/v1/libraries/{owner}/{repo}/versions`:
 - If the secret key is lost or changed, the library's docs stay available and adding a version
   answers `credentials_required`; send the credential again with the new version request.
 
+### Sync on push (webhooks)
+
+A branch version is otherwise only as fresh as its last sync (the Sync button,
+`exactdocs library sync`, or the scheduled check). A forge can tell ExactDocs when the docs
+repository changed:
+
+1. Turn the library's webhook on (an `admin` signed in with a session; an API token is refused):
+
+   ```bash
+   curl -X PUT -b "exactdocs_session=..." http://localhost:3000/api/v1/libraries/acme/docs/webhook
+   # {"library": "/acme/docs", "enabled": true, "url": "http://localhost:3000/api/v1/webhooks/acme/docs",
+   #  "created_at": "...", "secret": "kN0..."}
+   ```
+
+   The `secret` (32 random bytes, URL-safe) is shown **once**, in this answer: `GET .../webhook`
+   only says whether it is on, its URL and when it was made. `PUT` again rotates it (the old one
+   stops working at once); `DELETE` turns the webhook off. Removing the library removes it. The
+   `url` is built from the address the request came to: behind a reverse proxy, use the public
+   one.
+2. Add a webhook on the forge, with that URL and secret, for push events:
+   - **GitHub** (and GitHub Enterprise): *Settings → Webhooks → Add webhook*. Payload URL: the
+     `url`; Content type: `application/json`; Secret: the `secret`; *Just the push event*.
+     Deliveries are signed with `X-Hub-Signature-256`.
+   - **GitLab**: *Settings → Webhooks → Add new webhook*. URL: the `url`; Secret token: the
+     `secret`; triggers *Push events* and *Tag push events*. GitLab sends the token in
+     `X-Gitlab-Token`.
+   - **Bitbucket Cloud**: *Repository settings → Webhooks → Add webhook*. URL: the `url`;
+     Secret: the `secret`; trigger *Repository push*. **Bitbucket Data Center**: *Repository
+     settings → Webhooks → Create webhook*, the same URL and secret, event *Repository: Push*.
+     Both sign with `X-Hub-Signature: sha256=...`.
+
+A push to a branch that is a version of the library queues a sync of that branch (only that
+one), as `POST .../sync` would: the job asks the repository for the branch's tip itself, with the
+library's stored credential, and never trusts a commit from the payload. A deleted branch is
+recorded as `ref_deleted` on its version. A pushed tag that the library's auto-sync `tag_pattern`
+matches runs the tag part of the scheduled check (new `auto` versions, old ones pruned) without
+moving the schedule. Anything else (an untracked branch, a tag without auto-import, a ping)
+answers 202 `ignored`. The request itself does no git work: it answers 202 (`queued`,
+`duplicate` or `ignored`) after a few database reads and writes, and the sync runs as a `push`
+job, within a second when the library has no other job running. A burst of pushes to one branch
+queues one job; a redelivered webhook (same delivery ID, remembered for 7 days) answers
+`duplicate`. Every refusal (no or a wrong signature, SHA-1 signatures, an unknown forge, a
+library without a webhook, no such library) is the same 401 `invalid_signature`; a body above
+5 MiB is 413. ExactDocs does not rate-limit the route: put a per-address limit on it in your
+reverse proxy if it is reachable from the internet. Gitea and Forgejo send GitHub-compatible
+headers but are not tested.
+
 ExactDocs reads repositories with the system `git` binary (in the Docker image; on `uvx` it must be
 on `PATH`; `exactdocs serve` refuses to start without it. Only where that check is skipped, such as
 `--stdio` (which never imports), a missing git is a warning and repository checks answer
@@ -1260,8 +1307,8 @@ identity-provider groups:
 
 Who may create libraries is an instance-level permission mapped from users or IdP groups.
 MCP tokens act as their user, so an agent sees exactly the libraries its user may view.
-Libraries can also be declared in an `exactdocs.sources.yaml` in your own repo, and docs repos can
-trigger a sync with a webhook on push.
+Libraries can also be declared in an `exactdocs.sources.yaml` in your own repo. Docs repos can
+already trigger a sync with a webhook on push (see [Sync on push](#sync-on-push-webhooks)).
 
 A hardened single-container deployment that works today (the image runs as UID 10001 and needs
 nothing but `/data` and `/tmp` to be writable; CI runs it this way):

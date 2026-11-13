@@ -4,8 +4,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Self, cast
 
-from exactdocs.ingestion.constants import ACTIVE_JOB_STATES, IMPORT_KINDS
-from exactdocs.ingestion.errors import CredentialsRequiredError, VersionImportingError
+from exactdocs.ingestion.constants import ACTIVE_JOB_STATES, IMPORT_KINDS, PUSH_JOB
+from exactdocs.ingestion.errors import (
+    CredentialsRequiredError,
+    PushQueuedError,
+    VersionImportingError,
+)
 from exactdocs.ingestion.models import (
     ArticleChunk,
     AutoSync,
@@ -21,6 +25,8 @@ from exactdocs.ingestion.models import (
     JobState,
     Removed,
     StoredTags,
+    Webhook,
+    WebhookDelivery,
 )
 from exactdocs_kernel import NotFoundError
 
@@ -45,19 +51,26 @@ class InMemoryJobRepository:
         return cls(jobs={job.id: job for job in jobs})
 
     async def add(self, job: Job) -> None:
-        """Store a new job; a second unfinished import of one (library, ref) is refused.
+        """Store a new job; a second unfinished import, or queued push, of one ref is refused.
 
         Args:
             job: The new job.
 
         Raises:
             VersionImportingError: ``job`` is an unfinished import of a ref that has one.
+            PushQueuedError: ``job`` is a queued push of a ref that has one queued.
         """
         if job.kind in IMPORT_KINDS and job.state in ACTIVE_JOB_STATES and job.version:
             for other in self.jobs.values():
                 same = (other.library, other.version) == (job.library, job.version)
                 if same and other.kind in IMPORT_KINDS and other.state in ACTIVE_JOB_STATES:
                     raise VersionImportingError(job.library, job.version or "")
+        if job.kind == PUSH_JOB and job.state is JobState.QUEUED:
+            key = (job.library, job.version, job.ref_kind)
+            for other in self.jobs.values():
+                queued = other.kind == PUSH_JOB and other.state is JobState.QUEUED
+                if queued and (other.library, other.version, other.ref_kind) == key:
+                    raise PushQueuedError(job.library, job.version or "")
         self.jobs[job.id] = job
 
     async def save(self, job: Job) -> None:
@@ -539,3 +552,94 @@ class InMemoryAutoSyncStore:
             The schedules.
         """
         return [self.schedules[k] for k in sorted(self.schedules)]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryWebhookSecrets:
+    """Implements ``ports.driven.WebhookSecrets``. For tests; nothing is sealed."""
+
+    webhooks: dict[str, Webhook] = field(default_factory=dict)
+    """The stored webhooks, by library ID."""
+
+    async def save(self, webhook: Webhook) -> None:
+        """Store the webhook, replacing the library's earlier one.
+
+        Args:
+            webhook: The webhook.
+        """
+        self.webhooks[webhook.library] = webhook
+
+    async def get(self, library: str) -> Webhook | None:
+        """Return the library's webhook, or ``None``.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            The webhook, or ``None``.
+        """
+        return self.webhooks.get(library)
+
+    async def created_at(self, library: str) -> datetime | None:
+        """Say when the library's webhook was created.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            When, or ``None`` without one.
+        """
+        found = self.webhooks.get(library)
+        return None if found is None else found.created_at
+
+    async def delete(self, library: str) -> None:
+        """Forget the library's webhook.
+
+        Args:
+            library: The library ID.
+        """
+        self.webhooks.pop(library, None)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryWebhookDeliveries:
+    """Implements ``ports.driven.WebhookDeliveries``. For tests (one event loop: atomic)."""
+
+    deliveries: dict[tuple[str, str, str], WebhookDelivery] = field(default_factory=dict)
+    """The remembered deliveries, by (library, provider, delivery ID)."""
+
+    async def record(self, delivery: WebhookDelivery, *, prune_before: datetime) -> bool:
+        """Remember the delivery unless known, after forgetting the old ones.
+
+        Args:
+            delivery: The delivery.
+            prune_before: Older deliveries are forgotten.
+
+        Returns:
+            True when it was not known.
+        """
+        for key, known in list(self.deliveries.items()):
+            if known.received_at < prune_before:
+                del self.deliveries[key]
+        key = (delivery.library, delivery.provider.value, delivery.delivery_id)
+        if key in self.deliveries:
+            return False
+        self.deliveries[key] = delivery
+        return True
+
+    async def forget(self, delivery: WebhookDelivery) -> None:
+        """Forget the delivery.
+
+        Args:
+            delivery: The delivery.
+        """
+        self.deliveries.pop((delivery.library, delivery.provider.value, delivery.delivery_id), None)
+
+    async def delete_for(self, library: str) -> None:
+        """Forget every delivery of the library.
+
+        Args:
+            library: The library ID.
+        """
+        for key in [k for k in self.deliveries if k[0] == library]:
+            del self.deliveries[key]

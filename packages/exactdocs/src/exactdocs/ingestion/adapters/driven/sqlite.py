@@ -32,13 +32,17 @@ from exactdocs.ingestion.constants import (
     ACTIVE_JOB_STATES,
     IMPORT_KINDS,
     LEGACY_CODES,
+    PUSH_JOB,
+    QUEUED_PUSH_SQL,
     UNFINISHED_JOBS_SQL,
     JobKind,
 )
 from exactdocs.ingestion.errors import (
     CredentialsRequiredError,
     InvalidCredentialError,
+    PushQueuedError,
     VersionImportingError,
+    WebhookSecretUnreadableError,
 )
 from exactdocs.ingestion.models import (
     AutoSync,
@@ -50,6 +54,8 @@ from exactdocs.ingestion.models import (
     ProblemCode,
     RefKind,
     VersionOrigin,
+    Webhook,
+    WebhookDelivery,
     dump_credential,
     load_credential,
 )
@@ -105,6 +111,16 @@ jobs = Table(
         sqlite_where=text("state IN ('queued', 'running') AND kind IN ('import', 'refresh')"),
         postgresql_where=text("state IN ('queued', 'running') AND kind IN ('import', 'refresh')"),
     ),
+    # At most one queued push per (library, ref, kind): a burst of pushes coalesces (#114).
+    Index(
+        "ingestion_jobs_queued_push",
+        "library",
+        "version",
+        "ref_kind",
+        unique=True,
+        sqlite_where=text(QUEUED_PUSH_SQL),
+        postgresql_where=text(QUEUED_PUSH_SQL),
+    ),
 )
 
 
@@ -140,6 +156,7 @@ class SqliteJobRepository:
 
         Raises:
             VersionImportingError: ``job`` is an unfinished import of a ref that has one.
+            PushQueuedError: ``job`` is a queued push of a ref that has one queued.
             IntegrityError: Another constraint refused the row (a job ID that exists).
         """
         try:
@@ -148,6 +165,8 @@ class SqliteJobRepository:
         except IntegrityError as error:
             if job.kind in IMPORT_KINDS and job.state in ACTIVE_JOB_STATES and job.version:
                 raise VersionImportingError(job.library, job.version) from error
+            if job.kind == PUSH_JOB and job.state is JobState.QUEUED and job.version:
+                raise PushQueuedError(job.library, job.version) from error
             raise
 
     async def save(self, job: Job) -> None:
@@ -691,3 +710,166 @@ def _auto_sync(row: Row) -> AutoSync:
         last_error=row.last_error,
         revision=row.revision,
     )
+
+
+webhooks = Table(
+    "ingestion_webhooks",
+    metadata,
+    Column("library", Text, primary_key=True),  # by value: the catalog's library ID
+    # Fernet token of the secret, sealed under its own purpose; never logged or returned.
+    Column("sealed", Text, nullable=False),
+    Column("created_at", Text, nullable=False),  # UTC ISO-8601
+)
+webhook_deliveries = Table(
+    "ingestion_webhook_deliveries",
+    metadata,
+    Column("library", Text, primary_key=True),
+    Column("provider", Text, primary_key=True),
+    Column("delivery_id", Text, primary_key=True),
+    Column("received_at", Text, nullable=False),  # UTC ISO-8601, so text order is time order
+    Index("ingestion_webhook_deliveries_received_at", "received_at"),
+)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteWebhookSecrets:
+    """Implements ``ports.driven.WebhookSecrets``: one sealed secret per library."""
+
+    engine: AsyncEngine
+    """The database the webhooks table lives in."""
+    box: SecretBox
+    """Seals secrets before they are stored and opens them when they are read."""
+
+    async def save(self, webhook: Webhook) -> None:
+        """Store the library's webhook, replacing the one it had.
+
+        Args:
+            webhook: The webhook and its secret.
+        """
+        values = {"sealed": self.box.seal(webhook.secret), "created_at": _text(webhook.created_at)}
+        statement = _conflict_insert(self.engine, webhooks).values(
+            library=webhook.library, **values
+        )
+        statement = statement.on_conflict_do_update(
+            index_elements=[webhooks.c.library], set_=values
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(statement)
+
+    async def get(self, library: str) -> Webhook | None:
+        """Return the library's webhook with its secret opened, or ``None``.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            The webhook, or ``None``.
+
+        Raises:
+            WebhookSecretUnreadableError: The secret does not open with the instance's key.
+            AssertionError: The row has no ``created_at``, which the schema forbids.
+        """
+        async with self.engine.connect() as connection:
+            row = (
+                await connection.execute(select(webhooks).where(webhooks.c.library == library))
+            ).first()
+        if row is None:
+            return None
+        try:
+            secret = self.box.open(row.sealed)
+        except SealedTextUnreadableError:
+            raise WebhookSecretUnreadableError(library) from None
+        created_at = _moment(row.created_at)
+        if created_at is None:
+            message = "created_at is NOT NULL"
+            raise AssertionError(message)
+        return Webhook(library=library, secret=secret, created_at=created_at)
+
+    async def created_at(self, library: str) -> datetime | None:
+        """Say when the library's webhook was created; the secret is not opened.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            When, or ``None`` without one.
+        """
+        query = select(webhooks.c.created_at).where(webhooks.c.library == library)
+        async with self.engine.connect() as connection:
+            found = (await connection.execute(query)).scalar()
+        return _moment(found)
+
+    async def delete(self, library: str) -> None:
+        """Forget the library's webhook.
+
+        Args:
+            library: The library ID.
+        """
+        async with self.engine.begin() as connection:
+            await connection.execute(delete(webhooks).where(webhooks.c.library == library))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteWebhookDeliveries:
+    """Implements ``ports.driven.WebhookDeliveries``: rows inserted ``ON CONFLICT DO NOTHING``.
+
+    The insert is the check: of two processes recording one delivery, the database lets one
+    row in, so exactly one sees it as new. Old rows are pruned in the same transaction.
+    """
+
+    engine: AsyncEngine
+    """The database the deliveries table lives in."""
+
+    async def record(self, delivery: WebhookDelivery, *, prune_before: datetime) -> bool:
+        """Forget the old deliveries, then insert this one unless it is known.
+
+        Args:
+            delivery: The delivery.
+            prune_before: Older deliveries are forgotten.
+
+        Returns:
+            True when the row was inserted.
+        """
+        statement = (
+            _conflict_insert(self.engine, webhook_deliveries)
+            .values(
+                library=delivery.library,
+                provider=delivery.provider.value,
+                delivery_id=delivery.delivery_id,
+                received_at=_text(delivery.received_at),
+            )
+            .on_conflict_do_nothing()
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                delete(webhook_deliveries).where(
+                    webhook_deliveries.c.received_at < _text(prune_before)
+                )
+            )
+            return (await connection.execute(statement)).rowcount == 1
+
+    async def forget(self, delivery: WebhookDelivery) -> None:
+        """Forget the delivery.
+
+        Args:
+            delivery: The delivery.
+        """
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                delete(webhook_deliveries).where(
+                    webhook_deliveries.c.library == delivery.library,
+                    webhook_deliveries.c.provider == delivery.provider.value,
+                    webhook_deliveries.c.delivery_id == delivery.delivery_id,
+                )
+            )
+
+    async def delete_for(self, library: str) -> None:
+        """Forget every delivery of the library.
+
+        Args:
+            library: The library ID.
+        """
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                delete(webhook_deliveries).where(webhook_deliveries.c.library == library)
+            )

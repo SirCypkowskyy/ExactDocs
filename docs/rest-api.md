@@ -327,6 +327,26 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `DELETE .../auto-sync` turns it off and keeps every version. 404 for an unknown library, 422
   for a value out of range. Saving it again makes the library due at the next tick; removing the
   library removes its schedule.
+- **Push webhooks** (TEAM-03): `PUT /libraries/{owner}/{repo}/webhook` creates or rotates the
+  library's webhook secret and answers it once, with `url` (where the forge posts) and
+  `created_at`; the old secret stops working at once. `GET .../webhook` says `enabled`, `url` and
+  `created_at`, never the secret; `DELETE .../webhook` turns it off. These three are for
+  operators, as `/users` is: an `admin` signed in with a session (an API token is refused with
+  401, another account with 403 `forbidden`, since the answer reveals a secret); 404 for an
+  unknown library. Removing the library removes its secret. Forges post to `POST /webhooks/{owner}/{repo}`,
+  which needs no caller, only the secret: GitHub's `X-Hub-Signature-256` and Bitbucket's
+  `X-Hub-Signature` (both `sha256=<hex>`, HMAC-SHA256 of the raw body) or GitLab's
+  `X-Gitlab-Token`. Every refusal is the same 401 `invalid_signature` (no or a wrong signature,
+  a SHA-1 one, an unknown forge, a library without a secret, no such library); a body above
+  5 MiB is 413 before anything is looked up; a signed delivery without its ID (`X-GitHub-Delivery`;
+  `Idempotency-Key` or `X-Gitlab-Event-UUID`; `X-Request-UUID` or `X-Request-Id`) is 400
+  `missing_delivery_id`. Otherwise the answer is **202** with `status`: `queued` (a `push` job per
+  branch version pushed, or per tag the auto-sync `tag_pattern` matches; a push of a ref whose
+  `push` job still waits joins it), `duplicate` (that delivery ID was accepted in the last 7
+  days) or `ignored` (an untracked branch, a tag without auto-import, a ping), and `job_ids`. The
+  `push` job syncs the branch alone, as `POST .../sync` would (a deleted one gets `ref_deleted`),
+  or runs the tag part of the scheduled check without recording a check. Only ref names are read
+  from the payload.
 - **Re-importing a moved tag**: `POST /libraries/{owner}/{repo}/versions/reimport` (`{"ref"}`;
   the ref is in the body because a ref may hold slashes, so nothing could follow it in the path)
   is the confirmation a `tag_moved` asks for. The tag is checked against the remote again and a

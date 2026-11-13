@@ -58,6 +58,7 @@ from exactdocs.bootstrap.constants import (
     LOCAL_PROFILE_HINT,
     UPKEEP_RECANCEL_SECONDS,
     UPKEEP_STOP_SECONDS,
+    WEBHOOK_SECRETS_PURPOSE,
     WORK_DIR,
 )
 from exactdocs.bootstrap.database import (
@@ -113,6 +114,8 @@ from exactdocs.ingestion.adapters.driven.sqlite import (
     SqliteAutoSyncStore,
     SqliteCredentialVault,
     SqliteJobRepository,
+    SqliteWebhookDeliveries,
+    SqliteWebhookSecrets,
 )
 from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker
 from exactdocs.ingestion.constants import QUEUE, SCHEDULE, STEPS_VERSION, WORKFLOW
@@ -1023,6 +1026,10 @@ class Container:
                 list_unembedded_versions=read.retrieval.list_unembedded_versions,
             ),
             checkpoints=DbosCheckpoints(),
+            webhooks=SqliteWebhookSecrets(
+                engine=engine, box=_secret_box(settings, WEBHOOK_SECRETS_PURPOSE)
+            ),
+            webhook_deliveries=SqliteWebhookDeliveries(engine=engine),
         )
         return cls(
             settings=settings,

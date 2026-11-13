@@ -25,6 +25,7 @@ from exactdocs.ingestion.dtos import (
     PreviewRepositoryCommand,
     QueuedEmbedding,
     QueueEmbeddingCommand,
+    ReceiveWebhookCommand,
     ReimportedVersion,
     ReimportVersionCommand,
     RemovalResult,
@@ -40,6 +41,10 @@ from exactdocs.ingestion.dtos import (
     TaggedArticle,
     UpdatedLibrarySettings,
     UpdateLibrarySettingsCommand,
+    WebhookCreated,
+    WebhookOut,
+    WebhookQuery,
+    WebhookReceipt,
 )
 from exactdocs.ingestion.models import RemoteRefs
 
@@ -516,5 +521,71 @@ class QueueEmbedding(Protocol):
 
         Returns:
             How many jobs were queued.
+        """
+        ...
+
+
+class ReceiveWebhook(Protocol):
+    """Act on a forge's push delivery: verify it, remember it, queue a ``push`` job per ref.
+
+    Raises ``InvalidWebhookSignatureError`` (one fixed message) for a missing or wrong
+    signature, an unknown forge, a library without a secret or an unknown library;
+    ``MissingDeliveryIdError`` and ``InvalidWebhookPayloadError`` for a signed delivery without an
+    ID or with a body its forge would not send. Does no git work.
+    """
+
+    async def __call__(self, command: ReceiveWebhookCommand) -> WebhookReceipt:
+        """Run the use case.
+
+        Args:
+            command: The library and the delivery as received.
+
+        Returns:
+            Whether a job was queued, the delivery was a duplicate, or nothing was to be done.
+        """
+        ...
+
+
+class GetWebhook(Protocol):
+    """Say whether a library's webhook is on and since when (never its secret)."""
+
+    async def __call__(self, query: WebhookQuery) -> WebhookOut:
+        """Run the use case.
+
+        Args:
+            query: The library.
+
+        Returns:
+            The webhook, without its secret.
+        """
+        ...
+
+
+class SetWebhook(Protocol):
+    """Create or rotate a library's webhook secret; the old one stops working at once."""
+
+    async def __call__(self, query: WebhookQuery) -> WebhookCreated:
+        """Run the use case.
+
+        Args:
+            query: The library.
+
+        Returns:
+            The webhook with its new secret (shown this once).
+        """
+        ...
+
+
+class DisableWebhook(Protocol):
+    """Forget a library's webhook secret: every delivery is refused from then on."""
+
+    async def __call__(self, query: WebhookQuery) -> WebhookOut:
+        """Run the use case.
+
+        Args:
+            query: The library.
+
+        Returns:
+            The webhook, now off.
         """
         ...

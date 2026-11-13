@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import secrets
 import stat
 import time
 import uuid
@@ -44,11 +45,14 @@ from exactdocs.ingestion.constants import (
     MAX_WANTED_IMAGES,
     PARSER_VERSION,
     PERMANENT_IMPORT_FAILURES,
+    PUSH_JOB,
     REFRESH_JOB,
     SAVE_EVERY_FILES,
     SAVE_EVERY_SECONDS,
     UNEXPECTED_BACKOFF_CAP,
     UNEXPECTED_ERROR,
+    WEBHOOK_DELIVERY_TTL,
+    WEBHOOK_SECRET_BYTES,
     JobKind,
 )
 from exactdocs.ingestion.constants._use_cases import _BOMS, _MAX_DOUBLINGS, _NOT_TEXT
@@ -78,6 +82,7 @@ from exactdocs.ingestion.dtos import (
     PreviewRepositoryCommand,
     QueuedEmbedding,
     QueueEmbeddingCommand,
+    ReceiveWebhookCommand,
     RefOut,
     ReimportedVersion,
     ReimportVersionCommand,
@@ -96,8 +101,13 @@ from exactdocs.ingestion.dtos import (
     TagRuleIn,
     UpdatedLibrarySettings,
     UpdateLibrarySettingsCommand,
+    WebhookCreated,
+    WebhookOut,
+    WebhookQuery,
+    WebhookReceipt,
 )
 from exactdocs.ingestion.errors import (
+    AutoImportFailedError,
     CheckoutUnreadableError,
     CommitImportedError,
     CredentialsRequiredError,
@@ -106,12 +116,14 @@ from exactdocs.ingestion.errors import (
     ImportNotPinnedError,
     ImportTooLargeError,
     InvalidContext7Error,
+    InvalidWebhookSignatureError,
     JobNotFoundError,
     LibraryIdTakenError,
     NoArticlesError,
     NotAGitRepositoryError,
     NotATagError,
     PreviewBusyError,
+    PushQueuedError,
     RefDeletedError,
     RepositoryAuthRequiredError,
     RepositoryUnreachableError,
@@ -124,6 +136,7 @@ from exactdocs.ingestion.errors import (
     UnknownVersionError,
     VersionExistsError,
     VersionImportingError,
+    WebhookSecretUnreadableError,
 )
 from exactdocs.ingestion.models import (
     ArticleChunk,
@@ -152,6 +165,7 @@ from exactdocs.ingestion.models import (
     PathSelection,
     ProblemCode,
     ProposedId,
+    PushEvent,
     ReadmeSummary,
     RefKind,
     RemoteRefs,
@@ -164,6 +178,9 @@ from exactdocs.ingestion.models import (
     SyncStatus,
     TagRule,
     VersionOrigin,
+    Webhook,
+    WebhookDelivery,
+    WebhookProvider,
     check_credential_fits,
     compose_renames,
     git_blob_sha,
@@ -172,12 +189,16 @@ from exactdocs.ingestion.models import (
     is_unordered,
     parse_article,
     parse_context7,
+    parse_push,
     plan_auto_imports,
     previous_version,
     readme_summary,
     ref_tips,
     resolve_ref,
+    route_push,
     sniff_image,
+    verify_webhook,
+    webhook_provider,
 )
 from exactdocs.ingestion.ports.driven import (
     AutoSyncStore,
@@ -210,8 +231,15 @@ from exactdocs.ingestion.ports.driven import (
     VersionCopier,
     VersionEmbedder,
     VersionPublisher,
+    WebhookDeliveries,
+    WebhookSecrets,
 )
-from exactdocs.ingestion.ports.driving import EnqueueJob, RemoveVersion, SyncLibraryFromRefs
+from exactdocs.ingestion.ports.driving import (
+    EnqueueJob,
+    RemoveVersion,
+    SyncLibrary,
+    SyncLibraryFromRefs,
+)
 from exactdocs_kernel import (
     Clock,
     DomainError,
@@ -1080,7 +1108,8 @@ class SyncLibraryUseCase:
         """Ask the remote where each branch and tag is now, queue an import for moved branches.
 
         ``refs`` is what the remote advertised a moment ago (the scheduled check listed it for
-        the tags): the remote is not asked again.
+        the tags): the remote is not asked again. ``command.refs`` limits the sync to the
+        versions of those refs (a push names the branch it moved).
 
         The import is the one of adding a version: pinned to the new commit, it fetches it,
         reuses the chunks of every unchanged blob and activates the new manifest in place of the
@@ -1109,12 +1138,15 @@ class SyncLibraryUseCase:
         library = command.library
         source = await self.sources.get(library)
         versions = await self.sources.imported_versions(library)
+        if command.refs is not None:  # a push names the branch it moved: the others are left
+            versions = [v for v in versions if v.ref in command.refs]
         checked = [v for v in versions if v.kind in CHECKED_KINDS]
         jobs = await self.jobs.list_for_library(library)  # newest first
         busy = _busy_refs(jobs)
         newest: dict[str, Job] = {}
         for job in jobs:
-            if job.version:
+            # A `push` job names its ref too, but says nothing about how the version fared.
+            if job.version and job.kind != PUSH_JOB:
                 newest.setdefault(job.version, job)
         tips: dict[tuple[RefKind, str], str] = {}
         if checked:
@@ -3794,6 +3826,10 @@ class RemoveLibraryUseCase:
     """Where the library's schedule is forgotten."""
     switch: ScheduleSwitch
     """Turns the tick off once no library has a schedule."""
+    webhooks: WebhookSecrets
+    """Where the library's webhook secret is forgotten."""
+    deliveries: WebhookDeliveries
+    """Where the library's webhook deliveries are forgotten."""
 
     async def __call__(self, command: RemoveLibraryCommand) -> RemovalResult:
         """Refuse during any import of the library, remove it from the catalog, then clean up.
@@ -3810,6 +3846,8 @@ class RemoveLibraryUseCase:
         await self.jobs.delete_for(library)
         await self.vault.delete(library)  # the removed library's token or key goes with it
         await self.schedules.delete(library)  # and its scheduled check
+        await self.webhooks.delete(library)  # and its webhook secret
+        await self.deliveries.delete_for(library)
         await _switch_to_need(self.schedules, self.switch)
         await _forget_chunks(self.index, removed)
         return RemovalResult(
@@ -4109,6 +4147,43 @@ class RunScheduledChecksUseCase:
         Returns:
             What could not be queued or removed.
         """
+        return await AutoImports(
+            sources=self.sources,
+            jobs=self.jobs,
+            clock=self.clock,
+            enqueue_job=self.enqueue_job,
+            remove_version=self.remove_version,
+        ).run(auto_sync, tips, tally)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AutoImports:
+    """The tag part of a scheduled check, shared with the ``push`` job of a pushed tag."""
+
+    sources: LibrarySources
+    """Where a library's versions are read."""
+    jobs: JobRepository
+    """Where jobs are stored."""
+    clock: Clock
+    """Tells the time: how long a failed tag is held back."""
+    enqueue_job: EnqueueJob
+    """Queues the ``auto`` imports."""
+    remove_version: RemoveVersion
+    """Removes the ``auto`` versions that fell out of ``keep_last``."""
+
+    async def run(
+        self, auto_sync: AutoSync, tips: Sequence[ResolvedRef], tally: _Tally
+    ) -> list[str]:
+        """Queue the imports and the removals ``plan_auto_imports`` asks for.
+
+        Args:
+            auto_sync: The library's schedule.
+            tips: The refs the remote advertises.
+            tally: What was done so far; added to.
+
+        Returns:
+            What could not be queued or removed.
+        """
         library = auto_sync.library
         versions = await self.sources.imported_versions(library)
         jobs = await self.jobs.list_for_library(library)  # newest first
@@ -4384,3 +4459,286 @@ class EmbedVersionUseCase:
             except EmbeddingUnavailableError:
                 await self.sleep(EMBED_RETRY_SECONDS * 2**attempt)
         return await self.embedder.embed_batch(library, ref, plan)
+
+
+# ---------------------------------------------------------------- push webhooks (TEAM-03)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GetWebhookUseCase:
+    """Implements ``ports.driving.GetWebhook``."""
+
+    sources: LibrarySources
+    """Tells which libraries exist."""
+    webhooks: WebhookSecrets
+    """Where webhook secrets are kept."""
+
+    async def __call__(self, query: WebhookQuery) -> WebhookOut:
+        """Say whether the library's webhook is on and since when; the secret is not opened.
+
+        Args:
+            query: The library.
+
+        Returns:
+            The webhook, without its secret.
+        """
+        library = query.library.lower()
+        await self.sources.get(library)  # an unknown library is not found
+        created_at = await self.webhooks.created_at(library)
+        if created_at is None:
+            return WebhookOut.disabled(library)
+        return WebhookOut(library=library, enabled=True, created_at=created_at)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SetWebhookUseCase:
+    """Implements ``ports.driving.SetWebhook``."""
+
+    sources: LibrarySources
+    """Tells which libraries exist."""
+    webhooks: WebhookSecrets
+    """Where webhook secrets are kept."""
+    clock: Clock
+    """Tells the time the secret was created."""
+
+    async def __call__(self, query: WebhookQuery) -> WebhookCreated:
+        """Make a new secret (``WEBHOOK_SECRET_BYTES`` random bytes, URL-safe) and store it.
+
+        It replaces the library's previous secret at once: a delivery signed with that one is
+        refused from now on.
+
+        Args:
+            query: The library.
+
+        Returns:
+            The webhook with its secret, shown this once.
+        """
+        library = query.library.lower()
+        await self.sources.get(library)
+        webhook = Webhook(
+            library=library,
+            secret=secrets.token_urlsafe(WEBHOOK_SECRET_BYTES),
+            created_at=self.clock.now(),
+        )
+        await self.webhooks.save(webhook)
+        return WebhookCreated.created(webhook)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DisableWebhookUseCase:
+    """Implements ``ports.driving.DisableWebhook``."""
+
+    sources: LibrarySources
+    """Tells which libraries exist."""
+    webhooks: WebhookSecrets
+    """Where webhook secrets are kept."""
+
+    async def __call__(self, query: WebhookQuery) -> WebhookOut:
+        """Forget the secret: every delivery for the library is refused from now on.
+
+        Args:
+            query: The library.
+
+        Returns:
+            The webhook, now off.
+        """
+        library = query.library.lower()
+        await self.sources.get(library)
+        await self.webhooks.delete(library)
+        return WebhookOut.disabled(library)
+
+
+def _dummy_secret() -> str:
+    """Make the key an unknown library's delivery is checked against, so it costs one HMAC.
+
+    Returns:
+        A random secret no library has.
+    """
+    return secrets.token_urlsafe(WEBHOOK_SECRET_BYTES)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ReceiveWebhookUseCase:
+    """Implements ``ports.driving.ReceiveWebhook``.
+
+    A refused delivery costs one indexed read and one HMAC and writes nothing: the secret is read
+    by library (an unknown one has none, and is checked against a random key all the same), the
+    signature is checked over the raw body, and only then is anything in it read. An accepted
+    one costs a few reads and writes: its delivery ID is recorded (a redelivery is answered
+    ``duplicate``), the pushed refs routed (``route_push``), and a ``push`` job queued for each,
+    a second one of a ref that already waits joining it. No git work is done here.
+    """
+
+    webhooks: WebhookSecrets
+    """Where the webhook secrets are kept."""
+    deliveries: WebhookDeliveries
+    """The deliveries accepted lately."""
+    sources: LibrarySources
+    """Where a library's versions are read."""
+    schedules: AutoSyncStore
+    """Where a library's tag pattern is read."""
+    enqueue_job: EnqueueJob
+    """Queues the ``push`` jobs."""
+    clock: Clock
+    """Tells the time a delivery is received."""
+    _dummy: str = field(default_factory=_dummy_secret, repr=False)
+    """Checked against when the library has no secret, so every refusal takes one HMAC."""
+
+    async def __call__(self, command: ReceiveWebhookCommand) -> WebhookReceipt:
+        """Verify the delivery, then remember it and queue what it asks for.
+
+        Args:
+            command: The library and the delivery as received.
+
+        Returns:
+            ``queued``, ``duplicate`` or ``ignored``.
+
+        Raises:
+            InvalidWebhookSignatureError: The delivery is not proven by the library's secret
+                (or there is no such secret, forge or library).
+        """
+        library = command.library.lower()
+        provider = webhook_provider(command.headers)
+        try:
+            webhook = await self.webhooks.get(library)
+        except WebhookSecretUnreadableError:
+            log.warning(
+                "the webhook secret of %s cannot be read (the instance's secret key changed?): "
+                "every delivery is refused until a new one is set",
+                library,
+            )
+            webhook = None
+        secret = self._dummy if webhook is None else webhook.secret
+        signed = verify_webhook(
+            provider or WebhookProvider.GITHUB, command.headers, command.body, secret
+        )
+        if webhook is None or provider is None or not signed:
+            raise InvalidWebhookSignatureError
+        event = parse_push(provider, command.headers, command.body)
+        now = self.clock.now()
+        delivery = WebhookDelivery(
+            library=library, provider=provider, delivery_id=event.delivery_id, received_at=now
+        )
+        if not await self.deliveries.record(delivery, prune_before=now - WEBHOOK_DELIVERY_TTL):
+            return WebhookReceipt(status="duplicate")
+        try:
+            return await self._queue(library, event)
+        except Exception:
+            await self.deliveries.forget(delivery)  # the forge's retry is acted on
+            raise
+
+    async def _queue(self, library: str, event: PushEvent) -> WebhookReceipt:
+        """Queue a ``push`` job for each pushed ref the library follows.
+
+        Args:
+            library: The library ID.
+            event: The verified delivery.
+
+        Returns:
+            ``queued`` (a ref whose push already waits counts), or ``ignored``.
+        """
+        wanted = route_push(
+            event,
+            await self.sources.imported_versions(library),
+            await self.schedules.get(library),
+        )
+        if not wanted:
+            return WebhookReceipt(status="ignored")
+        job_ids: list[str] = []
+        for ref in wanted:
+            try:
+                job = await self.enqueue_job(
+                    EnqueueJobCommand(
+                        kind=PUSH_JOB, library=library, version=ref.name, ref_kind=ref.kind
+                    )
+                )
+            except PushQueuedError:
+                continue  # a push of this ref already waits: it lists the remote when it runs
+            job_ids.append(job.id)
+        return WebhookReceipt(status="queued", job_ids=job_ids)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PushJobUseCase:
+    """Implements ``ports.driven.JobHandler`` for ``PUSH_JOB``: what a pushed ref leads to.
+
+    A branch is synced alone (``SyncLibrary`` with ``refs``): the remote is listed with the
+    stored credential and an import queued if its tip moved; a deleted branch gets
+    ``ref_deleted`` on its version. A tag runs the tag part of the scheduled check (the
+    library's ``AutoSync``, ``plan_auto_imports``) without recording a check. The payload's
+    commits are never used: the remote is asked.
+    """
+
+    sync_library: SyncLibrary
+    """Syncs the pushed branch."""
+    sources: LibrarySources
+    """Where the library's repository is read."""
+    remote: GitRemote
+    """Lists the repository's refs for a pushed tag."""
+    vault: CredentialVault
+    """Where the library's credential is kept."""
+    schedules: AutoSyncStore
+    """Where the library's tag pattern is read."""
+    auto_imports: AutoImports
+    """The tag part of the scheduled check."""
+
+    async def __call__(self, job: Job, progress: JobProgress, /) -> None:
+        """Sync the pushed branch, or auto-import after the pushed tag.
+
+        Args:
+            job: The ``push`` job: its ``version`` is the ref, its ``ref_kind`` what it is.
+            progress: Where the job reports.
+
+        Raises:
+            AutoImportFailedError: A tag could not be queued or an old version removed.
+        """
+        await progress.report(done=0, total=1)
+        if job.version is not None and job.ref_kind is RefKind.TAG:
+            errors = await self._tag(job.library)
+            if errors:
+                raise AutoImportFailedError(errors)
+        elif job.version is not None:
+            await self._branch(job.library, job.version)
+        await progress.report(done=1, total=1)
+
+    async def _branch(self, library: str, ref: str) -> None:
+        """Sync one branch version; what went wrong is recorded on the version's jobs.
+
+        Args:
+            library: The library ID.
+            ref: The branch.
+        """
+        try:
+            await self.sync_library(SyncLibraryCommand(library=library, refs=(ref,)))
+        except VersionImportingError:
+            pass  # an import of the branch waits: it runs after this job, at the tip it lists
+        except SyncFailedError as failed:  # recorded on a failed job of the version
+            log.info("the push sync of %s in %s failed: %s", ref, library, failed)
+
+    async def _tag(self, library: str) -> list[str]:
+        """Queue the ``auto`` imports and removals the library's tag pattern asks for now.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            What could not be queued or removed.
+
+        Raises:
+            DomainError: The remote could not be listed (a login demand without a credential is
+                ``not_a_git_repository``).
+        """
+        auto_sync = await self.schedules.get(library)
+        if auto_sync is None or auto_sync.tag_pattern is None:
+            return []  # turned off since the push was received
+        source = await self.sources.get(library)
+        credential: Credential | None = None
+        try:
+            credential = await self.vault.load(library, source.url.credential_scope)
+            refs = await self.remote.list_refs(source.url, credential=credential)
+        except DomainError as raised:
+            error = _anonymous(raised, credential)
+            if error is raised:
+                raise
+            raise error from raised
+        return await self.auto_imports.run(auto_sync, ref_tips(refs), _Tally())
