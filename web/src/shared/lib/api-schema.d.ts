@@ -1164,6 +1164,71 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/libraries/{owner}/{repo}/webhook": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Webhook
+         * @description Say whether the library's push webhook is on, its URL and when its secret was made.
+         *
+         *     The secret is never returned again: rotate it with `PUT` if it was lost.
+         */
+        readonly get: operations["ingestion-get_webhook"];
+        /**
+         * Set Webhook
+         * @description Create or rotate the library's webhook secret; the old one stops working at once.
+         *
+         *     The answer holds the secret (32 random bytes, URL-safe) and the URL to set in the
+         *     forge's webhook settings. It is shown this once: `GET` never returns it.
+         */
+        readonly put: operations["ingestion-set_webhook"];
+        readonly post?: never;
+        /**
+         * Disable Webhook
+         * @description Turn the library's push webhook off: every delivery is refused from now on.
+         */
+        readonly delete: operations["ingestion-disable_webhook"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/webhooks/{owner}/{repo}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive Webhook
+         * @description Receive a push from GitHub, GitLab or Bitbucket; the sync runs later, as a job.
+         *
+         *     Set this URL in the forge's webhook settings, with the secret from `PUT
+         *     /libraries/{owner}/{repo}/webhook`, for push events (and tag pushes). The signature is
+         *     checked over the raw body: GitHub's `X-Hub-Signature-256`, Bitbucket's
+         *     `X-Hub-Signature` (both `sha256=`, HMAC-SHA256), GitLab's `X-Gitlab-Token`. Every
+         *     refusal is the same 401 `invalid_signature`: no or a wrong signature, an unknown forge, a
+         *     library without a webhook, or no such library. 413 above the size cap, 400
+         *     `missing_delivery_id` for a signed delivery without a delivery ID. A push to a branch
+         *     version queues a sync of that branch, a tag the library's auto-sync `tag_pattern`
+         *     matches queues its auto-import: 202 `queued`. A delivery seen before answers 202
+         *     `duplicate`, anything else (an untracked branch, a tag without auto-import, a ping) 202
+         *     `ignored`. Only ref names are read from the payload: the job asks the repository itself.
+         */
+        readonly post: operations["ingestion-receive_webhook"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5137,6 +5202,84 @@ export interface components {
              * @default manual
              */
             readonly origin: components["schemas"]["exactdocs__catalog__models__VersionOrigin"];
+        };
+        /**
+         * WebhookCreated
+         * @description A new or rotated webhook, with the secret: shown in this answer only, never again.
+         */
+        readonly WebhookCreated: {
+            /**
+             * Library
+             * @description The library ID, `/owner/repo`.
+             */
+            readonly library: string;
+            /**
+             * Enabled
+             * @description False when the library has no webhook secret: every delivery is refused.
+             */
+            readonly enabled: boolean;
+            /**
+             * Url
+             * @description Where a forge sends its pushes (`POST`); set by the HTTP API, null elsewhere.
+             */
+            readonly url?: string | null;
+            /**
+             * Created At
+             * @description When the secret was created or last rotated; null when off.
+             */
+            readonly created_at?: string | null;
+            /**
+             * Secret
+             * @description The shared secret to paste into the forge's webhook settings (GitHub, Bitbucket: the
+             *     secret; GitLab: the secret token). It replaces the previous one at once.
+             */
+            readonly secret: string;
+        };
+        /**
+         * WebhookOut
+         * @description A library's push webhook: whether it is on and where forges send their pushes.
+         */
+        readonly WebhookOut: {
+            /**
+             * Library
+             * @description The library ID, `/owner/repo`.
+             */
+            readonly library: string;
+            /**
+             * Enabled
+             * @description False when the library has no webhook secret: every delivery is refused.
+             */
+            readonly enabled: boolean;
+            /**
+             * Url
+             * @description Where a forge sends its pushes (`POST`); set by the HTTP API, null elsewhere.
+             */
+            readonly url?: string | null;
+            /**
+             * Created At
+             * @description When the secret was created or last rotated; null when off.
+             */
+            readonly created_at?: string | null;
+        };
+        /**
+         * WebhookReceipt
+         * @description What ExactDocs did with a delivery; the sync itself runs later, as a job.
+         */
+        readonly WebhookReceipt: {
+            /**
+             * Status
+             * @description `queued`: a `push` job runs the sync (a push of the same ref already waiting counts);
+             *     `duplicate`: this delivery was handled before; `ignored`: nothing it pushed is followed (an
+             *     untracked branch, a tag without auto-import, a ping).
+             * @enum {string}
+             */
+            readonly status: "queued" | "duplicate" | "ignored";
+            /**
+             * Job Ids
+             * @description The `push` jobs queued by this delivery (empty when they joined waiting ones).
+             * @default []
+             */
+            readonly job_ids: readonly string[];
         };
         /**
          * RefKind
@@ -10326,6 +10469,326 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-get_webhook": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WebhookOut"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-set_webhook": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WebhookCreated"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-disable_webhook": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WebhookOut"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-receive_webhook": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        /** @description The forge's push payload, signed as it was sent. */
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": Record<string, never>;
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WebhookReceipt"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The body is larger than 5242880 bytes. */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {

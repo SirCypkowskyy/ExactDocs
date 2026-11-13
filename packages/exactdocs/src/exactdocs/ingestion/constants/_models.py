@@ -241,6 +241,10 @@ COLLECT_JOB: Final[JobKind] = JobKind("collect")
 """The kind of job that frees what removed or replaced versions left on disk."""
 EMBED_JOB: Final[JobKind] = JobKind("embed")
 """Embeds one version with the instance's embedding model, a durable step per batch (RET-01)."""
+PUSH_JOB: Final[JobKind] = JobKind("push")
+"""Syncs one pushed branch, or auto-imports after one pushed tag, when a forge's webhook said so."""
+QUEUED_PUSH_SQL: Final[str] = "state = 'queued' AND kind = 'push'"
+"""The rows of the unique index that keeps one queued ``push`` job per (library, ref, kind)."""
 EMBED_AFTER_KINDS: Final[frozenset[JobKind]] = frozenset(
     {IMPORT_JOB, REFRESH_JOB, REPROCESS_JOB, RECHUNK_JOB}
 )

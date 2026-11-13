@@ -7377,6 +7377,448 @@
           }
         }
       }
+    },
+    "/api/v1/libraries/{owner}/{repo}/webhook": {
+      "get": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "Get Webhook",
+        "description": "Say whether the library's push webhook is on, its URL and when its secret was made.\n\nThe secret is never returned again: rotate it with `PUT` if it was lost.",
+        "operationId": "ingestion-get_webhook",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "Set Webhook",
+        "description": "Create or rotate the library's webhook secret; the old one stops working at once.\n\nThe answer holds the secret (32 random bytes, URL-safe) and the URL to set in the\nforge's webhook settings. It is shown this once: `GET` never returns it.",
+        "operationId": "ingestion-set_webhook",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookCreated"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "Disable Webhook",
+        "description": "Turn the library's push webhook off: every delivery is refused from now on.",
+        "operationId": "ingestion-disable_webhook",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhooks/{owner}/{repo}": {
+      "post": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "Receive Webhook",
+        "description": "Receive a push from GitHub, GitLab or Bitbucket; the sync runs later, as a job.\n\nSet this URL in the forge's webhook settings, with the secret from `PUT\n/libraries/{owner}/{repo}/webhook`, for push events (and tag pushes). The signature is\nchecked over the raw body: GitHub's `X-Hub-Signature-256`, Bitbucket's\n`X-Hub-Signature` (both `sha256=`, HMAC-SHA256), GitLab's `X-Gitlab-Token`. Every\nrefusal is the same 401 `invalid_signature`: no or a wrong signature, an unknown forge, a\nlibrary without a webhook, or no such library. 413 above the size cap, 400\n`missing_delivery_id` for a signed delivery without a delivery ID. A push to a branch\nversion queues a sync of that branch, a tag the library's auto-sync `tag_pattern`\nmatches queues its auto-import: 202 `queued`. A delivery seen before answers 202\n`duplicate`, anything else (an untracked branch, a tag without auto-import, a ping) 202\n`ignored`. Only ref names are read from the payload: the job asks the repository itself.",
+        "operationId": "ingestion-receive_webhook",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The body is larger than 5242880 bytes."
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "description": "The forge's push payload, signed as it was sent.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -14188,6 +14630,136 @@
         ],
         "title": "VersionOut",
         "description": "One imported version: the ref, what kind of ref it is, and the commit it stands for."
+      },
+      "WebhookCreated": {
+        "properties": {
+          "library": {
+            "type": "string",
+            "title": "Library",
+            "description": "The library ID, `/owner/repo`."
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "description": "False when the library has no webhook secret: every delivery is refused."
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url",
+            "description": "Where a forge sends its pushes (`POST`); set by the HTTP API, null elsewhere."
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At",
+            "description": "When the secret was created or last rotated; null when off."
+          },
+          "secret": {
+            "type": "string",
+            "title": "Secret",
+            "description": "The shared secret to paste into the forge's webhook settings (GitHub, Bitbucket: the\nsecret; GitLab: the secret token). It replaces the previous one at once."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "library",
+          "enabled",
+          "secret"
+        ],
+        "title": "WebhookCreated",
+        "description": "A new or rotated webhook, with the secret: shown in this answer only, never again."
+      },
+      "WebhookOut": {
+        "properties": {
+          "library": {
+            "type": "string",
+            "title": "Library",
+            "description": "The library ID, `/owner/repo`."
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "description": "False when the library has no webhook secret: every delivery is refused."
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url",
+            "description": "Where a forge sends its pushes (`POST`); set by the HTTP API, null elsewhere."
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At",
+            "description": "When the secret was created or last rotated; null when off."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "library",
+          "enabled"
+        ],
+        "title": "WebhookOut",
+        "description": "A library's push webhook: whether it is on and where forges send their pushes."
+      },
+      "WebhookReceipt": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "duplicate",
+              "ignored"
+            ],
+            "title": "Status",
+            "description": "`queued`: a `push` job runs the sync (a push of the same ref already waiting counts);\n`duplicate`: this delivery was handled before; `ignored`: nothing it pushed is followed (an\nuntracked branch, a tag without auto-import, a ping)."
+          },
+          "job_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Job Ids",
+            "description": "The `push` jobs queued by this delivery (empty when they joined waiting ones).",
+            "default": []
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "WebhookReceipt",
+        "description": "What ExactDocs did with a delivery; the sync itself runs later, as a job."
       },
       "exactdocs__catalog__models__RefKind": {
         "type": "string",

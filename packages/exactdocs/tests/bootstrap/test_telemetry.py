@@ -42,6 +42,7 @@ from exactdocs.bootstrap.telemetry import (
     build_metrics_router,
     is_untraced,
     search_tracer,
+    traced_job,
     traced_jobs,
 )
 from exactdocs.catalog.dtos import (
@@ -290,6 +291,17 @@ def test_with_metrics_on_searches_and_jobs_are_observed_without_query_text() -> 
     assert isinstance(tracer, OpenTelemetrySearchTracer)
     assert not tracer.record_query_text
     assert isinstance(traced[JobKind("import")], TracedJobHandler)
+
+
+def test_a_handler_the_ingestion_module_adds_is_traced_only_when_observed() -> None:
+    handler = object()
+
+    untraced = traced_job(Settings())(JobKind("push"), handler)  # ty: ignore[invalid-argument-type]
+    traced = traced_job(Settings(metrics=True))(JobKind("push"), handler)  # ty: ignore[invalid-argument-type]
+
+    assert untraced is handler
+    assert isinstance(traced, TracedJobHandler)
+    assert (traced.kind, traced.handler) == (JobKind("push"), handler)
 
 
 class Quiet:

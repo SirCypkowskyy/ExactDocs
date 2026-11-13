@@ -10,7 +10,7 @@ exporter and no ``/metrics``.
 import hmac
 import importlib
 import logging
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from time import perf_counter
@@ -178,6 +178,49 @@ def traced_jobs(
     if not _observed(settings):
         return handlers
     return {kind: TracedJobHandler(kind=kind, handler=h) for kind, h in handlers.items()}
+
+
+def traced_job(settings: Settings) -> Callable[[JobKind, JobHandler], JobHandler]:
+    """Give a handler the ingestion module adds itself (``push``) a span and a duration.
+
+    That is when telemetry or metrics are on, as ``traced_jobs`` does for the given handlers.
+
+    Args:
+        settings: The runtime configuration.
+
+    Returns:
+        What wraps one handler; it returns the handler as given when nothing is observed.
+    """
+    if not _observed(settings):
+        return _as_given
+    return _traced
+
+
+def _as_given(kind: JobKind, handler: JobHandler) -> JobHandler:
+    """Return the handler unchanged.
+
+    Args:
+        kind: The job kind it runs.
+        handler: What runs the job.
+
+    Returns:
+        ``handler``.
+    """
+    del kind
+    return handler
+
+
+def _traced(kind: JobKind, handler: JobHandler) -> JobHandler:
+    """Wrap the handler in a span and a duration.
+
+    Args:
+        kind: The job kind it runs.
+        handler: What runs the job.
+
+    Returns:
+        The traced handler.
+    """
+    return TracedJobHandler(kind=kind, handler=handler)
 
 
 def is_untraced(scope: MutableMapping[str, Any]) -> bool:

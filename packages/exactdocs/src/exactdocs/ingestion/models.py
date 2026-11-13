@@ -7,6 +7,7 @@ touches the filesystem or evaluates content. ``.mdx`` is plain Markdown: JSX, ``
 
 import base64
 import hashlib
+import hmac
 import ipaddress
 import json
 import math
@@ -38,6 +39,7 @@ from exactdocs.ingestion.constants import (
     DEFAULT_KEEP_LAST,
     DEFAULT_MAX_SECTION_CHARS,
     FLAT_HOSTS,
+    GITHUB_SIGNATURE_HEADER,
     GLOB_CHARS,
     HEADS,
     INSTRUCTION_FILE_NAMES,
@@ -46,6 +48,7 @@ from exactdocs.ingestion.constants import (
     MAX_CHUNK_CHARS,
     MAX_CONTEXT7_RULE_CHARS,
     MAX_CONTEXT7_RULES,
+    MAX_DELIVERY_ID,
     MAX_HEADING_LEVEL,
     MAX_IMAGES_PER_ARTICLE,
     MAX_INSTRUCTION_DIRS,
@@ -67,6 +70,7 @@ from exactdocs.ingestion.constants import (
     PEELED,
     README_DESCRIPTION_MAX,
     README_TITLE_MAX,
+    SIGNATURE_SCHEME,
     SOURCE_MISMATCH,
     TAGS,
     JobKind,
@@ -112,6 +116,8 @@ from exactdocs.ingestion.errors import (
     InvalidProgressError,
     InvalidRepositoryUrlError,
     InvalidTagError,
+    InvalidWebhookPayloadError,
+    MissingDeliveryIdError,
     PatternProblem,
     TagProblem,
     UnknownRefError,
@@ -3317,4 +3323,327 @@ def plan_sources(
         undeclared=tuple(c for c in current if c.library_id not in named),
         errors=tuple(errors),
         prune=prune,
+    )
+
+
+# ---------------------------------------------------------------- push webhooks (TEAM-03)
+
+
+class WebhookProvider(StrEnum):
+    """The forge a webhook delivery comes from, told by its headers."""
+
+    GITHUB = "github"
+    GITLAB = "gitlab"
+    BITBUCKET = "bitbucket"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Webhook:
+    """A library's webhook: the shared secret its forge proves its deliveries with."""
+
+    library: str
+    """The library ID."""
+    secret: str = field(repr=False)
+    """The shared secret (URL-safe text); never logged or shown again after it is created."""
+    created_at: datetime
+    """When it was created (or last rotated)."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class WebhookDelivery:
+    """One delivery a forge made, remembered so a redelivery is not acted on twice."""
+
+    library: str
+    """The library ID."""
+    provider: WebhookProvider
+    """The forge."""
+    delivery_id: str
+    """The forge's ID of the delivery."""
+    received_at: datetime
+    """When it was accepted."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PushedRef:
+    """A branch or tag a push changed, by name only: the job lists the remote itself."""
+
+    kind: RefKind
+    """``branch`` or ``tag``."""
+    name: str
+    """The branch or tag name, without ``refs/heads/`` or ``refs/tags/``."""
+    deleted: bool = False
+    """The push deleted it."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PushEvent:
+    """What a delivery says: its ID and the refs it pushed (none for a ping or another event)."""
+
+    delivery_id: str
+    """The forge's ID of the delivery."""
+    refs: tuple[PushedRef, ...] = ()
+    """The branches and tags pushed, in the payload's order."""
+
+
+def _lowered(headers: Mapping[str, str]) -> dict[str, str]:
+    """Return the headers by lower-case name (HTTP header names are case-insensitive).
+
+    Args:
+        headers: The request's headers.
+
+    Returns:
+        The same headers, keyed by lower-case name.
+    """
+    return {name.lower(): value for name, value in headers.items()}
+
+
+def webhook_provider(headers: Mapping[str, str]) -> WebhookProvider | None:
+    """Tell which forge sent a delivery by the event header it carries.
+
+    Args:
+        headers: The request's headers.
+
+    Returns:
+        The forge, or ``None`` when no known event header is there.
+    """
+    lowered = _lowered(headers)
+    if "x-github-event" in lowered:
+        return WebhookProvider.GITHUB
+    if "x-gitlab-event" in lowered:
+        return WebhookProvider.GITLAB
+    if "x-event-key" in lowered:
+        return WebhookProvider.BITBUCKET
+    return None
+
+
+def verify_webhook(
+    provider: WebhookProvider, headers: Mapping[str, str], body: bytes, secret: str
+) -> bool:
+    """Tell whether the delivery was made by someone who holds the secret (constant time).
+
+    GitHub signs the raw body in ``X-Hub-Signature-256: sha256=<hex>`` and Bitbucket (Cloud and
+    Data Center) in ``X-Hub-Signature: sha256=<hex>``, both HMAC-SHA256 with the secret as key;
+    GitLab sends the secret itself in ``X-Gitlab-Token``. Every comparison is
+    ``hmac.compare_digest``, and the HMAC is computed even when the header is missing. A SHA-1
+    signature (``sha1=``, GitHub's ``X-Hub-Signature``) is never accepted.
+
+    Args:
+        provider: The forge, told by ``webhook_provider``.
+        headers: The request's headers.
+        body: The raw body, exactly as received (before it is parsed).
+        secret: The library's webhook secret.
+
+    Returns:
+        True when the signature or token matches.
+    """
+    lowered = _lowered(headers)
+    key = secret.encode()
+    if provider is WebhookProvider.GITLAB:
+        sent = lowered.get("x-gitlab-token", "").encode()
+        # Digests of both: equal lengths, so the comparison says nothing about the length.
+        return hmac.compare_digest(hashlib.sha256(sent).digest(), hashlib.sha256(key).digest())
+    header = GITHUB_SIGNATURE_HEADER if provider is WebhookProvider.GITHUB else "x-hub-signature"
+    expected = SIGNATURE_SCHEME + hmac.new(key, body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(lowered.get(header, "").encode(), expected.encode())
+
+
+def _delivery_id(provider: WebhookProvider, headers: Mapping[str, str]) -> str | None:
+    """Return the delivery's ID from the forge's header for it.
+
+    Args:
+        provider: The forge.
+        headers: The request's headers, by lower-case name.
+
+    Returns:
+        The ID, or ``None`` when there is none (or it is empty or too long).
+    """
+    names = {
+        WebhookProvider.GITHUB: ("x-github-delivery",),
+        WebhookProvider.GITLAB: ("idempotency-key", "x-gitlab-event-uuid"),
+        WebhookProvider.BITBUCKET: ("x-request-uuid", "x-request-id"),
+    }[provider]
+    found = next((headers[n].strip() for n in names if headers.get(n, "").strip()), None)
+    if found is None or len(found) > MAX_DELIVERY_ID or not found.isprintable():
+        return None
+    return found
+
+
+def _pushed(full: str, *, deleted: bool) -> PushedRef | None:
+    """Read a full ref name (``refs/heads/main``, ``refs/tags/v1``) as a pushed branch or tag.
+
+    Args:
+        full: The full ref name.
+        deleted: The push deleted it.
+
+    Returns:
+        The ref, or ``None`` for another kind of ref or a name git would not accept.
+    """
+    for prefix, kind in ((HEADS, RefKind.BRANCH), (TAGS, RefKind.TAG)):
+        if full.startswith(prefix) and (name := branch_name(full.removeprefix(prefix))):
+            return PushedRef(kind=kind, name=name, deleted=deleted)
+    return None
+
+
+def _named(kind: object, name: object, *, deleted: bool) -> PushedRef | None:
+    """Read a ref Bitbucket names by its type and short name.
+
+    Args:
+        kind: The ref's type (``branch``/``tag`` on Cloud, ``BRANCH``/``TAG`` on Data Center).
+        name: The short name.
+        deleted: The push deleted it.
+
+    Returns:
+        The ref, or ``None`` for another type or a name git would not accept.
+    """
+    kinds = {"branch": RefKind.BRANCH, "tag": RefKind.TAG}
+    if not isinstance(kind, str) or not isinstance(name, str) or kind.lower() not in kinds:
+        return None
+    valid = branch_name(name)
+    return (
+        None if valid is None else PushedRef(kind=kinds[kind.lower()], name=valid, deleted=deleted)
+    )
+
+
+def _github_refs(payload: Mapping[str, Any]) -> list[PushedRef | None]:
+    """Read the ref of a GitHub ``push`` (``ref``, ``deleted``).
+
+    Args:
+        payload: The JSON body.
+
+    Returns:
+        The pushed ref, or ``None`` when it is not a branch or tag.
+    """
+    ref = payload.get("ref")
+    return [_pushed(ref, deleted=payload.get("deleted") is True) if isinstance(ref, str) else None]
+
+
+def _gitlab_refs(payload: Mapping[str, Any]) -> list[PushedRef | None]:
+    """Read the ref of a GitLab ``Push Hook`` or ``Tag Push Hook`` (deleted: ``after`` is zeros).
+
+    Args:
+        payload: The JSON body.
+
+    Returns:
+        The pushed ref, or ``None`` when it is not a branch or tag.
+    """
+    ref, after = payload.get("ref"), payload.get("after")
+    deleted = isinstance(after, str) and bool(after) and set(after) == {"0"}
+    return [_pushed(ref, deleted=deleted) if isinstance(ref, str) else None]
+
+
+def _bitbucket_refs(payload: Mapping[str, Any]) -> list[PushedRef | None]:
+    """Read every change of a Bitbucket Cloud ``repo:push`` or Data Center ``repo:refs_changed``.
+
+    Cloud lists ``push.changes[]`` with the ref's ``new`` state (``None`` once deleted) and its
+    ``old`` one; Data Center lists ``changes[]`` with the ``ref`` and a ``type`` (``DELETE``).
+
+    Args:
+        payload: The JSON body.
+
+    Returns:
+        One entry per change: the ref, or ``None`` when it is not a branch or tag.
+
+    Raises:
+        InvalidWebhookPayloadError: The changes are not a list of objects.
+    """
+    push = payload.get("push")
+    changes = push.get("changes") if isinstance(push, dict) else payload.get("changes")
+    if not isinstance(changes, list) or not all(isinstance(c, dict) for c in changes):
+        reason = "no list of changes"
+        raise InvalidWebhookPayloadError(reason)
+    found: list[PushedRef | None] = []
+    for change in changes:
+        if "ref" in change:  # Data Center
+            ref = change["ref"] if isinstance(change["ref"], dict) else {}
+            deleted = change.get("type") == "DELETE"
+            full = ref.get("id")
+            pushed = _pushed(full, deleted=deleted) if isinstance(full, str) else None
+            found.append(pushed or _named(ref.get("type"), ref.get("displayId"), deleted=deleted))
+            continue
+        new, old = change.get("new"), change.get("old")
+        state = new if isinstance(new, dict) else old if isinstance(old, dict) else {}
+        found.append(_named(state.get("type"), state.get("name"), deleted=new is None))
+    return found
+
+
+def parse_push(provider: WebhookProvider, headers: Mapping[str, str], body: bytes) -> PushEvent:
+    """Read a verified delivery: its ID and, for a push, the branches and tags it changed.
+
+    Only ref names are read: the payload is a hint, and a commit SHA in it is never trusted.
+    Push events are GitHub's ``push``, GitLab's ``Push Hook`` and ``Tag Push Hook``, and
+    Bitbucket's ``repo:push`` (Cloud) and ``repo:refs_changed`` (Data Center); any other event
+    (a ping, diagnostics) has no refs. A ref that is not a branch or tag is left out.
+
+    Args:
+        provider: The forge.
+        headers: The request's headers.
+        body: The raw body.
+
+    Returns:
+        The delivery's ID and the refs it pushed.
+
+    Raises:
+        MissingDeliveryIdError: The delivery has no usable ID.
+        InvalidWebhookPayloadError: A push event's body is not the JSON its forge sends.
+    """
+    lowered = _lowered(headers)
+    delivery = _delivery_id(provider, lowered)
+    if delivery is None:
+        raise MissingDeliveryIdError
+    event = {
+        WebhookProvider.GITHUB: lowered.get("x-github-event", ""),
+        WebhookProvider.GITLAB: lowered.get("x-gitlab-event", ""),
+        WebhookProvider.BITBUCKET: lowered.get("x-event-key", ""),
+    }[provider].strip()
+    readers = {
+        (WebhookProvider.GITHUB, "push"): _github_refs,
+        (WebhookProvider.GITLAB, "Push Hook"): _gitlab_refs,
+        (WebhookProvider.GITLAB, "Tag Push Hook"): _gitlab_refs,
+        (WebhookProvider.BITBUCKET, "repo:push"): _bitbucket_refs,
+        (WebhookProvider.BITBUCKET, "repo:refs_changed"): _bitbucket_refs,
+    }
+    reader = readers.get((provider, event))
+    if reader is None:
+        return PushEvent(delivery_id=delivery)
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        reason = "not JSON"
+        raise InvalidWebhookPayloadError(reason) from None
+    if not isinstance(payload, dict):
+        reason = "not a JSON object"
+        raise InvalidWebhookPayloadError(reason)
+    refs = tuple(dict.fromkeys(r for r in reader(payload) if r is not None))
+    return PushEvent(delivery_id=delivery, refs=refs)
+
+
+def route_push(
+    event: PushEvent, versions: Sequence[ImportedRef], auto_sync: AutoSync | None
+) -> tuple[PushedRef, ...]:
+    """Pick the pushed refs that queue a job (pure).
+
+    A branch that is a version of the library is synced, deleted too (the sync records
+    ``ref_deleted`` on it). A tag the library's auto-sync ``tag_pattern`` matches starts the
+    auto-import. Anything else (an untracked branch, a tag without auto-import, a deleted tag)
+    queues nothing.
+
+    Args:
+        event: The verified delivery.
+        versions: The library's versions.
+        auto_sync: The library's scheduled check, if it has one.
+
+    Returns:
+        The refs to queue a ``push`` job for, in the payload's order.
+    """
+    branches = {v.ref for v in versions if v.kind is RefKind.BRANCH}
+    return tuple(
+        ref
+        for ref in event.refs
+        if (ref.kind is RefKind.BRANCH and ref.name in branches)
+        or (
+            ref.kind is RefKind.TAG
+            and not ref.deleted
+            and auto_sync is not None
+            and auto_sync.matches(ref.name)
+        )
     )

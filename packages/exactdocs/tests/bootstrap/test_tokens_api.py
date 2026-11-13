@@ -217,6 +217,8 @@ OPEN_ROUTES = {
     ("DELETE", "/api/v1/session"),
     ("POST", "/api/v1/tokens/login"),
     ("GET", "/api/v1/openapi.json"),
+    # A forge's push: no caller, only the library's webhook secret (answers 401 without it).
+    ("POST", "/api/v1/webhooks/{owner}/{repo}"),
 }
 
 

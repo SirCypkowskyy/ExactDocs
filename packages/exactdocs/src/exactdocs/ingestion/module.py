@@ -6,6 +6,7 @@ together with the job kinds it supports. ``import_job`` builds the import's hand
 
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from datetime import datetime
 from types import MappingProxyType
 from typing import Never, Self
 
@@ -21,6 +22,7 @@ from exactdocs.ingestion.constants import (
     EMBED_JOB,
     IMPORT_JOB,
     LIBRARY_KINDS,
+    PUSH_JOB,
     RECHUNK_JOB,
     REFRESH_JOB,
     REPROCESS_JOB,
@@ -38,6 +40,8 @@ from exactdocs.ingestion.models import (
     KnownLibrary,
     PathSelection,
     TagRule,
+    Webhook,
+    WebhookDelivery,
 )
 from exactdocs.ingestion.ports.driven import (
     AutoSyncStore,
@@ -70,6 +74,8 @@ from exactdocs.ingestion.ports.driven import (
     VersionCopier,
     VersionEmbedder,
     VersionPublisher,
+    WebhookDeliveries,
+    WebhookSecrets,
 )
 from exactdocs.ingestion.ports.driving import (
     AddLibrary,
@@ -77,16 +83,19 @@ from exactdocs.ingestion.ports.driving import (
     ApplySources,
     CheckRepository,
     DisableAutoSync,
+    DisableWebhook,
     EnqueueJob,
     GetAutoSync,
     GetJob,
     GetLibraryAccess,
+    GetWebhook,
     ListLatestJobs,
     ListLibraryJobs,
     ListRepositoryRefs,
     PlanSources,
     PreviewRepository,
     QueueEmbedding,
+    ReceiveWebhook,
     RecoverJobs,
     ReimportVersion,
     RemoveLibrary,
@@ -95,6 +104,7 @@ from exactdocs.ingestion.ports.driving import (
     RunNextJob,
     RunScheduledChecks,
     SetAutoSync,
+    SetWebhook,
     SubmitQueuedJobs,
     SwitchSchedule,
     SyncLibrary,
@@ -105,9 +115,11 @@ from exactdocs.ingestion.use_cases import (
     AddLibraryUseCase,
     AddVersionUseCase,
     ApplySourcesUseCase,
+    AutoImports,
     CheckRepositoryUseCase,
     CollectGarbageUseCase,
     DisableAutoSyncUseCase,
+    DisableWebhookUseCase,
     DiscardInterruptedImportUseCase,
     EmbedAfterJob,
     EmbeddingQueue,
@@ -116,13 +128,16 @@ from exactdocs.ingestion.use_cases import (
     GetAutoSyncUseCase,
     GetJobUseCase,
     GetLibraryAccessUseCase,
+    GetWebhookUseCase,
     ImportVersionUseCase,
     ListLatestJobsUseCase,
     ListLibraryJobsUseCase,
     ListRepositoryRefsUseCase,
     PlanSourcesUseCase,
     PreviewRepositoryUseCase,
+    PushJobUseCase,
     QueueEmbeddingUseCase,
+    ReceiveWebhookUseCase,
     RechunkLibraryUseCase,
     RecoverJobsUseCase,
     ReimportVersionUseCase,
@@ -134,6 +149,7 @@ from exactdocs.ingestion.use_cases import (
     RunNextJobUseCase,
     RunScheduledChecksUseCase,
     SetAutoSyncUseCase,
+    SetWebhookUseCase,
     SourcesReader,
     SubmitQueuedJobsUseCase,
     SwitchScheduleUseCase,
@@ -396,6 +412,106 @@ class _NoKnownLibraries:
         return []
 
 
+class _NoWebhooks:
+    """The default ``webhooks`` of ``build``: no library has a secret, so every delivery fails."""
+
+    async def save(self, webhook: Webhook) -> None:
+        """Refuse: without a store a secret would be shown that never works.
+
+        Args:
+            webhook: The webhook.
+
+        Raises:
+            NotImplementedError: Always.
+        """
+        del webhook
+        message = "no webhook store was given to IngestionModule.build"
+        raise NotImplementedError(message)
+
+    async def get(self, library: str) -> Webhook | None:
+        """Find nothing.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            Always ``None``.
+        """
+        del library
+        return None
+
+    async def created_at(self, library: str) -> datetime | None:
+        """Find nothing.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            Always ``None``.
+        """
+        del library
+        return None
+
+    async def delete(self, library: str) -> None:
+        """Forget nothing: nothing is kept.
+
+        Args:
+            library: The library ID.
+        """
+        del library
+
+
+class _NoDeliveries:
+    """The default ``webhook_deliveries`` of ``build``: nothing is remembered."""
+
+    async def record(self, delivery: WebhookDelivery, *, prune_before: datetime) -> bool:
+        """Remember nothing: every delivery is new.
+
+        Args:
+            delivery: The delivery.
+            prune_before: Unused.
+
+        Returns:
+            Always True.
+        """
+        del delivery, prune_before
+        return True
+
+    async def forget(self, delivery: WebhookDelivery) -> None:
+        """Forget nothing.
+
+        Args:
+            delivery: The delivery.
+        """
+        del delivery
+
+    async def delete_for(self, library: str) -> None:
+        """Forget nothing.
+
+        Args:
+            library: The library ID.
+        """
+        del library
+
+
+def _wrapped(
+    kind: JobKind,
+    handler: JobHandler,
+    wrap_handler: Callable[[JobKind, JobHandler], JobHandler] | None,
+) -> JobHandler:
+    """Wrap a handler built inside ``build``, as ``build``'s ``wrap_handler`` says.
+
+    Args:
+        kind: The handler's job kind.
+        handler: The handler, as built.
+        wrap_handler: Wraps it, given its kind; None: it runs as built.
+
+    Returns:
+        The handler to register for ``kind``.
+    """
+    return handler if wrap_handler is None else wrap_handler(kind, handler)
+
+
 class _NoSwitch:
     """The default ``schedule_switch`` of ``build``: no tick to turn on or off."""
 
@@ -434,6 +550,8 @@ class IngestionModule:
     """Validates a git URL and proposes a library ID, saving nothing."""
     disable_auto_sync: DisableAutoSync
     """Turns a library's scheduled check off."""
+    disable_webhook: DisableWebhook
+    """Forgets a library's webhook secret."""
     enqueue_job: EnqueueJob
     """Queues a job of a registered kind."""
     get_auto_sync: GetAutoSync
@@ -442,6 +560,8 @@ class IngestionModule:
     """Reads one job."""
     get_library_access: GetLibraryAccess
     """Says whether a library has a stored credential."""
+    get_webhook: GetWebhook
+    """Says whether a library's webhook is on."""
     list_latest_jobs: ListLatestJobs
     """Lists the newest job of every (library, version)."""
     list_library_jobs: ListLibraryJobs
@@ -454,6 +574,8 @@ class IngestionModule:
     """Lists the files an import would take, importing nothing."""
     queue_embedding: QueueEmbedding
     """Queues the ``embed`` jobs of the versions not fully embedded."""
+    receive_webhook: ReceiveWebhook
+    """Verifies a forge's push delivery and queues its ``push`` jobs."""
     recover_jobs: RecoverJobs
     """On start: cleans up after interrupted jobs and hands the queued ones to the runner."""
     reimport_version: ReimportVersion
@@ -470,6 +592,8 @@ class IngestionModule:
     """Runs one tick of the scheduled checks."""
     set_auto_sync: SetAutoSync
     """Turns a library's scheduled check on, or changes it."""
+    set_webhook: SetWebhook
+    """Creates or rotates a library's webhook secret."""
     submit_queued_jobs: SubmitQueuedJobs
     """Hands every queued job to the runner again."""
     switch_schedule: SwitchSchedule
@@ -507,6 +631,9 @@ class IngestionModule:
         embedder: VersionEmbedder | None = None,
         checkpoints: Checkpoints | None = None,
         known_libraries: KnownLibraries | None = None,
+        webhooks: WebhookSecrets | None = None,
+        webhook_deliveries: WebhookDeliveries | None = None,
+        wrap_handler: Callable[[JobKind, JobHandler], JobHandler] | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -523,7 +650,11 @@ class IngestionModule:
         than ``tag_locks``); without it they take turns within this process only. ``embedder``
         adds the ``embed`` job (one version embedded in the background, a durable step per batch
         through ``checkpoints``) and makes every job that stores chunks queue the embedding of
-        what it stored.
+        what it stored. ``webhooks`` keeps the libraries' push webhook secrets and
+        ``webhook_deliveries`` the deliveries seen; the ``push`` job they queue is always
+        registered (it syncs one branch or auto-imports after one tag). ``wrap_handler`` wraps
+        that ``push`` handler, which is built here (for example in a span, as the given
+        ``handlers`` already are).
 
         Args:
             jobs: Where jobs are stored.
@@ -548,6 +679,9 @@ class IngestionModule:
             embedder: Embeds versions; None: no ``embed`` job.
             checkpoints: Makes the ``embed`` job's batches durable steps.
             known_libraries: Lists the libraries, for a sources file; None: none is known.
+            webhooks: Where webhook secrets are kept; None: no library can have one.
+            webhook_deliveries: Where deliveries are remembered; None: none is.
+            wrap_handler: Wraps the ``push`` handler, given its kind; None: it runs as built.
 
         Returns:
             The module.
@@ -563,21 +697,24 @@ class IngestionModule:
             message = "settings needs the reprocess, rechunk and retag handlers of import_job"
             raise TypeError(message)
         runner = runner or _NoRunner()
+        # The `push` handler needs the use cases built over `enqueue_job`: added below, to this
+        # same mapping, which `enqueue_job` and the runners read when a job comes.
+        kinds: dict[JobKind, JobHandler] = dict(handlers)
         embedding = None
         if embedder is not None:
             embedding = EmbeddingQueue(jobs=jobs, runner=runner, clock=clock, embedder=embedder)
-            handlers = {
+            kinds = {
                 **{
                     kind: EmbedAfterJob(inner=handler, queue=embedding)
                     if kind in EMBED_AFTER_KINDS
                     else handler
-                    for kind, handler in handlers.items()
+                    for kind, handler in kinds.items()
                 },
                 EMBED_JOB: EmbedVersionUseCase(
                     embedder=embedder, queue=embedding, checkpoints=checkpoints or _InlineSteps()
                 ),
             }
-        enqueue_job = EnqueueJobUseCase(jobs=jobs, clock=clock, handlers=handlers, runner=runner)
+        enqueue_job = EnqueueJobUseCase(jobs=jobs, clock=clock, handlers=kinds, runner=runner)
         sources = sources or _NoLibrarySources()
         vault = vault or _NoCredentials()
         schedules = auto_syncs or _NoAutoSyncs()
@@ -616,6 +753,8 @@ class IngestionModule:
             vault=vault,
             schedules=schedules,
             switch=switch,
+            webhooks=webhooks or _NoWebhooks(),
+            deliveries=webhook_deliveries or _NoDeliveries(),
         )
         update_library_settings = UpdateLibrarySettingsUseCase(
             sources=sources,
@@ -623,6 +762,24 @@ class IngestionModule:
             jobs=jobs,
             enqueue_job=enqueue_job,
             locks=settings_locks or TagLocks(),
+        )
+        kinds[PUSH_JOB] = _wrapped(
+            PUSH_JOB,
+            PushJobUseCase(
+                sync_library=sync_library,
+                sources=sources,
+                remote=remote,
+                vault=vault,
+                schedules=schedules,
+                auto_imports=AutoImports(
+                    sources=sources,
+                    jobs=jobs,
+                    clock=clock,
+                    enqueue_job=enqueue_job,
+                    remove_version=remove_version,
+                ),
+            ),
+            wrap_handler,
         )
         return cls(
             add_library=add_library,
@@ -650,10 +807,14 @@ class IngestionModule:
             disable_auto_sync=DisableAutoSyncUseCase(
                 sources=sources, schedules=schedules, switch=switch
             ),
+            disable_webhook=DisableWebhookUseCase(
+                sources=sources, webhooks=webhooks or _NoWebhooks()
+            ),
             enqueue_job=enqueue_job,
             get_auto_sync=GetAutoSyncUseCase(sources=sources, schedules=schedules),
             get_job=GetJobUseCase(jobs=jobs),
             get_library_access=GetLibraryAccessUseCase(vault=vault, library_ids=library_ids),
+            get_webhook=GetWebhookUseCase(sources=sources, webhooks=webhooks or _NoWebhooks()),
             list_latest_jobs=ListLatestJobsUseCase(jobs=jobs),
             list_library_jobs=ListLibraryJobsUseCase(jobs=jobs),
             list_repository_refs=ListRepositoryRefsUseCase(remote=remote),
@@ -667,6 +828,14 @@ class IngestionModule:
             ),
             preview_repository=PreviewRepositoryUseCase(remote=remote, tree=tree or _NoTree()),
             queue_embedding=QueueEmbeddingUseCase(queue=embedding),
+            receive_webhook=ReceiveWebhookUseCase(
+                webhooks=webhooks or _NoWebhooks(),
+                deliveries=webhook_deliveries or _NoDeliveries(),
+                sources=sources,
+                schedules=schedules,
+                enqueue_job=enqueue_job,
+                clock=clock,
+            ),
             recover_jobs=RecoverJobsUseCase(
                 jobs=jobs, clock=clock, hooks=recovery_hooks, runner=runner
             ),
@@ -679,8 +848,8 @@ class IngestionModule:
             ),
             remove_library=remove_library,
             remove_version=remove_version,
-            run_job=RunJobUseCase(jobs=jobs, clock=clock, handlers=handlers, hooks=recovery_hooks),
-            run_next_job=RunNextJobUseCase(jobs=jobs, clock=clock, handlers=handlers),
+            run_job=RunJobUseCase(jobs=jobs, clock=clock, handlers=kinds, hooks=recovery_hooks),
+            run_next_job=RunNextJobUseCase(jobs=jobs, clock=clock, handlers=kinds),
             run_scheduled_checks=RunScheduledChecksUseCase(
                 schedules=schedules,
                 sources=sources,
@@ -694,6 +863,9 @@ class IngestionModule:
                 switch=switch,
             ),
             set_auto_sync=SetAutoSyncUseCase(sources=sources, schedules=schedules, switch=switch),
+            set_webhook=SetWebhookUseCase(
+                sources=sources, webhooks=webhooks or _NoWebhooks(), clock=clock
+            ),
             submit_queued_jobs=SubmitQueuedJobsUseCase(jobs=jobs, runner=runner),
             switch_schedule=SwitchScheduleUseCase(schedules=schedules, switch=switch),
             sync_library=sync_library,

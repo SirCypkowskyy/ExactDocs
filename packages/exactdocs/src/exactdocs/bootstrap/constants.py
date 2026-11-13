@@ -353,6 +353,12 @@ AI_KEYS_PURPOSE: Final[bytes] = b"exactdocs ai provider keys v1"
 Its own context: a provider key never opens with the credentials' key, nor the reverse. Never
 change it: every stored provider key is sealed with the key derived from it.
 """
+WEBHOOK_SECRETS_PURPOSE: Final[bytes] = b"exactdocs webhook secrets v1"
+"""HKDF context (``purpose``) of the key that seals the libraries' push webhook secrets.
+
+Its own context: a webhook secret never opens with the credentials' key, nor the reverse. Never
+change it: every stored webhook secret is sealed with the key derived from it.
+"""
 AGENT_CACHE_PURPOSE: Final[bytes] = b"exactdocs agentic cache v1"
 """HKDF context of the key of the HMACs that hash the questions in the agentic answer cache.
 

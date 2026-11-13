@@ -58,6 +58,7 @@ from exactdocs.ingestion.models import (
     SyncStatus,
     TagRule,
     VersionOrigin,
+    Webhook,
 )
 from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, MAX_PATH, MAX_TAG_INPUT, MAX_TAGS, Page
 
@@ -745,10 +746,12 @@ class RemovalResult(_Dto):
 
 
 class SyncLibraryCommand(_Dto):
-    """Re-sync the branch versions of a library."""
+    """Re-sync the branch versions of a library (only those named in `refs`, when given)."""
 
     library: str = Field(min_length=1, max_length=200)
     """The canonical `/owner/repo`."""
+    refs: tuple[str, ...] | None = None
+    """Only the versions of these refs are checked (a push names one); null checks every one."""
 
 
 class SyncedVersion(_Dto):
@@ -1449,3 +1452,97 @@ class AppliedSources(_Dto):
     """Created, then updated or unchanged, then removed libraries, then the plan's errors."""
     failed: int
     """How many libraries have an `error`."""
+
+
+# ---------------------------------------------------------------- push webhooks (TEAM-03)
+
+
+class WebhookQuery(_Dto):
+    """Name the library whose webhook is read, set or turned off."""
+
+    library: str = Field(min_length=1, max_length=200)
+    """The library ID, `/owner/repo`."""
+
+
+class WebhookOut(_Dto):
+    """A library's push webhook: whether it is on and where forges send their pushes."""
+
+    library: str
+    """The library ID, `/owner/repo`."""
+    enabled: bool
+    """False when the library has no webhook secret: every delivery is refused."""
+    url: str | None = None
+    """Where a forge sends its pushes (`POST`); set by the HTTP API, null elsewhere."""
+    created_at: datetime | None = None
+    """When the secret was created or last rotated; null when off."""
+
+    @classmethod
+    def from_model(cls, webhook: Webhook) -> Self:
+        """Describe a webhook that is on, without its secret.
+
+        Args:
+            webhook: The library's webhook.
+
+        Returns:
+            The webhook at the boundary.
+        """
+        return cls(library=webhook.library, enabled=True, created_at=webhook.created_at)
+
+    @classmethod
+    def disabled(cls, library: str) -> Self:
+        """Describe a library without a webhook.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            The webhook, off.
+        """
+        return cls(library=library, enabled=False)
+
+
+class WebhookCreated(WebhookOut):
+    """A new or rotated webhook, with the secret: shown in this answer only, never again."""
+
+    secret: str
+    """The shared secret to paste into the forge's webhook settings (GitHub, Bitbucket: the
+    secret; GitLab: the secret token). It replaces the previous one at once."""
+
+    @classmethod
+    def created(cls, webhook: Webhook) -> Self:
+        """Describe the webhook with its secret.
+
+        Args:
+            webhook: The library's new webhook.
+
+        Returns:
+            The webhook and its secret.
+        """
+        return cls(
+            library=webhook.library,
+            enabled=True,
+            created_at=webhook.created_at,
+            secret=webhook.secret,
+        )
+
+
+class ReceiveWebhookCommand(_Dto):
+    """A delivery from a forge, as received: verified before anything in it is read."""
+
+    library: str = Field(min_length=1, max_length=200)
+    """The library ID, `/owner/repo`, from the webhook's URL."""
+    headers: dict[str, str]
+    """The request's headers (names in any letter case)."""
+    body: bytes
+    """The raw body, exactly as received (the signature covers these bytes)."""
+
+
+class WebhookReceipt(_Dto):
+    """What ExactDocs did with a delivery; the sync itself runs later, as a job."""
+
+    status: Literal["queued", "duplicate", "ignored"]
+    """`queued`: a `push` job runs the sync (a push of the same ref already waiting counts);
+    `duplicate`: this delivery was handled before; `ignored`: nothing it pushed is followed (an
+    untracked branch, a tag without auto-import, a ping)."""
+    job_ids: list[str] = []
+    """The `push` jobs queued by this delivery (empty when they joined waiting ones)."""

@@ -3,7 +3,14 @@
 from collections.abc import Sequence
 from enum import StrEnum
 
-from exactdocs_kernel import BusyError, ConflictError, DomainError, NotFoundError, ValidationError
+from exactdocs_kernel import (
+    BusyError,
+    ConflictError,
+    DomainError,
+    NotFoundError,
+    UnauthenticatedError,
+    ValidationError,
+)
 
 
 class UrlProblem(StrEnum):
@@ -655,3 +662,90 @@ class InvalidSourcesError(ValidationError):
             reason: The underlying error's message (it never repeats a URL).
         """
         super().__init__(f"libraries[{index}] ({library_id}): {reason}")
+
+
+class InvalidWebhookSignatureError(UnauthenticatedError):
+    """A webhook delivery is refused: one fixed message, whatever the reason.
+
+    A missing or wrong signature, an unknown forge, a library without a webhook secret and an
+    unknown library all read alike, so a caller cannot tell which libraries exist or have one.
+    """
+
+    code = "invalid_signature"
+
+    def __init__(self) -> None:
+        """Create the error; its message never depends on the request."""
+        super().__init__("the webhook signature is missing or invalid")
+
+
+class MissingDeliveryIdError(DomainError):
+    """A signed webhook delivery carries no delivery ID, so a redelivery could not be told apart."""
+
+    code = "missing_delivery_id"
+
+    def __init__(self) -> None:
+        """Create the error."""
+        super().__init__(
+            "the delivery has no ID (X-GitHub-Delivery, Idempotency-Key or X-Gitlab-Event-UUID, "
+            "X-Request-UUID or X-Request-Id)"
+        )
+
+
+class InvalidWebhookPayloadError(DomainError):
+    """A signed push delivery whose body is not the JSON its forge sends."""
+
+    code = "invalid_webhook_payload"
+
+    def __init__(self, reason: str) -> None:
+        """Say what is wrong with the body.
+
+        Args:
+            reason: What is wrong, in fixed words (never the body itself).
+        """
+        super().__init__(f"the push payload cannot be read: {reason}")
+
+
+class WebhookSecretUnreadableError(DomainError):
+    """A stored webhook secret does not open (the instance's secret key changed); never shown."""
+
+    code = "webhook_secret_unreadable"
+
+    def __init__(self, library: str) -> None:
+        """Name the library.
+
+        Args:
+            library: The library ID.
+        """
+        super().__init__(f"the webhook secret of {library!r} cannot be read; set a new one")
+        self.library = library
+
+
+class PushQueuedError(ConflictError):
+    """A ``push`` job of this (library, ref, ref kind) already waits: the new push joins it."""
+
+    code = "push_queued"
+
+    def __init__(self, library: str, ref: str, kind: str) -> None:
+        """Name the library, the ref and its kind (a branch and a tag may share a name).
+
+        Args:
+            library: The library ID.
+            ref: The pushed branch or tag.
+            kind: ``branch`` or ``tag``.
+        """
+        super().__init__(f"a sync of {kind} {ref!r} in library {library!r} is already queued")
+        self.library, self.ref, self.kind = library, ref, kind
+
+
+class AutoImportFailedError(DomainError):
+    """The auto-import after a pushed tag could not queue or remove everything it planned."""
+
+    code = "auto_import_failed"
+
+    def __init__(self, errors: Sequence[str]) -> None:
+        """List what could not be done.
+
+        Args:
+            errors: One text per tag that was not queued or version that was not removed.
+        """
+        super().__init__("; ".join(errors))

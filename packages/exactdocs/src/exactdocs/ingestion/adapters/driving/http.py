@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
-from exactdocs.ingestion.constants import SET_AUTO_SYNC_DESCRIPTION
+from exactdocs.ingestion.constants import MAX_WEBHOOK_BYTES, SET_AUTO_SYNC_DESCRIPTION
 from exactdocs.ingestion.dtos import (
     AddedLibrary,
     AddedVersion,
@@ -32,6 +32,7 @@ from exactdocs.ingestion.dtos import (
     ManualTagsIn,
     PlanSourcesCommand,
     PreviewRepositoryCommand,
+    ReceiveWebhookCommand,
     ReimportedVersion,
     ReimportVersionBody,
     ReimportVersionCommand,
@@ -48,6 +49,10 @@ from exactdocs.ingestion.dtos import (
     TaggedArticle,
     UpdatedLibrarySettings,
     UpdateLibrarySettingsCommand,
+    WebhookCreated,
+    WebhookOut,
+    WebhookQuery,
+    WebhookReceipt,
     sources_json_schema,
 )
 from exactdocs.ingestion.models import SyncStatus
@@ -57,18 +62,22 @@ from exactdocs.ingestion.ports.driving import (
     ApplySources,
     CheckRepository,
     DisableAutoSync,
+    DisableWebhook,
     GetAutoSync,
     GetJob,
     GetLibraryAccess,
+    GetWebhook,
     ListLatestJobs,
     ListLibraryJobs,
     ListRepositoryRefs,
     PlanSources,
     PreviewRepository,
+    ReceiveWebhook,
     ReimportVersion,
     RemoveLibrary,
     RemoveVersion,
     SetAutoSync,
+    SetWebhook,
     SyncLibrary,
     TagArticle,
     UpdateLibrarySettings,
@@ -829,5 +838,181 @@ def _sources_router(
             The plan and what was done per library.
         """
         return await apply_sources(command)
+
+    return router
+
+
+async def _capped_body(request: Request) -> bytes:
+    """Read the raw body, refusing (413) one above ``MAX_WEBHOOK_BYTES`` before reading it all.
+
+    Args:
+        request: The HTTP request.
+
+    Returns:
+        The body, exactly as sent.
+
+    Raises:
+        HTTPException: 413 when the body (or its announced length) is too large.
+    """
+    detail = f"a webhook body is at most {MAX_WEBHOOK_BYTES} bytes"
+    announced = request.headers.get("content-length", "")
+    if announced.isdigit() and int(announced) > MAX_WEBHOOK_BYTES:
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, detail)
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > MAX_WEBHOOK_BYTES:
+            raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, detail)
+    return bytes(body)
+
+
+def build_webhook_router(*, receive_webhook: ReceiveWebhook) -> APIRouter:
+    """Build the route forges send their pushes to; it needs no caller, only the secret.
+
+    Args:
+        receive_webhook: Verifies a delivery and queues its ``push`` jobs.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["ingestion"])
+
+    @router.post(
+        "/webhooks/{owner}/{repo}",
+        name="receive_webhook",
+        status_code=status.HTTP_202_ACCEPTED,
+        responses={
+            status.HTTP_413_CONTENT_TOO_LARGE: {
+                "description": f"The body is larger than {MAX_WEBHOOK_BYTES} bytes."
+            }
+        },
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "description": "The forge's push payload, signed as it was sent.",
+                "content": {"application/json": {"schema": {"type": "object"}}},
+            }
+        },
+    )
+    async def receive(owner: str, repo: str, request: Request) -> WebhookReceipt:
+        """Receive a push from GitHub, GitLab or Bitbucket; the sync runs later, as a job.
+
+        Set this URL in the forge's webhook settings, with the secret from `PUT
+        /libraries/{owner}/{repo}/webhook`, for push events (and tag pushes). The signature is
+        checked over the raw body: GitHub's `X-Hub-Signature-256`, Bitbucket's
+        `X-Hub-Signature` (both `sha256=`, HMAC-SHA256), GitLab's `X-Gitlab-Token`. Every
+        refusal is the same 401 `invalid_signature`: no or a wrong signature, an unknown forge, a
+        library without a webhook, or no such library. 413 above the size cap, 400
+        `missing_delivery_id` for a signed delivery without a delivery ID. A push to a branch
+        version queues a sync of that branch, a tag the library's auto-sync `tag_pattern`
+        matches queues its auto-import: 202 `queued`. A delivery seen before answers 202
+        `duplicate`, anything else (an untracked branch, a tag without auto-import, a ping) 202
+        `ignored`. Only ref names are read from the payload: the job asks the repository itself.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository name.
+            request: The HTTP request: its headers and raw body.
+
+        Returns:
+            What the delivery led to.
+        """
+        body = await _capped_body(request)
+        return await receive_webhook(
+            ReceiveWebhookCommand(
+                library=f"/{owner}/{repo}", headers=dict(request.headers.items()), body=body
+            )
+        )
+
+    return router
+
+
+def build_webhook_settings_router(
+    *,
+    get_webhook: GetWebhook,
+    set_webhook: SetWebhook,
+    disable_webhook: DisableWebhook,
+    require_operator: Callable[[Request], Awaitable[object]],
+) -> APIRouter:
+    """Build the routes that turn a library's push webhook on, rotate and off (operators only).
+
+    Every route needs an operator signed in with a session, not an API token: the answer of
+    `PUT` holds a secret.
+
+    Args:
+        get_webhook: Says whether a library's webhook is on.
+        set_webhook: Creates or rotates the secret.
+        disable_webhook: Forgets the secret.
+        require_operator: Refuses a request without a session cookie (401) or of a caller who
+            is not an operator (403).
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["ingestion"], dependencies=[Depends(require_operator)])
+    path = "/libraries/{owner}/{repo}/webhook"
+
+    def url_of(request: Request, owner: str, repo: str) -> str:
+        """Return where the forge sends this library's pushes.
+
+        Args:
+            request: The HTTP request, for the server's address.
+            owner: The library ID's owner.
+            repo: The library ID's repository name.
+
+        Returns:
+            The absolute URL of the receiving route.
+        """
+        return str(request.url_for("receive_webhook", owner=owner.lower(), repo=repo.lower()))
+
+    @router.get(path, name="get_webhook")
+    async def get_one(owner: str, repo: str, request: Request) -> WebhookOut:
+        """Say whether the library's push webhook is on, its URL and when its secret was made.
+
+        The secret is never returned again: rotate it with `PUT` if it was lost.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository name.
+            request: The HTTP request, for the webhook's URL.
+
+        Returns:
+            The webhook, without its secret.
+        """
+        found = await get_webhook(WebhookQuery(library=f"/{owner}/{repo}"))
+        if not found.enabled:
+            return found
+        return found.model_copy(update={"url": url_of(request, owner, repo)})
+
+    @router.put(path, name="set_webhook")
+    async def set_one(owner: str, repo: str, request: Request) -> WebhookCreated:
+        """Create or rotate the library's webhook secret; the old one stops working at once.
+
+        The answer holds the secret (32 random bytes, URL-safe) and the URL to set in the
+        forge's webhook settings. It is shown this once: `GET` never returns it.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository name.
+            request: The HTTP request, for the webhook's URL.
+
+        Returns:
+            The webhook with its secret.
+        """
+        created = await set_webhook(WebhookQuery(library=f"/{owner}/{repo}"))
+        return created.model_copy(update={"url": url_of(request, owner, repo)})
+
+    @router.delete(path, name="disable_webhook")
+    async def disable(owner: str, repo: str) -> WebhookOut:
+        """Turn the library's push webhook off: every delivery is refused from now on.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository name.
+
+        Returns:
+            The webhook, now off.
+        """
+        return await disable_webhook(WebhookQuery(library=f"/{owner}/{repo}"))
 
     return router
