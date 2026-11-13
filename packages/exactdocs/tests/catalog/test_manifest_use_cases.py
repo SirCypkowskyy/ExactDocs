@@ -25,6 +25,7 @@ from exactdocs.catalog.dtos import (
     GetArticleQuery,
     GetInstructionFilesQuery,
     GetLibraryQuery,
+    GetManifestStatesQuery,
     InstructionFileIn,
     ListArticlesQuery,
     ListRenamesQuery,
@@ -216,6 +217,22 @@ async def test_the_active_manifest_of_a_version_is_named_even_when_it_has_no_art
         await world.catalog.get_active_manifest(
             GetActiveManifestQuery(library="/acme/payments", ref="nope")
         )
+
+
+async def test_manifest_states_are_reported_by_id_and_unknown_ids_are_left_out(
+    world: World,
+) -> None:
+    active = await world.active("main", "aaa111", article("a.md"))
+    pending = await world.catalog.store_manifest(command("main", "bbb222", article("a.md")))
+
+    states = await world.catalog.get_manifest_states(
+        GetManifestStatesQuery(manifest_ids=[pending.manifest_id, "nope", active, active])
+    )
+
+    assert states.states == {
+        pending.manifest_id: ManifestState.PENDING,
+        active: ManifestState.ACTIVE,
+    }
 
 
 async def test_activating_a_new_ref_makes_it_a_version(world: World) -> None:
