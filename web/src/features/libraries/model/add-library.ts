@@ -32,6 +32,8 @@ export interface AddProblem {
   message: string;
   /** The session is gone or the server is not set up: the way out is another page. */
   link?: { href: "/sign-in" | "/setup"; label: string };
+  /** The library this repository already is (`/owner/repo`): the field links to it. */
+  library?: string;
 }
 
 /** `https://github.com/acme/payments` or `git@host:org/repo.git`, no credentials. */
@@ -121,6 +123,15 @@ export function explainCheckError(error: unknown, sent?: CredentialKind): AddPro
       };
     case "git_not_installed":
       return { message: "The server has no git installed, so it can't read repositories." };
+    case "library_id_taken":
+      // The check refuses before it reads anything: the ID this address proposes is in use.
+      return error.libraryId
+        ? {
+            field: "url",
+            message: `This repository is already the library ${error.libraryId}.`,
+            library: error.libraryId,
+          }
+        : { field: "url", message: "This repository is already a library." };
     default:
       return generic(error);
   }

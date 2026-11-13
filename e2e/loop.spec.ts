@@ -24,6 +24,14 @@ test("setup, add the fixture repository, browse an article, search a term", asyn
   await expect(page.getByText(/^\d+ files imported/)).toBeVisible({ timeout: 60_000 });
   await page.screenshot({ path: "shots/1-imported.png" });
 
+  // the same repository again: the form says it is already a library and links to it (#219)
+  await page.goto("/libraries/new");
+  await page.getByLabel("Repository address").fill(FIXTURE_REPO_URL);
+  await page.getByRole("button", { name: "Check repository" }).click();
+  await expect(page.getByText("This repository is already the library /fixture/docs-repo.")).toBeVisible();
+  await page.getByRole("link", { name: "Open it" }).click();
+  await expect(page).toHaveURL(/\/libraries\/fixture\/docs-repo$/);
+
   // browse: the Resilience article renders (markdown, highlighted code, table, callout)
   await page.goto("/libraries/fixture/docs-repo?version=v1.4.0");
   await page.getByRole("treeitem", { name: "docs", exact: true }).click();

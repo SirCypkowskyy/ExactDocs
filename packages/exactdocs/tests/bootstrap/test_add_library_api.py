@@ -101,6 +101,7 @@ async def test_adding_the_fixture_repository(
     )
     again = await client.post("/api/v1/libraries", json={"url": docs_repo.file_url})
     assert (again.status_code, again.json()["error"]) == (409, "library_id_taken")
+    assert again.json()["library_id"] == "/fixture/docs-repo"
 
 
 async def test_an_unknown_ref_is_a_422(client: httpx.AsyncClient, docs_repo: DocsRepo) -> None:
