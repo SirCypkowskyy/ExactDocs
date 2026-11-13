@@ -2892,7 +2892,7 @@ export interface components {
         readonly ManualTagInfo: {
             /**
              * Tag
-             * @description The tag.
+             * @description The tag in its normal form: case-folded, inner spaces as `-`.
              */
             readonly tag: string;
             /**
@@ -4016,7 +4016,7 @@ export interface components {
         readonly TagCount: {
             /**
              * Tag
-             * @description The tag.
+             * @description The tag in its normal form: case-folded, inner spaces as `-`.
              */
             readonly tag: string;
             /**

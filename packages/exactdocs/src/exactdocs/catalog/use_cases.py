@@ -912,7 +912,10 @@ class ListArticlesUseCase:
     """Stores the manifests with their articles, images and renames."""
 
     async def __call__(self, query: ListArticlesQuery) -> ArticleList:
-        """List a page of the active manifest's articles whose path starts with the prefix.
+        """List a page of the active manifest's articles inside a directory, sorted by path.
+
+        The prefix is a directory: ``guide`` matches ``guide`` itself and everything under
+        ``guide/``, not ``guide-old/``.
 
         Args:
             query: The version, the filters and the page.

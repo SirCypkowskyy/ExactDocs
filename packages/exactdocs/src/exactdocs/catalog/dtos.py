@@ -697,7 +697,7 @@ class TagCount(_Dto):
     """A tag and how many articles of the version carry it."""
 
     tag: str
-    """The tag."""
+    """The tag in its normal form: case-folded, inner spaces as `-`."""
     count: int
     """How many articles of the version carry it."""
 
@@ -855,7 +855,7 @@ class ManualTagInfo(_Dto):
     """A tag set by hand, and the article path it was set on."""
 
     tag: str
-    """The tag."""
+    """The tag in its normal form: case-folded, inner spaces as `-`."""
     path: str
     """Where the tag was set: this article's path, or an older one it was renamed from. Change or
     remove the tag on this path.

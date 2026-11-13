@@ -671,7 +671,7 @@
                 "type": "string"
               },
               "tag": {
-                "description": "The tag.",
+                "description": "The tag in its normal form: case-folded, inner spaces as `-`.",
                 "title": "Tag",
                 "type": "string"
               }

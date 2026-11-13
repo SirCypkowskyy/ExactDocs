@@ -446,8 +446,11 @@ class ManifestState(StrEnum):
     """Where a manifest is in its life: stored, serving readers, or replaced by a newer one."""
 
     PENDING = "pending"
+    """Stored by an import and not yet activated: no reader sees it."""
     ACTIVE = "active"
+    """The version's current manifest: readers are served from it."""
     SUPERSEDED = "superseded"
+    """Replaced by a newer manifest of the same version; kept until it is collected."""
 
 
 type ContentKey = tuple[str, int]  # (git blob SHA, content version)

@@ -9948,7 +9948,7 @@
           "tag": {
             "type": "string",
             "title": "Tag",
-            "description": "The tag."
+            "description": "The tag in its normal form: case-folded, inner spaces as `-`."
           },
           "path": {
             "type": "string",
@@ -12037,7 +12037,7 @@
           "tag": {
             "type": "string",
             "title": "Tag",
-            "description": "The tag."
+            "description": "The tag in its normal form: case-folded, inner spaces as `-`."
           },
           "count": {
             "type": "integer",
