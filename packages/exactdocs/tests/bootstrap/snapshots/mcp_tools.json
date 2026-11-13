@@ -212,6 +212,7 @@
         },
         "limit": {
           "default": 50,
+          "description": "How many articles per page.",
           "maximum": 200,
           "minimum": 1,
           "type": "integer"
@@ -272,23 +273,28 @@
       "description": "A page of articles of one manifest, sorted by path.",
       "properties": {
         "articles": {
+          "description": "The articles of this page, sorted by path.",
           "items": {
             "additionalProperties": false,
             "description": "An article as listed in a tree: no content.",
             "properties": {
               "path": {
+                "description": "Path of the article in the repository, e.g. `docs/guide/auth.md`.",
                 "type": "string"
               },
               "size": {
+                "description": "Bytes of the article's text.",
                 "type": "integer"
               },
               "tags": {
+                "description": "Every tag: from front matter, path rules and by hand.",
                 "items": {
                   "type": "string"
                 },
                 "type": "array"
               },
               "title": {
+                "description": "The article's title; untrusted repository text.",
                 "type": "string"
               }
             },
@@ -303,12 +309,15 @@
           "type": "array"
         },
         "commit_sha": {
+          "description": "The commit the version was imported at.",
           "type": "string"
         },
         "library": {
+          "description": "Library ID, `/owner/repo`.",
           "type": "string"
         },
         "manifest_id": {
+          "description": "ID of the manifest that serves the version.",
           "type": "string"
         },
         "next_cursor": {
@@ -328,6 +337,7 @@
           "type": "string"
         },
         "ref": {
+          "description": "The exact ref that answered (the default version when none was asked).",
           "type": "string"
         }
       },
@@ -369,6 +379,7 @@
         },
         "limit": {
           "default": 20,
+          "description": "How many libraries per page.",
           "maximum": 200,
           "minimum": 1,
           "type": "integer"
@@ -381,6 +392,7 @@
       "description": "A page of the libraries visible to the caller, sorted by ID.",
       "properties": {
         "libraries": {
+          "description": "The libraries of this page.",
           "items": {
             "additionalProperties": false,
             "description": "A library and its imported versions.",
@@ -397,12 +409,15 @@
                   {
                     "type": "null"
                   }
-                ]
+                ],
+                "description": "The ref `/owner/repo` resolves to; null while no version is imported."
               },
               "description": {
+                "description": "What the library is; untrusted repository text unless an owner typed it.",
                 "type": "string"
               },
               "id": {
+                "description": "Library ID, `/owner/repo`.",
                 "type": "string"
               },
               "last_imported_at": {
@@ -424,9 +439,11 @@
                   "description": "One imported version: the ref, what kind of ref it is, and the commit it stands for.",
                   "properties": {
                     "commit_sha": {
+                      "description": "The full commit SHA the ref resolved to at its last import.",
                       "type": "string"
                     },
                     "imported_at": {
+                      "description": "When the version was last imported.",
                       "format": "date-time",
                       "type": "string"
                     },
@@ -435,7 +452,7 @@
                       "type": "boolean"
                     },
                     "kind": {
-                      "description": "What a version was imported from.",
+                      "description": "Whether the ref is a tag, a branch or a commit.",
                       "enum": [
                         "tag",
                         "branch",
@@ -453,6 +470,7 @@
                       "type": "string"
                     },
                     "ref": {
+                      "description": "The ref as imported, e.g. `v1.4.0`, `main` or a commit SHA; case-sensitive.",
                       "type": "string"
                     }
                   },
@@ -468,6 +486,7 @@
                 "type": "array"
               },
               "source_url": {
+                "description": "The repository's URL.",
                 "type": "string"
               },
               "tags": {
@@ -478,6 +497,7 @@
                 "type": "array"
               },
               "title": {
+                "description": "Display name; untrusted repository text unless an owner typed it.",
                 "type": "string"
               },
               "version_count": {
@@ -619,19 +639,23 @@
       "description": "Where an article comes from and its metadata: everything but the text.",
       "properties": {
         "commit_sha": {
+          "description": "The commit the version was imported at.",
           "title": "Commit Sha",
           "type": "string"
         },
         "front_matter": {
           "additionalProperties": true,
+          "description": "The article's front matter, parsed; untrusted repository data.",
           "title": "Front Matter",
           "type": "object"
         },
         "library": {
+          "description": "Library ID, `/owner/repo`.",
           "title": "Library",
           "type": "string"
         },
         "manifest_id": {
+          "description": "ID of the manifest that serves the version.",
           "title": "Manifest Id",
           "type": "string"
         },
@@ -647,6 +671,7 @@
                 "type": "string"
               },
               "tag": {
+                "description": "The tag.",
                 "title": "Tag",
                 "type": "string"
               }
@@ -668,14 +693,17 @@
           "type": "string"
         },
         "path": {
+          "description": "Path of the article in the repository, e.g. `docs/guide/auth.md`.",
           "title": "Path",
           "type": "string"
         },
         "ref": {
+          "description": "The exact ref that answered (the default version when none was asked).",
           "title": "Ref",
           "type": "string"
         },
         "size": {
+          "description": "Bytes of the article's text.",
           "title": "Size",
           "type": "integer"
         },
@@ -700,6 +728,7 @@
           "type": "array"
         },
         "title": {
+          "description": "The article's title; untrusted repository text.",
           "title": "Title",
           "type": "string"
         }

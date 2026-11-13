@@ -129,40 +129,71 @@ class CatalogModule:
     """The catalog's driving ports, ready to be exposed by driving adapters."""
 
     list_libraries: ListLibraries
+    """List a page of libraries and their indexed versions."""
     create_library: CreateLibrary
+    """Add a library without versions."""
     discard_library: DiscardLibrary
+    """Remove a library that has no versions yet (the undo of ``CreateLibrary``)."""
     get_library: GetLibrary
+    """Fetch one library; raises ``LibraryNotFoundError`` when it is missing."""
     resolve_version: ResolveVersion
+    """Resolve a context7-style ID to the one version it names."""
     resolve_renamed_path: ResolveRenamedPath
+    """Follow a path across the renames git detected when the version was imported."""
     list_renames: ListRenames
+    """List every rename stored with a version (same errors as ``ResolveRenamedPath``)."""
     store_manifest: StoreManifest
+    """Store a version's articles as a pending manifest; nothing changes for readers yet."""
     activate_manifest: ActivateManifest
+    """Make a pending manifest what its version serves, all at once."""
     list_articles: ListArticles
+    """List the articles of a version (default version without a ref), sorted by path."""
     list_tags: ListTags
+    """Count the tags of a version's articles (default version without a ref), most used first."""
     get_article: GetArticle
+    """Read one article of a version (default version without a ref)."""
     get_asset: GetAsset
+    """Read one image of a version (default version without a ref)."""
     discard_pending_manifests: DiscardPendingManifests
+    """Delete the pending manifests that match the command's filters (never "all")."""
     collect_garbage: CollectGarbage
+    """Delete manifests superseded longer ago than the grace period, and unused contents."""
     get_manifest_states: GetManifestStates
+    """Tell whether manifests are pending, active or superseded, for domains that hold their IDs."""
     get_article_titles: GetArticleTitles
     """Titles of a manifest's articles by path, for other domains (embedding input)."""
     get_active_manifest: GetActiveManifest
+    """Name the manifest that serves a version, for domains that hold manifest IDs."""
     get_instruction_files: GetInstructionFiles
     """The instruction files kept with a manifest, for other domains (agentic retrieval)."""
     list_default_manifests: ListDefaultManifests
+    """Name the active manifest of every library's default version, in one call."""
     update_library: UpdateLibrary
+    """Set a library's title and/or description by hand; later README imports keep them."""
     pin_default_version: PinDefaultVersion
+    """Pin the library's default version to an imported one, or unpin it (LIB-10)."""
     apply_readme: ApplyReadme
+    """Take title and description from the README of a just-imported version."""
     remove_version: RemoveVersion
+    """Remove a version: it and its manifests are gone at once, in one transaction."""
     remove_library: RemoveLibrary
+    """Remove a library with all its versions and manifests, in one transaction."""
     set_manual_tags: SetManualTags
+    """Set the tags a user gives an article path by hand, for every version of the library."""
     apply_manual_tags: ApplyManualTags
+    """Give a manifest the manual tags its library has now (before it is activated)."""
     set_library_settings: SetLibrarySettings
+    """Replace a library's paths and tag rules, and its chunking unless it is left out."""
     get_version_tags: GetVersionTags
+    """Name a version's active manifest with each article's path, front matter and imported tags."""
     set_imported_tags: SetImportedTags
+    """Replace the imported tags of articles of a manifest in one transaction (manual ones stay)."""
     find_stored_articles: FindStoredArticles
+    """Return what the library's manifests hold for these files: same path, blob and version."""
     replace_renames: ReplaceRenames
+    """Replace the rename map of a version's active manifest and re-tag from the new map."""
     copy_manifest: CopyManifest
+    """Copy a version's active manifest into a new pending one, with its articles' stored text."""
 
     @classmethod
     def build(
@@ -184,6 +215,19 @@ class CatalogModule:
         imported from. ``article_titles`` looks titles up by path for other domains; without
         it none are known. ``instruction_files`` reads the instruction files ``manifests``
         stores; without it none are read.
+
+        Args:
+            repository: Stores the libraries, their versions, settings and manual tags.
+            manifests: Stores the manifests with their articles, images and renames.
+            imported_tags: Rewrites the imported tags of stored manifests.
+            stored_articles: Finds stored articles by path and blob SHA.
+            copier: Copies a version's active manifest.
+            clock: Tells the time; the system clock by default.
+            article_titles: Looks article titles up by path; none are known without it.
+            instruction_files: Reads the instruction files kept with a manifest; none without it.
+
+        Returns:
+            The module, every driving port wired.
         """
         clock = clock or SystemClock()
         tagger = ManualTagger(repository=repository, manifests=manifests)

@@ -26,6 +26,8 @@ from exactdocs.catalog.constants import (
     MAX_SUMMARY_REFS,
     MAX_TAG_RULES,
     MAX_TITLE,
+    SIMILARITY_DESCRIPTION,
+    TAG_LIST_DESCRIPTION,
 )
 from exactdocs.catalog.models import (
     GarbageCollected,
@@ -73,29 +75,46 @@ class TagRuleOut(_FromModel):
     """Articles whose path matches `pattern` get `tag`."""
 
     pattern: str
+    """Glob over article paths, e.g. `docs/api/**`."""
     tag: str
+    """The tag a matching article gets."""
 
 
 class ChunkingOut(_FromModel):
     """How articles are cut into chunks."""
 
     split_level: int
+    """The deepest heading that starts a chunk: 2 cuts at `#` and `##` only."""
     min_chars: int
+    """A chunk shorter than this is merged with the next one, within `max_chars`; 0 merges none."""
     max_chars: int | None
+    """A chunk longer than this is cut again at its deeper headings; null: no bound."""
     chunker: str
+    """Which chunker cuts, e.g. `markdown`."""
 
 
 class LibrarySettingsOut(_FromModel):
     """A library's import settings."""
 
     include_paths: list[str]
+    """Folders, files or globs to import; empty: every Markdown file."""
     exclude_paths: list[str]
+    """Folders, files or globs to leave out; they win over `include_paths`."""
     tag_rules: list[TagRuleOut]
+    """Tags given to articles by path, on top of their front-matter tags."""
     chunking: ChunkingOut
+    """How the articles are cut into chunks."""
 
     @classmethod
     def from_model(cls, settings: LibrarySettings) -> Self:
-        """Map the domain value object."""
+        """Map the domain value object.
+
+        Args:
+            settings: The library's settings.
+
+        Returns:
+            The settings at the boundary.
+        """
         return cls.model_validate(settings)
 
 
@@ -103,9 +122,13 @@ class VersionOut(_Dto):
     """One imported version: the ref, what kind of ref it is, and the commit it stands for."""
 
     ref: str
+    """The ref as imported, e.g. `v1.4.0`, `main` or a commit SHA; case-sensitive."""
     kind: RefKind
+    """Whether the ref is a tag, a branch or a commit."""
     commit_sha: str
+    """The full commit SHA the ref resolved to at its last import."""
     imported_at: datetime
+    """When the version was last imported."""
     is_default: bool
     """True for the version `/owner/repo` resolves to."""
     origin: VersionOrigin = Field(default=VersionOrigin.MANUAL)
@@ -115,7 +138,15 @@ class VersionOut(_Dto):
 
     @classmethod
     def from_model(cls, version: Version, *, is_default: bool) -> Self:
-        """Map a domain entity."""
+        """Map a domain entity.
+
+        Args:
+            version: The version.
+            is_default: Whether it is the library's default version.
+
+        Returns:
+            The version at the boundary.
+        """
         return cls(
             ref=str(version.ref),
             kind=version.kind,
@@ -130,10 +161,19 @@ class ResolvedVersion(VersionOut):
     """The version an ID resolved to; always states which one was used."""
 
     library: str
+    """Library ID, `/owner/repo`."""
 
     @classmethod
     def from_library(cls, library: Library, version: Version) -> Self:
-        """Map the library and the chosen version."""
+        """Map the library and the chosen version.
+
+        Args:
+            library: The library.
+            version: The version the ID resolved to.
+
+        Returns:
+            The version, naming its library.
+        """
         found = VersionOut.from_model(version, is_default=version == library.default_version())
         return cls(library=str(library.id), **found.model_dump())
 
@@ -142,11 +182,17 @@ class LibrarySummary(_Dto):
     """A library and its imported versions."""
 
     id: str
+    """Library ID, `/owner/repo`."""
     title: str
+    """Display name; untrusted repository text unless an owner typed it."""
     description: str
+    """What the library is; untrusted repository text unless an owner typed it."""
     default_version: str | None
+    """The ref `/owner/repo` resolves to; null while no version is imported."""
     default_pinned: bool = Field(description=_PINNED)
+    """Whether an owner pinned the default version; its schema description is ``_PINNED``."""
     source_url: str
+    """The repository's URL."""
     refs: list[VersionOut] = Field(
         description=(
             "The imported versions with kind, commit SHA and default flag: the default one, then "
@@ -154,6 +200,7 @@ class LibrarySummary(_Dto):
             "Pass any ref as `ref` to `list_articles` or `search_docs`."
         )
     )
+    """Some of the imported versions; its schema description names ``MAX_SUMMARY_REFS``."""
     version_count: int
     """How many versions are imported; `refs` may hold fewer."""
     tags: list[str]
@@ -163,7 +210,14 @@ class LibrarySummary(_Dto):
 
     @classmethod
     def from_model(cls, library: Library) -> Self:
-        """Map a domain entity to its boundary representation."""
+        """Map a domain entity to its boundary representation.
+
+        Args:
+            library: The library.
+
+        Returns:
+            The summary: the default version and the newest ones, at most ``MAX_SUMMARY_REFS``.
+        """
         default = library.default_version()
         newest = sorted(library.versions, key=lambda v: v.imported_at, reverse=True)
         shown = ([default] if default else []) + [v for v in newest if v != default]
@@ -188,15 +242,25 @@ class LibraryDetail(_Dto):
     """Everything known about one library."""
 
     id: str
+    """Library ID, `/owner/repo`."""
     title: str
+    """Display name; untrusted repository text unless an owner typed it."""
     description: str
+    """What the library is; untrusted repository text unless an owner typed it."""
     source_url: str
+    """The repository's URL."""
     host: HostKind
+    """What kind of server hosts the repository; `git` is any other one."""
     default_branch: str | None
+    """The repository's default branch; null until an import finds it."""
     settings: LibrarySettingsOut
+    """Import settings, for every version of the library."""
     versions: list[VersionOut]
+    """Every imported version, sorted by ref."""
     default_version: str | None
+    """The ref `/owner/repo` resolves to; null while no version is imported."""
     default_pinned: bool = Field(description=_PINNED)
+    """Whether an owner pinned the default version; its schema description is ``_PINNED``."""
     rules: list[str] = Field(default_factory=list)
     """The rules of the default version's `context7.json`, shown to agents with every `query-docs`
     answer. Untrusted repository text.
@@ -204,7 +268,14 @@ class LibraryDetail(_Dto):
 
     @classmethod
     def from_model(cls, library: Library) -> Self:
-        """Map a domain entity to its boundary representation."""
+        """Map a domain entity to its boundary representation.
+
+        Args:
+            library: The library.
+
+        Returns:
+            Everything known about it, every version included.
+        """
         default = library.default_version()
         return cls(
             id=str(library.id),
@@ -231,7 +302,9 @@ class ListLibrariesQuery(_Dto):
     """One page of libraries: ``limit`` items after the opaque ``cursor`` of the previous page."""
 
     limit: Limit = DEFAULT_LIMIT
+    """How many libraries per page."""
     cursor: str | None = None
+    """Opaque: only ever a `next_cursor`; absent for the first page."""
 
 
 class LibraryList(_Dto):
@@ -243,12 +316,20 @@ class LibraryList(_Dto):
     """Untrusted-content notice; read it before the fields below."""
 
     libraries: list[LibrarySummary]
+    """The libraries of this page."""
     next_cursor: str | None
     """Pass as `cursor` to get the next page; null on the last page."""
 
     @classmethod
     def from_page(cls, page: Page[Library]) -> Self:
-        """Map a page of domain entities."""
+        """Map a page of domain entities.
+
+        Args:
+            page: The libraries and the cursor of the next page.
+
+        Returns:
+            The page at the boundary.
+        """
         return cls(
             libraries=[LibrarySummary.from_model(lib) for lib in page.items],
             next_cursor=page.next_cursor,
@@ -259,12 +340,14 @@ class GetLibraryQuery(_Dto):
     """Look up one library by ID (`/owner/repo`, any letter case)."""
 
     id: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
 
 
 class ResolveVersionQuery(_Dto):
     """Resolve `/owner/repo` (its default version) or `/owner/repo/<ref>` (exactly that ref)."""
 
     id: str = Field(min_length=1)
+    """`/owner/repo` (the default version) or `/owner/repo/<ref>`."""
 
 
 class ArticleIn(_Dto):
@@ -279,17 +362,24 @@ class ArticleIn(_Dto):
     with the same blob SHA and content version share one stored text.
     """
     title: str
+    """The article's title."""
     tags: list[str] = []
+    """Tags from front matter and the library's path rules."""
     front_matter: dict[str, Any] = {}
+    """The parsed front matter; untrusted repository data."""
     content: str
+    """The article's Markdown, as it will be served."""
 
 
 class RenameIn(_Dto):
     """A file git saw moved: in version `from_ref`, `old_path` became `new_path` (an article)."""
 
     from_ref: str = Field(min_length=1)
+    """The version `old_path` is from."""
     old_path: str = Field(min_length=1, max_length=MAX_PATH)
+    """The path in `from_ref`."""
     new_path: str = Field(min_length=1, max_length=MAX_PATH)
+    """The path in the version being stored: one of its articles."""
     similarity: int = Field(ge=1, le=100)
     """Percent of the content kept."""
 
@@ -302,7 +392,9 @@ class ImageIn(_Dto):
     blob_sha: str
     """Git blob SHA of the file; equal SHAs share one copy."""
     content_type: Literal["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"]
+    """Media type sniffed from the bytes."""
     data: bytes = Field(repr=False)
+    """The image's bytes."""
 
 
 class InstructionFileIn(_Dto):
@@ -320,10 +412,15 @@ class StoreManifestCommand(_Dto):
     library: str = Field(min_length=1)
     """`/owner/repo`, any letter case."""
     ref: str = Field(min_length=1)
+    """The ref imported."""
     kind: RefKind
+    """Whether the ref is a tag, a branch or a commit."""
     commit_sha: str
+    """The full commit SHA the ref resolved to."""
     articles: list[ArticleIn]
+    """Every article of the version, one per path."""
     images: list[ImageIn] = []
+    """The images the articles reference, one per path."""
     must_exist: bool = Field(default=False)
     """Refuse (VersionNotFoundError) unless the library already has this version."""
     renames: list[RenameIn] = Field(default=[])
@@ -338,15 +435,28 @@ class StoredManifest(_Dto):
     """A stored manifest; pass `manifest_id` to `ActivateManifest`."""
 
     manifest_id: str
+    """The new manifest's ID."""
     library: str
+    """Library ID, `/owner/repo`."""
     ref: str
+    """The version's ref."""
     commit_sha: str
+    """The commit the articles are from."""
     state: ManifestState
+    """`pending` until it is activated."""
     article_count: int
+    """How many articles it holds."""
 
     @classmethod
     def from_model(cls, manifest: Manifest) -> Self:
-        """Map a domain entity."""
+        """Map a domain entity.
+
+        Args:
+            manifest: The stored manifest.
+
+        Returns:
+            The manifest's ID, version and article count.
+        """
         return cls(
             manifest_id=manifest.id,
             library=str(manifest.library),
@@ -361,13 +471,16 @@ class ActivateManifestCommand(_Dto):
     """Make this pending manifest what its version serves."""
 
     manifest_id: str = Field(min_length=1)
+    """The pending manifest to activate."""
 
 
 class ActivatedManifest(_Dto):
     """The version after the swap: its commit is the manifest's commit."""
 
     manifest_id: str
+    """The manifest now serving the version."""
     version: ResolvedVersion
+    """The version as it is now."""
 
 
 class DiscardPendingManifestsCommand(_Dto):
@@ -378,12 +491,22 @@ class DiscardPendingManifestsCommand(_Dto):
     """
 
     manifest_id: str | None = None
+    """Only this manifest."""
     library: str | None = Field(default=None)
     """`/owner/repo`, any letter case."""
     older_than_seconds: int | None = Field(default=None, ge=0)
+    """Only manifests stored more than this many seconds ago."""
 
     @model_validator(mode="after")
     def _has_a_filter(self) -> Self:
+        """Refuse a command without any filter.
+
+        Returns:
+            The command unchanged.
+
+        Raises:
+            ValueError: No filter is given.
+        """
         if self.manifest_id is None and self.library is None and self.older_than_seconds is None:
             message = "give a manifest_id, a library or older_than_seconds"
             raise ValueError(message)
@@ -394,24 +517,36 @@ class DiscardedManifests(_Dto):
     """How many pending manifests were deleted."""
 
     count: int
+    """Pending manifests deleted."""
 
 
 class CollectGarbageCommand(_Dto):
     """Collect manifests superseded more than `grace_seconds` ago and the contents left unused."""
 
     grace_seconds: int = Field(default=DEFAULT_GRACE_SECONDS, ge=0)
+    """Keep manifests superseded more recently than this many seconds."""
 
 
 class CollectionResult(_Dto):
     """What a garbage collection deleted."""
 
     manifests: int
+    """Manifests deleted."""
     contents: int
+    """Article texts deleted."""
     images: int = 0
+    """Stored images deleted."""
 
     @classmethod
     def from_model(cls, collected: GarbageCollected) -> Self:
-        """Map the domain value object."""
+        """Map the domain value object.
+
+        Args:
+            collected: What the collection removed.
+
+        Returns:
+            The counts at the boundary.
+        """
         return cls(
             manifests=collected.manifests, contents=collected.contents, images=collected.images
         )
@@ -424,10 +559,16 @@ class TagFilter(_Dto):
     """
 
     tags: list[str] = Field(default_factory=list)
+    """The tags, as typed; normalized when the filter is applied."""
     match: TagMatch = TagMatch.ANY
+    """`any`: at least one of `tags`; `all`: every one."""
 
     def selection(self) -> TagSelection:
-        """Return the domain filter; raises `InvalidTagFilterError` for bad values."""
+        """Return the domain filter; ``TagSelection.of`` refuses a value that is no tag.
+
+        Returns:
+            The normalized selection.
+        """
         return TagSelection.of(self.tags, self.match)
 
 
@@ -435,7 +576,9 @@ class ListArticlesQuery(_Dto):
     """One page of a version's articles; no `ref` means the default version."""
 
     library: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
     ref: str | None = None
+    """Exact imported ref; null or blank: the default version."""
     path_prefix: str = Field(default="", max_length=MAX_NAME)
     """Only paths inside this directory: `guide` matches `guide/install.md`, not `guide-old/x.md`.
     Matched literally against stored paths; empty lists everything.
@@ -443,18 +586,37 @@ class ListArticlesQuery(_Dto):
     tag_filter: TagFilter = Field(default_factory=TagFilter)
     """Applied before paging."""
     limit: Limit = DEFAULT_LIMIT
+    """How many articles per page."""
     cursor: str | None = Field(default=None)
     """Opaque: only ever a `next_cursor`."""
 
     @field_validator("ref", mode="before")
     @classmethod
     def _blank_ref_is_none(cls, value: object) -> object:
+        """Treat a blank ref as none: the default version.
+
+        Args:
+            value: The raw field.
+
+        Returns:
+            ``None`` for blank text, otherwise the value unchanged.
+        """
         return None if isinstance(value, str) and not value.strip() else value
 
     @field_validator("path_prefix")
     @classmethod
     def _clean_path_prefix(cls, value: str) -> str:
-        """Drop `.` and empty segments (`./guide//x`); refuse `..` and backslashes."""
+        """Drop `.` and empty segments (`./guide//x`); refuse `..` and backslashes.
+
+        Args:
+            value: The prefix as sent.
+
+        Returns:
+            The prefix, its segments joined by `/`.
+
+        Raises:
+            ValueError: It holds a `..` segment or a backslash.
+        """
         segments = [s for s in value.split("/") if s not in {"", "."}]
         if ".." in segments or "\\" in value:
             message = "path_prefix must be a plain `/`-separated directory"
@@ -466,13 +628,24 @@ class ArticleSummary(_Dto):
     """An article as listed in a tree: no content."""
 
     path: str
+    """Path of the article in the repository, e.g. `docs/guide/auth.md`."""
     title: str
+    """The article's title; untrusted repository text."""
     tags: list[str]
+    """Every tag: from front matter, path rules and by hand."""
     size: int
+    """Bytes of the article's text."""
 
     @classmethod
     def from_model(cls, entry: ManifestEntry) -> Self:
-        """Map a manifest entry."""
+        """Map a manifest entry.
+
+        Args:
+            entry: The article's entry.
+
+        Returns:
+            The article without its text, with every tag.
+        """
         return cls(path=entry.path, title=entry.title, tags=list(entry.all_tags), size=entry.size)
 
 
@@ -485,10 +658,15 @@ class ArticleList(_Dto):
     """Untrusted-content notice; read it before the fields below."""
 
     library: str
+    """Library ID, `/owner/repo`."""
     ref: str
+    """The exact ref that answered (the default version when none was asked)."""
     commit_sha: str
+    """The commit the version was imported at."""
     manifest_id: str
+    """ID of the manifest that serves the version."""
     articles: list[ArticleSummary]
+    """The articles of this page, sorted by path."""
     next_cursor: str | None
     """Pass as `cursor` to get the next page; null on the last page."""
 
@@ -497,11 +675,21 @@ class ListTagsQuery(_Dto):
     """The tags of a version's articles; no `ref` means the default version."""
 
     library: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
     ref: str | None = None
+    """Exact imported ref; null or blank: the default version."""
 
     @field_validator("ref", mode="before")
     @classmethod
     def _blank_ref_is_none(cls, value: object) -> object:
+        """Treat a blank ref as none: the default version.
+
+        Args:
+            value: The raw field.
+
+        Returns:
+            ``None`` for blank text, otherwise the value unchanged.
+        """
         return None if isinstance(value, str) and not value.strip() else value
 
 
@@ -509,7 +697,9 @@ class TagCount(_Dto):
     """A tag and how many articles of the version carry it."""
 
     tag: str
+    """The tag."""
     count: int
+    """How many articles of the version carry it."""
 
 
 class TagList(_Dto):
@@ -521,10 +711,13 @@ class TagList(_Dto):
     """Untrusted-content notice; read it before the fields below."""
 
     library: str
+    """Library ID, `/owner/repo`."""
     ref: str
+    """The exact ref that answered (the default version when none was asked)."""
     commit_sha: str
-    tags: list[TagCount]
-    """Most used first, then by name; at most 100."""
+    """The commit the version was imported at."""
+    tags: list[TagCount] = Field(description=TAG_LIST_DESCRIPTION)
+    """The tags and their counts; its schema description is ``TAG_LIST_DESCRIPTION``."""
     truncated: bool
     """True when the version has more tags than are listed."""
 
@@ -533,12 +726,23 @@ class GetArticleQuery(_Dto):
     """Read the article at `path` of a version; no `ref` means the default version."""
 
     library: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
     ref: str | None = None
+    """Exact imported ref; null or blank: the default version."""
     path: str = Field(min_length=1, max_length=MAX_PATH)
+    """The article's path in the repository."""
 
     @field_validator("ref", mode="before")
     @classmethod
     def _blank_ref_is_none(cls, value: object) -> object:
+        """Treat a blank ref as none: the default version.
+
+        Args:
+            value: The raw field.
+
+        Returns:
+            ``None`` for blank text, otherwise the value unchanged.
+        """
         return None if isinstance(value, str) and not value.strip() else value
 
 
@@ -550,13 +754,25 @@ class ResolveRenamedPathQuery(_Dto):
     """
 
     library: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
     ref: str | None = None
+    """Exact imported ref; null or blank: the default version."""
     path: str = Field(min_length=1, max_length=MAX_PATH)
+    """`forward`: a path of the version before `ref`; `back`: an article of `ref`."""
     direction: RenameDirection = RenameDirection.FORWARD
+    """`forward`: old to new path; `back`: new to old."""
 
     @field_validator("ref", mode="before")
     @classmethod
     def _blank_ref_is_none(cls, value: object) -> object:
+        """Treat a blank ref as none: the default version.
+
+        Args:
+            value: The raw field.
+
+        Returns:
+            ``None`` for blank text, otherwise the value unchanged.
+        """
         return None if isinstance(value, str) and not value.strip() else value
 
 
@@ -564,16 +780,31 @@ class RenamedPath(_Dto):
     """`old_path` of version `from_ref` is `new_path` in `ref`, as git saw it."""
 
     library: str
+    """Library ID, `/owner/repo`."""
     ref: str
+    """The version whose import saw the move."""
     from_ref: str
+    """The version `old_path` is from; for a branch, the branch itself."""
     old_path: str
+    """The path in `from_ref`."""
     new_path: str
-    similarity: int
-    """Percent of the content kept; 100 is a move unchanged."""
+    """The path in `ref`."""
+    similarity: int = Field(description=SIMILARITY_DESCRIPTION)
+    """How much of the content the move kept; its schema description is ``SIMILARITY_DESCRIPTION``.
+    """
 
     @classmethod
     def from_model(cls, library: str, ref: str, rename: ManifestRename) -> Self:
-        """Map a domain value object."""
+        """Map a domain value object.
+
+        Args:
+            library: The library ID.
+            ref: The version whose renames hold the move.
+            rename: The move.
+
+        Returns:
+            The move at the boundary.
+        """
         return cls(
             library=library,
             ref=ref,
@@ -588,17 +819,28 @@ class RenameAnswer(_Dto):
     """The answer to a rename lookup: `renamed` is `null` when git saw no move of that path."""
 
     renamed: RenamedPath | None
+    """The move; null when git saw none for that path."""
 
 
 class ListRenamesQuery(_Dto):
     """List the renames stored with the active manifest of `ref` (default version without one)."""
 
     library: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
     ref: str | None = None
+    """Exact imported ref; null or blank: the default version."""
 
     @field_validator("ref", mode="before")
     @classmethod
     def _blank_ref_is_none(cls, value: object) -> object:
+        """Treat a blank ref as none: the default version.
+
+        Args:
+            value: The raw field.
+
+        Returns:
+            ``None`` for blank text, otherwise the value unchanged.
+        """
         return None if isinstance(value, str) and not value.strip() else value
 
 
@@ -606,12 +848,14 @@ class RenameList(_Dto):
     """Every rename of a version, by old path."""
 
     renames: list[RenamedPath]
+    """The renames, sorted by old path."""
 
 
 class ManualTagInfo(_Dto):
     """A tag set by hand, and the article path it was set on."""
 
     tag: str
+    """The tag."""
     path: str
     """Where the tag was set: this article's path, or an older one it was renamed from. Change or
     remove the tag on this path.
@@ -626,11 +870,17 @@ class ArticleInfo(_Dto):
     notice: str = Field(default=NOTICE)
     """Untrusted-content notice; read it before the fields below."""
     library: str
+    """Library ID, `/owner/repo`."""
     ref: str
+    """The exact ref that answered (the default version when none was asked)."""
     commit_sha: str
+    """The commit the version was imported at."""
     manifest_id: str
+    """ID of the manifest that serves the version."""
     path: str
+    """Path of the article in the repository, e.g. `docs/guide/auth.md`."""
     title: str
+    """The article's title; untrusted repository text."""
     tags: list[str]
     """Every tag: from front matter, path rules and by hand."""
     manual_tags: list[ManualTagInfo]
@@ -638,7 +888,9 @@ class ArticleInfo(_Dto):
     renamed from. A tag set on both is listed for each.
     """
     size: int
+    """Bytes of the article's text."""
     front_matter: dict[str, Any]
+    """The article's front matter, parsed; untrusted repository data."""
     source_url: str | None
     """Link to the file at the commit; null when the host is unknown."""
 
@@ -646,7 +898,17 @@ class ArticleInfo(_Dto):
     def from_stored(
         cls, library: str, ref: str, stored: StoredArticle, source_url: str | None
     ) -> Self:
-        """Map a stored article of the given version."""
+        """Map a stored article of the given version.
+
+        Args:
+            library: The library ID.
+            ref: The version's ref.
+            stored: The article with its manifest entry.
+            source_url: Link to the file at the commit; ``None`` when the host is unknown.
+
+        Returns:
+            The article's metadata, without its text.
+        """
         entry = stored.entry
         return cls(
             library=library,
@@ -667,10 +929,19 @@ class Article(ArticleInfo):
     """One article with its Markdown, verbatim as imported."""
 
     content: str
+    """The article's Markdown, verbatim as imported."""
 
     @classmethod
     def with_content(cls, info: ArticleInfo, content: str) -> Self:
-        """Add the text to an article's metadata."""
+        """Add the text to an article's metadata.
+
+        Args:
+            info: The metadata.
+            content: The article's Markdown.
+
+        Returns:
+            The whole article.
+        """
         return cls(**dict(info), content=content)
 
 
@@ -687,14 +958,18 @@ class SetManualTagsCommand(ManualTagsIn):
     """Set the manual tags of `path` for every version of `library`."""
 
     library: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
     path: str = Field(min_length=1, max_length=MAX_PATH)
+    """The article path to tag; it need not be an article of every version."""
 
 
 class ArticleTags(_Dto):
     """Every tag an article carries now (`ManifestEntry.all_tags`)."""
 
     path: str
+    """The article's path."""
     tags: list[str]
+    """Its tags."""
 
 
 class RetaggedManifest(_Dto):
@@ -704,11 +979,21 @@ class RetaggedManifest(_Dto):
     """
 
     manifest_id: str
+    """The manifest."""
     articles: list[ArticleTags]
+    """Its articles whose tags changed or may have, sorted by path."""
 
     @classmethod
     def of(cls, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> Self:
-        """Map what the repository reports."""
+        """Map what the repository reports.
+
+        Args:
+            manifest_id: The manifest.
+            tags: The tags of each touched article, by path.
+
+        Returns:
+            The manifest's touched articles, sorted by path.
+        """
         return cls(
             manifest_id=manifest_id,
             articles=[ArticleTags(path=p, tags=list(t)) for p, t in sorted(tags.items())],
@@ -719,8 +1004,11 @@ class ManualTagsOut(_Dto):
     """The manual tags of a path, as stored: every version's article at that path gets them."""
 
     library: str
+    """Library ID, `/owner/repo`."""
     path: str
+    """The article path tagged."""
     tags: list[str]
+    """Its manual tags now, normalized and sorted."""
     retagged: list[RetaggedManifest]
     """The pending and active manifests whose articles' tags are touched."""
 
@@ -729,6 +1017,7 @@ class ApplyManualTagsCommand(_Dto):
     """Give a (pending) manifest the manual tags its library has now."""
 
     manifest_id: str = Field(min_length=1)
+    """The manifest to tag."""
 
 
 class ReplaceRenamesCommand(_Dto):
@@ -742,13 +1031,16 @@ class ReplaceRenamesCommand(_Dto):
     library: str = Field(min_length=1)
     """`/owner/repo`, any letter case."""
     ref: str = Field(min_length=1)
+    """The version whose active manifest gets the renames."""
     renames: list[RenameIn]
+    """The new rename map; it replaces the old one."""
 
 
 class RenamesReplaced(_Dto):
     """The manifest whose renames were replaced, and every manifest whose tags that touched."""
 
     manifest_id: str
+    """The manifest whose renames were replaced."""
     retagged: list[RetaggedManifest]
     """The pending and active manifests whose articles carry or carried manual tags."""
 
@@ -757,14 +1049,25 @@ class GetAssetQuery(_Dto):
     """Read the image at repository path `path` of a version; no `ref` means the default version."""
 
     library: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
     ref: str | None = None
+    """Exact imported ref; null or blank: the default version."""
     path: str = Field(min_length=1, max_length=MAX_PATH)
+    """The image's path in the repository."""
     known_blob_shas: list[str] = Field(default=[])
     """Blob SHAs the caller holds; a match answers `unchanged`."""
 
     @field_validator("ref", mode="before")
     @classmethod
     def _blank_ref_is_none(cls, value: object) -> object:
+        """Treat a blank ref as none: the default version.
+
+        Args:
+            value: The raw field.
+
+        Returns:
+            ``None`` for blank text, otherwise the value unchanged.
+        """
         return None if isinstance(value, str) and not value.strip() else value
 
 
@@ -772,8 +1075,11 @@ class Asset(_Dto):
     """An image of a version: its bytes and the type sniffed from them when it was imported."""
 
     blob_sha: str
+    """Git blob SHA of the image: its ETag."""
     content_type: str
+    """Media type sniffed when it was imported."""
     data: bytes = Field(repr=False)
+    """The image's bytes; empty when `unchanged`."""
     unchanged: bool = Field(default=False)
     """The blob is one of `known_blob_shas`; `data` is empty."""
 
@@ -782,41 +1088,53 @@ class GetManifestStatesQuery(_Dto):
     """Ask for the state of manifests by ID."""
 
     manifest_ids: list[str]
+    """The manifests asked about."""
 
 
 class GetActiveManifestQuery(_Dto):
     """Ask which manifest serves a version (the library's default one without a ref)."""
 
     library: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
     ref: str | None = None
+    """Exact imported ref; null: the default version."""
 
 
 class ActiveManifest(_Dto):
     """The manifest serving a version, or ``None`` while it has none."""
 
     library: str
+    """Library ID, `/owner/repo`."""
     ref: str
+    """The version's ref."""
     commit_sha: str
     """The commit of the manifest, else of the version."""
     manifest_id: str | None
+    """The active manifest; null while the version has none."""
 
 
 class DefaultManifest(_Dto):
     """A library's default version and the manifest serving it, with where its source lives."""
 
     library: str
+    """Library ID, `/owner/repo`."""
     ref: str
+    """The default version's ref."""
     commit_sha: str
     """The commit of the manifest."""
     manifest_id: str
+    """The manifest serving it."""
     source_url: str
+    """The repository's URL."""
     host: HostKind
+    """What kind of server hosts the repository."""
 
 
 class DefaultManifests(_Dto):
     """The default versions that have an active manifest, by library ID."""
 
     manifests: list[DefaultManifest]
+    """One per library, sorted by library ID."""
 
 
 class GetArticleTitlesQuery(_Dto):
@@ -862,26 +1180,37 @@ class ManifestStates(_Dto):
     """Manifest state by ID; IDs the catalog does not know are left out."""
 
     states: dict[str, ManifestState]
+    """The state of each manifest found."""
 
 
 class TagRuleIn(_Dto):
     """Articles whose path matches `pattern` get `tag` (already normalized by the importer)."""
 
     pattern: str = Field(min_length=1, max_length=256)
+    """Glob over article paths, e.g. `docs/api/**`."""
     tag: str = Field(min_length=1, max_length=MAX_TAG_LENGTH)
+    """The tag a matching article gets."""
 
 
 class CreateLibraryCommand(_Dto):
     """Add an empty library; its versions arrive with imports."""
 
     id: str = Field(min_length=1)
+    """Library ID, `/owner/repo`."""
     title: str = Field(min_length=1)
+    """Display name."""
     source_url: str = Field(min_length=1)
+    """Where the repository is cloned from."""
     host: HostKind
+    """What kind of server hosts the repository."""
     default_branch: str | None = None
+    """The repository's default branch, when known."""
     include_paths: list[str] = Field(default_factory=list)
+    """Folders, files or globs to import; empty: every Markdown file."""
     exclude_paths: list[str] = Field(default_factory=list)
+    """Folders, files or globs to leave out; they win."""
     tag_rules: list[TagRuleIn] = Field(default_factory=list, max_length=MAX_TAG_RULES)
+    """Tags given to articles by path."""
 
 
 _Title = Annotated[str, Field(min_length=1, max_length=MAX_TITLE)]
@@ -890,7 +1219,14 @@ _Rule = Annotated[str, Field(min_length=1, max_length=MAX_LIBRARY_RULE_CHARS)]
 
 
 def _clean(text: str) -> str:
-    r"""Drop control and format characters (zero-width, bidi, tags, escapes); keep \n and \t."""
+    r"""Drop control and format characters (zero-width, bidi, tags, escapes); keep \n and \t.
+
+    Args:
+        text: Text a user typed.
+
+    Returns:
+        The text without those characters.
+    """
     return "".join(
         c for c in text if c in "\n\t" or unicodedata.category(c) not in {"Cc", "Cf", "Co", "Cs"}
     )
@@ -911,6 +1247,17 @@ class LibraryPatch(_Dto):
     @field_validator("title")
     @classmethod
     def _single_line(cls, title: str | None) -> str | None:
+        """Refuse a title on several lines; drop invisible characters and collapse spaces.
+
+        Args:
+            title: The title as sent; ``None`` when absent.
+
+        Returns:
+            The cleaned title, or ``None``.
+
+        Raises:
+            ValueError: The title has a line break, or no visible text.
+        """
         if title is None:
             return None
         if any(unicodedata.category(c) in {"Zl", "Zp"} or c in "\n\r\v\f\x85" for c in title):
@@ -925,10 +1272,26 @@ class LibraryPatch(_Dto):
     @field_validator("description")
     @classmethod
     def _plain(cls, description: str | None) -> str | None:
+        """Drop invisible characters and surrounding whitespace from the description.
+
+        Args:
+            description: The description as sent; ``None`` when absent.
+
+        Returns:
+            The cleaned description, or ``None``.
+        """
         return None if description is None else _clean(description).strip()
 
     @model_validator(mode="after")
     def _says_something(self) -> Self:
+        """Refuse a patch that changes nothing.
+
+        Returns:
+            The patch unchanged.
+
+        Raises:
+            ValueError: Neither a title nor a description is given.
+        """
         if self.title is None and self.description is None:
             message = "give a title or a description"
             raise ValueError(message)
@@ -939,6 +1302,7 @@ class UpdateLibraryCommand(LibraryPatch):
     """Set the title and/or description of a library by hand; they are then kept for good."""
 
     id: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
 
 
 class DefaultVersionPin(_Dto):
@@ -954,6 +1318,7 @@ class PinDefaultVersionCommand(_Dto):
     library: str = Field(min_length=1)
     """`/owner/repo`, any letter case."""
     ref: str | None = Field(default=None, min_length=1, max_length=MAX_NAME)
+    """An imported ref, or a unique short SHA; null unpins."""
 
 
 class ApplyReadmeCommand(_Dto):
@@ -965,16 +1330,22 @@ class ApplyReadmeCommand(_Dto):
     """
 
     library: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
     ref: str = Field(min_length=1)
+    """The version imported; nothing changes unless it is the default."""
     title: _Title | None = None
+    """The title it gives; null: the repository name."""
     description: _Description | None = None
+    """The description it gives; null: none."""
     rules: list[_Rule] = Field(default_factory=list, max_length=MAX_LIBRARY_RULES)
+    """Its `context7.json` rules; they replace the library's."""
 
 
 class DiscardLibraryCommand(_Dto):
     """Undo ``CreateLibrary`` for a library that has no versions."""
 
     id: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
 
 
 class RemoveVersionCommand(_Dto):
@@ -983,6 +1354,7 @@ class RemoveVersionCommand(_Dto):
     library: str = Field(min_length=1)
     """`/owner/repo`, any letter case."""
     ref: str = Field(min_length=1)
+    """The exact ref to remove."""
 
 
 class RemoveLibraryCommand(_Dto):
@@ -1001,18 +1373,26 @@ class Removal(_Dto):
     """
 
     library: str
+    """Library ID, `/owner/repo`."""
     ref: str | None
+    """The version removed; null when the whole library was."""
     manifest_ids: list[str]
+    """Every manifest removed, in any state."""
     default_ref: str | None
+    """The default version now; null when none is left."""
 
 
 class ChunkingIn(_Dto):
     """How articles are cut (validated by the importer, which knows the chunkers)."""
 
     split_level: int = Field(default=6, ge=1, le=6)
+    """The deepest heading that starts a chunk."""
     min_chars: int = Field(default=0, ge=0)
+    """A chunk shorter than this is merged with the next one."""
     max_chars: int | None = Field(default=None, ge=1)
+    """A chunk longer than this is cut again; null: no bound."""
     chunker: str = Field(default="markdown", min_length=1, max_length=64)
+    """Which chunker cuts."""
 
 
 class SetLibrarySettingsCommand(_Dto):
@@ -1022,82 +1402,110 @@ class SetLibrarySettingsCommand(_Dto):
     """
 
     id: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
     include_paths: list[str] = Field(default_factory=list)
+    """Folders, files or globs to import; empty: every Markdown file."""
     exclude_paths: list[str] = Field(default_factory=list)
+    """Folders, files or globs to leave out; they win."""
     tag_rules: list[TagRuleIn] = Field(default_factory=list, max_length=MAX_TAG_RULES)
+    """Tags given to articles by path."""
     chunking: ChunkingIn | None = None
+    """How articles are cut; null keeps the current chunking."""
 
 
 class GetVersionTagsQuery(_Dto):
     """Ask for what the imported tags of a version's articles are derived from."""
 
     library: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
     ref: str = Field(min_length=1)
+    """The exact ref."""
 
 
 class ArticleTagSource(_Dto):
     """An article's path, front matter and imported tags (manual ones are kept apart)."""
 
     path: str
+    """The article's path."""
     front_matter: dict[str, Any]
+    """Its parsed front matter."""
     tags: list[str]
+    """Its imported tags."""
 
 
 class VersionTags(_Dto):
     """The active manifest of a version and its articles' tag sources (none while it has none)."""
 
     library: str
+    """Library ID, `/owner/repo`."""
     ref: str
+    """The version's ref."""
     manifest_id: str | None
+    """The active manifest; null while the version has none."""
     articles: list[ArticleTagSource]
+    """Every article of the manifest; empty without one."""
 
 
 class SetImportedTagsCommand(_Dto):
     """Replace the imported tags of some articles of a manifest."""
 
     manifest_id: str = Field(min_length=1)
+    """The manifest."""
     articles: list[ArticleTags]
+    """The articles to retag; the others keep their tags."""
 
 
 class StoredFileIn(_Dto):
     """A file of a commit, named by its path and git blob SHA."""
 
     path: str = Field(min_length=1)
+    """The file's path in the repository."""
     blob_sha: str = Field(min_length=1)
+    """Its git blob SHA."""
 
 
 class FindStoredArticlesQuery(_Dto):
     """Ask what the catalog stored for these files, so an import need not parse them again."""
 
     library: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
     ref: str | None = Field(default=None)
     """The version being imported: its active manifest is read first."""
     content_version: int
     """The importer's parser version: part of the key."""
     files: list[StoredFileIn] = Field(max_length=MAX_STORED_ARTICLE_FILES)
+    """The files of the commit being imported."""
 
 
 class StoredArticleOut(_Dto):
     """What an import stored for a file: its title, front matter and text (tags are derived)."""
 
     path: str
+    """The file's path, as asked."""
     blob_sha: str
+    """Its git blob SHA, as asked."""
     title: str
+    """The stored title."""
     front_matter: dict[str, Any]
+    """The stored front matter."""
     content: str
+    """The stored text."""
 
 
 class StoredArticles(_Dto):
     """The asked files the catalog holds; the others are left out."""
 
     articles: list[StoredArticleOut]
+    """One per file found."""
 
 
 class CopyManifestCommand(_Dto):
     """Copy a version's active manifest into a new pending one (to re-chunk what it serves)."""
 
     library: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
     ref: str = Field(min_length=1)
+    """The version to copy."""
     content_version: int
     """The parser version the articles must be stored by, else nothing is copied."""
 
@@ -1106,19 +1514,31 @@ class CopiedArticle(_Dto):
     """An article of the copy with its stored text; `tags` are the imported ones."""
 
     path: str
+    """The article's path."""
     blob_sha: str
+    """Its git blob SHA."""
     title: str
+    """Its title."""
     front_matter: dict[str, Any]
+    """Its front matter."""
     tags: list[str]
+    """Its imported tags."""
     content: str
+    """Its stored text."""
 
 
 class CopiedManifest(_Dto):
     """The pending copy: activate it with `ActivateManifest`, or discard it."""
 
     manifest_id: str
+    """The pending copy."""
     library: str
+    """Library ID, `/owner/repo`."""
     ref: str
+    """The version's ref."""
     kind: RefKind
+    """Whether the ref is a tag, a branch or a commit."""
     commit_sha: str
+    """The commit the articles are from."""
     articles: list[CopiedArticle]
+    """Every article of the copy."""

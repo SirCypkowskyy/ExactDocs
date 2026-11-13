@@ -126,7 +126,20 @@ from exactdocs_kernel import Clock, decode_cursor, encode_cursor, paginate, sect
 async def _find_version(
     repository: LibraryRepository, library_id: LibraryId, ref: VersionRef | None
 ) -> tuple[Library, Version]:
-    """Find the version a ref names (the default one without a ref); never any other version."""
+    """Find the version a ref names (the default one without a ref); never any other version.
+
+    Args:
+        repository: Where the library is read.
+        library_id: The library.
+        ref: The ref, or a short commit SHA; None for the default version.
+
+    Returns:
+        The library and the version.
+
+    Raises:
+        LibraryNotFoundError: The library is not in the catalog.
+        VersionNotFoundError: The ref names no version, or the library has none.
+    """
     library = await repository.get(library_id)
     if library is None:
         raise LibraryNotFoundError(str(library_id))
@@ -141,9 +154,17 @@ class ListLibrariesUseCase:
     """Implements ``ports.driving.ListLibraries``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
 
     async def __call__(self, query: ListLibrariesQuery) -> LibraryList:
-        """List a page of libraries, sorted by ID."""
+        """List a page of libraries, sorted by ID.
+
+        Args:
+            query: The page size and the cursor of the previous page.
+
+        Returns:
+            The page of libraries, sorted by ID, with the next cursor.
+        """
         libraries = sorted(await self.repository.list_all(), key=lambda lib: lib.id.value)
         page = paginate(
             libraries, key=lambda lib: lib.id.value, limit=query.limit, cursor=query.cursor
@@ -156,9 +177,17 @@ class CreateLibraryUseCase:
     """Implements ``ports.driving.CreateLibrary``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
 
     async def __call__(self, command: CreateLibraryCommand) -> LibraryDetail:
-        """Store a new library without versions; the repository refuses a taken ID."""
+        """Store a new library without versions; the repository refuses a taken ID.
+
+        Args:
+            command: The library's ID, source and settings.
+
+        Returns:
+            The new library, without versions.
+        """
         library = Library(
             id=LibraryId(command.id),
             title=command.title,
@@ -180,9 +209,20 @@ class UpdateLibraryUseCase:
     """Implements ``ports.driving.UpdateLibrary``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
 
     async def __call__(self, command: UpdateLibraryCommand) -> LibraryDetail:
-        """Change the given fields and remember that a user chose them."""
+        """Change the given fields and remember that a user chose them.
+
+        Args:
+            command: The library and the fields to change.
+
+        Returns:
+            The library as it is now.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog, or was removed meanwhile.
+        """
         library = await self.repository.get(LibraryId(command.id))
         if library is None:
             raise LibraryNotFoundError(command.id)
@@ -200,9 +240,20 @@ class SetLibrarySettingsUseCase:
     """Implements ``ports.driving.SetLibrarySettings``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
 
     async def __call__(self, command: SetLibrarySettingsCommand) -> LibraryDetail:
-        """Replace paths and tag rules; the chunking too unless it is left out."""
+        """Replace paths and tag rules; the chunking too unless it is left out.
+
+        Args:
+            command: The library and its new settings.
+
+        Returns:
+            The library as it is now.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog, or was removed meanwhile.
+        """
         library = await self.repository.get(LibraryId(command.id))
         if library is None:
             raise LibraryNotFoundError(command.id)
@@ -233,9 +284,21 @@ class PinDefaultVersionUseCase:
     """Implements ``ports.driving.PinDefaultVersion``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
 
     async def __call__(self, command: PinDefaultVersionCommand) -> LibraryDetail:
-        """Pin the version the ref names (stored by its exact ref), or unpin without a ref."""
+        """Pin the version the ref names (stored by its exact ref), or unpin without a ref.
+
+        Args:
+            command: The library and the ref to pin; no ref unpins.
+
+        Returns:
+            The library as it is now.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog, or was removed meanwhile.
+            VersionNotFoundError: The ref names no imported version, or it was removed meanwhile.
+        """
         library_id = LibraryId(command.library)
         library = await self.repository.get(library_id)
         if library is None:
@@ -261,6 +324,7 @@ class ApplyReadmeUseCase:
     """Implements ``ports.driving.ApplyReadme``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
 
     async def __call__(self, command: ApplyReadmeCommand) -> None:
         """Follow the default version's text for every field a user has not edited, and its rules.
@@ -272,6 +336,12 @@ class ApplyReadmeUseCase:
         Only the two text columns and the rules are written, in one statement that keeps edited
         fields, so a concurrent user edit survives. The caller does not retry: if this fails the
         library keeps its old text and rules until the default version is imported again.
+
+        Args:
+            command: The version imported and what it says about the library.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog.
         """
         library = await self.repository.get(LibraryId(command.library))
         if library is None:
@@ -292,9 +362,17 @@ class DiscardLibraryUseCase:
     """Implements ``ports.driving.DiscardLibrary``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
 
     async def __call__(self, command: DiscardLibraryCommand) -> None:
-        """Remove the library if it exists and has no versions."""
+        """Remove the library if it exists and has no versions.
+
+        Args:
+            command: The library.
+
+        Raises:
+            LibraryNotEmptyError: The library has imported versions.
+        """
         library = await self.repository.get(LibraryId(command.id))
         if library is None:
             return
@@ -308,9 +386,20 @@ class GetLibraryUseCase:
     """Implements ``ports.driving.GetLibrary``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
 
     async def __call__(self, query: GetLibraryQuery) -> LibraryDetail:
-        """Fetch one library by ID."""
+        """Fetch one library by ID.
+
+        Args:
+            query: The library ID.
+
+        Returns:
+            The library with every version and its settings.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog.
+        """
         library = await self.repository.get(LibraryId(query.id))
         if library is None:
             raise LibraryNotFoundError(query.id)
@@ -322,9 +411,17 @@ class ResolveVersionUseCase:
     """Implements ``ports.driving.ResolveVersion``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
 
     async def __call__(self, query: ResolveVersionQuery) -> ResolvedVersion:
-        """Resolve `/owner/repo[/ref]` to exactly one version."""
+        """Resolve `/owner/repo[/ref]` to exactly one version.
+
+        Args:
+            query: `/owner/repo` or `/owner/repo/<ref>`.
+
+        Returns:
+            The version it names, with its library.
+        """
         target = ParsedId.parse(query.id)
         library, version = await _find_version(self.repository, target.library, target.ref)
         return ResolvedVersion.from_library(library, version)
@@ -335,11 +432,24 @@ class StoreManifestUseCase:
     """Implements ``ports.driving.StoreManifest``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
     clock: Clock
+    """Tells the time that stamps what is stored and when the grace periods end."""
 
     async def __call__(self, command: StoreManifestCommand) -> StoredManifest:
-        """Store the articles as a pending manifest, invisible until it is activated."""
+        """Store the articles as a pending manifest, invisible until it is activated.
+
+        Args:
+            command: The version, its articles, images, renames and instruction files.
+
+        Returns:
+            The pending manifest, for ``ActivateManifest``.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog.
+        """
         library_id = LibraryId(command.library)
         if await self.repository.get(library_id) is None:
             raise LibraryNotFoundError(command.library)
@@ -352,7 +462,19 @@ class StoreManifestUseCase:
     def _build(
         self, command: StoreManifestCommand, library_id: LibraryId
     ) -> tuple[Manifest, dict[ContentKey, str], dict[str, StoredImage]]:
-        """Build the manifest and its texts: CPU-bound for a big version, so run in a thread."""
+        """Build the manifest and its texts: CPU-bound for a big version, so run in a thread.
+
+        Args:
+            command: What to store.
+            library_id: The library, checked to exist.
+
+        Returns:
+            The pending manifest, its texts by content key and its images by blob SHA.
+
+        Raises:
+            ConflictingContentError: Two articles of one blob and content version differ in text.
+            ConflictingImageError: Two images of one blob SHA differ in type or bytes.
+        """
         manifest = Manifest(
             id=ManifestId(uuid4().hex),
             library=library_id,
@@ -423,12 +545,22 @@ class ManualTagger:
     """Brings a manifest's manual tags in line with the ones users set for its library."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
 
     async def apply(
         self, manifest: Manifest, by_path: Mapping[str, tuple[str, ...]]
     ) -> RetaggedManifest:
-        """Give the manifest's entries the manual tags that reach them (see ``ManualTags``)."""
+        """Give the manifest's entries the manual tags that reach them (see ``ManualTags``).
+
+        Args:
+            manifest: The manifest to re-tag.
+            by_path: The library's manual tags, by the path they were set on.
+
+        Returns:
+            The manifest's articles whose tags changed, with every tag they carry now.
+        """
         origins = await self._origins(manifest) if by_path else {}
         wanted = ManualTags.reaching(origins, by_path)
         touched = await self.manifests.set_manual_tags(manifest.id, wanted)
@@ -439,11 +571,25 @@ class ManualTagger:
 
         A rename names the version it came from; that version's own rename map is followed in
         turn, so a path is traced back across several versions (each step at most once).
+
+        Args:
+            manifest: The manifest whose renamed paths are traced.
+
+        Returns:
+            Each renamed path of the manifest with every older path it came from.
         """
         into: dict[ManifestId, dict[str, list[ManifestRename]]] = {}
         previous: dict[VersionRef, Manifest | None] = {}
 
         async def renamed_into(m: Manifest) -> dict[str, list[ManifestRename]]:
+            """Read a manifest's renames once, by new path.
+
+            Args:
+                m: The manifest.
+
+            Returns:
+                Its renames, by the path they lead to.
+            """
             if m.id not in into:
                 by_new: dict[str, list[ManifestRename]] = {}
                 for r in await self.manifests.list_renames(m.id, limit=MAX_RENAMES):
@@ -480,10 +626,22 @@ class SetManualTagsUseCase:
     """Implements ``ports.driving.SetManualTags``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
     tagger: ManualTagger
+    """Re-tags manifests from their library's manual tags."""
 
     async def __call__(self, command: SetManualTagsCommand) -> ManualTagsOut:
-        """Store the path's tags, then re-tag every pending and active manifest of the library."""
+        """Store the path's tags, then re-tag every pending and active manifest of the library.
+
+        Args:
+            command: The library, the path and its tags.
+
+        Returns:
+            The path's tags and the manifests whose articles were re-tagged.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog.
+        """
         library = await self.repository.get(LibraryId(command.library))
         if library is None:
             raise LibraryNotFoundError(command.library)
@@ -507,10 +665,23 @@ class GetVersionTagsUseCase:
     """Implements ``ports.driving.GetVersionTags``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
 
     async def __call__(self, query: GetVersionTagsQuery) -> VersionTags:
-        """Read every entry of the version's active manifest, page by page."""
+        """Read every entry of the version's active manifest, page by page.
+
+        Args:
+            query: The library and the exact ref.
+
+        Returns:
+            The active manifest and each article's tag sources; none while it has no manifest.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog.
+            VersionNotFoundError: The library has no version of exactly this ref.
+        """
         library = await self.repository.get(LibraryId(query.library))
         if library is None:
             raise LibraryNotFoundError(query.library)
@@ -544,9 +715,17 @@ class FindStoredArticlesUseCase:
     """Implements ``ports.driving.FindStoredArticles``."""
 
     finder: StoredArticleFinder
+    """Finds what earlier imports stored for a file."""
 
     async def __call__(self, query: FindStoredArticlesQuery) -> StoredArticles:
-        """Look the files up in every manifest of the library."""
+        """Look the files up in every manifest of the library.
+
+        Args:
+            query: The library, the version imported, the parser version and the files.
+
+        Returns:
+            What is stored for the files found.
+        """
         files = {(f.path, f.blob_sha) for f in query.files}
         found = await self.finder.find_articles(
             LibraryId(query.library),
@@ -573,10 +752,22 @@ class SetImportedTagsUseCase:
     """Implements ``ports.driving.SetImportedTags``."""
 
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
     writer: ImportedTagWriter
+    """Writes the imported tags of a manifest's articles."""
 
     async def __call__(self, command: SetImportedTagsCommand) -> RetaggedManifest:
-        """Write the new imported tags; report every given article with every tag it carries."""
+        """Write the new imported tags; report every given article with every tag it carries.
+
+        Args:
+            command: The manifest and the new imported tags of some of its articles.
+
+        Returns:
+            Those articles with every tag they now carry.
+
+        Raises:
+            ManifestNotFoundError: No manifest has this ID.
+        """
         manifest_id = ManifestId(command.manifest_id)
         if await self.manifests.get(manifest_id) is None:
             raise ManifestNotFoundError(command.manifest_id)
@@ -590,10 +781,22 @@ class ApplyManualTagsUseCase:
     """Implements ``ports.driving.ApplyManualTags``."""
 
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
     tagger: ManualTagger
+    """Re-tags manifests from their library's manual tags."""
 
     async def __call__(self, command: ApplyManualTagsCommand) -> RetaggedManifest:
-        """Re-tag the manifest from its library's manual tags as they are now."""
+        """Re-tag the manifest from its library's manual tags as they are now.
+
+        Args:
+            command: The manifest.
+
+        Returns:
+            Its articles whose tags changed.
+
+        Raises:
+            ManifestNotFoundError: No manifest has this ID.
+        """
         manifest = await self.manifests.get(ManifestId(command.manifest_id))
         if manifest is None:
             raise ManifestNotFoundError(command.manifest_id)
@@ -606,8 +809,11 @@ class ReplaceRenamesUseCase:
     """Implements ``ports.driving.ReplaceRenames``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
     tagger: ManualTagger
+    """Re-tags manifests from their library's manual tags."""
 
     async def __call__(self, command: ReplaceRenamesCommand) -> RenamesReplaced:
         """Store the new map with the active manifest, then let manual tags follow it.
@@ -615,6 +821,16 @@ class ReplaceRenamesUseCase:
         Tags reach an article through the maps of every version before it, so each pending and
         active manifest of the library is re-tagged, not only this one (``v1.5.0`` gets a tag
         through ``v1.4.0``'s new map too).
+
+        Args:
+            command: The version and its new rename map.
+
+        Returns:
+            The manifest and every manifest re-tagged.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog.
+            VersionNotFoundError: The version has no active manifest.
         """
         library_id = LibraryId(command.library)
         if await self.repository.get(library_id) is None:
@@ -649,11 +865,25 @@ class ActivateManifestUseCase:
     """Implements ``ports.driving.ActivateManifest``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
     clock: Clock
+    """Tells the time that stamps what is stored and when the grace periods end."""
 
     async def __call__(self, command: ActivateManifestCommand) -> ActivatedManifest:
-        """Flip the version to the manifest in one transaction (see the driven port)."""
+        """Flip the version to the manifest in one transaction (see the driven port).
+
+        Args:
+            command: The pending manifest.
+
+        Returns:
+            The manifest and the version it now serves.
+
+        Raises:
+            ManifestNotFoundError: No manifest has this ID.
+            LibraryNotFoundError: Its library was removed.
+        """
         manifest_id = ManifestId(command.manifest_id)
         manifest = await self.manifests.get(manifest_id)
         if manifest is None:
@@ -677,10 +907,22 @@ class ListArticlesUseCase:
     """Implements ``ports.driving.ListArticles``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
 
     async def __call__(self, query: ListArticlesQuery) -> ArticleList:
-        """List a page of the active manifest's articles whose path starts with the prefix."""
+        """List a page of the active manifest's articles whose path starts with the prefix.
+
+        Args:
+            query: The version, the filters and the page.
+
+        Returns:
+            The page of articles, sorted by path, with the next cursor.
+
+        Raises:
+            ArticleNotFoundError: The version has no active manifest.
+        """
         ref = VersionRef(query.ref) if query.ref else None
         library, version = await _find_version(self.repository, LibraryId(query.library), ref)
         manifest = await self.manifests.get_active(library.id, version.ref)
@@ -708,7 +950,20 @@ class ListArticlesUseCase:
 async def _renames_manifest(
     repository: LibraryRepository, manifests: ManifestRepository, library: str, ref: str | None
 ) -> tuple[str, str, ManifestId]:
-    """Return ``(library, ref, manifest ID)`` of the version whose renames are asked for."""
+    """Return ``(library, ref, manifest ID)`` of the version whose renames are asked for.
+
+    Args:
+        repository: Where the library is read.
+        manifests: Where the active manifest is read.
+        library: The library ID, any letter case.
+        ref: The exact ref; ``None`` for the default version.
+
+    Returns:
+        The library ID, the version's ref and its active manifest's ID.
+
+    Raises:
+        ArticleNotFoundError: The version has no active manifest.
+    """
     found, version = await _find_version(
         repository, LibraryId(library), VersionRef(ref) if ref else None
     )
@@ -723,10 +978,19 @@ class ResolveRenamedPathUseCase:
     """Implements ``ports.driving.ResolveRenamedPath``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
 
     async def __call__(self, query: ResolveRenamedPathQuery) -> RenamedPath | None:
-        """Look the path up in the renames stored with the version's active manifest."""
+        """Look the path up in the renames stored with the version's active manifest.
+
+        Args:
+            query: The version, the path and the direction.
+
+        Returns:
+            The move, or ``None`` when git saw none.
+        """
         library, ref, manifest = await _renames_manifest(
             self.repository, self.manifests, query.library, query.ref
         )
@@ -739,10 +1003,19 @@ class ListRenamesUseCase:
     """Implements ``ports.driving.ListRenames``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
 
     async def __call__(self, query: ListRenamesQuery) -> RenameList:
-        """List the renames stored with the version's active manifest."""
+        """List the renames stored with the version's active manifest.
+
+        Args:
+            query: The version.
+
+        Returns:
+            Its renames, by old path.
+        """
         library, ref, manifest = await _renames_manifest(
             self.repository, self.manifests, query.library, query.ref
         )
@@ -755,10 +1028,22 @@ class GetArticleUseCase:
     """Implements ``ports.driving.GetArticle``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
 
     async def __call__(self, query: GetArticleQuery) -> Article:
-        """Read one article of the version's active manifest."""
+        """Read one article of the version's active manifest.
+
+        Args:
+            query: The version and the article path.
+
+        Returns:
+            The article with its text and metadata.
+
+        Raises:
+            ArticleNotFoundError: The version has no such article; the error names close matches.
+        """
         ref = VersionRef(query.ref) if query.ref else None
         library, version = await _find_version(self.repository, LibraryId(query.library), ref)
         stored = await self.manifests.get_article(library.id, version.ref, query.path)
@@ -776,7 +1061,16 @@ class GetArticleUseCase:
         return Article.with_content(info, stored.content)
 
     async def _close(self, library: Library, version: Version, path: str) -> list[str]:
-        """Paths of this version an agent may have meant (only looked up on a miss)."""
+        """Paths of this version an agent may have meant (only looked up on a miss).
+
+        Args:
+            library: The library.
+            version: The version.
+            path: The path asked for.
+
+        Returns:
+            The close paths, best first; none when the version has no active manifest.
+        """
         manifest = await self.manifests.get_active(library.id, version.ref)
         if manifest is None:
             return []
@@ -790,10 +1084,22 @@ class GetAssetUseCase:
     """Implements ``ports.driving.GetAsset``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
 
     async def __call__(self, query: GetAssetQuery) -> Asset:
-        """Read one image of the version's active manifest."""
+        """Read one image of the version's active manifest.
+
+        Args:
+            query: The version, the image path and the blob SHAs the caller holds.
+
+        Returns:
+            The image, or ``unchanged`` without bytes when the caller holds it.
+
+        Raises:
+            AssetNotFoundError: The version has no image at this path.
+        """
         ref = VersionRef(query.ref) if query.ref else None
         library, version = await _find_version(self.repository, LibraryId(query.library), ref)
         known = bool(query.known_blob_shas)
@@ -816,10 +1122,22 @@ class ListTagsUseCase:
     """Implements ``ports.driving.ListTags``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
 
     async def __call__(self, query: ListTagsQuery) -> TagList:
-        """Count the tags of the version's active manifest."""
+        """Count the tags of the version's active manifest.
+
+        Args:
+            query: The version.
+
+        Returns:
+            Its most used tags, with their counts.
+
+        Raises:
+            ArticleNotFoundError: The version has no active manifest.
+        """
         ref = VersionRef(query.ref) if query.ref else None
         library, version = await _find_version(self.repository, LibraryId(query.library), ref)
         manifest = await self.manifests.get_active(library.id, version.ref)
@@ -841,10 +1159,19 @@ class DiscardPendingManifestsUseCase:
     """Implements ``ports.driving.DiscardPendingManifests``."""
 
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
     clock: Clock
+    """Tells the time that stamps what is stored and when the grace periods end."""
 
     async def __call__(self, command: DiscardPendingManifestsCommand) -> DiscardedManifests:
-        """Delete the pending manifest(s); active and superseded ones are never touched."""
+        """Delete the pending manifest(s); active and superseded ones are never touched.
+
+        Args:
+            command: The filters.
+
+        Returns:
+            How many pending manifests were deleted.
+        """
         older = command.older_than_seconds
         count = await self.manifests.discard_pending(
             manifest_id=None if command.manifest_id is None else ManifestId(command.manifest_id),
@@ -859,10 +1186,19 @@ class CollectGarbageUseCase:
     """Implements ``ports.driving.CollectGarbage``."""
 
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
     clock: Clock
+    """Tells the time that stamps what is stored and when the grace periods end."""
 
     async def __call__(self, command: CollectGarbageCommand) -> CollectionResult:
-        """Delete manifests superseded before the grace period, then contents nobody uses."""
+        """Delete manifests superseded before the grace period, then contents nobody uses.
+
+        Args:
+            command: The grace period.
+
+        Returns:
+            How many manifests, texts and images were deleted.
+        """
         cutoff = self.clock.now() - timedelta(seconds=command.grace_seconds)
         collected = await self.manifests.collect_garbage(superseded_before=cutoff)
         return CollectionResult.from_model(collected)
@@ -873,9 +1209,17 @@ class GetManifestStatesUseCase:
     """Implements ``ports.driving.GetManifestStates``."""
 
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
 
     async def __call__(self, query: GetManifestStatesQuery) -> ManifestStates:
-        """Look each ID up; unknown ones are left out."""
+        """Look each ID up; unknown ones are left out.
+
+        Args:
+            query: The manifest IDs.
+
+        Returns:
+            The state of each manifest found.
+        """
         found = await self.manifests.get_many(
             [ManifestId(i) for i in dict.fromkeys(query.manifest_ids)]
         )
@@ -933,10 +1277,19 @@ class GetActiveManifestUseCase:
     """Implements ``ports.driving.GetActiveManifest``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
 
     async def __call__(self, query: GetActiveManifestQuery) -> ActiveManifest:
-        """Name the version's active manifest; unknown library or version raise not-found."""
+        """Name the version's active manifest; unknown library or version raise not-found.
+
+        Args:
+            query: The version.
+
+        Returns:
+            The version's commit and its active manifest, if any.
+        """
         ref = VersionRef(query.ref) if query.ref else None
         library, version = await _find_version(self.repository, LibraryId(query.library), ref)
         manifest = await self.manifests.get_active(library.id, version.ref)
@@ -953,10 +1306,16 @@ class ListDefaultManifestsUseCase:
     """Implements ``ports.driving.ListDefaultManifests``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
 
     async def __call__(self) -> DefaultManifests:
-        """Take every library's default version (one read) and its active manifest (batched)."""
+        """Take every library's default version (one read) and its active manifest (batched).
+
+        Returns:
+            Each library's default version that has an active manifest, by library ID.
+        """
         defaults = [
             (library, version)
             for library in await self.repository.list_all()
@@ -984,10 +1343,23 @@ class RemoveVersionUseCase:
     """Implements ``ports.driving.RemoveVersion``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
 
     async def __call__(self, command: RemoveVersionCommand) -> Removal:
-        """Delete the version and its manifests; report which version is the default now."""
+        """Delete the version and its manifests; report which version is the default now.
+
+        Args:
+            command: The library and the exact ref.
+
+        Returns:
+            The manifests removed and the default version now.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog.
+            VersionNotFoundError: The library has no version of exactly this ref.
+        """
         library_id, ref = LibraryId(command.library), VersionRef(command.ref)
         library = await self.repository.get(library_id)
         if library is None:
@@ -1012,10 +1384,22 @@ class RemoveLibraryUseCase:
     """Implements ``ports.driving.RemoveLibrary``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
+    """Stores the manifests with their articles, images and renames."""
 
     async def __call__(self, command: RemoveLibraryCommand) -> Removal:
-        """Delete the library with its versions and manifests."""
+        """Delete the library with its versions and manifests.
+
+        Args:
+            command: The library.
+
+        Returns:
+            Every manifest removed.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog.
+        """
         library = await self.repository.get(LibraryId(command.library))
         if library is None:
             raise LibraryNotFoundError(command.library)
@@ -1030,11 +1414,26 @@ class CopyManifestUseCase:
     """Implements ``ports.driving.CopyManifest``."""
 
     repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
     copier: ManifestCopier
+    """Copies a version's active manifest."""
     clock: Clock
+    """Tells the time that stamps what is stored and when the grace periods end."""
 
     async def __call__(self, command: CopyManifestCommand) -> CopiedManifest:
-        """Copy the active manifest of the version as a pending one, created now."""
+        """Copy the active manifest of the version as a pending one, created now.
+
+        Args:
+            command: The version and the parser version its articles must be stored by.
+
+        Returns:
+            The pending copy with its articles' texts.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog.
+            VersionNotFoundError: The version is not imported, has no active manifest, or its texts
+                are of another parser version.
+        """
         library = await self.repository.get(LibraryId(command.library))
         if library is None:
             raise LibraryNotFoundError(command.library)

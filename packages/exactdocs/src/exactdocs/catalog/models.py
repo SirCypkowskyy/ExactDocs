@@ -47,14 +47,25 @@ class LibraryId:
     """`/owner/repo`, exactly two segments. Stored lower-case, so matched case-insensitively."""
 
     value: str
+    """The ID as given; stored lower-case."""
 
     def __post_init__(self) -> None:
+        """Check the shape and store the ID lower-case.
+
+        Raises:
+            InvalidLibraryIdError: Not ``/owner/repo`` with two valid segments.
+        """
         parts = self.value.split("/")
         if len(parts) != _ID_PARTS or parts[0] or not all(map(_SEGMENT.fullmatch, parts[1:])):
             raise InvalidLibraryIdError(self.value)
         object.__setattr__(self, "value", self.value.lower())
 
     def __str__(self) -> str:
+        """Render as ``/owner/repo``.
+
+        Returns:
+            The ID, lower-case.
+        """
         return self.value
 
 
@@ -66,8 +77,15 @@ class VersionRef:
     """
 
     value: str
+    """The ref as published; case-sensitive."""
 
     def __post_init__(self) -> None:
+        """Check the ref against the basics of ``git check-ref-format``.
+
+        Raises:
+            InvalidVersionRefError: An empty part, ``..``, a leading ``-``, a part ending in
+                ``.lock``, a space or a control character.
+        """
         parts = self.value.split("/")
         if (
             "" in parts
@@ -79,6 +97,11 @@ class VersionRef:
             raise InvalidVersionRefError(self.value)
 
     def __str__(self) -> str:
+        """Render as the ref.
+
+        Returns:
+            The ref as published.
+        """
         return self.value
 
 
@@ -87,11 +110,20 @@ class ParsedId:
     """A context7-style ID split into its library and the optional ref after it."""
 
     library: LibraryId
+    """The library the ID names."""
     ref: VersionRef | None
+    """The ref after the library; ``None`` when there is none (the default version)."""
 
     @classmethod
     def parse(cls, text: str) -> Self:
-        """`/owner/repo` or `/owner/repo/<ref>`: everything after two segments is the ref."""
+        """`/owner/repo` or `/owner/repo/<ref>`: everything after two segments is the ref.
+
+        Args:
+            text: The ID as given.
+
+        Returns:
+            The library and the optional ref.
+        """
         parts = text.split("/", _ID_PARTS)
         library = LibraryId("/".join(parts[:_ID_PARTS]))
         return cls(library=library, ref=VersionRef(parts[-1]) if len(parts) > _ID_PARTS else None)
@@ -117,13 +149,23 @@ class Version:
     """One imported version of a library: a ref pinned to the commit it was resolved to."""
 
     ref: VersionRef
+    """The ref it was imported from."""
     kind: RefKind
+    """Whether the ref is a tag, a branch or a commit."""
     commit_sha: str
+    """The full commit SHA the ref resolved to at import."""
     imported_at: datetime
+    """When it was last imported; timezone-aware."""
     origin: VersionOrigin = VersionOrigin.MANUAL
     """Set by the version's first import and never changed by a later one."""
 
     def __post_init__(self) -> None:
+        """Check the commit SHA and the import time.
+
+        Raises:
+            InvalidCommitShaError: The SHA is not a full lower-case object ID.
+            InvalidImportTimeError: The import time has no time zone.
+        """
         if not _OBJECT_ID.fullmatch(self.commit_sha):
             raise InvalidCommitShaError(self.commit_sha)
         if self.imported_at.tzinfo is None:
@@ -145,9 +187,16 @@ class TagRule:
     """Articles whose path matches the glob get the tag (`docs/api/**` -> `api`)."""
 
     pattern: str
+    """Glob over article paths, e.g. ``docs/api/**``."""
     tag: str
+    """The tag a matching article gets."""
 
     def __post_init__(self) -> None:
+        """Check the tag's shape.
+
+        Raises:
+            InvalidSettingsError: The tag is empty, too long, or holds a comma or a space.
+        """
         # Shape only: rules stored under an older normal form must still load.
         if (
             not self.tag
@@ -171,11 +220,24 @@ class TagSelection:
     """Which articles a tag filter keeps. No tags keeps every article."""
 
     tags: frozenset[str] = frozenset()
+    """The normalized tags; empty keeps every article."""
     match: TagMatch = TagMatch.ANY
+    """Whether an article needs any or all of ``tags``."""
 
     @classmethod
     def of(cls, tags: Iterable[str], match: TagMatch = TagMatch.ANY) -> Self:
-        """Normalize what a caller typed; refuse a value that is no tag, or too many."""
+        """Normalize what a caller typed; refuse a value that is no tag, or too many.
+
+        Args:
+            tags: The tags as typed.
+            match: Whether an article needs any or all of them.
+
+        Returns:
+            The selection.
+
+        Raises:
+            InvalidTagFilterError: A value is not a valid tag, or there are more than ``MAX_TAGS``.
+        """
         raw = list(tags)
         found = [normalize_tag(tag) for tag in raw] if len(raw) <= MAX_TAGS else [None]
         if None in found:
@@ -184,7 +246,14 @@ class TagSelection:
         return cls(tags=frozenset(t for t in found if t), match=match)
 
     def keeps(self, article_tags: Iterable[str]) -> bool:
-        """Tell whether an article with these tags passes."""
+        """Tell whether an article with these tags passes.
+
+        Args:
+            article_tags: The article's tags.
+
+        Returns:
+            True when the selection is empty or the article has any (or all) of its tags.
+        """
         if not self.tags:
             return True
         have = self.tags & set(article_tags)
@@ -196,12 +265,21 @@ class ChunkingConfig:
     """How articles are cut: new chunk at headings up to `split_level` (1-6), size bounds."""
 
     split_level: int = _HEADING_LEVELS
+    """Deepest heading level that starts a new chunk."""
     min_chars: int = 0
+    """A chunk shorter than this is merged with the next one, within ``max_chars``."""
     max_chars: int | None = None
+    """A chunk longer than this is cut again at deeper headings; ``None``: no bound."""
     chunker: str = "markdown"
     """Which chunker cuts; the importer knows which ones exist."""
 
     def __post_init__(self) -> None:
+        """Check the level, the size bounds and the chunker name.
+
+        Raises:
+            InvalidSettingsError: The level is out of range, the bounds are inverted or negative,
+                or no chunker is named.
+        """
         if not 1 <= self.split_level <= _HEADING_LEVELS:
             message = f"split_level must be between 1 and 6, not {self.split_level}"
             raise InvalidSettingsError(message)
@@ -218,9 +296,13 @@ class LibrarySettings:
     """Per-library import settings; they apply to every version of the library."""
 
     include_paths: tuple[str, ...] = ()
+    """Folders, files or globs to import; empty: every Markdown file."""
     exclude_paths: tuple[str, ...] = ()
+    """Folders, files or globs to leave out; they win over ``include_paths``."""
     tag_rules: tuple[TagRule, ...] = ()
+    """Tags given to articles by path."""
     chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
+    """How articles are cut into chunks."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -228,22 +310,36 @@ class Library:
     """A documented library and its imported versions."""
 
     id: LibraryId
+    """``/owner/repo``."""
     title: str
+    """Display name."""
     source_url: str
+    """Where the repository is cloned from."""
     host: HostKind
+    """What kind of server hosts the repository."""
     description: str = ""
+    """What the library is; from the README unless a user typed it."""
     default_branch: VersionRef | None = None
+    """The repository's default branch, once known."""
     settings: LibrarySettings = field(default_factory=LibrarySettings)
+    """Import settings for every version."""
     versions: frozenset[Version] = field(default_factory=frozenset)
-    # Set once a user typed the field: README imports never touch it again.
+    """The imported versions, one per ref."""
     title_edited: bool = False
+    """A user typed the title: README imports never touch it again."""
     description_edited: bool = False
-    # The version an owner chose as the default (LIB-10); it wins over the rule while imported.
+    """A user typed the description: README imports never touch it again."""
     pinned_version: VersionRef | None = None
-    # What the default version's `context7.json` tells agents (LIB-06); untrusted repository text.
+    """The version an owner chose as the default (LIB-10); it wins over the rule while imported."""
     rules: tuple[str, ...] = ()
+    """What the default version's ``context7.json`` tells agents (LIB-06); untrusted text."""
 
     def __post_init__(self) -> None:
+        """Refuse two versions of one ref.
+
+        Raises:
+            DuplicateVersionRefError: A ref is listed twice.
+        """
         refs = [v.ref for v in self.versions]
         if len(set(refs)) != len(refs):
             duplicate = next(r for r in refs if refs.count(r) > 1)
@@ -255,6 +351,9 @@ class Library:
         The pinned version while it is imported (LIB-10); else the highest stable semver tag;
         else the default branch's version; else the version imported last. Ties go to the larger
         ref so the answer never depends on set order.
+
+        Returns:
+            The default version; ``None`` when nothing is imported.
         """
         if pinned := self._pinned():
             return pinned
@@ -276,10 +375,19 @@ class Library:
         return max(self.versions, key=lambda v: (v.imported_at, v.ref.value))
 
     def default_is_pinned(self) -> bool:
-        """Tell whether the default version is the one an owner pinned, not the rule's choice."""
+        """Tell whether the default version is the one an owner pinned, not the rule's choice.
+
+        Returns:
+            True while the pinned version is imported.
+        """
         return self._pinned() is not None
 
     def _pinned(self) -> Version | None:
+        """Find the pinned version among the imported ones.
+
+        Returns:
+            The pinned version; ``None`` when none is pinned or it is not imported.
+        """
         return next((v for v in self.versions if v.ref == self.pinned_version), None)
 
     def find_version(self, ref: VersionRef) -> Version | None:
@@ -287,6 +395,15 @@ class Library:
 
         Refs are case-sensitive and the match is never fuzzy: a SHA prefix of 7 or more
         characters counts only when exactly one commit version starts with it.
+
+        Args:
+            ref: The ref asked for, or a commit SHA prefix.
+
+        Returns:
+            The version; ``None`` when no ref or commit matches.
+
+        Raises:
+            AmbiguousCommitError: The prefix matches commit versions of different commits.
         """
         exact = next((v for v in self.versions if v.ref == ref), None)
         prefix = ref.value.lower()
@@ -301,6 +418,14 @@ class Library:
 
 
 def _stable_semver(tag: str) -> tuple[int, int, int] | None:
+    """Read a tag as stable semver.
+
+    Args:
+        tag: The tag's name.
+
+    Returns:
+        Major, minor and patch; ``None`` for a pre-release or a tag that is not semver.
+    """
     match = _STABLE_SEMVER.fullmatch(tag)
     return (int(match[1]), int(match[2]), int(match[3])) if match else None
 
@@ -338,19 +463,28 @@ class ManifestEntry:
     """
 
     path: str
+    """Repository path of the article."""
     blob_sha: str
     """Git blob SHA."""
     content_version: int
+    """The importer's content version: a new one stores a new text for the same blob."""
     title: str
+    """The article's title."""
     tags: tuple[str, ...] = ()
     """Imported: from front matter and the library's path rules."""
     front_matter: dict[str, Any] = field(default_factory=dict)
+    """The article's front matter, parsed; untrusted repository data."""
     size: int = 0
     """Bytes of the content."""
     manual_tags: tuple[ManualTag, ...] = ()
     """Set by hand for this path, or for a path it was renamed from (see ``ManualTags``)."""
 
     def __post_init__(self) -> None:
+        """Check the path and the blob SHA.
+
+        Raises:
+            InvalidBlobShaError: The SHA is not a full lower-case object ID.
+        """
         _check_path(self.path)
         if not _OBJECT_ID.fullmatch(self.blob_sha):
             raise InvalidBlobShaError(self.blob_sha)
@@ -368,6 +502,14 @@ class ManifestEntry:
 
 
 def _check_path(path: str) -> None:
+    """Refuse a path that is not relative and normalized.
+
+    Args:
+        path: A repository path.
+
+    Raises:
+        InvalidArticlePathError: It is empty or has an empty, ``.`` or ``..`` part.
+    """
     if not path or any(part in {"", ".", ".."} for part in path.split("/")):
         raise InvalidArticlePathError(path)
 
@@ -381,7 +523,9 @@ class ManualTag:
     """
 
     tag: str
+    """The tag."""
     path: str
+    """The path it was set on: the entry's own, or one it was renamed from."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -394,11 +538,25 @@ class ManualTags:
     """
 
     path: str
+    """The article path tagged."""
     tags: tuple[str, ...]
+    """The tags, normalized and sorted."""
 
     @classmethod
     def of(cls, path: str, tags: Iterable[str]) -> Self:
-        """Normalize what a user typed (sorted, no duplicates); refuse a value that is no tag."""
+        """Normalize what a user typed (sorted, no duplicates); refuse a value that is no tag.
+
+        Args:
+            path: The article path.
+            tags: The tags as typed.
+
+        Returns:
+            The path's manual tags.
+
+        Raises:
+            InvalidManualTagsError: A value is not a valid tag, or there are more than
+                ``MAX_TAGS``.
+        """
         _check_path(path)
         raw = list(tags)
         found = [normalize_tag(tag) for tag in raw]
@@ -415,6 +573,13 @@ class ManualTags:
         ``origins`` maps an article path to the older paths it was renamed from (any number of
         versions back); paths it leaves out only have their own tags. Each tag names the path it
         was set on, so a tag set on two of them is there twice.
+
+        Args:
+            origins: Article path to the older paths it was renamed from.
+            by_path: Manual tags by the path they were set on.
+
+        Returns:
+            Each article path that gets a tag, with its tags sorted.
         """
         reached = {
             path: {ManualTag(tag=t, path=path) for t in tags} for path, tags in by_path.items()
@@ -436,12 +601,20 @@ class ManifestRename:
     """
 
     from_ref: VersionRef
+    """The version ``old_path`` is from."""
     old_path: str
+    """The path in ``from_ref``."""
     new_path: str
+    """The path in this manifest's version."""
     similarity: int
     """Percent of the content kept; 1..100."""
 
     def __post_init__(self) -> None:
+        """Check both paths and the similarity.
+
+        Raises:
+            InvalidSimilarityError: The similarity is not from 1 to ``MAX_SIMILARITY``.
+        """
         _check_path(self.old_path)
         _check_path(self.new_path)
         if not 0 < self.similarity <= MAX_SIMILARITY:
@@ -453,12 +626,22 @@ class ManifestImage:
     """One image of a manifest: the repository path articles reference, and the blob it holds."""
 
     path: str
+    """Repository path of the image."""
     blob_sha: str
     """Git blob SHA: images with the same blob share one stored copy."""
     content_type: str
+    """Media type, one of ``IMAGE_TYPES``."""
     size: int = 0
+    """Bytes of the image."""
 
     def __post_init__(self) -> None:
+        """Check the path, the blob SHA and the media type.
+
+        Raises:
+            InvalidArticlePathError: An empty, ``.``, ``..`` or ``.git`` segment.
+            InvalidBlobShaError: The SHA is not a full lower-case object ID.
+            InvalidImageTypeError: The media type is not one of ``IMAGE_TYPES``.
+        """
         if not self.path or any(part in {"", ".", ".."} for part in self.path.split("/")):
             raise InvalidArticlePathError(self.path)
         if any(part.lower() == ".git" for part in self.path.split("/")):
@@ -501,8 +684,11 @@ class StoredImage:
     """An image as a reader gets it (and as it is stored once per blob SHA)."""
 
     blob_sha: str
+    """Git blob SHA of the image."""
     content_type: str
+    """Media type, one of ``IMAGE_TYPES``."""
     data: bytes = field(repr=False)
+    """The image's bytes."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -514,15 +700,25 @@ class Manifest:
     """
 
     id: ManifestId
+    """The manifest's ID."""
     library: LibraryId
+    """The library."""
     ref: VersionRef
+    """The version's ref."""
     kind: RefKind
+    """Whether the ref is a tag, a branch or a commit."""
     commit_sha: str
+    """The commit the articles are from."""
     created_at: datetime
+    """When it was stored."""
     entries: tuple[ManifestEntry, ...] = ()
+    """Its articles, one per path."""
     images: tuple[ManifestImage, ...] = ()
+    """Its images, one per path."""
     state: ManifestState = ManifestState.PENDING
+    """Pending, active or superseded."""
     superseded_at: datetime | None = None
+    """When a newer manifest replaced it; starts the grace period before collection."""
     renames: tuple[ManifestRename, ...] = ()
     """Files moved since an earlier version; not loaded with the manifest (``find_rename``)."""
     origin: VersionOrigin = VersionOrigin.MANUAL
@@ -532,6 +728,16 @@ class Manifest:
     manifest (``list_instructions``)."""
 
     def __post_init__(self) -> None:
+        """Check the instruction files, the commit SHA, and that no path or rename repeats.
+
+        Raises:
+            InvalidInstructionFileError: More than ``MAX_INSTRUCTION_FILES`` instruction files,
+                or one path twice.
+            InvalidCommitShaError: The SHA is not a full lower-case object ID.
+            DuplicateArticlePathError: An article or image path is listed twice.
+            DuplicateRenameError: An old path is renamed twice.
+            SelfRenameError: A tag's renames come from the tag itself.
+        """
         kept = [instruction.path for instruction in self.instructions]
         if len(kept) > MAX_INSTRUCTION_FILES:
             raise InvalidInstructionFileError(kept[MAX_INSTRUCTION_FILES])
@@ -559,9 +765,13 @@ class StoredArticle:
     """An article as a reader gets it: its manifest entry and the shared content."""
 
     manifest_id: ManifestId
+    """The active manifest it was read from."""
     commit_sha: str
+    """The commit the article is from."""
     entry: ManifestEntry
+    """Its manifest entry."""
     content: str
+    """Its text."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -569,12 +779,24 @@ class GarbageCollected:
     """What a collection removed."""
 
     manifests: int
+    """Manifests removed."""
     contents: int
+    """Article texts removed."""
     images: int = 0
+    """Stored images removed."""
 
 
 def close_paths(wanted: str, paths: Sequence[str], limit: int = MAX_CLOSE_MATCHES) -> list[str]:
-    """Paths an agent may mean by ``wanted``: the same file name elsewhere, then near typos."""
+    """Paths an agent may mean by ``wanted``: the same file name elsewhere, then near typos.
+
+    Args:
+        wanted: The path asked for.
+        paths: The paths that exist.
+        limit: The most paths returned.
+
+    Returns:
+        The close paths, best first, without repeats.
+    """
     name = wanted.rsplit("/", 1)[-1]
     same_name = sorted(p for p in paths if p.rsplit("/", 1)[-1] == name)
     # A typo changes a path a little: skip the (slow) fuzzy match for paths of another size.
