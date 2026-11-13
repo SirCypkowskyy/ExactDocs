@@ -1859,15 +1859,16 @@ export interface components {
             /**
              * Min Chars
              * @description A chunk shorter than this is merged with the next one (the last with the one before), within
-             *     `max_chars`; the text before the first heading is never merged.
+             *     `max_chars`; the text before the first heading is never merged. At most 8,000 when sent: no
+             *     chunk is longer.
              * @default 0
              */
             readonly min_chars: number;
             /**
              * Max Chars
              * @description A chunk longer than this is cut again at its deeper headings; never inside a code block or
-             *     table, so a section without deeper headings stays whole. Null: no bound. At least
-             *     `min_chars`.
+             *     table. Null: no bound. At least `min_chars`, and at most 8,000 when sent: whatever the
+             *     settings, a section longer than 8,000 characters is split between its top-level blocks.
              */
             readonly max_chars?: number | null;
             /**

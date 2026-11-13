@@ -7999,7 +7999,7 @@
             "maximum": 1000000.0,
             "minimum": 0.0,
             "title": "Min Chars",
-            "description": "A chunk shorter than this is merged with the next one (the last with the one before), within\n`max_chars`; the text before the first heading is never merged.",
+            "description": "A chunk shorter than this is merged with the next one (the last with the one before), within\n`max_chars`; the text before the first heading is never merged. At most 8,000 when sent: no\nchunk is longer.",
             "default": 0
           },
           "max_chars": {
@@ -8014,7 +8014,7 @@
               }
             ],
             "title": "Max Chars",
-            "description": "A chunk longer than this is cut again at its deeper headings; never inside a code block or\ntable, so a section without deeper headings stays whole. Null: no bound. At least\n`min_chars`."
+            "description": "A chunk longer than this is cut again at its deeper headings; never inside a code block or\ntable. Null: no bound. At least `min_chars`, and at most 8,000 when sent: whatever the\nsettings, a section longer than 8,000 characters is split between its top-level blocks."
           },
           "chunker": {
             "type": "string",

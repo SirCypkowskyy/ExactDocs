@@ -1588,6 +1588,8 @@ class UpdateLibrarySettingsUseCase:
                 chunker=wanted.chunker,
             )
         )
+        if sent is not None:
+            sent.refuse_sizes_above_section_bound()
         async with self.locks.of(library):
             change, chunking, refs, job_id = await self._update(library, selection, tag_rules, sent)
         return UpdatedLibrarySettings(

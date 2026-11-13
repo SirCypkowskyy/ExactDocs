@@ -203,6 +203,7 @@ class InMemoryChunkRepository:
                     position=row.position,
                     heading_path=chunk.heading_path,
                     occurrence_index=chunk.occurrence_index,
+                    part=chunk.part,
                     content_hash=chunk.content_hash,
                     anchor=chunk.anchor,
                     headings=chunk.headings,
