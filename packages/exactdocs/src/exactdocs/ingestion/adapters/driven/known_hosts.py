@@ -11,6 +11,9 @@ def seed_known_hosts(path: Path) -> None:
 
     Only missing pinned lines are appended, so a user's own entries stay. A pinned host whose
     entry was edited by hand is left for ssh to judge.
+
+    Args:
+        path: The ``known_hosts`` file; it and its folder are created when missing.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     wanted = PINNED

@@ -114,9 +114,18 @@ class SqliteJobRepository:
     """Implements ``ports.driven.JobRepository`` with SQLAlchemy Core on SQLite."""
 
     engine: AsyncEngine
+    """The database the jobs table lives in."""
 
     async def add(self, job: Job) -> None:
-        """Store a new job; the unique index refuses a second unfinished import of a ref."""
+        """Store a new job; the unique index refuses a second unfinished import of a ref.
+
+        Args:
+            job: The new job.
+
+        Raises:
+            VersionImportingError: ``job`` is an unfinished import of a ref that has one.
+            IntegrityError: Another constraint refused the row (a job ID that exists).
+        """
         try:
             async with self.engine.begin() as connection:
                 await connection.execute(insert(jobs).values(**_values(job)))
@@ -126,18 +135,36 @@ class SqliteJobRepository:
             raise
 
     async def save(self, job: Job) -> None:
-        """Replace the stored job that has the same ID."""
+        """Replace the stored job that has the same ID.
+
+        Args:
+            job: The job as it is now.
+        """
         async with self.engine.begin() as connection:
             await connection.execute(update(jobs).where(jobs.c.id == job.id).values(**_values(job)))
 
     async def get(self, job_id: JobId) -> Job | None:
-        """Return the job, or ``None``."""
+        """Return the job, or ``None``.
+
+        Args:
+            job_id: The job's ID.
+
+        Returns:
+            The job, or ``None`` when no row has this ID.
+        """
         async with self.engine.connect() as connection:
             row = (await connection.execute(select(jobs).where(jobs.c.id == job_id))).first()
         return _job(row) if row else None
 
     async def list_for_library(self, library: str) -> Sequence[Job]:
-        """Return the library's jobs, newest first (job IDs are time-ordered)."""
+        """Return the library's jobs, newest first (job IDs are time-ordered).
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            Every job of the library.
+        """
         query = select(jobs).where(jobs.c.library == library).order_by(jobs.c.id.desc())
         async with self.engine.connect() as connection:
             return [_job(row) for row in await connection.execute(query)]
@@ -168,7 +195,11 @@ class SqliteJobRepository:
             return [_job(row) for row in await connection.execute(query)]
 
     async def list_latest(self) -> Sequence[Job]:
-        """Return the newest job of every (library, version), ordered by library and version."""
+        """Return the newest job of every (library, version), ordered by library and version.
+
+        Returns:
+            One job per pair; the jobs without a version count as one pair per library.
+        """
         # One grouped query (job IDs are time-ordered, so max(id) is the newest); NULL versions
         # group together.
         newest = select(func.max(jobs.c.id)).group_by(jobs.c.library, jobs.c.version)
@@ -181,7 +212,12 @@ class SqliteJobRepository:
             return [_job(row) for row in await connection.execute(query)]
 
     async def delete_for(self, library: str, version: str | None = None) -> None:
-        """Delete the library's jobs (only those of ``version`` when given), never a running one."""
+        """Delete the library's jobs (only those of ``version`` when given), never a running one.
+
+        Args:
+            library: The library ID.
+            version: Only the jobs of this ref; ``None`` deletes every job of the library.
+        """
         doomed = delete(jobs).where(jobs.c.library == library, jobs.c.state != JobState.RUNNING)
         if version is not None:
             doomed = doomed.where(jobs.c.version == version)
@@ -189,13 +225,21 @@ class SqliteJobRepository:
             await connection.execute(doomed)
 
     async def list_running(self) -> Sequence[Job]:
-        """Return every job in the ``running`` state."""
+        """Return every job in the ``running`` state.
+
+        Returns:
+            The running jobs, by ID.
+        """
         query = select(jobs).where(jobs.c.state == JobState.RUNNING).order_by(jobs.c.id)
         async with self.engine.connect() as connection:
             return [_job(row) for row in await connection.execute(query)]
 
     async def list_queued(self) -> Sequence[Job]:
-        """Return every job in the ``queued`` state, oldest first."""
+        """Return every job in the ``queued`` state, oldest first.
+
+        Returns:
+            The queued jobs.
+        """
         query = (
             select(jobs)
             .where(jobs.c.state == JobState.QUEUED)
@@ -210,6 +254,12 @@ class SqliteJobRepository:
         One UPDATE ... RETURNING statement, so SQLite's single writer decides the race, also
         between processes sharing the database. An idle poll only reads: it never takes the
         write lock that migrations and progress saves wait for.
+
+        Args:
+            now: The time recorded as the job's ``started_at``.
+
+        Returns:
+            The started job, or ``None`` when no queued job may start.
         """
         async with self.engine.connect() as connection:
             waiting = select(jobs.c.id).where(jobs.c.state == JobState.QUEUED).limit(1)
@@ -235,14 +285,38 @@ class SqliteJobRepository:
 
 
 def _text(moment: datetime | None) -> str | None:
+    """Store a moment as ISO-8601 text with microseconds.
+
+    Args:
+        moment: The moment, or None.
+
+    Returns:
+        The text, or None.
+    """
     return moment.isoformat(timespec="microseconds") if moment else None
 
 
 def _moment(text: str | None) -> datetime | None:
+    """Read a moment stored by ``_text``.
+
+    Args:
+        text: The stored text, or None.
+
+    Returns:
+        The moment, or None.
+    """
     return datetime.fromisoformat(text) if text else None
 
 
 def _values(job: Job) -> Mapping[str, Any]:
+    """Turn a job into the columns of its row.
+
+    Args:
+        job: The job.
+
+    Returns:
+        The column values; problems as JSON, moments as text.
+    """
     return {
         "id": job.id,
         "kind": job.kind,
@@ -270,7 +344,14 @@ def _values(job: Job) -> Mapping[str, Any]:
 
 
 def _problem(raw: Mapping[str, str]) -> FileProblem:
-    """Read a stored problem; a missing or unknown code (older or newer version) never fails."""
+    """Read a stored problem; a missing or unknown code (older or newer version) never fails.
+
+    Args:
+        raw: The problem's JSON object.
+
+    Returns:
+        The problem; a code it lacks is inferred from its text, else ``unreadable``.
+    """
     path, reason = raw["path"], raw["reason"]
     try:
         code = ProblemCode(raw["code"])
@@ -285,7 +366,14 @@ def _problem(raw: Mapping[str, str]) -> FileProblem:
 
 
 def _origin(stored: str) -> VersionOrigin:
-    """Read a stored origin; an unknown one (a newer release) counts as ``manual``: kept."""
+    """Read a stored origin; an unknown one (a newer release) counts as ``manual``: kept.
+
+    Args:
+        stored: The stored text.
+
+    Returns:
+        The origin.
+    """
     try:
         return VersionOrigin(stored)
     except ValueError:
@@ -293,6 +381,17 @@ def _origin(stored: str) -> VersionOrigin:
 
 
 def _job(row: Row) -> Job:
+    """Read a job from its row.
+
+    Args:
+        row: A row of the jobs table.
+
+    Returns:
+        The job, with its problems and its count of front-matter notes.
+
+    Raises:
+        AssertionError: The row has no ``created_at``, which the schema forbids.
+    """
     created_at = _moment(row.created_at)
     if created_at is None:
         message = "created_at is NOT NULL"
@@ -337,10 +436,18 @@ class SqliteCredentialVault:
     """Implements ``ports.driven.CredentialVault``: rows of encrypted credentials."""
 
     engine: AsyncEngine
+    """The database the credentials table lives in."""
     box: SecretBox
+    """Seals credentials before they are stored and opens them when they are read."""
 
     async def save(self, library: str, scope: str, credential: Credential) -> None:
-        """Store the library's credential, replacing the one it had."""
+        """Store the library's credential, replacing the one it had.
+
+        Args:
+            library: The library ID.
+            scope: Where the credential may be offered (``RepositoryUrl.credential_scope``).
+            credential: The token or deploy key.
+        """
         sealed = self.box.seal(dump_credential(library, scope, credential))
         statement = _conflict_insert(self.engine, credentials).values(
             library=library, sealed=sealed
@@ -352,7 +459,19 @@ class SqliteCredentialVault:
             await connection.execute(statement)
 
     async def load(self, library: str, scope: str) -> Credential | None:
-        """Return the credential, ``None`` if there is none; unreadable ones raise."""
+        """Return the credential, ``None`` if there is none; unreadable ones raise.
+
+        Args:
+            library: The library ID.
+            scope: The library's ``credential_scope`` now.
+
+        Returns:
+            The credential, or ``None``.
+
+        Raises:
+            CredentialsRequiredError: The stored credential cannot be opened with the secret
+                key, cannot be parsed, or was stored for another scope.
+        """
         async with self.engine.connect() as connection:
             row = (
                 await connection.execute(
@@ -373,12 +492,23 @@ class SqliteCredentialVault:
             raise CredentialsRequiredError from None
 
     async def delete(self, library: str) -> None:
-        """Forget the library's credential."""
+        """Forget the library's credential.
+
+        Args:
+            library: The library ID.
+        """
         async with self.engine.begin() as connection:
             await connection.execute(delete(credentials).where(credentials.c.library == library))
 
     async def has(self, library: str) -> bool:
-        """Whether a credential row exists; it is not opened."""
+        """Whether a credential row exists; it is not opened.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            True when the library has a row.
+        """
         async with self.engine.connect() as connection:
             row = await connection.execute(
                 select(credentials.c.library).where(credentials.c.library == library)
@@ -405,9 +535,17 @@ class SqliteAutoSyncStore:
     """Implements ``ports.driven.AutoSyncStore``: one row per library checked on its own."""
 
     engine: AsyncEngine
+    """The database the schedules table lives in."""
 
     async def get(self, library: str) -> AutoSync | None:
-        """Return the library's schedule, or ``None``."""
+        """Return the library's schedule, or ``None``.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            The schedule, or ``None`` when the library has none.
+        """
         async with self.engine.connect() as connection:
             row = (
                 await connection.execute(select(auto_syncs).where(auto_syncs.c.library == library))
@@ -415,7 +553,11 @@ class SqliteAutoSyncStore:
         return None if row is None else _auto_sync(row)
 
     async def save(self, auto_sync: AutoSync) -> None:
-        """Store the schedule, replacing the library's earlier one."""
+        """Store the schedule, replacing the library's earlier one.
+
+        Args:
+            auto_sync: The schedule.
+        """
         values = {
             "tag_pattern": auto_sync.tag_pattern,
             "keep_last": auto_sync.keep_last,
@@ -435,12 +577,24 @@ class SqliteAutoSyncStore:
             await connection.execute(statement)
 
     async def delete(self, library: str) -> None:
-        """Forget the library's schedule."""
+        """Forget the library's schedule.
+
+        Args:
+            library: The library ID.
+        """
         async with self.engine.begin() as connection:
             await connection.execute(delete(auto_syncs).where(auto_syncs.c.library == library))
 
     async def record_check(self, read: AutoSync, checked: AutoSync) -> bool:
-        """Compare and set: store the check only on the row the check read."""
+        """Compare and set: store the check only on the row the check read.
+
+        Args:
+            read: The schedule as the check read it.
+            checked: The same schedule with the check's ``checked_at`` and ``last_error``.
+
+        Returns:
+            True when the row still had ``read``'s revision and ``checked_at`` and was updated.
+        """
         before = _text(read.checked_at)
         statement = (
             update(auto_syncs)
@@ -457,13 +611,25 @@ class SqliteAutoSyncStore:
             return (await connection.execute(statement)).rowcount == 1
 
     async def list_all(self) -> Sequence[AutoSync]:
-        """Return every schedule, by library."""
+        """Return every schedule, by library.
+
+        Returns:
+            The schedules, ordered by library ID.
+        """
         async with self.engine.connect() as connection:
             rows = await connection.execute(select(auto_syncs).order_by(auto_syncs.c.library))
             return [_auto_sync(row) for row in rows]
 
 
 def _auto_sync(row: Row) -> AutoSync:
+    """Read a schedule from its row.
+
+    Args:
+        row: A row of the schedules table.
+
+    Returns:
+        The schedule.
+    """
     return AutoSync(
         library=row.library,
         tag_pattern=row.tag_pattern,

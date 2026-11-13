@@ -153,9 +153,14 @@ class _OutputTooBigError(RepositoryUnreachableError):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _Output:
+    """What a finished git process printed, and its exit code."""
+
     stdout: bytes
+    """Standard output, at most the call's cap plus one byte."""
     stderr: str
+    """Standard error, truncated and lower-cased: only classified, never shown."""
     code: int
+    """The exit code; 0 is success."""
 
 
 def _pick_fingerprint(output: str) -> str | None:
@@ -190,8 +195,11 @@ class GitCli:
     """Implements ``ports.driven.GitRemote`` with ``git ls-remote``."""
 
     git: str
+    """Path of the ``git`` binary."""
     timeout: float = TIMEOUT_SECONDS
+    """Seconds one call that is not a fetch may take."""
     max_output: int = MAX_STDOUT
+    """The most bytes ``ls-remote``, a tree listing or a rename listing may print."""
     work_root: Path | None = None
     """Where fetches get their folders; the temp dir when None."""
     known_hosts: Path | None = None
@@ -205,22 +213,25 @@ class GitCli:
     max_fetch_bytes: int = MAX_FETCH_BYTES
     """Of the fetched repository plus its work tree."""
     max_fetch_files: int = MAX_FETCH_FILES
+    """The most files a fetch folder may hold."""
     watch_interval: float = WATCH_SECONDS
-    # Fetches wait here, so long imports cannot take every slot of `slots` from the checks.
+    """Seconds between two measurements of a fetch folder."""
     fetch_slots: asyncio.Semaphore = field(
         default_factory=lambda: asyncio.Semaphore(MAX_FETCHES), compare=False, repr=False
     )
+    """Fetches wait here, so long imports cannot take every slot of ``slots`` from the checks."""
     preview_wait: float = PREVIEW_WAIT_SECONDS
     """How long a preview waits for a slot."""
-    # Previews wait here, apart from imports: a flood of dry runs must not starve the importer.
     preview_slots: asyncio.Semaphore = field(
         default_factory=lambda: asyncio.Semaphore(MAX_PREVIEWS), compare=False, repr=False
     )
-    # Bounds the cost of an unauthenticated endpoint: one process, its helpers and up to
-    # `max_output` bytes each.
+    """Previews wait here, apart from imports: a flood of dry runs must not starve the importer."""
     slots: asyncio.Semaphore = field(
         default_factory=lambda: asyncio.Semaphore(MAX_PROCESSES), compare=False, repr=False
     )
+    """Bounds the cost of an unauthenticated endpoint: each slot is one git process, its helpers
+    and up to ``max_output`` bytes of output.
+    """
 
     @classmethod
     def locate(
@@ -230,7 +241,19 @@ class GitCli:
         work_root: Path | None = None,
         known_hosts: Path | None = None,
     ) -> Self:
-        """Find ``git`` on ``PATH``; raises ``GitNotInstalledError`` when it is missing."""
+        """Find ``git`` on ``PATH``; raises ``GitNotInstalledError`` when it is missing.
+
+        Args:
+            timeout: Seconds one call that is not a fetch may take.
+            work_root: Where fetches get their folders; the temp dir when None.
+            known_hosts: Remembered SSH host keys; none are kept when None.
+
+        Returns:
+            The adapter, with the other settings at their defaults.
+
+        Raises:
+            GitNotInstalledError: There is no ``git`` on ``PATH``.
+        """
         git = shutil.which("git")
         if git is None:
             raise GitNotInstalledError
@@ -242,7 +265,20 @@ class GitCli:
         *patterns: str,
         credential: Credential | None = None,
     ) -> RemoteRefs:
-        """Run ``git ls-remote --symref`` and parse it."""
+        """Run ``git ls-remote --symref`` and parse it.
+
+        Args:
+            repository: The repository.
+            *patterns: Ref patterns to list; every ref when empty.
+            credential: The library's credential, if any.
+
+        Returns:
+            The refs, with the default branch when ``HEAD`` was listed.
+
+        Raises:
+            InvalidRepositoryUrlError: The URL or a pattern would be read as a git option.
+            _failure: git failed; ``_failure`` tells which error its output means.
+        """
         if repository.url.startswith("-") or any(p.startswith("-") for p in patterns):
             raise InvalidRepositoryUrlError(UrlProblem.GIT_OPTION)
         # A local repository owned by someone else (a read-only mount) is refused by git unless
@@ -260,7 +296,15 @@ class GitCli:
         return _parse(output.stdout.decode(errors="replace"))
 
     async def host_key_fingerprint(self, repository: RepositoryUrl) -> str | None:
-        """Return the ``SHA256:`` fingerprint ssh remembered for the host (ed25519 first)."""
+        """Return the ``SHA256:`` fingerprint ssh remembered for the host (ed25519 first).
+
+        Args:
+            repository: The repository.
+
+        Returns:
+            The fingerprint; None when the URL is not SSH, no key is known, or ``ssh-keygen``
+            is missing, fails or takes too long.
+        """
         keygen = shutil.which("ssh-keygen")
         if repository.transport != "ssh" or self.known_hosts is None or keygen is None:
             return None
@@ -298,9 +342,15 @@ class GitCli:
     ) -> AsyncGenerator[Path]:
         """Implement ``GitGateway.fetch`` (see the module docstring).
 
+        Args:
+            repository: The repository.
+            commit_sha: The full SHA of the commit to check out.
+            selection: Which files to check out.
+            refs: Full ref names to try when a bare SHA is refused.
+            credential: The library's credential, if any.
+
         Yields:
             The folder with the checked-out files; it is removed afterwards.
-
         """
         async with self.checkout(
             repository, commit_sha, sparse_patterns(selection), refs, credential
@@ -323,9 +373,16 @@ class GitCli:
         The watchdog's size limit is ``max_bytes`` (plus room for git's own files) instead of
         the whole-repository limit, so a server cannot make a few images cost a repository.
 
+        Args:
+            repository: The repository.
+            commit_sha: The full SHA of the commit to check out.
+            paths: Literal repository paths.
+            max_bytes: The most bytes the files may add up to.
+            refs: Full ref names to try when a bare SHA is refused.
+            credential: The library's credential, if any.
+
         Yields:
             The folder with the checked-out files; it is removed afterwards.
-
         """
         bounded = replace(self, max_fetch_bytes=max_bytes + _GIT_OVERHEAD)
         async with bounded.checkout(
@@ -348,9 +405,18 @@ class GitCli:
     ) -> AsyncGenerator[Path]:
         """Check out the sparse lines of the commit into a folder of its own (see ``fetch``).
 
+        Args:
+            repository: The repository.
+            commit_sha: The full SHA of the commit to check out.
+            sparse: Non-cone sparse-checkout lines.
+            refs: Full ref names to try when a bare SHA is refused.
+            credential: The library's credential, if any.
+
         Yields:
             The folder with the checked-out files; it is removed afterwards.
 
+        Raises:
+            InvalidRepositoryUrlError: The URL, the SHA or a ref could be read as a git option.
         """
         if (
             repository.url.startswith("-")
@@ -379,6 +445,15 @@ class GitCli:
         """Return ``git(*args)``: one isolated step inside ``folder`` under the call's deadline.
 
         A step may pass ``watch_bytes`` to hold ``folder`` to fewer bytes than
+
+        Args:
+            folder: The repository folder every step runs in.
+            url: The repository URL; a ``file:`` one is trusted whoever owns it.
+            deadline: Loop time by which every step must have finished.
+            auth: The credential to offer, if any.
+
+        Returns:
+            The step function.
         ``max_fetch_bytes`` while it runs.
         """
         local = url.lower().startswith("file:")
@@ -386,7 +461,19 @@ class GitCli:
         async def git(
             *args: str, cap: int = _MAX_STEP_OUTPUT, watch_bytes: int | None = None
         ) -> _Output:
-            # every step may authenticate: checkout fetches the blobs it needs lazily
+            """Run one git step in ``folder``.
+
+            Every step may authenticate: checkout fetches the blobs it needs lazily.
+
+            Args:
+                *args: git's arguments.
+                cap: The most bytes it may print.
+                watch_bytes: The most bytes ``folder`` may hold meanwhile; ``max_fetch_bytes``
+                    when None.
+
+            Returns:
+                What git printed, and its exit code.
+            """
             return await self._run(
                 ["-C", str(folder), *args],
                 cap=cap,
@@ -409,6 +496,21 @@ class GitCli:
         deadline: float,
         auth: _Auth | None = None,
     ) -> None:
+        """Fetch the commit into ``folder`` and check out the sparse lines; then measure it.
+
+        Args:
+            folder: An empty folder of the call's own.
+            url: The repository URL.
+            sha: The full SHA of the commit.
+            sparse_lines: Non-cone sparse-checkout lines.
+            refs: Full ref names to try when a bare SHA is refused.
+            deadline: Loop time by which everything must have finished.
+            auth: The credential to offer, if any.
+
+        Raises:
+            _failure: The checkout failed; ``_failure`` tells which error git's output means.
+            RepositoryTooLargeError: The checked-out files are too many or too big.
+        """
         git = self._stepper(folder, url, deadline, auth)
         ssh = repository_url_is_ssh(url)
         await _prepare(git, folder, url, "\n".join(sparse_lines) + "\n", ssh=ssh)
@@ -433,6 +535,19 @@ class GitCli:
         The same hardening, deadline (``fetch_timeout``), size watchdog and process ``slots`` as
         ``fetch``, with ``preview_slots`` of its own. No blob is downloaded and nothing is checked
         out. More than ``max_output`` bytes of paths is an error (``RepositoryUnreachableError``).
+
+        Args:
+            repository: The repository.
+            commit_sha: The full SHA of the commit.
+            refs: Full ref names to try when a bare SHA is refused.
+            credential: The library's credential, if any.
+
+        Returns:
+            The path of every file, links left out, lossy-decoded.
+
+        Raises:
+            TreeTooLargeError: The listing is longer than ``max_output``.
+            _failure: ``ls-tree`` failed; ``_failure`` tells which error its output means.
         """
         async with self._trees(repository, commit_sha, refs, credential) as trees:
             try:
@@ -462,6 +577,22 @@ class GitCli:
         then read with ``cat-file`` (the partial clone fetches only it); its output is capped at
         ``max_bytes`` and the download by a watchdog limit of what is already there plus
         ``max_bytes`` and git's overhead, so a huge file costs at most that much.
+
+        Args:
+            repository: The repository.
+            commit_sha: The full SHA of the commit.
+            path: A file name at the repository's root.
+            max_bytes: The most the file may be.
+            refs: Full ref names to try when a bare SHA is refused.
+            credential: The library's credential, if any.
+
+        Returns:
+            The file's bytes; empty when the commit has no such file; a ``problem`` when it is
+            not a regular file or is larger than ``max_bytes``.
+
+        Raises:
+            ValueError: ``path`` is not a plain file name at the root.
+            _failure: git failed; ``_failure`` tells which error its output means.
         """
         if not _ROOT_NAME.fullmatch(path):
             message = f"not a plain root file name: {path!r}"
@@ -561,9 +692,18 @@ class GitCli:
 
         A preview slot, or with ``imports`` one of the imports' ``fetch_slots``.
 
+        Args:
+            repository: The repository.
+            commit_sha: The full SHA of the commit.
+            refs: Full ref names to try when a bare SHA is refused.
+            credential: The library's credential, if any.
+            imports: Take an import's fetch slot instead of a preview slot.
+
         Yields:
             The fetched folder (removed afterwards) and how to run git in it.
 
+        Raises:
+            InvalidRepositoryUrlError: The URL, the SHA or a ref could be read as a git option.
         """
         if (
             repository.url.startswith("-")
@@ -589,7 +729,14 @@ class GitCli:
 
     @asynccontextmanager
     async def _preview_slot(self) -> AsyncGenerator[None]:
-        """Hold a preview slot; ``PreviewBusyError`` when none is free within ``preview_wait``."""
+        """Hold a preview slot; ``PreviewBusyError`` when none is free within ``preview_wait``.
+
+        Yields:
+            Nothing; the slot is held until the block ends.
+
+        Raises:
+            PreviewBusyError: No slot was free in time.
+        """
         try:
             async with asyncio.timeout(self.preview_wait):
                 await self.preview_slots.acquire()
@@ -621,6 +768,20 @@ class GitCli:
         limit squared; exact renames are still found). The rename limit bounds CPU, not
         downloads: a hostile repository with huge added and deleted Markdown files is stopped by
         the size watchdog and the deadline.
+
+        Args:
+            repository: The repository.
+            old_sha: The commit the version served before.
+            new_sha: The commit it serves now.
+            refs: Full ref names to try when a bare SHA is refused.
+            credential: The library's credential, if any.
+
+        Returns:
+            The Markdown renames, at most ``MAX_RENAMES``.
+
+        Raises:
+            InvalidRepositoryUrlError: The URL, a SHA or a ref could be read as a git option.
+            _failure: ``diff-tree`` failed; ``_failure`` tells which error its output means.
         """
         if (
             repository.url.startswith("-")
@@ -673,9 +834,22 @@ class GitCli:
         (``RepositoryTooLargeError``). ``auth`` is made
         available to this one process, in its private directory, and gone when it ends.
 
-        Raises ``RepositoryUnreachableError`` when it runs out of time or prints more than
-        ``cap`` bytes (the process group is killed at once). stderr is truncated and lower-cased
-        for classification only.
+        Args:
+            args: git's arguments (``-c credential.helper=`` comes first).
+            cap: The most bytes it may print on stdout.
+            limit: Seconds it may take; ``timeout`` when None.
+            deadline: Loop time by which it must have finished; replaces ``limit``.
+            trust_local: Let git read local repositories owned by another user.
+            watch: A folder whose size is limited while git runs.
+            watch_bytes: The most bytes ``watch`` may hold; ``max_fetch_bytes`` when None.
+            auth: The credential to offer, if any.
+
+        Returns:
+            What git printed, and its exit code.
+
+        Raises:
+            RepositoryUnreachableError: The deadline had passed before git could start. Running
+                out of time or printing more than ``cap`` bytes raises it too.
         """
         async with self.slots:
             seconds = self.timeout if limit is None else limit
@@ -710,6 +884,26 @@ class GitCli:
         watch_bytes: int | None = None,
         auth: _Auth | None = None,
     ) -> _Output:
+        """Start git in ``home``, read its output under the time limit, then kill its group.
+
+        Args:
+            args: git's arguments.
+            cap: The most bytes it may print on stdout.
+            limit: Seconds it may take.
+            home: The call's private directory: git's home and working directory.
+            trust_local: Let git read local repositories owned by another user.
+            watch: A folder whose size is limited while git runs.
+            watch_bytes: The most bytes ``watch`` may hold; ``max_fetch_bytes`` when None.
+            auth: The credential to offer, if any.
+
+        Returns:
+            What git printed, and its exit code.
+
+        Raises:
+            RepositoryUnreachableError: git did not finish within ``limit``.
+            RepositoryTooLargeError: The watchdog found too many bytes or files in ``watch``.
+            _OutputTooBigError: git printed more than ``cap`` bytes.
+        """
         max_bytes = self.max_fetch_bytes if watch_bytes is None else watch_bytes
         environment = _environment(home, self.known_hosts)
         if auth is not None:
@@ -749,7 +943,13 @@ class GitCli:
         return _Output(stdout=out, stderr=err.decode(errors="replace").lower(), code=code)
 
     async def _guard(self, process: Process, folder: Path, max_bytes: int) -> None:
-        """Return (after killing git) as soon as ``folder`` holds too many bytes or files."""
+        """Return (after killing git) as soon as ``folder`` holds too many bytes or files.
+
+        Args:
+            process: The git process.
+            folder: The folder to measure.
+            max_bytes: The most bytes it may hold.
+        """
         while True:
             await asyncio.sleep(self.watch_interval)
             size, count = await asyncio.to_thread(_measure, folder)
@@ -763,9 +963,13 @@ class _Trees:
     """A blob-less fetch of one commit: its folder, and ``git`` steps under its deadline."""
 
     git: Callable[..., Awaitable[_Output]]
+    """Runs one git step in the folder, under the fetch's deadline."""
     ssh: bool
+    """Whether the repository is reached over ssh."""
     folder: Path
+    """The fetch's folder."""
     deadline: float
+    """Loop time by which every step must have finished."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -778,14 +982,30 @@ class MissingGit:
         *patterns: str,
         credential: Credential | None = None,
     ) -> RemoteRefs:
-        """Refuse with ``GitNotInstalledError``."""
+        """Refuse with ``GitNotInstalledError``.
+
+        Args:
+            repository: The repository.
+            *patterns: Ref patterns.
+            credential: The library's credential, if any.
+
+        Returns:
+            Never: ``_git_missing`` raises.
+        """
         del repository, patterns, credential
-        raise GitNotInstalledError
+        return await _git_missing()
 
     async def host_key_fingerprint(self, repository: RepositoryUrl) -> str | None:
-        """Refuse with ``GitNotInstalledError``."""
+        """Refuse with ``GitNotInstalledError``.
+
+        Args:
+            repository: The repository.
+
+        Returns:
+            Never: ``_git_missing`` raises.
+        """
         del repository
-        raise GitNotInstalledError
+        return await _git_missing()
 
     def fetch(
         self,
@@ -796,7 +1016,18 @@ class MissingGit:
         refs: Sequence[str] = (),
         credential: Credential | None = None,
     ) -> AbstractAsyncContextManager[Path]:
-        """Refuse with ``GitNotInstalledError``."""
+        """Refuse with ``GitNotInstalledError``.
+
+        Args:
+            repository: The repository.
+            commit_sha: The commit.
+            selection: Which files to check out.
+            refs: Full ref names.
+            credential: The library's credential, if any.
+
+        Returns:
+            A context manager that raises ``GitNotInstalledError`` when entered.
+        """
         del repository, commit_sha, selection, refs, credential
         return _no_git()
 
@@ -808,9 +1039,19 @@ class MissingGit:
         refs: Sequence[str] = (),
         credential: Credential | None = None,
     ) -> list[str]:
-        """Refuse with ``GitNotInstalledError``."""
+        """Refuse with ``GitNotInstalledError``.
+
+        Args:
+            repository: The repository.
+            commit_sha: The commit.
+            refs: Full ref names.
+            credential: The library's credential, if any.
+
+        Returns:
+            Never: ``_git_missing`` raises.
+        """
         del repository, commit_sha, refs, credential
-        raise GitNotInstalledError
+        return await _git_missing()
 
     async def read_file(
         self,
@@ -822,9 +1063,21 @@ class MissingGit:
         refs: Sequence[str] = (),
         credential: Credential | None = None,
     ) -> FetchedFile:
-        """Refuse with ``GitNotInstalledError``."""
+        """Refuse with ``GitNotInstalledError``.
+
+        Args:
+            repository: The repository.
+            commit_sha: The commit.
+            path: A root file name.
+            max_bytes: The most the file may be.
+            refs: Full ref names.
+            credential: The library's credential, if any.
+
+        Returns:
+            Never: ``_git_missing`` raises.
+        """
         del repository, commit_sha, path, max_bytes, refs, credential
-        raise GitNotInstalledError
+        return await _git_missing()
 
     async def renames(
         self,
@@ -835,9 +1088,20 @@ class MissingGit:
         refs: Sequence[str] = (),
         credential: Credential | None = None,
     ) -> Sequence[GitRename]:
-        """Refuse with ``GitNotInstalledError``."""
+        """Refuse with ``GitNotInstalledError``.
+
+        Args:
+            repository: The repository.
+            old_sha: The older commit.
+            new_sha: The newer commit.
+            refs: Full ref names.
+            credential: The library's credential, if any.
+
+        Returns:
+            Never: ``_git_missing`` raises.
+        """
         del repository, old_sha, new_sha, refs, credential
-        raise GitNotInstalledError
+        return await _git_missing()
 
     def fetch_files(
         self,
@@ -849,7 +1113,19 @@ class MissingGit:
         refs: Sequence[str] = (),
         credential: Credential | None = None,
     ) -> AbstractAsyncContextManager[Path]:
-        """Refuse with ``GitNotInstalledError``."""
+        """Refuse with ``GitNotInstalledError``.
+
+        Args:
+            repository: The repository.
+            commit_sha: The commit.
+            paths: Literal repository paths.
+            max_bytes: The most bytes the files may add up to.
+            refs: Full ref names.
+            credential: The library's credential, if any.
+
+        Returns:
+            A context manager that raises ``GitNotInstalledError`` when entered.
+        """
         del repository, commit_sha, paths, max_bytes, refs, credential
         return _no_git()
 
@@ -891,7 +1167,10 @@ async def _entries(
         literal: ``:(literal)`` pathspecs.
 
     Returns:
-        The entries found; git's own failure raises as ``_failure`` says.
+        The entries found.
+
+    Raises:
+        _failure: ``ls-tree`` failed; ``_failure`` tells which error its output means.
     """
     out = await trees.git("ls-tree", "-z", "--full-tree", commit_sha, "--", *literal)
     if out.code:
@@ -949,6 +1228,9 @@ async def _blob(trees: _Trees, blob: str, max_bytes: int) -> FetchedFile:
 
     Returns:
         Its bytes, or why not.
+
+    Raises:
+        _failure: ``cat-file`` failed; ``_failure`` tells which error its output means.
     """
     used, _ = await asyncio.to_thread(_measure, trees.folder)
     try:
@@ -973,6 +1255,14 @@ async def _git_missing() -> Never:
 
 @asynccontextmanager
 async def _no_git() -> AsyncGenerator[Path]:
+    """Refuse on entry: there is no ``git``.
+
+    Yields:
+        Never.
+
+    Raises:
+        GitNotInstalledError: Always, when entered.
+    """
     raise GitNotInstalledError
     yield  # pragma: no cover
 
@@ -980,7 +1270,18 @@ async def _no_git() -> AsyncGenerator[Path]:
 async def _prepare(
     git: Callable[..., Awaitable[_Output]], folder: Path, url: str, sparse: str, *, ssh: bool
 ) -> None:
-    """Make ``folder`` an empty repository that fetches commits without blobs from ``url``."""
+    """Make ``folder`` an empty repository that fetches commits without blobs from ``url``.
+
+    Args:
+        git: Runs one git step in ``folder``.
+        folder: The empty folder.
+        url: The repository URL, written into the config as ``origin``.
+        sparse: The sparse-checkout file's text.
+        ssh: Whether the repository is reached over ssh.
+
+    Raises:
+        _failure: ``git init`` failed; ``_failure`` tells which error its output means.
+    """
     init = await git("init", "-q", "--template=")
     if init.code:
         raise _failure(init.stderr, ssh=ssh)
@@ -990,7 +1291,18 @@ async def _prepare(
 async def _fetch_commit(
     git: Callable[..., Awaitable[_Output]], sha: str, refs: Sequence[str], *, ssh: bool
 ) -> None:
-    """Fetch ``sha`` alone (depth 1, no blobs); ``refs`` are tried if the server refuses a SHA."""
+    """Fetch ``sha`` alone (depth 1, no blobs); ``refs`` are tried if the server refuses a SHA.
+
+    Args:
+        git: Runs one git step in the repository folder.
+        sha: The full SHA of the commit.
+        refs: Full ref names to try when a bare SHA is refused.
+        ssh: Whether the repository is reached over ssh.
+
+    Raises:
+        _failure: A fetch failed for another reason than an unknown object.
+        CommitUnavailableError: Neither the SHA nor any ref brought that commit.
+    """
     for target in (sha, *refs):
         out = await git(
             "fetch", "-q", "--depth=1", "--filter=blob:none", "--no-tags",
@@ -1006,7 +1318,14 @@ async def _fetch_commit(
 
 
 def _parse_renames(output: bytes) -> list[GitRename]:
-    """Parse ``diff-tree -z --name-status``: NUL-separated ``R<score>``, old path, new path."""
+    """Parse ``diff-tree -z --name-status``: NUL-separated ``R<score>``, old path, new path.
+
+    Args:
+        output: What ``diff-tree`` printed.
+
+    Returns:
+        The renames whose score is valid, at most ``MAX_RENAMES``.
+    """
     fields = output.split(b"\0")
     renames: list[GitRename] = []
     for index in range(0, len(fields) - 2, 3):
@@ -1027,6 +1346,13 @@ def _parse_renames(output: bytes) -> list[GitRename]:
 
 
 def _write_config(folder: Path, url: str, sparse: str) -> None:
+    """Write the repository's config, sparse-checkout file and attributes.
+
+    Args:
+        folder: The repository folder.
+        url: The repository URL.
+        sparse: The sparse-checkout file's text.
+    """
     git_dir = folder / ".git"
     quoted = json.dumps(url, ensure_ascii=False)  # git unescapes \\ and \" in quoted values
     config = _CONFIG.format(null=os.devnull, url=quoted)
@@ -1037,7 +1363,14 @@ def _write_config(folder: Path, url: str, sparse: str) -> None:
 
 
 def _tree_files(output: bytes) -> list[str]:
-    """Parse ``ls-tree -r -z`` (NUL-ended entries ``mode type sha TAB path``): blobs only."""
+    """Parse ``ls-tree -r -z`` (NUL-ended entries ``mode type sha TAB path``): blobs only.
+
+    Args:
+        output: What ``ls-tree`` printed.
+
+    Returns:
+        The paths of the regular files and executables, lossy-decoded.
+    """
     paths = []
     for entry in output.split(b"\0"):
         meta, _, path = entry.partition(b"\t")
@@ -1051,11 +1384,26 @@ def _tree_files(output: bytes) -> list[str]:
 
 
 def _make_folder(work_root: Path | None) -> str:
+    """Create a fetch folder.
+
+    Args:
+        work_root: Where to create it; the temp dir when None.
+
+    Returns:
+        The new folder's path.
+    """
     return tempfile.mkdtemp(prefix=_PREFIX, dir=work_root)
 
 
 def _valid_ref(ref: str) -> bool:
-    """Tell whether this is a full ref name that cannot be read as a refspec."""
+    """Tell whether this is a full ref name that cannot be read as a refspec.
+
+    Args:
+        ref: A ref name such as ``refs/tags/v1``.
+
+    Returns:
+        True when git can take it as a fetch target safely.
+    """
     return bool(
         _REF.fullmatch(ref)
         and ".." not in ref
@@ -1074,6 +1422,10 @@ def sweep_stale_fetches(
     itself, a symlinked ``work_root`` or a symlink inside it. The data directory must have
     exactly one job runner: a second one could not tell another runner's live folder from a
     stale one beyond its age.
+
+    Args:
+        work_root: The folder fetches are made in.
+        older_than: Seconds since a folder was last touched before it counts as stale.
     """
     if work_root.is_symlink() or not work_root.is_dir():
         return
@@ -1085,7 +1437,14 @@ def sweep_stale_fetches(
 
 
 def _measure(folder: Path) -> tuple[int, int]:
-    """Total bytes and number of files below ``folder`` (links are not followed)."""
+    """Total bytes and number of files below ``folder`` (links are not followed).
+
+    Args:
+        folder: The folder to measure.
+
+    Returns:
+        The bytes and the count of files.
+    """
     size = count = 0
     for root, _, names in os.walk(folder):
         for name in names:
@@ -1102,6 +1461,12 @@ def sparse_patterns(selection: PathSelection) -> list[str]:
     line wins, as with ``PathSelection``), and the root ``context7.json`` at the very end.
     Over-fetching is harmless because the importer applies ``PathSelection.selects`` again; a
     folder pattern brings its non-article files too.
+
+    Args:
+        selection: The library's paths.
+
+    Returns:
+        The sparse-checkout lines, in order.
     """
     # ponytail: no include means "all articles", fetched as every file; narrow it if repos with
     # big non-doc trees show up.
@@ -1121,6 +1486,12 @@ def _literal(path: str) -> str | None:
 
     Glob characters are escaped, so a hostile file name cannot widen the checkout; a path with
     a control character (a newline would start a new pattern) is refused.
+
+    Args:
+        path: A repository path.
+
+    Returns:
+        The line, or ``None`` for an empty path or one with a control character.
     """
     if not path or not path.isprintable():
         return None
@@ -1132,6 +1503,12 @@ def _anchored(pattern: str) -> list[str] | None:
     """Expand ``{a,b}`` choices, escape ``[`` and anchor at the repository root.
 
     Returns ``None`` when there are too many choices, ``[]`` for a pattern matching nothing.
+
+    Args:
+        pattern: A path pattern of the selection.
+
+    Returns:
+        The sparse-checkout lines, ``None`` or ``[]``.
     """
     match = re.search(r"\{([^{}]*)\}", pattern)
     if match is None:
@@ -1152,11 +1529,21 @@ class _Auth:
     """A credential and the only host it may be offered to."""
 
     credential: Credential = field(repr=False)
+    """The token or deploy key; never printed."""
     scope: str
     """`scheme://host[:port]`, lower-case."""
 
     @classmethod
     def of(cls, repository: RepositoryUrl, credential: Credential | None) -> Self | None:
+        """Pair a credential with the repository's scope.
+
+        Args:
+            repository: The repository.
+            credential: The library's credential, if any.
+
+        Returns:
+            The pair, or None without a credential.
+        """
         return (
             None
             if credential is None
@@ -1165,6 +1552,15 @@ class _Auth:
 
 
 def _ssh_command(known_hosts: Path | None, key: str | None = None) -> str:
+    """Build the ``GIT_SSH_COMMAND`` that checks host keys against ``known_hosts``.
+
+    Args:
+        known_hosts: Remembered host keys; none are kept when None.
+        key: A private key file to authenticate with; no key authentication when None.
+
+    Returns:
+        The command line, shell-quoted.
+    """
     kept = ["-o", "UserKnownHostsFile=" + str(known_hosts or os.devnull)]
     if key is None:
         kept += ["-o", "PubkeyAuthentication=no"]
@@ -1174,7 +1570,13 @@ def _ssh_command(known_hosts: Path | None, key: str | None = None) -> str:
 
 
 def _write_private(path: Path, text: str, mode: int) -> None:
-    """Create ``path`` (it must not exist) with ``mode`` from the start, never wider."""
+    """Create ``path`` (it must not exist) with ``mode`` from the start, never wider.
+
+    Args:
+        path: The new file; a link there is not followed.
+        text: Its content.
+        mode: Its permission bits.
+    """
     descriptor = os.open(
         path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), mode
     )
@@ -1183,7 +1585,14 @@ def _write_private(path: Path, text: str, mode: int) -> None:
 
 
 def _offer(environment: dict[str, str], home: str, auth: _Auth, known_hosts: Path | None) -> None:
-    """Make the credential available to one git process through its environment and ``home``."""
+    """Make the credential available to one git process through its environment and ``home``.
+
+    Args:
+        environment: The process's environment; changed in place.
+        home: The call's private directory, where the credential's files go.
+        auth: The credential and its scope.
+        known_hosts: Remembered host keys, for a deploy key's ssh command.
+    """
     credential = auth.credential
     if isinstance(credential, AccessToken):
         script = Path(home, _ASKPASS_FILE)
@@ -1199,6 +1608,15 @@ def _offer(environment: dict[str, str], home: str, auth: _Auth, known_hosts: Pat
 
 
 def _environment(home: str, known_hosts: Path | None = None) -> dict[str, str]:
+    """Build git's environment from scratch: a private home, no config, no prompts.
+
+    Args:
+        home: The call's private directory.
+        known_hosts: Remembered host keys; none are kept when None.
+
+    Returns:
+        The environment; of ours only ``PATH``, proxy and certificate variables are kept.
+    """
     kept = {k: v for k, v in os.environ.items() if k.lower() in _PASSTHROUGH}
     return {
         **kept,
@@ -1219,6 +1637,14 @@ async def _read(process: Process, stream: asyncio.StreamReader | None, cap: int 
     """Read to the end keeping at most ``cap + 1`` bytes (``MAX_STDERR`` if no cap).
 
     Going over ``cap`` kills the process group, so a server that streams forever is cut off at
+
+    Args:
+        process: The process, killed when it prints too much.
+        stream: Its stdout or stderr.
+        cap: The most bytes it may print; None keeps ``MAX_STDERR`` bytes and never kills.
+
+    Returns:
+        What was kept.
     once instead of when the timeout fires.
     """
     limit = MAX_STDERR if cap is None else cap
@@ -1239,6 +1665,9 @@ async def _settle(process: Process) -> None:
     to run again. ``wait()`` itself only returns once the pipes are closed if the process was
     still running when it was called, so it sits inside the bound too: a helper that left the
     process group could keep a pipe open for as long as it lives. The child is reaped either
+
+    Args:
+        process: The process.
     way; only its transport then closes later, when that helper exits.
     """
     with suppress(TimeoutError):
@@ -1250,6 +1679,11 @@ async def _settle(process: Process) -> None:
 
 
 def _kill_group(process: Process) -> None:
+    """Kill the process and every helper in its process group (the process alone on Windows).
+
+    Args:
+        process: The process.
+    """
     with suppress(ProcessLookupError):
         if sys.platform == "win32":
             process.kill()
@@ -1258,7 +1692,14 @@ def _kill_group(process: Process) -> None:
 
 
 def repository_url_is_ssh(url: str) -> bool:
-    """Tell whether git reaches this URL over ssh (``ssh://`` or scp-like ``user@host:path``)."""
+    """Tell whether git reaches this URL over ssh (``ssh://`` or scp-like ``user@host:path``).
+
+    Args:
+        url: A repository URL.
+
+    Returns:
+        True for ``ssh://`` and for anything without ``://``.
+    """
     return "://" not in url or url.lower().startswith("ssh://")
 
 
@@ -1272,6 +1713,15 @@ def _failure(
     | RepositoryAuthRequiredError
     | HostKeyChangedError
 ):
+    """Tell which error git's stderr means.
+
+    Args:
+        stderr: git's lower-cased stderr.
+        ssh: Whether git talked ssh; only then can the host key have changed.
+
+    Returns:
+        The error to raise; ``RepositoryUnreachableError`` when nothing more specific fits.
+    """
     # Only ssh's own words count: an HTTP server could print them in a "remote:" message.
     if ssh and _HOST_KEY_CHANGED.search(stderr):
         return HostKeyChangedError()
@@ -1283,7 +1733,14 @@ def _failure(
 
 
 def _parse(output: str) -> RemoteRefs:
-    """Parse `--symref` output: `ref: refs/heads/main<TAB>HEAD`, then `<sha><TAB><ref>` lines."""
+    """Parse `--symref` output: `ref: refs/heads/main<TAB>HEAD`, then `<sha><TAB><ref>` lines.
+
+    Args:
+        output: What ``ls-remote --symref`` printed.
+
+    Returns:
+        The refs, and the default branch when ``HEAD`` points at one.
+    """
     default_branch = None
     refs: list[RemoteRef] = []
     for line in output.splitlines():
