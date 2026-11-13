@@ -75,3 +75,1071 @@ cases:
   expected_output:
     hits: []
     reference: The Electron v30.0.0 documentation has no ImageView.
+
+- name: 'electron v30.0.0: Inside a sandboxed preload script, what can require() actually load?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'Inside a sandboxed preload script, what can require() actually load?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v30.0.0, article: docs/tutorial/sandbox.md, heading_path: [Process Sandboxing, Sandbox behavior in Electron, Preload scripts]}
+    reference: >-
+      A polyfilled require that loads only the electron module (contextBridge, crashReporter,
+      ipcRenderer, nativeImage, webFrame, webUtils) and the events, timers and url built-ins (also as
+      node imports); Buffer, process, setImmediate and clearImmediate are polyfilled as globals.
+    facts:
+    - require can load electron's renderer modules such as contextBridge and ipcRenderer
+    - only the events, timers and url Node.js built-ins can be required
+    - Buffer, process, setImmediate and clearImmediate are available as polyfilled globals
+    - the preload cannot be split into CommonJS modules, so a bundler is needed
+
+- name: 'electron v38.0.0: How do I copy one webContents'' back/forward history into a new window?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'How do I copy one webContents'' back/forward history into a new window?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/api/navigation-history.md, heading_path: ['Class: NavigationHistory', Instance Methods, navigationHistory.restore(options)]}
+    - {version: v38.0.0, article: docs/tutorial/navigation-history.md, heading_path: [Navigation History, Restoring history]}
+    reference: >-
+      Read the entries with `navigationHistory.getAllEntries()` (and the position with
+      `getActiveIndex()`), then call `navigationHistory.restore({ entries, index })` on the new
+      window's webContents, ideally before any `loadURL()` or `loadFile()`; it returns a Promise.
+    facts:
+    - restore takes entries from a prior getAllEntries() call and an optional index
+    - without an index the last (newest) entry is loaded
+    - it should be called before loadURL() or loadFile()
+    - it returns a Promise that resolves when the selected entry has finished loading
+
+- name: 'electron v45.3.2: How do I wipe the saved bounds of a window that uses state persistence?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'How do I wipe the saved bounds of a window that uses state persistence?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v45.3.2, article: docs/api/base-window.md, heading_path: [BaseWindow, 'Class: BaseWindow', Static Methods, BaseWindow.clearPersistedState(name)]}
+    - {version: v45.3.2, article: docs/tutorial/window-state-persistence.md, heading_path: [Window State Persistence, Usage, Clearing persisted state]}
+    reference: >-
+      Call the static `BaseWindow.clearPersistedState(name)` (also on `BrowserWindow`)
+      with the window's `name`; it removes the saved bounds, display mode and work area, and logs a
+      warning if the name is empty or no state exists.
+    facts:
+    - the method is the static BaseWindow.clearPersistedState(name)
+    - it takes the window name given in the constructor options
+    - it removes persisted bounds, display mode and work area information
+    - it logs a warning when the name is empty or no saved state exists
+
+- name: 'electron v38.0.0: What stdio settings and process name options does utilityProcess.fork take?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'What stdio settings and process name options does utilityProcess.fork take?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/api/utility-process.md, heading_path: [utilityProcess, Methods, 'utilityProcess.fork(modulePath[, args][, options])']}
+    reference: '`stdio` configures stdout and stderr as `pipe`, `ignore` or `inherit` (default
+      `inherit`); stdin can only be `ignore`. `serviceName` names the process in `app.getAppMetrics`
+      and `child-process-gone` (default `Node Utility Process`). fork can only be called after the
+      app is ready.'
+    facts:
+    - stdio defaults to inherit and accepts pipe, ignore or inherit for stdout and stderr
+    - configuring stdin to anything other than ignore is an error
+    - serviceName defaults to Node Utility Process
+    - utilityProcess.fork can only be called after the app ready event
+
+- name: 'electron v38.0.0: What value makes -electron-corner-smoothing match the operating system?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'What value makes -electron-corner-smoothing match the operating system?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/api/corner-smoothing-css.md, heading_path: ['CSS Rule: -electron-corner-smoothing', Matching the system UI]}
+    reference: >-
+      Use the `system-ui` keyword; it resolves to 60% smoothing on macOS and 0% on Windows
+      and Linux.
+    facts:
+    - the system-ui keyword matches the OS design language
+    - system-ui is 60% on macOS
+    - system-ui is 0% on Windows and Linux
+
+- name: 'electron v45.3.2: Can autoUpdater on macOS download a binary patch instead of the whole ZIP?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'Can autoUpdater on macOS download a binary patch instead of the whole ZIP?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v45.3.2, article: docs/api/auto-updater.md, heading_path: [autoUpdater, Platform Notices, macOS]}
+    reference: >-
+      Yes. An update entry may carry `delta` with `from_version`, `url`, `sha256` and
+      `size`; when `from_version` equals the running app's `CFBundleVersion` the patch is downloaded
+      and applied instead of the ZIP, falling back to the ZIP on any failure. Patches are made with
+      Sparkle's `BinaryDelta create`.
+    facts:
+    - an update entry can carry a delta object with from_version, url, sha256 and size
+    - the patch is used only when from_version equals the running app's CFBundleVersion
+    - on any failure the full ZIP is downloaded in the same check
+    - patches are created with Sparkle's BinaryDelta create
+
+- name: 'electron v38.0.0: Are cookies encrypted on disk by default, and which fuse changes that?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'Are cookies encrypted on disk by default, and which fuse changes that?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/tutorial/fuses.md, heading_path: [Electron Fuses, Current Fuses, cookieEncryption]}
+    reference: >-
+      No. The `cookieEncryption` fuse (`FuseV1Options.EnableCookieEncryption`) is disabled
+      by default, so Chromium's cookie database stores values in plaintext; enabling it encrypts them
+      with OS-level keys, and it is a one-way transition.
+    facts:
+    - the cookieEncryption fuse is disabled by default
+    - its @electron/fuses option is FuseV1Options.EnableCookieEncryption
+    - enabling it is one-way; disabling it again leaves the cookie store corrupt
+
+- name: 'electron v30.0.0: What does requestSingleInstanceLock return and what should my app do with it?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'What does requestSingleInstanceLock return and what should my app do with it?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v30.0.0, article: docs/api/app.md, heading_path: [app, Methods, 'app.requestSingleInstanceLock([additionalData])']}
+    reference: >-
+      It returns a boolean, `true` when this process is the primary instance and should keep
+      loading, `false` when another instance holds the lock and this one should quit at once. It can
+      pass `additionalData` to the first instance.
+    facts:
+    - it returns true when this process obtained the lock and is the primary instance
+    - it returns false when another instance holds the lock, and the app should quit immediately
+    - an optional additionalData object is sent to the first instance
+
+- name: 'electron v45.3.2: What does safeStorage.decryptStringAsync resolve with?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'What does safeStorage.decryptStringAsync resolve with?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v45.3.2, article: docs/api/safe-storage.md, heading_path: [safeStorage, Methods, safeStorage.decryptStringAsync(encrypted)]}
+    reference: >-
+      It takes the encrypted Buffer and resolves with an object holding `result`, the
+      decrypted string, and `shouldReEncrypt`, which says whether the data should be re-encrypted
+      because the key was rotated or a new key is available.
+    facts:
+    - it takes the encrypted data as a Buffer
+    - it resolves with an object whose result field is the decrypted string
+    - shouldReEncrypt says whether the data should be re-encrypted after key rotation
+
+- name: 'electron v45.3.2: How do I make my main window reopen with the same size and position after a restart?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'How do I make my main window reopen with the same size and position after a restart?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v45.3.2, article: docs/tutorial/window-state-persistence.md, heading_path: [Window State Persistence, Usage, Basic usage]}
+    - {version: v45.3.2, article: docs/tutorial/window-state-persistence.md, heading_path: [Window State Persistence, Usage, Selective persistence]}
+    reference: >-
+      Give the window a unique `name` and set `windowStatePersistence: true` in its constructor
+      options; Electron then restores position, size and display mode on creation and saves them on
+      every change. Pass `{ bounds, displayMode }` to persist only part of it.
+    facts:
+    - set windowStatePersistence to true in the window constructor options
+    - the window needs a unique name, which identifies the saved state
+    - position, size and display mode are restored on creation and saved when they change
+    - an object with bounds and displayMode chooses what is persisted
+
+- name: 'electron v38.0.0: How do I wire up back and forward buttons for a BrowserWindow?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'How do I wire up back and forward buttons for a BrowserWindow?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/tutorial/navigation-history.md, heading_path: [Navigation History, Navigating through history]}
+    - {version: v38.0.0, article: docs/tutorial/navigation-history.md, heading_path: [Navigation History, Accessing NavigationHistory]}
+    reference: >-
+      Take `navigationHistory` from the window's `webContents` and call `goBack()` or
+      `goForward()` after checking `canGoBack()` or `canGoForward()`.
+    facts:
+    - navigation history is reached through webContents.navigationHistory
+    - check canGoBack() before calling goBack()
+    - check canGoForward() before calling goForward()
+
+- name: 'electron v30.0.0: Links with target=_blank open a new Electron window; how do I send them to the default browser?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'Links with target=_blank open a new Electron window; how do I send them to the default browser?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v30.0.0, article: docs/tutorial/security.md, heading_path: [Security, 'Checklist: Security recommendations', 14. Disable or limit creation of new windows, 'How?']}
+    reference: >-
+      Register a window open handler with `contents.setWindowOpenHandler` (for example in
+      `app.on('web-contents-created')`), call `shell.openExternal(url)` for URLs you trust, and return
+      `{ action: 'deny' }` so no Electron window is created.
+    facts:
+    - webContents delegates new windows to a handler set with setWindowOpenHandler
+    - the handler calls shell.openExternal for URLs considered safe
+    - the handler returns action deny so no new window is created
+
+- name: 'electron v30.0.0: How can the user force dark or light mode from my app''s settings regardless of the OS?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'How can the user force dark or light mode from my app''s settings regardless of the OS?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v30.0.0, article: docs/tutorial/dark-mode.md, heading_path: [Dark Mode, Overview, Manually update your own interfaces]}
+    reference: >-
+      Set `nativeTheme.themeSource` to the desired mode; the value propagates to the
+      renderer and CSS rules using `prefers-color-scheme` update accordingly.
+    facts:
+    - set the themeSource property of the nativeTheme module
+    - the value is propagated to the renderer process
+    - CSS prefers-color-scheme rules update accordingly
+
+- name: 'electron v30.0.0: How do I write my main process as an ES module?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'How do I write my main process as an ES module?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v30.0.0, article: docs/tutorial/esm.md, heading_path: [ES Modules (ESM) in Electron, Main process]}
+    - {version: v30.0.0, article: docs/tutorial/esm.md, heading_path: [ES Modules (ESM) in Electron, Main process, Caveats, "You must use await generously before the app's ready event"]}
+    reference: >-
+      Give the file a `.mjs` extension or set `"type": "module"` in the nearest
+      package.json; the main process uses Node's ESM loader. Because ESM loads asynchronously,
+      `await` anything that must run before the app's `ready` event (such as `app.setPath`).
+    facts:
+    - the file must end in .mjs or the nearest package.json must set type module
+    - the main process uses the Node.js ESM loader
+    - ES modules load asynchronously, so await promises that must finish before ready
+
+- name: 'electron v38.0.0: I set titleBarStyle hidden and lost the minimize and close buttons on Windows. How do I get them back?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'I set titleBarStyle hidden and lost the minimize and close buttons on Windows. How do I get them back?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/tutorial/custom-title-bar.md, heading_path: [Custom Title Bar, Basic tutorial, Add native window controls Windows Linux]}
+    reference: >-
+      On Windows and Linux, set `titleBarOverlay` in the BrowserWindow constructor
+      (`titleBarOverlay: true` is the simplest); macOS keeps its traffic lights with
+      `titleBarStyle: 'hidden'`.
+    facts:
+    - on Windows and Linux the window controls are added back with the titleBarOverlay option
+    - titleBarOverlay true is the simplest way
+    - on macOS a hidden title bar keeps the traffic light controls
+
+- name: 'electron v38.0.0: After removing the title bar the window cannot be moved. How do I make my HTML header draggable?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'After removing the title bar the window cannot be moved. How do I make my HTML header draggable?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/tutorial/custom-title-bar.md, heading_path: [Custom Title Bar, Basic tutorial, Create a custom title bar]}
+    reference: >-
+      Add the CSS style `app-region: drag` to the custom title bar element so Electron knows which
+      region drags the window.
+    facts:
+    - the app must tell Electron which regions are draggable
+    - add the CSS app-region drag style to the custom title bar
+
+- name: 'electron v45.3.2: How do I keep native .node files outside app.asar when packing?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'How do I keep native .node files outside app.asar when packing?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v45.3.2, article: docs/tutorial/asar-archives.md, heading_path: [Adding Unpacked Files to ASAR archives]}
+    reference: >-
+      Pack with the `--unpack` option, for example `asar pack app app.asar --unpack *.node`,
+      which puts those files in an `app.asar.unpacked` folder that must be shipped next to
+      `app.asar`.
+    facts:
+    - use the --unpack option of asar pack
+    - for example asar pack app app.asar --unpack *.node
+    - the unpacked files go into an app.asar.unpacked folder shipped together with app.asar
+
+- name: 'electron v30.0.0: How do I turn off the sandbox for just one window?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'How do I turn off the sandbox for just one window?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v30.0.0, article: docs/tutorial/sandbox.md, heading_path: [Process Sandboxing, Configuring the sandbox, Disabling the sandbox for a single process]}
+    reference: >-
+      Set `sandbox: false` in that BrowserWindow's `webPreferences`; enabling
+      `nodeIntegration: true` also disables the sandbox for that renderer.
+    facts:
+    - set sandbox false in the window's webPreferences
+    - enabling nodeIntegration also disables sandboxing for that renderer
+
+- name: 'electron v30.0.0: Why does Electron split an app into several processes instead of one?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'Why does Electron split an app into several processes instead of one?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v30.0.0, article: docs/tutorial/process-model.md, heading_path: [Process Model, 'Why not a single process?']}
+    - {version: v30.0.0, article: docs/tutorial/process-model.md, heading_path: [Process Model, The multi-process model]}
+    reference: >-
+      It follows Chrome's design: in a single process one crashing or hanging page takes down the
+      whole browser, so each page renders in its own process under one controlling process. In
+      Electron that is the main process, with renderer processes for the web content.
+    facts:
+    - in a single-process design one crashing or hanging site affects the whole application
+    - Chrome renders each tab in its own process to limit the harm of buggy or malicious pages
+    - Electron apps have a main process and renderer processes, like Chrome's browser and renderer processes
+
+- name: 'electron v30.0.0: Should I use child_process.fork or a utility process for CPU-heavy work, and why?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'Should I use child_process.fork or a utility process for CPU-heavy work, and why?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v30.0.0, article: docs/tutorial/process-model.md, heading_path: [Process Model, The utility process]}
+    reference: >-
+      Prefer the UtilityProcess API. A utility process runs in a Node.js environment like a forked
+      child, but unlike one it can open a channel to a renderer through MessagePorts; it suits
+      untrusted services, CPU-intensive tasks and crash-prone components.
+    facts:
+    - a utility process is spawned from the main process and runs with full Node.js APIs
+    - unlike child_process.fork it can talk to a renderer through MessagePorts
+    - Electron apps can always prefer UtilityProcess over child_process.fork
+
+- name: 'electron v30.0.0: My preload uses import statements and breaks once the window is sandboxed. Why?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'My preload uses import statements and breaks once the window is sandboxed. Why?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v30.0.0, article: docs/tutorial/esm.md, heading_path: [ES Modules (ESM) in Electron, Preload scripts, Caveats, "Sandboxed preload scripts can't use ESM imports"]}
+    - {version: v30.0.0, article: docs/tutorial/esm.md, heading_path: [ES Modules (ESM) in Electron, 'Summary: ESM support matrix']}
+    reference: >-
+      Sandboxed preload scripts run as plain JavaScript without an ESM context, so ESM imports are
+      unsupported there; bundle the preload code instead and load Electron with `require('electron')`.
+    facts:
+    - sandboxed preload scripts run as plain JavaScript without an ESM context
+    - use a bundler for external modules in a sandboxed preload
+    - the electron API is still loaded with require('electron')
+
+- name: 'electron v38.0.0: What exactly are Electron fuses and why can''t they be flipped back at runtime?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'What exactly are Electron fuses and why can''t they be flipped back at runtime?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/tutorial/fuses.md, heading_path: [Electron Fuses, 'What are fuses?']}
+    reference: >-
+      Fuses are "magic bits" in the Electron binary, flipped when packaging the app, that enable or
+      disable features for the whole app without building Electron from source. They are flipped
+      before code signing, so the OS's signature validation (Gatekeeper, App Locker) keeps them from
+      being flipped back.
+    facts:
+    - fuses are bits in the Electron binary that turn features or restrictions on or off
+    - they are flipped at package time
+    - they are flipped before code signing, so OS code signing validation stops them being changed back
+
+- name: 'electron v38.0.0: Why does child_process.spawn fail on a binary that lives inside app.asar?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'Why does child_process.spawn fail on a binary that lives inside app.asar?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/tutorial/asar-archives.md, heading_path: [Limitations of the Node API, Executing Binaries Inside ASAR archive]}
+    reference: >-
+      Only `child_process.execFile` can run binaries inside an ASAR archive. `exec` and `spawn`
+      take a command run under a shell, and Electron cannot reliably tell whether a command uses a
+      file in the archive or safely rewrite its path.
+    facts:
+    - only execFile is supported for executing binaries inside an ASAR archive
+    - exec and spawn take a command that is executed under a shell
+    - there is no reliable way to detect or rewrite archive paths inside a command
+
+- name: 'electron v45.3.2: What is the difference between GPU accelerated and software offscreen rendering?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'What is the difference between GPU accelerated and software offscreen rendering?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v45.3.2, article: docs/tutorial/offscreen-rendering.md, heading_path: [Offscreen Rendering, Overview, Rendering Modes, GPU accelerated]}
+    - {version: v45.3.2, article: docs/tutorial/offscreen-rendering.md, heading_path: [Offscreen Rendering, Overview, Rendering Modes, Software output device]}
+    reference: >-
+      GPU accelerated mode composites on the GPU and supports WebGL and 3D CSS animations; with
+      `offscreen.useSharedTexture: true` frames go to GPU shared textures, otherwise (the default)
+      they are copied into a CPU bitmap. The software output device renders on the CPU, is faster
+      than the shared-memory bitmap mode, and needs `app.disableHardwareAcceleration()`.
+    facts:
+    - GPU accelerated mode supports WebGL and 3D CSS animations
+    - useSharedTexture true copies frames into GPU shared textures; false (the default) uses a CPU shared memory bitmap
+    - the software output device renders on the CPU and is faster than the shared memory bitmap mode
+    - software mode is enabled by calling app.disableHardwareAcceleration()
+
+- name: 'electron v45.3.2: Should I embed a third-party site with an iframe, a webview tag or a WebContentsView?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'Should I embed a third-party site with an iframe, a webview tag or a WebContentsView?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v45.3.2, article: docs/tutorial/web-embeds.md, heading_path: [Web Embeds, Overview]}
+    - {version: v45.3.2, article: docs/tutorial/web-embeds.md, heading_path: [Web Embeds, Overview, WebViews]}
+    - {version: v45.3.2, article: docs/tutorial/web-embeds.md, heading_path: [Web Embeds, Overview, WebContentsView]}
+    reference: >-
+      Iframes behave as in browsers (limit them with the `sandbox` attribute). WebViews are not
+      recommended: they are out-of-process, IPC-driven, need `webviewTag: true` and may change or go
+      away. WebContentsView gives the most control but lives outside the DOM, positioned by the main
+      process, so aligning it with page content needs main/renderer coordination.
+    facts:
+    - iframes behave like in regular browsers and can be limited with the sandbox attribute
+    - webview tags are not recommended and need webviewTag set to true
+    - WebContentsView is created and positioned by the main process, outside the DOM
+    - WebContentsView offers the greatest control over its contents
+
+- name: 'electron v38.0.0: If I stay on an older Electron major, how long will it keep getting fixes?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'If I stay on an older Electron major, how long will it keep getting fixes?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/tutorial/electron-timelines.md, heading_path: [Electron Releases, Version support policy]}
+    reference: >-
+      Only the latest three stable majors are supported, and only the latest minor of each. The
+      newest stable gets all fixes from main, the one before most of them, and the oldest supported
+      line only security fixes; after that the line is end-of-life.
+    facts:
+    - the latest three stable major versions are supported
+    - only the latest minor release of each supported series gets fixes
+    - the oldest supported release line receives only security fixes
+
+- name: 'electron v45.3.2: How does a renderer''s LanguageModel.prompt() call end up in my own local model?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'How does a renderer''s LanguageModel.prompt() call end up in my own local model?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v45.3.2, article: docs/tutorial/local-ai-handler.md, heading_path: [Local AI Handler, How it works]}
+    reference: >-
+      Three processes take part: the main process registers a UtilityProcess as the session's
+      handler with `ses.registerLocalAIHandler()`, the utility process supplies a
+      `LanguageModelUtility` subclass through `localAIHandler.setPromptAPIHandler()`, and the
+      renderer uses the Prompt API. Electron proxies the call through the main process to the
+      utility process, which sends the result back to the renderer.
+    facts:
+    - the main process registers a utility process with ses.registerLocalAIHandler()
+    - the utility process calls localAIHandler.setPromptAPIHandler() to supply a LanguageModelUtility subclass
+    - requests are proxied through the main process to the utility process, which answers the renderer directly
+
+- name: 'electron v45.3.2: Can my sandboxed preload still use Buffer and require(''events'')?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'Can my sandboxed preload still use Buffer and require(''events'')?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v45.3.2, article: docs/breaking-changes.md, heading_path: [Breaking Changes, Breaking API Changes (45.0), 'Removed: Node.js module shims and Buffer, setImmediate, clearImmediate globals in sandboxed preload scripts']}
+    - {version: v45.3.2, article: docs/tutorial/sandbox.md, heading_path: [Process Sandboxing, Sandbox behavior in Electron, Preload scripts]}
+    reference: >-
+      No. Since Electron 45 sandboxed preloads lost the events, timers and url shims and the Buffer,
+      setImmediate and clearImmediate globals; require loads only electron (and electron/renderer,
+      electron/common). Use EventTarget, URL, setTimeout/queueMicrotask, Uint8Array/TextEncoder or
+      bundle a polyfill. Preloads with `sandbox: false` are unaffected.
+    facts:
+    - require in a sandboxed preload now only loads electron
+    - Buffer, setImmediate and clearImmediate are no longer in scope
+    - Web APIs such as EventTarget, URL and Uint8Array or a bundled polyfill replace them
+    - preloads for renderers with sandbox false keep the full Node.js environment
+
+- name: 'electron v45.3.2: clipboard is undefined in my renderer after upgrading. What should I use instead?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'clipboard is undefined in my renderer after upgrading. What should I use instead?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v45.3.2, article: docs/breaking-changes.md, heading_path: [Breaking Changes, Breaking API Changes (44.0), 'Removed: clipboard module is no longer available in the renderer process']}
+    reference: >-
+      Electron 44 removed the `clipboard` module from renderer processes (deprecated in 40). Use the
+      web `navigator.clipboard` API, or expose specific helpers from a preload script with
+      `contextBridge` without handing the clipboard API to untrusted content.
+    facts:
+    - the clipboard module is no longer exposed to renderer processes since Electron 44
+    - renderers should use navigator.clipboard
+    - advanced needs can be met by exposing helpers from a preload with contextBridge
+
+- name: 'electron v45.3.2: What replaced clipboard.writeHTML and readImage?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'What replaced clipboard.writeHTML and readImage?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v45.3.2, article: docs/breaking-changes.md, heading_path: [Breaking Changes, Breaking API Changes (44.0), 'API Changed: clipboard module rearchitected to align with the W3C Clipboard API']}
+    reference: >-
+      Electron 44 removed the narrow helpers. Write HTML with `clipboard.write()` and a
+      `ClipboardItem` keyed by `text/html`; read images with `clipboard.read()` and the `image/*`
+      MIME type. `read()` resolves to `ClipboardItem[]` and `write()` returns `Promise<void>`.
+    facts:
+    - writeHTML, readImage and the other narrow helpers were removed in Electron 44
+    - clipboard.write() with the text/html MIME type replaces writeHTML
+    - clipboard.read() with an image MIME type replaces readImage
+    - read and write now return Promises, matching navigator.clipboard
+
+- name: 'electron v45.3.2: Our CI installs with npm --ignore-scripts. Does the Electron binary still get downloaded?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'Our CI installs with npm --ignore-scripts. Does the Electron binary still get downloaded?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v45.3.2, article: docs/breaking-changes.md, heading_path: [Breaking Changes, Breaking API Changes (42.0), 'Behavior Changed: electron no longer downloads itself via postinstall script']}
+    reference: >-
+      Since Electron 42 the npm package has no postinstall download: the binary is fetched the first
+      time its bin script runs (e.g. `npx electron`), so `--ignore-scripts` works. Run
+      `npx install-electron` to download ahead of time; `ELECTRON_SKIP_BINARY_DOWNLOAD` is no longer
+      supported.
+    facts:
+    - the electron package no longer downloads the binary in a postinstall script
+    - the binary is downloaded the first time the electron bin script runs
+    - npx install-electron downloads it on demand
+    - ELECTRON_SKIP_BINARY_DOWNLOAD is no longer supported
+
+- name: 'electron v45.3.2: My open dialog stopped remembering the last folder the user picked. Why?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'My open dialog stopped remembering the last folder the user picked. Why?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v45.3.2, article: docs/breaking-changes.md, heading_path: [Breaking Changes, Breaking API Changes (43.0), 'Behavior Changed: Dialog methods default to Downloads directory']}
+    reference: >-
+      Since Electron 43, `showOpenDialog`, `showSaveDialog` and their sync variants default
+      `defaultPath` to the user's Downloads folder (or home if it is missing), so the OS no longer
+      restores the last-used directory. Track the last directory yourself and pass it as
+      `defaultPath`.
+    facts:
+    - since Electron 43 dialogs without defaultPath open in the Downloads folder
+    - the home directory is used when Downloads does not exist
+    - the OS no longer tracks and restores the last-used directory
+    - track the last-used directory yourself and pass it as defaultPath
+
+- name: 'electron v38.0.0: Are webContents.goBack and canGoBack still the way to navigate history?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'Are webContents.goBack and canGoBack still the way to navigate history?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/breaking-changes.md, heading_path: [Breaking Changes, Planned Breaking API Changes (32.0), 'Deprecated: clearHistory, canGoBack, goBack, canGoForward, goForward, goToIndex, canGoToOffset, goToOffset on WebContents']}
+    reference: >-
+      No. Since Electron 32 they are deprecated on WebContents and moved to its `navigationHistory`
+      property: `webContents.navigationHistory.goBack()`, `canGoBack()`, `clear()` and so on.
+    facts:
+    - the navigation methods on WebContents were deprecated in Electron 32
+    - they moved to the webContents.navigationHistory property
+    - clearHistory is replaced by navigationHistory.clear()
+
+- name: 'electron v38.0.0: ELECTRON_OZONE_PLATFORM_HINT=wayland no longer does anything. How do I run under Wayland now?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'ELECTRON_OZONE_PLATFORM_HINT=wayland no longer does anything. How do I run under Wayland now?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/breaking-changes.md, heading_path: [Breaking Changes, Planned Breaking API Changes (38.0), 'Removed: ELECTRON_OZONE_PLATFORM_HINT environment variable']}
+    reference: >-
+      Electron 38 removed the `ELECTRON_OZONE_PLATFORM_HINT` variable because the `--ozone-platform`
+      default changed to `auto`; set `XDG_SESSION_TYPE=wayland` instead.
+    facts:
+    - ELECTRON_OZONE_PLATFORM_HINT was removed in Electron 38
+    - the default of the ozone platform flag changed to auto
+    - use the XDG_SESSION_TYPE=wayland environment variable
+
+- name: 'electron v38.0.0: An unhandled promise rejection no longer kills my utility process. Is that intended?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'An unhandled promise rejection no longer kills my utility process. Is that intended?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/breaking-changes.md, heading_path: [Breaking Changes, Planned Breaking API Changes (37.0), Utility Process unhandled rejection behavior change]}
+    reference: >-
+      Yes. Since Electron 37 utility processes log an error on an unhandled rejection instead of
+      crashing; add `process.on('unhandledRejection', () => process.exit(1))` to restore the old
+      behavior.
+    facts:
+    - since Electron 37 an unhandled rejection only warns with an error message
+    - previously the utility process crashed
+    - an unhandledRejection handler that calls process.exit(1) restores the old behavior
+
+- name: 'electron v38.0.0: Which Chromium and Node.js versions does Electron 38 move to compared with Electron 30?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'Which Chromium and Node.js versions does Electron 38 move to compared with Electron 30?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/tutorial/electron-timelines.md, heading_path: [Electron Releases, Timeline]}
+    reference: >-
+      Electron 38.0.0 ships Chrome M140 and Node v22.18 (stable 2025-Sep-02); Electron 30.0.0 had
+      M124 and Node v20.11 and is no longer supported.
+    facts:
+    - Electron 38.0.0 uses Chrome M140
+    - Electron 38.0.0 uses Node v22.18
+    - Electron 30.0.0 used M124 and Node v20.11
+
+- name: 'electron v30.0.0: params.inputFormType is gone from the context-menu event. What replaces it?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'params.inputFormType is gone from the context-menu event. What replaces it?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v30.0.0, article: docs/breaking-changes.md, heading_path: [Breaking Changes, Planned Breaking API Changes (30.0), 'Removed: params.inputFormType property on context-menu on WebContents']}
+    reference: >-
+      Electron 30 removed `inputFormType` from the `context-menu` params of WebContents; use the new
+      `formControlType` property.
+    facts:
+    - inputFormType was removed from the context-menu params in Electron 30
+    - formControlType replaces it
+
+- name: 'electron v30.0.0: Did BrowserView.setAutoResize change behavior on macOS in Electron 30?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'Did BrowserView.setAutoResize change behavior on macOS in Electron 30?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v30.0.0, article: docs/breaking-changes.md, heading_path: [Breaking Changes, Planned Breaking API Changes (30.0), 'Behavior Changed: BrowserView.setAutoResize behavior on macOS']}
+    reference: >-
+      Yes. BrowserView became a wrapper around WebContentsView, and autoresizing, previously macOS
+      autoresizing versus a custom algorithm on Windows and Linux, is now the same on all platforms,
+      so macOS-specific workarounds are no longer needed.
+    facts:
+    - in Electron 30 BrowserView is a wrapper around WebContentsView
+    - setAutoResize used macOS autoresizing before, and a custom algorithm on Windows and Linux
+    - autoresizing behavior is now standardized across all platforms
+
+- name: 'electron v30.0.0: BrowserView is deprecated. What do I replace it with and how do I place the new view in a window?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'BrowserView is deprecated. What do I replace it with and how do I place the new view in a window?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v30.0.0, article: docs/api/browser-view.md, heading_path: [BrowserView]}
+    - {version: v30.0.0, article: docs/api/web-contents-view.md, heading_path: [WebContentsView]}
+    - {version: v30.0.0, article: docs/api/web-contents-view.md, heading_path: [WebContentsView, 'Class: WebContentsView extends View', 'new WebContentsView([options])']}
+    reference: >-
+      BrowserView is replaced by WebContentsView. Create one with `new WebContentsView()`
+      (optionally with `webPreferences`), add it to a BaseWindow with
+      `win.contentView.addChildView(view)`, place it with `view.setBounds()` and load content through
+      `view.webContents`.
+    facts:
+    - the BrowserView class is deprecated and replaced by WebContentsView
+    - a WebContentsView is added with win.contentView.addChildView()
+    - setBounds positions the view inside the window
+    - content is loaded through view.webContents, for example loadURL
+
+- name: 'electron v38.0.0: file.path is undefined on files from an input element. How do I get the real path on disk?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'file.path is undefined on files from an input element. How do I get the real path on disk?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/breaking-changes.md, heading_path: [Breaking Changes, Planned Breaking API Changes (32.0), 'Removed: File.path']}
+    - {version: v38.0.0, article: docs/api/web-utils.md, heading_path: [webUtils, Methods, webUtils.getPathForFile(file)]}
+    reference: >-
+      The nonstandard `File.path` was removed in Electron 32. Call `webUtils.getPathForFile(file)`
+      (from a preload, exposed through contextBridge); it returns the path, an empty string for a
+      File built in JS, and throws if the argument is not a File.
+    facts:
+    - File.path was removed in Electron 32
+    - webUtils.getPathForFile(file) returns the file system path
+    - it returns an empty string for a File not backed by a file on disk
+    - the breaking-changes example calls it in a preload exposed with contextBridge
+
+- name: 'electron v38.0.0: session.setPreloads is deprecated. How do I register a preload for every frame in a session now?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'session.setPreloads is deprecated. How do I register a preload for every frame in a session now?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/breaking-changes.md, heading_path: [Breaking Changes, Planned Breaking API Changes (35.0), 'Deprecated: setPreloads, getPreloads on Session']}
+    - {version: v38.0.0, article: docs/api/session.md, heading_path: [session, 'Class: Session', Instance Methods, ses.registerPreloadScript(script)]}
+    - {version: v38.0.0, article: docs/api/structures/preload-script-registration.md, heading_path: [PreloadScriptRegistration Object]}
+    reference: >-
+      Use `ses.registerPreloadScript({ type: 'frame', id, filePath })`, which adds a script without
+      replacing others and returns its ID; `filePath` must be absolute, `type` can be `frame` or
+      `service-worker`, and `id` defaults to a random UUID. Frame preloads registered this way run
+      before the webPreferences preload.
+    facts:
+    - registerPreloadScript replaces the deprecated setPreloads
+    - the registration takes type (frame or service-worker), an optional id and an absolute filePath
+    - it returns the ID of the registered script
+    - frame preloads registered on the session run before the WebContents' own preload
+
+- name: 'electron v45.3.2: How do I move my safeStorage code off the deprecated synchronous calls?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'How do I move my safeStorage code off the deprecated synchronous calls?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v45.3.2, article: docs/breaking-changes.md, heading_path: [Breaking Changes, Breaking API Changes (45.0), 'Deprecated: safeStorage.isEncryptionAvailable(), safeStorage.encryptString() and safeStorage.decryptString()']}
+    - {version: v45.3.2, article: docs/api/safe-storage.md, heading_path: [safeStorage, Methods, safeStorage.isAsyncEncryptionAvailable()]}
+    - {version: v45.3.2, article: docs/api/safe-storage.md, heading_path: [safeStorage, Methods, safeStorage.decryptStringAsync(encrypted)]}
+    reference: >-
+      The sync methods are deprecated and go away in Electron 46. Use `await
+      safeStorage.isAsyncEncryptionAvailable()`, `await encryptStringAsync()` and `await
+      decryptStringAsync()`, whose result is an object with `result`; data encrypted with
+      `encryptString()` can still be decrypted with `decryptStringAsync()`.
+    facts:
+    - the synchronous methods are deprecated and will be removed in Electron 46
+    - isAsyncEncryptionAvailable, encryptStringAsync and decryptStringAsync replace them
+    - decryptStringAsync resolves to an object whose result is the plaintext
+    - data encrypted with encryptString can be decrypted with decryptStringAsync
+
+- name: 'electron v45.3.2: Walk me through serving the renderer''s Prompt API from a model in a utility process.'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'Walk me through serving the renderer''s Prompt API from a model in a utility process.'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v45.3.2, article: docs/tutorial/local-ai-handler.md, heading_path: [Local AI Handler, Quick start, 1. Create the utility process script]}
+    - {version: v45.3.2, article: docs/tutorial/local-ai-handler.md, heading_path: [Local AI Handler, Quick start, 2. Register the handler in the main process]}
+    - {version: v45.3.2, article: docs/api/session.md, heading_path: [session, 'Class: Session', Instance Methods, ses.registerLocalAIHandler(handler) Experimental]}
+    reference: >-
+      In the utility script call `localAIHandler.setPromptAPIHandler()` returning a
+      `LanguageModelUtility` subclass. In main, `utilityProcess.fork()` that script, create the
+      window with `enableBlinkFeatures: 'AIPromptAPI'`, and call
+      `win.webContents.session.registerLocalAIHandler(aiHandler)`; `registerLocalAIHandler(null)`
+      clears it. The API is experimental.
+    facts:
+    - the utility process calls localAIHandler.setPromptAPIHandler and returns a LanguageModelUtility subclass
+    - the main process forks it with utilityProcess.fork and registers it with ses.registerLocalAIHandler
+    - the window needs enableBlinkFeatures set to AIPromptAPI
+    - passing null to registerLocalAIHandler clears the handler
+
+- name: 'electron v45.3.2: How do I put plain text and HTML on the clipboard in one go from the main process?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'How do I put plain text and HTML on the clipboard in one go from the main process?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v45.3.2, article: docs/api/clipboard.md, heading_path: [clipboard, Methods, clipboard.write(data)]}
+    - {version: v45.3.2, article: docs/api/clipboard-item.md, heading_path: [ClipboardItem, 'Class: ClipboardItem', new ClipboardItem(items)]}
+    reference: >-
+      Build one `new ClipboardItem({ 'text/plain': ..., 'text/html': ... })`, keyed by MIME type,
+      and pass it in an array to `await clipboard.write([...])`; all entries of one write are
+      committed atomically. String values are UTF-8 encoded, Blobs are used as raw bytes.
+    facts:
+    - a ClipboardItem maps MIME types such as text/plain and text/html to payloads
+    - clipboard.write takes an array of ClipboardItem objects and returns Promise<void>
+    - all entries in a single write() call are committed atomically
+    - string payloads are UTF-8 encoded and Blob payloads supply raw bytes
+
+- name: 'electron v30.0.0: On Windows, how does my already-running app receive the URL when a myapp:// link is clicked?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'On Windows, how does my already-running app receive the URL when a myapp:// link is clicked?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v30.0.0, article: docs/tutorial/launch-app-from-url-in-another-app.md, heading_path: [Deep Links, Examples, Main Process (main.js), 'Windows and Linux code:']}
+    - {version: v30.0.0, article: docs/api/app.md, heading_path: [app, Events, "Event: 'second-instance'"]}
+    - {version: v30.0.0, article: docs/api/app.md, heading_path: [app, Methods, 'app.setAsDefaultProtocolClient(protocol[, path, args])']}
+    reference: >-
+      Register the scheme with `app.setAsDefaultProtocolClient`, take the single instance lock with
+      `app.requestSingleInstanceLock()` (quit if it fails), and handle `second-instance`: the URL is
+      the last element of the second instance's command line. macOS uses `open-url` instead.
+    facts:
+    - the app registers the protocol with app.setAsDefaultProtocolClient
+    - Windows and Linux emit second-instance instead of open-url
+    - the deep link URL is the last element of the second instance's command line
+    - the app must take the single instance lock and quit if it does not get it
+
+- name: 'electron v45.3.2: How can my code tell that Electron restored a window''s saved state, and what does that state include?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'How can my code tell that Electron restored a window''s saved state, and what does that state include?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v45.3.2, article: docs/api/base-window.md, heading_path: [BaseWindow, 'Class: BaseWindow', Instance Events, "Event: 'persisted-state-restored'"]}
+    - {version: v45.3.2, article: docs/tutorial/window-state-persistence.md, heading_path: [Window State Persistence, Usage, Basic usage]}
+    reference: >-
+      Listen for the window's `persisted-state-restored` event, emitted after the persisted state is
+      restored and only when `windowStatePersistence` is enabled (with a window `name`). The state is
+      the bounds (x, y, width, height) and display mode (maximized, fullscreen, kiosk).
+    facts:
+    - the persisted-state-restored event is emitted after the saved state is restored
+    - it is only emitted when windowStatePersistence is enabled
+    - the state includes the window bounds x, y, width and height
+    - the state includes the display mode, maximized, fullscreen or kiosk
+
+- name: 'electron v30.0.0: How do I call a main-process function from the renderer and await its result without exposing ipcRenderer?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'How do I call a main-process function from the renderer and await its result without exposing ipcRenderer?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v30.0.0, article: docs/tutorial/ipc.md, heading_path: [Inter-Process Communication, 'Pattern 2: Renderer to main (two-way)', 1. Listen for events with ipcMain.handle]}
+    - {version: v30.0.0, article: docs/tutorial/ipc.md, heading_path: [Inter-Process Communication, 'Pattern 2: Renderer to main (two-way)', 2. Expose ipcRenderer.invoke via preload]}
+    - {version: v30.0.0, article: docs/api/context-bridge.md, heading_path: [contextBridge, Methods, 'contextBridge.exposeInMainWorld(apiKey, api)']}
+    reference: >-
+      Handle the channel in main with `ipcMain.handle`, whose return value goes back as a Promise. In
+      the preload, use `contextBridge.exposeInMainWorld('electronAPI', { openFile: () =>
+      ipcRenderer.invoke('dialog:openFile') })`, so the page calls `window.electronAPI.openFile()`
+      without getting `ipcRenderer` itself. Errors thrown in a handler only carry their `message`.
+    facts:
+    - the main process registers the channel with ipcMain.handle
+    - the preload exposes a one-purpose function that calls ipcRenderer.invoke
+    - contextBridge.exposeInMainWorld puts the API on window[apiKey]
+    - errors thrown in handle reach the renderer with only their message property
+
+- name: 'electron v38.0.0: How do I stop people from running my packaged app as plain Node with ELECTRON_RUN_AS_NODE?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'How do I stop people from running my packaged app as plain Node with ELECTRON_RUN_AS_NODE?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v38.0.0, article: docs/tutorial/fuses.md, heading_path: [Electron Fuses, Current Fuses, runAsNode]}
+    - {version: v38.0.0, article: docs/tutorial/fuses.md, heading_path: [Electron Fuses, 'How do I flip the fuses?', The easy way]}
+    - {version: v38.0.0, article: docs/tutorial/security.md, heading_path: [Security, 'Checklist: Security recommendations', 19. Check which fuses you can change, 'Why?']}
+    reference: >-
+      Disable the `runAsNode` fuse (enabled by default) with `@electron/fuses`: `flipFuses(...,
+      { version: FuseVersion.V1, [FuseV1Options.RunAsNode]: false })`, and check it with `npx
+      @electron/fuses read`. The security checklist warns that runAsNode and nodeCliInspect let
+      command-line environment variables or arguments make the app run commands. With the fuse off,
+      `process.fork` in main stops working, so use utility processes.
+    facts:
+    - the runAsNode fuse decides whether ELECTRON_RUN_AS_NODE is respected and is enabled by default
+    - flip it off with flipFuses from @electron/fuses and FuseV1Options.RunAsNode set to false
+    - runAsNode and nodeCliInspect can be used to execute commands through the application
+    - with the fuse disabled process.fork in the main process does not work, so utility processes are recommended
+
+- name: 'electron v30.0.0: What do I need on the signing side before autoUpdater can update my Mac app?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'What do I need on the signing side before autoUpdater can update my Mac app?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v30.0.0, article: docs/api/auto-updater.md, heading_path: [autoUpdater, Platform Notices, macOS]}
+    - {version: v30.0.0, article: docs/tutorial/code-signing.md, heading_path: ['Signing & notarizing macOS builds']}
+    reference: >-
+      Squirrel.Mac, which backs autoUpdater on macOS, requires the app to be signed. Releasing a Mac
+      app means code signing it and then notarizing it with Apple, which needs an Apple Developer
+      Program membership, Xcode on a Mac and signing certificates.
+    facts:
+    - the app must be signed for automatic updates on macOS, a Squirrel.Mac requirement
+    - macOS release builds are code signed and then notarized by Apple
+    - signing requires enrolling in the Apple Developer Program, Xcode and signing certificates
+
+- name: 'electron v38.0.0: Is there a built-in option for BrowserWindow to remember its size and position between launches?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'Is there a built-in option for BrowserWindow to remember its size and position between launches?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Electron v38.0.0 documentation has no built-in window state persistence; the
+      windowStatePersistence option first appears in the v45.3.2 docs.
+
+- name: 'electron v38.0.0: How do I route the renderer''s LanguageModel Prompt API calls to a local LLM?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'How do I route the renderer''s LanguageModel Prompt API calls to a local LLM?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Electron v38.0.0 documentation does not cover the Prompt API or a local AI handler;
+      registerLocalAIHandler and localAIHandler appear only in the v45.3.2 docs.
+
+- name: 'electron v38.0.0: Is there an async, non-blocking version of safeStorage.encryptString?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'Is there an async, non-blocking version of safeStorage.encryptString?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Electron v38.0.0 documentation lists only the synchronous safeStorage methods; the async
+      encryptStringAsync and decryptStringAsync appear in the v45.3.2 docs.
+
+- name: 'electron v30.0.0: How do I implement undo-close-tab by restoring a closed webContents'' history?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'How do I implement undo-close-tab by restoring a closed webContents'' history?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Electron v30.0.0 documentation does not cover restoring navigation history; its
+      NavigationHistory class only has getActiveIndex, getEntryAtIndex and length, and restore() first
+      appears in the v38.0.0 docs.
+
+- name: 'electron v30.0.0: How do I get Apple-style smooth rounded corners in CSS in my Electron app?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'How do I get Apple-style smooth rounded corners in CSS in my Electron app?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Electron v30.0.0 documentation does not cover corner smoothing; the
+      -electron-corner-smoothing CSS rule first appears in the v38.0.0 docs.
+
+- name: 'electron v30.0.0: How do I run a preload script inside my app''s service workers?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'How do I run a preload script inside my app''s service workers?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Electron v30.0.0 documentation has no service worker preload scripts; the
+      registerPreloadScript API with type service-worker first appears in the v38.0.0 docs.
+
+- name: 'electron v45.3.2: Which Chromium milestone and Node.js version does Electron 45 bundle?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'Which Chromium milestone and Node.js version does Electron 45 bundle?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Electron v45.3.2 documentation does not state Electron 45's Chromium or Node.js version;
+      its releases page links to the external release schedule instead of the version table older
+      docs had.
+
+- name: 'electron v38.0.0: Can autoUpdater on macOS download a Sparkle binary delta instead of the full ZIP?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'Can autoUpdater on macOS download a Sparkle binary delta instead of the full ZIP?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Electron v38.0.0 documentation does not cover delta updates on macOS; the delta field for
+      Squirrel.Mac update entries first appears in the v45.3.2 docs.
+
+- name: 'electron v45.3.2: How do I trigger haptic feedback on a MacBook trackpad from Electron?'
+  inputs:
+    project: electron
+    version: v45.3.2
+    query: 'How do I trigger haptic feedback on a MacBook trackpad from Electron?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Electron v45.3.2 documentation does not cover haptic feedback; no pinned version does.
+
+- name: 'electron v30.0.0: Which command-line switch makes Chromium render with Vulkan?'
+  inputs:
+    project: electron
+    version: v30.0.0
+    query: 'Which command-line switch makes Chromium render with Vulkan?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Electron v30.0.0 documentation does not mention Vulkan; no pinned version does.
+
+- name: 'electron v38.0.0: Can I run the main process on Bun instead of Node.js?'
+  inputs:
+    project: electron
+    version: v38.0.0
+    query: 'Can I run the main process on Bun instead of Node.js?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Electron v38.0.0 documentation does not mention Bun; no pinned version does.
