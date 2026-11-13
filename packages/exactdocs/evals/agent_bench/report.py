@@ -22,6 +22,10 @@ ERROR: Final[str] = "error"
 """The grade of a question the run or the judge failed on (it is not correct either)."""
 CORRECT: Final[str] = "correct"
 """The grade that counts as accurate."""
+REFUSED: Final[str] = "refused"
+"""The grade of an answer that says the documentation does not cover the question."""
+UNANSWERABLE: Final[str] = "unanswerable"
+"""The kind of a case its version does not answer: there a refusal is the right answer."""
 
 
 class _Model(BaseModel):
@@ -246,6 +250,21 @@ def results_of(
     return rows
 
 
+def accurate(row: QuestionResult) -> bool:
+    """Tell whether a question counts as answered right.
+
+    ``correct`` always does. ``refused`` (the documentation does not cover it) does only for an
+    ``unanswerable`` case, where it is the right answer; for any other kind it is a miss.
+
+    Args:
+        row: The question, with its raw grade.
+
+    Returns:
+        True when it counts towards accuracy.
+    """
+    return row.grade == CORRECT or (row.kind == UNANSWERABLE and row.grade == REFUSED)
+
+
 def _breakdown(rows: Sequence[QuestionResult], key: Callable[[QuestionResult], str]) -> dict:
     """Accuracy per value of ``key``.
 
@@ -262,7 +281,7 @@ def _breakdown(rows: Sequence[QuestionResult], key: Callable[[QuestionResult], s
     return {
         name: Breakdown(
             questions=len(group),
-            correct=(correct := sum(r.grade == CORRECT for r in group)),
+            correct=(correct := sum(accurate(r) for r in group)),
             accuracy=round(correct / len(group), 3),
         )
         for name, group in sorted(groups.items())
@@ -301,7 +320,7 @@ def summarize(agent_model: str, retrieval: str, rows: Sequence[QuestionResult]) 
         retrieval=retrieval,
         questions=len(rows),
         grades={grade: counts[grade] for grade in (*GRADES, ERROR)},
-        accuracy=round(counts[CORRECT] / len(rows), 3) if rows else 0.0,
+        accuracy=round(sum(accurate(r) for r in rows) / len(rows), 3) if rows else 0.0,
         wrong_version=sum(r.wrong_version for r in rows),
         grounded_share=round(sum(answerable) / len(answerable), 3) if answerable else None,
         read_other_versions=sum(bool(r.other_versions_read) for r in rows),

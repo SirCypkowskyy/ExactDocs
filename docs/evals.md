@@ -532,8 +532,10 @@ facts and the answer as JSON, not the documentation, and grades:
 | `wrong` | none of them, something the reference contradicts, or an invented API or behaviour |
 | `refused` | says the documentation does not cover it, or declines, and states no facts |
 
-For an `unanswerable` case, saying the documentation of that version does not cover it is
-`correct`, and answering anyway (from another version, from memory, invented) is `wrong`.
+For an `unanswerable` case, the judge grades an answer that says the documentation of that version
+does not cover it `refused`, and one that answers anyway (from another version, from memory,
+invented) `wrong`. The report counts `refused` as accurate for an `unanswerable` case only: there
+it is the right answer, for any other kind it is a miss. Each question keeps its raw grade.
 `wrong_version` is set when the answer states something true of another version only; the report
 counts those separately (*Wrong for the version*). Its instructions are in
 `agent_bench/judge.py`.
@@ -543,7 +545,8 @@ counts those separately (*Wrong for the version*). Its instructions are in
 `reports/evals/agent-bench.json` (and `.md` next to it, also appended to `$GITHUB_STEP_SUMMARY`),
 one cell per agent model and retrieval configuration:
 
-- grades and accuracy (share `correct`), overall, per kind and per project; errors;
+- grades and accuracy (share `correct`, plus `refused` on `unanswerable` cases), overall, per kind
+  and per project; errors;
 - *Wrong for the version*: answers the judge flagged `wrong_version`;
 - *Read the answer*: of the answerable questions, the share where the agent read in full every
   section the case names (at its version). Search snippets do not count. This is the measure of

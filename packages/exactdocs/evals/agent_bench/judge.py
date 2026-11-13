@@ -44,8 +44,9 @@ API, an option or a behaviour.
 facts.
 
 A question of kind "unanswerable" has no facts: this version's documentation does not answer it. \
-There an answer that says the documentation does not cover it is correct, and an answer that \
-answers anyway (from another version, from memory, or invented) is wrong.
+Grade an answer that says the documentation does not cover it refused (the benchmark counts that \
+as the right answer for such a question), and an answer that answers anyway (from another \
+version, from memory, or invented) wrong.
 
 Set wrong_version to true when the answer states something that holds for another version of \
 the library but not for this one, for example an option this version renamed or removed.

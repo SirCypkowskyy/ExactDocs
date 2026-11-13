@@ -28,7 +28,15 @@ from agent_bench.harness import (
 )
 from agent_bench.judge import AnswerJudge, judge_agent
 from agent_bench.offline import OFFLINE_AGENTS, OFFLINE_JUDGE, offline_judge, offline_verdict
-from agent_bench.report import BenchReport, QuestionResult, RunMeta, markdown, results_of, summarize
+from agent_bench.report import (
+    BenchReport,
+    QuestionResult,
+    RunMeta,
+    accurate,
+    markdown,
+    results_of,
+    summarize,
+)
 from fixture_repo import git
 from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question
 from retrieval_eval.golden import Corpus, GoldenCase, PinnedVersion, Project, fetch
@@ -202,7 +210,7 @@ def test_a_known_model_is_priced_and_a_stand_in_is_not() -> None:
             ["install it with pip install demo"],
             "refused",
         ),
-        ("The documentation of v1 does not cover this.", [], "correct"),
+        ("The documentation of v1 does not cover this.", [], "refused"),
         ("Install the package with pip install demo.", [], "wrong"),
     ],
 )
@@ -297,7 +305,7 @@ async def test_the_judge_labels_answers_and_a_failed_run_is_wrong_unjudged() -> 
     rows = results_of(evaluated, "offline:read", "bm25")
 
     by_case = {r.case: r for r in rows}
-    assert [by_case[c.name or ""].grade for c in CASES] == ["correct", "correct", "wrong"]
+    assert [by_case[c.name or ""].grade for c in CASES] == ["correct", "refused", "wrong"]
     assert by_case[CASES[2].name or ""].judge_reason.startswith("no answer: UsageLimitExceeded")
     first = by_case[CASES[0].name or ""]
     assert first.grounded is True
@@ -309,10 +317,10 @@ async def test_the_judge_labels_answers_and_a_failed_run_is_wrong_unjudged() -> 
     cell = summarize("offline:read", "bm25", rows)
     assert cell.questions == 3
     assert cell.grades == {
-        "correct": 2,
+        "correct": 1,
         "partially_correct": 0,
         "wrong": 1,
-        "refused": 0,
+        "refused": 1,
         "error": 0,
     }
     measured = (cell.accuracy, cell.grounded_share, cell.tool_calls_per_question)
@@ -322,6 +330,22 @@ async def test_the_judge_labels_answers_and_a_failed_run_is_wrong_unjudged() -> 
     kinds = cell.by_kind
     assert (kinds["unanswerable"].accuracy, kinds["conceptual"].accuracy) == pytest.approx((1, 0))
     assert cell.by_project["demo"].questions == 3
+
+
+def test_refused_is_accurate_for_an_unanswerable_case_only() -> None:
+    rows = [
+        _row("answerable refused", grade="refused"),
+        _row("unanswerable refused", grade="refused", kind="unanswerable"),
+        _row("unanswerable correct", grade="correct", kind="unanswerable"),
+        _row("unanswerable answered anyway", grade="wrong", kind="unanswerable"),
+    ]
+    assert [accurate(r) for r in rows] == [False, True, True, False]
+
+    cell = summarize("m", "r", rows)
+    assert cell.accuracy == pytest.approx(0.5)
+    assert cell.grades["refused"] == 2  # the raw grades stay as the judge gave them
+    assert cell.by_kind["how-to"].correct == 0
+    assert cell.by_kind["unanswerable"].correct == 2
 
 
 def test_a_cell_with_an_unpriced_run_has_no_usd_and_an_empty_cell_is_zero() -> None:
@@ -341,13 +365,14 @@ def _row(
     wrong_version: bool = False,
     usd: float | None = 0.01,
     agent: str = "m1",
+    kind: str = "how-to",
 ) -> QuestionResult:
     return QuestionResult(
         agent_model=agent,
         retrieval="bm25",
         case=case,
         project="demo",
-        kind="how-to",
+        kind=kind,
         version="v1",
         question=f"question {case}",
         reference="ref",

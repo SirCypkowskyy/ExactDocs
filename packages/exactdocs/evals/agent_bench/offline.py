@@ -167,12 +167,13 @@ def offline_verdict(case: dict[str, Any]) -> Verdict:
         case: What ``judge.judge_prompt`` sends, parsed.
 
     Returns:
-        The verdict: an unanswerable case is correct only when the answer says it is not covered.
+        The verdict: an answer saying the documentation does not cover it is refused (right for
+        an unanswerable case), and an unanswerable case answered anyway is wrong.
     """
     answer = case["answer"]
     refused = bool(REFUSALS.search(answer))
     if not case["facts"]:
-        grade = "correct" if refused else "wrong"
+        grade = "refused" if refused else "wrong"
         return Verdict(grade=grade, wrong_version=False, reason="stand-in: unanswerable case")
     if refused:
         return Verdict(grade="refused", wrong_version=False, reason="stand-in: says not covered")
