@@ -28,7 +28,7 @@ def run(context: Context, line: str, *, stdin: str = "", tty: bool = False) -> N
     assert words.pop(0) == "exactdocs", line
     output, errors = io.StringIO(), io.StringIO()
     standard_in = io.StringIO(stdin)
-    standard_in.isatty = lambda: tty  # ty: ignore[invalid-assignment]
+    standard_in.isatty = lambda: tty
     env = {"EXACTDOCS_CLIENT_CONFIG": str(context.config_file)}
     context.exit_code = 0
     with (

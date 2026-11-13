@@ -322,7 +322,7 @@ async def client(demo_catalog: dict[str, str]) -> AsyncIterator[httpx.AsyncClien
             cookies=demo_catalog,
         ) as client,
     ):
-        client.chunk_ids = {  # ty: ignore[unresolved-attribute]
+        client.chunk_ids = {  # ty: ignore[missing-attribute]
             "old": await publish(container, "main", "a", {"a.md": "v1"}, kind=RefKind.BRANCH),
             "new": await publish(container, "main", "b", {"a.md": "v2"}, kind=RefKind.BRANCH),
         }
@@ -332,7 +332,7 @@ async def client(demo_catalog: dict[str, str]) -> AsyncIterator[httpx.AsyncClien
 async def test_rest_reads_a_chunk_and_maps_stale_and_unknown_to_distinct_errors(
     client: httpx.AsyncClient,
 ) -> None:
-    ids = client.chunk_ids  # ty: ignore[unresolved-attribute]
+    ids = client.chunk_ids  # ty: ignore[missing-attribute]
 
     ok = await client.get(f"/api/v1/chunks/{ids['new']['a.md'][0]}")
     stale = await client.get(f"/api/v1/chunks/{ids['old']['a.md'][0]}")
@@ -389,7 +389,7 @@ async def test_rest_reads_an_article_with_its_source_link_and_notice(
 async def test_rest_outlines_an_article_without_its_text_and_refuses_another_version(
     client: httpx.AsyncClient,
 ) -> None:
-    ids = client.chunk_ids  # ty: ignore[unresolved-attribute]
+    ids = client.chunk_ids  # ty: ignore[missing-attribute]
 
     response = await client.get(
         "/api/v1/libraries/acme/payments/outline", params={"ref": "main", "path": "a.md"}
