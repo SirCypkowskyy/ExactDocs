@@ -17,9 +17,11 @@ import secrets
 import socket
 import sqlite3
 import tempfile
+import threading
 import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
+from typing import Any
 from urllib.parse import unquote, urlparse
 
 import aiosqlite
@@ -32,7 +34,7 @@ from sqlalchemy.engine import URL, make_url
 from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor
 from sqlalchemy.exc import ArgumentError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from sqlalchemy.pool import ConnectionPoolEntry
+from sqlalchemy.pool import ConnectionPoolEntry, QueuePool
 from sqlalchemy.util import await_
 
 from exactdocs.bootstrap.cancellation import being_cancelled
@@ -63,6 +65,56 @@ from exactdocs.bootstrap.constants import (
 from exactdocs.bootstrap.settings import Settings
 
 logger = logging.getLogger(__name__)
+
+
+class ClosingQueuePool(QueuePool):
+    """A ``QueuePool`` that closes a connection returned to it once it is disposed (#333).
+
+    ``Engine.dispose()`` closes the pooled connections and swaps in a new pool, but one still
+    checked out goes back to the old pool when its holder is done, and stays open there until the
+    garbage collector finds it ("deleted while still open"). DBOS's system database needs this:
+    ``DBOS.destroy`` stops its executor without waiting, so a thread that is still recording a step
+    returns its connection after DBOS has disposed the engine. On SQLite DBOS gets a ``NullPool``
+    instead, which closes every connection on return.
+
+    Limit: this covers only connections checked out *before* ``dispose()``. The engine's new pool
+    (from ``recreate()``) is a live one, so a late thread that starts a *new* checkout after
+    ``DBOS.destroy`` gets a pooled connection nobody disposes, and it leaks the same way. With
+    async workflows each ``to_thread`` call is one database operation, so today that takes a
+    background thread outliving ``_destroy``'s 10 s join. A leak like that is not this one; making
+    ``recreate()`` return a closing pool would break legitimate reuse after ``dispose()``.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # ruff: ignore[any-type]
+        """Make a pool, with its own lock; ``recreate()`` goes through here too.
+
+        Args:
+            *args: Passed to ``QueuePool``.
+            **kwargs: Passed to ``QueuePool``.
+        """
+        super().__init__(*args, **kwargs)
+        self._disposed = False
+        # Per pool, so one pool's dispose never holds up another's check-in; re-entrant, so a
+        # SQLAlchemy that returns a connection from inside ``dispose()`` cannot deadlock it.
+        self._disposing = threading.RLock()
+
+    def dispose(self) -> None:
+        """Close the pooled connections, and any returned from now on."""
+        with self._disposing:
+            self._disposed = True
+            super().dispose()
+
+    def _do_return_conn(self, record: ConnectionPoolEntry) -> None:
+        """Put a returned connection back in the pool, or close it once the pool is disposed.
+
+        Args:
+            record: The returned connection.
+        """
+        with self._disposing:
+            if not self._disposed:
+                super()._do_return_conn(record)
+                return
+        record.close()
 
 
 class StartupError(RuntimeError):
