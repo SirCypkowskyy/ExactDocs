@@ -1,7 +1,9 @@
-"""Constants of texts the DTOs share as field descriptions."""
+"""Constants of texts the DTOs share as field descriptions, and of the routes' descriptions."""
 
+from datetime import timedelta
 from typing import Final
 
+from exactdocs.ingestion.constants._models import UNEXPECTED_BACKOFF_CAP
 from exactdocs.ingestion.constants._use_cases import MAX_LISTED_REFS, MAX_PREVIEW_FILES
 
 ERROR_CODE: Final[str] = (
@@ -36,3 +38,19 @@ PREVIEW_FILES_DESCRIPTION: Final[str] = (
     "text, never as markup or a link target."
 )
 """Description of a preview's ``files``, built from ``MAX_PREVIEW_FILES``."""
+SET_AUTO_SYNC_DESCRIPTION: Final[str] = (
+    "Check the library on its own every `interval_minutes`, starting at the next tick.\n\n"
+    "Each check asks the repository for its refs once. Tags matching `tag_pattern` that have a "
+    "version order (`v1.4.0`, `2.1`; pre-releases do not) are imported as `auto` versions, oldest "
+    "first, and only the newest `keep_last` `auto` versions are kept: older ones are removed once "
+    "their replacements are versions. Versions added by hand (`manual`) and the pinned default "
+    "are never removed and do not count. A tag whose import failed for good (`no_articles`, "
+    "`import_too_large`) is tried again only once it moves; after repeated `unexpected` failures "
+    "it backs off (doubling, at most "
+    f"{UNEXPECTED_BACKOFF_CAP // timedelta(hours=1)} hours); other failures are tried at the next "
+    "check. An `auto` version removed by hand comes back while it is among the newest "
+    "`keep_last`. With `sync_branches`, every branch version is re-synced as `POST .../sync` "
+    "would. Send the whole set: what is left out takes its default. What a check could not do is "
+    "its `last_error`."
+)
+"""OpenAPI description of ``PUT .../auto-sync``, built from ``UNEXPECTED_BACKOFF_CAP``."""

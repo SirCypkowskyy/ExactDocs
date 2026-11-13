@@ -8,6 +8,7 @@ from exactdocs.ingestion.constants._dtos import (
     ERROR_CODE,
     PREVIEW_FILES_DESCRIPTION,
     REFS_TRUNCATED_DESCRIPTION,
+    SET_AUTO_SYNC_DESCRIPTION,
 )
 from exactdocs.ingestion.constants._git import (
     ALLOWED_PROTOCOLS,
@@ -212,6 +213,7 @@ __all__ = [
     "SAVE_EVERY_SECONDS",
     "SCHEDULE",
     "SCHEDULE_WORKFLOW",
+    "SET_AUTO_SYNC_DESCRIPTION",
     "STALE_MARGIN_SECONDS",
     "STEPS_VERSION",
     "TAGS",

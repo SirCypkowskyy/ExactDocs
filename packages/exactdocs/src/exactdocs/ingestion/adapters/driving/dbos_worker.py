@@ -125,8 +125,11 @@ class DbosJobWorker:
     """
 
     run_job: RunJob
+    """Runs one job to its end: the body of the workflow."""
     recover_jobs: RecoverJobs
+    """Recovers the unfinished jobs no workflow will resume, on start."""
     submit_queued_jobs: SubmitQueuedJobs
+    """Hands the queued jobs to DBOS again, every ``resubmit_interval``."""
     database: Path | None = None
     """DBOS's SQLite file (its workflows and their steps), unless ``system_database_url`` is set."""
     system_database_url: str | None = None
@@ -137,14 +140,18 @@ class DbosJobWorker:
     """With ``system_database_url``: the executor IDs of the processes sharing the queue. Without,
     the process is DBOS's one ``local`` executor."""
     queue: str
+    """The DBOS queue jobs are enqueued on."""
     workflow: str
+    """The name the job workflow is registered under."""
     version: str
+    """DBOS's application version: a workflow another version started is not resumed."""
     engine_options: Mapping[str, object] = field(default_factory=dict)
     """SQLAlchemy engine options for that file: the composition root picks ``NullPool``, so that
     a connection one of DBOS's threads still holds when it stops is closed, not left behind."""
     concurrency: int = 2
-    # How long a stopping worker lets a running job finish before cancelling it.
+    """How many jobs this process runs at once (of different libraries)."""
     stop_grace: float = 1.0
+    """How long a stopping worker lets a running job finish before cancelling it."""
     poll_interval: float = 1.0
     """How often DBOS looks for a queued job to start: an idle server only polls this often."""
     resubmit_interval: float = 30.0
@@ -177,6 +184,7 @@ class DbosJobWorker:
     """Called when another process took this one's slot: the composition root stops the
     process (its jobs are then another executor's, and must not run here as well)."""
     _running: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
+    """The tasks of the jobs and ticks running now."""
     job_ids: set[str] = field(default_factory=set, init=False, repr=False)
     """The jobs this process is running now."""
     monotonic: Callable[[], float] = time.monotonic
@@ -192,6 +200,7 @@ class DbosJobWorker:
     _destroyed: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     """Set once DBOS was stopped in this run: teardown does not stop it twice."""
     _forgetting: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
+    """The tasks deleting finished workflows."""
 
     def __post_init__(self) -> None:
         """Refuse slot timings that would let two processes run one job.
@@ -228,6 +237,12 @@ class DbosJobWorker:
         ``version`` started, are deleted first. Stopping lets running jobs finish for
         ``stop_grace`` seconds, then cancels them: a cancelled job stays ``running`` and its
         workflow pending, so the next start resumes it.
+
+        Yields:
+            Nothing; the jobs run until the block ends.
+
+        Raises:
+            RuntimeError: Another worker of this process did not stop in time.
         """
         # A worker that is still stopping (a server in another thread) is waited for.
         if not await asyncio.to_thread(_one_per_process.acquire, timeout=_WAIT_FOR_OTHER):
@@ -670,6 +685,12 @@ class DbosJobWorker:
 
         Once the slot is lost no job starts: the workflow ends cancelled, stays pending, and
         ``_halt`` queues it again for another process.
+
+        Args:
+            job_id: The job's ID, also the workflow's.
+
+        Raises:
+            CancelledError: The slot is lost: the job must run in another process.
         """
         if self._lost.is_set():
             self._refused.add(job_id)
@@ -696,7 +717,11 @@ class DbosJobWorker:
     async def _apply_schedule(
         self, tick: Callable[[datetime, object], Coroutine[object, object, None]]
     ) -> None:
-        """Keep the DBOS schedule in line with ``run_scheduled_checks`` and ``schedule``."""
+        """Keep the DBOS schedule in line with ``run_scheduled_checks`` and ``schedule``.
+
+        Args:
+            tick: The registered tick workflow.
+        """
         if self.run_scheduled_checks is None:
             await DBOS.delete_schedule_async(self.schedule_name)
             return
@@ -739,6 +764,11 @@ class DbosJobWorker:
 
     @staticmethod
     async def _check(run_scheduled_checks: RunScheduledChecks) -> None:
+        """Run one tick's checks; a failure is logged, and the next tick tries again.
+
+        Args:
+            run_scheduled_checks: One tick of the scheduled checks.
+        """
         try:
             await run_scheduled_checks()
         except Exception:  # the next tick tries again
@@ -748,6 +778,9 @@ class DbosJobWorker:
         """Delete a finished workflow (its steps hold the whole text of an import).
 
         Once no workflow is left, the file is compacted: deleted steps only free pages.
+
+        Args:
+            job_id: The workflow's ID: a job's, or a tick's.
         """
         try:
             ended = await self._ended(job_id)
@@ -761,7 +794,14 @@ class DbosJobWorker:
 
     @staticmethod
     async def _ended(job_id: str) -> bool:
-        """Wait until DBOS has recorded the end of the workflow; ``False`` if it never does."""
+        """Wait until DBOS has recorded the end of the workflow; ``False`` if it never does.
+
+        Args:
+            job_id: The workflow's ID.
+
+        Returns:
+            True once DBOS records it ended; False when it is unknown or does not end in time.
+        """
         for _ in range(_FORGET_TRIES):
             status = await DBOS.get_workflow_status_async(job_id)
             if status is None:
@@ -908,7 +948,11 @@ def _log_failed(task: asyncio.Task[None], what: str) -> None:
 
 
 def _vacuum(database: Path) -> None:
-    """``VACUUM`` the file when at least half of it (and 1 MiB) is free pages."""
+    """``VACUUM`` the file when at least half of it (and 1 MiB) is free pages.
+
+    Args:
+        database: DBOS's SQLite file.
+    """
     with closing(sqlite3.connect(database, timeout=30, isolation_level=None)) as connection:
         free = connection.execute("PRAGMA freelist_count").fetchone()[0]
         pages = connection.execute("PRAGMA page_count").fetchone()[0]
