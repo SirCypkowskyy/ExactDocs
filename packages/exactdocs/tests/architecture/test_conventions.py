@@ -315,16 +315,13 @@ def _own_nodes(function: ast.FunctionDef | ast.AsyncFunctionDef) -> Iterator[ast
     Yields:
         Every node that belongs to this function's own code.
     """
-    stack: list[ast.AST] = list(function.body)
+    skipped = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+    stack: list[ast.AST] = [node for node in function.body if not isinstance(node, skipped)]
     while stack:
         node = stack.pop()
         yield node
         stack.extend(
-            child
-            for child in ast.iter_child_nodes(node)
-            if not isinstance(
-                child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
-            )
+            child for child in ast.iter_child_nodes(node) if not isinstance(child, skipped)
         )
 
 
@@ -821,7 +818,7 @@ def _sources() -> Iterable[Path]:
 # only the docstring rules may appear in it. Emptying it is tracked in its own issue.
 BASELINE = Path(__file__).parent / "conventions_baseline.txt"
 # The most entries the baseline may hold. Lower it when you delete lines; never raise it.
-BASELINE_CEILING = 2994
+BASELINE_CEILING = 2643
 BASELINE_RULES = {
     "function-without-docstring",
     "docstring-missing-args",

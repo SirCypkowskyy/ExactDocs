@@ -140,6 +140,25 @@ async def session() -> AsyncIterator[str]:
     yield "id"
 
 
+def make_session() -> object:
+    """Build a session factory; its nested generator does not make this one a generator.
+
+    Returns:
+        The factory.
+    """
+
+    @asynccontextmanager
+    async def scoped() -> AsyncIterator[str]:
+        """Open a scoped session.
+
+        Yields:
+            The session id.
+        """
+        yield "id"
+
+    return scoped
+
+
 @overload
 def same(value: int) -> int: ...
 @overload

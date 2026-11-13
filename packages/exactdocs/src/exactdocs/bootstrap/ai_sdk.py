@@ -639,6 +639,9 @@ async def _chat_model(endpoint: Endpoint, model: str) -> Model:
 
     Returns:
         The pydantic-ai model.
+
+    Raises:
+        ProviderUnsupportedError: The profile's kind serves no chat model.
     """
     profile = endpoint.profile
     if not profile.kind.has_chat:

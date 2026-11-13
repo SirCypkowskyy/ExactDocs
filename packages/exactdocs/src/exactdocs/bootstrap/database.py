@@ -74,13 +74,25 @@ class WriteTurnTimeoutError(RuntimeError):
 
 
 def alembic_config(location: Path = MIGRATIONS) -> Config:
-    """Alembic configuration built in code; ``env.py`` reuses the connection it is given."""
+    """Alembic configuration built in code; ``env.py`` reuses the connection it is given.
+
+    Args:
+        location: The migrations directory.
+
+    Returns:
+        The configuration.
+    """
     config = Config()
     config.set_main_option("script_location", str(location).replace("%", "%%"))
     return config
 
 
 def _check_sqlite() -> None:
+    """Refuse a SQLite library older than ``MIN_SQLITE``.
+
+    Raises:
+        StartupError: The SQLite this Python is built against is too old.
+    """
     if sqlite3.sqlite_version_info < MIN_SQLITE:
         message = (
             f"SQLite {sqlite3.sqlite_version} is too old: ExactDocs needs "
@@ -96,6 +108,17 @@ def open_database(settings: Settings, *, read_only: bool = False) -> AsyncEngine
     ``read_only`` opens an existing database file with ``mode=ro`` and ``PRAGMA query_only``: it
     creates no directory, switches no journal mode and can never write. A missing file is a
     ``StartupError`` naming it.
+
+    Args:
+        settings: The instance settings, for the database URL and the data directory.
+        read_only: Open an existing SQLite file that can never be written.
+
+    Returns:
+        The engine.
+
+    Raises:
+        StartupError: The URL is invalid, names another database than SQLite or PostgreSQL, or
+            the data directory cannot be used.
     """
     try:
         url = make_url(settings.effective_database_url)
@@ -220,6 +243,9 @@ def _configure_spend_ledger_connection(
     Args:
         dbapi_connection: SQLAlchemy's adapter over the aiosqlite connection.
         record: The pool's record of it, which holds the aiosqlite connection itself.
+
+    Raises:
+        TypeError: The pool's connection is not an aiosqlite one.
     """
     cursor = dbapi_connection.cursor()
     try:
@@ -385,6 +411,10 @@ def _begin_postgres(connection: Connection) -> None:
 
     Args:
         connection: The connection whose transaction begins.
+
+    Raises:
+        WriteTurnTimeoutError: Another transaction kept the turn past ``WRITE_LOCK_TIMEOUT_MS``.
+        OperationalError: The lock failed for another reason.
     """
     if not connection.get_execution_options().get("begin_immediate", False):
         return
@@ -417,6 +447,12 @@ def is_postgres(engine: AsyncEngine) -> bool:
 def _configure_read_only_connection(
     dbapi_connection: DBAPIConnection, _: ConnectionPoolEntry
 ) -> None:
+    """Make a read-only connection wait for locks and refuse every write.
+
+    Args:
+        dbapi_connection: The new DB-API connection.
+        _: The pool's record of it (unused).
+    """
     cursor = dbapi_connection.cursor()
     try:
         # Only what a reader needs: foreign_keys and synchronous matter for writes alone.
@@ -427,7 +463,14 @@ def _configure_read_only_connection(
 
 
 def _prepare_directory(path: Path) -> None:
-    """Create ``path`` if missing and prove it is writable, or fail naming it."""
+    """Create ``path`` if missing and prove it is writable, or fail naming it.
+
+    Args:
+        path: The directory.
+
+    Raises:
+        StartupError: The directory cannot be created or written to.
+    """
     try:
         path.mkdir(mode=0o700, parents=True, exist_ok=True)  # private when we create it
         with tempfile.TemporaryFile(dir=path):
@@ -441,6 +484,12 @@ def _prepare_directory(path: Path) -> None:
 
 
 def _configure_connection(dbapi_connection: DBAPIConnection, _: ConnectionPoolEntry) -> None:
+    """Set a new SQLite connection up: busy timeout, WAL, ``synchronous`` and foreign keys.
+
+    Args:
+        dbapi_connection: The new DB-API connection.
+        _: The pool's record of it (unused).
+    """
     cursor = dbapi_connection.cursor()
     try:
         # First, so the statements below wait for a lock instead of failing at once.
@@ -459,6 +508,13 @@ def _enable_wal(cursor: DBAPICursor) -> None:
     without calling the busy handler when two connections race for it (each holds a shared lock
     the other waits on), so ``busy_timeout`` does not cover this statement. Retry it ourselves
     for as long as that timeout; the losers then find the file already in WAL.
+
+    Args:
+        cursor: A cursor of the new connection.
+
+    Raises:
+        OperationalError: The switch failed for another reason than a busy file, or the file
+            stayed busy for longer than ``BUSY_TIMEOUT_MS``.
     """
     deadline = time.monotonic() + BUSY_TIMEOUT_MS / 1000
     while True:
@@ -475,6 +531,11 @@ def _enable_wal(cursor: DBAPICursor) -> None:
 
 
 def _begin(connection: Connection) -> None:
+    """Begin a transaction: ``BEGIN IMMEDIATE`` when the connection asks for one.
+
+    Args:
+        connection: The connection whose transaction begins.
+    """
     immediate = connection.get_execution_options().get("begin_immediate", False)
     connection.exec_driver_sql("BEGIN IMMEDIATE" if immediate else "BEGIN")
 
@@ -494,6 +555,10 @@ async def migrate(engine: AsyncEngine, *, location: Path = MIGRATIONS) -> None:
     On PostgreSQL the revisions run in one transaction that first takes an advisory lock (the
     same turn-taking across processes), and the text columns of ExactDocs' tables are then given
     the "C" collation (see ``COLLATED_PREFIXES``).
+
+    Args:
+        engine: The database engine.
+        location: The migrations directory.
     """
     if is_postgres(engine):
         async with engine.begin() as connection:
@@ -622,6 +687,12 @@ def _turn_holder(descriptor: int) -> str:
 
 
 def _pragma(connection: Connection, pragma: str) -> None:
+    """Run one ``PRAGMA`` on the raw DB-API connection, outside any transaction.
+
+    Args:
+        connection: The connection.
+        pragma: The pragma and its value, e.g. ``foreign_keys=OFF``.
+    """
     cursor = connection.connection.cursor()
     try:
         cursor.execute(f"PRAGMA {pragma}")
@@ -630,6 +701,15 @@ def _pragma(connection: Connection, pragma: str) -> None:
 
 
 def _upgrade(connection: Connection, location: Path) -> None:
+    """Run the SQLite revisions up to the head, then prove they left no foreign key violation.
+
+    Args:
+        connection: The connection, in its ``BEGIN IMMEDIATE`` transaction.
+        location: The migrations directory.
+
+    Raises:
+        StartupError: The revisions left foreign key violations (the transaction rolls back).
+    """
     config = alembic_config(location)
     config.attributes["connection"] = connection
     command.upgrade(config, "head")
@@ -803,7 +883,14 @@ def _collate_by_code_point(connection: Connection) -> None:
 
 
 async def current_revision(engine: AsyncEngine) -> str | None:
-    """Return the schema revision the database is at, or ``None`` before the first migration."""
+    """Return the schema revision the database is at, or ``None`` before the first migration.
+
+    Args:
+        engine: The database engine.
+
+    Returns:
+        The revision, or ``None``.
+    """
     async with engine.connect() as connection:
         return await connection.run_sync(
             lambda sync: MigrationContext.configure(sync).get_current_revision()
@@ -853,7 +940,14 @@ def database_file_missing(engine: AsyncEngine) -> bool:
 
 
 async def check_schema_is_current(engine: AsyncEngine) -> None:
-    """Refuse a database a reader cannot use: unreadable, not migrated, or newer than this build."""
+    """Refuse a database a reader cannot use: unreadable, not migrated, or newer than this build.
+
+    Args:
+        engine: The database engine.
+
+    Raises:
+        StartupError: The database cannot be read, or is not at this build's head revision.
+    """
     script = ScriptDirectory.from_config(alembic_config())
     head = script.get_current_head()
     if is_postgres(engine):

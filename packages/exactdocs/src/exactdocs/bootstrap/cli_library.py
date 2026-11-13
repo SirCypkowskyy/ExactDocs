@@ -57,7 +57,14 @@ class UsageError(ClientError):
 
 
 def exit_code(error: ClientError) -> int:
-    """Map a failure to the process exit status."""
+    """Map a failure to the process exit status.
+
+    Args:
+        error: The failure.
+
+    Returns:
+        The exit status (``EXIT_*``): by kind, and for an API error by its HTTP status.
+    """
     if isinstance(error, ImportFailedError):
         return EXIT_IMPORT
     if isinstance(error, UsageError):
@@ -76,17 +83,33 @@ def exit_code(error: ClientError) -> int:
 
 
 def dump(data: object) -> None:
-    """Print ``data`` as JSON for scripts."""
+    """Print ``data`` as JSON for scripts.
+
+    Args:
+        data: Anything ``json.dumps`` takes.
+    """
     sys.stdout.write(json.dumps(data, indent=2) + "\n")
 
 
 def say(text: str) -> None:
-    """Print one line of human output."""
+    """Print one line of human output.
+
+    Args:
+        text: The line, made printable first.
+    """
     sys.stdout.write(printable(text) + "\n")
 
 
 def table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
-    """Render left-aligned columns; cells are made printable first."""
+    """Render left-aligned columns; cells are made printable first.
+
+    Args:
+        headers: The column headers.
+        rows: The rows, one cell per header.
+
+    Returns:
+        The table's lines, without trailing spaces.
+    """
     cells = [[printable(c) for c in row] for row in [headers, *rows]]
     widths = [max(len(row[i]) for row in cells) for i in range(len(headers))]
     return "\n".join(
@@ -95,7 +118,17 @@ def table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
 
 
 def split_target(target: str) -> tuple[str, str | None]:
-    """Split ``owner/repo`` or ``/owner/repo/ref`` (a ref may hold slashes) into library and ref."""
+    """Split ``owner/repo`` or ``/owner/repo/ref`` (a ref may hold slashes) into library and ref.
+
+    Args:
+        target: The library or version as typed.
+
+    Returns:
+        ``owner/repo`` and the ref, or ``None`` when there is none.
+
+    Raises:
+        UsageError: The target has no owner or no repository.
+    """
     owner, _, rest = target.strip().strip("/").partition("/")
     repo, _, ref = rest.partition("/")
     if not owner or not repo:
@@ -105,6 +138,17 @@ def split_target(target: str) -> tuple[str, str | None]:
 
 
 def _library_path(library: str) -> str:
+    """Return a library's API path.
+
+    Args:
+        library: ``owner/repo`` as typed.
+
+    Returns:
+        ``/libraries/<owner>/<repo>``, each part URL-quoted.
+
+    Raises:
+        UsageError: The target is not a library, or names a version.
+    """
     name, ref = split_target(library)
     if ref:
         message = f"expected a library (/owner/repo), not a version: {printable(library)!r}"
@@ -114,7 +158,20 @@ def _library_path(library: str) -> str:
 
 
 async def _poll(api: ApiClient, job_id: str, interval: float) -> dict[str, Any]:
-    """Fetch a job; retry a few times when the server or network hiccups."""
+    """Fetch a job; retry a few times when the server or network hiccups.
+
+    Args:
+        api: The API client.
+        job_id: The job.
+        interval: Seconds to wait before a retry.
+
+    Returns:
+        The decoded ``Job``.
+
+    Raises:
+        ImportFailedError: The job could not be fetched: a client error, or more than
+            ``POLL_RETRIES`` failures.
+    """
     failures = 0
     while True:
         try:
@@ -146,6 +203,21 @@ async def wait_for_job(
 
     Gives up after ``give_up_after`` seconds (the job goes on in the server) and says so when
     interrupted: the CLI only watches, it never owns the import.
+
+    Args:
+        api: The API client.
+        job_id: The job.
+        label: What the job imports, for the messages.
+        progress: Called with a line on each change of state or count; nothing when ``None``.
+        interval: Seconds between two polls.
+        give_up_after: Seconds to wait at most.
+
+    Returns:
+        The succeeded ``Job``.
+
+    Raises:
+        CancelledError: The wait was cancelled (the job keeps running).
+        KeyboardInterrupt: The user interrupted the wait (the job keeps running).
     """
     try:
         return await _watch(api, job_id, label, progress, interval, give_up_after)
@@ -162,6 +234,23 @@ async def _watch(
     interval: float,
     give_up_after: float,
 ) -> dict[str, Any]:
+    """Poll a job until it ends, reporting progress (``wait_for_job`` without the interrupt).
+
+    Args:
+        api: The API client.
+        job_id: The job.
+        label: What the job imports, for the messages.
+        progress: Called with a line on each change of state or count; nothing when ``None``.
+        interval: Seconds between two polls.
+        give_up_after: Seconds to wait at most.
+
+    Returns:
+        The succeeded ``Job``.
+
+    Raises:
+        ImportFailedError: The job failed, or did not end within ``give_up_after`` seconds.
+        ClientError: The job is in a state this client does not know.
+    """
     shown = None
     deadline = time.monotonic() + give_up_after
     while True:
@@ -191,7 +280,17 @@ async def _watch(
 
 
 def _read_capped(path: str) -> bytes:
-    """Return the file's bytes (one more than the cap if it is longer); refuse non-regular files."""
+    """Return the file's bytes (one more than the cap if it is longer); refuse non-regular files.
+
+    Args:
+        path: The file.
+
+    Returns:
+        At most ``MAX_SECRET_BYTES + 1`` bytes.
+
+    Raises:
+        UsageError: It is not a regular file.
+    """
     descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK)  # a FIFO must not block us
     with os.fdopen(descriptor, "rb") as handle:
         info = os.fstat(handle.fileno())
@@ -207,6 +306,15 @@ def read_secret(path: str) -> str:
     """Read a token or key file; refuse what cannot be one, warn when others can read it.
 
     The content never appears in a message. A file over the cap is refused, not cut off.
+
+    Args:
+        path: The file.
+
+    Returns:
+        Its text.
+
+    Raises:
+        UsageError: It cannot be read, is not UTF-8, is over ``MAX_SECRET_BYTES`` or is blank.
     """
     try:
         data = _read_capped(path)
@@ -224,17 +332,39 @@ def read_secret(path: str) -> str:
 
 
 def to_stderr(line: str) -> None:
-    """Progress goes to stderr so ``--json`` output on stdout stays parseable."""
+    """Progress goes to stderr so ``--json`` output on stdout stays parseable.
+
+    Args:
+        line: The line, made printable first.
+    """
     sys.stderr.write(printable(line) + "\n")
 
 
 def _finished(job: dict[str, Any]) -> str:
+    """Summarize a succeeded import.
+
+    Args:
+        job: The decoded ``Job``.
+
+    Returns:
+        How many files were imported, and skipped if any.
+    """
     skipped = sum(1 for p in job["problems"] if p["is_skip"])
     return f"imported {job['done']} files" + (f", skipped {skipped}" if skipped else "")
 
 
 def parse_tag_rules(tag_rules: Sequence[str]) -> list[dict[str, str]]:
-    """Turn ``PATTERN=TAG`` arguments into the API's tag rules; a malformed one is a usage error."""
+    """Turn ``PATTERN=TAG`` arguments into the API's tag rules; a malformed one is a usage error.
+
+    Args:
+        tag_rules: The ``PATTERN=TAG`` arguments.
+
+    Returns:
+        The rules, as ``{"pattern", "tag"}`` objects.
+
+    Raises:
+        UsageError: An argument has no pattern or no tag.
+    """
     rules = []
     for rule in tag_rules:
         pattern, _, tag = rule.rpartition("=")
@@ -262,7 +392,23 @@ async def add_library(
     interval: float = POLL_SECONDS,
     give_up_after: float = WAIT_SECONDS,
 ) -> None:
-    """``POST /libraries``, then optionally follow the import job."""
+    """``POST /libraries``, then optionally follow the import job.
+
+    Args:
+        api: The API client.
+        url: The repository's clone URL.
+        library_id: The library's ``owner/repo`` ID; the server derives it from ``url`` if
+            ``None``.
+        ref: The version to import; the repository's default branch if ``None``.
+        include: Path globs to import (everything when empty).
+        exclude: Path globs to leave out.
+        tag_rules: ``PATTERN=TAG`` arguments.
+        credential: The repository credential, for a private repository.
+        wait: Follow the import job until it ends.
+        as_json: Print JSON for scripts instead of text.
+        interval: Seconds between two polls of the job.
+        give_up_after: Seconds to wait for the job at most.
+    """
     rules = parse_tag_rules(tag_rules)
     body: dict[str, Any] = {
         "url": url,
@@ -293,6 +439,15 @@ async def preview_import(
 
     Prints the files an import would take, how many there are and whether the list was cut;
     no sizes (the server would have to download every file to know them). Nothing is stored.
+
+    Args:
+        api: The API client.
+        url: The repository's clone URL.
+        ref: The version to look at; the repository's default branch if ``None``.
+        include: Path globs to import (everything when empty).
+        exclude: Path globs to leave out.
+        credential: The repository credential, for a private repository.
+        as_json: Print JSON for scripts instead of text.
     """
     body: dict[str, Any] = {
         "url": url,
@@ -333,7 +488,18 @@ async def add_version(
     interval: float = POLL_SECONDS,
     give_up_after: float = WAIT_SECONDS,
 ) -> None:
-    """``POST /libraries/{owner}/{repo}/versions``, then optionally follow the import job."""
+    """``POST /libraries/{owner}/{repo}/versions``, then optionally follow the import job.
+
+    Args:
+        api: The API client.
+        library: ``owner/repo``.
+        ref: The version to import.
+        credential: The repository credential, when it changed.
+        wait: Follow the import job until it ends.
+        as_json: Print JSON for scripts instead of text.
+        interval: Seconds between two polls of the job.
+        give_up_after: Seconds to wait for the job at most.
+    """
     body = {"ref": ref} | ({"credential": credential} if credential else {})
     added = await api.request("POST", f"{_library_path(library)}/versions", json=body)
     await _report_added(
@@ -350,6 +516,16 @@ async def _report_added(
     interval: float,
     give_up_after: float,
 ) -> None:
+    """Print what was added, after following its import job when asked to.
+
+    Args:
+        api: The API client.
+        added: The decoded ``LibraryAdded``/``VersionAdded`` answer.
+        wait: Follow the import job until it ends.
+        as_json: Print JSON for scripts instead of text.
+        interval: Seconds between two polls of the job.
+        give_up_after: Seconds to wait for the job at most.
+    """
     what = f"{added['library_id']}@{added['ref']}"
     job = None
     if wait:
@@ -373,7 +549,12 @@ async def _report_added(
 
 
 async def list_libraries(api: ApiClient, *, as_json: bool = False) -> None:
-    """``GET /libraries``, every page."""
+    """``GET /libraries``, every page.
+
+    Args:
+        api: The API client.
+        as_json: Print JSON for scripts instead of a table.
+    """
     libraries: list[dict[str, Any]] = []
     cursor = None
     while True:
@@ -406,7 +587,17 @@ async def list_libraries(api: ApiClient, *, as_json: bool = False) -> None:
 async def _follow(
     api: ApiClient, synced: dict[str, Any], interval: float, give_up_after: float
 ) -> tuple[dict[str, Any], ClientError | None]:
-    """Wait for every queued import of a sync; the jobs by ref, and the first failure."""
+    """Wait for every queued import of a sync; the jobs by ref, and the first failure.
+
+    Args:
+        api: The API client.
+        synced: The decoded ``SyncResult``.
+        interval: Seconds between two polls of a job.
+        give_up_after: Seconds to wait for each job at most.
+
+    Returns:
+        The succeeded jobs by ref, and the first import failure (``None`` when none failed).
+    """
     jobs: dict[str, Any] = {}
     failure = None
     for version in synced["versions"]:
@@ -435,6 +626,15 @@ async def _reimport_moved_tags(
     ``wanted`` names the tags to confirm (``None``: every moved tag). Returns the rows whose
     re-import was queued. A tag whose re-import is refused (it moved back, an import of it started
     meanwhile...) stays ``failed``, with the refusal as its code and reason.
+
+    Args:
+        api: The API client.
+        library: ``owner/repo``.
+        synced: The decoded ``SyncResult``; its version rows are updated in place.
+        wanted: The tags to confirm, or ``None`` for every moved tag.
+
+    Returns:
+        The version rows whose re-import was queued.
     """
     path = f"{_library_path(library)}/versions/reimport"
     queued = []
@@ -463,7 +663,17 @@ async def _reimport_moved_tags(
 async def _sync(api: ApiClient, library: str, *, confirming: str | None) -> dict[str, Any]:
     """``POST .../sync``: a 422 (the remote could not be read) is a failed sync, exit 6.
 
-    ``confirming`` is the confirmation flag the user passed, named in the hint of a 409.
+    Args:
+        api: The API client.
+        library: ``owner/repo``.
+        confirming: The confirmation flag the user passed, named in the hint of a 409.
+
+    Returns:
+        The decoded ``SyncResult``.
+
+    Raises:
+        ApiError: The server refused the sync (a 409 with a hint when ``confirming``).
+        ImportFailedError: The remote could not be read (422).
     """
     try:
         return await api.request("POST", f"{_library_path(library)}/sync")
@@ -496,6 +706,18 @@ async def sync_library(
     version that could not be synced (the remote could not be read, a branch or tag is gone, a tag
     moved and was not confirmed, a named tag did not move, a queued import failed) raises
     ``ImportFailedError`` naming each reason and code.
+
+    Args:
+        api: The API client.
+        library: ``owner/repo``.
+        confirm: Re-import moved tags: ``True`` every one, a collection of refs only those.
+        wait: Follow every queued import until it ends.
+        as_json: Print JSON for scripts instead of text.
+        interval: Seconds between two polls of a job.
+        give_up_after: Seconds to wait for each job at most.
+
+    Raises:
+        ImportFailedError: A version could not be synced.
     """
     wanted = None if confirm is True else set(confirm or ())
     flag = None if not confirm else "--confirm" if confirm is True else "--confirm-tag"
@@ -542,20 +764,41 @@ async def sync_library(
 
 
 def _sync_failure(version: dict[str, Any]) -> str:
+    """Say why one version of a sync failed.
+
+    Args:
+        version: The failed version row of a ``SyncResult``.
+
+    Returns:
+        ``sync of <ref> failed [<code>]: <reason>``.
+    """
     code = f" [{printable(version['error_code'])}]" if version.get("error_code") else ""
     reason = printable(version.get("error") or "see the jobs")
     return f"sync of {printable(version['ref'])} failed{code}: {reason}"
 
 
 def removal_prompt(target: str) -> str:
-    """Return the question asked before a removal."""
+    """Return the question asked before a removal.
+
+    Args:
+        target: ``/owner/repo`` or ``/owner/repo/ref``.
+
+    Returns:
+        The question, naming what would be removed.
+    """
     library, ref = split_target(target)
     what = f"version {ref} of /{library}" if ref else f"/{library} with all its versions"
     return f"Remove {what}? Its imported content is deleted. [y/N] "
 
 
 async def remove(api: ApiClient, target: str, *, as_json: bool = False) -> None:
-    """``DELETE`` a version (``/owner/repo/ref``) or a whole library (``/owner/repo``)."""
+    """``DELETE`` a version (``/owner/repo/ref``) or a whole library (``/owner/repo``).
+
+    Args:
+        api: The API client.
+        target: ``/owner/repo`` or ``/owner/repo/ref``.
+        as_json: Print JSON for scripts instead of text.
+    """
     library, ref = split_target(target)
     path = _library_path(library) + (f"/versions/{quote(ref, safe='/')}" if ref else "")
     result = await api.request("DELETE", path)
@@ -569,7 +812,16 @@ async def remove(api: ApiClient, target: str, *, as_json: bool = False) -> None:
 
 
 async def create_token(api: ApiClient, name: str, days: int | None) -> dict[str, Any]:
-    """``POST /tokens`` (a session is needed) and return the grant; ``days=None`` never expires."""
+    """``POST /tokens`` (a session is needed) and return the grant; ``days=None`` never expires.
+
+    Args:
+        api: The API client, signed in with a session.
+        name: The token's name.
+        days: Days until the token expires, or ``None`` for never.
+
+    Returns:
+        The decoded ``TokenGrant``, with the secret.
+    """
     body: dict[str, Any] = {"name": name}
     if days is not None:
         body["expires_at"] = (datetime.now(UTC) + timedelta(days=days)).isoformat()
@@ -577,7 +829,14 @@ async def create_token(api: ApiClient, name: str, days: int | None) -> dict[str,
 
 
 async def token_create(api: ApiClient, name: str, days: int | None, *, as_json: bool) -> None:
-    """Create a token; the secret is shown this once."""
+    """Create a token; the secret is shown this once.
+
+    Args:
+        api: The API client, signed in with a session.
+        name: The token's name.
+        days: Days until the token expires, or ``None`` for never.
+        as_json: Print JSON for scripts instead of text.
+    """
     grant = await create_token(api, name, days)
     if as_json:
         dump(grant)
@@ -587,7 +846,12 @@ async def token_create(api: ApiClient, name: str, days: int | None, *, as_json: 
 
 
 async def token_list(api: ApiClient, *, as_json: bool) -> None:
-    """``GET /tokens``."""
+    """``GET /tokens``.
+
+    Args:
+        api: The API client, signed in with a session.
+        as_json: Print JSON for scripts instead of a table.
+    """
     tokens = (await api.request("GET", "/tokens"))["tokens"]
     if as_json:
         dump({"tokens": tokens})
@@ -601,19 +865,39 @@ async def token_list(api: ApiClient, *, as_json: bool) -> None:
 
 
 async def token_revoke(api: ApiClient, token_id: str) -> None:
-    """``DELETE /tokens/{id}``."""
+    """``DELETE /tokens/{id}``.
+
+    Args:
+        api: The API client, signed in with a session.
+        token_id: The token's ID.
+    """
     await api.request("DELETE", f"/tokens/{quote(token_id, safe='')}")
     say(f"Revoked token {token_id}.")
 
 
 def _one_line(text: str) -> str:
+    """Join a text's lines and collapse its whitespace.
+
+    Args:
+        text: The text.
+
+    Returns:
+        The text on one line.
+    """
     return " ".join(text.split())
 
 
 async def find_library(
     api: ApiClient, name: str, query: str | None, *, as_json: bool = False
 ) -> None:
-    """``ctx7 library``: ``GET /c7/search``; a missing query defaults to the name."""
+    """``ctx7 library``: ``GET /c7/search``; a missing query defaults to the name.
+
+    Args:
+        api: The API client.
+        name: The library name to look for.
+        query: What the user wants to do with it, to rank the matches.
+        as_json: Print the bare result list as JSON instead of text.
+    """
     found = await api.request(
         "GET", "/c7/search", params={"libraryName": name, "query": query or name}
     )
@@ -641,7 +925,18 @@ async def find_library(
 async def query_docs(
     api: ApiClient, library_id: str, query: str, *, language: str | None = None, as_json: bool
 ) -> None:
-    """``ctx7 docs``: ``GET /c7/docs``. The text keeps the server's notice and line breaks."""
+    """``ctx7 docs``: ``GET /c7/docs``. The text keeps the server's notice and line breaks.
+
+    Args:
+        api: The API client.
+        library_id: ``/owner/repo``, ``/owner/repo/version`` or ``/owner/repo@version``.
+        query: What to look for.
+        language: Put chunks with code in this language first (it does not filter).
+        as_json: Print the JSON answer instead of the text.
+
+    Raises:
+        UsageError: The library ID is not one of the accepted forms.
+    """
     if not LIBRARY_ID.match(library_id):
         message = (
             f"invalid library ID {printable(library_id)!r}; expected /owner/repo, "

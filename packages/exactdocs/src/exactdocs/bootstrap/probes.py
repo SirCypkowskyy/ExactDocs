@@ -250,6 +250,9 @@ class _OneCheckAtATime[T]:
 
         Args:
             grace: Seconds the check gets to finish on its own, and again once cancelled.
+
+        Raises:
+            CancelledError: ``settle`` itself was cancelled (the check is cancelled too).
         """
         task = self.pending
         if task is None:

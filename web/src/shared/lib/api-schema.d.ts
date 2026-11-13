@@ -1953,12 +1953,20 @@ export interface components {
          * @description The one error shape of the API: a stable machine ``error`` code and a human ``detail``.
          */
         readonly ErrorResponse: {
-            /** Error */
+            /**
+             * Error
+             * @description A stable machine code of the error, e.g. `not_found` or `validation_error`. Branch on this,
+             *     not on `detail`.
+             */
             readonly error: string;
-            /** Detail */
+            /**
+             * Detail
+             * @description What went wrong, for a person. Its wording may change between releases.
+             */
             readonly detail: string;
             /**
              * Fields
+             * @description On `validation_error`: one entry per invalid request field. Empty otherwise.
              * @default []
              */
             readonly fields: readonly components["schemas"]["FieldError"][];
@@ -1986,11 +1994,21 @@ export interface components {
          * @description One invalid request field.
          */
         readonly FieldError: {
-            /** Loc */
+            /**
+             * Loc
+             * @description Where the field is: its location (`body`, `query`, `path`, `header` or `cookie`), then its
+             *     name, then the keys or list indexes into it, e.g. `["body", "tag_rules", 0, "pattern"]`.
+             */
             readonly loc: readonly (string | number)[];
-            /** Msg */
+            /**
+             * Msg
+             * @description What is wrong with it, for a person.
+             */
             readonly msg: string;
-            /** Type */
+            /**
+             * Type
+             * @description A stable machine code of the problem, e.g. `missing` or `string_too_long`.
+             */
             readonly type: string;
         };
         /**

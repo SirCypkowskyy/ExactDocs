@@ -185,13 +185,23 @@ class CatalogSearchableVersions:
     """Implements ``retrieval.ports.driven.SearchableVersions`` using the catalog."""
 
     get_library: GetLibrary
+    """The catalog's library read, for the repository and its rules."""
     get_active_manifest: GetActiveManifest
+    """The catalog's resolution of a ref to the manifest it serves."""
 
     async def find(self, library: str, ref: str | None) -> SearchableVersion | None:
         """Resolve the exact ref (the default version without one) and name its active manifest.
 
         The manifest answer carries the commit, so the ref, the manifest and the commit come
         from one catalog call and cannot disagree.
+
+        Args:
+            library: The library ID.
+            ref: The exact ref, or ``None`` for the default version.
+
+        Returns:
+            The version and its active manifest; ``None`` when the library or the exact ref is
+            unknown, or the version serves no manifest.
         """
         try:
             active = await self.get_active_manifest(
@@ -220,9 +230,14 @@ class CatalogDefaultVersions:
     """Implements ``retrieval.ports.driven.DefaultVersions`` using the catalog."""
 
     list_default_manifests: ListDefaultManifests
+    """The catalog's list of every library's default version and its manifest."""
 
     async def all(self) -> Sequence[SearchableVersion]:
-        """Name every library's default version with an active manifest, in one catalog call."""
+        """Name every library's default version with an active manifest, in one catalog call.
+
+        Returns:
+            The default versions.
+        """
         found = await self.list_default_manifests()
         return [
             SearchableVersion(
@@ -242,6 +257,7 @@ class CatalogLibraries:
     """Implements ``retrieval.ports.driven.Libraries`` using the catalog."""
 
     list_libraries: ListLibraries
+    """The catalog's paged library list."""
     get_library: GetLibrary
     """Spells a library ID as the catalog stores it."""
 
@@ -260,7 +276,11 @@ class CatalogLibraries:
             return None
 
     async def all(self) -> Sequence[CatalogLibrary]:
-        """Read every page of the catalog's list, skipping libraries with no default version."""
+        """Read every page of the catalog's list, skipping libraries with no default version.
+
+        Returns:
+            The libraries that have a default version.
+        """
         found: list[CatalogLibrary] = []
         cursor = None
         while True:
@@ -289,9 +309,17 @@ class CatalogLibraryIds:
     """Implements ``ingestion.ports.driven.LibraryIds`` using the catalog."""
 
     get_library: GetLibrary
+    """The catalog's library read; a miss means the ID is free."""
 
     async def is_taken(self, library_id: ProposedId) -> bool:
-        """Tell whether a library with this ID is in the catalog."""
+        """Tell whether a library with this ID is in the catalog.
+
+        Args:
+            library_id: The proposed ID.
+
+        Returns:
+            ``True`` when the catalog has it.
+        """
         try:
             await self.get_library(GetLibraryQuery(id=library_id))
         except NotFoundError:
@@ -304,10 +332,19 @@ class CatalogActiveManifests:
     """Implements ``retrieval.ports.driven.ActiveManifests`` using the catalog."""
 
     get_active_manifest: GetActiveManifest
+    """The catalog's resolution of a ref to the manifest it serves."""
     get_manifest_states: GetManifestStates
+    """The catalog's states of manifests, by ID."""
 
     async def active_id(self, target: DocTarget) -> str | None:
-        """Return the manifest the catalog serves for this version, or ``None`` when it has none."""
+        """Return the manifest the catalog serves for this version, or ``None`` when it has none.
+
+        Args:
+            target: The library version.
+
+        Returns:
+            The manifest ID, or ``None``.
+        """
         try:
             found = await self.get_active_manifest(
                 GetActiveManifestQuery(library=target.library, ref=target.version)
@@ -317,7 +354,14 @@ class CatalogActiveManifests:
         return found.manifest_id
 
     async def statuses(self, manifest_ids: Collection[str]) -> Mapping[str, ManifestStatus]:
-        """Ask the catalog; IDs it does not know are left out."""
+        """Ask the catalog; IDs it does not know are left out.
+
+        Args:
+            manifest_ids: The manifests.
+
+        Returns:
+            Each known manifest's status.
+        """
         found = await self.get_manifest_states(
             GetManifestStatesQuery(manifest_ids=list(manifest_ids))
         )
@@ -329,9 +373,18 @@ class CatalogRenamedPaths:
     """Implements ``retrieval.ports.driven.RenamedPaths`` using the catalog."""
 
     resolve_renamed_path: ResolveRenamedPath
+    """The catalog's lookup of a path in the active manifest's rename map."""
 
     async def new_path(self, target: DocTarget, old_path: str) -> str | None:
-        """Follow the rename map of the active manifest; ``None`` when nothing is known."""
+        """Follow the rename map of the active manifest; ``None`` when nothing is known.
+
+        Args:
+            target: The library version.
+            old_path: The path that may have moved.
+
+        Returns:
+            The article's new path, or ``None``.
+        """
         try:
             found = await self.resolve_renamed_path(
                 ResolveRenamedPathQuery(library=target.library, ref=target.version, path=old_path)
@@ -374,10 +427,19 @@ class CatalogNewLibraries:
     """Implements ``ingestion.ports.driven.NewLibraries`` using the catalog."""
 
     create_library: CreateLibrary
+    """The catalog's creation of a library."""
     discard_library: DiscardLibrary
+    """The catalog's removal of a library whose first import failed."""
 
     async def add(self, library: NewLibrary) -> str:
-        """Create the library in the catalog; return its canonical ID."""
+        """Create the library in the catalog; return its canonical ID.
+
+        Args:
+            library: The library to create.
+
+        Returns:
+            The ID as the catalog spells it.
+        """
         created = await self.create_library(
             CreateLibraryCommand(
                 id=library.library_id,
@@ -393,7 +455,11 @@ class CatalogNewLibraries:
         return created.id
 
     async def discard(self, library_id: str) -> None:
-        """Remove the library from the catalog again."""
+        """Remove the library from the catalog again.
+
+        Args:
+            library_id: The library ID.
+        """
         await self.discard_library(DiscardLibraryCommand(id=library_id))
 
 
@@ -402,10 +468,20 @@ class CatalogLibrarySources:
     """Implements ``ingestion.ports.driven.LibrarySources`` using the catalog."""
 
     get_library: GetLibrary
+    """The catalog's library read: repository, settings and versions."""
     list_renames: ListRenames
+    """The catalog's rename map of a version."""
 
     async def renames_of(self, library: str, ref: str) -> list[GitRename]:
-        """Return the rename map the version serves; empty when it has none or is unknown."""
+        """Return the rename map the version serves; empty when it has none or is unknown.
+
+        Args:
+            library: The library ID.
+            ref: The version.
+
+        Returns:
+            The renames.
+        """
         try:
             found = await self.list_renames(ListRenamesQuery(library=library, ref=ref))
         except NotFoundError:
@@ -416,7 +492,14 @@ class CatalogLibrarySources:
         ]
 
     async def get(self, library: str) -> ImportSource:
-        """Read the library's repository, selection and tag rules; ``NotFoundError`` if unknown."""
+        """Read the library's repository, selection and tag rules; ``NotFoundError`` if unknown.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            What an import of the library needs.
+        """
         detail = await self.get_library(GetLibraryQuery(id=library))
         settings = detail.settings
         chunking = settings.chunking
@@ -433,7 +516,14 @@ class CatalogLibrarySources:
         )
 
     async def imported_versions(self, library: str) -> list[ImportedRef]:
-        """Return the versions: kind, commit, origin and whether it is the pinned default."""
+        """Return the versions: kind, commit, origin and whether it is the pinned default.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            The library's versions.
+        """
         detail = await self.get_library(GetLibraryQuery(id=library))
         return [
             ImportedRef(
@@ -452,31 +542,65 @@ class CatalogVersionPublisher:
     """Implements ``ingestion.ports.driven.VersionPublisher`` using the catalog."""
 
     store_manifest: StoreManifest
+    """The catalog's storing of a pending manifest."""
     activate_manifest: ActivateManifest
+    """The catalog's switch of a version to a manifest."""
     discard_pending_manifests: DiscardPendingManifests
+    """The catalog's deletion of pending manifests."""
     apply_readme: ApplyReadme
+    """The catalog's update of a library's text and rules from a version."""
     apply_manual_tags_to: ApplyManualTags
+    """The catalog's tagging of a pending manifest with the manual tags."""
     replace_renames_of: ReplaceRenames
+    """The catalog's replacement of a version's rename map."""
 
     async def store(self, version: ImportedVersion) -> str:
-        """Store the articles as a pending manifest."""
+        """Store the articles as a pending manifest.
+
+        Args:
+            version: The imported version.
+
+        Returns:
+            The pending manifest's ID.
+        """
         command = await asyncio.to_thread(_store_command, version)
         stored = await self.store_manifest(command)
         return stored.manifest_id
 
     async def activate(self, manifest_id: str) -> None:
-        """Make the manifest what its version serves."""
+        """Make the manifest what its version serves.
+
+        Args:
+            manifest_id: The pending manifest.
+        """
         await self.activate_manifest(ActivateManifestCommand(manifest_id=manifest_id))
 
     async def apply_manual_tags(self, manifest_id: str) -> dict[str, tuple[str, ...]]:
-        """Give the pending manifest its library's manual tags."""
+        """Give the pending manifest its library's manual tags.
+
+        Args:
+            manifest_id: The pending manifest.
+
+        Returns:
+            Every tag of each article, by path.
+        """
         found = await self.apply_manual_tags_to(ApplyManualTagsCommand(manifest_id=manifest_id))
         return {a.path: tuple(a.tags) for a in found.articles}
 
     async def replace_renames(
         self, library: str, ref: str, *, from_ref: str, renames: Sequence[GitRename]
     ) -> dict[str, dict[str, tuple[str, ...]]]:
-        """Give the version's active manifest the new map; empty when it serves none."""
+        """Give the version's active manifest the new map; empty when it serves none.
+
+        Args:
+            library: The library ID.
+            ref: The version.
+            from_ref: The version the renames were detected against.
+            renames: The new rename map.
+
+        Returns:
+            The articles' tags of each manifest that was re-tagged, by manifest ID.
+        """
         try:
             found = await self.replace_renames_of(
                 ReplaceRenamesCommand(
@@ -506,7 +630,15 @@ class CatalogVersionPublisher:
         description: str | None,
         rules: Sequence[str],
     ) -> None:
-        """Offer the version's text and rules to the catalog, which decides whether they apply."""
+        """Offer the version's text and rules to the catalog, which decides whether they apply.
+
+        Args:
+            library: The library ID.
+            ref: The version.
+            title: The title its README gives, if any.
+            description: The description its README gives, if any.
+            rules: Its rules for agents.
+        """
         await self.apply_readme(
             ApplyReadmeCommand(
                 library=library, ref=ref, title=title, description=description, rules=list(rules)
@@ -514,7 +646,12 @@ class CatalogVersionPublisher:
         )
 
     async def discard(self, *, manifest_id: str | None, library: str) -> None:
-        """Delete one pending manifest, or the library's pending manifests."""
+        """Delete one pending manifest, or the library's pending manifests.
+
+        Args:
+            manifest_id: The pending manifest, or ``None`` for all of the library's.
+            library: The library ID.
+        """
         await self.discard_pending_manifests(
             DiscardPendingManifestsCommand(
                 manifest_id=manifest_id, library=None if manifest_id else library
@@ -527,15 +664,28 @@ class RetrievalChunkIndex:
     """Implements ``ingestion.ports.driven.ChunkIndex`` using retrieval."""
 
     index_manifest: IndexManifest
+    """Retrieval's storing and indexing of a manifest's chunks."""
     get_chunk_sets: GetChunkSets
+    """Retrieval's read of the chunks stored for blobs."""
     discard_pending_chunks: DiscardPendingChunks
+    """Retrieval's deletion of pending manifests' chunks."""
     remove_chunks: RemoveChunks
+    """Retrieval's deletion of removed manifests' chunks."""
     retag_articles: RetagArticles
+    """Retrieval's copy of the articles' tags onto their chunks."""
 
     async def known(
         self, config_hash: str, blob_shas: Sequence[str]
     ) -> Mapping[str, tuple[ArticleChunk, ...]]:
-        """Read back the chunks stored for these blobs."""
+        """Read back the chunks stored for these blobs.
+
+        Args:
+            config_hash: The chunking configuration the chunks were made with.
+            blob_shas: The blobs.
+
+        Returns:
+            Each known blob's chunks, in order.
+        """
         found = await self.get_chunk_sets(
             GetChunkSetsQuery(config_hash=config_hash, blob_shas=list(blob_shas))
         )
@@ -566,12 +716,22 @@ class RetrievalChunkIndex:
         }
 
     async def index(self, manifest_id: str, version: ImportedVersion) -> None:
-        """Store and index the chunks of the pending manifest."""
+        """Store and index the chunks of the pending manifest.
+
+        Args:
+            manifest_id: The pending manifest.
+            version: The imported version, with its chunks.
+        """
         command = await asyncio.to_thread(_index_command, manifest_id, version)
         await self.index_manifest(command)
 
     async def discard(self, *, manifest_id: str | None, library: str) -> None:
-        """Delete one pending manifest's chunks, or the library's pending chunks."""
+        """Delete one pending manifest's chunks, or the library's pending chunks.
+
+        Args:
+            manifest_id: The pending manifest, or ``None`` for all of the library's.
+            library: The library ID.
+        """
         await self.discard_pending_chunks(
             DiscardPendingChunksCommand(
                 manifest_id=manifest_id, library=None if manifest_id else library
@@ -579,11 +739,20 @@ class RetrievalChunkIndex:
         )
 
     async def remove(self, manifest_ids: Sequence[str]) -> None:
-        """Delete the chunks of manifests the catalog has just deleted."""
+        """Delete the chunks of manifests the catalog has just deleted.
+
+        Args:
+            manifest_ids: The deleted manifests.
+        """
         await self.remove_chunks(RemoveChunksCommand(manifest_ids=list(manifest_ids)))
 
     async def retag(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> None:
-        """Copy the articles' tags onto their chunk rows."""
+        """Copy the articles' tags onto their chunk rows.
+
+        Args:
+            manifest_id: The manifest.
+            tags: Every tag of each changed article, by path.
+        """
         await self.retag_articles(
             RetagArticlesCommand(
                 manifest_id=manifest_id,
@@ -634,6 +803,10 @@ class RetrievalVersionEmbedder:
 
         Returns:
             What the batch embedded.
+
+        Raises:
+            EmbeddingUnavailableError: The provider failed for now; the job retries after a wait.
+            EmbeddingFailedError: The embedding failed for good.
         """
         if plan.space_id is None or plan.manifest_id is None:
             return EmbeddedBatch(embedded=0, finished=True)
@@ -675,9 +848,19 @@ class CatalogManualTags:
     """Implements ``ingestion.ports.driven.ManualTagStore`` using the catalog."""
 
     set_manual_tags: SetManualTags
+    """The catalog's storing of a path's manual tags."""
 
     async def set_tags(self, library: str, path: str, tags: Sequence[str]) -> TaggedPath:
-        """Store the path's manual tags; the catalog re-tags its manifests and says which."""
+        """Store the path's manual tags; the catalog re-tags its manifests and says which.
+
+        Args:
+            library: The library ID.
+            path: The article path.
+            tags: Its manual tags.
+
+        Returns:
+            The stored tags and the manifests that were re-tagged.
+        """
         done = await self.set_manual_tags(
             SetManualTagsCommand(library=library, path=path, tags=list(tags))
         )
@@ -696,6 +879,7 @@ class CatalogLibrarySettings:
     """Implements ``ingestion.ports.driven.LibrarySettingsStore`` using the catalog."""
 
     set_library_settings: SetLibrarySettings
+    """The catalog's storing of a library's import settings."""
 
     async def save(
         self,
@@ -704,7 +888,14 @@ class CatalogLibrarySettings:
         tag_rules: Sequence[TagRule],
         chunking: ChunkingConfig,
     ) -> None:
-        """Store the paths, tag rules and chunking on the library."""
+        """Store the paths, tag rules and chunking on the library.
+
+        Args:
+            library: The library ID.
+            selection: The paths to import.
+            tag_rules: The tag rules.
+            chunking: The chunking settings.
+        """
         await self.set_library_settings(
             SetLibrarySettingsCommand(
                 id=library,
@@ -726,9 +917,22 @@ class CatalogVersionCopier:
     """Implements ``ingestion.ports.driven.VersionCopier`` using the catalog."""
 
     copy_manifest: CopyManifest
+    """The catalog's copy of a version's active manifest."""
 
     async def copy(self, library: str, ref: str, *, content_version: int) -> CopiedVersion | None:
-        """Copy the version's active manifest; ``None`` for an unknown or empty version."""
+        """Copy the version's active manifest; ``None`` for an unknown or empty version.
+
+        Args:
+            library: The library ID.
+            ref: The version.
+            content_version: The parser version the stored texts must have been made with.
+
+        Returns:
+            The copy, or ``None``.
+
+        Raises:
+            StoredTextOutdatedError: The stored texts were made by an older parser.
+        """
         try:
             copied = await self.copy_manifest(
                 CopyManifestCommand(library=library, ref=ref, content_version=content_version)
@@ -760,10 +964,20 @@ class CatalogImportedTags:
     """Implements ``ingestion.ports.driven.ImportedTagStore`` using the catalog."""
 
     get_version_tags: GetVersionTags
+    """The catalog's read of a version's tag sources."""
     set_imported_tags_of: SetImportedTags
+    """The catalog's storing of a manifest's imported tags."""
 
     async def stored_tags(self, library: str, ref: str) -> StoredTags | None:
-        """Read the active manifest's tag sources; ``None`` for an unknown or empty version."""
+        """Read the active manifest's tag sources; ``None`` for an unknown or empty version.
+
+        Args:
+            library: The library ID.
+            ref: The version.
+
+        Returns:
+            The manifest and each article's front matter and tags, or ``None``.
+        """
         try:
             found = await self.get_version_tags(GetVersionTagsQuery(library=library, ref=ref))
         except NotFoundError:
@@ -781,7 +995,15 @@ class CatalogImportedTags:
     async def set_imported_tags(
         self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]
     ) -> dict[str, tuple[str, ...]]:
-        """Write the imported tags; return every tag of the articles that changed."""
+        """Write the imported tags; return every tag of the articles that changed.
+
+        Args:
+            manifest_id: The manifest.
+            tags: The imported tags of each article, by path.
+
+        Returns:
+            Every tag of each changed article, by path.
+        """
         done = await self.set_imported_tags_of(
             SetImportedTagsCommand(
                 manifest_id=manifest_id,
@@ -796,11 +1018,22 @@ class CatalogStoredArticles:
     """Implements ``ingestion.ports.driven.StoredArticleSource`` using the catalog."""
 
     find_stored_articles: FindStoredArticles
+    """The catalog's lookup of articles already stored for blobs."""
 
     async def find(
         self, library: str, ref: str, parser_version: int, files: Sequence[tuple[str, str]]
     ) -> list[StoredArticle]:
-        """Ask the catalog; the parser version is its content version (see ``_store_command``)."""
+        """Ask the catalog; the parser version is its content version (see ``_store_command``).
+
+        Args:
+            library: The library ID.
+            ref: The version.
+            parser_version: The parser version the stored texts must have been made with.
+            files: ``(path, blob SHA)`` of each file.
+
+        Returns:
+            The articles already stored for those files.
+        """
         found = await self.find_stored_articles(
             FindStoredArticlesQuery(
                 library=library,
@@ -826,12 +1059,22 @@ class CatalogRemovals:
     """Implements ``ingestion.ports.driven.Removals`` using the catalog (and retrieval)."""
 
     version_remover: RemoveVersion
+    """The catalog's removal of a version."""
     library_remover: RemoveLibrary
+    """The catalog's removal of a library."""
     forget_library: ForgetLibrary
     """Drops retrieval's per-library settings once the catalog has removed the library."""
 
     async def remove_version(self, library: str, ref: str) -> Removed:
-        """Remove the version from the catalog."""
+        """Remove the version from the catalog.
+
+        Args:
+            library: The library ID.
+            ref: The version.
+
+        Returns:
+            What the catalog removed.
+        """
         return _removed(await self.version_remover(RemoveVersionCommand(library=library, ref=ref)))
 
     async def remove_library(self, library: str) -> Removed:
@@ -852,6 +1095,14 @@ class CatalogRemovals:
 
 
 def _removed(result: CatalogRemoval) -> Removed:
+    """Translate the catalog's removal into ingestion's.
+
+    Args:
+        result: What the catalog removed.
+
+    Returns:
+        The same, in ingestion's terms.
+    """
     return Removed(
         library=result.library,
         ref=result.ref,
@@ -865,9 +1116,17 @@ class CatalogCollector:
     """Implements ``ingestion.ports.driven.Collector`` using the catalog."""
 
     collect_garbage: CollectGarbage
+    """The catalog's garbage collection."""
 
     async def collect(self, *, grace_seconds: int) -> Collected:
-        """Delete superseded manifests past the grace period and the texts nothing uses."""
+        """Delete superseded manifests past the grace period and the texts nothing uses.
+
+        Args:
+            grace_seconds: How long a superseded manifest is kept.
+
+        Returns:
+            How many manifests, texts and images were deleted.
+        """
         done = await self.collect_garbage(CollectGarbageCommand(grace_seconds=grace_seconds))
         return Collected(deleted=done.manifests + done.contents + done.images)
 
@@ -877,6 +1136,7 @@ class RetrievalCollector:
     """Implements ``ingestion.ports.driven.Collector`` using retrieval."""
 
     collect_chunks: CollectChunks
+    """Retrieval's garbage collection of chunk rows."""
 
     async def collect(self, *, grace_seconds: int) -> Collected:
         """Delete chunk rows of manifests the catalog no longer knows, and unused chunk sets.
@@ -885,6 +1145,12 @@ class RetrievalCollector:
         done with them, so retrieval asks for none beyond its own five minutes of doubt about
         a manifest the catalog has not answered for yet. That also sweeps the rows of a removal
         whose ``RemoveChunks`` failed.
+
+        Args:
+            grace_seconds: The job's grace period (not used, see above).
+
+        Returns:
+            How many manifests' rows and chunk sets were deleted.
         """
         del grace_seconds
         done = await self.collect_chunks(CollectChunksCommand(grace_seconds=0))
@@ -892,7 +1158,14 @@ class RetrievalCollector:
 
 
 def _store_command(version: ImportedVersion) -> StoreManifestCommand:
-    """Build the catalog's command (validates every article: off the event loop)."""
+    """Build the catalog's command (validates every article: off the event loop).
+
+    Args:
+        version: The imported version.
+
+    Returns:
+        The command.
+    """
     return StoreManifestCommand(
         library=version.library,
         ref=version.ref,
@@ -933,7 +1206,15 @@ def _store_command(version: ImportedVersion) -> StoreManifestCommand:
 
 
 def _index_command(manifest_id: str, version: ImportedVersion) -> IndexManifestCommand:
-    """Build retrieval's command (validates every chunk: off the event loop)."""
+    """Build retrieval's command (validates every chunk: off the event loop).
+
+    Args:
+        manifest_id: The pending manifest.
+        version: The imported version, with its chunks.
+
+    Returns:
+        The command.
+    """
     return IndexManifestCommand(
         manifest_id=manifest_id,
         library=version.library,
