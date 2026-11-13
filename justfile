@@ -81,6 +81,10 @@ golden-validate *args:
 golden-import *args:
     uv run python packages/exactdocs/evals/run_golden.py import {{ args }}
 
+# Agent benchmark (never in CI): an agent with only the ExactDocs MCP tools answers the golden set (docs/evals.md); `just agent-bench run --offline`
+agent-bench *args:
+    uv run python packages/exactdocs/evals/run_agent_bench.py {{ args }}
+
 # Web unit tests (vitest)
 web-test:
     cd {{ web }} && pnpm test

@@ -115,6 +115,7 @@ ignore = [
 # The eval runner script sits beside its package, outside any package, like e2e/run.py.
 "packages/exactdocs/evals/run_retrieval_eval.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_golden.py" = ["implicit-namespace-package"]
+"packages/exactdocs/evals/run_agent_bench.py" = ["implicit-namespace-package"]
 "**/features/**" = ["assert", "D", "DOC", "ANN", "FBT", "implicit-namespace-package"]
 # Alembic revisions are generated from migrations/script.py.mako: no per-function docstrings.
 "**/migrations/versions/**" = ["D"]
@@ -182,7 +183,13 @@ pythonpath = [
     "packages/exactdocs/tests/fixtures",  # fixture_repo.py
     "packages/exactdocs/evals",  # retrieval_eval, the retrieval eval suite
 ]
-addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+addopts = [
+    "-ra", "--strict-markers", "--strict-config", "--import-mode=importlib",
+    "-m", "not eval",  # docs/evals.md: the release runs them; `uv run pytest -m eval` locally
+]
+markers = [
+    "eval: runs the retrieval eval suite end to end on the imported fixture (slow); skipped by default",
+]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 xfail_strict = true
