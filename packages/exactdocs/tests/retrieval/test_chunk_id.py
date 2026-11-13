@@ -1,3 +1,7 @@
+import hashlib
+import json
+from dataclasses import replace
+
 import pytest
 
 from exactdocs.retrieval.errors import DuplicateChunkError
@@ -28,6 +32,33 @@ def test_the_chunk_id_of_a_known_input_never_changes() -> None:
 )
 def test_every_input_changes_the_chunk_id(changed: tuple) -> None:
     assert chunk_id(*changed) != chunk_id(*KNOWN)
+
+
+def test_part_0_keeps_the_id_a_whole_section_had_and_another_part_changes_it() -> None:
+    assert chunk_id(*KNOWN, 0) == chunk_id(*KNOWN)
+    assert chunk_id(*KNOWN, 1) != chunk_id(*KNOWN)
+    assert chunk_id(*KNOWN, 1) != chunk_id(*KNOWN, 2)
+    assert chunk_id(*KNOWN[:3], 1, KNOWN[4]) != chunk_id(*KNOWN[:3], 0, KNOWN[4], 1)
+
+
+def test_part_0_keeps_the_digest_a_chunk_set_had_before_parts_existed() -> None:
+    whole = ChunkSet(blob_sha="b", config_hash="h", chunks=(chunk("A", "a"),))
+    split = ChunkSet(
+        blob_sha="b", config_hash="h", chunks=(chunk("A", "a"), replace(chunk("A", "b"), part=1))
+    )
+
+    before = json.dumps([[["A"], 0, "a", "a"]], separators=(",", ":"))  # the shape before #141
+    assert whole.digest == hashlib.sha256(before.encode()).hexdigest()
+    assert split.digest != replace(split, chunks=(chunk("A", "a"), chunk("A", "b"))).digest
+
+
+def test_two_parts_of_one_section_get_two_ids() -> None:
+    parts = ChunkSet(
+        blob_sha="b", config_hash="h", chunks=(chunk("A", "x"), replace(chunk("A", "x"), part=1))
+    )
+
+    first, second = article_chunk_rows("/o/r/main", "a.md", parts, ())
+    assert first.chunk_id != second.chunk_id
 
 
 def test_a_separator_inside_a_heading_cannot_collide_with_a_longer_heading_path() -> None:
