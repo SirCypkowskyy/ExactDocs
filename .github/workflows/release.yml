@@ -129,6 +129,13 @@ jobs:
         run: >-
           uv run python packages/exactdocs/evals/run_ingestion_bench.py --check
           --out reports/evals
+      # BM25 on the golden set at the default chunking, through the retrieval benchmark: fails on
+      # a wrong version or when recall@5 or nDCG@10 drops more than 2 points below the recorded
+      # run (docs/evals.md#the-retrieval-benchmark). No model; about a minute.
+      - name: Retrieval benchmark (BM25, model-free, against the recorded run)
+        run: >-
+          uv run python packages/exactdocs/evals/run_retrieval_bench.py --configs bm25
+          --chunkings default --check --out reports/evals/retrieval-bench
       # Report-only from here (continue-on-error): a failed pull or a model's numbers never stop
       # the release; a wrong version (rate above 0) still shows as a failed step. The models are
       # cached between releases under a key named after the pinned revisions, so a new pin gets a
