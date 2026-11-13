@@ -1,5 +1,6 @@
 from exactdocs_kernel import (
     ConflictError,
+    ForbiddenError,
     NotFoundError,
     RateLimitedError,
     UnauthenticatedError,
@@ -53,13 +54,67 @@ class NotSignedInError(UnauthenticatedError):
 
 
 class UnknownAccountError(NotFoundError):
-    """No account has this username. Only operators (the local command line) learn this."""
+    """No account has this username or id. Only operators (command line, users page) learn this."""
 
     code = "unknown_account"
 
     def __init__(self) -> None:
         """Create the error with its fixed message."""
         super().__init__("no account has this username")
+
+
+class ReservedUsernameError(ValidationError):
+    """A new username holds a sequence the sign-in throttle uses in its own keys."""
+
+    code = "invalid_username"
+
+    def __init__(self, reserved: str) -> None:
+        """Create the error.
+
+        Args:
+            reserved: The sequence that is not allowed, for the message.
+        """
+        super().__init__(f"a username may not contain {reserved!r}")
+
+
+class UsernameTakenError(ConflictError):
+    """Another account already has this username (compared case-insensitively)."""
+
+    code = "username_taken"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__("another account already has this username")
+
+
+class NotSetUpError(ConflictError):
+    """No account exists yet: the first one is the admin, made by the setup, not a user."""
+
+    code = "not_set_up"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__(
+            "the instance is not set up: create the first admin first (exactdocs admin create)"
+        )
+
+
+class LastOperatorError(ConflictError):
+    """Disabling this account would leave no enabled admin to manage the others."""
+
+    code = "last_operator"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__("the last enabled admin cannot be disabled")
+
+
+class NotAnOperatorError(ForbiddenError):
+    """The caller is signed in, but only an admin manages accounts."""
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__("only an admin manages user accounts")
 
 
 class InvalidTokenNameError(ValidationError):

@@ -4,7 +4,7 @@ import logging
 import math
 import secrets
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from uuid import uuid7
 
@@ -15,6 +15,7 @@ from exactdocs.identity.constants import (
     IDLE_TIMEOUT,
     MAX_TOKENS_PER_ACCOUNT,
     PREFIX_SHOWN,
+    RESERVED_IN_USERNAME,
     TOKEN_BYTES,
     TOUCH_INTERVAL,
     VALUE_PREFIX,
@@ -24,16 +25,20 @@ from exactdocs.identity.dtos import (
     AuthenticateQuery,
     CreateFirstAdminCommand,
     CreateTokenCommand,
+    CreateUserCommand,
     LoginForTokenCommand,
     PasswordReset,
     ResetPasswordCommand,
     SessionGrant,
     SessionState,
     SetupState,
+    SetUserDisabledCommand,
     ThrottleReset,
     TokenGrant,
     TokenList,
     TokenSummary,
+    UserList,
+    UserSummary,
 )
 from exactdocs.identity.errors import (
     AlreadySetUpError,
@@ -41,11 +46,15 @@ from exactdocs.identity.errors import (
     InvalidTokenError,
     InvalidTokenExpiryError,
     InvalidUsernameError,
+    LastOperatorError,
+    NotSetUpError,
     NotSignedInError,
+    ReservedUsernameError,
     SignInThrottledError,
     TooManyTokensError,
     UnknownAccountError,
     UnknownTokenError,
+    UsernameTakenError,
 )
 from exactdocs.identity.models import (
     Account,
@@ -189,6 +198,11 @@ class AuthenticateUseCase:
             raise InvalidCredentialsError
         if not await self.hasher.verify(account.password_hash, password):
             raise InvalidCredentialsError
+        if account.is_disabled:
+            # Checked after the password, with the same error and the attempt still counted, so
+            # the answer tells nobody whether the account exists, is disabled or the password
+            # is wrong.
+            raise InvalidCredentialsError
         # The account's own count starts over; the address only gets this attempt back (its
         # wait is not restarted), so one good password does not buy an address a fresh round of
         # guesses at others.
@@ -295,7 +309,8 @@ class IdentifyCallerUseCase:
             The signed-in account.
 
         Raises:
-            NotSignedInError: No token, or its session is unknown, expired or of a deleted account.
+            NotSignedInError: No token, or its session is unknown, expired or of a deleted or
+                disabled account.
         """
         if not token:
             raise NotSignedInError
@@ -309,8 +324,10 @@ class IdentifyCallerUseCase:
         account = (
             None if session.is_expired(now) else await self.accounts.get_by_id(session.account_id)
         )
-        if account is None:
-            await self.sessions.delete(token_hash)  # expired, or its account is gone
+        if account is None or account.is_disabled:
+            # Expired, or its account is gone or disabled. Disabling deletes the account's
+            # sessions already; this also refuses one a sign-in racing the disable created.
+            await self.sessions.delete(token_hash)
             raise NotSignedInError
         if now - session.last_used_at >= TOUCH_INTERVAL:
             await self.sessions.touch(token_hash, now)
@@ -376,63 +393,211 @@ class ResetPasswordUseCase:
 
         By then the reset itself is done, so a throttle that is busy or fails does not undo or
         fail it: the result says so (``throttle``, the worse of the two steps), and running the
-        reset again is safe.
+        reset again is safe. An unknown account is refused with ``UnknownAccountError``.
 
         Args:
-            command: The account's username and its new password.
+            command: The account (its username or id) and its new password.
 
         Returns:
             The account, and what became of its username's throttle count and remembered
             sign-ins.
-
-        Raises:
-            UnknownAccountError: No account has that username.
         """
-        try:
-            account = await self.accounts.get(Username(command.username))
-        except InvalidUsernameError:
-            account = None
-        if account is None:
-            raise UnknownAccountError
+        account = await _find_account(
+            self.accounts, account_id=command.id, username=command.username
+        )
         password_hash = await self.hasher.hash(command.password.get_secret_value())
         await self.accounts.set_password_hash(account.id, password_hash)
         await self.sessions.delete_for_account(account.id)
         await self.tokens.delete_for_account(account.id)
-        username = str(account.username)
-        count = await self._forget_throttle(
-            lambda: self.failures.forget(f"username:{username}"),
-            "a username's count was not reset",
-        )
-        remembered = await self._forget_throttle(
-            lambda: self.failures.forget_remembered(username),
-            "a username's remembered sign-ins were not forgotten",
-        )
-        # The worse of the two: either one left undone is worth a warning.
-        outcomes = {count, remembered}
-        throttle: ThrottleReset = (
-            "failed" if "failed" in outcomes else "busy" if "busy" in outcomes else "cleared"
-        )
+        throttle = await _clear_throttle(self.failures, str(account.username))
         return PasswordReset(account=AccountSummary.from_model(account), throttle=throttle)
 
-    @staticmethod
-    async def _forget_throttle(forget: Callable[[], Awaitable[bool]], what: str) -> ThrottleReset:
-        """Await one of the throttle's forgets, reporting rather than raising a failure.
 
-        Args:
-            forget: Starts the forget; called inside the ``try``, so a forget that raises
-                before it awaits anything is reported too.
-            what: What stays when it fails, for the log.
+async def _find_account(
+    accounts: AccountRepository, *, account_id: str | None, username: str | None
+) -> Account:
+    """Return the account an operator named, by its id or by its username.
+
+    Args:
+        accounts: Where accounts are stored.
+        account_id: The account's id, when it is named that way.
+        username: The account's username, when it is named that way.
+
+    Returns:
+        The account.
+
+    Raises:
+        UnknownAccountError: No account has that id or username.
+    """
+    account: Account | None = None
+    if account_id is not None:
+        account = await accounts.get_by_id(AccountId(account_id))
+    elif username is not None:
+        try:
+            account = await accounts.get(Username(username))
+        except InvalidUsernameError:
+            account = None
+    if account is None:
+        raise UnknownAccountError
+    return account
+
+
+async def _clear_throttle(failures: FailedSignInLog, username: str) -> ThrottleReset:
+    """Drop a username's sign-in throttle count and every address remembered for it.
+
+    The client addresses' own counts and other usernames' stay. A throttle that is busy or
+    fails does not raise: the result says so (the worse of the two steps), and clearing again
+    is safe.
+
+    Args:
+        failures: The sign-in throttle.
+        username: The (normalised) username.
+
+    Returns:
+        ``cleared``, ``busy`` (the log skipped a step) or ``failed`` (a step raised).
+    """
+    count = await _forget_throttle(
+        lambda: failures.forget(f"username:{username}"), "a username's count was not reset"
+    )
+    remembered = await _forget_throttle(
+        lambda: failures.forget_remembered(username),
+        "a username's remembered sign-ins were not forgotten",
+    )
+    # The worse of the two: either one left undone is worth a warning.
+    outcomes = {count, remembered}
+    return "failed" if "failed" in outcomes else "busy" if "busy" in outcomes else "cleared"
+
+
+async def _forget_throttle(forget: Callable[[], Awaitable[bool]], what: str) -> ThrottleReset:
+    """Await one of the throttle's forgets, reporting rather than raising a failure.
+
+    Args:
+        forget: Starts the forget; called inside the ``try``, so a forget that raises
+            before it awaits anything is reported too.
+        what: What stays when it fails, for the log.
+
+    Returns:
+        ``cleared``, ``busy`` (the log skipped it) or ``failed`` (the log raised).
+    """
+    try:
+        cleared = await forget()
+    except Exception as error:  # ruff: ignore[blind-except] - the account changed already
+        # No traceback: the change worked, and one would read as if it had not.
+        logger.warning("Sign-in throttle failed: %s (%s)", what, type(error).__name__)
+        return "failed"
+    return "cleared" if cleared else "busy"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ListUsersUseCase:
+    """Implements ``ports.driving.ListUsers``."""
+
+    accounts: AccountRepository
+    """Where accounts are stored."""
+
+    async def __call__(self) -> UserList:
+        """List every local account, disabled ones included.
 
         Returns:
-            ``cleared``, ``busy`` (the log skipped it) or ``failed`` (the log raised).
+            The accounts, oldest first.
         """
-        try:
-            cleared = await forget()
-        except Exception as error:  # ruff: ignore[blind-except] - the password changed already
-            # No traceback: the reset worked, and one would read as if it had not.
-            logger.warning("Sign-in throttle failed: %s (%s)", what, type(error).__name__)
-            return "failed"
-        return "cleared" if cleared else "busy"
+        return UserList(users=[UserSummary.from_model(a) for a in await self.accounts.list_all()])
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CreateUserUseCase:
+    """Implements ``ports.driving.CreateUser``."""
+
+    accounts: AccountRepository
+    """Where accounts are stored."""
+    hasher: PasswordHasher
+    """The password hasher."""
+    failures: FailedSignInLog
+    """The sign-in throttle; any count the new username collected is dropped."""
+    clock: Clock
+    """The current time."""
+
+    async def __call__(self, command: CreateUserCommand) -> UserSummary:
+        """Create a further local account.
+
+        Only after the setup: the first account must be the admin the setup makes. Once the
+        account is stored, the throttle forgets whatever failures were counted against its
+        username before it existed, so guesses at a name cannot lock its new owner out.
+
+        Args:
+            command: The new account's username, password and role.
+
+        Returns:
+            The new account.
+
+        Raises:
+            NotSetUpError: No account exists yet.
+            ReservedUsernameError: The username holds ``RESERVED_IN_USERNAME``.
+            UsernameTakenError: Another account has the username.
+        """
+        if not await self.accounts.any_exists():
+            raise NotSetUpError
+        username = Username(command.username)
+        if RESERVED_IN_USERNAME in username.value:
+            raise ReservedUsernameError(RESERVED_IN_USERNAME)
+        if await self.accounts.get(username) is not None:
+            raise UsernameTakenError  # cheap early exit; `add` below is the atomic check
+        account = Account(
+            id=AccountId(uuid7().hex),
+            username=username,
+            password_hash=await self.hasher.hash(command.password.get_secret_value()),
+            role=Role(command.role),
+            created_at=self.clock.now(),
+        )
+        if not await self.accounts.add(account):
+            raise UsernameTakenError
+        await _clear_throttle(self.failures, username.value)
+        return UserSummary.from_model(account)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SetUserDisabledUseCase:
+    """Implements ``ports.driving.SetUserDisabled``."""
+
+    accounts: AccountRepository
+    """Where accounts are stored."""
+    sessions: SessionRepository
+    """Where browser sessions are stored."""
+    tokens: TokenRepository
+    """Where API tokens are stored."""
+    clock: Clock
+    """The current time."""
+
+    async def __call__(self, command: SetUserDisabledCommand) -> UserSummary:
+        """Disable or enable the account. Doing what is already done is not an error.
+
+        Disabling marks the account first, so a sign-in, a session or a token checked from
+        then on is refused; then every session of the account ends and every token is
+        revoked, so nothing issued before survives an enable either. Enabling lets the account
+        sign in again, with its password unchanged. An unknown account is refused with
+        ``UnknownAccountError``.
+
+        Args:
+            command: The account (its username or id), and whether to disable or enable it.
+
+        Returns:
+            The account as it is now.
+
+        Raises:
+            LastOperatorError: The account is the last enabled admin.
+        """
+        account = await _find_account(
+            self.accounts, account_id=command.id, username=command.username
+        )
+        if command.disabled == account.is_disabled:
+            return UserSummary.from_model(account)
+        disabled_at = self.clock.now() if command.disabled else None
+        if not await self.accounts.set_disabled_at(account.id, disabled_at):
+            raise LastOperatorError
+        if command.disabled:
+            await self.sessions.delete_for_account(account.id)
+            await self.tokens.delete_for_account(account.id)
+        return UserSummary.from_model(replace(account, disabled_at=disabled_at))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -568,7 +733,7 @@ class IdentifyTokenUseCase:
             The account the token acts as.
 
         Raises:
-            InvalidTokenError: The token is unknown, expired, or its account is gone.
+            InvalidTokenError: The token is unknown, expired, or its account is gone or disabled.
         """
         token_hash = hash_token(token)
         # Looked up by the hash of a random secret, like sessions: no timing to learn from.
@@ -579,7 +744,7 @@ class IdentifyTokenUseCase:
         if found.is_expired(now):
             raise InvalidTokenError
         account = await self.accounts.get_by_id(found.account_id)
-        if account is None:
+        if account is None or account.is_disabled:
             raise InvalidTokenError
         if found.last_used_at is None or now - found.last_used_at >= TOUCH_INTERVAL:
             try:

@@ -14,7 +14,7 @@ same idea with **vertical slices**. All of this is enforced by tests, not by con
 | `packages/exactdocs/` | the application, published as `exactdocs` (`src/exactdocs/`) |
 | `packages/exactdocs/src/exactdocs/bootstrap/` | composition root: settings, container, bridges, migrations, HTTP / MCP / CLI entry points |
 | `packages/exactdocs/src/exactdocs/catalog/` | domain: libraries, versions, manifests, article contents |
-| `packages/exactdocs/src/exactdocs/identity/` | domain: the admin account, web sessions and API tokens |
+| `packages/exactdocs/src/exactdocs/identity/` | domain: local accounts (admins and users), web sessions and API tokens |
 | `packages/exactdocs/src/exactdocs/retrieval/` | domain: chunks, the BM25 index, `search_docs`, `query-docs`, `resolve-library-id` |
 | `packages/exactdocs/src/exactdocs/ingestion/` | domain: jobs, the DBOS worker, git access, parsing, chunking and the import |
 | `packages/exactdocs/src/exactdocs/_web/` | the built web UI (gitignored, added by CI / Docker) |
@@ -647,7 +647,17 @@ counts quiet for `FORGET_FAILURES_AFTER`, a remembered sign-in those older than
 
 `AccountRepository.add_first` stores an account only while the table is empty, in one atomic
 statement under `BEGIN IMMEDIATE`, so two concurrent setups (or `exactdocs admin create` next to
-the running server) can never create two admins. `bootstrap/rest.py:SetupGuard` answers
+the running server) can never create two admins. Further accounts (ACL-06) are created only by an operator:
+`CreateUser` behind `POST /api/v1/users` (session of an `admin`, else 403 `forbidden`) or
+`exactdocs user create` (local); there is no self-signup route. `AccountRepository.add` relies on
+the unique `username` column, so a race for one name stores one account. `Role` is `admin` (an
+operator: manages accounts) or `user`; library roles are E12-05. A disabled account
+(`identity_accounts.disabled_at`) is refused at sign-in (after the password check, with the same
+`invalid_credentials`, so the answer reveals nothing), by `IdentifyCaller` and by `IdentifyToken`;
+disabling also deletes its sessions and tokens. `set_disabled_at` checks for another enabled admin
+and disables in one `begin_immediate` transaction, so the last one can never be disabled, even by
+two concurrent requests. New usernames may not hold `@address:`, the separator of the throttle's
+remembered-sign-in keys (`known_sign_ins_prefix`), so one account's keys never prefix another's. `bootstrap/rest.py:SetupGuard` answers
 `403 setup_required` for everything under `/api/v1` until an account exists (default deny; the
 exemptions are `POST /setup`, `GET /session` and `openapi.json`) and stops asking the database
 once one does.
@@ -659,7 +669,8 @@ goes to the browser in an HttpOnly, SameSite=Lax cookie (`Path=/api`, `Secure` o
 only its SHA-256 is stored, so a leaked database holds no usable token. A session ends after
 7 days without use or 30 days in all (`models.IDLE_TIMEOUT`/`ABSOLUTE_TIMEOUT`, checked against the
 kernel `Clock`); using it writes `last_used_at` at most once an hour. Signing out deletes the row,
-so a copied cookie dies too, and `exactdocs admin reset-password` changes the hash first and then
+so a copied cookie dies too, and a password reset (`exactdocs admin|user reset-password`, or
+`PUT /api/v1/users/{id}/password` by an operator) changes the hash first and then
 deletes all the account's sessions, then drops the username's throttle count
 (`FailedSignInLog.forget`) and every address remembered for the username
 (`FailedSignInLog.forget_remembered`, in each key's turn, a bounded batch of keys per

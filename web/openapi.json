@@ -55,7 +55,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -137,7 +137,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -227,7 +227,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -318,7 +318,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -410,7 +410,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -510,7 +510,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -605,7 +605,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -701,7 +701,493 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Get Users",
+        "description": "List every local account, disabled ones included, oldest first. Operators only (`admin`): any other signed-in account is refused with `forbidden` (403). Needs a signed-in session; an API token is refused (401), so a leaked token cannot create accounts. There is no self-signup: accounts are created here, by `exactdocs user create` or, for the first admin, by the setup.",
+        "operationId": "identity-get_users",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Add User",
+        "description": "Create a local account with a password the operator passes on to its owner.\n\nOperators only, with a session (see `GET /users`).",
+        "operationId": "identity-add_user",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/users/{user_id}/disable": {
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Disable User",
+        "description": "Disable an account: its sessions end, its tokens are revoked, and it cannot sign in.\n\nThe last enabled admin cannot be disabled (409 `last_operator`). Disabling a disabled\naccount changes nothing. Operators only, with a session (see `GET /users`).",
+        "operationId": "identity-disable_user",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/enable": {
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Enable User",
+        "description": "Let a disabled account sign in again, with its password unchanged.\n\nIts revoked API tokens stay revoked. Operators only, with a session (see `GET /users`).",
+        "operationId": "identity-enable_user",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/password": {
+      "put": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Set User Password",
+        "description": "Set a new password: every session of the account ends and its tokens are revoked.\n\nThe username's sign-in throttle count is dropped too, so its owner can sign in with the\nnew password at once (`throttle` says whether that worked). Operators only, with a\nsession (see `GET /users`).",
+        "operationId": "identity-set_user_password",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewPassword"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasswordReset"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -841,7 +1327,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -965,7 +1451,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1074,7 +1560,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1198,7 +1684,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1296,7 +1782,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1424,7 +1910,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1542,7 +2028,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1651,7 +2137,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1770,7 +2256,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1888,7 +2374,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2088,7 +2574,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2214,7 +2700,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2346,7 +2832,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2461,7 +2947,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2598,7 +3084,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2748,7 +3234,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2887,7 +3373,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3090,7 +3576,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3258,7 +3744,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3360,7 +3846,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3478,7 +3964,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3630,7 +4116,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3740,7 +4226,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3858,7 +4344,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3940,7 +4426,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -4038,7 +4524,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -4148,7 +4634,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -4258,7 +4744,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -4351,7 +4837,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -4470,7 +4956,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -4552,7 +5038,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -4642,7 +5128,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -4732,7 +5218,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -4822,7 +5308,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -4951,7 +5437,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -5054,7 +5540,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -5165,7 +5651,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -5263,7 +5749,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -5355,7 +5841,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -5509,7 +5995,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -5637,7 +6123,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -5747,7 +6233,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -5841,7 +6327,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -5951,7 +6437,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -6062,7 +6548,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -6201,7 +6687,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -6311,7 +6797,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -6429,7 +6915,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -6537,7 +7023,7 @@
             }
           },
           "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`).",
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -6636,7 +7122,7 @@
           "role": {
             "type": "string",
             "title": "Role",
-            "description": "What the account may do; `admin` is the only role so far."
+            "description": "What the account may do: `admin` (an operator, who also manages accounts) or `user`."
           }
         },
         "additionalProperties": false,
@@ -8242,6 +8728,43 @@
         ],
         "title": "CreateTokenCommand",
         "description": "A new API token for the caller. ``expires_at`` (timezone-aware) is optional."
+      },
+      "CreateUserCommand": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "maxLength": 256,
+            "title": "Username",
+            "description": "Login name of the new account: 1 to 64 characters once normalised (Unicode NFKC, trimmed, case-folded), no whitespace or control characters, and not `@address:`. Taken names are refused with `username_taken` (409)."
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 12,
+            "format": "password",
+            "title": "Password",
+            "description": "Password of the new account, 12 to 1024 characters.",
+            "writeOnly": true
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "user"
+            ],
+            "title": "Role",
+            "description": "`user` (the default) signs in and uses the instance; `admin` also manages accounts.",
+            "default": "user"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "CreateUserCommand",
+        "description": "A new local account, created by an operator. There is no self-signup."
       },
       "DefaultVersionPin": {
         "properties": {
@@ -10179,6 +10702,26 @@
         "title": "ModelRole",
         "description": "A model an operator can configure; which ones are set decides the modes on offer.\n\nNo mode needs ``judge`` to run; the LLM judge (#96) uses it to rerank. It defaults to the\n``llm`` role."
       },
+      "NewPassword": {
+        "properties": {
+          "password": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 12,
+            "format": "password",
+            "title": "Password",
+            "description": "The new password, 12 to 1024 characters.",
+            "writeOnly": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "title": "NewPassword",
+        "description": "A new password an operator sets for an account on the users page."
+      },
       "NewProviderIn": {
         "properties": {
           "kind": {
@@ -10433,6 +10976,32 @@
         ],
         "title": "OutlineSectionOut",
         "description": "One heading of the outline, with the chunk it starts and the headings under it."
+      },
+      "PasswordReset": {
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/AccountSummary",
+            "description": "The account whose password changed, with its stored (normalised) username."
+          },
+          "throttle": {
+            "type": "string",
+            "enum": [
+              "cleared",
+              "busy",
+              "failed"
+            ],
+            "title": "Throttle",
+            "description": "What became of the username's sign-in throttle count and of the addresses the throttle\nremembers for it: ``cleared`` (both are gone, or there were none), ``busy`` (the throttle\ncould not take its turn in time, so the count stays until it is waited out, or the addresses\ngo on skipping the username's count until they are forgotten) or ``failed`` (another error;\neither may stay). The worse of the two is reported. Running the reset again is safe in\neither case."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "account",
+          "throttle"
+        ],
+        "title": "PasswordReset",
+        "description": "The outcome of a password reset: the password, sessions and tokens are always done."
       },
       "PreviewRepositoryCommand": {
         "properties": {
@@ -12508,6 +13077,66 @@
         ],
         "title": "UpdatedLibrarySettings",
         "description": "The settings as stored (normalized) and the job that brings every version in line."
+      },
+      "UserList": {
+        "properties": {
+          "users": {
+            "items": {
+              "$ref": "#/components/schemas/UserSummary"
+            },
+            "type": "array",
+            "title": "Users",
+            "description": "The accounts, oldest first."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "users"
+        ],
+        "title": "UserList",
+        "description": "Every local account, oldest first."
+      },
+      "UserSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Stable identifier of the account."
+          },
+          "username": {
+            "type": "string",
+            "title": "Username",
+            "description": "The login name, normalised (NFKC, trimmed, case-folded): `Admin` signs in as `admin`."
+          },
+          "role": {
+            "type": "string",
+            "title": "Role",
+            "description": "What the account may do: `admin` (an operator, who also manages accounts) or `user`."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "When the account was created."
+          },
+          "disabled": {
+            "type": "boolean",
+            "title": "Disabled",
+            "description": "`true` while the account is disabled: it cannot sign in, and its sessions and tokens are\nrefused."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "username",
+          "role",
+          "created_at",
+          "disabled"
+        ],
+        "title": "UserSummary",
+        "description": "An account as an operator sees it on the users page."
       },
       "VersionOut": {
         "properties": {

@@ -77,6 +77,33 @@ describe("the session guard", () => {
     expect(await screen.findByRole("heading", { name: "Page not found" })).toBeInTheDocument();
   });
 
+  it("shows the users page to an operator and nothing to anyone else", async () => {
+    const api = (state: unknown) => (url: string) =>
+      json(url.endsWith("/users") ? { users: [] } : url.endsWith("/libraries") ? libraries : state);
+    mount("/users", api(signedIn));
+    expect(await screen.findByRole("heading", { name: "Users" })).toBeInTheDocument();
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    expect(within(nav).getByRole("link", { name: "Users" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    cleanup();
+    const member = { state: "signed_in", account: { id: "2", username: "bob", role: "user" } };
+    mount("/users", api(member));
+    expect(await screen.findByRole("heading", { name: "Page not found" })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("navigation", { name: "Main" })).queryByRole("link", {
+        name: "Users",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers no way to sign up", async () => {
+    mount("/sign-in", () => json(signedOut));
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.queryByText(/sign up|register|create (an )?account/i)).not.toBeInTheDocument();
+  });
+
   it("returns to sign-in when the session ends while a page is open", async () => {
     const { client, router } = mount("/account", (url) =>
       json(url.endsWith("/tokens") ? { tokens: [] } : signedIn),

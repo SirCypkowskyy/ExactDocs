@@ -162,3 +162,66 @@ def test_serve_on_postgresql_lets_web_concurrency_decide_and_bounds_shutdown(
 
     assert started["workers"] is None  # uvicorn reads WEB_CONCURRENCY
     assert started["timeout_graceful_shutdown"] == 30
+
+
+def user(monkeypatch: pytest.MonkeyPatch, stdin: str, *args: str) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO(stdin))
+    cli.app(["user", *args], exit_on_error=False, result_action="return_value")
+
+
+def test_user_create_needs_the_setup_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(SystemExit) as raised:
+        user(monkeypatch, GOOD + "\n", "create", "bob", "--password-stdin")
+
+    assert "create the first admin first" in str(raised.value.code)
+
+
+def test_user_create_disable_enable_and_reset(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(monkeypatch, GOOD + "\n", "--username", "ada", "--password-stdin")
+    new = "bob's brand new passphrase"
+
+    user(monkeypatch, GOOD + "\n", "create", "Bob", "--password-stdin")
+    user(monkeypatch, GOOD + "\n", "create", "carol", "--password-stdin", "--operator")
+    user(monkeypatch, "", "disable", "bob")
+    user(monkeypatch, "", "enable", "BOB")
+    user(monkeypatch, new + "\n", "reset-password", "bob", "--password-stdin")
+
+    out, err = capsys.readouterr()
+    assert "Created user 'bob'." in out
+    assert "Created admin 'carol'." in out
+    assert "Disabled 'bob'; its sessions ended and its API tokens were revoked." in out
+    assert "Enabled 'bob'." in out
+    assert "Password of 'bob' changed; all its sessions ended." in out
+    assert GOOD not in out + err
+    assert new not in out + err
+
+
+def test_user_create_refuses_a_taken_name_and_a_short_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run(monkeypatch, GOOD + "\n", "--username", "ada", "--password-stdin")
+
+    with pytest.raises(SystemExit) as taken:
+        user(monkeypatch, GOOD + "\n", "create", "ADA", "--password-stdin")
+    with pytest.raises(SystemExit) as short:
+        user(monkeypatch, "short\n", "create", "bob", "--password-stdin")
+
+    assert "another account already has this username" in str(taken.value.code)
+    assert "12 to 1024 characters" in str(short.value.code)
+    assert "short\n" not in str(short.value.code)
+
+
+def test_user_disable_refuses_the_last_admin_and_an_unknown_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run(monkeypatch, GOOD + "\n", "--username", "ada", "--password-stdin")
+
+    with pytest.raises(SystemExit) as last:
+        user(monkeypatch, "", "disable", "ada")
+    with pytest.raises(SystemExit) as unknown:
+        user(monkeypatch, "", "disable", "nobody")
+
+    assert "last enabled admin" in str(last.value.code)
+    assert "no account" in str(unknown.value.code)

@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Literal, Self
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 from exactdocs.identity.constants import (
     MAX_PASSWORD_LENGTH,
@@ -11,6 +11,7 @@ from exactdocs.identity.constants import (
     MAX_USERNAME_LENGTH,
     MIN_PASSWORD_LENGTH,
     NEW_PASSWORD_DESCRIPTION,
+    NEW_USERNAME_DESCRIPTION,
     TOKEN_NAME_DESCRIPTION,
     USERNAME_DESCRIPTION,
 )
@@ -29,7 +30,7 @@ class AccountSummary(_Dto):
     username: str
     """The login name, normalised (NFKC, trimmed, case-folded): `Admin` signs in as `admin`."""
     role: str
-    """What the account may do; `admin` is the only role so far."""
+    """What the account may do: `admin` (an operator, who also manages accounts) or `user`."""
 
     @classmethod
     def from_model(cls, account: Account) -> Self:
@@ -86,17 +87,107 @@ class LoginForTokenCommand(_Dto):
     """When the token stops working (in the future, with a timezone); omit it for no expiry."""
 
 
-class ResetPasswordCommand(_Dto):
+class _OneAccount(_Dto):
+    """Names one existing account, by exactly one of its id and its username."""
+
+    id: str | None = None
+    """The account's id (the users page names accounts this way)."""
+    username: str | None = None
+    """Login name of the account, compared case-insensitively (the command line's way)."""
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> Self:
+        """Check that exactly one of ``id`` and ``username`` is given.
+
+        Returns:
+            The command, unchanged.
+
+        Raises:
+            ValueError: Neither or both are given.
+        """
+        if (self.id is None) == (self.username is None):
+            message = "give exactly one of id and username"
+            raise ValueError(message)
+        return self
+
+
+class ResetPasswordCommand(_OneAccount):
     """A new password for an existing account (the operator's recovery path)."""
 
-    username: str
-    """Login name of the account, compared case-insensitively."""
     password: SecretStr = Field(
         min_length=MIN_PASSWORD_LENGTH,
         max_length=MAX_PASSWORD_LENGTH,
         description=f"The new password, {NEW_PASSWORD_DESCRIPTION}",
     )
     """The new password; its schema description names the length limits."""
+
+
+class NewPassword(_Dto):
+    """A new password an operator sets for an account on the users page."""
+
+    password: SecretStr = Field(
+        min_length=MIN_PASSWORD_LENGTH,
+        max_length=MAX_PASSWORD_LENGTH,
+        description=f"The new password, {NEW_PASSWORD_DESCRIPTION}",
+    )
+    """The new password; its schema description names the length limits."""
+
+
+class SetUserDisabledCommand(_OneAccount):
+    """Disable an account (it is locked out at once) or enable it again."""
+
+    disabled: bool
+    """`true` to disable the account, `false` to let it sign in again."""
+
+
+class CreateUserCommand(_Dto):
+    """A new local account, created by an operator. There is no self-signup."""
+
+    username: str = Field(max_length=4 * MAX_USERNAME_LENGTH, description=NEW_USERNAME_DESCRIPTION)
+    """Login name of the new account; its schema description is ``NEW_USERNAME_DESCRIPTION``."""
+    password: SecretStr = Field(
+        min_length=MIN_PASSWORD_LENGTH,
+        max_length=MAX_PASSWORD_LENGTH,
+        description=f"Password of the new account, {NEW_PASSWORD_DESCRIPTION}",
+    )
+    """Password of the new account; its schema description names the length limits."""
+    role: Literal["admin", "user"] = "user"
+    """`user` (the default) signs in and uses the instance; `admin` also manages accounts."""
+
+
+class UserSummary(AccountSummary):
+    """An account as an operator sees it on the users page."""
+
+    created_at: datetime
+    """When the account was created."""
+    disabled: bool
+    """`true` while the account is disabled: it cannot sign in, and its sessions and tokens are
+    refused."""
+
+    @classmethod
+    def from_model(cls, account: Account) -> Self:
+        """Map a domain entity to its boundary representation.
+
+        Args:
+            account: The account.
+
+        Returns:
+            Its summary, with when it was created and whether it is disabled.
+        """
+        return cls(
+            id=account.id,
+            username=account.username.value,
+            role=account.role.value,
+            created_at=account.created_at,
+            disabled=account.is_disabled,
+        )
+
+
+class UserList(_Dto):
+    """Every local account, oldest first."""
+
+    users: list[UserSummary]
+    """The accounts, oldest first."""
 
 
 ThrottleReset = Literal["cleared", "busy", "failed"]

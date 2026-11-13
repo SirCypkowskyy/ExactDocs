@@ -64,6 +64,15 @@ class RacedRepository:
     async def any_exists(self) -> bool:
         return False
 
+    async def add(self, account: Account) -> bool:
+        return await self.inner.add(account)
+
+    async def list_all(self) -> list[Account]:
+        return await self.inner.list_all()
+
+    async def set_disabled_at(self, account_id: AccountId, disabled_at: datetime | None) -> bool:
+        return await self.inner.set_disabled_at(account_id, disabled_at)
+
 
 @pytest.fixture
 def hasher() -> FakeHasher:

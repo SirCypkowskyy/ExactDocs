@@ -59,7 +59,14 @@ from exactdocs.bootstrap.models_pull import pull as pull_models
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.telemetry import start_telemetry
 from exactdocs.identity.constants import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
-from exactdocs.identity.dtos import CreateFirstAdminCommand, PasswordReset, ResetPasswordCommand
+from exactdocs.identity.dtos import (
+    CreateFirstAdminCommand,
+    CreateUserCommand,
+    PasswordReset,
+    ResetPasswordCommand,
+    SetUserDisabledCommand,
+    UserSummary,
+)
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.retrieval.dtos import (
@@ -75,6 +82,11 @@ app = App(name="exactdocs", version=__version__, help="Version-accurate docs for
 
 admin = App(name="admin", help="Local administration; opens the database directly.")
 app.command(admin)
+user = App(
+    name="user",
+    help="Manage local user accounts; opens the database directly (no self-signup exists).",
+)
+app.command(user)
 
 
 @app.command
@@ -1052,7 +1064,15 @@ def reset_password(
         password_stdin: Read the new password from one line of stdin instead of prompting.
     """
     name, password = _read_credentials(username, password_stdin=password_stdin, new=True)
-    reset = _run(_reset_password(Settings(), name, password))
+    _report_reset(_run(_reset_password(Settings(), name, password)))
+
+
+def _report_reset(reset: PasswordReset) -> None:
+    """Say that a password changed, and warn when the sign-in throttle was not cleared.
+
+    Args:
+        reset: The outcome of the reset.
+    """
     sys.stdout.write(f"Password of {reset.account.username!r} changed; all its sessions ended.\n")
     if reset.throttle != "cleared":
         cause = "was busy" if reset.throttle == "busy" else "failed"
@@ -1063,6 +1083,75 @@ def reset_password(
             "that signed in with the old password may still skip the username's count. Run the "
             "command again to retry (that is safe), or wait.\n"
         )
+
+
+@user.command(name="create")
+def user_create(
+    username: Annotated[str | None, Parameter(help="Asked for when omitted.")] = None,
+    /,
+    *,
+    password_stdin: Annotated[
+        bool, Parameter(help="Read the password from one line of stdin instead of prompting.")
+    ] = False,
+    operator: Annotated[
+        bool, Parameter(help="Make the account an admin, who also manages accounts.")
+    ] = False,
+) -> None:
+    """Create a local user account (after the setup; the first account is the admin).
+
+    Args:
+        username: Asked for when omitted.
+        password_stdin: Read the password from one line of stdin instead of prompting.
+        operator: Make the account an admin, who also manages accounts.
+    """
+    name, password = _read_credentials(username, password_stdin=password_stdin)
+    created = _run(_create_user(Settings(), name, password, operator=operator))
+    sys.stdout.write(f"Created {'admin' if operator else 'user'} {created.username!r}.\n")
+
+
+@user.command(name="disable")
+def user_disable(username: str, /) -> None:
+    """Disable an account: it cannot sign in, its sessions end and its API tokens are revoked.
+
+    Args:
+        username: The account's username.
+    """
+    command = SetUserDisabledCommand(username=username, disabled=True)
+    changed = _run(_set_user_disabled(Settings(), command))
+    sys.stdout.write(
+        f"Disabled {changed.username!r}; its sessions ended and its API tokens were revoked.\n"
+    )
+
+
+@user.command(name="enable")
+def user_enable(username: str, /) -> None:
+    """Let a disabled account sign in again, with its password unchanged.
+
+    Args:
+        username: The account's username.
+    """
+    command = SetUserDisabledCommand(username=username, disabled=False)
+    changed = _run(_set_user_disabled(Settings(), command))
+    sys.stdout.write(f"Enabled {changed.username!r}.\n")
+
+
+@user.command(name="reset-password")
+def user_reset_password(
+    username: Annotated[str | None, Parameter(help="Asked for when omitted.")] = None,
+    /,
+    *,
+    password_stdin: Annotated[
+        bool, Parameter(help="Read the new password from one line of stdin instead of prompting.")
+    ] = False,
+) -> None:
+    """Set a new password for an account and sign it out everywhere.
+
+    Args:
+        username: Asked for when omitted.
+        password_stdin: Read the new password from one line of stdin instead of prompting.
+    """
+    name, password = _read_credentials(username, password_stdin=password_stdin, new=True)
+    _report_reset(_run(_reset_password(Settings(), name, password)))
 
 
 def _read_credentials(
@@ -1179,6 +1268,44 @@ async def _reset_password(settings: Settings, username: str, password: str) -> P
     async with container.running(jobs=False):  # the server runs the jobs
         command = ResetPasswordCommand(username=username, password=SecretStr(password))
         return await container.identity.reset_password(command)
+
+
+async def _create_user(
+    settings: Settings, username: str, password: str, *, operator: bool
+) -> UserSummary:
+    """Create a local user account in the local database.
+
+    Args:
+        settings: The server's settings.
+        username: The account's username.
+        password: The account's password.
+        operator: Make the account an admin.
+
+    Returns:
+        The new account, its username as stored (normalized).
+    """
+    # Built in here, so `_run` turns a refused password into a message that does not echo it.
+    command = CreateUserCommand(
+        username=username, password=SecretStr(password), role="admin" if operator else "user"
+    )
+    container = _build(settings)
+    async with container.running(jobs=False):  # the server runs the jobs
+        return await container.identity.create_user(command)
+
+
+async def _set_user_disabled(settings: Settings, command: SetUserDisabledCommand) -> UserSummary:
+    """Disable or enable an account in the local database.
+
+    Args:
+        settings: The server's settings.
+        command: The account and what to do.
+
+    Returns:
+        The account as it is now.
+    """
+    container = _build(settings)
+    async with container.running(jobs=False):  # the server runs the jobs
+        return await container.identity.set_user_disabled(command)
 
 
 @app.command

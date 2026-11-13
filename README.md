@@ -1205,9 +1205,33 @@ and a 15 s timeout. An import fetches only the pinned commit (no history, no uns
 a temporary folder under the data directory (`work/`), with hooks, submodules and symlinks off; git
 2.30 or newer is recommended, and a server without partial-clone support just sends more.
 
-## Teams and access (planned)
+## Teams and access
 
-MVP-1 has one admin account. An instance can already run on [PostgreSQL](#postgresql) with several
+### Local user accounts
+
+The setup creates the first admin. After that, an operator (any account with role `admin`) adds
+more local accounts; there is no sign-up page or route, so nobody creates their own:
+
+```bash
+exactdocs user create bob                      # prompts for the password (or --password-stdin)
+exactdocs user create carol --operator         # an admin, who also manages accounts
+exactdocs user disable bob                     # signs bob out everywhere and revokes his API tokens
+exactdocs user enable bob                      # lets him sign in again (with the same password)
+exactdocs user reset-password bob              # new password; his sessions end, his tokens are revoked
+```
+
+Like `admin create`, these open the database directly (in Docker:
+`docker exec -it exactdocs exactdocs user create bob`). An admin can do the same on the **Users**
+page of the web UI (`/users`; the API is `/api/v1/users`, see `docs/rest-api.md`), which other
+accounts neither see nor reach (403). A disabled account cannot sign in (it gets the same answer
+as a wrong password), and its sessions and tokens are refused at once. The last enabled admin
+cannot be disabled. A reset also clears the username's sign-in throttle, as
+`admin reset-password` does. Until library roles arrive, every signed-in account may read and
+change every library and the AI settings; only managing accounts is reserved to admins.
+
+### Planned
+
+An instance can already run on [PostgreSQL](#postgresql) with several
 server processes; for teams, the plan is to sign in through OIDC/OAuth, and share libraries with users or
 identity-provider groups:
 
@@ -1480,6 +1504,7 @@ Read [docs/architecture.md](docs/architecture.md) (modular monolith, ports & ada
 - [ ] Retrieval eval suite (Pydantic Evals) comparing modes
 - [ ] MCP Apps (rendered articles in Claude / ChatGPT)
 - [x] PostgreSQL with several server processes
+- [x] Local user accounts created, disabled and reset by an operator (no self-signup)
 - [ ] OIDC/OAuth, sharing with viewer / contributor / admin / creator roles
 - [x] OpenTelemetry traces to your own collector
 - [x] Prometheus metrics

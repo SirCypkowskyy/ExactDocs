@@ -24,7 +24,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.engine import Row
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from exactdocs.identity.constants import (
@@ -58,6 +58,7 @@ accounts = Table(
     Column("password_hash", Text, nullable=False),
     Column("role", Text, nullable=False),
     Column("created_at", Text, nullable=False),  # ISO 8601 with offset
+    Column("disabled_at", Text),  # see `_stamp`; NULL while the account may sign in
 )
 sessions = Table(
     "identity_sessions",
@@ -159,6 +160,68 @@ class SqliteAccountRepository:
                 result = await connection.execute(statement)
         return result.rowcount == 1
 
+    async def add(self, account: Account) -> bool:
+        """Store a further account; the unique username column refuses a taken name atomically.
+
+        Args:
+            account: The new account.
+
+        Returns:
+            ``True`` when it was stored, ``False`` when another account has the username.
+        """
+        values = {
+            "id": account.id,
+            "username": account.username.value,
+            "password_hash": account.password_hash,
+            "role": account.role.value,
+            "created_at": account.created_at.isoformat(),
+            "disabled_at": None if account.disabled_at is None else _stamp(account.disabled_at),
+        }
+        try:
+            async with self.engine.begin() as connection:
+                await connection.execute(insert(accounts).values(values))
+        except IntegrityError:
+            return False
+        return True
+
+    async def list_all(self) -> list[Account]:
+        """Return every account, oldest first (then by username).
+
+        Returns:
+            The accounts.
+        """
+        # `created_at` is ISO 8601 with its offset, as the account had it: sorted in Python, by
+        # instant, not as text.
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(select(accounts))).all()
+        return sorted(map(_account, rows), key=lambda a: (a.created_at, a.username.value))
+
+    async def set_disabled_at(self, account_id: AccountId, disabled_at: datetime | None) -> bool:
+        """Disable or enable the account, never disabling the last enabled admin.
+
+        A ``begin_immediate`` transaction (SQLite's write lock; on PostgreSQL the shared writers'
+        lock) makes the check and the change one step, so concurrent disables cannot both pass.
+
+        Args:
+            account_id: The account's id.
+            disabled_at: When it was disabled, or ``None`` to enable it.
+
+        Returns:
+            ``False`` when disabling was refused to keep an enabled admin, else ``True``.
+        """
+        stamp = None if disabled_at is None else _stamp(disabled_at)
+        change = update(accounts).where(accounts.c.id == account_id).values(disabled_at=stamp)
+        enabled_admins = select(accounts.c.id).where(
+            accounts.c.role == Role.ADMIN.value, accounts.c.disabled_at.is_(None)
+        )
+        async with self.engine.execution_options(begin_immediate=True).begin() as connection:
+            if disabled_at is not None:
+                admins = set((await connection.execute(enabled_admins)).scalars())
+                if admins == {account_id}:
+                    return False
+            await connection.execute(change)
+        return True
+
     async def get(self, username: Username) -> Account | None:
         """Return the account with this username, or ``None``.
 
@@ -226,6 +289,7 @@ def _account(row: Row[Any]) -> Account:
         password_hash=row.password_hash,
         role=Role(row.role),
         created_at=datetime.fromisoformat(row.created_at),
+        disabled_at=None if row.disabled_at is None else datetime.fromisoformat(row.disabled_at),
     )
 
 
