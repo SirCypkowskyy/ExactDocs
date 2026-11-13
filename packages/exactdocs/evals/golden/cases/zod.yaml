@@ -78,3 +78,1029 @@ cases:
   expected_output:
     hits: []
     reference: The Zod v3.23.8 documentation has no z.file() schema.
+
+# --- identifier-lookup ---
+
+- name: 'zod v3.23.8: How do I allow extra keys on an object but require all of them to be numbers?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'How do I allow extra keys on an object but require all of them to be numbers?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v3.23.8, article: README.md, heading_path: [Objects, .catchall]}
+    reference: >-
+      Pass a catchall schema with `.catchall(z.number())`: every unknown key is validated
+      against it. Using `.catchall()` makes `.passthrough()`, `.strip()` and `.strict()`
+      irrelevant, since all keys count as known.
+    facts:
+    - .catchall() takes a schema that all unknown keys are validated against
+    - an unknown key that fails the catchall schema makes parsing throw
+    - with .catchall() the passthrough, strip and strict settings no longer apply
+
+- name: 'zod v3.23.8: How can I make a function accept only data that went through my schema, not any object of the same shape?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'How can I make a function accept only data that went through my schema, not any object of the same shape?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v3.23.8, article: README.md, heading_path: [Schema methods, .brand]}
+    reference: >-
+      Use a branded type: `z.object({...}).brand<"Cat">()`. The brand is attached to the
+      inferred type with an intersection, so plain objects are no longer assignable; it is
+      static only and does not change what `.parse` returns.
+    facts:
+    - .brand<T>() simulates nominal typing for the inferred type
+    - the brand is added to the inferred type with an intersection type
+    - branding has no effect on the runtime result of .parse
+
+- name: 'zod v3.23.8: My enum comes from a third-party TypeScript library; how do I validate values against it?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'My enum comes from a third-party TypeScript library; how do I validate values against it?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v3.23.8, article: README.md, heading_path: [Native enums]}
+    reference: >-
+      Use `z.nativeEnum(MyEnum)`. It works with numeric, string and mixed enums and with
+      `as const` objects; the underlying object is available as `.enum`.
+    facts:
+    - z.nativeEnum() validates against an existing TypeScript enum
+    - it also works for as const objects
+    - the underlying enum object is exposed through the .enum property
+
+- name: 'zod v3.23.8: Is there a way to get a frozen, readonly-typed result from parsing?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'Is there a way to get a frozen, readonly-typed result from parsing?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v3.23.8, article: README.md, heading_path: [Schema methods, .readonly]}
+    reference: >-
+      Call `.readonly()`. It parses with the base schema, then calls `Object.freeze()` on
+      the result, and the inferred type is marked readonly (e.g. `readonly string[]`,
+      `ReadonlyMap`).
+    facts:
+    - .readonly() returns a ZodReadonly schema
+    - the parsed result is passed to Object.freeze()
+    - the inferred type is marked readonly
+
+- name: 'zod v4.0.17: Which function parses env-style strings like "yes", "off" or "enabled" into booleans?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'Which function parses env-style strings like "yes", "off" or "enabled" into booleans?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v4.0.17, article: packages/docs/content/v4/index.mdx, heading_path: [Stringbool]}
+    reference: >-
+      `z.stringbool()`: "true", "1", "yes", "on", "y", "enabled" become `true`, their
+      counterparts become `false`, anything else fails with `invalid_value`. The accepted
+      values can be changed with the `truthy` and `falsy` options.
+    facts:
+    - z.stringbool() does env-style boolean coercion
+    - strings outside the truthy and falsy lists fail with an invalid_value issue
+    - the truthy and falsy values can be customized
+
+- name: 'zod v4.0.17: How do I validate strings shaped like `${number}px` or `hello, ${string}!` and get that exact type?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'How do I validate strings shaped like `${number}px` or `hello, ${string}!` and get that exact type?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v4.0.17, article: packages/docs/content/api.mdx, heading_path: [Template literals]}
+    reference: >-
+      Use `z.templateLiteral([...])` with a mix of string literals and schemas, e.g.
+      `z.templateLiteral([z.number(), z.enum(["px", "em", "rem"])])`. Any schema whose type
+      is assignable to string, number, bigint, boolean, null or undefined can be used.
+    facts:
+    - z.templateLiteral() builds a template literal schema from literals and schemas
+    - it infers the matching TypeScript template literal type
+    - parts must have types assignable to string, number, bigint, boolean, null or undefined
+
+- name: 'zod v4.0.17: How do I turn a ZodError into a nested object that mirrors my schema so I can read errors per field?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'How do I turn a ZodError into a nested object that mirrors my schema so I can read errors per field?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v4.0.17, article: packages/docs/content/error-formatting.mdx, heading_path: [z.treeifyError()]}
+    reference: >-
+      `z.treeifyError(error)` returns a tree with an `errors` array at each level and
+      `properties` / `items` to go deeper, e.g. `tree.properties?.username?.errors`.
+    facts:
+    - z.treeifyError() converts a ZodError into a nested object
+    - each node has an errors array of messages
+    - properties and items are used to traverse into objects and arrays
+
+- name: 'zod v4.6.7: How can I reuse a helper that adds common checks to a schema without breaking the method chain?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'How can I reuse a helper that adds common checks to a schema without breaking the method chain?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/api.mdx, heading_path: [Apply]}
+    reference: >-
+      Use `.apply(fn)`, which calls the function with the schema inside the chain, e.g.
+      `z.number().apply(setCommonNumberChecks).nullable()`; extra arguments to `.apply()`
+      are passed through to the function.
+    facts:
+    - .apply() incorporates an external function into the method chain
+    - the function receives the schema and returns a schema
+    - additional arguments to .apply() are passed to the function
+
+- name: 'zod v4.6.7: I need a record that validates keys ending in _phone but leaves other keys alone; what do I use?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'I need a record that validates keys ending in _phone but leaves other keys alone; what do I use?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/api.mdx, heading_path: [Records, z.looseRecord]}
+    reference: >-
+      `z.looseRecord(keySchema, valueSchema)`: unlike `z.record()`, which errors on keys that
+      do not match the key schema, it passes non-matching keys through unchanged. Combine it
+      with an object via `.and()` to model pattern properties.
+    facts:
+    - z.record() errors on keys that do not match the key schema
+    - z.looseRecord() passes non-matching keys through unchanged
+    - it is useful combined with intersections for pattern properties
+
+- name: 'zod v4.6.7: Is there a built-in validator for international bank account numbers?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'Is there a built-in validator for international bank account numbers?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/api.mdx, heading_path: [String formats, IBANs]}
+    reference: >-
+      Yes, `z.iban()`. It checks the country code, check digits, 11 to 30 alphanumeric
+      characters and the MOD 97-10 checksum, accepts the electronic format only (no spaces,
+      uppercase), and does not consult the country registry.
+    facts:
+    - z.iban() validates an IBAN
+    - it verifies the ISO 7064 MOD 97-10 checksum
+    - spaces and lowercase letters are rejected
+    - the country registry is not consulted, so country-specific lengths are not enforced
+
+# --- how-to ---
+
+- name: 'zod v3.23.8: My password/confirm check fails but the error shows on the whole form; how do I attach it to the confirm field?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'My password/confirm check fails but the error shows on the whole form; how do I attach it to the confirm field?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v3.23.8, article: README.md, heading_path: [Schema methods, .refine, Customize error path]}
+    - {version: v3.23.8, article: README.md, heading_path: [Schema methods, .refine, Arguments]}
+    reference: >-
+      Refine the object and pass `path` in the second argument:
+      `.refine((data) => data.password === data.confirm, { message: "Passwords don't match",
+      path: ["confirm"] })`. The resulting issue then has `path: ["confirm"]`.
+    facts:
+    - the refinement goes on the object schema
+    - the path option of .refine sets the error path
+    - the resulting issue has code custom and path ["confirm"]
+
+- name: 'zod v3.23.8: How do I write a schema for categories that contain nested subcategories of the same type?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'How do I write a schema for categories that contain nested subcategories of the same type?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v3.23.8, article: README.md, heading_path: [Recursive types]}
+    reference: >-
+      Declare the TypeScript type by hand and use `z.lazy`: `const categorySchema:
+      z.ZodType<Category> = baseCategorySchema.extend({ subcategories: z.lazy(() =>
+      categorySchema.array()) })`. The recursive type cannot be inferred, so it is given as a
+      type hint.
+    facts:
+    - the type of a recursive schema cannot be statically inferred
+    - the type must be defined manually and given as a z.ZodType type hint
+    - z.lazy() is used for the self-reference
+
+- name: 'zod v3.23.8: How do I stop later refinements from running once an earlier check has failed?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'How do I stop later refinements from running once an earlier check has failed?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v3.23.8, article: README.md, heading_path: [Schema methods, .superRefine, Abort early]}
+    reference: >-
+      Use `.superRefine`, call `ctx.addIssue({ ..., fatal: true })` and return `z.NEVER`. By
+      default parsing continues after a failed refinement and all chained refinements run.
+    facts:
+    - by default all chained refinements run even after one fails
+    - pass fatal true to ctx.addIssue
+    - return z.NEVER from the superRefine function
+
+- name: 'zod v3.23.8: z.coerce.date() accepts null and z.coerce.bigint() throws on null; how do I restrict what gets coerced?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'z.coerce.date() accepts null and z.coerce.bigint() throws on null; how do I restrict what gets coerced?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v3.23.8, article: README.md, heading_path: [Schema methods, .pipe, You can use .pipe() to fix common issues with z.coerce.]}
+    reference: >-
+      Constrain the input first and pipe it into the coercion, e.g.
+      `z.union([z.number(), z.string(), z.date()]).pipe(z.coerce.date())`; then `null` fails
+      validation instead of being coerced or throwing an uncaught error.
+    facts:
+    - .pipe() chains a constrained input schema into a coercing schema
+    - with a constrained input, null fails safeParse instead of being coerced
+    - this also avoids coercions that throw uncaught errors, as with z.coerce.bigint()
+
+- name: 'zod v3.23.8: How do I accept only IPv4 addresses in a string field?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'How do I accept only IPv4 addresses in a string field?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v3.23.8, article: README.md, heading_path: [Strings, IP addresses]}
+    reference: >-
+      Use `z.string().ip({ version: "v4" })`. Without the option, `z.string().ip()` accepts
+      both IPv4 and IPv6.
+    facts:
+    - z.string().ip() accepts both IPv4 and IPv6 by default
+    - the version option set to "v4" restricts it to IPv4
+
+- name: 'zod v4.0.17: How do I validate an uploaded image so it is a PNG or JPEG under 1 MB?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'How do I validate an uploaded image so it is a PNG or JPEG under 1 MB?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v4.0.17, article: packages/docs/content/api.mdx, heading_path: [Files]}
+    reference: >-
+      Use `z.file()` with `.max(1_000_000)` for the size in bytes and
+      `.mime(["image/png", "image/jpeg"])` for the types; in Zod Mini the same checks are
+      `z.maxSize()` and `z.mime()` passed to `.check()`.
+    facts:
+    - z.file() validates File instances
+    - .min() and .max() bound the file size in bytes
+    - .mime() accepts one MIME type or an array of them
+
+- name: 'zod v4.0.17: How do I attach a title and description to a schema and read them back later?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'How do I attach a title and description to a schema and read them back later?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v4.0.17, article: packages/docs/content/metadata.mdx, heading_path: [Metadata, .meta()]}
+    reference: >-
+      Call `.meta({ title, description, ... })`, which registers the schema in
+      `z.globalRegistry`; `.meta()` with no argument returns the metadata. Metadata belongs
+      to that schema instance, so a derived schema such as `.refine(...)` has none.
+    facts:
+    - .meta() registers the schema in z.globalRegistry
+    - calling .meta() without arguments retrieves the metadata
+    - metadata is tied to a specific schema instance, not to schemas derived from it
+
+- name: 'zod v4.6.7: How do I parse an ISO string into a Date and also turn the Date back into the string when sending it?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'How do I parse an ISO string into a Date and also turn the Date back into the string when sending it?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/codecs.mdx, heading_path: []}
+    - {version: v4.6.7, article: packages/docs/content/codecs.mdx, heading_path: [How encoding works, isoDatetimeToDate]}
+    reference: >-
+      Define a codec: `z.codec(z.iso.datetime(), z.date(), { decode: (s) => new Date(s),
+      encode: (d) => d.toISOString() })`, then `.decode()` (or `.parse()`) goes string to Date
+      and `.encode()` goes Date to string. Codecs were introduced in zod 4.1.
+    facts:
+    - z.codec() defines a bidirectional transformation between an input and an output schema
+    - .decode() runs forward from input to output
+    - .encode() runs backward from output to input
+    - codecs were introduced in zod 4.1
+
+- name: 'zod v4.6.7: How can I make sure a schema on my hot path really got compiled instead of silently falling back?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'How can I make sure a schema on my hot path really got compiled instead of silently falling back?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/compile.mdx, heading_path: [Unsupported schemas]}
+    reference: >-
+      Call `z.compile(schema, { strict: true })`. Without it, unsupported schemas (async
+      checks, `z.xor()`, recursive schemas, `z.coerce.*`, ...) come back uncompiled; with
+      `strict` it throws `ZodCompileAsyncError` or `ZodCompileUnsupportedError` instead.
+    facts:
+    - by default z.compile() returns the original schema when it cannot compile it
+    - the strict option makes it throw instead of falling back
+    - async schemas throw ZodCompileAsyncError and other unsupported ones ZodCompileUnsupportedError
+
+- name: 'zod v4.6.7: How do I get a compile error when my schema drifts from an existing TypeScript type, including extra keys?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'How do I get a compile error when my schema drifts from an existing TypeScript type, including extra keys?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/api.mdx, heading_path: [Matching an existing type]}
+    reference: >-
+      Wrap the schema in `z.toZod<MyType>()(schema)`: it checks exact type equality of the
+      output type and returns the schema unchanged. `satisfies z.ZodType<MyType>` only checks
+      assignability, so extra keys or `z.any()` slip through.
+    facts:
+    - z.toZod<T>() checks that the schema output type is exactly T
+    - the schema is returned unchanged
+    - satisfies z.ZodType<T> only checks assignability and misses extra keys
+
+# --- conceptual ---
+
+- name: 'zod v3.23.8: With a transform in my schema, does z.infer give me the type before or after the transform?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'With a transform in my schema, does z.infer give me the type before or after the transform?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v3.23.8, article: README.md, heading_path: [Guides and concepts, Type inference]}
+    reference: >-
+      After: every schema tracks an input and an output type, and `z.infer` returns the
+      output type (it equals `z.output`). Use `z.input` for the type before the transform.
+    facts:
+    - each schema tracks both an input and an output type
+    - z.infer returns the output type
+    - z.input extracts the input type
+
+- name: 'zod v3.23.8: Why can I not call .email() on a string schema after .transform()?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'Why can I not call .email() on a string schema after .transform()?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v3.23.8, article: README.md, heading_path: [Schema methods, .transform, Chaining order]}
+    reference: >-
+      `.transform()` returns a `ZodEffects` instance, not a `ZodString`, so the string methods
+      are gone. Apply `.email()` and other `ZodString` methods before the transform.
+    facts:
+    - .transform() returns an instance of ZodEffects
+    - the result is not a ZodString, so string methods are unavailable
+    - built-in string methods must be applied before any transforms
+
+- name: 'zod v3.23.8: What do I gain from z.discriminatedUnion over a plain z.union of objects?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'What do I gain from z.discriminatedUnion over a plain z.union of objects?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v3.23.8, article: README.md, heading_path: [Discriminated unions]}
+    reference: >-
+      Zod reads the discriminator key to pick one option, so parsing is faster and errors
+      only report the issues of that option; a plain union tries every option and reports
+      issues for all of them.
+    facts:
+    - the discriminator key selects which option schema is used
+    - this makes parsing faster
+    - errors show only the issues of the selected option, while a plain union reports all options
+
+- name: 'zod v3.23.8: What is the difference between .default() and .catch() on a schema?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'What is the difference between .default() and .catch() on a schema?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v3.23.8, article: README.md, heading_path: [Schema methods, .catch]}
+    - {version: v3.23.8, article: README.md, heading_path: [Schema methods, .default]}
+    reference: >-
+      `.default(value)` is returned only when the input is `undefined`; other input is parsed
+      normally. `.catch(value)` parses with the base schema and returns the catch value when
+      parsing fails. Both accept a function that is re-run each time a value is needed.
+    facts:
+    - .default() returns the default only when the input is undefined
+    - .catch() returns the catch value when parsing fails
+    - both can take a function that is re-executed for each value
+
+- name: 'zod v3.23.8: Why are keys I did not declare missing from the object returned by parse?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'Why are keys I did not declare missing from the object returned by parse?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v3.23.8, article: README.md, heading_path: [Objects, .passthrough]}
+    - {version: v3.23.8, article: README.md, heading_path: [Objects, .strict]}
+    reference: >-
+      Object schemas strip unrecognized keys by default. Use `.passthrough()` to keep them, or
+      `.strict()` to throw on them.
+    facts:
+    - object schemas strip unrecognized keys during parsing by default
+    - .passthrough() keeps unknown keys
+    - .strict() makes unknown keys an error
+
+- name: 'zod v4.0.17: Is Zod Mini worth it for a Node API on AWS Lambda?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'Is Zod Mini worth it for a Node API on AWS Lambda?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v4.0.17, article: packages/docs/content/packages/mini.mdx, heading_path: [When (not) to use Zod Mini, Backend development]}
+    - {version: v4.0.17, article: packages/docs/content/packages/mini.mdx, heading_path: [When (not) to use Zod Mini]}
+    reference: >-
+      Generally no. On the backend, Zod's bundle size is not meaningful even on Lambda:
+      regular Zod is about 17 kB gzipped, roughly a 0.6 ms increase in cold start. Mini is
+      for front-end bundles under strict size constraints.
+    facts:
+    - on the backend Zod's bundle size is not meaningful, even on Lambda
+    - regular Zod is roughly 17kb gzipped
+    - that corresponds to about a 0.6ms increase in cold start time
+    - regular Zod is recommended unless bundle size constraints are uncommonly strict
+
+- name: 'zod v4.0.17: Why was Zod 4 first shipped inside zod@3.25 under a subpath instead of as zod@4.0.0?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'Why was Zod 4 first shipped inside zod@3.25 under a subpath instead of as zod@4.0.0?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v4.0.17, article: packages/docs/content/v4/versioning.mdx, heading_path: [Versioning in Zod 4]}
+    - {version: v4.0.17, article: packages/docs/content/v4/versioning.mdx, heading_path: ["Why?"]}
+    reference: >-
+      Many libraries accept user-defined Zod schemas, so a breaking Zod release forces a
+      breaking release on them too (a Zod 3 `ZodType` is not assignable to a Zod 4 one). To
+      avoid that, Zod 4 was exported at `"zod/v4"` alongside Zod 3 in `zod@3.25.0`, with Zod 3
+      still at the root and at `"zod/v3"`; later the root switched to Zod 4 with `zod@4.0.0`,
+      and the `"zod/v4"` subpath stays available forever.
+    facts:
+    - libraries that accept user-defined schemas would have to make breaking changes too
+    - Zod 4 was first exported at the "zod/v4" subpath of zod@3.25.0, with Zod 3 at the root
+    - the root later switched to Zod 4 with zod@4.0.0
+    - the "zod/v4" subpath remains available forever
+
+- name: 'zod v4.6.7: If I set an error message on z.string() and another on .min(5), which one wins, and does an error map passed to .parse() override them?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'If I set an error message on z.string() and another on .min(5), which one wins, and does an error map passed to .parse() override them?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/error-customization.mdx, heading_path: [Error precedence]}
+    reference: >-
+      The check-level error on `.min(5)` wins for that check. A schema-level error covers the
+      schema's own issues and is the fallback for checks without their own error. A per-parse
+      error map ranks below both, followed by the global `z.config()` error map and the
+      locale.
+    facts:
+    - a check-level error has the highest priority
+    - a schema-level error is the fallback for checks that define no error
+    - a per-parse error map has lower priority than schema-level errors
+    - the global error map and then the locale error map come last
+
+- name: 'zod v4.6.7: Why does .encode() throw a plain Error instead of a ZodError when my schema has a .transform()?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'Why does .encode() throw a plain Error instead of a ZodError when my schema has a .transform()?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/codecs.mdx, heading_path: [How encoding works, Transforms]}
+    reference: >-
+      `.transform()` is unidirectional, so there is no way to run it backward. Any transform
+      anywhere in the schema makes `z.encode()` throw a runtime error ("Encountered
+      unidirectional transform during encode"), not a validation error; use a codec for
+      two-way conversions.
+    facts:
+    - .transform() implements a unidirectional transformation
+    - any transform in the schema makes encode throw a runtime error
+    - the error is not a ZodError
+
+- name: 'zod v4.6.7: Will z.compile work on Cloudflare Workers with a strict CSP, and how do I turn off global compilation there?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'Will z.compile work on Cloudflare Workers with a strict CSP, and how do I turn off global compilation there?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/compile.mdx, heading_path: [Content Security Policy]}
+    reference: >-
+      Compilation uses `new Function`, which CSP/no-eval environments forbid. Global mode
+      stands down with `z.config({ jitless: true })`; a direct `z.compile()` still tries, and
+      where `new Function` is rejected the schema comes back uncompiled.
+    facts:
+    - compilation relies on new Function
+    - setting jitless to true with z.config() makes global compilation stand down
+    - an explicit z.compile() call ignores jitless and falls back to the uncompiled schema if code generation is refused
+
+# --- version-change ---
+
+- name: 'zod v4.0.17: My .default("tuna") after a .transform() now has to be a number; how do I get the old pre-parse default?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'My .default("tuna") after a .transform() now has to be a number; how do I get the old pre-parse default?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v4.0.17, article: packages/docs/content/v4/changelog.mdx, heading_path: [.default() updates]}
+    reference: >-
+      In Zod 4 `.default()` short-circuits on `undefined` and returns the value as is, so it
+      must match the output type. In Zod 3 the default was parsed and matched the input type.
+      Use `.prefault("tuna")` ("pre-parse default") to get the old behaviour.
+    facts:
+    - in Zod 4 .default() short-circuits and must match the output type
+    - in Zod 3 the default value was parsed and matched the input type
+    - .prefault() replicates the old behavior
+
+- name: 'zod v4.0.17: z.record(z.string()) used to work; why is it rejected now?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'z.record(z.string()) used to work; why is it rejected now?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v4.0.17, article: packages/docs/content/v4/changelog.mdx, heading_path: [z.record(), drops single argument usage]}
+    reference: >-
+      Zod 4 drops the single-argument form of `z.record()`; pass both a key and a value
+      schema, e.g. `z.record(z.string(), z.string())`.
+    facts:
+    - Zod 4 no longer supports z.record() with a single argument
+    - both a key schema and a value schema must be passed
+
+- name: 'zod v4.0.17: An error map passed to .parse() no longer overrides the message set on my schema; is that intended?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'An error map passed to .parse() no longer overrides the message set on my schema; is that intended?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v4.0.17, article: packages/docs/content/v4/changelog.mdx, heading_path: [ZodError, changes error map precedence]}
+    reference: >-
+      Yes. Zod 4 changed the precedence: an error map passed into `.parse()` no longer takes
+      precedence over a schema-level error map, so the schema-level message wins (in Zod 3 the
+      contextual one did).
+    facts:
+    - Zod 4 changed error map precedence
+    - a per-parse error map no longer overrides a schema-level error
+    - in Zod 3 the error map passed to .parse() won
+
+- name: 'zod v4.0.17: Do I still need z.lazy and a hand-written type for a recursive object schema?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'Do I still need z.lazy and a hand-written type for a recursive object schema?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v4.0.17, article: packages/docs/content/api.mdx, heading_path: [Recursive objects]}
+    - {version: v4.0.17, article: packages/docs/content/v4/index.mdx, heading_path: [Recursive objects]}
+    reference: >-
+      No. Zod 4 infers recursive types: define the recursive key as a getter, e.g.
+      `get subcategories(){ return z.array(Category) }`. Unlike the Zod 3 pattern no type
+      casting is needed, and the result is a plain `ZodObject` with all its methods.
+    facts:
+    - recursive keys are defined with a getter
+    - the recursive type is inferred without a manual type annotation
+    - the result is a plain ZodObject, so .pick(), .partial() and .extend() work
+    - passing cyclical data into a recursive schema causes an infinite loop
+
+- name: 'zod v4.0.17: Can I now call .min() after .refine() on a string schema?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'Can I now call .min() after .refine() on a string schema?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v4.0.17, article: packages/docs/content/v4/index.mdx, heading_path: [Refinements live inside schemas]}
+    reference: >-
+      Yes. In Zod 3 refinements wrapped the schema in `ZodEffects`, so `.min()` did not exist
+      after `.refine()`; in Zod 4 refinements are stored inside the schema itself, so
+      `z.string().refine(...).min(5)` works.
+    facts:
+    - in Zod 3 refinements were stored in a ZodEffects wrapper class
+    - so methods like .min() could not follow .refine() in Zod 3
+    - in Zod 4 refinements live inside the schemas, so the chain works
+
+- name: 'zod v4.6.7: Can a record use z.number() as its key schema, and what does it accept?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'Can a record use z.number() as its key schema, and what does it accept?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/api.mdx, heading_path: [Records, z.record]}
+    reference: >-
+      Yes. A `z.number()` key validates that each key is a numeric string ("1", "1.5", "-3"),
+      and extra constraints such as `.int()`, `.min()` and `.max()` are checked too. In
+      v4.0.17 the docs said a number key schema always throws during parsing.
+    facts:
+    - a number key schema validates that keys are numeric strings
+    - numeric constraints like min, max and step are also validated on keys
+
+- name: 'zod v4.6.7: Can I parse an object graph that contains a reference back to itself?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'Can I parse an object graph that contains a reference back to itself?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/api.mdx, heading_path: [Recursive objects]}
+    - {version: v4.6.7, article: packages/docs/content/blog/zod-4-5.mdx, heading_path: [Cyclical inputs]}
+    reference: >-
+      Yes. Since zod 4.5 recursive schemas support cyclical inputs out of the box and the
+      output graph mirrors the input (`result.subcategories[0] === result`). Zod Mini needs
+      `z.config({ memoizer: z.memoizer() })` first. In v4.0.17 cyclical data caused an
+      infinite loop.
+    facts:
+    - recursive schemas accept cyclical inputs
+    - the output graph mirrors the cycles of the input
+    - Zod Mini must register a memoizer with z.config before defining schemas
+
+- name: 'zod v4.6.7: z.iso.datetime() now rejects "2020-01-01T06:15Z"; how do I still accept times without seconds?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'z.iso.datetime() now rejects "2020-01-01T06:15Z"; how do I still accept times without seconds?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/blog/zod-4-5.mdx, heading_path: [Bug fixes, ⚠️ z.iso.datetime() requires seconds]}
+    - {version: v4.6.7, article: packages/docs/content/api.mdx, heading_path: [String formats, ISO datetimes]}
+    reference: >-
+      Since 4.5, `z.iso.datetime()` follows RFC 3339 and requires seconds (minute precision
+      was accepted in 4.4 and earlier; `local: true` still allows it). To accept both, use
+      `z.union([z.iso.datetime(), z.iso.datetime({ precision: -1 })])`.
+    facts:
+    - z.iso.datetime() now requires seconds, as RFC 3339 mandates
+    - minute-precision input such as 2020-01-01T06:15Z was accepted in 4.4
+    - a union with z.iso.datetime() at precision -1 accepts both forms
+    - the local option still admits datetimes without seconds
+
+- name: 'zod v4.6.7: An object with an a: z.unknown() field now fails when a is missing; did that change?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'An object with an a: z.unknown() field now fails when a is missing; did that change?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/v4/changelog.mdx, heading_path: [z.object(), changes z.unknown() optionality]}
+    reference: >-
+      Yes. In Zod 4 `z.unknown()` and `z.any()` keys are not optional in the inferred type,
+      and as of v4.4.0 the key is required at parse time too (4.0 to 4.3 accepted a missing
+      key). Use `.optional()` for a key that may be absent.
+    facts:
+    - z.unknown() and z.any() are no longer key-optional in the inferred type
+    - since v4.4.0 a missing key fails at parse time
+    - Zod 4.0 to 4.3 accepted a missing key
+    - .optional() allows the key to be absent
+
+- name: 'zod v4.6.7: Is there a deep partial again, and how is it called now?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'Is there a deep partial again, and how is it called now?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/api.mdx, heading_path: [Objects, 'z.deepPartial() [#deep-partial]']}
+    - {version: v4.6.7, article: packages/docs/content/blog/zod-4-5.mdx, heading_path: [z.deepPartial()]}
+    reference: >-
+      Yes, as the function `z.deepPartial(schema)` (back in 4.5 after the `.deepPartial()`
+      method was removed in Zod 4). It recurses into every nested object, never modifies the
+      source, and returns a `ZodObject`; a discriminated union degrades to a plain union.
+    facts:
+    - z.deepPartial() is a top-level function, not a method
+    - it came back in functional form after the .deepPartial() method was removed in Zod 4
+    - it recurses through nested objects, arrays, tuples, unions and records
+    - the result is still a ZodObject
+
+# --- cross-page ---
+
+- name: 'zod v4.6.7: How do I give a schema a title and description that show up in the generated JSON Schema?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'How do I give a schema a title and description that show up in the generated JSON Schema?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/metadata.mdx, heading_path: [Metadata, .meta()]}
+    - {version: v4.6.7, article: packages/docs/content/json-schema.mdx, heading_path: [z.toJSONSchema(), metadata]}
+    reference: >-
+      Add them with `.meta({ title, description })`, which registers the schema in
+      `z.globalRegistry`; `z.toJSONSchema()` copies all metadata fields into the result, and
+      metadata takes precedence over the keywords Zod generates.
+    facts:
+    - .meta() registers metadata in z.globalRegistry
+    - z.toJSONSchema() copies all metadata fields into the JSON Schema
+    - metadata takes precedence over keywords Zod generates
+
+- name: 'zod v4.6.7: After switching to zod/mini every issue message just says "Invalid input"; how do I get real messages, in Polish for example?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'After switching to zod/mini every issue message just says "Invalid input"; how do I get real messages, in Polish for example?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/packages/mini.mdx, heading_path: [No default locale]}
+    - {version: v4.6.7, article: packages/docs/content/error-customization.mdx, heading_path: [Internationalization, Locales]}
+    reference: >-
+      Zod Mini loads no locale, so messages default to "Invalid input". Load one from
+      `zod/locales` with `z.config(...)`, e.g. `z.config(en())`; Polish is available as `pl`.
+    facts:
+    - Zod Mini does not load the English locale automatically
+    - without a locale every issue message is "Invalid input"
+    - a locale from zod/locales is loaded with z.config
+    - pl is the Polish locale
+
+- name: 'zod v4.6.7: How do I get per-field error messages for a flat form when safeParse fails?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'How do I get per-field error messages for a flat form when safeParse fails?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/basics.mdx, heading_path: [Handling errors]}
+    - {version: v4.6.7, article: packages/docs/content/error-formatting.mdx, heading_path: [z.flattenError()]}
+    reference: >-
+      `.safeParse()` returns a result with `success: false` and a `ZodError` in `error`; pass
+      it to `z.flattenError(result.error)` to get `formErrors` (top-level errors) and
+      `fieldErrors` (an array of messages per field).
+    facts:
+    - .safeParse() returns a result object instead of throwing
+    - on failure the result holds a ZodError
+    - z.flattenError() returns formErrors and fieldErrors
+    - fieldErrors holds an array of messages for each field
+
+- name: 'zod v4.6.7: Can Zod build a schema from an existing JSON Schema, and does it enforce uniqueItems?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'Can Zod build a schema from an existing JSON Schema, and does it enforce uniqueItems?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/json-schema.mdx, heading_path: [z.fromJSONSchema()]}
+    - {version: v4.6.7, article: packages/docs/content/blog/zod-4-6.mdx, heading_path: [fromJSONSchema()]}
+    reference: >-
+      Yes, with `z.fromJSONSchema(jsonSchema)`, which is experimental and not part of the
+      stable API. Zod 4.6 added `uniqueItems` (structural, so equal objects count as
+      duplicates), plus min/maxProperties, contains and min/maxContains.
+    facts:
+    - z.fromJSONSchema() converts a JSON Schema into a Zod schema
+    - z.fromJSONSchema() is experimental
+    - uniqueItems is supported since zod 4.6
+    - array uniqueness is structural
+
+- name: 'zod v4.6.7: How do I compile every schema in my Node app automatically, and what does it cost in bundle size?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'How do I compile every schema in my Node app automatically, and what does it cost in bundle size?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v4.6.7, article: packages/docs/content/compile.mdx, heading_path: ['import "zod/compile"']}
+    - {version: v4.6.7, article: packages/docs/content/blog/introducing-z-compile.mdx, heading_path: [Tradeoffs]}
+    - {version: v4.6.7, article: packages/docs/content/compile.mdx, heading_path: [Bundle size]}
+    reference: >-
+      `import "zod/compile"` before any module defines schemas (or `node --import
+      zod/compile`); schemas are then compiled lazily on first parse. The compiler adds about
+      7 KB gzipped (28 KB minified); bundles that never use it pay nothing.
+    facts:
+    - import "zod/compile" enables compilation for every schema defined after it
+    - schemas are compiled lazily on their first parse
+    - it can be loaded with node --import zod/compile
+    - the compiler adds about 7 KB gzipped to the bundle
+
+- name: 'zod v4.0.17: My User and Post schemas reference each other; how do I emit them as separate JSON Schemas linked with $ref?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'My User and Post schemas reference each other; how do I emit them as separate JSON Schemas linked with $ref?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v4.0.17, article: packages/docs/content/json-schema.mdx, heading_path: [Registries]}
+    - {version: v4.0.17, article: packages/docs/content/metadata.mdx, heading_path: [Registries]}
+    reference: >-
+      Register each schema with an `id` (e.g. `z.globalRegistry.add(User, { id: "User" })`)
+      and pass the registry to `z.toJSONSchema(z.globalRegistry)`; it returns a `schemas` map
+      whose entries point at each other with `$ref`. Schemas without an `id` are ignored, and
+      ids must be unique in a registry.
+    facts:
+    - z.toJSONSchema() accepts a registry and returns one JSON Schema per registered schema
+    - schemas reference each other with $ref
+    - schemas without a registered id are ignored
+    - registering two schemas with the same id throws an Error
+
+- name: 'zod v4.0.17: Now that zod@4.0.0 is out, what peer dependency range should my library declare, and how do I tell Zod 3 and Zod 4 schemas apart at runtime?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'Now that zod@4.0.0 is out, what peer dependency range should my library declare, and how do I tell Zod 3 and Zod 4 schemas apart at runtime?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v4.0.17, article: packages/docs/content/v4/versioning.mdx, heading_path: ['Update — July 8th, 2025']}
+    - {version: v4.0.17, article: packages/docs/content/library-authors.mdx, heading_path: ["How to support Zod 3 and Zod 4 simultaneously?"]}
+    - {version: v4.0.17, article: packages/docs/content/library-authors.mdx, heading_path: ["How to configure peer dependencies?"]}
+    reference: >-
+      Declare `"zod": "^3.25.0 || ^4.0.0"` in peerDependencies (no other code change is
+      needed). Import types from `"zod/v3"` and `"zod/v4/core"`, and check for the `_zod`
+      property: only Zod 4 schemas have it.
+    facts:
+    - the peer dependency range is "^3.25.0 || ^4.0.0"
+    - zod 3.25.0 and later contain both Zod 3 and Zod 4 at subpaths
+    - a Zod 4 schema has a _zod property and a Zod 3 schema does not
+
+- name: 'zod v4.0.17: How do I define a validated async function now that z.function() has no .args() and .returns()?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'How do I define a validated async function now that z.function() has no .args() and .returns()?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v4.0.17, article: packages/docs/content/api.mdx, heading_path: [Functions]}
+    - {version: v4.0.17, article: packages/docs/content/v4/changelog.mdx, heading_path: [z.function()]}
+    reference: >-
+      Pass `input` (an array or ZodTuple of parameter schemas) and optionally `output` to
+      `z.function({...})`, then wrap the implementation with `.implementAsync(async (...) =>
+      ...)`. `z.function()` is no longer a Zod schema, only a function factory.
+    facts:
+    - z.function() takes input and output schemas up front
+    - input must be an array or a ZodTuple
+    - .implementAsync() defines an async function
+    - z.function() no longer returns a Zod schema
+
+- name: 'zod v4.0.17: How do I add length limits and a custom refine to a string in zod/mini, and why are they not methods there?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'How do I add length limits and a custom refine to a string in zod/mini, and why are they not methods there?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v4.0.17, article: packages/docs/content/packages/mini.mdx, heading_path: [ZodMiniType, .check()]}
+    - {version: v4.0.17, article: packages/docs/content/v4/index.mdx, heading_path: [Introducing Zod Mini]}
+    reference: >-
+      Pass checks to `.check()`: `z.string().check(z.minLength(5), z.maxLength(10),
+      z.refine(...))`. Zod Mini replaces methods with top-level functions because a
+      method-heavy API cannot be tree-shaken.
+    facts:
+    - Zod Mini adds checks through the .check() method
+    - length limits are z.minLength() and z.maxLength()
+    - custom checks use z.refine()
+    - Zod Mini uses functions because methods are hard to tree-shake
+
+# --- unanswerable ---
+
+- name: 'zod v3.23.8: How do I register schemas with an id in a global registry and look up their metadata later?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'How do I register schemas with an id in a global registry and look up their metadata later?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Zod v3.23.8 documentation has no registries or .meta(); it only offers .describe()
+      for a description.
+
+- name: 'zod v3.23.8: Is there a z.stringbool() to read "yes"/"off" environment variables as booleans?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'Is there a z.stringbool() to read "yes"/"off" environment variables as booleans?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Zod v3.23.8 documentation has no z.stringbool(); it only documents z.coerce.boolean(),
+      which uses Boolean(input).
+
+- name: 'zod v3.23.8: How do I cancel a pending parseAsync with an AbortSignal?'
+  inputs:
+    project: zod
+    version: v3.23.8
+    query: 'How do I cancel a pending parseAsync with an AbortSignal?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The Zod v3.23.8 documentation does not cover cancelling a parse.
+
+- name: 'zod v4.0.17: How do I define a two-way schema so I can decode an ISO string into a Date and .encode() it back?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'How do I define a two-way schema so I can decode an ISO string into a Date and .encode() it back?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Zod v4.0.17 documentation has no codecs or .encode(); they were introduced in
+      zod 4.1.
+
+- name: 'zod v4.0.17: How do I make a union fail when more than one of its options matches?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'How do I make a union fail when more than one of its options matches?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The Zod v4.0.17 documentation has no exclusive union (z.xor()).
+
+- name: 'zod v4.0.17: How can TypeScript tell me when an object schema has a key that my existing interface does not?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'How can TypeScript tell me when an object schema has a key that my existing interface does not?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Zod v4.0.17 documentation does not cover checking a schema against an existing type
+      (z.toZod<T>() arrives in a later version).
+
+- name: 'zod v4.0.17: How do I parse and validate a CSV file row by row?'
+  inputs:
+    project: zod
+    version: v4.0.17
+    query: 'How do I parse and validate a CSV file row by row?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The Zod v4.0.17 documentation does not cover CSV files.
+
+- name: 'zod v4.6.7: How does Zod compare with io-ts, and when should I pick one over the other?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'How does Zod compare with io-ts, and when should I pick one over the other?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Zod v4.6.7 documentation has no comparison with io-ts (only the v3 README had a
+      Comparison section).
+
+- name: 'zod v4.6.7: Can Zod generate Protocol Buffers .proto definitions from a schema?'
+  inputs:
+    project: zod
+    version: v4.6.7
+    query: 'Can Zod generate Protocol Buffers .proto definitions from a schema?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The Zod v4.6.7 documentation does not cover Protocol Buffers.
