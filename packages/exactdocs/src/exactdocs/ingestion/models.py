@@ -122,6 +122,7 @@ class NotJsonSafeError(ValueError):
     """Front matter holds values that cannot be stored as standard JSON."""
 
     def __init__(self) -> None:
+        """Create the error with its fixed message."""
         super().__init__(
             "values must be text, numbers, booleans, null, lists or maps with text keys"
         )
@@ -135,6 +136,18 @@ class _FrontMatterLoader(yaml.SafeLoader):
     """
 
     def compose_node(self, parent: yaml.Node | None, index: object) -> yaml.Node | None:
+        """Compose a node, refusing anchors and aliases.
+
+        Args:
+            parent: The node being composed around it, if any.
+            index: Its key or position in ``parent``.
+
+        Returns:
+            The composed node.
+
+        Raises:
+            MarkedYAMLError: The document uses an anchor or an alias.
+        """
         event = self.peek_event()
         if isinstance(event, yaml.AliasEvent) or getattr(event, "anchor", None):
             raise yaml.MarkedYAMLError(problem=_NO_ALIASES, problem_mark=event.start_mark)
@@ -150,7 +163,14 @@ _readme_markdown = MarkdownIt("commonmark").enable("table")  # a table is not a 
 
 
 def malformed_front_matter_length(body: str) -> int:
-    """Length of the broken front-matter block ``parse_article`` left at the start of ``body``."""
+    """Length of the broken front-matter block ``parse_article`` left at the start of ``body``.
+
+    Args:
+        body: An article's body.
+
+    Returns:
+        The block's length in characters; 0 when the body does not start with one.
+    """
     match = _FRONT_MATTER.match(body)
     return match.end() if match else 0
 
@@ -168,6 +188,15 @@ def stored_front_matter_problems(
     to nothing (blank lines or comments) before it, and that block is Markdown (#228). ``None``
     when the blob SHA cannot tell them apart (the parser also strips invisible characters): only
     a parse of the file can.
+
+    Args:
+        path: The file's repository path.
+        content: The stored body.
+        front_matter: The stored front matter.
+        blob_sha: The file's git blob SHA.
+
+    Returns:
+        The note (``()`` when there was none), or ``None`` when only a parse can tell.
     """
     if front_matter or not malformed_front_matter_length(content):
         return ()
@@ -178,7 +207,14 @@ def stored_front_matter_problems(
 
 
 def strip_invisible(text: str) -> str:
-    """Remove invisible and control characters (see ``_ALWAYS_INVISIBLE``); change nothing else."""
+    """Remove invisible and control characters (see ``_ALWAYS_INVISIBLE``); change nothing else.
+
+    Args:
+        text: Untrusted text.
+
+    Returns:
+        The text without them.
+    """
     return _STRAY_JOINER.sub("", _ALWAYS_INVISIBLE.sub(lambda m: m["flag"] or "", text))
 
 
@@ -187,12 +223,19 @@ class ParsedArticle:
     """An article ready to store: clean Markdown body plus what the front matter said."""
 
     path: str
+    """The file's repository path."""
     title: str
+    """The front-matter ``title``, else the first H1, else the file name without its extension."""
     body: str
+    """The Markdown after the front matter (all of it when the front matter is malformed)."""
     tags: tuple[str, ...] = ()
+    """The normalized front-matter tags."""
     description: str | None = None
+    """The front-matter ``description``, if it is text."""
     front_matter: dict[str, Any] = field(default_factory=dict)
+    """The front matter as loaded; empty when there is none or it is malformed."""
     problems: tuple[str, ...] = ()
+    """Notes on the front matter: the article is imported anyway."""
     images: tuple[str, ...] = ()
     """Repository paths of the images the body references by a relative link (``image_paths``)."""
 
@@ -204,6 +247,13 @@ def parse_article(path: str, source: str) -> ParsedArticle:
     extension. Malformed front matter does not fail the article: it stays in the body, the
     metadata is empty and the reason is listed in ``problems``. A leading ``---`` block that is
     not a mapping (a thematic break around prose) is just body text, with no problem.
+
+    Args:
+        path: The file's repository path.
+        source: The file's text.
+
+    Returns:
+        The article.
     """
     text = strip_invisible(source)
     front_matter: dict[str, Any] = {}
@@ -233,7 +283,14 @@ def parse_article(path: str, source: str) -> ParsedArticle:
 
 
 def _declared(front_matter: Mapping[str, Any]) -> tuple[tuple[str, ...], list[str]]:
-    """Return the tags a parsed front matter declares, and the notes on its title and tags."""
+    """Return the tags a parsed front matter declares, and the notes on its title and tags.
+
+    Args:
+        front_matter: The loaded front matter.
+
+    Returns:
+        The normalized tags, and the notes.
+    """
     problems: list[str] = []
     declared = front_matter.get("title")
     if declared is not None and not isinstance(declared, str):
@@ -243,6 +300,14 @@ def _declared(front_matter: Mapping[str, Any]) -> tuple[tuple[str, ...], list[st
 
 
 def _description(front_matter: Mapping[str, Any]) -> str | None:
+    """Take the front-matter ``description`` if it is text.
+
+    Args:
+        front_matter: The loaded front matter.
+
+    Returns:
+        The description, or None.
+    """
     description = front_matter.get("description")
     return description if isinstance(description, str) else None
 
@@ -253,6 +318,12 @@ def front_matter_tags(front_matter: Mapping[str, Any]) -> tuple[tuple[str, ...],
     ``tags`` is a list or a comma-separated string; invalid items are dropped, at most
     ``MAX_TAGS`` kept. Pure, so the tags of a stored article can be derived again from its
     stored front matter (re-tagging without a fetch).
+
+    Args:
+        front_matter: The loaded or stored front matter.
+
+    Returns:
+        The tags, and the notes on what was ignored.
     """
     problems: list[str] = []
     tags = front_matter.get("tags")
@@ -279,6 +350,13 @@ def image_paths(article_path: str, body: str) -> tuple[str, ...]:
     leading ``/`` means the repository root), query and fragment are dropped, a path that leaves
     the repository, has a scheme (``https:``, ``data:``), starts with ``//`` or holds a control
     character, a backslash or a ``.git`` segment is ignored. At most ``MAX_IMAGES_PER_ARTICLE``.
+
+    Args:
+        article_path: The article's repository path.
+        body: Its Markdown body.
+
+    Returns:
+        The image paths.
     """
     found: dict[str, None] = {}
     if "![" not in body:  # every image, inline or by reference, starts so: skip the parse
@@ -293,6 +371,15 @@ def image_paths(article_path: str, body: str) -> tuple[str, ...]:
 
 
 def _resolve(article_path: str, src: str) -> str | None:
+    """Resolve an image's ``src`` against its article's folder.
+
+    Args:
+        article_path: The article's repository path.
+        src: The image's ``src``, trimmed.
+
+    Returns:
+        The image's repository path, or None when it is ignored.
+    """
     if _SCHEME.match(src) or src.startswith("//"):
         return None
     target = unquote(re.split(r"[?#]", src, maxsplit=1)[0])
@@ -312,6 +399,17 @@ def _resolve(article_path: str, src: str) -> str | None:
 
 
 def _load_front_matter(text: str) -> object:
+    """Load YAML front matter with ``_FrontMatterLoader``.
+
+    Args:
+        text: The YAML between the ``---`` lines.
+
+    Returns:
+        What it loads to.
+
+    Raises:
+        NotJsonSafeError: It holds a value standard JSON cannot.
+    """
     loader = _FrontMatterLoader(text)
     try:
         loaded = loader.get_single_data()
@@ -323,7 +421,14 @@ def _load_front_matter(text: str) -> object:
 
 
 def _is_json_safe(value: object) -> bool:
-    """Tell whether standard JSON can hold it (no bytes, sets, dates, NaN or Infinity)."""
+    """Tell whether standard JSON can hold it (no bytes, sets, dates, NaN or Infinity).
+
+    Args:
+        value: A loaded YAML value.
+
+    Returns:
+        True when it can be stored as JSON.
+    """
     match value:
         case None | bool() | str() | int():
             return True
@@ -338,7 +443,14 @@ def _is_json_safe(value: object) -> bool:
 
 
 def _reason(error: Exception) -> str:
-    """Say what is wrong and where, without echoing the file's content."""
+    """Say what is wrong and where, without echoing the file's content.
+
+    Args:
+        error: Why the front matter did not load.
+
+    Returns:
+        The reason, with the line for a YAML error.
+    """
     if isinstance(error, yaml.MarkedYAMLError) and error.problem_mark:
         # +2: the front matter starts on line 2 (after the opening ---), marks are 0-based
         where = f"at line {error.problem_mark.line + 2}"
@@ -347,6 +459,16 @@ def _reason(error: Exception) -> str:
 
 
 def _title(declared: object, body: str, path: str) -> str:
+    """Pick an article's title.
+
+    Args:
+        declared: The front-matter ``title``, whatever its type.
+        body: The Markdown body.
+        path: The file's repository path.
+
+    Returns:
+        The declared title if it is text, else the first H1, else the file name's stem.
+    """
     if isinstance(declared, str) and declared.strip():
         return declared.strip()
     tokens = _markdown.parse(body)
@@ -367,7 +489,9 @@ class ReadmeSummary:
     """What a root README says about its library; ``None`` where it says nothing usable."""
 
     title: str | None = None
+    """The first heading's text."""
     description: str | None = None
+    """The first paragraph's text."""
 
 
 def readme_summary(source: str) -> ReadmeSummary:
@@ -378,6 +502,12 @@ def readme_summary(source: str) -> ReadmeSummary:
     cut to ``README_TITLE_MAX`` / ``README_DESCRIPTION_MAX``. Paragraphs inside lists or quotes,
     and paragraphs with no text (badges, images), are skipped. Without a heading the first
     paragraph of the file is used.
+
+    Args:
+        source: The README's text.
+
+    Returns:
+        The title and the description found.
     """
     tokens = _readme_markdown.parse(parse_article("README.md", source).body)
     title, start = None, 0
@@ -401,6 +531,13 @@ def _inline_text(inline: Token, *, skip_link_only: bool = False) -> str:
     """Join the visible text of an inline token, collapsing whitespace.
 
     With ``skip_link_only`` a line that is nothing but links (a nav bar) gives ``""``.
+
+    Args:
+        inline: An inline token.
+        skip_link_only: Give ``""`` for text that is nothing but links.
+
+    Returns:
+        The text, whitespace collapsed.
     """
     words, outside, in_link = [], [], False
     for child in inline.children or []:
@@ -501,8 +638,11 @@ class FileProblem:
     """A problem with one file of an import: ``code`` is the stable kind, ``reason`` the text."""
 
     path: str
+    """The file's repository path; empty for the ``truncated`` marker."""
     code: ProblemCode
+    """What kind of problem it is."""
     reason: str
+    """What happened, in words for users."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -519,29 +659,47 @@ class Job:
     """
 
     id: JobId
+    """Time-ordered: a later job has a greater ID."""
     kind: JobKind
+    """What the job does."""
     library: str
+    """The library ID."""
     version: str | None
+    """The ref of the version the job is for; ``None`` for a job of the whole library."""
     state: JobState
+    """Where the job is in its life."""
     commit_sha: str | None = None
+    """The commit ``version`` was pinned to when the job was queued."""
     ref_kind: RefKind | None = None
+    """What ``version`` is, as resolved when the job was queued."""
     done: int = 0
+    """How much of ``total`` is done."""
     total: int = 0
+    """The job's size; 0 until it is known."""
     problems: tuple[FileProblem, ...] = ()
+    """The files skipped or imported with a note."""
     notes: int = 0
     """How many of ``problems`` are notes on imported files (derived, not stored)."""
     chunked: int = 0
+    """Articles an import cut into chunks."""
     reused: int = 0
+    """Articles whose chunks an earlier import had stored."""
     parsed: int = 0
+    """Articles an import parsed."""
     taken: int = 0
+    """Articles an import took as an earlier import had stored them."""
     error: str | None = None
+    """Why the job failed, for users; ``None`` unless it failed."""
     error_code: str | None = None
     """The stable code of ``error``: a ``SyncErrorCode``, an error's own code or ``unexpected``."""
     origin: VersionOrigin = VersionOrigin.MANUAL
     """Who queued it; the first import of a version gives the version this origin."""
     created_at: datetime
+    """When the job was queued."""
     started_at: datetime | None = None
+    """When the job last started running."""
     finished_at: datetime | None = None
+    """When the job ended."""
 
     @classmethod
     def queued(
@@ -556,7 +714,21 @@ class Job:
         ref_kind: RefKind | None = None,
         origin: VersionOrigin = VersionOrigin.MANUAL,
     ) -> Self:
-        """Create a job that waits for the worker."""
+        """Create a job that waits for the worker.
+
+        Args:
+            job_id: The new job's ID.
+            kind: What the job does.
+            library: The library ID.
+            version: The version's ref; ``None`` for a job of the whole library.
+            now: The time it is queued.
+            commit_sha: The commit ``version`` is pinned to.
+            ref_kind: What ``version`` is.
+            origin: Who queued it.
+
+        Returns:
+            The queued job.
+        """
         return cls(
             id=job_id,
             kind=kind,
@@ -570,21 +742,55 @@ class Job:
         )
 
     def started(self, now: datetime) -> Self:
-        """Mark the job as picked up by the worker."""
+        """Mark the job as picked up by the worker.
+
+        Args:
+            now: The time it starts.
+
+        Returns:
+            The running job.
+        """
         return replace(self, state=JobState.RUNNING, started_at=now)
 
     def progressed(self, *, done: int, total: int) -> Self:
-        """``done`` of ``total`` files processed so far."""
+        """``done`` of ``total`` files processed so far.
+
+        Args:
+            done: How much is done.
+            total: How much there is.
+
+        Returns:
+            The job with that progress.
+
+        Raises:
+            InvalidProgressError: ``done`` is negative or more than ``total``.
+        """
         if not 0 <= done <= total:
             raise InvalidProgressError(done, total)
         return replace(self, done=done, total=total)
 
     def chunking(self, *, chunked: int, reused: int) -> Self:
-        """Record how many articles were chunked now and how many reused stored chunks."""
+        """Record how many articles were chunked now and how many reused stored chunks.
+
+        Args:
+            chunked: Articles cut into chunks.
+            reused: Articles whose stored chunks were reused.
+
+        Returns:
+            The job with those counts.
+        """
         return replace(self, chunked=chunked, reused=reused)
 
     def parsing(self, *, parsed: int, taken: int) -> Self:
-        """Record how many articles were parsed now and how many taken as stored before."""
+        """Record how many articles were parsed now and how many taken as stored before.
+
+        Args:
+            parsed: Articles parsed.
+            taken: Articles taken as stored.
+
+        Returns:
+            The job with those counts.
+        """
         return replace(self, parsed=parsed, taken=taken)
 
     def with_problem(self, path: str, code: ProblemCode, reason: str) -> Self:
@@ -593,6 +799,14 @@ class Job:
         Skips are kept up to ``MAX_JOB_PROBLEMS``, then counted in one ``truncated`` marker.
         Notes (``front_matter``) have a separate, lower ``MAX_JOB_NOTES`` and are dropped beyond
         it, so they can never crowd skips out.
+
+        Args:
+            path: The file's repository path.
+            code: What kind of problem it is.
+            reason: What happened, in words for users.
+
+        Returns:
+            The job with the problem recorded, counted or dropped.
         """
         if code is ProblemCode.FRONT_MATTER:
             if self.notes >= MAX_JOB_NOTES:
@@ -626,15 +840,35 @@ class Job:
         )
 
     def succeeded(self, now: datetime) -> Self:
-        """Mark the job as finished."""
+        """Mark the job as finished.
+
+        Args:
+            now: The time it ended.
+
+        Returns:
+            The succeeded job.
+        """
         return replace(self, state=JobState.SUCCEEDED, finished_at=now)
 
     def failed(self, error: str, now: datetime, *, code: str | None = None) -> Self:
-        """Mark the job as stopped with ``error`` (the text) and its stable ``code``."""
+        """Mark the job as stopped with ``error`` (the text) and its stable ``code``.
+
+        Args:
+            error: Why it failed, for users.
+            now: The time it ended.
+            code: The stable code of ``error``.
+
+        Returns:
+            The failed job.
+        """
         return replace(self, state=JobState.FAILED, error=error, error_code=code, finished_at=now)
 
     def requeued(self) -> Self:
-        """Run again from the beginning, as if never started."""
+        """Run again from the beginning, as if never started.
+
+        Returns:
+            The job queued again, its progress, problems and error cleared.
+        """
         return replace(
             self,
             state=JobState.QUEUED,
@@ -678,8 +912,11 @@ class RepositoryUrl:
     """
 
     url: str
+    """The URL as typed, trimmed: what git is given."""
     host_kind: RepositoryHost
+    """The hosting service, for source links."""
     library_id: ProposedId
+    """The proposed library ID."""
 
     @property
     def transport(self) -> str:
@@ -708,7 +945,18 @@ class RepositoryUrl:
 
     @classmethod
     def parse(cls, text: str) -> Self:
-        """Validate ``text`` and propose a library ID (``/owner/repo``, lower-case)."""
+        """Validate ``text`` and propose a library ID (``/owner/repo``, lower-case).
+
+        Args:
+            text: The URL a user typed.
+
+        Returns:
+            The URL and the library ID it proposes.
+
+        Raises:
+            InvalidRepositoryUrlError: The URL is not one ExactDocs accepts, or no library ID
+                can be derived from it.
+        """
         url = text.strip()
         if not url:
             raise InvalidRepositoryUrlError(UrlProblem.EMPTY)
@@ -739,7 +987,19 @@ class RepositoryUrl:
 
 
 def _split_url(url: str) -> tuple[str, list[str], bool]:
-    """Check a ``scheme://`` URL; return its host, path segments and the owner-group flag."""
+    """Check a ``scheme://`` URL; return its host, path segments and the owner-group flag.
+
+    Args:
+        url: The URL, trimmed.
+
+    Returns:
+        The lower-case host, the path segments, and whether the first segment is the owner
+        (``https`` and ``ssh``: a host with nested groups keys a library by its top group).
+
+    Raises:
+        InvalidRepositoryUrlError: The URL is malformed, has another scheme, an invalid host or
+            credentials.
+    """
     try:
         parts = urlsplit(url)
         port = parts.port
@@ -761,6 +1021,17 @@ def _split_url(url: str) -> tuple[str, list[str], bool]:
 
 
 def _segments(path: str) -> list[str]:
+    """Split a URL's path into its segments, unquoted.
+
+    Args:
+        path: The URL's path.
+
+    Returns:
+        The non-empty segments.
+
+    Raises:
+        InvalidRepositoryUrlError: A segment is ``.`` or ``..`` or holds an encoded ``/``.
+    """
     segments = [unquote(s) for s in path.split("/") if s]
     if any(s in {".", ".."} or "/" in s for s in segments):
         raise InvalidRepositoryUrlError(UrlProblem.DOTS)
@@ -768,6 +1039,14 @@ def _segments(path: str) -> list[str]:
 
 
 def _is_host(host: str) -> bool:
+    """Tell whether ``host`` is a valid host name or an IP address.
+
+    Args:
+        host: The lower-case host.
+
+    Returns:
+        True when it is.
+    """
     if _HOST.fullmatch(host):
         return True
     try:
@@ -778,11 +1057,29 @@ def _is_host(host: str) -> bool:
 
 
 def _host_kind(host: str) -> RepositoryHost:
+    """Tell which hosting service a host is.
+
+    Args:
+        host: The lower-case host.
+
+    Returns:
+        Its service; ``git`` for any host ExactDocs does not know.
+    """
     return RepositoryHost(KNOWN_HOSTS.get(host, RepositoryHost.GIT))
 
 
 def _id_segment(raw: str) -> str:
-    """Shape a path segment like a library ID segment (letters, digits, ``._-``), lower-case."""
+    """Shape a path segment like a library ID segment (letters, digits, ``._-``), lower-case.
+
+    Args:
+        raw: A path segment.
+
+    Returns:
+        The library ID segment.
+
+    Raises:
+        InvalidRepositoryUrlError: Nothing usable is left of it.
+    """
     segment = _UNSAFE_ID_CHARS.sub("-", raw).strip("-").lower()
     if not segment or set(segment) == {"."}:
         raise InvalidRepositoryUrlError(UrlProblem.NO_ID)
@@ -798,9 +1095,16 @@ class AccessToken:
     """
 
     token: str = field(repr=False)
+    """The token, on one line."""
     username: str = "x-access-token"
+    """The user name sent with the token."""
 
     def __post_init__(self) -> None:
+        """Refuse a token that is empty, not one line or too long, or a bad user name.
+
+        Raises:
+            InvalidCredentialError: The token or the user name cannot be used.
+        """
         if not self.token:
             raise InvalidCredentialError(CredentialProblem.EMPTY)
         if (
@@ -818,8 +1122,14 @@ class DeployKey:
     """An SSH private key without a passphrase, kept in the OpenSSH or PEM text format."""
 
     private_key: str = field(repr=False)
+    """The key, armour lines included; normalized to ``\\n`` line ends and a final newline."""
 
     def __post_init__(self) -> None:
+        """Normalize the key; refuse one that is empty, too long, flattened or encrypted.
+
+        Raises:
+            InvalidCredentialError: The key cannot be used.
+        """
         key = self.private_key.replace("\r\n", "\n").strip()
         if not key:
             raise InvalidCredentialError(CredentialProblem.EMPTY)
@@ -877,6 +1187,14 @@ def check_credential_fits(repository: RepositoryUrl, credential: Credential) -> 
 
     A token over plain ``http://`` would cross the network in the clear, so only localhost (a
     local mirror, the test servers) may use it. A deploy key needs an SSH URL.
+
+    Args:
+        repository: The repository.
+        credential: The token or deploy key.
+
+    Raises:
+        InvalidCredentialError: A token without https (or http to localhost), or a deploy key
+            without SSH.
     """
     transport = repository.transport
     if isinstance(credential, AccessToken):
@@ -892,6 +1210,14 @@ def dump_credential(library: str, scope: str, credential: Credential) -> str:
 
     The library and the ``credential_scope`` it was given for are part of the text, so it opens
     for that library and that host only.
+
+    Args:
+        library: The library ID.
+        scope: The repository's ``credential_scope``.
+        credential: The token or deploy key.
+
+    Returns:
+        JSON text holding the secret.
     """
     if isinstance(credential, AccessToken):
         body = {"kind": "token", "token": credential.token, "username": credential.username}
@@ -901,7 +1227,19 @@ def dump_credential(library: str, scope: str, credential: Credential) -> str:
 
 
 def load_credential(library: str, scope: str, text: str) -> Credential:
-    """Inverse of ``dump_credential``; ``ValueError`` when it is for another library or host."""
+    """Inverse of ``dump_credential``; ``ValueError`` when it is for another library or host.
+
+    Args:
+        library: The library ID it must be for.
+        scope: The ``credential_scope`` it must be for.
+        text: What ``dump_credential`` returned.
+
+    Returns:
+        The credential.
+
+    Raises:
+        ValueError: It was stored for another library or scope.
+    """
     body = json.loads(text)
     if body["library"] != library or body["scope"] != scope:
         raise ValueError(library)  # a copied row, or the library now lives on another host
@@ -915,7 +1253,9 @@ class RemoteRef:
     """One ref a remote advertises: ``refs/heads/main`` or ``refs/tags/v1.4.0`` and its object."""
 
     name: str
+    """The full ref name, e.g. ``refs/heads/main``; ``^{}`` ends a peeled annotated tag."""
     sha: str
+    """The object it points at."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -923,7 +1263,9 @@ class RemoteRefs:
     """What ``git ls-remote`` saw: the branch ``HEAD`` points at (``None`` if unknown) and refs."""
 
     default_branch: str | None
+    """The branch ``HEAD`` points at."""
     refs: tuple[RemoteRef, ...] = ()
+    """Every ref listed, in git's order."""
 
 
 def branch_name(raw: str) -> str | None:
@@ -931,6 +1273,12 @@ def branch_name(raw: str) -> str | None:
 
     The name comes from a remote, so it is also capped and checked for control characters
     before it is stored or shown.
+
+    Args:
+        raw: A branch name without ``refs/heads/``.
+
+    Returns:
+        ``raw``, or None.
     """
     parts = raw.split("/")
     ok = (
@@ -959,11 +1307,21 @@ class ChunkingConfig:
     """
 
     split_depth: int = MAX_HEADING_LEVEL
+    """The deepest heading level that starts a chunk."""
     min_chars: int = 0
+    """Shorter chunks are merged; 0 merges none."""
     max_chars: int | None = None
+    """Longer chunks are cut again at deeper headings; ``None``: no bound."""
     chunker: str = DEFAULT_CHUNKER
+    """Which chunker cuts."""
 
     def __post_init__(self) -> None:
+        """Refuse settings out of range or a chunker that is not provided.
+
+        Raises:
+            InvalidChunkingConfigError: A setting is out of range, ``max_chars`` is below
+                ``min_chars`` or the chunker is unknown.
+        """
         if not 1 <= self.split_depth <= MAX_HEADING_LEVEL:
             raise InvalidChunkingConfigError
         if not 0 <= self.min_chars <= MAX_CHUNK_CHARS:
@@ -992,6 +1350,13 @@ def chunking_config_hash(config: ChunkingConfig, engine: str = "") -> str:
     names ``MERGED_HEADINGS_VERSION``: its chunks record those headings, and a set cut before
     they did is cut again instead of reused. The others cut at every heading (``max_chars`` only
     cuts whole sections), so their chunk sets already tell every heading and keep their hash.
+
+    Args:
+        config: The chunking settings.
+        engine: The cutting library and its version.
+
+    Returns:
+        32 hexadecimal characters.
     """
     fields: list[object] = [PARSER_VERSION, CHUNKER_VERSION, config.split_depth, engine]
     extra = (config.min_chars, config.max_chars, config.chunker)
@@ -1026,10 +1391,13 @@ class ArticleChunk:
     position: int
     """0-based index in the article."""
     content: str
+    """The chunk's Markdown, verbatim."""
     content_hash: str
+    """SHA-256 of ``content``, hexadecimal."""
     anchor: str
     """GitHub-style, unique in the article; empty before the first heading."""
     code_languages: tuple[str, ...] = ()
+    """Languages of the fenced code blocks in it, in order of first appearance."""
     headings: tuple[ChunkHeading, ...] | None = None
     """Every heading the chunk holds, in order; ``None`` when not recorded (a chunk set stored
     before heading records existed)."""
@@ -1048,14 +1416,23 @@ class ResolvedRef:
     """A ref pinned to a commit. For a commit, ``name`` is the full SHA."""
 
     name: str
+    """The tag or branch name, or the full commit SHA."""
     kind: RefKind
+    """What the ref is."""
     commit_sha: str
+    """The full SHA of the commit it names."""
 
 
 def ref_tips(refs: RemoteRefs) -> tuple[ResolvedRef, ...]:
     """List the branches then the tags a remote advertises, each sorted, with commit SHAs.
 
     An annotated tag points at a tag object; its ``^{}`` line carries the commit, which is used.
+
+    Args:
+        refs: What the remote advertised.
+
+    Returns:
+        The branches, then the tags whose names git accepts.
     """
     branches: dict[str, str] = {}
     tags: dict[str, str] = {}
@@ -1089,6 +1466,17 @@ def resolve_ref(refs: RemoteRefs, requested: str | None) -> ResolvedRef:
     or short (7+ characters) commit SHA that is the tip of some advertised ref.
     ponytail: a commit that is not a ref tip cannot be seen by ``ls-remote``, so it is refused;
     verify it with a fetch (E3-03) if importing arbitrary commits matters.
+
+    Args:
+        refs: What the remote advertised.
+        requested: A tag, a branch, a full or short commit SHA; ``None`` for the default branch.
+
+    Returns:
+        The ref, its kind and its commit.
+
+    Raises:
+        UnknownRefError: Nothing advertised matches (or there is no default branch).
+        AmbiguousRefError: A short SHA starts more than one advertised commit.
     """
     tips = ref_tips(refs)
     if requested is None:
@@ -1121,13 +1509,26 @@ type _Segment = tuple[_Token, ...] | None  # None: `**`, any number of folders
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _Glob:
+    """A parsed path pattern."""
+
     segments: tuple[_Segment, ...]
+    """One per folder level; ``None`` for ``**``."""
     folder: bool
     """A plain name also selects everything below it."""
 
 
 def _segment(text: str) -> _Segment:
-    """Split one path segment into tokens; ``**`` alone is a globstar."""
+    """Split one path segment into tokens; ``**`` alone is a globstar.
+
+    Args:
+        text: One segment of a pattern.
+
+    Returns:
+        Its tokens, or ``None`` for ``**``.
+
+    Raises:
+        InvalidPathPatternError: A ``{`` has no ``}``.
+    """
     if text == "**":
         return None
     tokens: list[_Token] = []
@@ -1157,7 +1558,14 @@ def _segment(text: str) -> _Segment:
 
 @lru_cache(maxsize=512)
 def _glob(pattern: str) -> _Glob:
-    """Parse a cleaned pattern. Matching never backtracks: see ``_matches``."""
+    """Parse a cleaned pattern. Matching never backtracks: see ``_matches``.
+
+    Args:
+        pattern: A pattern ``_clean_pattern`` accepted.
+
+    Returns:
+        The parsed pattern.
+    """
     folder = not GLOB_CHARS & set(pattern)
     parts = pattern.split("/")
     if not parts[-1]:  # `docs/` is `docs/**`
@@ -1172,7 +1580,15 @@ def _glob(pattern: str) -> _Glob:
 
 
 def _name_matches(tokens: tuple[_Token, ...], name: str) -> bool:
-    """Match one segment: the set of reachable positions, so the time is tokens x length."""
+    """Match one segment: the set of reachable positions, so the time is tokens x length.
+
+    Args:
+        tokens: A pattern segment's tokens.
+        name: One name of a path.
+
+    Returns:
+        True when the whole name matches.
+    """
     if len(name) > _MAX_SEGMENT:
         return False
     reach = {0}
@@ -1195,6 +1611,13 @@ def _matches(glob: _Glob, path: str) -> bool:
 
     ``**`` reaches every position from the first one on. Linear in pattern segments times path
     segments, whatever the pattern (a regex would backtrack on stacked wildcards).
+
+    Args:
+        glob: The parsed pattern.
+        path: A repository path.
+
+    Returns:
+        True when the pattern selects the path.
     """
     if len(path) > _MAX_PATH:
         return False
@@ -1211,6 +1634,18 @@ def _matches(glob: _Glob, path: str) -> bool:
 
 
 def _clean_pattern(raw: str) -> str:
+    """Trim a pattern and refuse what cannot be one.
+
+    Args:
+        raw: A pattern as given.
+
+    Returns:
+        The pattern without surrounding blanks or a leading ``./``.
+
+    Raises:
+        InvalidPathPatternError: It is empty, too long, absolute, has ``.``/``..`` parts, a
+            backslash or a control character.
+    """
     pattern = raw.strip().removeprefix("./")
     if not pattern or len(pattern) > _MAX_PATTERN or not pattern.isprintable():
         raise InvalidPathPatternError(PatternProblem.EMPTY)
@@ -1239,11 +1674,24 @@ class PathSelection:
     """
 
     include: tuple[str, ...] = ()
+    """Patterns of what to import; empty: every ``.md``/``.mdx`` file."""
     exclude: tuple[str, ...] = ()
+    """Patterns of what to leave out; they win over ``include``."""
 
     @classmethod
     def of(cls, include: Sequence[str] = (), exclude: Sequence[str] = ()) -> Self:
-        """Validate and normalise the patterns (blank, duplicate-free, bounded)."""
+        """Validate and normalise the patterns (blank, duplicate-free, bounded).
+
+        Args:
+            include: Patterns of what to import.
+            exclude: Patterns of what to leave out.
+
+        Returns:
+            The selection.
+
+        Raises:
+            InvalidPathPatternError: There are too many patterns.
+        """
         if len(include) + len(exclude) > _MAX_PATTERNS:
             raise InvalidPathPatternError(PatternProblem.TOO_MANY)
         return cls(
@@ -1252,7 +1700,14 @@ class PathSelection:
         )
 
     def selects(self, path: str) -> bool:
-        """Tell whether the file at this repo-relative path is an article."""
+        """Tell whether the file at this repo-relative path is an article.
+
+        Args:
+            path: A repository path.
+
+        Returns:
+            True for a ``.md``/``.mdx`` file the patterns select.
+        """
         if not path.lower().endswith(ARTICLE_SUFFIXES):
             return False
         if any(_matches(_glob(p), path) for p in self.exclude):
@@ -1268,18 +1723,41 @@ class TagRule:
     """
 
     selection: PathSelection
+    """The glob, as a selection of one include pattern."""
     tag: str
+    """The tag, normalized."""
 
     @classmethod
     def of(cls, pattern: str, tag: str) -> Self:
-        """Validate the glob and normalize the tag; a tag that cannot be one is refused."""
+        """Validate the glob and normalize the tag; a tag that cannot be one is refused.
+
+        Args:
+            pattern: A path pattern.
+            tag: The tag as given.
+
+        Returns:
+            The rule.
+
+        Raises:
+            InvalidTagError: The tag cannot be one.
+        """
         if (normalized := normalize_tag(tag)) is None:
             raise InvalidTagError(TagProblem.INVALID)
         return cls(selection=PathSelection.of([pattern]), tag=normalized)
 
     @classmethod
     def many(cls, pairs: Sequence[tuple[str, str]]) -> tuple[Self, ...]:
-        """Build the rules of a library: bounded and duplicate-free."""
+        """Build the rules of a library: bounded and duplicate-free.
+
+        Args:
+            pairs: ``(pattern, tag)`` of each rule.
+
+        Returns:
+            The rules, in order, without duplicates.
+
+        Raises:
+            InvalidTagError: There are too many rules.
+        """
         if len(pairs) > MAX_TAG_RULES:
             raise InvalidTagError(TagProblem.TOO_MANY)
         return tuple(dict.fromkeys(starmap(cls.of, pairs)))
@@ -1295,6 +1773,14 @@ def article_tags(path: str, declared: Sequence[str], rules: Sequence[TagRule]) -
 
     Rule tags come first (they are the library owner's), then ``declared`` (already normalized by
     ``parse_article``); duplicates go; at most ``MAX_TAGS`` are kept.
+
+    Args:
+        path: The article's repository path.
+        declared: Its front-matter tags.
+        rules: The library's tag rules.
+
+    Returns:
+        The article's imported tags.
     """
     ruled = (rule.tag for rule in rules if rule.selection.selects(path))
     return tuple(dict.fromkeys((*ruled, *declared)))[:MAX_TAGS]
@@ -1305,7 +1791,9 @@ class PreviousVersion:
     """An older tag a ``context7.json`` offers for import, with its optional display title."""
 
     tag: str
+    """The tag, as the file gives it."""
     title: str = ""
+    """Its display title, flattened to one line; empty when the file gives none."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1319,13 +1807,21 @@ class Context7Config:
     """
 
     project_title: str | None = None
+    """Its ``projectTitle``, cut like a README's title."""
     description: str | None = None
+    """Its ``description``, cut like a README's description."""
     folders: tuple[str, ...] = ()
+    """Its ``folders``, as given."""
     exclude_folders: tuple[str, ...] = ()
+    """Its ``excludeFolders``, as given."""
     exclude_files: tuple[str, ...] = ()
+    """Its ``excludeFiles``, as given."""
     rules: tuple[str, ...] = ()
+    """Its ``rules``, distinct, each one line."""
     previous_versions: tuple[PreviousVersion, ...] = ()
+    """Its importable ``previousVersions``, one per tag."""
     selection: PathSelection | None = None
+    """The folders and excludes as patterns; ``None`` when the file names none."""
     notes: tuple[str, ...] = ()
     """What was left out of an otherwise usable file (``previousVersions`` entries), and why."""
 
@@ -1335,7 +1831,9 @@ class FetchedFile:
     """One file of a commit read on its own: its bytes, nothing (absent), or why it was not read."""
 
     data: bytes | None = None
+    """The file's bytes; ``None`` when it is absent or was not read."""
     problem: str | None = None
+    """Why it was not read; ``None`` when it was, or is absent."""
     code: ProblemCode | None = None
     """The problem's kind, when the reader names one (``TOO_LARGE``, ``NOT_A_FILE``)."""
 
@@ -1350,6 +1848,16 @@ def parse_context7(data: bytes) -> Context7Config:
     file would import something nobody asked for. A ``previousVersions`` entry that cannot be
     imported (no tag, or one git would not take as a ref name) only offers nothing: it is left
     out and named in ``notes``.
+
+    Args:
+        data: The file's bytes.
+
+    Returns:
+        The file's settings.
+
+    Raises:
+        InvalidContext7Error: The file is too big, not UTF-8 JSON, not an object, has too many
+            or too long rules, or names a path ExactDocs refuses.
     """
     if len(data) > CONTEXT7_MAX_BYTES:
         reason = f"it is larger than {CONTEXT7_MAX_BYTES} bytes"
@@ -1405,6 +1913,14 @@ def context7_selection(
     whole repository). An excluded folder or file given by its bare name (``archive``,
     ``CHANGELOG.md``) is excluded wherever it is; one with a ``/`` (``./docs/internal``) only at
     that path. Entries with glob characters are taken as ``PathSelection`` patterns.
+
+    Args:
+        folders: The ``folders`` to import.
+        exclude_folders: The ``excludeFolders``.
+        exclude_files: The ``excludeFiles``.
+
+    Returns:
+        The selection.
     """
     if not (folders or exclude_folders or exclude_files):
         return None
@@ -1419,6 +1935,12 @@ def _c7_path(entry: str) -> tuple[str, bool]:
     """Strip ``./`` and ``/`` at the start (both mean the repository root) and ``/`` at the end.
 
     Also tell whether the entry is anchored at a path (it started at the root or has a ``/``).
+
+    Args:
+        entry: A folder or file entry.
+
+    Returns:
+        The cleaned entry, and whether it is anchored.
     """
     stripped = entry.strip()
     cleaned = stripped.removeprefix("./").lstrip("/").rstrip("/")
@@ -1426,15 +1948,40 @@ def _c7_path(entry: str) -> tuple[str, bool]:
 
 
 def _c7_root(folder: str) -> bool:
+    """Tell whether a ``folders`` entry is the repository root.
+
+    Args:
+        folder: The entry.
+
+    Returns:
+        True for ``.``, ``./`` or ``/``.
+    """
     return _c7_path(folder)[0] in {"", "."}
 
 
 def _c7_folder(folder: str) -> str:
+    """Turn a ``folders`` entry into an include pattern.
+
+    Args:
+        folder: The entry.
+
+    Returns:
+        The folder and everything below it, or the entry itself when it is a glob.
+    """
     cleaned, _ = _c7_path(folder)
     return cleaned if GLOB_CHARS & set(cleaned) else f"{cleaned}/"
 
 
 def _c7_exclude(entry: str, *, folder: bool) -> str:
+    """Turn an ``excludeFolders`` or ``excludeFiles`` entry into an exclude pattern.
+
+    Args:
+        entry: The entry.
+        folder: Whether it is a folder (everything below it goes too).
+
+    Returns:
+        The pattern: anywhere for a bare name, at that path for an anchored one.
+    """
     cleaned, anchored = _c7_path(entry)
     if GLOB_CHARS & set(cleaned):
         return cleaned
@@ -1443,6 +1990,18 @@ def _c7_exclude(entry: str, *, folder: bool) -> str:
 
 
 def _c7_strings(document: dict[str, Any], key: str) -> tuple[str, ...]:
+    """Read a list of strings.
+
+    Args:
+        document: The parsed file.
+        key: The key.
+
+    Returns:
+        The strings; empty when the key is absent.
+
+    Raises:
+        InvalidContext7Error: The value is not a list of strings.
+    """
     value = document.get(key)
     if value is None:
         return ()
@@ -1453,6 +2012,18 @@ def _c7_strings(document: dict[str, Any], key: str) -> tuple[str, ...]:
 
 
 def _c7_text(document: dict[str, Any], key: str) -> str | None:
+    """Read a text, flattened to one line.
+
+    Args:
+        document: The parsed file.
+        key: The key.
+
+    Returns:
+        The text; None when the key is absent or the text blank.
+
+    Raises:
+        InvalidContext7Error: The value is not a string.
+    """
     value = document.get(key)
     if value is None:
         return None
@@ -1463,7 +2034,18 @@ def _c7_text(document: dict[str, Any], key: str) -> str | None:
 
 
 def _c7_line(value: str, key: str) -> str:
-    """Flatten to one line; a control or invisible formatting character makes the file unusable."""
+    """Flatten to one line; a control or invisible formatting character makes the file unusable.
+
+    Args:
+        value: A text of the file.
+        key: Its key, for the error.
+
+    Returns:
+        The text on one line.
+
+    Raises:
+        InvalidContext7Error: It has a control or invisible character.
+    """
     line = " ".join(value.split())
     if not line.isprintable():
         reason = f"{key} has control or invisible characters"
@@ -1472,7 +2054,17 @@ def _c7_line(value: str, key: str) -> str:
 
 
 def _c7_previous_versions(value: object) -> tuple[tuple[PreviousVersion, ...], tuple[str, ...]]:
-    """Return the importable entries and a note for each one that is left out."""
+    """Return the importable entries and a note for each one that is left out.
+
+    Args:
+        value: The ``previousVersions`` value.
+
+    Returns:
+        The entries, one per tag, and the notes.
+
+    Raises:
+        InvalidContext7Error: It is not a list, or too long.
+    """
     if value is None:
         return (), ()
     if not isinstance(value, list) or len(value) > MAX_PREVIOUS_VERSIONS:
@@ -1493,7 +2085,14 @@ def _c7_previous_versions(value: object) -> tuple[tuple[PreviousVersion, ...], t
 
 
 def _c7_previous_version(entry: object) -> PreviousVersion | str:
-    """Validate one entry; a string says why it cannot be offered (never echoes control text)."""
+    """Validate one entry; a string says why it cannot be offered (never echoes control text).
+
+    Args:
+        entry: One ``previousVersions`` entry.
+
+    Returns:
+        The version, or why it is left out.
+    """
     if not isinstance(entry, dict):
         return 'it is not a {"tag": ..., "title": ...} object'
     tag, title = entry.get("tag"), entry.get("title", "")
@@ -1518,22 +2117,45 @@ class NewLibrary:
     """What a library is created from: its repository, default branch and doc selection."""
 
     library_id: ProposedId
+    """The library ID."""
     title: str
+    """The display title until an import finds a better one."""
     source_url: str
+    """The repository URL, as git is given it."""
     host: RepositoryHost
+    """The hosting service, for source links."""
     default_branch: str | None
+    """The branch ``HEAD`` points at, if any."""
     selection: PathSelection
+    """Which files are articles."""
     tag_rules: tuple[TagRule, ...] = ()
+    """Tags given to articles by path."""
 
 
 # ---------------------------------------------------------------- import
 
 
 def _dropped_reason(count: int) -> str:
+    """Say how many skipped files are not listed.
+
+    Args:
+        count: How many.
+
+    Returns:
+        The ``truncated`` marker's reason.
+    """
     return f"{count} more skipped files are not listed"
 
 
 def _dropped(marker: FileProblem) -> int:
+    """Read how many skipped files a ``truncated`` marker counts.
+
+    Args:
+        marker: The marker.
+
+    Returns:
+        The count its reason starts with.
+    """
     return int(marker.reason.split()[0])
 
 
@@ -1545,9 +2167,13 @@ class ImportSource:
     """Where a library's articles come from and which of them are taken."""
 
     url: RepositoryUrl
+    """The library's repository."""
     selection: PathSelection
+    """Which files are articles."""
     tag_rules: tuple[TagRule, ...] = ()
+    """Tags given to articles by path."""
     chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
+    """How articles are cut into chunks."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1555,12 +2181,19 @@ class ImportedArticle:
     """An article ready to publish: its text, metadata and chunks."""
 
     path: str
+    """The file's repository path."""
     blob_sha: str
+    """The file's git blob SHA."""
     title: str
+    """The article's title."""
     tags: tuple[str, ...]
+    """The imported tags: path rules first, then front matter."""
     front_matter: dict[str, Any]
+    """The front matter as loaded."""
     content: str
+    """The body, verbatim (invisible characters removed)."""
     chunks: tuple[ArticleChunk, ...]
+    """The body's chunks, in order."""
 
 
 def sniff_image(data: bytes) -> str | None:
@@ -1568,6 +2201,12 @@ def sniff_image(data: bytes) -> str | None:
 
     PNG, JPEG, GIF, WebP and SVG. An SVG is a document whose root element is ``<svg``; one that
     declares entities is refused (nothing here parses it, but a browser would expand them).
+
+    Args:
+        data: The file's bytes.
+
+    Returns:
+        The media type, e.g. ``image/png``, or ``None``.
     """
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
         return "image/png"
@@ -1588,9 +2227,13 @@ class ImportedImage:
     """An image an article references: its repository path, git blob SHA, sniffed type, bytes."""
 
     path: str
+    """The image's repository path."""
     blob_sha: str
+    """Its git blob SHA."""
     content_type: str
+    """The media type sniffed from its bytes."""
     data: bytes = field(repr=False)
+    """Its bytes."""
 
 
 class InstructionPolicy(StrEnum):
@@ -1645,11 +2288,18 @@ class GitRename:
     """A file git sees as moved between two commits: ``old_path`` became ``new_path``."""
 
     old_path: str
+    """The path in the older commit."""
     new_path: str
+    """The path in the newer commit."""
     similarity: int
     """Percent of the content kept (100: moved unchanged); git reports renames from 50."""
 
     def __post_init__(self) -> None:
+        """Refuse a similarity out of range.
+
+        Raises:
+            ValueError: ``similarity`` is not a percentage above 0.
+        """
         if not 0 < self.similarity <= MAX_SIMILARITY:
             message = f"similarity must be 1..{MAX_SIMILARITY}, not {self.similarity}"
             raise ValueError(message)
@@ -1660,17 +2310,25 @@ class ImportedVersion:
     """Every article of one library version at one commit, chunked with ``config_hash``."""
 
     library: str
+    """The library ID."""
     ref: str
+    """The version's ref."""
     kind: RefKind
+    """What the ref is."""
     commit_sha: str
+    """The full SHA of the commit imported."""
     config_hash: str
+    """The chunker's ``config_hash``: keys the chunk sets."""
     articles: tuple[ImportedArticle, ...]
+    """Every article, chunked."""
     images: tuple[ImportedImage, ...] = ()
+    """The images the articles reference, within the version's budget."""
     refresh: bool = False
     """The version must still exist when it is stored (a re-sync never re-creates a removed one)."""
     renamed_from: str | None = None
     """The ref whose commit ``renames`` were detected against; ``None`` when none were."""
     renames: tuple[GitRename, ...] = ()
+    """Renames from ``renamed_from``'s commit to this one, Markdown files only."""
     origin: VersionOrigin = VersionOrigin.MANUAL
     """Given to the version when this creates it; a version that exists keeps its own."""
     instructions: tuple[ImportedInstruction, ...] = ()
@@ -1678,7 +2336,14 @@ class ImportedVersion:
 
 
 def git_blob_sha(data: bytes) -> str:
-    """Return the SHA-1 git gives a file with exactly these bytes."""
+    """Return the SHA-1 git gives a file with exactly these bytes.
+
+    Args:
+        data: The file's bytes.
+
+    Returns:
+        The blob SHA, hexadecimal.
+    """
     return hashlib.sha1(b"blob %d\0" % len(data) + data, usedforsecurity=False).hexdigest()
 
 
@@ -1687,9 +2352,13 @@ class Removed:
     """What the catalog took out: the manifests other domains must forget, the new default."""
 
     library: str
+    """The library ID."""
     ref: str | None
+    """The removed version; ``None`` when the whole library was removed."""
     manifest_ids: tuple[str, ...]
+    """The deleted manifests."""
     default_ref: str | None
+    """The library's default version now; ``None`` when none is left."""
 
 
 type ArticleTags = Mapping[str, tuple[str, ...]]
@@ -1701,8 +2370,11 @@ class TaggedPath:
     """Manual tags the catalog stored for a path, and the manifests whose articles they touched."""
 
     library: str
+    """The library ID."""
     path: str
+    """The article's repository path."""
     tags: tuple[str, ...]
+    """Its manual tags, normalized."""
     retagged: Mapping[str, ArticleTags]
     """Manifest ID -> its touched articles."""
 
@@ -1712,12 +2384,21 @@ class StoredArticleTags:
     """What a stored article's imported tags are derived from, and what they are now."""
 
     path: str
+    """The article's repository path."""
     front_matter: Mapping[str, Any]
+    """Its stored front matter."""
     tags: tuple[str, ...]
     """Imported: path rules and front matter (manual tags are kept apart)."""
 
     def retagged(self, rules: Sequence[TagRule]) -> tuple[str, ...]:
-        """Return the imported tags the article gets under ``rules`` (as an import would)."""
+        """Return the imported tags the article gets under ``rules`` (as an import would).
+
+        Args:
+            rules: The library's tag rules.
+
+        Returns:
+            The imported tags.
+        """
         return article_tags(self.path, front_matter_tags(self.front_matter)[0], rules)
 
 
@@ -1731,16 +2412,24 @@ class StoredArticle:
     """
 
     path: str
+    """The file's repository path."""
     blob_sha: str
+    """The file's git blob SHA."""
     title: str
+    """The title the parse gave."""
     front_matter: Mapping[str, Any]
+    """The front matter the parse gave."""
     content: str
+    """The body the parse gave."""
 
     def parsed(self) -> ParsedArticle | None:
         """Return what ``parse_article`` gives the file, rebuilt without parsing it.
 
         ``None`` when only a parse can tell whether the front matter was malformed (kept in the
         body, with a note to list again; ``stored_front_matter_problems``).
+
+        Returns:
+            The parsed article, or ``None``.
         """
         kept = stored_front_matter_problems(
             self.path, self.content, self.front_matter, self.blob_sha
@@ -1766,7 +2455,9 @@ class StoredTags:
     """The active manifest of a version, with the tag sources of its articles."""
 
     manifest_id: str
+    """The active manifest."""
     articles: tuple[StoredArticleTags, ...]
+    """Every article's tag sources."""
 
 
 class SettingsChange(StrEnum):
@@ -1793,18 +2484,26 @@ class CopiedArticle:
     """An article of a version's copied manifest, with its stored text (re-chunking)."""
 
     path: str
+    """The file's repository path."""
     blob_sha: str
+    """The file's git blob SHA."""
     title: str
+    """The stored title."""
     front_matter: Mapping[str, Any]
+    """The stored front matter."""
     tags: tuple[str, ...]
     """Imported: path rules and front matter (manual tags are kept apart)."""
     content: str
+    """The stored body."""
 
     def parsed(self) -> ParsedArticle | None:
         """Return the article as the parser gave it: what a chunker cuts.
 
         ``None`` when only a parse of the file can tell whether its front matter was malformed
         (``stored_front_matter_problems``): the version is then re-imported.
+
+        Returns:
+            The parsed article, or ``None``.
         """
         problems = stored_front_matter_problems(
             self.path, self.content, self.front_matter, self.blob_sha
@@ -1827,8 +2526,11 @@ class CopiedVersion:
     manifest_id: str
     """The copy: pending, with the same entries, images and renames."""
     kind: RefKind
+    """What the version's ref is."""
     commit_sha: str
+    """The commit the version serves."""
     articles: tuple[CopiedArticle, ...]
+    """Every article, with its stored text."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1836,6 +2538,7 @@ class Collected:
     """What one collector deleted."""
 
     deleted: int
+    """How many things it deleted."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1843,20 +2546,40 @@ class ImportedRef:
     """A version a library has: its ref, what kind of ref it is and the commit it serves."""
 
     ref: str
+    """The version's ref."""
     kind: RefKind
+    """What the ref is."""
     commit_sha: str
+    """The commit the version serves."""
     origin: VersionOrigin = VersionOrigin.MANUAL
+    """Who asked for the version: retention only removes ``auto`` ones."""
     pinned: bool = False
     """The library's owner pinned it as the default version (LIB-10): retention keeps it."""
 
 
 def _numbers(ref: str) -> tuple[int, ...] | None:
+    """Read the numbers of a numeric ref (``v1.4.0`` -> ``(1, 4, 0)``).
+
+    Args:
+        ref: A ref.
+
+    Returns:
+        The numbers, or None for a ref without a version order.
+    """
     match = _NUMERIC_REF.fullmatch(ref)
     return tuple(map(int, match[1].split("."))) if match else None
 
 
 def _precedes(older: tuple[int, ...], newer: tuple[int, ...]) -> bool:
-    """Tell whether ``older`` is a lower version; ``1.4`` and ``1.4.0`` are the same one."""
+    """Tell whether ``older`` is a lower version; ``1.4`` and ``1.4.0`` are the same one.
+
+    Args:
+        older: A version's numbers.
+        newer: Another version's numbers.
+
+    Returns:
+        True when ``older`` comes before ``newer``.
+    """
     width = max(len(older), len(newer))
     return older + (0,) * (width - len(older)) < newer + (0,) * (width - len(newer))
 
@@ -1868,6 +2591,13 @@ def previous_version(ref: str, imported: Sequence[ImportedRef]) -> ImportedRef |
     with itself, so a re-sync of it gives the same map. A ref without an order (a branch, a
     commit) is compared with what it served before, if it was imported; ``None`` otherwise.
     Pre-releases and other names have no order and get ``None`` as well.
+
+    Args:
+        ref: The ref being imported.
+        imported: The library's versions.
+
+    Returns:
+        The version to compare with, or ``None``.
     """
     wanted = _numbers(ref)
     if wanted is None:
@@ -1882,7 +2612,14 @@ def previous_version(ref: str, imported: Sequence[ImportedRef]) -> ImportedRef |
 
 
 def is_unordered(ref: str) -> bool:
-    """Tell whether renames of ``ref`` build up over its syncs (it has no place in an order)."""
+    """Tell whether renames of ``ref`` build up over its syncs (it has no place in an order).
+
+    Args:
+        ref: A ref.
+
+    Returns:
+        True for a ref without a version order.
+    """
     return _numbers(ref) is None
 
 
@@ -1894,6 +2631,14 @@ def compose_renames(
     ``A -> B`` earlier and ``B -> C`` now gives ``A -> C`` (the lower similarity); renames of
     the latest sync stay too, unless their old path is one the earlier map already tells about.
     Entries whose target is not an article any more, or that came back to their old path, go.
+
+    Args:
+        earlier: The renames the branch had.
+        latest: The renames of its latest sync.
+        articles: The article paths of the new version.
+
+    Returns:
+        The chained renames, at most ``MAX_RENAMES``.
     """
     now = {r.old_path: r for r in latest}
     chained = [
@@ -1944,16 +2689,28 @@ class AutoSync:
     """
 
     library: str
+    """The library ID."""
     tag_pattern: str | None = None
+    """A case-sensitive glob over tag names; ``None`` imports no tag."""
     keep_last: int = DEFAULT_KEEP_LAST
+    """How many ``auto`` versions are kept, the newest."""
     interval_minutes: int = DEFAULT_INTERVAL_MINUTES
+    """Minutes between two checks."""
     sync_branches: bool = False
+    """Whether every branch version is re-synced at each check."""
     checked_at: datetime | None = None
+    """When the last check ended."""
     last_error: str | None = None
+    """What the last check could not do, cut to ``MAX_CHECK_ERROR`` characters."""
     revision: str = ""
     """Changes on every save of the settings: a check records itself only on the one it read."""
 
     def __post_init__(self) -> None:
+        """Refuse a tag pattern, retention or interval out of range.
+
+        Raises:
+            InvalidAutoSyncError: A setting cannot be used.
+        """
         pattern = self.tag_pattern
         if pattern is not None and (
             not pattern
@@ -1973,7 +2730,14 @@ class AutoSync:
             raise InvalidAutoSyncError(message)
 
     def matches(self, tag: str) -> bool:
-        """Tell whether the tag is one to import automatically (case-sensitive glob)."""
+        """Tell whether the tag is one to import automatically (case-sensitive glob).
+
+        Args:
+            tag: A tag name.
+
+        Returns:
+            True when ``tag_pattern`` matches it.
+        """
         return self.tag_pattern is not None and fnmatchcase(tag, self.tag_pattern)
 
     @property
@@ -1984,12 +2748,27 @@ class AutoSync:
         return self.checked_at + timedelta(minutes=self.interval_minutes)
 
     def is_due(self, now: datetime) -> bool:
-        """Tell whether the scheduled check should look at the library ``now``."""
+        """Tell whether the scheduled check should look at the library ``now``.
+
+        Args:
+            now: The time of the tick.
+
+        Returns:
+            True when it was never checked or its interval has passed.
+        """
         due = self.next_check_at
         return due is None or now >= due
 
     def checked(self, now: datetime, error: str | None) -> Self:
-        """Record that a check ended at ``now``, with what it could not do."""
+        """Record that a check ended at ``now``, with what it could not do.
+
+        Args:
+            now: The time the check ended.
+            error: What it could not do; ``None`` when it did everything.
+
+        Returns:
+            The schedule with the check recorded.
+        """
         if error is not None and len(error) > MAX_CHECK_ERROR:
             error = error[: MAX_CHECK_ERROR - 1] + "…"
         return replace(self, checked_at=now, last_error=error)
@@ -2006,7 +2785,14 @@ class AutoImportPlan:
 
 
 def _order(ref: str) -> tuple[tuple[int, ...], str]:
-    """Rank a numeric ref: ``1.4`` equals ``1.4.0``, and the name breaks a tie."""
+    """Rank a numeric ref: ``1.4`` equals ``1.4.0``, and the name breaks a tie.
+
+    Args:
+        ref: A ref.
+
+    Returns:
+        The sort key.
+    """
     numbers = _numbers(ref) or ()
     padded = numbers + (0,) * (_ORDER_WIDTH - len(numbers)) if numbers else ()
     return padded, ref
@@ -2029,6 +2815,15 @@ def plan_auto_imports(
     pinned default version are never removed and do not count. ``failed`` holds the (tag,
     commit) pairs whose last import failed for good: they are not tried again until the tag
     moves.
+
+    Args:
+        auto_sync: The library's schedule.
+        tips: The refs the remote advertises.
+        versions: The library's versions.
+        failed: The (tag, commit) pairs whose last import failed for good.
+
+    Returns:
+        The imports, oldest first, and the removals.
     """
     if auto_sync.tag_pattern is None:
         return AutoImportPlan()

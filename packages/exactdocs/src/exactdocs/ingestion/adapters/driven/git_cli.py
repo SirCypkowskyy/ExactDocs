@@ -445,6 +445,7 @@ class GitCli:
         """Return ``git(*args)``: one isolated step inside ``folder`` under the call's deadline.
 
         A step may pass ``watch_bytes`` to hold ``folder`` to fewer bytes than
+        ``max_fetch_bytes`` while it runs.
 
         Args:
             folder: The repository folder every step runs in.
@@ -454,7 +455,6 @@ class GitCli:
 
         Returns:
             The step function.
-        ``max_fetch_bytes`` while it runs.
         """
         local = url.lower().startswith("file:")
 
@@ -1637,6 +1637,7 @@ async def _read(process: Process, stream: asyncio.StreamReader | None, cap: int 
     """Read to the end keeping at most ``cap + 1`` bytes (``MAX_STDERR`` if no cap).
 
     Going over ``cap`` kills the process group, so a server that streams forever is cut off at
+    once instead of when the timeout fires.
 
     Args:
         process: The process, killed when it prints too much.
@@ -1645,7 +1646,6 @@ async def _read(process: Process, stream: asyncio.StreamReader | None, cap: int 
 
     Returns:
         What was kept.
-    once instead of when the timeout fires.
     """
     limit = MAX_STDERR if cap is None else cap
     kept = b""
@@ -1665,10 +1665,10 @@ async def _settle(process: Process) -> None:
     to run again. ``wait()`` itself only returns once the pipes are closed if the process was
     still running when it was called, so it sits inside the bound too: a helper that left the
     process group could keep a pipe open for as long as it lives. The child is reaped either
+    way; only its transport then closes later, when that helper exits.
 
     Args:
         process: The process.
-    way; only its transport then closes later, when that helper exits.
     """
     with suppress(TimeoutError):
         async with asyncio.timeout(_DRAIN_SECONDS):
