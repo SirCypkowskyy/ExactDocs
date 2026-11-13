@@ -476,8 +476,202 @@ and `schema_version` changes when a field is renamed or removed.
 `retrieval_eval/golden_run.py` is the golden set's multi-library runner: `golden_retriever` sends
 each question to its project's library through the suite's `SearchDocsRetriever`, and
 `run_golden` scores the whole set with the suite's evaluators and `evaluate_mode`, with the exact
-or the nested match rule. The ingestion benchmark runs BM25 through it; any mode can run the same
-way.
+or the nested match rule. The ingestion benchmark runs BM25 through it, and the retrieval
+benchmark (below) every mode.
+
+## The retrieval benchmark
+
+The retrieval benchmark (#347) runs every retrieval configuration ExactDocs offers on the golden
+set, at every chunking configuration of the ingestion benchmark, and names the configuration to use
+by default for each budget: no models, local models only, hosted models.
+
+```bash
+just retrieval-bench --offline --configs bm25          # the model-free part: about a minute per chunking
+just retrieval-bench --offline                          # + every local model that was pulled (hours, below)
+just retrieval-bench --configs 'bm25*,hybrid:bge-small*' --chunkings default,h2 --projects zod
+just retrieval-bench --out packages/exactdocs/evals/results    # refresh the recorded run
+just retrieval-bench --configs bm25 --chunkings default --check   # what the release runs
+```
+
+For each chunking configuration it imports every pinned version once, into a model-free instance
+of its own (the ingestion benchmark's import). Then every configuration runs on that data
+directory in a container built with only the model roles it calls, embeds the corpus the first
+time an embedding model is used (as the `embed` jobs would, timed and costed as `index`), and asks
+every golden question in its project's library (`golden_run`), one at a time. Hits are matched
+with the nested rule, so a coarser or finer chunking is not penalised for cutting at another depth.
+It writes `retrieval.json` and `retrieval.md` to `reports/evals/` (or `--out`), prints the summary
+(and appends it to `$GITHUB_STEP_SUMMARY`), and exits with 1 when a configuration returned a result
+of another version, read outside its version (agentic traces), or failed on a question.
+
+### The matrix
+
+| Configuration | Budget | Models |
+|---|---|---|
+| `bm25` | none | none |
+| `bm25+ce` | local | the local cross-encoder (`Xenova/ms-marco-MiniLM-L-6-v2`, timeout 30 s) |
+| `hybrid:<model>`, `hybrid:<model>+ce` | local | a local embedding model (default: `BAAI/bge-small-en-v1.5`, `snowflake/snowflake-arctic-embed-s`, `BAAI/bge-base-en-v1.5`; `--local-embeddings`), and the cross-encoder |
+| `hybrid:hosted`, `hybrid:hosted+ce` | hosted | the embedding model `EXACTDOCS_AI__EMBEDDING__MODEL` names (and the local cross-encoder) |
+| `<base>+judge` for each base above | hosted | the LLM judge, `EXACTDOCS_AI__JUDGE__MODEL` (else the `llm` role) |
+| `hyde:hosted` | hosted | the hosted embedding model and `EXACTDOCS_AI__LLM__MODEL` |
+| `agentic:hosted` | hosted | `EXACTDOCS_AI__LLM__MODEL` |
+
+Each runs at every chunking configuration (`default`, `h2`, `h3-max-4000`, `merge-400`;
+`--chunkings`). `--configs` takes names or shell patterns (`'hybrid:*+ce'`). A configuration that
+cannot run is listed with the reason: a local model that was not pulled (`unavailable`, with the
+`exactdocs models pull` command), a hosted role that is not configured, or a hosted configuration
+without `--allow-providers` (`skipped`). The section ceiling of #141 (`max_section_chars`, 8,000
+characters) applies to every configuration, but it is not a library setting, so it cannot be
+swept per configuration yet; nor can the ways to embed a chunk longer than the embedding model's
+window (bge-small reads about its first 1,800 characters), which have no setting either.
+`<pattern>@<chunking>` runs a configuration at some chunkings only (`'*+ce@default'`).
+
+### Metrics
+
+Each metric is reported per configuration and chunking, over all cases, per question kind
+(`by_kind`) and per project (`by_project`).
+
+| Metric | Over | Definition |
+|---|---|---|
+| recall@1, recall@5, recall@10 | answerable cases | the first expected section is in the top k |
+| MRR | answerable cases | mean of 1 / the rank of the first expected section (0 past 10) |
+| section recall@5, @10 | answerable cases | the share of a case's expected sections in the top k, averaged over the cases |
+| nDCG@10 | answerable cases | binary relevance over every expected section, below |
+| wrong-version rate | every case | share of cases with a result of another version (read back by chunk ID, as in the suite); must be 0 |
+| unanswerable clean | unanswerable cases | share that returned nothing of another version |
+| no answer | unanswerable cases | share that signalled no answer: came back with no result |
+| answerable empty | answerable cases | share that came back with no result (a "no answer" that was wrong) |
+| p50 / p95 latency | every case | nearest-rank percentiles of the search alone, one question at a time, on the machine named in the report |
+| tokens / USD per question | every case | what the spend ledger grew by during each search (an embedding, a judgment, a HyDE answer, an agent run); USD from the configured prices or `genai-prices` |
+| index | per embedding model and chunking | seconds, tokens and USD of embedding the whole corpus once |
+
+**nDCG@10.** A returned hit at rank *i* is relevant (*rel* = 1) when it answers an expected section
+that no earlier hit answered, so a section found twice counts once; otherwise *rel* = 0.
+DCG@10 = Σ<sub>i=1..10</sub> *rel*<sub>i</sub> / log<sub>2</sub>(*i* + 1). The ideal DCG puts every
+expected section first: IDCG@10 = Σ<sub>i=1..min(R, 10)</sub> 1 / log<sub>2</sub>(*i* + 1), with *R*
+the number of expected sections. nDCG@10 = DCG@10 / IDCG@10.
+
+**Cases with several expected sections** (`cross-page`, and any case listing more than one).
+recall@k and MRR follow the suite's rule and the fixture suite's numbers: they count the first
+expected section only (`VersionAndRank`, `rank_of`), so they stay comparable with the retrieval
+eval and the ingestion benchmark. Section recall@k counts every expected section: a case scores
+the share of its sections found in the top k (each found section counted once, by the hit
+matching rule above), and the metric is the mean over cases; for a case with one section it equals
+recall@k. The per-kind and per-project tables show recall@5, section recall@5 and nDCG@10 side by
+side, so the `cross-page` row says how often the whole answer came back, not only its first page.
+
+**"No answer".** `search_docs` has no explicit no-answer signal: a result carries a `score` that is
+"only comparable within one search", and no mode applies a relevance threshold. The only signal a
+caller can read is an empty result list. BM25 returns nothing only when no term of the question is
+in the version; `hybrid` always returns the nearest chunks; the cross-encoder and the judge reorder
+and never drop; `agentic` answers with the chunks the agent picks. The benchmark counts an empty
+result as "signalled no answer", and reports how often an answerable case came back empty too, so
+a configuration that returns nothing more often is not rewarded for it. In the recorded run no
+configuration signalled no answer for any of the 54 unanswerable cases (0%), while all of them
+returned nothing of another version: a caller cannot tell an unanswerable question from an
+answerable one by the result list today.
+
+### The recommendation
+
+For each budget, cheapest first, the candidates are the results that ran with no wrong version,
+no read outside the version, no error and no reranker fallback. The best of a budget, by recall@5,
+then nDCG@10, MRR, lower USD and lower p95, becomes its default only when its recall@5 beats the
+cheaper budget's default by 5 points (the suite's `DEFAULT_MARGIN_POINTS`); otherwise the cheaper
+default stays, and the reason says by how much the dearer one fell short. Each recommendation
+gives its USD per 1000 questions and its numbers. A budget nothing of which ran is "not measured
+yet"; for hosted models that means a real-providers run is needed.
+
+### Reproducing a result
+
+`retrieval.json` (`schema_version` 1, read by #349) records, besides the metrics:
+
+- `golden` (the golden set's fingerprint), `cases`, `projects`, and `corpus`: every pinned version
+  as `project`, `version`, `commit`;
+- `environment`: the ExactDocs commit (`-dirty` with uncommitted changes), Python, platform, CPU
+  count, and the versions of `exactdocs`, `fastembed`, `onnxruntime`, `pydantic-ai-slim` and
+  `pydantic-evals`;
+- `chunkings`: each chunking configuration's name and library settings;
+- per result (`results`): `configuration`, `chunking`, `budget`, `mode`, `rerank`, `status` and
+  `reason`; `models` (each role's `<profile>:<model>`, the profile's `kind` and `base_url`, and for
+  a local model the Hub `revision` it was pulled at and its `dimensions`); `settings` (the `ai`
+  settings it ran with: the roles, `rerank_with`, the reranker's `top_n` and timeout, the judge's
+  timeout, HyDE and agentic limits; never a key); `metrics`, `by_kind`, `by_project`, `index`,
+  `fallbacks`, `reranked`, `rerank_fallbacks`, `misses`, `errors`, `wrong_version_cases`,
+  `left_version_cases`;
+- `recommendations`: per `budget`, the `configuration`, `chunking`, `usd_per_1000_questions` and
+  the `reasons`.
+
+The recorded run is `packages/exactdocs/evals/results/retrieval.json` and `retrieval.md`.
+`schema_version` changes when a field is renamed or removed.
+
+### The recorded run
+
+Measured on an Apple M-series laptop (10 cores) with no network, on the whole golden set, in about
+1 h 40 min. A full local matrix (three embedding models, each with and without the cross-encoder,
+at four chunkings) would take about six hours on that CPU, so it ran on this subset:
+
+- `bm25` and `hybrid:bge-small-en-v1.5` at every chunking configuration;
+- `bm25+ce` at `default` and `h2`; `hybrid:bge-small-en-v1.5+ce` at `default`;
+- `hybrid:snowflake-arctic-embed-s` at `default` (the second local embedding model);
+- `hybrid:bge-base-en-v1.5` did not run (about 50 minutes of embedding per chunking there);
+- every hosted configuration is listed as skipped: it needs a real-providers run.
+
+```bash
+EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
+  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@default,bm25+ce@h2,hybrid:bge-small-en-v1.5+ce@default,hybrid:snowflake-arctic-embed-s@default,*+judge,*:hosted*' \
+  --out packages/exactdocs/evals/results
+```
+
+Embedding the whole corpus took 17 minutes with bge-small at `default` (8 at `h2`, 13 at
+`h3-max-4000`, 11 at `merge-400`) and 16 with arctic-embed-s; the cross-encoder adds about
+1.4 s per question (32 candidates). What it found: BM25 is best at `h3-max-4000` (recall@5 81.7%);
+hybrid on bge-small reaches 84.6% at `default`, 3 points more, under the 5-point margin, so BM25
+stays the default for both the no-model and the local budget; the cross-encoder adds as much as
+hybrid at `default` and loses recall at `h2`, whose chunks are longer than its window;
+arctic-embed-s is below BM25 (75.3%).
+
+### Running it with local models
+
+```bash
+EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models uv run exactdocs models pull \
+  BAAI/bge-small-en-v1.5 Xenova/ms-marco-MiniLM-L-6-v2 \
+  snowflake/snowflake-arctic-embed-s BAAI/bge-base-en-v1.5
+EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline
+```
+
+The pull is the only step that needs the network; the models then run on the CPU (ONNX Runtime,
+half the cores per call). Embedding the corpus dominates the run time (`index` seconds per model
+and chunking in the report), then the cross-encoder; see the recorded run above.
+
+### Running the hosted part
+
+Only by hand, never in CI: the manual *Retrieval eval (real providers)* workflow
+(`.github/workflows/eval-providers.yml`) with the input `benchmark` ticked runs the job *Retrieval
+benchmark with real providers*: it configures profile `eval` from the same repository variables as
+the suite (`EVAL_PROVIDER_KIND`, `EVAL_PROVIDER_BASE_URL`, `EVAL_PROVIDER_API_VERSION`,
+`EVAL_EMBEDDING_MODEL`, `EVAL_LLM_MODEL`, `EVAL_JUDGE_MODEL`, secret `EVAL_PROVIDER_API_KEY`),
+pulls the local models, and runs `--allow-providers` on `benchmark_configs` (default
+`bm25,*+judge,*:hosted*`) with `benchmark_args` (e.g. `--chunkings default`). The report is the
+artifact `retrieval-bench-providers`. Locally the same is one command with the roles in the
+environment:
+
+```bash
+EXACTDOCS_AI__PROVIDERS__EVAL__KIND=openai EXACTDOCS_AI__PROVIDERS__EVAL__API_KEY=... \
+EXACTDOCS_AI__EMBEDDING__MODEL=eval:text-embedding-3-small EXACTDOCS_AI__LLM__MODEL=eval:gpt-4.1-mini \
+just retrieval-bench --allow-providers --configs 'bm25,*+judge,*:hosted*'
+```
+
+The tests run the hosted part on stand-ins only (`tests/evals/test_retrieval_bench.py`, marked
+`eval`, and `retrieval_bench.feature`): the term-hash embedding and one `FunctionModel` that rates as
+the judge, writes for HyDE and browses as the agent, priced. They check the plumbing, the wrong-version
+rate of 0 and that cost reaches the report; their numbers are never results.
+
+### When it runs
+
+On releases, the *Retrieval eval* job runs BM25 at the `default` chunking through the benchmark
+(step *Retrieval benchmark*, about a minute) with `--check`: it fails on a wrong version, an error,
+or recall@5 or nDCG@10 more than 2 points below the recorded run (the same golden set and projects
+are required). The local and hosted parts never run in CI; refresh the recorded run by hand when
+ranking, chunking or a model changes. Pull request CI runs the quick tests only.
 
 ## The agent benchmark
 

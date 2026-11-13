@@ -85,6 +85,10 @@ golden-import *args:
 ingestion-bench *args:
     uv run python packages/exactdocs/evals/run_ingestion_bench.py {{ args }}
 
+# Retrieval benchmark: modes, models, rerankers and chunking measured on the golden set (docs/evals.md)
+retrieval-bench *args:
+    uv run python packages/exactdocs/evals/run_retrieval_bench.py {{ args }}
+
 # Agent benchmark (never in CI): an agent with only the ExactDocs MCP tools answers the golden set (docs/evals.md); `just agent-bench run --offline`
 agent-bench *args:
     uv run python packages/exactdocs/evals/run_agent_bench.py {{ args }}
