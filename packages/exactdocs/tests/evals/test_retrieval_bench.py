@@ -103,6 +103,22 @@ def test_a_row_keeps_the_rank_the_version_and_whether_anything_came_back() -> No
     assert (unanswerable.answerable, unanswerable.empty, unanswerable.rank) == (False, True, None)
 
 
+def test_a_cross_page_case_scores_the_share_of_its_sections_found() -> None:
+    case = _case("cross-page", expected=[A, B])
+    rows = [
+        row_of(case, Answer(hits=[A, C, C, C, C, B])),  # A at 1, B at 6
+        row_of(case, Answer(hits=[C, B])),  # only B, at 2
+    ]
+
+    assert [r.section_ranks for r in rows] == [(1, 6), (2,)]
+    m = metrics_of(rows)
+    # recall@k follows the first expected section only (the suite's rule)
+    assert (m.recall_at_5, m.recall_at_10) == (0.5, 0.5)
+    # section recall: the share of the two sections found, averaged over the cases
+    assert m.section_recall_at_5 == pytest.approx((1 / 2 + 1 / 2) / 2)
+    assert m.section_recall_at_10 == pytest.approx((2 / 2 + 1 / 2) / 2)
+
+
 def _row(
     *,
     rank: int | None = 1,
@@ -120,6 +136,8 @@ def _row(
         answerable=answerable,
         rank=rank if answerable else None,
         ndcg=1 / math.log2(rank + 1) if answerable and rank and rank <= 10 else 0.0,
+        sections=1 if answerable else 0,
+        section_ranks=(rank,) if answerable and rank and rank <= 10 else (),
         wrong_version=wrong,
         empty=empty,
         search_ms=ms,
@@ -146,9 +164,10 @@ def test_metrics_score_ranks_over_answerable_cases_and_the_version_over_all() ->
     assert m.wrong_version_rate == pytest.approx(0.2)
     # unanswerable: one returned nothing (signalled no answer), one returned another version
     assert (m.unanswerable_clean_rate, m.no_answer_rate) == (0.5, 0.5)
-    assert m.answerable_empty_rate == pytest.approx(
-        0.3333
-    )  # an answerable case that came back empty
+    # an answerable case that came back empty
+    assert m.answerable_empty_rate == pytest.approx(0.3333)
+    # one expected section each: section recall is recall
+    assert (m.section_recall_at_5, m.section_recall_at_10) == (m.recall_at_5, m.recall_at_10)
     assert (m.latency_p50_ms, m.latency_p95_ms) == (30, 50)
     assert (m.tokens_per_question, m.usd_per_question) == (3, 0.1)
 

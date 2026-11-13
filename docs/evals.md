@@ -519,9 +519,11 @@ Each runs at every chunking configuration (`default`, `h2`, `h3-max-4000`, `merg
 `--chunkings`). `--configs` takes names or shell patterns (`'hybrid:*+ce'`). A configuration that
 cannot run is listed with the reason: a local model that was not pulled (`unavailable`, with the
 `exactdocs models pull` command), a hosted role that is not configured, or a hosted configuration
-without `--allow-providers` (`skipped`). The section ceiling of #141 (`max_section_chars`) and the
-ways to embed a chunk longer than the embedding model's window are not in the matrix yet: neither
-is a setting on `develop` today.
+without `--allow-providers` (`skipped`). The section ceiling of #141 (`max_section_chars`, 8,000
+characters) applies to every configuration, but it is not a library setting, so it cannot be
+swept per configuration yet; nor can the ways to embed a chunk longer than the embedding model's
+window (bge-small reads about its first 1,800 characters), which have no setting either.
+`<pattern>@<chunking>` runs a configuration at some chunkings only (`'*+ce@default'`).
 
 ### Metrics
 
@@ -532,6 +534,7 @@ Each metric is reported per configuration and chunking, over all cases, per ques
 |---|---|---|
 | recall@1, recall@5, recall@10 | answerable cases | the first expected section is in the top k |
 | MRR | answerable cases | mean of 1 / the rank of the first expected section (0 past 10) |
+| section recall@5, @10 | answerable cases | the share of a case's expected sections in the top k, averaged over the cases |
 | nDCG@10 | answerable cases | binary relevance over every expected section, below |
 | wrong-version rate | every case | share of cases with a result of another version (read back by chunk ID, as in the suite); must be 0 |
 | unanswerable clean | unanswerable cases | share that returned nothing of another version |
@@ -545,9 +548,16 @@ Each metric is reported per configuration and chunking, over all cases, per ques
 that no earlier hit answered, so a section found twice counts once; otherwise *rel* = 0.
 DCG@10 = Σ<sub>i=1..10</sub> *rel*<sub>i</sub> / log<sub>2</sub>(*i* + 1). The ideal DCG puts every
 expected section first: IDCG@10 = Σ<sub>i=1..min(R, 10)</sub> 1 / log<sub>2</sub>(*i* + 1), with *R*
-the number of expected sections. nDCG@10 = DCG@10 / IDCG@10. Recall and MRR count the first
-expected section only (the suite's rule); nDCG counts all of them, which matters for `cross-page`
-cases.
+the number of expected sections. nDCG@10 = DCG@10 / IDCG@10.
+
+**Cases with several expected sections** (`cross-page`, and any case listing more than one).
+recall@k and MRR follow the suite's rule and the fixture suite's numbers: they count the first
+expected section only (`VersionAndRank`, `rank_of`), so they stay comparable with the retrieval
+eval and the ingestion benchmark. Section recall@k counts every expected section: a case scores
+the share of its sections found in the top k (each found section counted once, by the hit
+matching rule above), and the metric is the mean over cases; for a case with one section it equals
+recall@k. The per-kind and per-project tables show recall@5, section recall@5 and nDCG@10 side by
+side, so the `cross-page` row says how often the whole answer came back, not only its first page.
 
 **"No answer".** `search_docs` has no explicit no-answer signal: a result carries a `score` that is
 "only comparable within one search", and no mode applies a relevance threshold. The only signal a

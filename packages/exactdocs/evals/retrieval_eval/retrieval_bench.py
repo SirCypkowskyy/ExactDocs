@@ -61,6 +61,10 @@ class Row(_Model):
     """Rank of the first expected section (as recall counts it); None when it is not returned."""
     ndcg: float
     """nDCG@10 of the answer (0 for an unanswerable case)."""
+    sections: int
+    """How many sections the case expects (0 when unanswerable)."""
+    section_ranks: tuple[int, ...]
+    """The rank at which each expected section was found in the top 10 (``section_ranks``)."""
     wrong_version: bool
     """A result is of another version."""
     empty: bool
@@ -73,14 +77,39 @@ class Row(_Model):
     """What it cost in USD."""
 
 
+def section_ranks(
+    expected: Sequence[Hit], hits: Sequence[Hit], matches: SectionMatch = same_section
+) -> tuple[int, ...]:
+    """The ranks, in the top 10, of the hits that answer an expected section.
+
+    A hit counts when it answers an expected section no earlier hit answered, so a section found
+    twice counts once.
+
+    Args:
+        expected: The sections that answer the case.
+        hits: What the configuration returned, best first.
+        matches: When a hit answers an expected section.
+
+    Returns:
+        One rank per expected section found, ascending.
+    """
+    left = list(expected)
+    ranks = []
+    for rank, hit in enumerate(hits[:NDCG_AT], start=1):
+        found = next((e for e in left if matches(e, hit)), None)
+        if found is not None:
+            left.remove(found)
+            ranks.append(rank)
+    return tuple(ranks)
+
+
 def ndcg_at(
     expected: Sequence[Hit], hits: Sequence[Hit], matches: SectionMatch = same_section
 ) -> float:
     """nDCG@10 with binary relevance over the expected sections.
 
-    A returned hit is relevant when it answers an expected section not answered by an earlier
-    hit, so a section found twice counts once. DCG sums ``1 / log2(rank + 1)`` over the relevant
-    hits in the top 10; the ideal DCG puts every expected section first (up to 10).
+    The relevant hits are those of ``section_ranks``. DCG sums ``1 / log2(rank + 1)`` over them;
+    the ideal DCG puts every expected section first (up to 10).
 
     Args:
         expected: The sections that answer the case.
@@ -90,13 +119,7 @@ def ndcg_at(
     Returns:
         DCG / ideal DCG, in [0, 1]; 0 when nothing is expected.
     """
-    left = list(expected)
-    dcg = 0.0
-    for rank, hit in enumerate(hits[:NDCG_AT], start=1):
-        found = next((e for e in left if matches(e, hit)), None)
-        if found is not None:
-            left.remove(found)
-            dcg += 1 / math.log2(rank + 1)
+    dcg = sum(1 / math.log2(rank + 1) for rank in section_ranks(expected, hits, matches))
     ideal = sum(1 / math.log2(rank + 1) for rank in range(1, min(len(expected), NDCG_AT) + 1))
     return dcg / ideal if ideal else 0.0
 
@@ -121,6 +144,8 @@ def row_of(
         answerable=bool(expected),
         rank=rank_of(expected[0], answer, matches) if expected else None,
         ndcg=ndcg_at(expected, answer.hits, matches),
+        sections=len(expected),
+        section_ranks=section_ranks(expected, answer.hits, matches),
         wrong_version=bool(wrong_version_hits(case.inputs, answer)),
         empty=not answer.hits,
         search_ms=answer.search_ms or 0.0,
@@ -143,6 +168,10 @@ class BenchMetrics(_Model):
     """Over answerable cases: mean of 1 / the rank of the first expected section."""
     ndcg_at_10: float
     """Over answerable cases: nDCG@10, binary relevance over every expected section."""
+    section_recall_at_5: float
+    section_recall_at_10: float
+    """Over answerable cases: the share of a case's expected sections in the top k, averaged
+    (differs from recall@k only for cases that expect several sections, such as cross-page)."""
     wrong_version_rate: float
     """Over every case: share with a result of another version; must be 0."""
     unanswerable_clean_rate: float | None
@@ -189,6 +218,17 @@ def metrics_of(rows: Sequence[Row]) -> BenchMetrics:
         """
         return _mean([1.0 if r.rank is not None and r.rank <= k else 0.0 for r in answerable])
 
+    def sections(k: int) -> float:
+        """Section recall at ``k``.
+
+        Args:
+            k: The cut-off.
+
+        Returns:
+            The mean share of each answerable row's expected sections ranked within ``k``.
+        """
+        return _mean([sum(rank <= k for rank in r.section_ranks) / r.sections for r in answerable])
+
     latencies = [r.search_ms for r in rows]
     return BenchMetrics(
         questions=len(rows),
@@ -199,6 +239,8 @@ def metrics_of(rows: Sequence[Row]) -> BenchMetrics:
         recall_at_10=recall(10),
         mrr=_mean([1 / r.rank if r.rank else 0.0 for r in answerable]),
         ndcg_at_10=_mean([r.ndcg for r in answerable]),
+        section_recall_at_5=sections(5),
+        section_recall_at_10=sections(10),
         wrong_version_rate=_share(list(rows), lambda r: r.wrong_version) or 0.0,
         unanswerable_clean_rate=_share(unanswerable, lambda r: not r.wrong_version),
         no_answer_rate=_share(unanswerable, lambda r: r.empty),
@@ -495,7 +537,7 @@ def _pair(m: BenchMetrics | None) -> str:
         return "-"
     if not m.answerable:  # unanswerable cases: clean / no answer instead
         return f"clean {_pct(m.unanswerable_clean_rate)}, no answer {_pct(m.no_answer_rate)}"
-    return f"{_pct(m.recall_at_5)} / {m.ndcg_at_10:.3f}"
+    return f"{_pct(m.recall_at_5)} / {_pct(m.section_recall_at_5)} / {m.ndcg_at_10:.3f}"
 
 
 def _breakdown(title: str, ran: Sequence[ConfigResult], pick: str) -> list[str]:
@@ -512,7 +554,7 @@ def _breakdown(title: str, ran: Sequence[ConfigResult], pick: str) -> list[str]:
     groups = sorted({g for r in ran for g in getattr(r, pick)})
     lines = [
         "",
-        f"## {title} (recall@5 / nDCG@10)",
+        f"## {title} (recall@5 / section recall@5 / nDCG@10)",
         "",
         "| configuration | chunking | " + " | ".join(groups) + " |",
         "|---|---|" + "---|" * len(groups),
