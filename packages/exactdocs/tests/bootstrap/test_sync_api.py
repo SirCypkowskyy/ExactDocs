@@ -20,11 +20,7 @@ SYNC = "/api/v1/libraries/fixture/docs-repo/sync"
 
 @pytest.fixture
 def repo(docs_repo: DocsRepo, tmp_path: Path) -> Path:
-    """A copy of the fixture repository whose branches may move.
-
-    Returns:
-        The copy's path.
-    """
+    """A copy of the fixture repository whose branches may move."""
     copy = tmp_path / "fixture" / "docs-repo"
     shutil.copytree(docs_repo.path, copy)
     return copy

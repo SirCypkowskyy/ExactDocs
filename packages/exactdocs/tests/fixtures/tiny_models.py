@@ -113,11 +113,7 @@ def _vocabulary() -> list[str]:
 
 
 def _table(vocabulary: list[str], dimensions: int) -> list[float]:
-    """One +-1 vector per word from its hash (zeros for the special tokens): the same every run.
-
-    Returns:
-        The vectors, flattened.
-    """
+    """One +-1 vector per word from its hash (zeros for the special tokens): the same every run."""
     values: list[float] = []
     for word in vocabulary:
         if word in _SPECIALS:
@@ -129,11 +125,7 @@ def _table(vocabulary: list[str], dimensions: int) -> list[float]:
 
 
 def _embedding_onnx(vocabulary: list[str]) -> bytes:
-    """Sum of the word vectors, given at every position (CLS pooling then reads the sum).
-
-    Returns:
-        The serialized ONNX model.
-    """
+    """Sum of the word vectors, given at every position (CLS pooling then reads the sum)."""
     rows = len(vocabulary)
     nodes = [
         _node("Gather", ["table", "input_ids"], ["words"], axis=0),
@@ -158,11 +150,7 @@ def _embedding_onnx(vocabulary: list[str]) -> bytes:
 
 
 def _reranker_onnx(vocabulary: list[str]) -> bytes:
-    """Dot product of the query's word sum and the document's (segment 0 and 1).
-
-    Returns:
-        The serialized ONNX model.
-    """
+    """Dot product of the query's word sum and the document's (segment 0 and 1)."""
     rows = len(vocabulary)
     nodes = [
         _node("Gather", ["table", "input_ids"], ["words"], axis=0),

@@ -109,11 +109,7 @@ async def publish(
     renames: tuple[RenameIn, ...] = (),
     kind: RefKind = RefKind.TAG,
 ) -> str:
-    """Store, apply manual tags and activate, as an import does.
-
-    Returns:
-        The activated manifest's ID.
-    """
+    """Store, apply manual tags and activate, as an import does."""
     manifest_id = await store(catalog, ref, *articles, renames=renames, kind=kind)
     await catalog.apply_manual_tags(ApplyManualTagsCommand(manifest_id=manifest_id))
     await catalog.activate_manifest(ActivateManifestCommand(manifest_id=manifest_id))
@@ -127,21 +123,13 @@ async def tag(catalog: CatalogModule, path: str, *tags: str) -> ManualTagsOut:
 
 
 async def tags_of(catalog: CatalogModule, ref: str, path: str) -> tuple[list[str], list[str]]:
-    """Every tag of the article, and the manual ones (whatever path they were set on).
-
-    Returns:
-        Every tag, and the manual ones.
-    """
+    """Every tag of the article, and the manual ones (whatever path they were set on)."""
     found = await catalog.get_article(GetArticleQuery(library=LIBRARY, ref=ref, path=path))
     return found.tags, sorted({t.tag for t in found.manual_tags})
 
 
 async def origins_of(catalog: CatalogModule, ref: str, path: str) -> list[tuple[str, str]]:
-    """The article's manual tags with the path each was set on.
-
-    Returns:
-        ``(tag, path)`` pairs.
-    """
+    """The article's manual tags with the path each was set on."""
     found = await catalog.get_article(GetArticleQuery(library=LIBRARY, ref=ref, path=path))
     return [(t.tag, t.path) for t in found.manual_tags]
 

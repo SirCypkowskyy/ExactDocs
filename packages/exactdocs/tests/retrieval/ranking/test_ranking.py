@@ -22,11 +22,7 @@ TOP = 5  # how many hits a failure prints
 
 
 def load_cases() -> list[Any]:
-    """One case per asserted version; an entry's ``xfail: <reason>`` marks a known gap.
-
-    Returns:
-        The cases, as pytest params.
-    """
+    """One case per asserted version; an entry's ``xfail: <reason>`` marks a known gap."""
     cases = []
     for entry in yaml.safe_load(TABLE.read_text(encoding="utf-8"))["queries"]:
         for version, expected in entry["expected"].items():

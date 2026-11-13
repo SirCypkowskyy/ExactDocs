@@ -47,12 +47,6 @@ def serve(context: Context, url: str, name: str, env: Mapping[str, str] | None =
 
     ``env`` adds settings (e.g. ``EXACTDOCS_DBOS_SYSTEM_SCHEMA``) to the process's environment.
     The process's output goes to ``context.serve_log`` (the last one started).
-
-    Returns:
-        The server's base URL.
-
-    Raises:
-        AssertionError: When the server does not get ready in time.
     """
     data = Path(tempfile.mkdtemp(prefix=f"exactdocs-{name}-"))
     context.add_cleanup(shutil.rmtree, data, ignore_errors=True)
@@ -125,11 +119,7 @@ def import_fixture(context: Context, client: httpx.Client) -> None:
 
 
 def query_as(url: str, statement: LiteralString, *params: object) -> list[tuple[object, ...]]:
-    """Run one statement on the database as the role in ``url``.
-
-    Returns:
-        The rows the statement returned.
-    """
+    """Run one statement on the database as the role in ``url``."""
     plain = make_url(url).set(drivername="postgresql").render_as_string(hide_password=False)
     with psycopg.connect(plain) as connection:
         return connection.execute(statement, params or None).fetchall()
@@ -186,11 +176,7 @@ def step_second_serves(context: Context) -> None:
 
 
 def _from(address: str) -> dict[str, str]:
-    """Headers making the request come from ``address`` (the processes trust 127.0.0.1).
-
-    Returns:
-        The headers.
-    """
+    """Headers making the request come from ``address`` (the processes trust 127.0.0.1)."""
     return {"X-Forwarded-For": address}
 
 
@@ -234,21 +220,13 @@ RESET = {"username": "admin", "password": "a brand new passphrase for the admin"
 
 
 def _throttle_counts(url: str) -> dict[object, tuple[object, ...]]:
-    """The sign-in throttle's counts in the database, by key.
-
-    Returns:
-        Each key mapped to its count row.
-    """
+    """The sign-in throttle's counts in the database, by key."""
     rows = query_as(url, "SELECT key, failures, last_at, previous_at FROM identity_failed_sign_ins")
     return {row[0]: row[1:] for row in rows}
 
 
 def _remembered(url: str) -> dict[object, object]:
-    """The sign-in throttle's remembered sign-ins in the database, by key.
-
-    Returns:
-        Each key mapped to its remembered sign-ins.
-    """
+    """The sign-in throttle's remembered sign-ins in the database, by key."""
     rows = query_as(url, "SELECT key, signed_in_at FROM identity_known_sign_ins")
     return {row[0]: row[1] for row in rows}
 

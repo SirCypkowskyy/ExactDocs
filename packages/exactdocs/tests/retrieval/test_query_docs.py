@@ -167,11 +167,7 @@ BUDGET = 500  # tokens: the smallest the setting allows
 
 
 def whole_payload(result: QueryDocsResult) -> str:
-    """What the agent receives in all: the notice block, then the documentation.
-
-    Returns:
-        The whole text.
-    """
+    """What the agent receives in all: the notice block, then the documentation."""
     return NOTICE + format_docs(result)
 
 

@@ -408,11 +408,7 @@ async def _count(container: Container, table) -> int:
 
 
 async def _fts_and_chunks(world: World) -> tuple[int, int]:
-    """Rows of the full-text index and of the chunk table: equal unless the index leaks.
-
-    Returns:
-        The two row counts.
-    """
+    """Rows of the full-text index and of the chunk table: equal unless the index leaks."""
     async with world.container.engine.connect() as connection:
         fts = (await connection.execute(text("SELECT count(*) FROM retrieval_search"))).scalar_one()
         stored = (

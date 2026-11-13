@@ -99,11 +99,7 @@ def _wait_for_collection(context: Context) -> None:
 
 
 def _stored(context: Context, blobs: set[str]) -> dict[str, int]:
-    """How many rows keep these blobs on disk: article texts and chunk sets.
-
-    Returns:
-        The row count of each table.
-    """
+    """How many rows keep these blobs on disk: article texts and chunk sets."""
 
     async def count() -> dict[str, int]:
         container = Container.build(context.settings)

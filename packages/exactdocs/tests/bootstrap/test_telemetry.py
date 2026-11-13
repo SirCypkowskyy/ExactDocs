@@ -412,11 +412,7 @@ async def test_a_failing_job_fails_its_span_and_still_raises() -> None:
 
 @pytest.fixture
 def query_text() -> bool:
-    """Whether the operator opted in to query text; a test parametrizes it to say yes.
-
-    Returns:
-        Whether query text is recorded.
-    """
+    """Whether the operator opted in to query text; a test parametrizes it to say yes."""
     return False
 
 
@@ -630,11 +626,7 @@ async def test_the_query_text_is_kept_only_when_the_operator_opted_in(
 
 @pytest.fixture
 def with_otlp() -> bool:
-    """Whether the OTLP export is on as well; a test parametrizes it to say yes.
-
-    Returns:
-        Whether the OTLP export is on.
-    """
+    """Whether the OTLP export is on as well; a test parametrizes it to say yes."""
     return False
 
 
@@ -697,11 +689,7 @@ async def scrape(app: FastAPI, host: str = "localhost", token: str | None = None
 
 
 def sampled(text: str, name: str, **labels: str) -> float:
-    """The sum of the samples of ``name`` that carry every one of ``labels``.
-
-    Returns:
-        The sum, 0 when no sample matches.
-    """
+    """The sum of the samples of ``name`` that carry every one of ``labels``."""
     total = 0.0
     for line in text.splitlines():
         if line.startswith((f"{name}{{", f"{name} ")) and all(
@@ -828,11 +816,7 @@ async def agentic_app(collector: Collector) -> AsyncIterator[FastAPI]:
 
 
 def ancestors(span: Span, by_id: dict[str, Span]) -> list[str]:
-    """Name the spans above ``span``, nearest first.
-
-    Returns:
-        Their names.
-    """
+    """Name the spans above ``span``, nearest first."""
     names = []
     while (parent := by_id.get(span.parent_span_id)) is not None:
         names.append(parent.name)

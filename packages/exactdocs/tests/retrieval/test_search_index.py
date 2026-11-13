@@ -150,11 +150,7 @@ class World:
 async def _sql_index(
     backend: str, container: Container
 ) -> SqliteSearchIndex | PostgresSearchIndex | PgSearchIndex:
-    """The search adapter of a database backend, on the running container's database.
-
-    Returns:
-        The adapter.
-    """
+    """The search adapter of a database backend, on the running container's database."""
     if backend == "sqlite":
         return SqliteSearchIndex(engine=container.engine)
     table = PostgresSearchIndex(engine=container.engine)

@@ -42,11 +42,7 @@ _DATABASES: dict[str, str] = {}  # engine -> database URL, for the engines that 
 
 
 def open_container(engine: str, data_dir: Path) -> Container:
-    """The app's container for ``engine``; every engine shares the import and the search port.
-
-    Returns:
-        The container.
-    """
+    """The app's container for ``engine``; every engine shares the import and the search port."""
     assert engine in ENGINES, engine
     if engine in _DATABASES:
         settings = Settings(

@@ -1045,11 +1045,7 @@ async def test_hybrid_is_reported_against_bm25_on_the_offline_embedding(
 
 
 def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """A stand-in LLM whose hypothetical answer restates the question.
-
-    Returns:
-        A response restating the question.
-    """
+    """A stand-in LLM whose hypothetical answer restates the question."""
     del info
     question = next(
         str(part.content)
@@ -1111,11 +1107,7 @@ def _words(text: str) -> set[str]:
 
 
 def _lexical_judge(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """A stand-in judge that rates each candidate by the query words it shares (at most 10).
-
-    Returns:
-        A response calling the rating tool with the ratings.
-    """
+    """A stand-in judge that rates each candidate by the query words it shares (at most 10)."""
     prompt = next(
         str(part.content)
         for message in messages
@@ -1257,11 +1249,7 @@ def test_the_offline_embedding_never_meets_real_models_or_the_baseline(other: st
 
 
 def _read(version: str, *, served: str | None = None, manifest: str = "m-asked") -> TracedRead:
-    """A traced read bound to ``version`` that served ``served`` (``version`` by default).
-
-    Returns:
-        The traced read.
-    """
+    """A traced read bound to ``version`` that served ``served`` (``version`` by default)."""
     return TracedRead(
         tool="read_chunk",
         pinned_version=f"{LIBRARY}/{version}",

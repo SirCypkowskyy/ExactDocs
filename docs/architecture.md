@@ -1459,7 +1459,7 @@ How the rest fits the structure above:
   as the tool's description, `Args:` and `Returns:` included. So a new tool passes
   `description=` from a `Final` string in its domain's `constants.py` (written for the agent that
   picks the tool) and keeps a full Google docstring on the function, as `article_outline` does.
-  The conventions checker has no baseline to put a tool on instead: every function is documented.
+  The conventions test fails on any undocumented tool function.
 - **Field docstrings.** Every dataclass field and every pydantic field has an attribute docstring
   on the line after it. Pydantic models set `use_attribute_docstrings=True` (the domains' `_Dto`
   bases do), so the docstring is the field's description in OpenAPI and the MCP tool schemas;
@@ -1482,8 +1482,8 @@ How the rest fits the structure above:
 | Fixed module set per domain, driving/driven split | same file (filesystem check) |
 | Bridges point one way: retrieval to catalog, ingestion to catalog / retrieval | `test_bridge_direction.py` |
 | No domain imports `cryptography` (the secret box is bootstrap's) | `test_architecture.py` |
-| No `abc.ABC`, no relative imports, every ruff rule incl. preview, Google docstrings that document every returned value and raised exception | ruff (`select = ["ALL"]`, `preview = true`, pydocstyle `google`, pydoclint `DOC201` / `DOC501` everywhere, tests included) |
-| Constants placement, `Final` and docstrings; docstrings on every function with complete `Args:` / `Returns:`; field docstrings; `use_attribute_docstrings`; dataclass flags and exception markers | `test_conventions.py` (AST checker over `packages/*/src`, a bad and a good fixture per rule; no baseline: every function must be documented) |
+| No `abc.ABC`, no relative imports, every ruff rule incl. preview, Google docstrings that document every returned value and raised exception | ruff (`select = ["ALL"]`, `preview = true`, pydocstyle `google`, pydoclint `DOC201` / `DOC501` on `packages/*/src`, `deploy/` and `evals/`; tests and features are exempt from `D` and `DOC`) |
+| Constants placement, `Final` and docstrings; docstrings on every function with complete `Args:` / `Returns:`; field docstrings; `use_attribute_docstrings`; dataclass flags and exception markers | `test_conventions.py` (AST checker over `packages/*/src`, a bad and a good fixture per rule; every function must be documented) |
 | Protocol conformance, types | ty |
 | Web: features don't import each other; `shared` imports no feature; routes use feature public APIs | fallow (`web/.fallowrc.json`) + Biome `noRestrictedImports` |
 

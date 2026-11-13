@@ -1035,11 +1035,7 @@ GIF = StoredImage(blob_sha=sha("2b"), content_type="image/gif", data=b"GIF89a-tw
 def with_images(
     stored: Manifest, paths: dict[str, StoredImage]
 ) -> tuple[Manifest, dict[str, StoredImage]]:
-    """The manifest listing the images at ``paths`` and the blobs to store for it.
-
-    Returns:
-        The manifest, and each image's blob by path.
-    """
+    """The manifest listing the images at ``paths`` and the blobs to store for it."""
     listed = tuple(
         ManifestImage(
             path=path,

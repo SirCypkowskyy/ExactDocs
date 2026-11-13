@@ -287,11 +287,7 @@ async def test_fetches_run_side_by_side(gateway: GitCli, docs_repo: DocsRepo) ->
 
 
 def commit_tree(tmp_path: Path, tree: dict[str, str | bytes]) -> tuple[Path, str]:
-    """Commit the files, then ``.gitattributes`` alone: the blobs are stored exactly as given.
-
-    Returns:
-        The repository's path and the commit SHA.
-    """
+    """Commit the files, then ``.gitattributes`` alone: the blobs are stored exactly as given."""
     origin = tmp_path / "origin"
     git("init", "-q", "-b", "main", str(origin))
     git("config", "uploadpack.allowAnySHA1InWant", "true", cwd=origin)
@@ -352,11 +348,7 @@ async def test_only_sha1_commits_are_accepted(gateway: GitCli, commit: str) -> N
 
 
 def stalling_git(tmp_path: Path, script: str) -> str:
-    """A ``git`` that runs ``script`` instead of fetching (``$4`` is the work folder).
-
-    Returns:
-        The executable's path.
-    """
+    """A ``git`` that runs ``script`` instead of fetching (``$4`` is the work folder)."""
     wrapper = tmp_path / "git"
     wrapper.write_text(
         f'#!/bin/sh\ncase " $* " in *" fetch "*) {script};; esac\nexec {GitCli.locate().git} "$@"\n'

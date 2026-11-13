@@ -238,11 +238,7 @@ async def test_every_route_needs_a_caller_except_the_listed_ones(
 
 
 def mcp_client(app: FastAPI, token: str | None) -> Client[StreamableHttpTransport]:
-    """A FastMCP client that talks to the app in-process, over the real HTTP transport.
-
-    Returns:
-        The client.
-    """
+    """A FastMCP client that talks to the app in-process, over the real HTTP transport."""
 
     def factory(
         headers: dict[str, str] | None = None,

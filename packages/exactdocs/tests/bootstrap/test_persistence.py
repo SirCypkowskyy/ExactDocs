@@ -246,11 +246,7 @@ async def test_a_revision_can_create_fts5_tables_with_op_execute() -> None:
 
 
 def add_revision(tmp_path: Path, body: str) -> Path:
-    """A copy of the real migrations plus one more revision on top of the current head.
-
-    Returns:
-        The folder of the copied migrations.
-    """
+    """A copy of the real migrations plus one more revision on top of the current head."""
     location = tmp_path / "migrations"
     shutil.copytree(MIGRATIONS, location, ignore=shutil.ignore_patterns("__pycache__"))
     (location / "versions" / "99999999_extra.py").write_text(
@@ -350,11 +346,7 @@ def migration_turn(engine: AsyncEngine) -> Path:
 
 
 def turn_taken(monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
-    """An event set as soon as a migration takes the turn (it then names itself in the file).
-
-    Returns:
-        The event.
-    """
+    """An event set as soon as a migration takes the turn (it then names itself in the file)."""
     taken = asyncio.Event()
     # Written the moment the flock is held.
     write = database._write_turn_holder  # ruff: ignore[private-member-access]

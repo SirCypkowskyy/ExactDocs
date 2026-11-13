@@ -33,20 +33,12 @@ CHILD = Path(__file__)
 
 
 def page(n: int) -> str:
-    """The path of article ``n`` of a ``big_repository``.
-
-    Returns:
-        The path.
-    """
+    """The path of article ``n`` of a ``big_repository``."""
     return f"docs/page-{n:03}.md"
 
 
 def big_repository(path: Path, files: int) -> tuple[str, str]:
-    """Create a repository whose ``main`` has ``files`` articles; return its URL and commit.
-
-    Returns:
-        Its URL and the commit SHA of ``main``.
-    """
+    """Create a repository whose ``main`` has ``files`` articles; return its URL and commit."""
     git("init", "-q", "-b", "main", "--template=", str(path))
     git("config", "uploadpack.allowFilter", "true", cwd=path)
     git("config", "uploadpack.allowAnySHA1InWant", "true", cwd=path)
@@ -64,11 +56,7 @@ def big_repository(path: Path, files: int) -> tuple[str, str]:
 
 
 async def run(*args: str) -> tuple[int, str, str]:
-    """Run this script with ``args`` to its end; return its exit code, stdout and stderr.
-
-    Returns:
-        Its exit code, stdout and stderr.
-    """
+    """Run this script with ``args`` to its end; return its exit code, stdout and stderr."""
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         str(CHILD),

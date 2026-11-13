@@ -42,11 +42,7 @@ class Versions:
 
 
 def stub(i: int) -> SearchableVersion:
-    """A library listed with a default version but never indexed: it only takes a slot.
-
-    Returns:
-        The stub.
-    """
+    """A library listed with a default version but never indexed: it only takes a slot."""
     return SearchableVersion(
         library=f"/o/l{i:04d}",
         version="v1",

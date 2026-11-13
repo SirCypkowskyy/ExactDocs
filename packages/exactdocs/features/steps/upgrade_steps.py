@@ -47,11 +47,7 @@ def _client(settings: Settings) -> TestClient:
 
 
 def _served(client: TestClient) -> dict[str, object]:
-    """What a client sees of the fixture library: the list, a version's articles, one, a search.
-
-    Returns:
-        Each of those answers, by what was asked.
-    """
+    """What a client sees of the fixture library: the list, a version's articles, one, a search."""
     owner_repo = LIBRARY
     answers = {
         "libraries": client.get("/api/v1/libraries"),

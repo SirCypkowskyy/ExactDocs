@@ -63,11 +63,7 @@ ODD = "---\n# only a comment\n---\n---\ntitle: [unclosed\n# Heading inside\n---\
 
 
 def stored(path: str, source: str, tags: tuple[str, ...] = ()) -> CopiedArticle:
-    """What an import of ``source`` stores for it: its blob SHA, metadata and body.
-
-    Returns:
-        The stored article.
-    """
+    """What an import of ``source`` stores for it: its blob SHA, metadata and body."""
     parsed = parse_article(path, source)
     return CopiedArticle(
         path=path,

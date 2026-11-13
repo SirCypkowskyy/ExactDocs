@@ -229,9 +229,6 @@ def _wait_for_embedding(context: Context) -> None:
 
     Args:
         context: The behave context.
-
-    Raises:
-        AssertionError: When an embedding fails or does not end in time.
     """
     deadline = time.monotonic() + EMBEDDING_SECONDS
     while time.monotonic() < deadline:

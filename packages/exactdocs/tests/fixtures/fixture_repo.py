@@ -27,11 +27,7 @@ REPO_PATH = Path("fixture") / "docs-repo"
 
 
 def _env(**extra: str) -> dict[str, str]:
-    """The caller's environment minus anything that makes git behave differently per machine.
-
-    Returns:
-        The environment.
-    """
+    """The caller's environment minus anything that makes git behave differently per machine."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     return {
         **env,
@@ -48,14 +44,7 @@ def _env(**extra: str) -> dict[str, str]:
 
 
 def git_bytes(*args: str, cwd: Path | None = None, check: bool = True, **env: str) -> bytes:
-    """Run git with an isolated configuration; return its raw stdout.
-
-    Returns:
-        Its stdout.
-
-    Raises:
-        RuntimeError: When git fails and ``check`` is set.
-    """
+    """Run git with an isolated configuration; return its raw stdout."""
     git_bin = shutil.which("git")
     assert git_bin, "git is required"
     run = subprocess.run(
@@ -68,11 +57,7 @@ def git_bytes(*args: str, cwd: Path | None = None, check: bool = True, **env: st
 
 
 def git(*args: str, cwd: Path | None = None, check: bool = True, **env: str) -> str:
-    """Like ``git_bytes``, as text without the trailing newline.
-
-    Returns:
-        Its stdout.
-    """
+    """Like ``git_bytes``, as text without the trailing newline."""
     return git_bytes(*args, cwd=cwd, check=check, **env).decode().rstrip("\n")
 
 
@@ -90,11 +75,7 @@ def _write_generated(path: Path, size: int) -> None:
 
 
 def build(dest: Path) -> Path:
-    """Build the fixture repository at ``dest`` (a new directory); every SHA is reproducible.
-
-    Returns:
-        ``dest``.
-    """
+    """Build the fixture repository at ``dest`` (a new directory); every SHA is reproducible."""
     history = tomllib.loads((FIXTURE / "history.toml").read_text(encoding="utf-8"))
     name, email = history["author"].removesuffix(">").split(" <")
     dest.mkdir(parents=True)
@@ -125,11 +106,7 @@ def build(dest: Path) -> Path:
 
 
 def headings(markdown: str) -> set[tuple[str, ...]]:
-    """Every heading path (H1 first) of ``markdown``, ignoring front matter and fenced code.
-
-    Returns:
-        The heading paths.
-    """
+    """Every heading path (H1 first) of ``markdown``, ignoring front matter and fenced code."""
     markdown = re.sub(r"\A---\n.*?\n---\n", "", markdown, flags=re.DOTALL)
     stack: list[str] = []
     paths: set[tuple[str, ...]] = set()
@@ -165,11 +142,7 @@ class DocsRepo:
 
 
 def _chunked(stream: BufferedIOBase) -> bytes:
-    """Decode a ``Transfer-Encoding: chunked`` request body.
-
-    Returns:
-        The decoded body.
-    """
+    """Decode a ``Transfer-Encoding: chunked`` request body."""
     body = b""
     while size := int(stream.readline().split(b";")[0], 16):
         body += stream.read(size)

@@ -8,11 +8,7 @@ from behave.runner import Context
 
 
 def _fill(context: Context, url: str) -> str:
-    """Point `<fixtures>` and `<port>` at the running fixture servers.
-
-    Returns:
-        The text with both placeholders replaced.
-    """
+    """Point `<fixtures>` and `<port>` at the running fixture servers."""
     fixtures = context.fixture_repo.path.parents[1]
     port = urlsplit(context.fixture_repo.http_url).port
     return url.replace("<fixtures>", fixtures.as_posix()).replace("<port>", str(port))

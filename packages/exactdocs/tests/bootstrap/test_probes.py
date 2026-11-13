@@ -333,11 +333,7 @@ async def test_a_query_string_is_still_a_probe(anonymous: httpx.AsyncClient) -> 
 
 
 def _broken_sqlite_vec() -> str:
-    """Stand for a Python whose sqlite-vec does not load.
-
-    Returns:
-        The Python's path.
-    """
+    """Stand for a Python whose sqlite-vec does not load."""
     return "/nowhere/vec0"
 
 

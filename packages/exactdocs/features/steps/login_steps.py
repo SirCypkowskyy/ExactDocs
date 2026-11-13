@@ -30,11 +30,7 @@ def _sign_in(context: Context, username: str, password: str) -> None:
 
 
 def _libraries_status(context: Context, token: str | None) -> int:
-    """Ask for the libraries with exactly this cookie header (the client's jar is not used).
-
-    Returns:
-        The response's status code.
-    """
+    """Ask for the libraries with exactly this cookie header (the client's jar is not used)."""
     headers = {"Cookie": f"{SESSION_COOKIE}={token}"} if token else {}
     return context.client.get("/api/v1/libraries", headers=headers).status_code
 

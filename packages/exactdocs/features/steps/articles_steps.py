@@ -18,11 +18,7 @@ from exactdocs.catalog.models import RefKind
 
 
 def _run[T](context: Context, action: Callable[[CatalogModule], Awaitable[T]]) -> T:
-    """Run `action` on the catalog of a second container over the scenario's data directory.
-
-    Returns:
-        What ``action`` returns.
-    """
+    """Run `action` on the catalog of a second container over the scenario's data directory."""
 
     async def go() -> T:
         container = Container.build(context.settings)

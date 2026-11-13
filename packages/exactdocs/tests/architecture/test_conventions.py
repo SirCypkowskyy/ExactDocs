@@ -35,7 +35,7 @@ import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import NotRequired, TypedDict
+from typing import TypedDict
 
 import pytest
 
@@ -77,8 +77,6 @@ class Violation:
     """Rule name, as listed in the module docstring."""
     message: str
     """What is wrong and how to fix it."""
-    subject: str = ""
-    """Qualified name of what is wrong (``Class.method``, ``Class.field``)."""
 
     def __str__(self) -> str:
         """Render as ``path:line: rule: message``.
@@ -96,8 +94,6 @@ class _Where(TypedDict):
     """File, as given to the checker."""
     line: int
     """1-based line."""
-    subject: NotRequired[str]
-    """Qualified name of the offending definition."""
 
 
 def _is_constants_module(path: PurePosixPath) -> bool:
@@ -398,13 +394,13 @@ def _check_function(
     decorators = _decorators(function)
     if "overload" in decorators:
         return
-    where: _Where = {"path": str(path), "line": function.lineno, "subject": qualname}
+    where: _Where = {"path": str(path), "line": function.lineno}
     docstring = ast.get_docstring(function)
     if docstring is None:
         yield Violation(
             **where,
             rule="function-without-docstring",
-            message=f"document `{function.name}` (Google style; private functions too)",
+            message=f"document `{qualname}` (Google style; private functions too)",
         )
         return
     sections = _sections(docstring)
@@ -415,7 +411,7 @@ def _check_function(
         yield Violation(
             **where,
             rule="docstring-missing-args",
-            message=f"`{function.name}`: list {', '.join(missing)} under `Args:`",
+            message=f"`{qualname}`: list {', '.join(missing)} under `Args:`",
         )
     if decorators & PROPERTY_DECORATORS or decorators & {"setter", "deleter"}:
         return
@@ -428,8 +424,7 @@ def _check_function(
             **where,
             rule="docstring-missing-returns",
             message=(
-                f"`{function.name}`: describe the result under "
-                f"`{'Yields' if generator else 'Returns'}:`"
+                f"`{qualname}`: describe the result under `{'Yields' if generator else 'Returns'}:`"
             ),
         )
 
@@ -574,8 +569,7 @@ def _check_fields(path: PurePosixPath, node: ast.ClassDef, qualname: str) -> Ite
                     path=str(path),
                     line=statement.lineno,
                     rule="field-without-docstring",
-                    message=f'`{node.name}.{name}`: add a """docstring""" on the line after it',
-                    subject=f"{qualname}.{name}",
+                    message=f'`{qualname}.{name}`: add a """docstring""" on the line after it',
                 )
 
 

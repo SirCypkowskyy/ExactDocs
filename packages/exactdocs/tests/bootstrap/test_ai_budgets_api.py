@@ -54,11 +54,7 @@ T0 = datetime(2026, 11, 7, 12, 0, tzinfo=UTC)
 
 
 def mcp_client(app: FastAPI, token: str) -> Client[StreamableHttpTransport]:
-    """A FastMCP client that talks to the app in-process, over the real HTTP transport.
-
-    Returns:
-        The client.
-    """
+    """A FastMCP client that talks to the app in-process, over the real HTTP transport."""
 
     def factory(
         headers: dict[str, str] | None = None,
@@ -277,11 +273,7 @@ class NightsOverError(Exception):
 
 
 def _nights(count: int, waits: list[float]) -> Any:
-    """A fake ``sleep`` that lets ``count`` nights pass, then stops the loop.
-
-    Returns:
-        The fake ``sleep``.
-    """
+    """A fake ``sleep`` that lets ``count`` nights pass, then stops the loop."""
 
     async def sleep(seconds: float) -> None:
         if len(waits) == count:

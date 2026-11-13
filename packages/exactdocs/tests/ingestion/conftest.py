@@ -49,11 +49,7 @@ def jobs() -> InMemoryJobRepository:
 
 @pytest.fixture
 def build_module(jobs: InMemoryJobRepository, clock: FakeClock) -> Callable[..., IngestionModule]:
-    """Build the module over ``jobs`` (or another ``repository``) with the fake clock.
-
-    Returns:
-        A factory that builds the module.
-    """
+    """Build the module over ``jobs`` (or another ``repository``) with the fake clock."""
 
     def build(
         handlers: dict[JobKind, JobHandler] | None = None,
@@ -84,11 +80,7 @@ def build_module(jobs: InMemoryJobRepository, clock: FakeClock) -> Callable[...,
 
 @pytest.fixture
 def eventually() -> Callable[..., Awaitable[None]]:
-    """Wait until an async condition holds; fail the test after a timeout.
-
-    Returns:
-        The waiting function.
-    """
+    """Wait until an async condition holds; fail the test after a timeout."""
 
     async def wait(condition: Callable[[], Awaitable[bool]], seconds: float = 5) -> None:
         deadline = asyncio.get_running_loop().time() + seconds

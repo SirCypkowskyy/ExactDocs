@@ -709,11 +709,7 @@ a span."""
 
 
 def _reading(code: str, sent: list[str]) -> FunctionModel:
-    """An agent that runs ``code`` once, records every request it is sent, then answers nothing.
-
-    Returns:
-        The model.
-    """
+    """An agent that runs ``code`` once, records every request it is sent, then answers nothing."""
 
     def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         sent.append(repr(messages))
@@ -850,11 +846,7 @@ async def test_an_unknown_article_is_a_plain_answer_to_the_model() -> None:
 
 
 def _writing(query: str, justification: str) -> FunctionModel:
-    """An agent that searches 60 times for nothing, then ``query``; it answers every hit.
-
-    Returns:
-        The model.
-    """
+    """An agent that searches 60 times for nothing, then ``query``; it answers every hit."""
 
     def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         results = code_results(messages)

@@ -409,11 +409,7 @@ def _allow_connections(database: str, *, allowed: bool) -> None:
 
 
 def _slot_worker(stopped: list[str], slots: PostgresExecutorSlots) -> DbosJobWorker:
-    """A worker that only checks its slot here (no DBOS runs), with the production timings.
-
-    Returns:
-        The worker.
-    """
+    """A worker that only checks its slot here (no DBOS runs), with the production timings."""
 
     async def nothing(*_: object, **__: object) -> None:
         return None
@@ -552,11 +548,7 @@ class _Slots:
 
 
 def _starting_worker(stopped: list[str], slots: _Slots, now: list[float]) -> DbosJobWorker:
-    """A worker that starts on the slots with a fake DBOS, the production timings and ``now``.
-
-    Returns:
-        The worker.
-    """
+    """A worker that starts on the slots with a fake DBOS, the production timings and ``now``."""
     return replace(
         _slot_worker(stopped, PostgresExecutorSlots(engine=slots.slots.engine)),
         executors=slots,

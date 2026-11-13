@@ -47,11 +47,7 @@ def set_cookie(response: httpx.Response) -> Any:
 
 
 def cookie_of(token: str) -> dict[str, str]:
-    """A request header carrying exactly this session cookie (whatever the client's jar holds).
-
-    Returns:
-        The header.
-    """
+    """A request header carrying exactly this session cookie (whatever the client's jar holds)."""
     return {"cookie": f"{SESSION_COOKIE}={token}"}
 
 

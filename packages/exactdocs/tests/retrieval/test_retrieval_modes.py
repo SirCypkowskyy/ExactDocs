@@ -151,11 +151,7 @@ async def _build(
     library_modes: LibraryModes | None = None,
     vector_store: bool | None = None,
 ) -> World:
-    """Build the module; ``vector_store`` adds a vector index that can (or cannot) search.
-
-    Returns:
-        The world around the module.
-    """
+    """Build the module; ``vector_store`` adds a vector index that can (or cannot) search."""
     chunks = InMemoryChunkRepository()
     index = InMemorySearchIndex(chunks=chunks)
     fakes = {

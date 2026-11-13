@@ -229,11 +229,7 @@ def _chunk(heading: str, text: str) -> ChunkIn:
 async def _import(
     stores: Stores, module: RetrievalModule, library: str, ref: str, blobs: dict[str, list[str]]
 ) -> str:
-    """Index a version: each blob is one article (``docs/<blob>.md``) of these chunk texts.
-
-    Returns:
-        The manifest ID (``<library>@<ref>``).
-    """
+    """Index a version: each blob is one article (``docs/<blob>.md``) of these chunk texts."""
     manifest = f"{library}@{ref}"
     await module.index_manifest(
         IndexManifestCommand(
@@ -257,11 +253,7 @@ async def _import(
 
 
 async def _embed(module: RetrievalModule, library: str, ref: str) -> EmbeddingPlanOut:
-    """Run an ``embed`` job of one version as ingestion does.
-
-    Returns:
-        The job's plan.
-    """
+    """Run an ``embed`` job of one version as ingestion does."""
     plan = await module.plan_embedding(EmbedVersionCommand(library=library, ref=ref))
     if plan.space_id is None or plan.manifest_id is None:
         return plan

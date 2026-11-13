@@ -136,11 +136,7 @@ USAGE_TOKENS = 40
 
 
 def _ids(messages: Sequence[ModelMessage]) -> list[str]:
-    """The candidate IDs in the judge's prompt, in their order.
-
-    Returns:
-        The IDs.
-    """
+    """The candidate IDs in the judge's prompt, in their order."""
     prompt = next(
         str(part.content)
         for message in messages
@@ -956,9 +952,6 @@ def _real_tokens(text: str) -> int:
     3, a common one (``_COMMON_BMP``) and each ASCII control character 1. ASCII without
     whitespace for 16 characters or more (base64, hex, even when spaced out) counts at 1.4
     characters a token (base64 runs at about 0.7 tokens a character), other ASCII at 1.7.
-
-    Returns:
-        The token count.
     """
     dense = sum(len(run) for run in _DENSE_WORD.findall(text))
     tokens = math.ceil(dense / 1.4)
@@ -974,11 +967,7 @@ def _real_tokens(text: str) -> int:
 
 
 def _sent_prompt(text: str) -> tuple[int, int]:
-    """The window for 200 candidates of ``text``, and the stand-in's count of what is sent.
-
-    Returns:
-        The window, and the count.
-    """
+    """The window for 200 candidates of ``text``, and the stand-in's count of what is sent."""
     candidates = [JudgedCandidate(chunk_id=ChunkId(f"{i:032x}"), text=text) for i in range(200)]
     window = judge_window(QUERY, candidates)
     sent = JUDGE_INSTRUCTIONS + judge_prompt(QUERY, candidates[:window])

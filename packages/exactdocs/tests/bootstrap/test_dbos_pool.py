@@ -185,11 +185,7 @@ async def _record_a_step(_job: Job, _progress: JobProgress) -> None:
 
 
 def _others(admin: psycopg.Connection, *, waiting: bool = False) -> int:
-    """Count the other sessions on the database (only those waiting on a lock, if asked).
-
-    Returns:
-        The number of those sessions.
-    """
+    """Count the other sessions on the database (only those waiting on a lock, if asked)."""
     query = (
         "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()"
         " AND pid <> pg_backend_pid()"

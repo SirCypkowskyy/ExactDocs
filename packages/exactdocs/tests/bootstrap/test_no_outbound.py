@@ -182,11 +182,7 @@ class Spawn:
 
 @pytest.fixture
 def commit(docs_repo: DocsRepo) -> str:
-    """Resolved before ``spawned`` starts recording (this uses git itself).
-
-    Returns:
-        The fixture's commit SHA.
-    """
+    """Resolved before ``spawned`` starts recording (this uses git itself)."""
     return git("rev-parse", f"{REF}^{{commit}}", cwd=docs_repo.path)
 
 
