@@ -164,10 +164,10 @@ from exactdocs.ingestion.models import (
     SyncStatus,
     TagRule,
     VersionOrigin,
-    article_tags,
     check_credential_fits,
     compose_renames,
     git_blob_sha,
+    imported_tags,
     instruction_candidates,
     is_unordered,
     parse_article,
@@ -2184,7 +2184,8 @@ class RechunkLibraryUseCase:
                     path=a.path,
                     blob_sha=a.blob_sha,
                     title=a.title,
-                    tags=tagged.get(a.path, wanted[a.path]),
+                    tags=tagged.get(a.path, wanted[a.path].tags),
+                    imported=wanted[a.path],
                     front_matter=dict(a.front_matter),
                     content=a.content,
                     chunks=every[a.blob_sha],
@@ -2862,7 +2863,10 @@ class ImportVersionUseCase:
                 unknown.setdefault(blob_sha, parsed)
         cut = await asyncio.to_thread(_cut, given.chunker, unknown)
         every = {**known, **chunked, **cut}
-        rules = given.source.tag_rules
+        tags = {
+            path: imported_tags(path, parsed.tags, given.source.tag_rules)
+            for path, _, parsed in loaded
+        }
         return _Batch(
             articles=tuple(
                 _Article(
@@ -2870,7 +2874,8 @@ class ImportVersionUseCase:
                         path=path,
                         blob_sha=blob_sha,
                         title=parsed.title,
-                        tags=article_tags(path, parsed.tags, rules),
+                        tags=tags[path].tags,
+                        imported=tags[path],
                         front_matter=parsed.front_matter,
                         content=parsed.body,
                         chunks=every[blob_sha],

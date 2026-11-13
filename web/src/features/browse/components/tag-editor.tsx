@@ -8,6 +8,7 @@ import { Input } from "@/shared/ui/input";
 import { refreshTags, setManualTags } from "../api/manual-tags";
 import {
   type AddResult,
+  addedNothing,
   addTag,
   keptNotice,
   type ManualTag,
@@ -19,7 +20,7 @@ import type { Article } from "../model/browse";
 interface TagEditorProps {
   owner: string;
   repo: string;
-  article: Pick<Article, "path" | "tags" | "manual_tags" | "front_matter">;
+  article: Pick<Article, "path" | "tags" | "manual_tags" | "tag_origins">;
 }
 
 const small =
@@ -75,7 +76,7 @@ function ManualChip({
   buttonRef,
   onRemove,
 }: {
-  tag: ManualTag & { declared: boolean };
+  tag: ManualTag;
   inherited: boolean;
   busy: boolean;
   buttonRef: (button: HTMLButtonElement | null) => void;
@@ -84,9 +85,6 @@ function ManualChip({
   return (
     <li className="inline-flex items-center gap-0.5 rounded-md bg-secondary pl-2.5 text-[13px] lg:pl-2">
       <span>{tag.tag}</span>
-      {tag.declared && (
-        <span className="ml-1 text-xs text-muted-foreground">also in front matter</span>
-      )}
       {inherited && (
         <span className="ml-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
           set on <span className="font-mono">{tag.path}</span>
@@ -196,8 +194,8 @@ function Status({
 }
 
 /**
- * The article's tags by origin (front matter, path rules, by hand), and the editor of the manual
- * ones (TAG-01). A manual tag holds for every version of the library; one set on an older path the
+ * The article's tags by origin (front matter, path rules, by hand; a tag with several origins
+ * shows under each), and the editor of the manual ones (TAG-01). A manual tag holds for every version of the library; one set on an older path the
  * article was renamed from is changed on that path, and says so. Focus never falls to the page:
  * closing the field returns it to "Add tag", removing a tag moves it to the next one.
  */
@@ -231,7 +229,17 @@ export function TagEditor({ owner, repo, article }: TagEditorProps) {
     const added = addTag(article, text);
     setProblem(added.ok ? undefined : REASONS[added.reason]);
     if (added.ok) {
-      save.mutate({ path: article.path, tags: added.tags }, { onSuccess: () => setText("") });
+      const before = added.tags.slice(0, -1);
+      save.mutate(
+        { path: article.path, tags: added.tags },
+        {
+          onSuccess: (saved) => {
+            setText("");
+            // The server made the tag; a spelling of one the path had adds nothing.
+            if (saved && addedNothing(before, saved.tags)) setProblem(REASONS.duplicate);
+          },
+        },
+      );
     }
   }
 
@@ -272,6 +280,15 @@ export function TagEditor({ owner, repo, article }: TagEditorProps) {
         {groups.rules.length > 0 && (
           <Group label="Path rules">
             <Plain tags={groups.rules} label="Tags from path rules" />
+          </Group>
+        )}
+        {groups.imported.length > 0 && (
+          <Group label="Imported">
+            <Plain tags={groups.imported} label="Tags from front matter or path rules" />
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              This version was imported before ExactDocs kept which is which. Importing it again, or
+              changing a tag rule, tells them apart.
+            </p>
           </Group>
         )}
         <Group label="By hand">

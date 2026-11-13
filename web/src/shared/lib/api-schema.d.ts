@@ -1251,6 +1251,12 @@ export interface components {
              */
             readonly tags: readonly string[];
             /**
+             * Tag Origins
+             * @description Every tag of `tags`, in the same order, with where it comes from. A tag can have several
+             *     origins, e.g. a path rule and a hand edit.
+             */
+            readonly tag_origins: readonly components["schemas"]["TagOriginsInfo"][];
+            /**
              * Manual Tags
              * @description The tags among `tags` set by hand, each with the path it was set on: this one or one it was
              *     renamed from. A tag set on both is listed for each.
@@ -4277,6 +4283,30 @@ export interface components {
              * @description True when the version has more tags than are listed.
              */
             readonly truncated: boolean;
+        };
+        /**
+         * TagOrigin
+         * @description Where a tag of an article comes from; a tag may come from several places at once.
+         * @enum {string}
+         */
+        readonly TagOrigin: "front_matter" | "path_rule" | "imported" | "manual";
+        /**
+         * TagOriginsInfo
+         * @description One tag of an article, and every place it comes from.
+         */
+        readonly TagOriginsInfo: {
+            /**
+             * Tag
+             * @description The tag, as in `tags`.
+             */
+            readonly tag: string;
+            /**
+             * Origins
+             * @description Where it comes from, at least one: `front_matter`, `path_rule`, `imported` (front matter
+             *     or a path rule, not recorded which: a version imported before origins were kept), `manual`
+             *     (set by hand; `manual_tags` says on which path).
+             */
+            readonly origins: readonly components["schemas"]["TagOrigin"][];
         };
         /**
          * TagRuleIn

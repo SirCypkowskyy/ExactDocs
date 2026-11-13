@@ -7,6 +7,7 @@ from typing import Protocol
 from exactdocs.catalog.models import (
     ContentKey,
     GarbageCollected,
+    ImportedTags,
     Library,
     LibraryId,
     LibrarySettings,
@@ -491,18 +492,18 @@ class ImportedTagWriter(Protocol):
     """
 
     async def set_imported_tags(
-        self, manifest_id: ManifestId, tags: Mapping[str, tuple[str, ...]]
+        self, manifest_id: ManifestId, tags: Mapping[str, ImportedTags]
     ) -> Mapping[str, tuple[str, ...]]:
         """Replace the imported tags of the entries at these paths, in one transaction.
 
-        Only entries whose tags differ are written; manual tags are kept; paths the manifest
-        lacks are ignored. Returns the ``all_tags`` of every given entry the manifest has,
-        changed or not, so copies kept elsewhere can be brought in line (also after a crash
+        Only entries whose tags or their sources differ are written; manual tags are kept; paths
+        the manifest lacks are ignored. Returns the ``all_tags`` of every given entry the manifest
+        has, changed or not, so copies kept elsewhere can be brought in line (also after a crash
         between this write and theirs).
 
         Args:
             manifest_id: The manifest.
-            tags: The new imported tags, by path.
+            tags: The new imported tags with their sources, by path.
 
         Returns:
             The tags of each given entry the manifest has, by path.

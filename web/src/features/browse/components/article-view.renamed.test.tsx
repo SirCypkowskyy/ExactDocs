@@ -28,6 +28,7 @@ const page = (path: string, title: string, content: string) =>
     path,
     title,
     tags: [],
+    tag_origins: [],
     manual_tags: [],
     front_matter: {},
     source_url: null,

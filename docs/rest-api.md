@@ -87,6 +87,12 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   the `path` it names (which removes it from every version). Listings, tag counts and search see them at once (the tag
   copies on chunks are refreshed, nothing is chunked again). A path no version has is accepted and
   waits for one. An unknown library is 404; a value that cannot be a tag is 422 `invalid_tags`.
+- **Tag origins**: an article (`GET .../article`, MCP `read_article`) lists every tag of `tags`
+  again in `tag_origins`, in the same order, as `[{"tag", "origins"}]`. `origins` names every place
+  the tag comes from: `front_matter`, `path_rule`, `manual`, or `imported` for a version imported
+  before origins were recorded (from the front matter or a path rule; the next import of the version
+  or change of the library's tag rules tells which). A tag can have several, e.g. `["path_rule",
+  "manual"]` for a path-rule tag also set by hand.
 - **Renames**: `GET /libraries/{owner}/{repo}/renamed-path?ref=&from=&path=` answers where `path`
   of version `from` is in `ref` (default version without `ref`). Each version names the one it
   follows (the version its renames were detected against, also when nothing moved), and the rename

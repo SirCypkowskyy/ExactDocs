@@ -105,6 +105,7 @@ function mount(path: string, options: Options = {}) {
           path: "docs/guide/retries.md",
           title: "Retries",
           tags: [],
+          tag_origins: [],
           manual_tags: [],
           size: 10,
           library: "/acme/payments",
