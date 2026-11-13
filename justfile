@@ -93,6 +93,10 @@ retrieval-bench *args:
 agent-bench *args:
     uv run python packages/exactdocs/evals/run_agent_bench.py {{ args }}
 
+# Benchmark pages (docs/benchmark/): refill their tables from evals/results/*.json and the golden set; `--check` fails when one is out of date
+bench-pages *args:
+    uv run python packages/exactdocs/evals/run_bench_pages.py {{ args }}
+
 # Web unit tests (vitest)
 web-test:
     cd {{ web }} && pnpm test
