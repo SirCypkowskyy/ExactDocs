@@ -78,3 +78,1012 @@ cases:
   expected_output:
     hits: []
     reference: The TanStack Query v4 documentation has no maxPages option.
+
+# --- v4.36.1 ---------------------------------------------------------------------------------
+
+- name: 'tanstack-query v4.36.1: What values does refetchOnMount take, and what does always do?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'What values does refetchOnMount take, and what does always do?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v4.36.1, article: docs/react/reference/useQuery.md, heading_path: []}
+    reference: >-
+      `refetchOnMount` takes `true` (default: refetch on mount if the data is stale), `false` (never
+      refetch on mount), `"always"` (always refetch on mount) or a function of the query that
+      returns one of these.
+    facts:
+    - refetchOnMount defaults to true, which refetches on mount only if the data is stale
+    - false means the query does not refetch on mount
+    - '"always" refetches on every mount'
+    - it can be a function that receives the query
+
+- name: 'tanstack-query v4.36.1: Is there a QueryClient method that returns cached data if present and only fetches when the query is missing?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'Is there a QueryClient method that returns cached data if present and only fetches when the query is missing?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v4.36.1, article: docs/react/reference/QueryClient.md, heading_path: [queryClient.ensureQueryData]}
+    reference: >-
+      `await queryClient.ensureQueryData({ queryKey, queryFn })` returns an existing query's cached
+      data; if the query does not exist it calls `queryClient.fetchQuery` and returns its result. It
+      takes fetchQuery's options, with `queryKey` required.
+    facts:
+    - the method is queryClient.ensureQueryData
+    - it returns the cached data when the query exists
+    - it calls fetchQuery when the query does not exist
+    - queryKey is required
+
+- name: 'tanstack-query v4.36.1: How can I register a default queryFn for every query under the posts key?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'How can I register a default queryFn for every query under the posts key?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v4.36.1, article: docs/react/reference/QueryClient.md, heading_path: [queryClient.setQueryDefaults]}
+    reference: >-
+      `queryClient.setQueryDefaults(['posts'], { queryFn: fetchPosts })`; then `useQuery({ queryKey:
+      ['posts'] })` uses it. In v4 `getQueryDefaults` returns the first matching registration, so
+      register from the least generic key to the most generic one.
+    facts:
+    - queryClient.setQueryDefaults takes a query key and options
+    - queries matching that key use the registered defaults
+    - the first matching defaults are returned
+    - register from the least generic key to the most generic one
+
+- name: 'tanstack-query v4.36.1: In a paginated table, how do I keep the current page on screen while the next page loads?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'In a paginated table, how do I keep the current page on screen while the next page loads instead of flashing a loading state?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v4.36.1, article: docs/react/guides/paginated-queries.md, heading_path: [Better Paginated Queries with keepPreviousData]}
+    reference: >-
+      Put the page in the query key and set `keepPreviousData: true`: the data of the last
+      successful fetch stays available while the new page is requested, is swapped when it
+      arrives, and `isPreviousData` tells you the old page is still shown (e.g. to disable "Next").
+    facts:
+    - set keepPreviousData to true on useQuery
+    - the last successful data stays available while the new key is fetched
+    - isPreviousData tells whether the shown data is the previous data
+
+- name: 'tanstack-query v4.36.1: How do I prefetch queries in getStaticProps or getServerSideProps and hand them to the client in Next.js?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'How do I prefetch queries in getStaticProps or getServerSideProps and hand them to the client in Next.js?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v4.36.1, article: docs/react/guides/ssr.md, heading_path: [Using Next.js, Using Hydration]}
+    reference: >-
+      In `_app`, create the QueryClient once (in React state), wrap the app in `QueryClientProvider`
+      and `<Hydrate state={pageProps.dehydratedState}>`. In the page's getStaticProps or
+      getServerSideProps, create a new QueryClient per request, `await prefetchQuery(...)` and return
+      `dehydratedState: dehydrate(queryClient)` in props.
+    facts:
+    - wrap the app in Hydrate with pageProps.dehydratedState
+    - create a new QueryClient for each page request on the server
+    - prefetch with prefetchQuery and pass dehydrate(queryClient) as the dehydratedState prop
+
+- name: 'tanstack-query v4.36.1: How do I abort the underlying fetch call when a query is no longer needed?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'How do I abort the underlying fetch call when a query is no longer needed?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v4.36.1, article: docs/react/guides/query-cancellation.md, heading_path: [Using fetch]}
+    - {version: v4.36.1, article: docs/react/guides/query-cancellation.md, heading_path: []}
+    reference: >-
+      Every query function receives an `AbortSignal` as `signal` in its context; pass it to `fetch`
+      (one or several calls). The signal is aborted when the query becomes out-of-date or inactive,
+      which cancels the request.
+    facts:
+    - the query function receives an AbortSignal as signal
+    - pass the signal to fetch
+    - the signal is aborted when the query becomes out-of-date or inactive
+
+- name: 'tanstack-query v4.36.1: My disabled query reports status loading but nothing is being fetched, how can both be true?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'My disabled query reports status loading but nothing is being fetched, how can both be true?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v4.36.1, article: docs/react/guides/queries.md, heading_path: [Query Basics, 'Why two different states?']}
+    - {version: v4.36.1, article: docs/react/guides/queries.md, heading_path: [Query Basics, FetchStatus]}
+    reference: >-
+      `status` tells whether there is data, `fetchStatus` whether the queryFn is running
+      (`fetching`, `paused` or `idle`). They are independent, so a query without data is `loading`
+      even while its fetchStatus is `idle`.
+    facts:
+    - status gives information about the data
+    - fetchStatus gives information about whether the queryFn is running
+    - a query can be in loading state without fetching
+
+- name: 'tanstack-query v4.36.1: What does networkMode offlineFirst actually do compared to online?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'What does networkMode offlineFirst actually do compared to online?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v4.36.1, article: docs/react/guides/network-mode.md, heading_path: ['Network Mode: offlineFirst']}
+    reference: >-
+      `offlineFirst` runs the queryFn once and then pauses retries. It suits a service worker or HTTP
+      caching (Cache-Control) where the first fetch can come from a cache; on a cache miss the
+      request fails and the query behaves like `online`, pausing retries.
+    facts:
+    - offlineFirst runs the queryFn once
+    - retries are then paused
+    - it suits service-worker or HTTP caching
+
+- name: 'tanstack-query v4.36.1: What happens to cached todos after every component using that query unmounts?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'What happens to cached todos after every component using that query unmounts?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v4.36.1, article: docs/react/guides/caching.md, heading_path: [Basic Example]}
+    reference: >-
+      With no active instances a cache timeout of `cacheTime` (5 minutes by default) starts. If the
+      query mounts again before it ends, the cached data is returned at once while it refetches in
+      the background; otherwise the data is deleted and garbage collected.
+    facts:
+    - a cache timeout of cacheTime starts once no instance uses the query
+    - cacheTime defaults to 5 minutes
+    - a new instance before the timeout gets the cached data immediately and refetches in the background
+    - after the timeout the data is garbage collected
+
+- name: 'tanstack-query v4.36.1: After upgrading, useQuery with a plain string key breaks, what changed about keys?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: "After upgrading, useQuery('todos', fetchTodos) breaks, what changed about keys?"
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v4.36.1, article: docs/react/guides/migrating-to-react-query-4.md, heading_path: [Breaking Changes, Query Keys (and Mutation Keys) need to be an Array]}
+    reference: >-
+      Since v4, query and mutation keys must be arrays (v3 also accepted strings), so write
+      `useQuery(['todos'], fetchTodos)`. A codemod is provided for the migration.
+    facts:
+    - in v4 query and mutation keys must be arrays
+    - v3 also allowed string keys
+    - a codemod helps with the migration
+
+- name: 'tanstack-query v4.36.1: What replaced the idle status for disabled queries in v4?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'What replaced the idle status for disabled queries in v4?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v4.36.1, article: docs/react/guides/migrating-to-react-query-4.md, heading_path: [Breaking Changes, The idle state has been removed]}
+    - {version: v4.36.1, article: docs/react/guides/migrating-to-react-query-4.md, heading_path: [Breaking Changes, The idle state has been removed, disabled queries]}
+    reference: >-
+      v4 removes the `idle` status: a disabled query without data is now `status: 'loading'` with
+      `fetchStatus: 'idle'`. For a spinner, check `isInitialLoading` instead of `isLoading`.
+    facts:
+    - the idle status was removed in v4
+    - disabled queries without data are in loading status with fetchStatus idle
+    - use isInitialLoading instead of isLoading to show a spinner
+
+- name: 'tanstack-query v4.36.1: Which npm package do I install for React Query v4, and where are the devtools now?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'Which npm package do I install for React Query v4, and where are the devtools now?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v4.36.1, article: docs/react/guides/migrating-to-react-query-4.md, heading_path: [Breaking Changes, react-query is now @tanstack/react-query]}
+    reference: >-
+      v4 renames `react-query` to `@tanstack/react-query`; the devtools are a separate package,
+      `@tanstack/react-query-devtools`. A codemod updates the imports, but installing the devtools
+      package is manual.
+    facts:
+    - the package is now @tanstack/react-query
+    - the devtools are the separate package @tanstack/react-query-devtools
+    - the codemod only changes imports
+
+- name: 'tanstack-query v4.36.1: How do I save the query cache to localStorage so it survives a reload, and what cacheTime does that need?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'How do I save the query cache to localStorage so it survives a reload, and what cacheTime does that need?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v4.36.1, article: docs/react/plugins/createSyncStoragePersister.md, heading_path: [Usage]}
+    - {version: v4.36.1, article: docs/react/plugins/persistQueryClient.md, heading_path: [How It Works]}
+    reference: >-
+      Create `createSyncStoragePersister({ storage: window.localStorage })` and pass it to
+      `persistQueryClient` (or `PersistQueryClientProvider`). Give the QueryClient a `cacheTime` at
+      least as long as `maxAge` (24 hours by default); otherwise the default 5 minutes discards the
+      restored cache early.
+    facts:
+    - createSyncStoragePersister with window.localStorage creates the persister
+    - the persister is passed to persistQueryClient
+    - cacheTime should be the same as or higher than maxAge, which defaults to 24 hours
+    - without it cacheTime defaults to 5 minutes and the stored cache is discarded
+
+- name: 'tanstack-query v4.36.1: Without suspense, how do I send query errors to an error boundary and let the user retry?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'Without suspense, how do I send query errors to an error boundary and let the user retry?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v4.36.1, article: docs/react/reference/useQuery.md, heading_path: []}
+    - {version: v4.36.1, article: docs/react/reference/QueryErrorResetBoundary.md, heading_path: []}
+    - {version: v4.36.1, article: docs/react/guides/suspense.md, heading_path: [Resetting Error Boundaries]}
+    reference: >-
+      Set `useErrorBoundary: true` (or a function of error and query) on the query so errors are
+      thrown in render to the nearest error boundary. To retry, wrap the boundary in
+      `QueryErrorResetBoundary` (or use `useQueryErrorResetBoundary`) and pass its `reset` to the
+      boundary's `onReset`.
+    facts:
+    - useErrorBoundary true throws errors to the nearest error boundary
+    - QueryErrorResetBoundary or useQueryErrorResetBoundary resets query errors
+    - pass reset to the error boundary's onReset
+
+- name: 'tanstack-query v4.36.1: How do I refetch only the first page of an infinite query from a QueryClient call?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'How do I refetch only the first page of an infinite query from a QueryClient call?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v4.36.1, article: docs/react/guides/infinite-queries.md, heading_path: ['What happens when an infinite query needs to be refetched?', refetchPage]}
+    - {version: v4.36.1, article: docs/react/reference/QueryClient.md, heading_path: [queryClient.refetchQueries]}
+    reference: >-
+      Pass `refetchPage: (page, index, allPages) => index === 0` in the filters of
+      `queryClient.refetchQueries` (also invalidateQueries and resetQueries) or to the `refetch` of
+      useInfiniteQuery; only pages for which it returns true are refetched. It only applies to
+      infinite queries.
+    facts:
+    - use the refetchPage function
+    - only pages for which it returns true are refetched
+    - refetchPage can be passed in the filters of queryClient.refetchQueries
+    - it only applies to infinite queries
+
+- name: 'tanstack-query v4.36.1: How do I read the variables of all pending mutations with useMutationState?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'How do I read the variables of all pending mutations with useMutationState?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The TanStack Query v4 documentation has no useMutationState hook.
+
+- name: 'tanstack-query v4.36.1: How do I merge the results of useQueries into one object with a combine function?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'How do I merge the results of useQueries into one object with a combine function?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The TanStack Query v4 documentation has no combine option for useQueries.
+
+- name: 'tanstack-query v4.36.1: How can I cap how many queries fetch at the same time, say four requests in flight?'
+  inputs:
+    project: tanstack-query
+    version: v4.36.1
+    query: 'How can I cap how many queries fetch at the same time, say four requests in flight?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The TanStack Query v4 documentation has no option to limit how many queries fetch concurrently.
+
+# --- v5.0.0 ----------------------------------------------------------------------------------
+
+- name: 'tanstack-query v5.0.0: How many times does a failing query retry by default, and is it different during SSR?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'How many times does a failing query retry by default, and is it different during SSR?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v5.0.0, article: docs/react/reference/useQuery.md, heading_path: []}
+    reference: >-
+      `retry` defaults to `3` on the client and `0` on the server. `false` disables retries, `true`
+      retries infinitely, and a function `(failureCount, error) => boolean` decides per failure.
+    facts:
+    - retry defaults to 3 on the client
+    - retry defaults to 0 on the server
+
+- name: 'tanstack-query v5.0.0: Which options can I not pass to useSuspenseQuery, and what is guaranteed about its data?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'Which options can I not pass to useSuspenseQuery, and what is guaranteed about its data?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v5.0.0, article: docs/react/reference/useSuspenseQuery.md, heading_path: []}
+    reference: >-
+      useSuspenseQuery takes useQuery's options except `suspense`, `throwOnError`, `enabled` and
+      `placeholderData`. Its `data` is guaranteed to be defined, `status` is always `success`, and
+      `isPlaceholderData` is missing.
+    facts:
+    - suspense, throwOnError, enabled and placeholderData are not accepted
+    - data is guaranteed to be defined
+    - status is always success
+
+- name: 'tanstack-query v5.0.0: Which useQueries option reduces all query results into a single value?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'Which useQueries option reduces all query results into a single value?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v5.0.0, article: docs/react/reference/useQueries.md, heading_path: [Combine]}
+    reference: >-
+      The `combine: (results) => ...` option; its return value is what useQueries returns,
+      structurally shared to stay as referentially stable as possible. Properties of the query
+      results that it does not return are lost.
+    facts:
+    - the option is combine
+    - it receives the array of query results
+    - the combined result is structurally shared
+    - other properties of the query results are lost
+
+- name: 'tanstack-query v5.0.0: How do I start fetching data for a child that uses useSuspenseQuery without the parent suspending first?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'How do I start fetching data for a child that uses useSuspenseQuery without the parent suspending first?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v5.0.0, article: docs/react/guides/prefetching.md, heading_path: [Prefetch in components]}
+    reference: >-
+      useSuspenseQueries would block rendering and useQuery would start too late, so add a small
+      `usePrefetchQuery` function that calls `queryClient.ensureQueryData(...)` during render, above
+      the Suspense boundary; the docs say the library might add it later. It never refetches stale
+      data already in the cache.
+    facts:
+    - write a small usePrefetchQuery function yourself
+    - it calls queryClient.ensureQueryData during render
+    - useSuspenseQueries cannot be used because it would block rendering
+    - it does not update existing stale data
+
+- name: 'tanstack-query v5.0.0: How do I show a just-submitted todo greyed out in the list while the mutation runs, without touching the cache?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'How do I show a just-submitted todo greyed out in the list while the mutation runs, without touching the cache?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v5.0.0, article: docs/react/guides/optimistic-updates.md, heading_path: [Via the UI]}
+    reference: >-
+      Render an extra list item from the mutation's `variables` while `isPending` is true, and return
+      the `invalidateQueries` promise from `onSettled` so the mutation stays pending until the
+      refetch finishes. `variables` are kept on error, so you can show a retry button.
+    facts:
+    - render the mutation variables while isPending is true
+    - return the invalidateQueries promise from onSettled to stay pending until the refetch ends
+    - variables are not cleared when the mutation errors
+
+- name: 'tanstack-query v5.0.0: How do I extract query options into a function and still get typed getQueryData results?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'How do I extract query options into a function and still get typed getQueryData results?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v5.0.0, article: docs/react/typescript.md, heading_path: [Typing Query Options]}
+    reference: >-
+      Wrap the options in the `queryOptions` helper and use the result in both `useQuery` and
+      `prefetchQuery`. Its `queryKey` carries the queryFn's type, so
+      `queryClient.getQueryData(groupOptions().queryKey)` is typed instead of `unknown`.
+    facts:
+    - wrap the options in queryOptions
+    - extracted options without it lose type inference
+    - getQueryData with the queryKey from queryOptions is typed
+
+- name: 'tanstack-query v5.0.0: What is a request waterfall and why does it slow pages down?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'What is a request waterfall and why does it slow pages down?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v5.0.0, article: docs/react/guides/request-waterfalls.md, heading_path: ['What is a Request Waterfall?']}
+    reference: >-
+      A request waterfall is when a request for a resource does not start until another request has
+      finished. Each step costs at least one roundtrip to the server, so the cost grows with the
+      user's latency; the browser devtools Network tab shows them.
+    facts:
+    - a request only starts after another request has finished
+    - each step is at least one server roundtrip
+    - the cost depends on the user's latency
+
+- name: 'tanstack-query v5.0.0: When should I optimistically update the cache in onMutate instead of rendering the mutation variables?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'When should I optimistically update the cache in onMutate instead of rendering the mutation variables?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v5.0.0, article: docs/react/guides/optimistic-updates.md, heading_path: [When to use what]}
+    reference: >-
+      Rendering `variables` is simpler and needs no rollbacks when the optimistic result shows in
+      one place; when several places on the screen need to know about the update, updating the
+      cache directly handles them all automatically.
+    facts:
+    - use variables when the optimistic result is shown in only one place
+    - the variables approach needs no rollback handling
+    - update the cache when several places need the update
+
+- name: 'tanstack-query v5.0.0: Why does an infinite query refetch all its pages one by one instead of in parallel?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'Why does an infinite query refetch all its pages one by one instead of in parallel?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v5.0.0, article: docs/react/guides/infinite-queries.md, heading_path: ['What happens when an infinite query needs to be refetched?']}
+    reference: >-
+      A stale infinite query refetches each page sequentially from the first so it never uses stale
+      cursors that could duplicate or skip records. If its data is removed from the cache, it
+      restarts with only the initial page.
+    facts:
+    - pages are refetched sequentially starting from the first
+    - this avoids stale cursors that cause duplicates or skipped records
+    - after removal from the cache only the initial page is requested
+
+- name: 'tanstack-query v5.0.0: useErrorBoundary is rejected after upgrading, what is that option called now?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'useErrorBoundary is rejected after upgrading, what is that option called now?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v5.0.0, article: docs/react/guides/migrating-to-v5.md, heading_path: [Breaking Changes, The useErrorBoundary option has been renamed to throwOnError]}
+    reference: >-
+      v5 renames `useErrorBoundary` to `throwOnError`, which is framework-agnostic and avoids
+      confusion with React's `use` prefix for hooks and the ErrorBoundary component.
+    facts:
+    - useErrorBoundary is renamed to throwOnError in v5
+    - the new name is more framework-agnostic and avoids the hook prefix use
+
+- name: 'tanstack-query v5.0.0: keepPreviousData no longer exists, how do I keep the old page while paginating?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'keepPreviousData: true no longer exists, how do I keep the old page while paginating?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v5.0.0, article: docs/react/guides/migrating-to-v5.md, heading_path: [Breaking Changes, Removed keepPreviousData in favor of placeholderData identity function]}
+    - {version: v5.0.0, article: docs/react/guides/paginated-queries.md, heading_path: [Better Paginated Queries with placeholderData]}
+    reference: >-
+      v5 removes the `keepPreviousData` option and `isPreviousData` flag: pass
+      `placeholderData: keepPreviousData` (imported from the library) or an identity function
+      `(previousData) => previousData`, and check `isPlaceholderData`. Unlike before, the status is
+      always `success` and `dataUpdatedAt` stays `0`.
+    facts:
+    - the keepPreviousData option and isPreviousData flag are removed
+    - use placeholderData with keepPreviousData or an identity function
+    - isPlaceholderData replaces isPreviousData
+    - placeholderData always puts the query in success status
+
+- name: 'tanstack-query v5.0.0: Can I still pass onSuccess and onError to useQuery?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'Can I still pass onSuccess and onError to useQuery?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v5.0.0, article: docs/react/guides/migrating-to-v5.md, heading_path: [Breaking Changes, Callbacks on useQuery (and QueryObserver) have been removed]}
+    reference: >-
+      No. v5 removes `onSuccess`, `onError` and `onSettled` from queries (useQuery and
+      QueryObserver); mutations keep them.
+    facts:
+    - onSuccess, onError and onSettled are removed from queries in v5
+    - mutations still have these callbacks
+
+- name: 'tanstack-query v5.0.0: What do isPending and isLoading mean now that the loading status is gone?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'What do isPending and isLoading mean now that the loading status is gone?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v5.0.0, article: docs/react/guides/migrating-to-v5.md, heading_path: ['Breaking Changes', 'status: loading has been changed to status: pending and isLoading has been changed to isPending and isInitialLoading has now been renamed to isLoading']}
+    reference: >-
+      v5 renames `status: 'loading'` to `'pending'` and `isLoading` to `isPending`, for queries and
+      mutations. A new `isLoading` is `isPending && isFetching`, the same as the old
+      `isInitialLoading`, which is deprecated.
+    facts:
+    - the loading status is renamed to pending
+    - isLoading is renamed to isPending, for mutations too
+    - the new isLoading is isPending && isFetching
+    - isInitialLoading is deprecated
+
+- name: 'tanstack-query v5.0.0: In the Next.js app router, how do I prefetch in a Server Component and use the data from useQuery in a client component?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'In the Next.js app router, how do I prefetch in a Server Component and use the data from useQuery in a client component?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v5.0.0, article: docs/react/guides/advanced-ssr.md, heading_path: [Server Components & Next.js app router, Prefetching and de/hydrating data]}
+    - {version: v5.0.0, article: docs/react/reference/hydration.md, heading_path: [HydrationBoundary]}
+    reference: >-
+      In the Server Component page, create a QueryClient, `await queryClient.prefetchQuery(...)` and
+      render `<HydrationBoundary state={dehydrate(queryClient)}>` around the client component, which
+      calls `useQuery` with the same key. HydrationBoundary puts the dehydrated state into the
+      client's queryClient, merging by update timestamp.
+    facts:
+    - prefetch with a new QueryClient in the Server Component
+    - pass dehydrate(queryClient) as the state of HydrationBoundary
+    - the client component uses useQuery with the same query key
+    - HydrationBoundary merges queries into the existing client based on update timestamp
+
+- name: 'tanstack-query v5.0.0: The mutation lives in a form and the list in another component, how do I render the pending item in the list?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'The mutation lives in a form and the list in another component, how do I render the pending item in the list?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v5.0.0, article: docs/react/guides/optimistic-updates.md, heading_path: [Via the UI, "If the mutation and the query don't live in the same component"]}
+    - {version: v5.0.0, article: docs/react/reference/useMutationState.md, heading_path: []}
+    reference: >-
+      Give the mutation a `mutationKey` and, in the list, call `useMutationState({ filters: {
+      mutationKey: ['addTodo'], status: 'pending' }, select: (mutation) => mutation.state.variables
+      })`. It returns an array, one entry per matching mutation.
+    facts:
+    - give the mutation a mutationKey
+    - useMutationState with filters on mutationKey and status pending
+    - select mutation.state.variables
+    - the result is an array because several mutations can run at once
+
+- name: 'tanstack-query v5.0.0: My v4 infinite query defaulted pageParam in the queryFn signature, what must change and how do I say there is no next page?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'My v4 infinite query defaulted pageParam in the queryFn signature, what must change and how do I say there is no next page?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v5.0.0, article: docs/react/guides/migrating-to-v5.md, heading_path: [Breaking Changes, Infinite queries now need a initialPageParam]}
+    - {version: v5.0.0, article: docs/react/reference/useInfiniteQuery.md, heading_path: []}
+    reference: >-
+      v5 requires an explicit `initialPageParam` option, used as the first page's `pageParam`,
+      instead of a default value in the queryFn signature (undefined is not serializable).
+      `getNextPageParam` returns `undefined` or `null` when there is no next page.
+    facts:
+    - initialPageParam is a required option
+    - it is used as the pageParam of the first page
+    - getNextPageParam returns undefined or null when there is no next page
+
+- name: 'tanstack-query v5.0.0: How do I disable a query in a type-safe way with skipToken?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'How do I disable a query in a type-safe way with skipToken?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The TanStack Query v5.0.0 documentation has no skipToken; it appears only in later v5 docs.
+
+- name: 'tanstack-query v5.0.0: Is there a helper that turns an AsyncIterable, like streamed LLM tokens, into query data?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'Is there a helper that turns an AsyncIterable, like streamed LLM tokens, into query data?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The TanStack Query v5.0.0 documentation has no streamedQuery or other helper for AsyncIterable query functions.
+
+- name: 'tanstack-query v5.0.0: How do I make mutations with the same scope id run one after another?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'How do I make mutations with the same scope id run one after another instead of in parallel?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The TanStack Query v5.0.0 documentation has no mutation scopes; it does not cover running mutations serially.
+
+- name: 'tanstack-query v5.0.0: How do I plug a custom setTimeout implementation into the timers TanStack Query uses?'
+  inputs:
+    project: tanstack-query
+    version: v5.0.0
+    query: 'How do I plug a custom setTimeout implementation into the timers TanStack Query uses?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The TanStack Query v5.0.0 documentation has no timeoutManager or other way to replace its timers.
+
+# --- v5.90.3 ---------------------------------------------------------------------------------
+
+- name: 'tanstack-query v5.90.3: What can I pass as queryFn to disable a query while keeping TypeScript happy, and what stops working?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'What can I pass as queryFn to disable a query while keeping TypeScript happy, and what stops working?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/framework/react/guides/disabling-queries.md, heading_path: [Typesafe disabling of queries using skipToken]}
+    reference: >-
+      Pass `skipToken` (imported from `@tanstack/react-query`) as the queryFn when the query should
+      not run, e.g. `queryFn: filter ? () => fetchTodos(filter) : skipToken`. It works like
+      `enabled: false`, except that `refetch` from useQuery does not work with it.
+    facts:
+    - use skipToken as the queryFn
+    - skipToken works the same as enabled false
+    - refetch from useQuery does not work with skipToken
+
+- name: 'tanstack-query v5.90.3: What is the default refetchMode of streamedQuery, and what does it do on refetch?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'What is the default refetchMode of streamedQuery, and what does it do on refetch?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/reference/streamedQuery.md, heading_path: []}
+    reference: >-
+      `refetchMode` defaults to `'reset'`: a refetch erases all data and puts the query back into
+      `pending`. `'append'` appends to the existing data, and `'replace'` writes all data to the
+      cache once the stream ends.
+    facts:
+    - refetchMode defaults to reset
+    - reset erases the data and returns the query to pending
+    - append adds to existing data and replace writes everything when the stream ends
+
+- name: 'tanstack-query v5.90.3: Which function swaps out the timer implementation, and when do I have to call it?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'Which function swaps out the timer implementation, and when do I have to call it?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/reference/timeoutManager.md, heading_path: [timeoutManager.setTimeoutProvider]}
+    reference: >-
+      `timeoutManager.setTimeoutProvider(provider)` sets custom setTimeout, clearTimeout,
+      setInterval and clearInterval functions. Call it before creating a QueryClient or any queries,
+      because different providers cannot cancel each other's timers.
+    facts:
+    - timeoutManager.setTimeoutProvider sets the timer functions
+    - call it before creating a QueryClient or queries
+    - different TimeoutProviders cannot cancel each other's timers
+
+- name: 'tanstack-query v5.90.3: Is there a util to test whether a given query matches a set of query filters?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'Is there a util to test whether a given query matches a set of query filters?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/framework/react/guides/filters.md, heading_path: [Utils, matchQuery]}
+    reference: >-
+      `matchQuery(filters, query)` returns a boolean telling whether the query matches the query
+      filters; `matchMutation(filters, mutation)` does the same for mutations.
+    facts:
+    - matchQuery(filters, query) returns a boolean
+    - matchMutation is the equivalent for mutations
+
+- name: 'tanstack-query v5.90.3: How do I queue mutations so that repeated mutate calls run one at a time?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'How do I queue mutations so that repeated mutate calls run one at a time?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/framework/react/guides/mutations.md, heading_path: [Mutation Scopes]}
+    reference: >-
+      Mutations run in parallel by default. Give them a `scope: { id: 'todo' }`: mutations with the
+      same `scope.id` run serially; one triggered while another is in progress starts with
+      `isPaused: true`, waits in a queue and resumes automatically.
+    facts:
+    - mutations run in parallel by default
+    - mutations with the same scope.id run in serial
+    - a queued mutation starts in isPaused true state and resumes automatically
+
+- name: 'tanstack-query v5.90.3: How do I make the error field unknown everywhere without annotating every useQuery?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'How do I make the error field unknown everywhere without annotating every useQuery?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/framework/react/typescript.md, heading_path: [Typing the error field, Registering a global Error]}
+    reference: >-
+      Augment the `Register` interface: `declare module '@tanstack/react-query' { interface Register
+      { defaultError: unknown } }`. Inference keeps working and every error field gets that type,
+      so call sites must narrow it.
+    facts:
+    - amend the Register interface of @tanstack/react-query
+    - set defaultError to the desired type, here unknown
+    - no generics are needed at the call sites
+
+- name: 'tanstack-query v5.90.3: How do I consume a useQuery result with React.use inside a Suspense boundary?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'How do I consume a useQuery result with React.use inside a Suspense boundary?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/framework/react/guides/suspense.md, heading_path: [Using useQuery().promise and React.use() (Experimental)]}
+    reference: >-
+      Turn on `experimental_prefetchInRender: true` in the QueryClient's default query options, pass
+      the useQuery result down, and in a child inside `<React.Suspense>` call
+      `React.use(query.promise)`. The feature is experimental.
+    facts:
+    - set experimental_prefetchInRender to true on the QueryClient
+    - call React.use(query.promise) in a component inside a Suspense boundary
+    - the feature is experimental
+
+- name: 'tanstack-query v5.90.3: Why does my component not re-render when isFetching changes if I never read it?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'Why does my component not re-render when isFetching changes if I never read it?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/framework/react/guides/render-optimizations.md, heading_path: [tracked properties]}
+    reference: >-
+      React Query tracks which returned properties a component uses (via a Proxy) and only
+      re-renders when one of those changes. `notifyOnChangeProps` customizes it (`'all'` turns it
+      off), and object rest destructuring disables the optimization.
+    facts:
+    - only properties that are actually used trigger a re-render
+    - usage is tracked with a Proxy
+    - notifyOnChangeProps all turns the tracking off
+    - object rest destructuring disables the optimization
+
+- name: 'tanstack-query v5.90.3: My inline select function runs on every render, when does select re-run and how do I avoid it?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'My inline select function runs on every render, when does select re-run and how do I avoid it?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/framework/react/guides/render-optimizations.md, heading_path: [select, memoization]}
+    reference: >-
+      `select` re-runs when the select function changes referentially or when `data` changes, so an
+      inline function runs on every render. Wrap it in `useCallback` or move it to a stable
+      function reference.
+    facts:
+    - select re-runs when the function changes referentially or data changes
+    - an inline select function runs on every render
+    - wrap it in useCallback or extract it to a stable function
+
+- name: 'tanstack-query v5.90.3: Can I put the whole useQuery result object in a useEffect dependency array?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'Can I put the whole useQuery result object in a useEffect dependency array?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/framework/react/guides/render-optimizations.md, heading_path: [structural sharing, referential identity]}
+    reference: >-
+      Better not: the top-level object from useQuery (and useInfiniteQuery, useMutation, and the
+      array from useQueries) is a new reference on every render. The `data` property is kept as
+      stable as possible by structural sharing.
+    facts:
+    - the top-level result object is not referentially stable
+    - it is a new reference on every render
+    - data is kept as stable as possible
+
+- name: 'tanstack-query v5.90.3: Where did hashQueryKey go, and why was it renamed?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'Where did hashQueryKey go, and why was it renamed?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/framework/react/guides/migrating-to-v5.md, heading_path: [Breaking Changes, hashQueryKey has been renamed to hashKey]}
+    reference: >-
+      In v5 `hashQueryKey` is `hashKey`, because it also hashes mutation keys and can be used in the
+      predicate functions of useIsMutating and useMutationState. The v5.0.0 migration guide does not
+      list this rename.
+    facts:
+    - hashQueryKey is renamed to hashKey
+    - it also hashes mutation keys
+    - it can be used in predicates of useIsMutating and useMutationState
+
+- name: 'tanstack-query v5.90.3: I register setQueryDefaults for todo and for todo detail, which applies and in what order should I register them?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: "I call setQueryDefaults for ['todo'] and for ['todo', 'detail'], which applies and in what order should I register them?"
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/framework/react/guides/migrating-to-v5.md, heading_path: [Breaking Changes, Query defaults changes]}
+    - {version: v5.90.3, article: docs/reference/QueryClient.md, heading_path: [queryClient.setQueryDefaults]}
+    reference: >-
+      `getQueryDefaults` now merges all matching registrations instead of returning only the first
+      match, so register from the most generic key (`['todo']`) to the least generic
+      (`['todo', 'detail']`); more specific defaults override generic ones. Earlier versions took the
+      first match and needed the reverse order.
+    facts:
+    - getQueryDefaults merges all matching registrations
+    - it used to return only the first matching registration
+    - register from the most generic key to the least generic one
+    - more specific defaults override more generic ones
+
+- name: 'tanstack-query v5.90.3: Do I still need to hand-roll a usePrefetchQuery helper to prefetch above a Suspense boundary?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'Do I still need to hand-roll a usePrefetchQuery helper to prefetch above a Suspense boundary?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/framework/react/guides/prefetching.md, heading_path: [Prefetch in components]}
+    - {version: v5.90.3, article: docs/framework/react/reference/usePrefetchQuery.md, heading_path: []}
+    reference: >-
+      No. The library now ships `usePrefetchQuery` and `usePrefetchInfiniteQuery` (v5.0.0 told you to
+      write a small helper around `ensureQueryData`). It takes the options of
+      `queryClient.prefetchQuery`, returns nothing, and is called before a Suspense boundary whose
+      child uses `useSuspenseQuery`.
+    facts:
+    - usePrefetchQuery and usePrefetchInfiniteQuery are hooks in the library
+    - it accepts the options of queryClient.prefetchQuery
+    - it returns nothing
+    - it is used before a suspense boundary wrapping a component that uses useSuspenseQuery
+
+- name: 'tanstack-query v5.90.3: In an optimistic update, which onError argument holds what onMutate returned, and how do I get the QueryClient there?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'In an optimistic update, which onError argument holds what onMutate returned, and how do I get the QueryClient there?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/framework/react/guides/optimistic-updates.md, heading_path: [Via the cache, Updating a single todo]}
+    - {version: v5.90.3, article: docs/framework/react/reference/useMutation.md, heading_path: []}
+    reference: >-
+      onMutate's return value arrives as `onMutateResult`, the third argument of
+      `onError(err, variables, onMutateResult, context)` (and the fourth of onSettled), so roll back
+      from `onMutateResult.previousTodo`. The last argument, `context`, carries the client:
+      `context.client.setQueryData(...)`.
+    facts:
+    - the value returned from onMutate is passed to onError and onSettled as onMutateResult
+    - onMutateResult is the third argument of onError
+    - the last callback argument is a context with the QueryClient as context.client
+    - roll back by setting the snapshot from onMutateResult back into the cache
+
+- name: 'tanstack-query v5.90.3: How do I stream useSuspenseQuery results from the server in Next.js without prefetching, and what is the cost?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'How do I stream useSuspenseQuery results from the server in Next.js without prefetching, and what is the cost?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/framework/react/guides/advanced-ssr.md, heading_path: [Experimental streaming without prefetching in Next.js]}
+    - {version: v5.90.3, article: docs/framework/react/guides/suspense.md, heading_path: [Suspense on the Server with streaming]}
+    reference: >-
+      Use the experimental `@tanstack/react-query-next-experimental` package: wrap the app in
+      `ReactQueryStreamedHydration` and call `useSuspenseQuery` in Client Components; results stream
+      as Suspense boundaries resolve. Without a `<Suspense>` boundary the HTML waits for the fetch,
+      hurting TTFB, and prefetching stays the recommended way because it flattens waterfalls.
+    facts:
+    - use the experimental @tanstack/react-query-next-experimental package
+    - wrap the app in ReactQueryStreamedHydration
+    - without a Suspense boundary the response waits for the fetch and hurts TTFB
+    - prefetching is still recommended because it flattens request waterfalls
+
+- name: 'tanstack-query v5.90.3: useSuspenseQuery keeps showing stale data on refetch errors, how do I send every error to my boundary and let users retry?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'useSuspenseQuery keeps showing stale data on refetch errors, how do I send every error to my boundary and let users retry?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/framework/react/guides/suspense.md, heading_path: [throwOnError default]}
+    - {version: v5.90.3, article: docs/framework/react/reference/QueryErrorResetBoundary.md, heading_path: []}
+    reference: >-
+      By default only errors without cached data are thrown (`throwOnError: (error, query) =>
+      typeof query.state.data === 'undefined'`), and useSuspenseQuery does not let you change it, so
+      throw manually: `if (error && !isFetching) throw error`. Wrap the error boundary in
+      `QueryErrorResetBoundary` and pass its `reset` to `onReset` so retries work.
+    facts:
+    - errors are thrown only if there is no data in the cache
+    - throwOnError cannot be changed for useSuspenseQuery
+    - throw the error manually when error is set and the query is not fetching
+    - QueryErrorResetBoundary resets query errors so the boundary can retry
+
+- name: 'tanstack-query v5.90.3: How do I share one query definition between useQuery, useSuspenseQuery, prefetchQuery and setQueryData?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'How do I share one query definition between useQuery, useSuspenseQuery, prefetchQuery and setQueryData, and still override select per component?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v5.90.3, article: docs/framework/react/guides/query-options.md, heading_path: []}
+    - {version: v5.90.3, article: docs/framework/react/reference/queryOptions.md, heading_path: []}
+    reference: >-
+      Build the options with `queryOptions({ queryKey, queryFn, ... })` in a function and pass the
+      result to useQuery, useSuspenseQuery, useQueries or `queryClient.prefetchQuery`; use its
+      `.queryKey` for `setQueryData`. Spread it and add `select` per component. It accepts what
+      useQuery accepts; options that do nothing in prefetchQuery still type-check.
+    facts:
+    - queryOptions returns the options it is given at runtime
+    - the same result works in useQuery, useSuspenseQuery, useQueries and prefetchQuery
+    - use the queryKey from queryOptions with setQueryData
+    - spread the options and add select to override per component
+
+- name: 'tanstack-query v5.90.3: How do I stop iframes from triggering false window-focus refetches?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'How do I stop iframes from triggering false window-focus refetches?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The TanStack Query v5.90.3 documentation does not cover iframe focus events; only the v4 docs had a section on them.
+
+- name: 'tanstack-query v5.90.3: Does TanStack Query send ETag or If-None-Match headers to avoid downloading unchanged data?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'Does TanStack Query send ETag or If-None-Match headers to avoid downloading unchanged data?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The TanStack Query documentation does not cover ETag or If-None-Match conditional requests.
+
+- name: 'tanstack-query v5.90.3: How do I combine useMutation with React 19 useOptimistic?'
+  inputs:
+    project: tanstack-query
+    version: v5.90.3
+    query: 'How do I combine useMutation with React 19 useOptimistic?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The TanStack Query documentation does not mention React's useOptimistic hook.
