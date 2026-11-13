@@ -245,18 +245,37 @@ def build_router(
                 min_length=1,
                 max_length=MAX_PATH,
                 description=(
-                    "`forward`: the article's path in the version imported before `ref`. "
-                    "`back`: its path in `ref`."
+                    "With `from`: the article's path in `from`. Otherwise `forward`: its path in "
+                    "the version imported before `ref`; `back`: its path in `ref`."
                 ),
             ),
         ],
         ref: str | None = None,
         direction: Annotated[
             RenameDirection,
-            Query(description="`forward` (default): old to new path; `back`: new to old."),
+            Query(
+                description=(
+                    "`forward` (default): old to new path; `back`: new to old. Ignored with `from`."
+                )
+            ),
         ] = RenameDirection.FORWARD,
+        from_ref: Annotated[
+            str | None,
+            Query(
+                alias="from",
+                description=(
+                    "The exact imported ref `path` is from: the renames of every version between "
+                    "it and `ref` are followed, either way. None: one hop by `direction`."
+                ),
+            ),
+        ] = None,
     ) -> RenameAnswer:
-        """Follow `path` one hop across the renames git saw when `ref` was imported.
+        """Follow `path` across the renames git saw when versions were imported.
+
+        With `from`, `path` is from that version, and the rename maps between it and `ref` are
+        followed hop by hop (older to newer or back): `new_path` is its path in `ref`. Versions
+        with no import link between them (another branch, a version removed in between) give
+        `null`. Without `from`, one hop across the renames git saw when `ref` was imported.
 
         `renamed` is `null` when it was not moved (or no renames are known). An unknown library
         or version, or a version without an active manifest, is a 404 instead.
@@ -267,13 +286,18 @@ def build_router(
             path: The path to follow.
             ref: Exact imported ref; none: the default version.
             direction: `forward` or `back`.
+            from_ref: The version `path` is from; none: one hop by `direction`.
 
         Returns:
             The move, or `null` in `renamed`.
         """
         found = await resolve_renamed_path(
             ResolveRenamedPathQuery(
-                library=f"/{owner}/{repo}", ref=ref, path=path, direction=direction
+                library=f"/{owner}/{repo}",
+                ref=ref,
+                path=path,
+                direction=direction,
+                from_ref=from_ref,
             )
         )
         return RenameAnswer(renamed=found)

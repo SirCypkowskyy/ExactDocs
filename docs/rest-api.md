@@ -87,14 +87,21 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   the `path` it names (which removes it from every version). Listings, tag counts and search see them at once (the tag
   copies on chunks are refreshed, nothing is chunked again). A path no version has is accepted and
   waits for one. An unknown library is 404; a value that cannot be a tag is 422 `invalid_tags`.
-- **Renames**: `GET /libraries/{owner}/{repo}/renamed-path?ref=&path=&direction=` follows `path` one
-  hop across the renames git saw when `ref` was imported (default version without `ref`).
+- **Renames**: `GET /libraries/{owner}/{repo}/renamed-path?ref=&from=&path=` answers where `path`
+  of version `from` is in `ref` (default version without `ref`). Each version names the one it
+  follows (the version its renames were detected against, also when nothing moved), and the rename
+  maps of every version between `from` and `ref` are followed hop by hop, in either order of
+  import (at most 100 versions apart): `new_path` is the path in `ref`, `old_path` the path asked
+  about, `similarity` the lowest of the moves. Versions with no import link between them (two
+  branches, a branch and a tag, a version removed in between) answer `null`, and so does a path
+  renamed and later dropped before `ref`: never a path of another version. Without `from`, one hop across the renames git saw when `ref` was imported:
   `direction=forward` (default): `path` is from the version imported before `ref`; `back`: `path`
   is an article of `ref`. It answers 200 `{"renamed": {"library", "ref", "from_ref", "old_path",
   "new_path", "similarity"} | null}`; `null` means the path was not moved (or no renames are
-  known; nothing is guessed). An unknown library or version, or one without an active manifest,
-  is 404 `not_found`. Across several versions, ask once per version and chain the answers; a
-  branch's map builds up over its syncs. Adding an older tag after a newer one (`v1.3.0` after
+  known; nothing is guessed). An unknown library or version (`ref` or `from`), or a `ref` without
+  an active manifest, is 404 `not_found`. A branch's map builds up over its syncs; it links to no
+  other version. A version imported before #201 where nothing moved has no link until it is
+  imported again. Adding an older tag after a newer one (`v1.3.0` after
   `v1.4.0`) also detects the newer tag's map again, against the older one, so the order versions
   are added in does not matter.
 - **Refs containing `/`**: library IDs are `/{owner}/{repo}` in the path. A ref may only be the

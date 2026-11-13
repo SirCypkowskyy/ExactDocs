@@ -8,7 +8,6 @@ import {
   orderVersions,
   pathInVersion,
   pinChoices,
-  type RenamedPath,
   type RenameLookup,
   repoWebUrl,
   resolveVersion,
@@ -208,56 +207,80 @@ describe("showFileName", () => {
 });
 
 describe("pathInVersion", () => {
-  // `guide/setup.md` of v1.3.0 became `guide/install.md` in v1.4.0 (v1.4.0 was imported after v1.3.0).
-  const setupToInstall: RenamedPath = {
-    library: "/a/b",
-    ref: "v1.4.0",
-    from_ref: "v1.3.0",
-    old_path: "guide/setup.md",
-    new_path: "guide/install.md",
-    similarity: 92,
+  // Imported in order v1.2.0, v1.3.0, v1.4.0; v1.4.0 renamed `guide/setup.md` of v1.3.0 to
+  // `guide/install.md`. The server walks the versions between `from` and `to`.
+  const moves: Record<string, [string, string]> = {
+    "v1.2.0>v1.4.0": ["guide/setup.md", "guide/install.md"],
+    "v1.3.0>v1.4.0": ["guide/setup.md", "guide/install.md"],
+    "v1.4.0>v1.2.0": ["guide/install.md", "guide/setup.md"],
+    "v1.4.0>v1.3.0": ["guide/install.md", "guide/setup.md"],
   };
-  const map: RenameLookup = async (ref, path, direction) => {
-    if (ref !== "v1.4.0") return null;
-    if (direction === "forward") return path === "guide/setup.md" ? setupToInstall : null;
-    return path === "guide/install.md" ? setupToInstall : null;
+  const asked: string[] = [];
+  const server: RenameLookup = async (from, to, path) => {
+    asked.push(`${from}>${to}`);
+    const [old, moved] = moves[`${from}>${to}`] ?? [];
+    if (old !== path || !moved) return null;
+    return {
+      library: "/a/b",
+      ref: to,
+      from_ref: from,
+      old_path: path,
+      new_path: moved,
+      similarity: 92,
+    };
   };
 
-  it("asks the rename map of the newer version when switching forward", async () => {
-    expect(await pathInVersion(map, "v1.3.0", "v1.4.0", "guide/setup.md")).toBe("guide/install.md");
-  });
-
-  it("follows the rename back when switching to the older version", async () => {
-    expect(await pathInVersion(map, "v1.4.0", "v1.3.0", "guide/install.md")).toBe("guide/setup.md");
-  });
-
-  it("keeps a path the map has not moved", async () => {
-    expect(await pathInVersion(map, "v1.3.0", "v1.4.0", "guide/auth.md")).toBe("guide/auth.md");
-  });
-
-  it("ignores a rename from a version other than the one switched from", async () => {
-    // v1.4.0's map is from v1.3.0: from v1.2.0, `guide/setup.md` may be another file.
-    expect(await pathInVersion(map, "v1.2.0", "v1.4.0", "guide/setup.md")).toBe("guide/setup.md");
-    expect(await pathInVersion(map, "v1.4.0", "v1.2.0", "guide/install.md")).toBe(
+  it("follows a rename to the next version and back", async () => {
+    expect(await pathInVersion(server, "v1.3.0", "v1.4.0", "guide/setup.md")).toBe(
       "guide/install.md",
+    );
+    expect(await pathInVersion(server, "v1.4.0", "v1.3.0", "guide/install.md")).toBe(
+      "guide/setup.md",
     );
   });
 
-  it("keeps the path when the map cannot be asked", async () => {
+  it("follows a rename made in a version the switch skips, with one lookup (#201)", async () => {
+    asked.length = 0;
+    expect(await pathInVersion(server, "v1.2.0", "v1.4.0", "guide/setup.md")).toBe(
+      "guide/install.md",
+    );
+    expect(asked).toEqual(["v1.2.0>v1.4.0"]);
+    expect(await pathInVersion(server, "v1.4.0", "v1.2.0", "guide/install.md")).toBe(
+      "guide/setup.md",
+    );
+  });
+
+  it("keeps a path that did not move", async () => {
+    expect(await pathInVersion(server, "v1.2.0", "v1.4.0", "guide/auth.md")).toBe("guide/auth.md");
+  });
+
+  it("ignores an answer about other versions", async () => {
+    const stray: RenameLookup = async () => ({
+      library: "/a/b",
+      ref: "v1.4.0",
+      from_ref: "v1.3.0",
+      old_path: "guide/setup.md",
+      new_path: "guide/install.md",
+      similarity: 92,
+    });
+    expect(await pathInVersion(stray, "v1.2.0", "v1.4.0", "guide/setup.md")).toBe("guide/setup.md");
+  });
+
+  it("keeps the path when the server cannot be asked", async () => {
     const down: RenameLookup = () => Promise.reject(new Error("offline"));
     expect(await pathInVersion(down, "v1.3.0", "v1.4.0", "guide/setup.md")).toBe("guide/setup.md");
   });
 
   it("asks nothing for the same version", async () => {
-    let asked = 0;
+    let count = 0;
     const counting: RenameLookup = async () => {
-      asked++;
+      count++;
       return null;
     };
     expect(await pathInVersion(counting, "v1.4.0", "v1.4.0", "guide/setup.md")).toBe(
       "guide/setup.md",
     );
-    expect(asked).toBe(0);
+    expect(count).toBe(0);
   });
 });
 

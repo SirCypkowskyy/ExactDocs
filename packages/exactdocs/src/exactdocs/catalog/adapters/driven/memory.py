@@ -410,13 +410,18 @@ class InMemoryManifestRepository:
         return tuple(sorted(found.renames, key=lambda r: r.old_path))[:limit] if found else ()
 
     async def replace_renames(
-        self, manifest_id: ManifestId, renames: Sequence[ManifestRename]
+        self,
+        manifest_id: ManifestId,
+        renames: Sequence[ManifestRename],
+        *,
+        renamed_from: VersionRef | None,
     ) -> None:
         """Keep the renames into the manifest's entries, one per old path, as its whole map.
 
         Args:
             manifest_id: The manifest.
             renames: The new rename map.
+            renamed_from: The version the map was detected against.
         """
         found = self.manifests.get(manifest_id)
         if found is None:
@@ -426,7 +431,9 @@ class InMemoryManifestRepository:
         for r in renames:
             if r.new_path in paths:
                 kept.setdefault(r.old_path, r)
-        self.manifests[manifest_id] = replace(found, renames=tuple(kept.values()))
+        self.manifests[manifest_id] = replace(
+            found, renames=tuple(kept.values()), renamed_from=renamed_from
+        )
 
     async def list_paths(self, manifest_id: ManifestId, *, limit: int) -> Sequence[str]:
         """Return up to ``limit`` article paths of the manifest, sorted.
