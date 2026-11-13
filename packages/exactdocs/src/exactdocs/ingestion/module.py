@@ -35,6 +35,7 @@ from exactdocs.ingestion.models import (
     GitRename,
     ImportedRef,
     Job,
+    KnownLibrary,
     PathSelection,
     TagRule,
 )
@@ -52,6 +53,7 @@ from exactdocs.ingestion.ports.driven import (
     JobHandler,
     JobRepository,
     JobRunner,
+    KnownLibraries,
     LibraryIds,
     LibraryLocks,
     LibrarySettingsStore,
@@ -72,6 +74,7 @@ from exactdocs.ingestion.ports.driven import (
 from exactdocs.ingestion.ports.driving import (
     AddLibrary,
     AddVersion,
+    ApplySources,
     CheckRepository,
     DisableAutoSync,
     EnqueueJob,
@@ -81,6 +84,7 @@ from exactdocs.ingestion.ports.driving import (
     ListLatestJobs,
     ListLibraryJobs,
     ListRepositoryRefs,
+    PlanSources,
     PreviewRepository,
     QueueEmbedding,
     RecoverJobs,
@@ -100,6 +104,7 @@ from exactdocs.ingestion.ports.driving import (
 from exactdocs.ingestion.use_cases import (
     AddLibraryUseCase,
     AddVersionUseCase,
+    ApplySourcesUseCase,
     CheckRepositoryUseCase,
     CollectGarbageUseCase,
     DisableAutoSyncUseCase,
@@ -115,6 +120,7 @@ from exactdocs.ingestion.use_cases import (
     ListLatestJobsUseCase,
     ListLibraryJobsUseCase,
     ListRepositoryRefsUseCase,
+    PlanSourcesUseCase,
     PreviewRepositoryUseCase,
     QueueEmbeddingUseCase,
     RechunkLibraryUseCase,
@@ -128,6 +134,7 @@ from exactdocs.ingestion.use_cases import (
     RunNextJobUseCase,
     RunScheduledChecksUseCase,
     SetAutoSyncUseCase,
+    SourcesReader,
     SubmitQueuedJobsUseCase,
     SwitchScheduleUseCase,
     SyncLibraryUseCase,
@@ -377,6 +384,18 @@ class _NoAutoSyncs:
         return False
 
 
+class _NoKnownLibraries:
+    """The default ``known_libraries`` of ``build``: no library is known."""
+
+    async def all(self) -> list[KnownLibrary]:
+        """List no library.
+
+        Returns:
+            Nothing.
+        """
+        return []
+
+
 class _NoSwitch:
     """The default ``schedule_switch`` of ``build``: no tick to turn on or off."""
 
@@ -409,6 +428,8 @@ class IngestionModule:
     """Creates a library from a git URL and queues its first import."""
     add_version: AddVersion
     """Pins another ref of a library and queues its import."""
+    apply_sources: ApplySources
+    """Applies a sources file library by library."""
     check_repository: CheckRepository
     """Validates a git URL and proposes a library ID, saving nothing."""
     disable_auto_sync: DisableAutoSync
@@ -427,6 +448,8 @@ class IngestionModule:
     """Lists a page of a library's jobs."""
     list_repository_refs: ListRepositoryRefs
     """Lists a repository's branches and tags."""
+    plan_sources: PlanSources
+    """Compares a sources file with the instance, writing nothing."""
     preview_repository: PreviewRepository
     """Lists the files an import would take, importing nothing."""
     queue_embedding: QueueEmbedding
@@ -483,6 +506,7 @@ class IngestionModule:
         settings: LibrarySettingsStore | None = None,
         embedder: VersionEmbedder | None = None,
         checkpoints: Checkpoints | None = None,
+        known_libraries: KnownLibraries | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -523,6 +547,7 @@ class IngestionModule:
             settings: Where edited settings are stored; None: no library can be edited.
             embedder: Embeds versions; None: no ``embed`` job.
             checkpoints: Makes the ``embed`` job's batches durable steps.
+            known_libraries: Lists the libraries, for a sources file; None: none is known.
 
         Returns:
             The module.
@@ -553,7 +578,7 @@ class IngestionModule:
                 ),
             }
         enqueue_job = EnqueueJobUseCase(jobs=jobs, clock=clock, handlers=handlers, runner=runner)
-        none = _NoLibrarySources()
+        sources = sources or _NoLibrarySources()
         vault = vault or _NoCredentials()
         schedules = auto_syncs or _NoAutoSyncs()
         switch = schedule_switch or _NoSwitch()
@@ -562,39 +587,84 @@ class IngestionModule:
         )
         sync_library = SyncLibraryUseCase(
             remote=remote,
-            sources=sources or none,
+            sources=sources,
             jobs=jobs,
             clock=clock,
             enqueue_job=enqueue_job,
             vault=vault,
         )
+        add_library = AddLibraryUseCase(
+            remote=remote,
+            library_ids=library_ids,
+            libraries=libraries,
+            enqueue_job=enqueue_job,
+            vault=vault,
+            tree=tree,
+        )
+        add_version = AddVersionUseCase(
+            remote=remote,
+            sources=sources,
+            jobs=jobs,
+            enqueue_job=enqueue_job,
+            vault=vault,
+        )
+        remove_library = RemoveLibraryUseCase(
+            jobs=jobs,
+            removals=removals,
+            index=index,
+            enqueue_job=enqueue_job,
+            vault=vault,
+            schedules=schedules,
+            switch=switch,
+        )
+        update_library_settings = UpdateLibrarySettingsUseCase(
+            sources=sources,
+            settings=settings or _NoSettings(),
+            jobs=jobs,
+            enqueue_job=enqueue_job,
+            locks=settings_locks or TagLocks(),
+        )
         return cls(
-            add_library=AddLibraryUseCase(
-                remote=remote,
-                library_ids=library_ids,
-                libraries=libraries,
-                enqueue_job=enqueue_job,
-                vault=vault,
-                tree=tree,
-            ),
-            add_version=AddVersionUseCase(
-                remote=remote,
-                sources=sources or _NoLibrarySources(),
-                jobs=jobs,
-                enqueue_job=enqueue_job,
-                vault=vault,
+            add_library=add_library,
+            add_version=add_version,
+            apply_sources=ApplySourcesUseCase(
+                reader=SourcesReader(
+                    known=known_libraries or _NoKnownLibraries(),
+                    sources=sources,
+                    jobs=jobs,
+                    schedules=schedules,
+                ),
+                add_library=add_library,
+                add_version=add_version,
+                update_library_settings=update_library_settings,
+                set_auto_sync=SetAutoSyncUseCase(
+                    sources=sources, schedules=schedules, switch=switch
+                ),
+                disable_auto_sync=DisableAutoSyncUseCase(
+                    sources=sources, schedules=schedules, switch=switch
+                ),
+                remove_version=remove_version,
+                remove_library=remove_library,
             ),
             check_repository=CheckRepositoryUseCase(remote=remote, library_ids=library_ids),
             disable_auto_sync=DisableAutoSyncUseCase(
-                sources=sources or none, schedules=schedules, switch=switch
+                sources=sources, schedules=schedules, switch=switch
             ),
             enqueue_job=enqueue_job,
-            get_auto_sync=GetAutoSyncUseCase(sources=sources or none, schedules=schedules),
+            get_auto_sync=GetAutoSyncUseCase(sources=sources, schedules=schedules),
             get_job=GetJobUseCase(jobs=jobs),
             get_library_access=GetLibraryAccessUseCase(vault=vault, library_ids=library_ids),
             list_latest_jobs=ListLatestJobsUseCase(jobs=jobs),
             list_library_jobs=ListLibraryJobsUseCase(jobs=jobs),
             list_repository_refs=ListRepositoryRefsUseCase(remote=remote),
+            plan_sources=PlanSourcesUseCase(
+                reader=SourcesReader(
+                    known=known_libraries or _NoKnownLibraries(),
+                    sources=sources,
+                    jobs=jobs,
+                    schedules=schedules,
+                )
+            ),
             preview_repository=PreviewRepositoryUseCase(remote=remote, tree=tree or _NoTree()),
             queue_embedding=QueueEmbeddingUseCase(queue=embedding),
             recover_jobs=RecoverJobsUseCase(
@@ -602,26 +672,18 @@ class IngestionModule:
             ),
             reimport_version=ReimportVersionUseCase(
                 remote=remote,
-                sources=sources or none,
+                sources=sources,
                 jobs=jobs,
                 enqueue_job=enqueue_job,
                 vault=vault,
             ),
-            remove_library=RemoveLibraryUseCase(
-                jobs=jobs,
-                removals=removals,
-                index=index,
-                enqueue_job=enqueue_job,
-                vault=vault,
-                schedules=schedules,
-                switch=switch,
-            ),
+            remove_library=remove_library,
             remove_version=remove_version,
             run_job=RunJobUseCase(jobs=jobs, clock=clock, handlers=handlers, hooks=recovery_hooks),
             run_next_job=RunNextJobUseCase(jobs=jobs, clock=clock, handlers=handlers),
             run_scheduled_checks=RunScheduledChecksUseCase(
                 schedules=schedules,
-                sources=sources or none,
+                sources=sources,
                 remote=remote,
                 vault=vault,
                 jobs=jobs,
@@ -631,22 +693,14 @@ class IngestionModule:
                 remove_version=remove_version,
                 switch=switch,
             ),
-            set_auto_sync=SetAutoSyncUseCase(
-                sources=sources or none, schedules=schedules, switch=switch
-            ),
+            set_auto_sync=SetAutoSyncUseCase(sources=sources, schedules=schedules, switch=switch),
             submit_queued_jobs=SubmitQueuedJobsUseCase(jobs=jobs, runner=runner),
             switch_schedule=SwitchScheduleUseCase(schedules=schedules, switch=switch),
             sync_library=sync_library,
             tag_article=TagArticleUseCase(
                 tags=manual_tags or _NoManualTags(), index=index, locks=tag_locks or TagLocks()
             ),
-            update_library_settings=UpdateLibrarySettingsUseCase(
-                sources=sources or none,
-                settings=settings or _NoSettings(),
-                jobs=jobs,
-                enqueue_job=enqueue_job,
-                locks=settings_locks or TagLocks(),
-            ),
+            update_library_settings=update_library_settings,
         )
 
 

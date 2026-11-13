@@ -112,6 +112,16 @@ from exactdocs.ingestion.constants._models import (
     JobKind,
 )
 from exactdocs.ingestion.constants._secrets import OPENSSH_MAGIC
+from exactdocs.ingestion.constants._sources import (
+    FULL_SHA,
+    MAX_SOURCE_REF,
+    MAX_SOURCE_REFS,
+    MAX_SOURCES,
+    SHORT_SHA,
+    SOURCE_MISMATCH,
+    SOURCES_SCHEMA_DIALECT,
+    SOURCES_SCHEMA_TITLE,
+)
 from exactdocs.ingestion.constants._use_cases import (
     KNOWN_BATCH,
     MAX_CONTROL_RATIO,
@@ -153,6 +163,7 @@ __all__ = [
     "EVERY_MINUTE",
     "FETCH_TIMEOUT_SECONDS",
     "FLAT_HOSTS",
+    "FULL_SHA",
     "GLOB_CHARS",
     "HEADS",
     "IMAGE_TYPES",
@@ -189,6 +200,9 @@ __all__ = [
     "MAX_PROCESSES",
     "MAX_RENAMES",
     "MAX_SIMILARITY",
+    "MAX_SOURCES",
+    "MAX_SOURCE_REF",
+    "MAX_SOURCE_REFS",
     "MAX_STDERR",
     "MAX_STDOUT",
     "MAX_TAG_PATTERN",
@@ -219,6 +233,10 @@ __all__ = [
     "SCHEDULE",
     "SCHEDULE_WORKFLOW",
     "SET_AUTO_SYNC_DESCRIPTION",
+    "SHORT_SHA",
+    "SOURCES_SCHEMA_DIALECT",
+    "SOURCES_SCHEMA_TITLE",
+    "SOURCE_MISMATCH",
     "STALE_MARGIN_SECONDS",
     "STEPS_VERSION",
     "TAGS",

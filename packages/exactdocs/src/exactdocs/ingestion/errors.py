@@ -639,3 +639,19 @@ class EmbeddingUnavailableError(DomainError):
             reason: Why the batch was not embedded.
         """
         super().__init__(reason)
+
+
+class InvalidSourcesError(ValidationError):
+    """A library of a sources file declares a setting the server cannot store."""
+
+    code = "invalid_sources"
+
+    def __init__(self, index: int, library_id: str, reason: str) -> None:
+        """Name the entry and say what is wrong with it.
+
+        Args:
+            index: The entry's position in ``libraries``, from 0.
+            library_id: The entry's library ID, or its URL's position when it has none.
+            reason: The underlying error's message (it never repeats a URL).
+        """
+        super().__init__(f"libraries[{index}] ({library_id}): {reason}")

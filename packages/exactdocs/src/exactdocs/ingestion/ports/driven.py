@@ -24,6 +24,7 @@ from exactdocs.ingestion.models import (
     InstructionPolicy,
     Job,
     JobId,
+    KnownLibrary,
     NewLibrary,
     ParsedArticle,
     PathSelection,
@@ -585,6 +586,18 @@ class NewLibraries(Protocol):
 
         Args:
             library_id: The ID ``add`` returned.
+        """
+        ...
+
+
+class KnownLibraries(Protocol):
+    """Which libraries the instance has (the catalog, in ingestion's words)."""
+
+    async def all(self) -> Sequence[KnownLibrary]:
+        """Return every library, with versions or not.
+
+        Returns:
+            The libraries.
         """
         ...
 

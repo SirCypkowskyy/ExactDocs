@@ -224,6 +224,8 @@ def create_app(container: Container) -> FastAPI:
             reimport_version=container.ingestion.reimport_version,
             tag_article=container.ingestion.tag_article,
             update_library_settings=container.ingestion.update_library_settings,
+            plan_sources=container.ingestion.plan_sources,
+            apply_sources=container.ingestion.apply_sources,
         )
     )
     protected.include_router(

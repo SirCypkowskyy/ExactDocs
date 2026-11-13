@@ -8,6 +8,8 @@ from exactdocs.ingestion.dtos import (
     AddedVersion,
     AddLibraryCommand,
     AddVersionCommand,
+    AppliedSources,
+    ApplySourcesCommand,
     AutoSyncOut,
     CheckedRepository,
     CheckRepositoryCommand,
@@ -22,6 +24,7 @@ from exactdocs.ingestion.dtos import (
     LibraryAccess,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
+    PlanSourcesCommand,
     PreviewRepositoryCommand,
     QueuedEmbedding,
     QueueEmbeddingCommand,
@@ -34,6 +37,7 @@ from exactdocs.ingestion.dtos import (
     RepositoryRefs,
     ScheduledChecks,
     SetAutoSyncCommand,
+    SourcesPlanOut,
     SyncedLibrary,
     SyncLibraryCommand,
     TagArticleCommand,
@@ -516,5 +520,48 @@ class QueueEmbedding(Protocol):
 
         Returns:
             How many jobs were queued.
+        """
+        ...
+
+
+class PlanSources(Protocol):
+    """Compare a sources file with the instance; nothing is written and nothing is queued.
+
+    The diff has four parts: ``create`` (declared libraries that do not exist), ``update`` (per
+    library, each managed setting that changes, the refs to add, the scheduled-check change, the
+    job the settings change queues and the ``manual`` versions it does not declare),
+    ``unchanged`` and ``undeclared``; plus per-entry ``errors`` such as ``source_mismatch``. The
+    git remote is not asked: a ref that does not exist fails at apply. Raises
+    ``InvalidSourcesError`` for a setting the server cannot store.
+    """
+
+    async def __call__(self, command: PlanSourcesCommand) -> SourcesPlanOut:
+        """Run the use case.
+
+        Args:
+            command: The file and whether to prune.
+
+        Returns:
+            The plan.
+        """
+        ...
+
+
+class ApplySources(Protocol):
+    """Plan again and apply it library by library: creations, then updates, then removals.
+
+    Removals (undeclared libraries and ``manual`` versions) happen only with ``prune``. One
+    library failing does not stop the others; its outcome carries the error. A second apply of
+    the same file, even while the first one's imports are queued, writes nothing.
+    """
+
+    async def __call__(self, command: ApplySourcesCommand) -> AppliedSources:
+        """Run the use case.
+
+        Args:
+            command: The file and whether to prune.
+
+        Returns:
+            The plan and the outcome per library.
         """
         ...

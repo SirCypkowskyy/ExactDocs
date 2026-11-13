@@ -12,6 +12,8 @@ from exactdocs.ingestion.dtos import (
     AddLibraryCommand,
     AddVersionBody,
     AddVersionCommand,
+    AppliedSources,
+    ApplySourcesCommand,
     AutoSyncIn,
     AutoSyncOut,
     CheckedRepository,
@@ -28,6 +30,7 @@ from exactdocs.ingestion.dtos import (
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
     ManualTagsIn,
+    PlanSourcesCommand,
     PreviewRepositoryCommand,
     ReimportedVersion,
     ReimportVersionBody,
@@ -38,17 +41,20 @@ from exactdocs.ingestion.dtos import (
     RepositoryPreview,
     RepositoryRefs,
     SetAutoSyncCommand,
+    SourcesPlanOut,
     SyncedLibrary,
     SyncLibraryCommand,
     TagArticleCommand,
     TaggedArticle,
     UpdatedLibrarySettings,
     UpdateLibrarySettingsCommand,
+    sources_json_schema,
 )
 from exactdocs.ingestion.models import SyncStatus
 from exactdocs.ingestion.ports.driving import (
     AddLibrary,
     AddVersion,
+    ApplySources,
     CheckRepository,
     DisableAutoSync,
     GetAutoSync,
@@ -57,6 +63,7 @@ from exactdocs.ingestion.ports.driving import (
     ListLatestJobs,
     ListLibraryJobs,
     ListRepositoryRefs,
+    PlanSources,
     PreviewRepository,
     ReimportVersion,
     RemoveLibrary,
@@ -100,6 +107,8 @@ def build_router(
     reimport_version: ReimportVersion,
     tag_article: TagArticle,
     update_library_settings: UpdateLibrarySettings,
+    plan_sources: PlanSources,
+    apply_sources: ApplySources,
     require_session: Callable[[Request], Awaitable[object]],
 ) -> APIRouter:
     """Expose adding a library, the repository checks and the job read side.
@@ -124,14 +133,17 @@ def build_router(
         reimport_version: Re-imports a tag version that moved upstream.
         tag_article: Sets an article path's manual tags.
         update_library_settings: Replaces a library's settings.
+        plan_sources: Compares a sources file with the instance.
+        apply_sources: Applies a sources file.
         require_session: Refuses (401) a request without a session cookie.
 
     Returns:
-        The router, with the job, removal, manual-tag and settings routes included.
+        The router, with the job, removal, manual-tag, settings and sources routes included.
     """
     router = APIRouter(tags=["ingestion"])
     router.include_router(_manual_tags_router(tag_article))
     router.include_router(_settings_router(update_library_settings))
+    router.include_router(_sources_router(plan_sources=plan_sources, apply_sources=apply_sources))
 
     @router.post("/repositories/check")
     async def check(command: CheckRepositoryCommand, request: Request) -> CheckedRepository:
@@ -742,5 +754,65 @@ def _settings_router(update_library_settings: UpdateLibrarySettings) -> APIRoute
             response.status_code = status.HTTP_202_ACCEPTED
             response.headers["Location"] = request.url_for("get_job", job_id=updated.job_id).path
         return updated
+
+    return router
+
+
+def _sources_router(*, plan_sources: PlanSources, apply_sources: ApplySources) -> APIRouter:
+    """Build the routes of the sources file (`exactdocs.sources.yaml`, TEAM-02).
+
+    Args:
+        plan_sources: Compares a sources file with the instance.
+        apply_sources: Applies it.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["ingestion"])
+
+    @router.get("/sources/schema", name="get_sources_schema")
+    async def schema() -> dict[str, object]:
+        """Return the JSON Schema of `exactdocs.sources.yaml` (also in `docs/schemas/`).
+
+        Returns:
+            The schema.
+        """
+        return sources_json_schema()
+
+    @router.post("/sources/plan", name="plan_sources")
+    async def plan(command: PlanSourcesCommand) -> SourcesPlanOut:
+        """Compare a sources file (sent as JSON) with the instance; nothing is written or queued.
+
+        `create` lists the declared libraries that do not exist; `update`, per library, each
+        managed setting that changes, the refs to add, the scheduled-check change, the job the
+        settings change queues and the `manual` versions the file does not declare; `unchanged`
+        and `undeclared` the rest. A setting an entry leaves out is not managed. `errors` lists
+        entries apply leaves alone (`source_mismatch`: the ID exists with another URL). The git
+        remote is not asked: a ref that does not exist fails at apply. 422 for an invalid file.
+
+        Args:
+            command: The file and whether to prune.
+
+        Returns:
+            The plan.
+        """
+        return await plan_sources(command)
+
+    @router.post("/sources/apply", name="apply_sources")
+    async def apply(command: ApplySourcesCommand) -> AppliedSources:
+        """Plan again, then create, update and (only with `prune`) remove, library by library.
+
+        A created library imports its first ref, then its other refs are added, then its
+        scheduled check is set. Settings are written only when they change, so applying the
+        same file again (even while its imports run) writes nothing. One library failing does
+        not stop the others: its outcome has `error`. Without `prune` nothing is removed.
+
+        Args:
+            command: The file and whether to prune.
+
+        Returns:
+            The plan and what was done per library.
+        """
+        return await apply_sources(command)
 
     return router

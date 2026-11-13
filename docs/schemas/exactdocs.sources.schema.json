@@ -1,0 +1,271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "AutoSyncIn": {
+      "additionalProperties": false,
+      "description": "How a library is checked on its own; the whole set (what is left out takes its default).",
+      "properties": {
+        "tag_pattern": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A glob over tag names (`v*`, `release-1.*`), case-sensitive: matching tags with a version\norder become `auto` versions. Null imports no tag.",
+          "title": "Tag Pattern"
+        },
+        "keep_last": {
+          "default": 5,
+          "description": "How many `auto` versions are kept, the newest; older ones are removed.",
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Keep Last",
+          "type": "integer"
+        },
+        "interval_minutes": {
+          "default": 60,
+          "description": "How often the library is checked.",
+          "maximum": 10080,
+          "minimum": 1,
+          "title": "Interval Minutes",
+          "type": "integer"
+        },
+        "sync_branches": {
+          "default": false,
+          "description": "Re-sync every branch version at each check.",
+          "title": "Sync Branches",
+          "type": "boolean"
+        }
+      },
+      "title": "AutoSyncIn",
+      "type": "object"
+    },
+    "ChunkingIn": {
+      "additionalProperties": false,
+      "description": "How a library's articles are cut into chunks (the defaults: one chunk per heading).",
+      "properties": {
+        "split_level": {
+          "default": 6,
+          "description": "The deepest heading that starts a chunk: 2 cuts at `#` and `##` only.",
+          "maximum": 6,
+          "minimum": 1,
+          "title": "Split Level",
+          "type": "integer"
+        },
+        "min_chars": {
+          "default": 0,
+          "description": "A chunk shorter than this is merged with the next one (the last with the one before), within\n`max_chars`; the text before the first heading is never merged. At most 8,000 when sent: no\nchunk is longer.",
+          "maximum": 1000000,
+          "minimum": 0,
+          "title": "Min Chars",
+          "type": "integer"
+        },
+        "max_chars": {
+          "anyOf": [
+            {
+              "maximum": 1000000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A chunk longer than this is cut again at its deeper headings; never inside a code block or\ntable. Null: no bound. At least `min_chars`, and at most 8,000 when sent: whatever the\nsettings, a section longer than 8,000 characters is split between its top-level blocks.",
+          "title": "Max Chars"
+        },
+        "chunker": {
+          "const": "markdown",
+          "default": "markdown",
+          "description": "`markdown`: cuts at headings with markdown-it-py (the only one supported).",
+          "title": "Chunker",
+          "type": "string"
+        }
+      },
+      "title": "ChunkingIn",
+      "type": "object"
+    },
+    "SourceLibrary": {
+      "additionalProperties": false,
+      "description": "One library of a sources file. A setting left out is not managed: never compared or changed.\n\n`include_paths`, `exclude_paths` and `tag_rules` are compared as sets, after the server's\nnormalization (a reordered list or a tag in other letter case is no change).",
+      "properties": {
+        "url": {
+          "description": "HTTPS, HTTP, SSH (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials.",
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Url",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "`/owner/repo`, any letter case; left out: the ID derived from `url`, as when a library is\nadded.",
+          "title": "Id"
+        },
+        "refs": {
+          "description": "The versions to have: tags, branches or full 40-character commit SHAs (a short SHA is\nrefused). The first one is imported when the library is created.",
+          "items": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Refs",
+          "type": "array"
+        },
+        "include_paths": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Folders, files or globs to import; empty: every `.md`/`.mdx` file (the repository's\n`context7.json` does not fill in a managed empty list). Left out: not managed.",
+          "title": "Include Paths"
+        },
+        "exclude_paths": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Folders, files or globs to leave out; they win. Left out: not managed.",
+          "title": "Exclude Paths"
+        },
+        "tag_rules": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/TagRuleIn"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Tags for articles by path, as a whole set. Left out: not managed.",
+          "title": "Tag Rules"
+        },
+        "chunking": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChunkingIn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How articles are cut into chunks. Left out: not managed."
+        },
+        "auto_sync": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AutoSyncIn"
+            },
+            {
+              "const": false,
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The scheduled check, as a whole (what it leaves out takes its default); `false` turns it\noff. Left out: not managed.",
+          "title": "Auto Sync"
+        }
+      },
+      "required": [
+        "url",
+        "refs"
+      ],
+      "title": "SourceLibrary",
+      "type": "object"
+    },
+    "TagRuleIn": {
+      "additionalProperties": false,
+      "description": "Articles whose path matches `pattern` (a glob like `docs/api/**`) get `tag`.",
+      "properties": {
+        "pattern": {
+          "description": "Glob over article paths, e.g. `docs/api/**`.",
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Pattern",
+          "type": "string"
+        },
+        "tag": {
+          "description": "The tag a matching article gets; normalized like every tag (lower-case, trimmed).",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Tag",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pattern",
+        "tag"
+      ],
+      "title": "TagRuleIn",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "`exactdocs.sources.yaml`: the libraries an instance should have, for code review.\n\nIt holds no credential: a private library is added in the UI with its credential first,\nthen managed by the file.",
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "The file format's version: 1.",
+      "title": "Version",
+      "type": "integer"
+    },
+    "libraries": {
+      "description": "The declared libraries, each ID once.",
+      "items": {
+        "$ref": "#/$defs/SourceLibrary"
+      },
+      "maxItems": 300,
+      "title": "Libraries",
+      "type": "array"
+    }
+  },
+  "required": [
+    "version"
+  ],
+  "title": "ExactDocs sources file (exactdocs.sources.yaml)",
+  "type": "object"
+}

@@ -782,6 +782,72 @@ def remove(
     _call(work())
 
 
+sources = App(
+    name="sources",
+    help="Declare libraries in exactdocs.sources.yaml, review the diff, apply it.",
+)
+app.command(sources)
+
+type PruneOption = Annotated[
+    bool,
+    Parameter(help="Also remove the libraries and manual versions the file does not declare."),
+]
+
+
+@sources.command(name="plan")
+def sources_plan(
+    file: Annotated[str, Parameter(help="The sources file, e.g. exactdocs.sources.yaml.")],
+    *,
+    prune: PruneOption = False,
+    json_output: JsonOption = False,
+    url: UrlOption = None,
+    token: TokenOption = None,
+) -> None:
+    """Show what applying the sources file would change; the server changes nothing.
+
+    Args:
+        file: The sources file, e.g. exactdocs.sources.yaml.
+        prune: Show the undeclared libraries and manual versions as removed.
+        json_output: Print JSON for scripts.
+        url: Server URL (default: EXACTDOCS_URL, config).
+        token: ExactDocs API token (default: EXACTDOCS_TOKEN, config); not a git token.
+    """
+
+    async def work() -> None:
+        """Plan the file."""
+        async with _api(url, token) as api:
+            await lib.plan_sources(api, file, prune=prune, as_json=json_output)
+
+    _call(work())
+
+
+@sources.command(name="apply")
+def sources_apply(
+    file: Annotated[str, Parameter(help="The sources file, e.g. exactdocs.sources.yaml.")],
+    *,
+    prune: PruneOption = False,
+    json_output: JsonOption = False,
+    url: UrlOption = None,
+    token: TokenOption = None,
+) -> None:
+    """Apply the sources file: create, update and, with --prune, remove libraries.
+
+    Args:
+        file: The sources file, e.g. exactdocs.sources.yaml.
+        prune: Also remove the libraries and manual versions the file does not declare.
+        json_output: Print JSON for scripts.
+        url: Server URL (default: EXACTDOCS_URL, config).
+        token: ExactDocs API token (default: EXACTDOCS_TOKEN, config); not a git token.
+    """
+
+    async def work() -> None:
+        """Apply the file."""
+        async with _api(url, token) as api:
+            await lib.apply_sources(api, file, prune=prune, as_json=json_output)
+
+    _call(work())
+
+
 tokens = App(name="token", help="API tokens; they need your password, not a token.")
 app.command(tokens)
 

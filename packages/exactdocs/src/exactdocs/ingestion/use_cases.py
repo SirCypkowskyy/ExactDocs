@@ -12,8 +12,9 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, contextmanag
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import partial
+from itertools import starmap
 from pathlib import Path
-from typing import BinaryIO, Self
+from typing import BinaryIO, Literal, Self
 
 from exactdocs.ingestion.constants import (
     ACTIVE_JOB_STATES,
@@ -57,6 +58,8 @@ from exactdocs.ingestion.dtos import (
     AddedVersion,
     AddLibraryCommand,
     AddVersionCommand,
+    AppliedSources,
+    ApplySourcesCommand,
     AutoSyncOut,
     CheckedRepository,
     CheckRepositoryCommand,
@@ -73,8 +76,10 @@ from exactdocs.ingestion.dtos import (
     LatestJob,
     LatestJobs,
     LibraryAccess,
+    LibraryOutcome,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
+    PlanSourcesCommand,
     PreviewRepositoryCommand,
     QueuedEmbedding,
     QueueEmbeddingCommand,
@@ -88,6 +93,8 @@ from exactdocs.ingestion.dtos import (
     RepositoryRefs,
     ScheduledChecks,
     SetAutoSyncCommand,
+    SourceLibrary,
+    SourcesPlanOut,
     SyncedLibrary,
     SyncedVersion,
     SyncLibraryCommand,
@@ -106,6 +113,7 @@ from exactdocs.ingestion.errors import (
     ImportNotPinnedError,
     ImportTooLargeError,
     InvalidContext7Error,
+    InvalidSourcesError,
     JobNotFoundError,
     LibraryIdTakenError,
     NoArticlesError,
@@ -132,6 +140,8 @@ from exactdocs.ingestion.models import (
     Context7Config,
     CopiedVersion,
     Credential,
+    CurrentLibrary,
+    DeclaredLibrary,
     EmbeddedBatch,
     EmbedPlan,
     FetchedFile,
@@ -147,6 +157,7 @@ from exactdocs.ingestion.models import (
     Job,
     JobId,
     JobState,
+    LibraryUpdate,
     NewLibrary,
     ParsedArticle,
     PathSelection,
@@ -159,6 +170,7 @@ from exactdocs.ingestion.models import (
     RepositoryUrl,
     ResolvedRef,
     SettingsChange,
+    SourcesPlan,
     StoredArticleTags,
     SyncErrorCode,
     SyncStatus,
@@ -173,6 +185,7 @@ from exactdocs.ingestion.models import (
     parse_article,
     parse_context7,
     plan_auto_imports,
+    plan_sources,
     previous_version,
     readme_summary,
     ref_tips,
@@ -194,6 +207,7 @@ from exactdocs.ingestion.ports.driven import (
     JobProgress,
     JobRepository,
     JobRunner,
+    KnownLibraries,
     LibraryIds,
     LibraryLocks,
     LibrarySettingsStore,
@@ -211,12 +225,23 @@ from exactdocs.ingestion.ports.driven import (
     VersionEmbedder,
     VersionPublisher,
 )
-from exactdocs.ingestion.ports.driving import EnqueueJob, RemoveVersion, SyncLibraryFromRefs
+from exactdocs.ingestion.ports.driving import (
+    AddLibrary,
+    AddVersion,
+    DisableAutoSync,
+    EnqueueJob,
+    RemoveLibrary,
+    RemoveVersion,
+    SetAutoSync,
+    SyncLibraryFromRefs,
+    UpdateLibrarySettings,
+)
 from exactdocs_kernel import (
     Clock,
     DomainError,
     NotFoundError,
     Page,
+    ValidationError,
     decode_cursor,
     encode_cursor,
 )
@@ -858,6 +883,27 @@ def _context7_out(context7: _Context7Read) -> Context7Out | None:
     return None if context7.config is None else Context7Out.from_model(context7.config)
 
 
+def _chunking_of(wanted: ChunkingIn | None) -> ChunkingConfig | None:
+    """Validate chunking settings sent at the boundary.
+
+    Args:
+        wanted: The settings, or None.
+
+    Returns:
+        The domain value, or None when none was sent.
+    """
+    if wanted is None:
+        return None
+    config = ChunkingConfig(
+        split_depth=wanted.split_level,
+        min_chars=wanted.min_chars,
+        max_chars=wanted.max_chars,
+        chunker=wanted.chunker,
+    )
+    config.refuse_sizes_above_section_bound()
+    return config
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AddLibraryUseCase:
     """Implements ``ports.driving.AddLibrary``."""
@@ -879,7 +925,9 @@ class AddLibraryUseCase:
         """Check everything that can be checked first, then store the library and queue its import.
 
         Sent without paths, the library takes those of the root ``context7.json`` at the pinned
-        commit (LIB-06); paths a user sends win. Without paths, ``PreviewBusyError`` (429) when
+        commit (LIB-06), unless ``context7_paths`` is false; paths a user sends win. A chunking
+        sent is stored with the library, so its first import already uses it. Without paths,
+        ``PreviewBusyError`` (429) when
         the file cannot be read because every preview slot stays busy, before anything is
         stored: changing the paths later re-processes every version, so guessing "every file"
         is no harmless default. The file's title, description and rules are applied by the
@@ -901,20 +949,19 @@ class AddLibraryUseCase:
         credential = _credential(command.credential, repository)
         selection = PathSelection.of(command.include_paths, command.exclude_paths)
         tag_rules = TagRule.many([(r.pattern, r.tag) for r in command.tag_rules])
+        chunking = _chunking_of(command.chunking)
         library_id = ProposedId(command.library_id or repository.library_id)
         if await self.library_ids.is_taken(library_id):
             raise LibraryIdTakenError(library_id)
         refs = await self.remote.list_refs(repository, credential=credential)
         resolved = resolve_ref(refs, command.ref)
         # Without paths the file decides them for good: a busy slot is a 429, not "every file".
+        prefill = command.context7_paths and not (selection.include or selection.exclude)
         context7 = await _fetch_context7(
-            self.tree,
-            repository,
-            resolved,
-            credential,
-            busy_raises=not (selection.include or selection.exclude),
+            self.tree, repository, resolved, credential, busy_raises=prefill
         )
-        selection = _prefilled(selection, context7)
+        if prefill:
+            selection = _prefilled(selection, context7)
         created = await self.libraries.add(
             NewLibrary(
                 library_id=library_id,
@@ -924,6 +971,7 @@ class AddLibraryUseCase:
                 default_branch=refs.default_branch,
                 selection=selection,
                 tag_rules=tag_rules,
+                chunking=chunking,
             )
         )
         try:
@@ -1577,19 +1625,7 @@ class UpdateLibrarySettingsUseCase:
         library = command.library.lower()
         selection = PathSelection.of(command.include_paths, command.exclude_paths)
         tag_rules = TagRule.many([(r.pattern, r.tag) for r in command.tag_rules])
-        wanted = command.chunking
-        sent = (
-            None
-            if wanted is None
-            else ChunkingConfig(
-                split_depth=wanted.split_level,
-                min_chars=wanted.min_chars,
-                max_chars=wanted.max_chars,
-                chunker=wanted.chunker,
-            )
-        )
-        if sent is not None:
-            sent.refuse_sizes_above_section_bound()
+        sent = _chunking_of(command.chunking)
         async with self.locks.of(library):
             change, chunking, refs, job_id = await self._update(library, selection, tag_rules, sent)
         return UpdatedLibrarySettings(
@@ -4379,3 +4415,342 @@ class EmbedVersionUseCase:
             except EmbeddingUnavailableError:
                 await self.sleep(EMBED_RETRY_SECONDS * 2**attempt)
         return await self.embedder.embed_batch(library, ref, plan)
+
+
+# ---------------------------------------------------------------- the sources file (TEAM-02)
+
+
+def _declared_entry(index: int, entry: SourceLibrary) -> DeclaredLibrary:
+    """Normalize one entry of a sources file the way the server stores its settings.
+
+    Args:
+        index: Its position in ``libraries``.
+        entry: The entry.
+
+    Returns:
+        The declared library.
+
+    Raises:
+        InvalidSourcesError: A setting cannot be stored (the URL, a pattern, a tag, the chunking
+            or the schedule).
+    """
+    named = entry.id or f"url of entry {index}"
+    try:
+        url = RepositoryUrl.parse(entry.url)
+        library_id = (entry.id or url.library_id).lower()
+        named = library_id
+        selection = PathSelection.of(entry.include_paths or (), entry.exclude_paths or ())
+        schedule = entry.auto_sync
+        return DeclaredLibrary(
+            library_id=library_id,
+            url=url,
+            refs=tuple(entry.refs),
+            include=None if entry.include_paths is None else selection.include,
+            exclude=None if entry.exclude_paths is None else selection.exclude,
+            tag_rules=None
+            if entry.tag_rules is None
+            else TagRule.many([(r.pattern, r.tag) for r in entry.tag_rules]),
+            chunking=_chunking_of(entry.chunking),
+            manages_auto_sync=schedule is not None,
+            auto_sync=AutoSync(library=library_id, **schedule.model_dump()) if schedule else None,
+        )
+    except ValidationError as exc:
+        raise InvalidSourcesError(index, named, str(exc)) from None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SourcesReader:
+    """Reads the instance a sources file is compared with, and computes the plan."""
+
+    known: KnownLibraries
+    """Lists the libraries."""
+    sources: LibrarySources
+    """Reads a library's repository, settings and versions."""
+    jobs: JobRepository
+    """Tells which imports are queued or running."""
+    schedules: AutoSyncStore
+    """Reads the libraries' scheduled checks."""
+
+    async def plan(self, command: PlanSourcesCommand) -> SourcesPlan:
+        """Normalize the file, read the instance and compare them.
+
+        Args:
+            command: The file and whether to prune.
+
+        Returns:
+            The plan.
+        """
+        declared = list(starmap(_declared_entry, enumerate(command.sources.libraries)))
+        current = [
+            found
+            for known in await self.known.all()
+            if (found := await self._current(known.library_id))
+        ]
+        return plan_sources(declared, current, prune=command.prune)
+
+    async def _current(self, library: str) -> CurrentLibrary | None:
+        """Read one library as a sources file can declare it.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            The library, or None when it was removed meanwhile.
+        """
+        try:
+            source = await self.sources.get(library)
+            versions = await self.sources.imported_versions(library)
+        except NotFoundError:
+            return None
+        busy = _busy_refs(await self.jobs.list_unfinished_for_library(library))
+        return CurrentLibrary(
+            library_id=library.lower(),
+            source=source,
+            versions=tuple(versions),
+            busy_refs=frozenset(busy),
+            auto_sync=await self.schedules.get(library),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PlanSourcesUseCase:
+    """Implements ``ports.driving.PlanSources``."""
+
+    reader: SourcesReader
+    """Computes the plan."""
+
+    async def __call__(self, command: PlanSourcesCommand) -> SourcesPlanOut:
+        """Compare the file with the instance; only reads.
+
+        Args:
+            command: The file and whether to prune.
+
+        Returns:
+            The plan.
+        """
+        return SourcesPlanOut.from_model(await self.reader.plan(command))
+
+
+@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- filled step by step
+class _Applying:
+    """What apply has done so far for one library."""
+
+    jobs: list[str] = field(default_factory=list)
+    """The jobs queued."""
+    wrote: bool = False
+    """Whether a write succeeded: a later failure leaves the library changed, not ``failed``."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ApplySourcesUseCase:
+    """Implements ``ports.driving.ApplySources`` with ingestion's own driving ports."""
+
+    reader: SourcesReader
+    """Computes the plan."""
+    add_library: AddLibrary
+    """Creates a library and queues its first import."""
+    add_version: AddVersion
+    """Queues the import of another ref."""
+    update_library_settings: UpdateLibrarySettings
+    """Stores paths, tag rules and chunking, and queues the re-processing."""
+    set_auto_sync: SetAutoSync
+    """Turns a scheduled check on, or changes it."""
+    disable_auto_sync: DisableAutoSync
+    """Turns a scheduled check off."""
+    remove_version: RemoveVersion
+    """Removes an undeclared version (``prune``)."""
+    remove_library: RemoveLibrary
+    """Removes an undeclared library (``prune``)."""
+
+    async def __call__(self, command: ApplySourcesCommand) -> AppliedSources:
+        """Plan again, then create, update and (only with ``prune``) remove, library by library.
+
+        Within a library the steps stop at the first failure; the other libraries go on.
+        Settings are written only when the plan shows a change, so a second apply calls no
+        write port.
+
+        Args:
+            command: The file and whether to prune.
+
+        Returns:
+            The plan and the outcome per library.
+        """
+        plan = await self.reader.plan(command)
+        results = [
+            *[
+                await self._step(d.library_id, "created", partial(self._create, d))
+                for d in plan.create
+            ],
+            *[
+                await self._step(u.library_id, "updated", partial(self._update, u))
+                if u.writes
+                else LibraryOutcome(library_id=u.library_id, action="unchanged", jobs=[])
+                for u in plan.update
+            ],
+            *[LibraryOutcome(library_id=i, action="unchanged", jobs=[]) for i in plan.unchanged],
+        ]
+        if plan.prune:
+            results += [
+                await self._step(c.library_id, "removed", partial(self._remove, c.library_id))
+                for c in plan.undeclared
+            ]
+        results += [
+            LibraryOutcome(
+                library_id=e.library_id,
+                action="failed",
+                jobs=[],
+                error_code=e.code,
+                error=e.message,
+            )
+            for e in plan.errors
+        ]
+        return AppliedSources(
+            plan=SourcesPlanOut.from_model(plan),
+            results=results,
+            failed=sum(r.error is not None for r in results),
+        )
+
+    @staticmethod
+    async def _step(
+        library: str,
+        action: Literal["created", "updated", "removed"],
+        work: Callable[[_Applying], Awaitable[None]],
+    ) -> LibraryOutcome:
+        """Run one library's writes; a failure is reported, not raised.
+
+        Args:
+            library: The library ID.
+            action: What success means.
+            work: The writes.
+
+        Returns:
+            What was done, with the error if a step failed.
+        """
+        applying = _Applying()
+        try:
+            await work(applying)
+        except Exception as exc:
+            if isinstance(exc, DomainError):
+                code, message = exc.code, str(exc)
+            else:
+                log.exception("applying the sources file to %s failed", library)
+                code, message = UNEXPECTED_ERROR, "unexpected error; see the server log"
+            return LibraryOutcome(
+                library_id=library,
+                action=action if applying.wrote else "failed",
+                jobs=applying.jobs,
+                error_code=code,
+                error=message,
+            )
+        return LibraryOutcome(library_id=library, action=action, jobs=applying.jobs)
+
+    async def _create(self, declared: DeclaredLibrary, applying: _Applying) -> None:
+        """Add the library with its first ref, then its other refs, then its schedule.
+
+        Args:
+            declared: The declaration.
+            applying: Collects the jobs.
+        """
+        first, *others = declared.refs
+        added = await self.add_library(
+            AddLibraryCommand(
+                url=declared.url.url,
+                library_id=declared.library_id,
+                ref=first,
+                include_paths=list(declared.include or ()),
+                exclude_paths=list(declared.exclude or ()),
+                tag_rules=[
+                    TagRuleIn(pattern=r.pattern, tag=r.tag) for r in declared.tag_rules or ()
+                ],
+                chunking=None if declared.chunking is None else ChunkingIn.of(declared.chunking),
+                context7_paths=not declared.manages_paths,
+            )
+        )
+        applying.wrote = True
+        applying.jobs.append(added.job_id)
+        await self._add_refs(added.library_id, others, applying)
+        if declared.auto_sync is not None:
+            await self._schedule(added.library_id, declared.auto_sync)
+
+    async def _update(self, update: LibraryUpdate, applying: _Applying) -> None:
+        """Store the changed settings, add the missing refs, set the schedule, prune versions.
+
+        Settings the file does not manage are sent as stored: ``UpdateLibrarySettings`` takes
+        paths and tag rules as a whole set.
+
+        Args:
+            update: The difference.
+            applying: Collects the jobs.
+        """
+        library, declared = update.library_id, update.declared
+        if update.changed:
+            selection = update.selection
+            stored = await self.update_library_settings(
+                UpdateLibrarySettingsCommand(
+                    library=library,
+                    include_paths=list(selection.include),
+                    exclude_paths=list(selection.exclude),
+                    tag_rules=[TagRuleIn(pattern=r.pattern, tag=r.tag) for r in update.tag_rules],
+                    chunking=None
+                    if declared.chunking is None
+                    else ChunkingIn.of(declared.chunking),
+                )
+            )
+            applying.wrote = True
+            if stored.job_id is not None:
+                applying.jobs.append(stored.job_id)
+        await self._add_refs(library, update.refs_to_add, applying)
+        if update.auto_sync_changes:
+            if declared.auto_sync is None:
+                await self.disable_auto_sync(DisableAutoSyncCommand(library=library))
+            else:
+                await self._schedule(library, declared.auto_sync)
+            applying.wrote = True
+        if update.prune:
+            for ref in update.undeclared_versions:
+                removed = await self.remove_version(RemoveVersionCommand(library=library, ref=ref))
+                applying.wrote = True
+                if removed.collection_job_id is not None:
+                    applying.jobs.append(removed.collection_job_id)
+
+    async def _add_refs(self, library: str, refs: Sequence[str], applying: _Applying) -> None:
+        """Queue the import of each ref.
+
+        Args:
+            library: The library ID.
+            refs: The refs to add.
+            applying: Collects the jobs.
+        """
+        for ref in refs:
+            added = await self.add_version(AddVersionCommand(library=library, ref=ref))
+            applying.wrote = True
+            applying.jobs.append(added.job_id)
+
+    async def _schedule(self, library: str, auto_sync: AutoSync) -> None:
+        """Turn the library's scheduled check on with the declared settings.
+
+        Args:
+            library: The library ID.
+            auto_sync: The declared schedule.
+        """
+        await self.set_auto_sync(
+            SetAutoSyncCommand(
+                library=library,
+                tag_pattern=auto_sync.tag_pattern,
+                keep_last=auto_sync.keep_last,
+                interval_minutes=auto_sync.interval_minutes,
+                sync_branches=auto_sync.sync_branches,
+            )
+        )
+
+    async def _remove(self, library: str, applying: _Applying) -> None:
+        """Remove an undeclared library (``prune``).
+
+        Args:
+            library: The library ID.
+            applying: Collects the collection job.
+        """
+        removed = await self.remove_library(RemoveLibraryCommand(library=library))
+        applying.wrote = True
+        if removed.collection_job_id is not None:
+            applying.jobs.append(removed.collection_job_id)

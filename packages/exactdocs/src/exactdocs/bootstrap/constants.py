@@ -58,6 +58,8 @@ POLL_RETRIES: Final[int] = 3
 """Consecutive failed polls (timeouts, 5xx) before the wait gives up."""
 MAX_SECRET_BYTES: Final[int] = 64 * 1024
 """A private key is about 3 KB."""
+MAX_SOURCES_BYTES: Final[int] = 1024 * 1024
+"""The largest sources file the CLI reads; a few hundred libraries take far less."""
 EXIT_INTERRUPTED: Final[int] = 130
 """Exit status after Ctrl+C (128 + SIGINT), as shells report it."""
 LIBRARY_ID: Final[re.Pattern[str]] = re.compile(

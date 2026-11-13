@@ -27,6 +27,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogDefaultVersions,
     CatalogImportedTags,
     CatalogInstructionFiles,
+    CatalogKnownLibraries,
     CatalogLibraries,
     CatalogLibraryIds,
     CatalogLibrarySettings,
@@ -1023,6 +1024,7 @@ class Container:
                 list_unembedded_versions=read.retrieval.list_unembedded_versions,
             ),
             checkpoints=DbosCheckpoints(),
+            known_libraries=CatalogKnownLibraries(list_libraries=read.catalog.list_libraries),
         )
         return cls(
             settings=settings,

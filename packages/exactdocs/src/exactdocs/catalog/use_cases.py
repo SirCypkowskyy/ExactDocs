@@ -203,6 +203,14 @@ class CreateLibraryUseCase:
                 include_paths=tuple(command.include_paths),
                 exclude_paths=tuple(command.exclude_paths),
                 tag_rules=tuple(TagRule(pattern=r.pattern, tag=r.tag) for r in command.tag_rules),
+                chunking=ChunkingConfig()
+                if (wanted := command.chunking) is None
+                else ChunkingConfig(
+                    split_level=wanted.split_level,
+                    min_chars=wanted.min_chars,
+                    max_chars=wanted.max_chars,
+                    chunker=wanted.chunker,
+                ),
             ),
         )
         await self.repository.add(library)
