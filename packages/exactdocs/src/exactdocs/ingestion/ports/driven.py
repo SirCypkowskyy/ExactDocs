@@ -552,6 +552,8 @@ class Chunker(Protocol):
         An empty body has no chunks. This is CPU-bound and synchronous: the import use case
         should call it through ``asyncio.to_thread``. ``max_chars`` bounds a chunk only where
         a heading allows a cut: a section without deeper headings stays whole, however long.
+        ``max_section_chars`` also splits such a section between its top-level blocks; only a
+        single block longer than it makes a longer chunk.
 
         Args:
             article: The parsed article.

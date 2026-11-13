@@ -114,6 +114,8 @@ chunks = Table(
     Column("position", Integer, nullable=False),
     Column("heading_path", Text, nullable=False),  # JSON list
     Column("occurrence_index", Integer, nullable=False),
+    # the part of a section split at its blocks (#141); 0 for a whole section
+    Column("part", Integer, nullable=False, server_default="0"),
     Column("content", Text, nullable=False),
     Column("content_hash", Text, nullable=False),
     Column("anchor", Text, nullable=False),
@@ -344,6 +346,7 @@ class SqliteChunkRepository:
                     "position": i,
                     "heading_path": json.dumps(c.heading_path),
                     "occurrence_index": c.occurrence_index,
+                    "part": c.part,
                     "content": c.content,
                     "content_hash": c.content_hash,
                     "anchor": c.anchor,
@@ -410,6 +413,7 @@ class SqliteChunkRepository:
                         Chunk(
                             heading_path=tuple(json.loads(row.heading_path)),
                             occurrence_index=row.occurrence_index,
+                            part=row.part,
                             content=row.content,
                             content_hash=row.content_hash,
                             anchor=row.anchor,
@@ -503,6 +507,7 @@ class SqliteChunkRepository:
                 manifest_chunks.c.position,
                 chunks.c.heading_path,
                 chunks.c.occurrence_index,
+                chunks.c.part,
                 chunks.c.content_hash,
                 chunks.c.anchor,
                 chunks.c.headings,
@@ -521,6 +526,7 @@ class SqliteChunkRepository:
                 position=r.position,
                 heading_path=tuple(json.loads(r.heading_path)),
                 occurrence_index=r.occurrence_index,
+                part=r.part,
                 content_hash=r.content_hash,
                 anchor=r.anchor,
                 headings=_headings(r.headings),
@@ -741,6 +747,7 @@ def _stored(manifest_id: str, row: Row[Any]) -> StoredChunk:
         chunk=Chunk(
             heading_path=tuple(json.loads(row.heading_path)),
             occurrence_index=row.occurrence_index,
+            part=row.part,
             content=row.content,
             content_hash=row.content_hash,
             anchor=row.anchor,

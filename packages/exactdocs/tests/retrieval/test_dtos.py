@@ -3,7 +3,7 @@
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from exactdocs.retrieval.adapters.driving.http import C7Library, LibraryRetrievalIn
 from exactdocs.retrieval.constants import (
@@ -18,6 +18,8 @@ from exactdocs.retrieval.constants import (
     QUERY_HITS_CAP,
 )
 from exactdocs.retrieval.dtos import (
+    ChunkHeadingIn,
+    ChunkIn,
     ChunkOut,
     EmbeddingEstimateOut,
     LibraryMatchOut,
@@ -86,3 +88,66 @@ def test_a_heading_path_description_reads_as_one_line(model: type[BaseModel]) ->
 
     assert "\n" not in description
     assert description.endswith("empty before the first heading.")
+
+
+def _chunk(
+    heading_path: list[str], headings: list[tuple[list[str], str, bool]], part: int = 1
+) -> ChunkIn:
+    return ChunkIn(
+        heading_path=heading_path,
+        occurrence_index=0,
+        part=part,
+        content="more text\n",
+        content_hash="h",
+        anchor="guide" if heading_path else "",
+        headings=[ChunkHeadingIn(heading_path=p, anchor=a, starts_chunk=s) for p, a, s in headings],
+    )
+
+
+@pytest.mark.parametrize(
+    ("heading_path", "headings"),
+    [
+        (["Guide"], []),
+        (["Guide"], [(["Guide", "Install"], "install", False)]),
+        ([], []),
+    ],
+    ids=["holding-none", "holding-a-merged-heading", "text-before-the-first-heading"],
+)
+def test_a_part_after_the_first_of_a_split_section_needs_no_heading_record_of_its_own(
+    heading_path: list[str], headings: list[tuple[list[str], str, bool]]
+) -> None:
+    assert _chunk(heading_path, headings).part == 1
+
+
+def test_a_part_after_the_first_that_starts_with_its_own_heading_is_refused() -> None:
+    with pytest.raises(ValidationError, match="holds no heading of its own"):
+        _chunk(["Guide"], [(["Guide"], "guide", True)])
+
+
+@pytest.mark.parametrize(
+    ("heading_path", "headings"),
+    [
+        (["Guide"], [(["Other"], "other", True)]),
+        (["Guide"], [(["Guide", "Install"], "install", False), (["Guide"], "guide", True)]),
+        ([], [(["Guide"], "guide", True)]),
+        (["Guide"], []),
+        (["Guide"], [(["Guide", "Install"], "install", False)]),
+    ],
+    ids=[
+        "another-heading-starts-it",
+        "not-the-first-record",
+        "text-before-the-first-heading",
+        "own-heading-missing",
+        "only-a-merged-heading",
+    ],
+)
+def test_a_heading_record_that_contradicts_a_first_part_is_refused(
+    heading_path: list[str], headings: list[tuple[list[str], str, bool]]
+) -> None:
+    with pytest.raises(ValidationError, match="the chunk's own heading"):
+        _chunk(heading_path, headings, part=0)
+
+
+def test_a_part_index_is_never_negative() -> None:
+    with pytest.raises(ValidationError):
+        _chunk(["Guide"], [], part=-1)
