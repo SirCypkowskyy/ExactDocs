@@ -26,6 +26,7 @@ const article = {
   path: "docs/start.md",
   title: "Start",
   tags: [],
+  tag_origins: [],
   manual_tags: [],
   front_matter: {},
   source_url: null,

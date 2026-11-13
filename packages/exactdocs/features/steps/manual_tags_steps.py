@@ -2,10 +2,13 @@
 
 from http import HTTPStatus
 
-from behave import given, then, when
+from behave import given, then, use_step_matcher, when
 from behave.runner import Context
 
-from steps.import_steps import LIBRARY
+from steps.import_steps import LIBRARY, import_version
+from steps.mcp_steps import call_tool
+
+ORIGINS_REF = "v1.4.0"  # where docs/guide/install.md declares its front-matter tags
 
 
 def _tag(context: Context, path: str, tags: list[str]) -> None:
@@ -110,3 +113,55 @@ def step_search_nothing(context: Context, ref: str, query: str, tag: str) -> Non
 def step_refused(context: Context) -> None:
     response = context.response
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, response.text
+
+
+def _origins(context: Context) -> dict[str, list[str]]:
+    """The origins of each tag of the article the agent read, by tag."""
+    found = context.mcp_data["tag_origins"]
+    assert [o["tag"] for o in found] == context.mcp_data["tags"], found
+    return {o["tag"]: o["origins"] for o in found}
+
+
+@given('a library whose path rule tags "{pattern}" with "{tag}"')
+def step_rule_library(context: Context, pattern: str, tag: str) -> None:
+    import_version(
+        context, ORIGINS_REF, include_paths=["docs/"], tag_rules=[{"pattern": pattern, "tag": tag}]
+    )
+    assert context.job["state"] == "succeeded", context.job
+
+
+@given('"{path}" declares the tags "{first}" and "{second}" in its front matter')
+def step_declares(context: Context, path: str, first: str, second: str) -> None:
+    declared = _article(context, path, ORIGINS_REF)["front_matter"]["tags"]
+    assert declared in ([first, second], f"{first}, {second}"), declared
+
+
+@given('the user has tagged "{path}" with "{tag}" by hand')
+def step_tagged_by_hand(context: Context, path: str, tag: str) -> None:
+    context.execute_steps(f'Given the user tagged "{path}" with "{tag}"')
+
+
+# A regular expression: "an agent reads "{path}" of "{target}"" (read_steps.py) must not match.
+use_step_matcher("re")
+
+
+@when(r'an agent reads "(?P<path>[^"]+)"')
+def step_agent_reads(context: Context, path: str) -> None:
+    call_tool(context, "read_article", {"library": LIBRARY, "path": path, "ref": ORIGINS_REF})
+
+
+use_step_matcher("parse")
+
+
+@then('"{first}" and "{second}" are listed as front-matter tags')
+def step_front_matter_tags(context: Context, first: str, second: str) -> None:
+    origins = _origins(context)
+    assert origins[first] == ["front_matter"], origins
+    assert origins[second] == ["front_matter"], origins
+
+
+@then('"{tag}" is listed as both a path-rule tag and a manual tag')
+def step_rule_and_manual(context: Context, tag: str) -> None:
+    origins = _origins(context)
+    assert origins[tag] == ["path_rule", "manual"], origins
+    assert [t["tag"] for t in context.mcp_data["manual_tags"]] == [tag], context.mcp_data

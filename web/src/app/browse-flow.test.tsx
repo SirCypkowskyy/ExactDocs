@@ -134,6 +134,14 @@ function serve(options: Options = {}) {
         return Response.json({
           ...found,
           tags: tagsOf(found),
+          // The fixture's imported tags stand for path-rule tags.
+          tag_origins: tagsOf(found).map((tag) => ({
+            tag,
+            origins: [
+              ...(found.tags.includes(tag) ? ["path_rule"] : []),
+              ...((manual.get(path) ?? []).includes(tag) ? ["manual"] : []),
+            ],
+          })),
           manual_tags: (manual.get(path) ?? []).map((tag) => ({ tag, path })),
           library: "/acme/payments",
           ref,

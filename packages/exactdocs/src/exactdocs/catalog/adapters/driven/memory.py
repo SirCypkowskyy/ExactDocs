@@ -16,6 +16,7 @@ from exactdocs.catalog.errors import (
 from exactdocs.catalog.models import (
     ContentKey,
     GarbageCollected,
+    ImportedTags,
     Library,
     LibraryId,
     LibrarySettings,
@@ -699,13 +700,13 @@ class InMemoryImportedTags:
     """The manifests."""
 
     async def set_imported_tags(
-        self, manifest_id: ManifestId, tags: Mapping[str, tuple[str, ...]]
+        self, manifest_id: ManifestId, tags: Mapping[str, ImportedTags]
     ) -> Mapping[str, tuple[str, ...]]:
-        """Replace the imported tags of the named entries; report every one of them.
+        """Replace the imported tags and their sources of the named entries; report every one.
 
         Args:
             manifest_id: The manifest.
-            tags: The new imported tags, by path.
+            tags: The new imported tags with their sources, by path.
 
         Returns:
             The tags of each given entry the manifest has, by path.
@@ -713,7 +714,12 @@ class InMemoryImportedTags:
         found = self.repository.manifests.get(manifest_id)
         if found is None:
             return {}
-        entries = tuple(replace(e, tags=tags.get(e.path, e.tags)) for e in found.entries)
+        entries = tuple(
+            replace(e, tags=tags[e.path].tags, sources=tags[e.path].sources)
+            if e.path in tags
+            else e
+            for e in found.entries
+        )
         self.repository.manifests[manifest_id] = replace(found, entries=entries)
         return {e.path: e.all_tags for e in entries if e.path in tags}
 

@@ -5,18 +5,18 @@ const MAX_TAG_INPUT = 100;
 /** Longest tag the API stores (the kernel's `MAX_TAG_LENGTH`). */
 export const MAX_TAG_LENGTH = 40;
 
-const TAG = /^[\p{L}\p{N}][\p{L}\p{N}\p{M}._+-]*$/u;
+const TAG_SHAPE = /^[\p{L}\p{N}][\p{L}\p{N}\p{M}._+-]*$/u;
 
 /**
- * A tag in its one form, as the API stores it, or `undefined` when `raw` cannot be a tag:
- * NFKC, lower-case, inner whitespace as `-`; it starts with a letter or digit and goes on with
- * letters, digits, combining marks and `._+-`; 40 characters at most. The server folds case a
- * little further (`ß` is `ss`), so its answer is the one to show.
+ * Whether `raw` has the shape of a tag, for feedback while a form is filled in: after NFKC and
+ * with inner whitespace as `-`, it starts with a letter or digit and goes on with letters,
+ * digits, combining marks and `._+-`, 40 characters at most. Only a check: the server makes the
+ * tag (case folding included) and its answer is the one to show; a value this lets through can
+ * still be refused there.
  */
-export function normalizeTag(raw: string): string | undefined {
-  const folded = raw.normalize("NFKC").toLowerCase().normalize("NFKC");
-  const tag = folded.trim().split(/\s+/u).join("-");
-  return tag !== "" && tag.length <= MAX_TAG_LENGTH && TAG.test(tag) ? tag : undefined;
+export function isTagShaped(raw: string): boolean {
+  const tag = raw.normalize("NFKC").trim().split(/\s+/u).join("-");
+  return tag !== "" && tag.length <= MAX_TAG_LENGTH && TAG_SHAPE.test(tag);
 }
 
 /** The `tags` URL param as a list. Over-long tags and anything past 20 are dropped, as the API would refuse them. */

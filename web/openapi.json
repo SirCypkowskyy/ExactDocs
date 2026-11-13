@@ -7003,6 +7003,14 @@
             "title": "Tags",
             "description": "Every tag: from front matter, path rules and by hand."
           },
+          "tag_origins": {
+            "items": {
+              "$ref": "#/components/schemas/TagOriginsInfo"
+            },
+            "type": "array",
+            "title": "Tag Origins",
+            "description": "Every tag of `tags`, in the same order, with where it comes from. A tag can have several\norigins, e.g. a path rule and a hand edit."
+          },
           "manual_tags": {
             "items": {
               "$ref": "#/components/schemas/ManualTagInfo"
@@ -7051,6 +7059,7 @@
           "path",
           "title",
           "tags",
+          "tag_origins",
           "manual_tags",
           "size",
           "front_matter",
@@ -12196,6 +12205,42 @@
         ],
         "title": "TagList",
         "description": "The most used tags of one manifest, for a tag filter."
+      },
+      "TagOrigin": {
+        "type": "string",
+        "enum": [
+          "front_matter",
+          "path_rule",
+          "imported",
+          "manual"
+        ],
+        "title": "TagOrigin",
+        "description": "Where a tag of an article comes from; a tag may come from several places at once."
+      },
+      "TagOriginsInfo": {
+        "properties": {
+          "tag": {
+            "type": "string",
+            "title": "Tag",
+            "description": "The tag, as in `tags`."
+          },
+          "origins": {
+            "items": {
+              "$ref": "#/components/schemas/TagOrigin"
+            },
+            "type": "array",
+            "title": "Origins",
+            "description": "Where it comes from, at least one: `front_matter`, `path_rule`, `imported` (front matter\nor a path rule, not recorded which: a version imported before origins were kept), `manual`\n(set by hand; `manual_tags` says on which path)."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tag",
+          "origins"
+        ],
+        "title": "TagOriginsInfo",
+        "description": "One tag of an article, and every place it comes from."
       },
       "TagRuleIn": {
         "properties": {

@@ -19,6 +19,7 @@ from exactdocs.ingestion.models import (
     FetchedFile,
     GitRename,
     ImportedRef,
+    ImportedTags,
     ImportedVersion,
     ImportSource,
     InstructionPolicy,
@@ -689,8 +690,10 @@ class ImportedTagStore(Protocol):
         """
         ...
 
-    async def set_imported_tags(self, manifest_id: str, tags: ArticleTags) -> ArticleTags:
-        """Replace the imported tags of these articles of the manifest, in one transaction.
+    async def set_imported_tags(
+        self, manifest_id: str, tags: Mapping[str, ImportedTags]
+    ) -> ArticleTags:
+        """Replace the imported tags and their sources of these articles, in one transaction.
 
         Only what differs is written; manual tags are kept. Returns every tag (imported and
         manual) of each given article the manifest has, changed or not: the chunk index must
@@ -698,7 +701,7 @@ class ImportedTagStore(Protocol):
 
         Args:
             manifest_id: The manifest.
-            tags: The new imported tags, by article path.
+            tags: The new imported tags with their sources, by article path.
 
         Returns:
             Every tag of each given article, by path.

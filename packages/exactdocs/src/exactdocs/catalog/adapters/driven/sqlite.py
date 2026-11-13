@@ -56,6 +56,7 @@ from exactdocs.catalog.models import (
     ContentKey,
     GarbageCollected,
     HostKind,
+    ImportedTags,
     Library,
     LibraryId,
     LibrarySettings,
@@ -73,6 +74,7 @@ from exactdocs.catalog.models import (
     StoredImage,
     TagMatch,
     TagSelection,
+    TagSources,
     Version,
     VersionOrigin,
     VersionRef,
@@ -151,6 +153,9 @@ manifest_entries = Table(
     # JSON list of {"tag", "path"}: path is where the tag was set (this one or an older name)
     Column("manual_tags", Text, nullable=False, server_default="[]"),
     Column("imported_tags", Text),  # JSON list; NULL without manual tags (then it is `tags`)
+    # JSON lists: the imported tags by source; both NULL when not recorded (stored before #215)
+    Column("front_matter_tags", Text),
+    Column("rule_tags", Text),
     ForeignKeyConstraint(
         ["blob_sha", "content_version"],
         ["catalog_article_contents.blob_sha", "catalog_article_contents.content_version"],
@@ -510,22 +515,44 @@ def _entry(row: Row) -> ManifestEntry:
         manual_tags=tuple(
             ManualTag(tag=t["tag"], path=t["path"]) for t in json.loads(row.manual_tags)
         ),
+        sources=_sources(row),
+    )
+
+
+def _sources(row: Row) -> TagSources | None:
+    """Read where an entry's imported tags come from; ``None`` when that was not recorded.
+
+    Args:
+        row: A row of the entries table.
+
+    Returns:
+        The sources, or ``None`` for a row stored before they were (both columns NULL).
+    """
+    if row.front_matter_tags is None and row.rule_tags is None:
+        return None
+    return TagSources(
+        front_matter=tuple(json.loads(row.front_matter_tags or "[]")),
+        rules=tuple(json.loads(row.rule_tags or "[]")),
     )
 
 
 def _tag_columns(entry: ManifestEntry) -> dict[str, str | None]:
-    """Return the three tag columns of an entry row (see the table).
+    """Return the tag columns of an entry row (see the table).
 
     Args:
         entry: The entry.
 
     Returns:
-        ``tags`` (every tag), ``manual_tags`` (JSON) and ``imported_tags`` (only with manual tags).
+        ``tags`` (every tag), ``manual_tags`` (JSON), ``imported_tags`` (only with manual tags),
+        and ``front_matter_tags`` and ``rule_tags`` (NULL when the sources are not known).
     """
+    sources = entry.sources
     return {
         "tags": json.dumps(entry.all_tags),
         "manual_tags": json.dumps([{"tag": t.tag, "path": t.path} for t in entry.manual_tags]),
         "imported_tags": json.dumps(entry.tags) if entry.manual_tags else None,
+        "front_matter_tags": None if sources is None else json.dumps(sources.front_matter),
+        "rule_tags": None if sources is None else json.dumps(sources.rules),
     }
 
 
@@ -1430,15 +1457,16 @@ class SqliteImportedTags:
     """The database holding the catalog's tables (SQLite or PostgreSQL)."""
 
     async def set_imported_tags(
-        self, manifest_id: ManifestId, tags: Mapping[str, tuple[str, ...]]
+        self, manifest_id: ManifestId, tags: Mapping[str, ImportedTags]
     ) -> Mapping[str, tuple[str, ...]]:
         """Read the named entries in batches, write those whose tags change; one transaction.
 
-        Every named entry is reported, changed or not (see the port).
+        Every named entry is reported, changed or not (see the port). Tags whose sources were
+        not recorded get them here, even when the tags themselves stay.
 
         Args:
             manifest_id: The manifest.
-            tags: The new imported tags, by path.
+            tags: The new imported tags with their sources, by path.
 
         Returns:
             The tags of each given entry the manifest has, by path.
@@ -1457,9 +1485,10 @@ class SqliteImportedTags:
                 )
                 for row in rows.all():
                     before = _entry(row)
-                    after = replace(before, tags=tags[before.path])
+                    wanted = tags[before.path]
+                    after = replace(before, tags=wanted.tags, sources=wanted.sources)
                     touched[after.path] = after.all_tags
-                    if after.tags != before.tags:
+                    if after.imported != before.imported:
                         await connection.execute(
                             update(manifest_entries)
                             .where(entries.manifest_id == manifest_id, entries.path == after.path)
