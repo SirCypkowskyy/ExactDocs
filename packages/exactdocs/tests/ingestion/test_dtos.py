@@ -55,6 +55,14 @@ async def _disable(command: DisableAutoSyncCommand) -> AutoSyncOut:
     raise AssertionError(command)
 
 
+def test_the_back_off_cap_is_a_whole_number_of_hours_above_one() -> None:
+    # The auto-sync description prints the cap as "{n} hours": a cap of 90 minutes or of one
+    # hour would print a wrong text without this guard.
+    hours, rest = divmod(UNEXPECTED_BACKOFF_CAP, timedelta(hours=1))
+    assert rest == timedelta(0)
+    assert hours > 1
+
+
 def test_setting_a_schedule_describes_the_longest_back_off_in_hours() -> None:
     app = FastAPI()
     app.include_router(

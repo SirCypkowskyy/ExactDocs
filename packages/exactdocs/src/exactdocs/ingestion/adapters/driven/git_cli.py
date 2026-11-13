@@ -277,7 +277,9 @@ class GitCli:
 
         Raises:
             InvalidRepositoryUrlError: The URL or a pattern would be read as a git option.
-            _failure: git failed; ``_failure`` tells which error its output means.
+            _failure: git failed: ``RepositoryUnreachableError``, ``NotAGitRepositoryError``,
+                ``RepositoryAuthRequiredError`` or (over ssh) ``HostKeyChangedError``, as its output
+                says.
         """
         if repository.url.startswith("-") or any(p.startswith("-") for p in patterns):
             raise InvalidRepositoryUrlError(UrlProblem.GIT_OPTION)
@@ -508,7 +510,9 @@ class GitCli:
             auth: The credential to offer, if any.
 
         Raises:
-            _failure: The checkout failed; ``_failure`` tells which error git's output means.
+            _failure: The checkout failed: ``RepositoryUnreachableError``,
+                ``NotAGitRepositoryError``, ``RepositoryAuthRequiredError`` or (over ssh)
+                ``HostKeyChangedError``, as its output says.
             RepositoryTooLargeError: The checked-out files are too many or too big.
         """
         git = self._stepper(folder, url, deadline, auth)
@@ -547,7 +551,9 @@ class GitCli:
 
         Raises:
             TreeTooLargeError: The listing is longer than ``max_output``.
-            _failure: ``ls-tree`` failed; ``_failure`` tells which error its output means.
+            _failure: ``ls-tree`` failed: ``RepositoryUnreachableError``,
+                ``NotAGitRepositoryError``, ``RepositoryAuthRequiredError`` or (over ssh)
+                ``HostKeyChangedError``, as its output says.
         """
         async with self._trees(repository, commit_sha, refs, credential) as trees:
             try:
@@ -592,7 +598,9 @@ class GitCli:
 
         Raises:
             ValueError: ``path`` is not a plain file name at the root.
-            _failure: git failed; ``_failure`` tells which error its output means.
+            _failure: git failed: ``RepositoryUnreachableError``, ``NotAGitRepositoryError``,
+                ``RepositoryAuthRequiredError`` or (over ssh) ``HostKeyChangedError``, as its output
+                says.
         """
         if not _ROOT_NAME.fullmatch(path):
             message = f"not a plain root file name: {path!r}"
@@ -781,7 +789,9 @@ class GitCli:
 
         Raises:
             InvalidRepositoryUrlError: The URL, a SHA or a ref could be read as a git option.
-            _failure: ``diff-tree`` failed; ``_failure`` tells which error its output means.
+            _failure: ``diff-tree`` failed: ``RepositoryUnreachableError``,
+                ``NotAGitRepositoryError``, ``RepositoryAuthRequiredError`` or (over ssh)
+                ``HostKeyChangedError``, as its output says.
         """
         if (
             repository.url.startswith("-")
@@ -981,7 +991,7 @@ class MissingGit:
         repository: RepositoryUrl,
         *patterns: str,
         credential: Credential | None = None,
-    ) -> RemoteRefs:
+    ) -> Never:
         """Refuse with ``GitNotInstalledError``.
 
         Args:
@@ -989,23 +999,23 @@ class MissingGit:
             *patterns: Ref patterns.
             credential: The library's credential, if any.
 
-        Returns:
-            Never: ``_git_missing`` raises.
+        Raises:
+            GitNotInstalledError: Always.
         """
         del repository, patterns, credential
-        return await _git_missing()
+        raise GitNotInstalledError
 
-    async def host_key_fingerprint(self, repository: RepositoryUrl) -> str | None:
+    async def host_key_fingerprint(self, repository: RepositoryUrl) -> Never:
         """Refuse with ``GitNotInstalledError``.
 
         Args:
             repository: The repository.
 
-        Returns:
-            Never: ``_git_missing`` raises.
+        Raises:
+            GitNotInstalledError: Always.
         """
         del repository
-        return await _git_missing()
+        raise GitNotInstalledError
 
     def fetch(
         self,
@@ -1038,7 +1048,7 @@ class MissingGit:
         *,
         refs: Sequence[str] = (),
         credential: Credential | None = None,
-    ) -> list[str]:
+    ) -> Never:
         """Refuse with ``GitNotInstalledError``.
 
         Args:
@@ -1047,11 +1057,11 @@ class MissingGit:
             refs: Full ref names.
             credential: The library's credential, if any.
 
-        Returns:
-            Never: ``_git_missing`` raises.
+        Raises:
+            GitNotInstalledError: Always.
         """
         del repository, commit_sha, refs, credential
-        return await _git_missing()
+        raise GitNotInstalledError
 
     async def read_file(
         self,
@@ -1062,7 +1072,7 @@ class MissingGit:
         max_bytes: int,
         refs: Sequence[str] = (),
         credential: Credential | None = None,
-    ) -> FetchedFile:
+    ) -> Never:
         """Refuse with ``GitNotInstalledError``.
 
         Args:
@@ -1073,11 +1083,11 @@ class MissingGit:
             refs: Full ref names.
             credential: The library's credential, if any.
 
-        Returns:
-            Never: ``_git_missing`` raises.
+        Raises:
+            GitNotInstalledError: Always.
         """
         del repository, commit_sha, path, max_bytes, refs, credential
-        return await _git_missing()
+        raise GitNotInstalledError
 
     async def renames(
         self,
@@ -1087,7 +1097,7 @@ class MissingGit:
         *,
         refs: Sequence[str] = (),
         credential: Credential | None = None,
-    ) -> Sequence[GitRename]:
+    ) -> Never:
         """Refuse with ``GitNotInstalledError``.
 
         Args:
@@ -1097,11 +1107,11 @@ class MissingGit:
             refs: Full ref names.
             credential: The library's credential, if any.
 
-        Returns:
-            Never: ``_git_missing`` raises.
+        Raises:
+            GitNotInstalledError: Always.
         """
         del repository, old_sha, new_sha, refs, credential
-        return await _git_missing()
+        raise GitNotInstalledError
 
     def fetch_files(
         self,
@@ -1170,7 +1180,9 @@ async def _entries(
         The entries found.
 
     Raises:
-        _failure: ``ls-tree`` failed; ``_failure`` tells which error its output means.
+        _failure: ``ls-tree`` failed: ``RepositoryUnreachableError``, ``NotAGitRepositoryError``,
+            ``RepositoryAuthRequiredError`` or (over ssh) ``HostKeyChangedError``, as its output
+            says.
     """
     out = await trees.git("ls-tree", "-z", "--full-tree", commit_sha, "--", *literal)
     if out.code:
@@ -1230,7 +1242,9 @@ async def _blob(trees: _Trees, blob: str, max_bytes: int) -> FetchedFile:
         Its bytes, or why not.
 
     Raises:
-        _failure: ``cat-file`` failed; ``_failure`` tells which error its output means.
+        _failure: ``cat-file`` failed: ``RepositoryUnreachableError``, ``NotAGitRepositoryError``,
+            ``RepositoryAuthRequiredError`` or (over ssh) ``HostKeyChangedError``, as its output
+            says.
     """
     used, _ = await asyncio.to_thread(_measure, trees.folder)
     try:
@@ -1280,7 +1294,9 @@ async def _prepare(
         ssh: Whether the repository is reached over ssh.
 
     Raises:
-        _failure: ``git init`` failed; ``_failure`` tells which error its output means.
+        _failure: ``git init`` failed: ``RepositoryUnreachableError``, ``NotAGitRepositoryError``,
+            ``RepositoryAuthRequiredError`` or (over ssh) ``HostKeyChangedError``, as its output
+            says.
     """
     init = await git("init", "-q", "--template=")
     if init.code:
@@ -1300,7 +1316,10 @@ async def _fetch_commit(
         ssh: Whether the repository is reached over ssh.
 
     Raises:
-        _failure: A fetch failed for another reason than an unknown object.
+        _failure: A fetch failed for another reason than an unknown object:
+            ``RepositoryUnreachableError``, ``NotAGitRepositoryError``,
+            ``RepositoryAuthRequiredError`` or (over ssh) ``HostKeyChangedError``, as its output
+            says.
         CommitUnavailableError: Neither the SHA nor any ref brought that commit.
     """
     for target in (sha, *refs):
@@ -1615,7 +1634,8 @@ def _environment(home: str, known_hosts: Path | None = None) -> dict[str, str]:
         known_hosts: Remembered host keys; none are kept when None.
 
     Returns:
-        The environment; of ours only ``PATH``, proxy and certificate variables are kept.
+        The environment; of ours only ``PATH``, ``SYSTEMROOT``, proxy and certificate variables
+        are kept.
     """
     kept = {k: v for k, v in os.environ.items() if k.lower() in _PASSTHROUGH}
     return {

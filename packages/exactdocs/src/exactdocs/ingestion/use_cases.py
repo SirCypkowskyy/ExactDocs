@@ -1386,7 +1386,8 @@ class ReimportVersionUseCase:
             UnknownVersionError: The library has no version of that ref.
             NotATagError: The version is a branch or a commit.
             VersionImportingError: An import of it is queued or running.
-            _anonymous: The remote could not be read; ``_anonymous`` says what that means.
+            _anonymous: The remote could not be read: the error raised, or
+                ``NotAGitRepositoryError`` for a login demand without a credential.
             RefDeletedError: The tag is gone upstream.
             TagNotMovedError: The tag still names the commit the version serves.
         """
@@ -2281,7 +2282,8 @@ class ImportVersionUseCase:
 
         Raises:
             ImportNotPinnedError: The job names no version or no commit.
-            _anonymous: The repository wanted a login; ``_anonymous`` says what that means.
+            _anonymous: The repository wanted a login: ``NotAGitRepositoryError`` when no credential
+                was sent, else ``RepositoryAuthRequiredError``.
             NoArticlesError: No file of the commit matches the library's paths.
         """
         if job.version is None or job.commit_sha is None:
