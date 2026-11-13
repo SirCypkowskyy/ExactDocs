@@ -12,7 +12,14 @@ from exactdocs.ingestion.constants import (
     MAX_PREVIEW_FILES,
     UNEXPECTED_BACKOFF_CAP,
 )
-from exactdocs.ingestion.dtos import RepositoryPreview, RepositoryRefs
+from exactdocs.ingestion.dtos import (
+    AutoSyncOut,
+    DisableAutoSyncCommand,
+    GetAutoSyncQuery,
+    RepositoryPreview,
+    RepositoryRefs,
+    SetAutoSyncCommand,
+)
 
 
 def field_schema(model: type[BaseModel], name: str) -> dict[str, Any]:
@@ -36,16 +43,22 @@ def test_the_limits_stay_required_fields() -> None:
     assert "files" in RepositoryPreview.model_json_schema()["required"]
 
 
-async def _unused(_: object) -> Any:
-    raise AssertionError
+async def _get(query: GetAutoSyncQuery) -> AutoSyncOut:
+    raise AssertionError(query)
+
+
+async def _set(command: SetAutoSyncCommand) -> AutoSyncOut:
+    raise AssertionError(command)
+
+
+async def _disable(command: DisableAutoSyncCommand) -> AutoSyncOut:
+    raise AssertionError(command)
 
 
 def test_setting_a_schedule_describes_the_longest_back_off_in_hours() -> None:
     app = FastAPI()
     app.include_router(
-        build_auto_sync_router(
-            get_auto_sync=_unused, set_auto_sync=_unused, disable_auto_sync=_unused
-        )
+        build_auto_sync_router(get_auto_sync=_get, set_auto_sync=_set, disable_auto_sync=_disable)
     )
     operation = app.openapi()["paths"]["/libraries/{owner}/{repo}/auto-sync"]["put"]
 

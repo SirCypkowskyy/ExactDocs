@@ -5311,7 +5311,7 @@
           "ingestion"
         ],
         "summary": "Preview",
-        "description": "List the articles an import of this URL, ref and patterns would take (a dry run).\n\nOnly the commit's tree is fetched, plus the root `context7.json` alone (no other file\ncontent), and nothing is stored. Without paths, the file's folders and exclusions are\napplied (see `include_paths`, `exclude_paths`, `context7`). `files` has at most 1000\npaths; `total` counts all matches and `truncated` says they were cut. Paths are\nuntrusted text. A `credential` needs a signed-in session, not an API token.",
+        "description": "List the articles an import of this URL, ref and patterns would take (a dry run).\n\nOnly the commit's tree is fetched, plus the root `context7.json` alone (no other file\ncontent), and nothing is stored. Without paths, the file's folders and exclusions are\napplied (see `include_paths`, `exclude_paths`, `context7`). `files` lists the first\nmatching paths; `total` counts all matches and `truncated` says they were cut. Paths are\nuntrusted text. A `credential` needs a signed-in session, not an API token.",
         "operationId": "ingestion-preview",
         "requestBody": {
           "content": {
@@ -5898,6 +5898,7 @@
           "ingestion"
         ],
         "summary": "Get Job",
+        "description": "Read a job: its state, its progress and the problems of its files.",
         "operationId": "ingestion-get_job",
         "security": [
           {
@@ -6110,6 +6111,7 @@
           "ingestion"
         ],
         "summary": "List Library Jobs",
+        "description": "List the library's jobs, newest first, a page at a time.",
         "operationId": "ingestion-list_library_jobs",
         "security": [
           {
@@ -6355,7 +6357,7 @@
           "ingestion"
         ],
         "summary": "Set Auto Sync",
-        "description": "Check the library on its own every `interval_minutes`, starting at the next tick.\n\nEach check asks the repository for its refs once. Tags matching `tag_pattern` that have\na version order (`v1.4.0`, `2.1`; pre-releases do not) are imported as `auto` versions,\noldest first, and only the newest `keep_last` `auto` versions are kept: older ones are\nremoved once their replacements are versions. Versions added by hand (`manual`) and the\npinned default are never removed and do not count. A tag whose import failed for good\n(`no_articles`, `import_too_large`) is tried again only once it moves; after repeated\n`unexpected` failures it backs off (doubling, at most a day); other failures are tried at\nthe next check. An `auto` version removed by hand comes back\nwhile it is among the newest `keep_last`. With `sync_branches`, every branch version is\nre-synced as `POST .../sync` would. Send the whole set: what is left out takes its\ndefault. What a check could not do is its `last_error`.",
+        "description": "Check the library on its own every `interval_minutes`, starting at the next tick.\n\nEach check asks the repository for its refs once. Tags matching `tag_pattern` that have a version order (`v1.4.0`, `2.1`; pre-releases do not) are imported as `auto` versions, oldest first, and only the newest `keep_last` `auto` versions are kept: older ones are removed once their replacements are versions. Versions added by hand (`manual`) and the pinned default are never removed and do not count. A tag whose import failed for good (`no_articles`, `import_too_large`) is tried again only once it moves; after repeated `unexpected` failures it backs off (doubling, at most 24 hours); other failures are tried at the next check. An `auto` version removed by hand comes back while it is among the newest `keep_last`. With `sync_branches`, every branch version is re-synced as `POST .../sync` would. Send the whole set: what is left out takes its default. What a check could not do is its `last_error`.",
         "operationId": "ingestion-set_auto_sync",
         "security": [
           {
@@ -6585,13 +6587,15 @@
           "kind": {
             "type": "string",
             "const": "token",
-            "title": "Kind"
+            "title": "Kind",
+            "description": "Always `token`."
           },
           "token": {
             "type": "string",
             "maxLength": 8192,
             "format": "password",
             "title": "Token",
+            "description": "The token, on one line.",
             "writeOnly": true
           },
           "username": {
@@ -6790,7 +6794,8 @@
         "properties": {
           "library_id": {
             "type": "string",
-            "title": "Library Id"
+            "title": "Library Id",
+            "description": "The library ID, `/owner/repo`."
           },
           "ref": {
             "type": "string",
@@ -6798,15 +6803,18 @@
             "description": "The tag or branch name, or the full SHA of a commit."
           },
           "ref_kind": {
-            "$ref": "#/components/schemas/exactdocs__ingestion__models__RefKind"
+            "$ref": "#/components/schemas/exactdocs__ingestion__models__RefKind",
+            "description": "Whether the ref is a tag, a branch or a commit."
           },
           "commit_sha": {
             "type": "string",
-            "title": "Commit Sha"
+            "title": "Commit Sha",
+            "description": "The full SHA of the commit the ref was pinned to: what the import takes."
           },
           "job_id": {
             "type": "string",
-            "title": "Job Id"
+            "title": "Job Id",
+            "description": "The queued import (`/jobs/{id}`)."
           },
           "include_paths": {
             "items": {
@@ -6821,7 +6829,8 @@
               "type": "string"
             },
             "type": "array",
-            "title": "Exclude Paths"
+            "title": "Exclude Paths",
+            "description": "The library's exclusions: the ones sent, else those of `context7.json`."
           },
           "context7": {
             "anyOf": [
@@ -6863,7 +6872,8 @@
         "properties": {
           "library_id": {
             "type": "string",
-            "title": "Library Id"
+            "title": "Library Id",
+            "description": "The library ID, `/owner/repo`."
           },
           "ref": {
             "type": "string",
@@ -6871,15 +6881,18 @@
             "description": "The tag or branch name, or the full SHA of a commit."
           },
           "ref_kind": {
-            "$ref": "#/components/schemas/exactdocs__ingestion__models__RefKind"
+            "$ref": "#/components/schemas/exactdocs__ingestion__models__RefKind",
+            "description": "Whether the ref is a tag, a branch or a commit."
           },
           "commit_sha": {
             "type": "string",
-            "title": "Commit Sha"
+            "title": "Commit Sha",
+            "description": "The full SHA of the commit the ref was pinned to: what the import takes."
           },
           "job_id": {
             "type": "string",
-            "title": "Job Id"
+            "title": "Job Id",
+            "description": "The queued import (`/jobs/{id}`)."
           }
         },
         "additionalProperties": false,
@@ -7309,7 +7322,8 @@
         "properties": {
           "library": {
             "type": "string",
-            "title": "Library"
+            "title": "Library",
+            "description": "The library ID, `/owner/repo`."
           },
           "enabled": {
             "type": "boolean",
@@ -7325,19 +7339,23 @@
                 "type": "null"
               }
             ],
-            "title": "Tag Pattern"
+            "title": "Tag Pattern",
+            "description": "The glob over tag names whose matching tags become `auto` versions; null imports no tag."
           },
           "keep_last": {
             "type": "integer",
-            "title": "Keep Last"
+            "title": "Keep Last",
+            "description": "How many `auto` versions are kept, the newest."
           },
           "interval_minutes": {
             "type": "integer",
-            "title": "Interval Minutes"
+            "title": "Interval Minutes",
+            "description": "How often the library is checked."
           },
           "sync_branches": {
             "type": "boolean",
-            "title": "Sync Branches"
+            "title": "Sync Branches",
+            "description": "Whether every branch version is re-synced at each check."
           },
           "checked_at": {
             "anyOf": [
@@ -8045,7 +8063,8 @@
                 "type": "null"
               }
             ],
-            "title": "Project Title"
+            "title": "Project Title",
+            "description": "Its `projectTitle`; null when it has none."
           },
           "description": {
             "anyOf": [
@@ -8056,42 +8075,48 @@
                 "type": "null"
               }
             ],
-            "title": "Description"
+            "title": "Description",
+            "description": "Its `description`; null when it has none."
           },
           "folders": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Folders"
+            "title": "Folders",
+            "description": "Its `folders`: the folders to import."
           },
           "exclude_folders": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Exclude Folders"
+            "title": "Exclude Folders",
+            "description": "Its `excludeFolders`."
           },
           "exclude_files": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Exclude Files"
+            "title": "Exclude Files",
+            "description": "Its `excludeFiles`."
           },
           "include_paths": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Include Paths"
+            "title": "Include Paths",
+            "description": "`folders` as ExactDocs include patterns."
           },
           "exclude_paths": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Exclude Paths"
+            "title": "Exclude Paths",
+            "description": "`excludeFolders` and `excludeFiles` as ExactDocs exclude patterns."
           },
           "rules": {
             "items": {
@@ -8241,13 +8266,15 @@
           "kind": {
             "type": "string",
             "const": "ssh_key",
-            "title": "Kind"
+            "title": "Kind",
+            "description": "Always `ssh_key`."
           },
           "private_key": {
             "type": "string",
             "maxLength": 32768,
             "format": "password",
             "title": "Private Key",
+            "description": "The private key as its file holds it, BEGIN and END lines included.",
             "writeOnly": true
           }
         },
@@ -8582,10 +8609,12 @@
         "properties": {
           "path": {
             "type": "string",
-            "title": "Path"
+            "title": "Path",
+            "description": "The file's repository path; empty for a problem of the whole import."
           },
           "code": {
-            "$ref": "#/components/schemas/ProblemCode"
+            "$ref": "#/components/schemas/ProblemCode",
+            "description": "What kind of problem it is."
           },
           "reason": {
             "type": "string",
@@ -8628,7 +8657,8 @@
               "$ref": "#/components/schemas/JobSummary"
             },
             "type": "array",
-            "title": "Jobs"
+            "title": "Jobs",
+            "description": "The jobs, highest ID (newest) first."
           },
           "next_cursor": {
             "anyOf": [
@@ -8667,15 +8697,18 @@
         "properties": {
           "id": {
             "type": "string",
-            "title": "Id"
+            "title": "Id",
+            "description": "The job ID, for `/jobs/{id}`."
           },
           "kind": {
             "type": "string",
-            "title": "Kind"
+            "title": "Kind",
+            "description": "What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect` or\n`embed`."
           },
           "library": {
             "type": "string",
-            "title": "Library"
+            "title": "Library",
+            "description": "The library ID, `/owner/repo`."
           },
           "version": {
             "anyOf": [
@@ -8686,7 +8719,8 @@
                 "type": "null"
               }
             ],
-            "title": "Version"
+            "title": "Version",
+            "description": "The ref of the version the job is for; null for a job of the whole library."
           },
           "commit_sha": {
             "anyOf": [
@@ -8701,22 +8735,26 @@
             "description": "The commit `version` was pinned to, if any."
           },
           "state": {
-            "$ref": "#/components/schemas/JobState"
+            "$ref": "#/components/schemas/JobState",
+            "description": "`queued` and `running` jobs are unfinished; `succeeded` and `failed` ones are done."
           },
           "done": {
             "type": "integer",
-            "title": "Done"
+            "title": "Done",
+            "description": "How much of `total` is done."
           },
           "total": {
             "type": "integer",
-            "title": "Total"
+            "title": "Total",
+            "description": "The job's size, 0 until it is known: files for an import, versions for `reprocess`,\n`retag` and `rechunk`, chunks for `embed`, cleanup steps for `collect`."
           },
           "problems": {
             "items": {
               "$ref": "#/components/schemas/FileProblemSummary"
             },
             "type": "array",
-            "title": "Problems"
+            "title": "Problems",
+            "description": "The files skipped or imported with a note."
           },
           "chunked": {
             "type": "integer",
@@ -8749,7 +8787,8 @@
                 "type": "null"
               }
             ],
-            "title": "Error"
+            "title": "Error",
+            "description": "Why the job failed, for people; null unless it failed."
           },
           "error_code": {
             "anyOf": [
@@ -8771,7 +8810,8 @@
           "created_at": {
             "type": "string",
             "format": "date-time",
-            "title": "Created At"
+            "title": "Created At",
+            "description": "When the job was queued."
           },
           "started_at": {
             "anyOf": [
@@ -8783,7 +8823,8 @@
                 "type": "null"
               }
             ],
-            "title": "Started At"
+            "title": "Started At",
+            "description": "When the job last started running; null while it waits."
           },
           "finished_at": {
             "anyOf": [
@@ -8795,7 +8836,8 @@
                 "type": "null"
               }
             ],
-            "title": "Finished At"
+            "title": "Finished At",
+            "description": "When the job ended; null while it is unfinished."
           }
         },
         "additionalProperties": false,
@@ -8836,15 +8878,18 @@
         "properties": {
           "id": {
             "type": "string",
-            "title": "Id"
+            "title": "Id",
+            "description": "The job ID, for `/jobs/{id}`."
           },
           "kind": {
             "type": "string",
-            "title": "Kind"
+            "title": "Kind",
+            "description": "What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect` or\n`embed`."
           },
           "library": {
             "type": "string",
-            "title": "Library"
+            "title": "Library",
+            "description": "The library ID, `/owner/repo`."
           },
           "version": {
             "anyOf": [
@@ -8855,18 +8900,22 @@
                 "type": "null"
               }
             ],
-            "title": "Version"
+            "title": "Version",
+            "description": "The ref of the version the job is for; null for a job of the whole library."
           },
           "state": {
-            "$ref": "#/components/schemas/JobState"
+            "$ref": "#/components/schemas/JobState",
+            "description": "`queued` and `running` jobs are unfinished; `succeeded` and `failed` ones are done."
           },
           "done": {
             "type": "integer",
-            "title": "Done"
+            "title": "Done",
+            "description": "How much of `total` is done."
           },
           "total": {
             "type": "integer",
-            "title": "Total"
+            "title": "Total",
+            "description": "The job's size, 0 until it is known: files for an import, versions for `reprocess`,\n`retag` and `rechunk`, chunks for `embed`, cleanup steps for `collect`."
           },
           "skipped": {
             "type": "integer",
@@ -8882,7 +8931,8 @@
                 "type": "null"
               }
             ],
-            "title": "Error"
+            "title": "Error",
+            "description": "Why the job failed, for people; null unless it failed."
           },
           "error_code": {
             "anyOf": [
@@ -8899,7 +8949,8 @@
           "created_at": {
             "type": "string",
             "format": "date-time",
-            "title": "Created At"
+            "title": "Created At",
+            "description": "When the job was queued."
           },
           "started_at": {
             "anyOf": [
@@ -8911,7 +8962,8 @@
                 "type": "null"
               }
             ],
-            "title": "Started At"
+            "title": "Started At",
+            "description": "When the job last started running; null while it waits."
           },
           "finished_at": {
             "anyOf": [
@@ -8923,7 +8975,8 @@
                 "type": "null"
               }
             ],
-            "title": "Finished At"
+            "title": "Finished At",
+            "description": "When the job ended; null while it is unfinished."
           }
         },
         "additionalProperties": false,
@@ -8953,7 +9006,8 @@
               "$ref": "#/components/schemas/LatestJob"
             },
             "type": "array",
-            "title": "Jobs"
+            "title": "Jobs",
+            "description": "One job per (library, version); the jobs of a whole library count as one version."
           }
         },
         "additionalProperties": false,
@@ -8968,7 +9022,8 @@
         "properties": {
           "private": {
             "type": "boolean",
-            "title": "Private"
+            "title": "Private",
+            "description": "True when a token or deploy key is stored for the library."
           }
         },
         "additionalProperties": false,
@@ -10444,7 +10499,8 @@
         "properties": {
           "tag": {
             "type": "string",
-            "title": "Tag"
+            "title": "Tag",
+            "description": "The tag, as git names it."
           },
           "title": {
             "type": "string",
@@ -10969,11 +11025,13 @@
         "properties": {
           "name": {
             "type": "string",
-            "title": "Name"
+            "title": "Name",
+            "description": "The tag or branch name, without `refs/tags/` or `refs/heads/`."
           },
           "commit_sha": {
             "type": "string",
-            "title": "Commit Sha"
+            "title": "Commit Sha",
+            "description": "The full SHA of the commit it points at; for an annotated tag, the tagged commit."
           }
         },
         "additionalProperties": false,
@@ -11007,14 +11065,17 @@
         "properties": {
           "library_id": {
             "type": "string",
-            "title": "Library Id"
+            "title": "Library Id",
+            "description": "The library ID, `/owner/repo`."
           },
           "ref": {
             "type": "string",
-            "title": "Ref"
+            "title": "Ref",
+            "description": "The tag."
           },
           "ref_kind": {
-            "$ref": "#/components/schemas/exactdocs__ingestion__models__RefKind"
+            "$ref": "#/components/schemas/exactdocs__ingestion__models__RefKind",
+            "description": "Always `tag`: only a tag version is re-imported."
           },
           "previous_commit_sha": {
             "type": "string",
@@ -11028,7 +11089,8 @@
           },
           "job_id": {
             "type": "string",
-            "title": "Job Id"
+            "title": "Job Id",
+            "description": "The queued import (`/jobs/{id}`)."
           }
         },
         "additionalProperties": false,
@@ -11048,7 +11110,8 @@
         "properties": {
           "library": {
             "type": "string",
-            "title": "Library"
+            "title": "Library",
+            "description": "The library ID, `/owner/repo`."
           },
           "ref": {
             "anyOf": [
@@ -11205,11 +11268,13 @@
             "description": "The tag or branch name, or the full SHA of a commit."
           },
           "ref_kind": {
-            "$ref": "#/components/schemas/exactdocs__ingestion__models__RefKind"
+            "$ref": "#/components/schemas/exactdocs__ingestion__models__RefKind",
+            "description": "Whether the ref is a tag, a branch or a commit."
           },
           "commit_sha": {
             "type": "string",
-            "title": "Commit Sha"
+            "title": "Commit Sha",
+            "description": "The full SHA of the commit the ref names now: the tree that was listed."
           },
           "files": {
             "items": {
@@ -11217,7 +11282,7 @@
             },
             "type": "array",
             "title": "Files",
-            "description": "Sorted repository-relative paths, at most 1000. Untrusted text: show it as text, never as\nmarkup or a link target."
+            "description": "Sorted repository-relative paths, at most 1000. Untrusted text: show it as text, never as markup or a link target."
           },
           "total": {
             "type": "integer",
@@ -11242,7 +11307,8 @@
               "type": "string"
             },
             "type": "array",
-            "title": "Exclude Paths"
+            "title": "Exclude Paths",
+            "description": "The exclusions applied: the ones sent, else those of `context7.json`."
           },
           "context7": {
             "anyOf": [
@@ -11292,26 +11358,29 @@
                 "type": "null"
               }
             ],
-            "title": "Default Branch"
+            "title": "Default Branch",
+            "description": "The branch `HEAD` points at; null when the repository has none."
           },
           "branches": {
             "items": {
               "$ref": "#/components/schemas/RefOut"
             },
             "type": "array",
-            "title": "Branches"
+            "title": "Branches",
+            "description": "The branches, sorted by name."
           },
           "tags": {
             "items": {
               "$ref": "#/components/schemas/RefOut"
             },
             "type": "array",
-            "title": "Tags"
+            "title": "Tags",
+            "description": "The tags, sorted by name."
           },
           "truncated": {
             "type": "boolean",
             "title": "Truncated",
-            "description": "True when branches or tags were cut at 1000 each."
+            "description": "True when branches or tags were cut: at most 1000 of each are listed."
           }
         },
         "additionalProperties": false,
@@ -11323,7 +11392,7 @@
           "truncated"
         ],
         "title": "RepositoryRefs",
-        "description": "What a repository offers as a ref, for the picker. Sorted by name, 1000 of each at most."
+        "description": "What a repository offers as a ref, for the picker: its branches and its tags, by name."
       },
       "RerankWith": {
         "type": "string",
@@ -11947,14 +12016,16 @@
         "properties": {
           "library_id": {
             "type": "string",
-            "title": "Library Id"
+            "title": "Library Id",
+            "description": "The library ID, `/owner/repo`."
           },
           "versions": {
             "items": {
               "$ref": "#/components/schemas/SyncedVersion"
             },
             "type": "array",
-            "title": "Versions"
+            "title": "Versions",
+            "description": "Every version of the library."
           }
         },
         "additionalProperties": false,
@@ -11970,13 +12041,16 @@
         "properties": {
           "ref": {
             "type": "string",
-            "title": "Ref"
+            "title": "Ref",
+            "description": "The version's ref."
           },
           "ref_kind": {
-            "$ref": "#/components/schemas/exactdocs__ingestion__models__RefKind"
+            "$ref": "#/components/schemas/exactdocs__ingestion__models__RefKind",
+            "description": "Whether the ref is a tag, a branch or a commit."
           },
           "status": {
-            "$ref": "#/components/schemas/SyncStatus"
+            "$ref": "#/components/schemas/SyncStatus",
+            "description": "`queued`, `up_to_date`, `importing`, `pinned` or `failed`; see each value."
           },
           "previous_commit_sha": {
             "type": "string",
@@ -12116,13 +12190,15 @@
             "type": "string",
             "maxLength": 256,
             "minLength": 1,
-            "title": "Pattern"
+            "title": "Pattern",
+            "description": "Glob over article paths, e.g. `docs/api/**`."
           },
           "tag": {
             "type": "string",
             "maxLength": 200,
             "minLength": 1,
-            "title": "Tag"
+            "title": "Tag",
+            "description": "The tag a matching article gets; normalized like every tag (lower-case, trimmed)."
           }
         },
         "additionalProperties": false,
@@ -12160,18 +12236,21 @@
         "properties": {
           "library": {
             "type": "string",
-            "title": "Library"
+            "title": "Library",
+            "description": "The library ID, `/owner/repo`."
           },
           "path": {
             "type": "string",
-            "title": "Path"
+            "title": "Path",
+            "description": "The article's repository path."
           },
           "tags": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Tags"
+            "title": "Tags",
+            "description": "The path's manual tags, normalized; empty when it has none."
           }
         },
         "additionalProperties": false,
@@ -12339,31 +12418,36 @@
         "properties": {
           "library_id": {
             "type": "string",
-            "title": "Library Id"
+            "title": "Library Id",
+            "description": "The library ID, `/owner/repo`."
           },
           "include_paths": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Include Paths"
+            "title": "Include Paths",
+            "description": "The paths to import, as stored."
           },
           "exclude_paths": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Exclude Paths"
+            "title": "Exclude Paths",
+            "description": "The paths to leave out, as stored."
           },
           "tag_rules": {
             "items": {
               "$ref": "#/components/schemas/TagRuleIn"
             },
             "type": "array",
-            "title": "Tag Rules"
+            "title": "Tag Rules",
+            "description": "The tag rules, as stored (tags normalized, duplicates dropped)."
           },
           "chunking": {
-            "$ref": "#/components/schemas/ChunkingIn"
+            "$ref": "#/components/schemas/ChunkingIn",
+            "description": "The chunking, as stored."
           },
           "reprocess": {
             "anyOf": [

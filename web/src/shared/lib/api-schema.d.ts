@@ -786,8 +786,8 @@ export interface paths {
          *
          *     Only the commit's tree is fetched, plus the root `context7.json` alone (no other file
          *     content), and nothing is stored. Without paths, the file's folders and exclusions are
-         *     applied (see `include_paths`, `exclude_paths`, `context7`). `files` has at most 1000
-         *     paths; `total` counts all matches and `truncated` says they were cut. Paths are
+         *     applied (see `include_paths`, `exclude_paths`, `context7`). `files` lists the first
+         *     matching paths; `total` counts all matches and `truncated` says they were cut. Paths are
          *     untrusted text. A `credential` needs a signed-in session, not an API token.
          */
         readonly post: operations["ingestion-preview"];
@@ -909,7 +909,10 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** Get Job */
+        /**
+         * Get Job
+         * @description Read a job: its state, its progress and the problems of its files.
+         */
         readonly get: operations["ingestion-get_job"];
         readonly put?: never;
         readonly post?: never;
@@ -946,7 +949,10 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** List Library Jobs */
+        /**
+         * List Library Jobs
+         * @description List the library's jobs, newest first, a page at a time.
+         */
         readonly get: operations["ingestion-list_library_jobs"];
         readonly put?: never;
         readonly post?: never;
@@ -972,17 +978,7 @@ export interface paths {
          * Set Auto Sync
          * @description Check the library on its own every `interval_minutes`, starting at the next tick.
          *
-         *     Each check asks the repository for its refs once. Tags matching `tag_pattern` that have
-         *     a version order (`v1.4.0`, `2.1`; pre-releases do not) are imported as `auto` versions,
-         *     oldest first, and only the newest `keep_last` `auto` versions are kept: older ones are
-         *     removed once their replacements are versions. Versions added by hand (`manual`) and the
-         *     pinned default are never removed and do not count. A tag whose import failed for good
-         *     (`no_articles`, `import_too_large`) is tried again only once it moves; after repeated
-         *     `unexpected` failures it backs off (doubling, at most a day); other failures are tried at
-         *     the next check. An `auto` version removed by hand comes back
-         *     while it is among the newest `keep_last`. With `sync_branches`, every branch version is
-         *     re-synced as `POST .../sync` would. Send the whole set: what is left out takes its
-         *     default. What a check could not do is its `last_error`.
+         *     Each check asks the repository for its refs once. Tags matching `tag_pattern` that have a version order (`v1.4.0`, `2.1`; pre-releases do not) are imported as `auto` versions, oldest first, and only the newest `keep_last` `auto` versions are kept: older ones are removed once their replacements are versions. Versions added by hand (`manual`) and the pinned default are never removed and do not count. A tag whose import failed for good (`no_articles`, `import_too_large`) is tried again only once it moves; after repeated `unexpected` failures it backs off (doubling, at most 24 hours); other failures are tried at the next check. An `auto` version removed by hand comes back while it is among the newest `keep_last`. With `sync_branches`, every branch version is re-synced as `POST .../sync` would. Send the whole set: what is left out takes its default. What a check could not do is its `last_error`.
          */
         readonly put: operations["ingestion-set_auto_sync"];
         readonly post?: never;
@@ -1006,13 +1002,14 @@ export interface components {
          */
         readonly AccessTokenIn: {
             /**
-             * @description discriminator enum property added by openapi-typescript
+             * @description Always `token`. (enum property replaced by openapi-typescript)
              * @enum {string}
              */
             readonly kind: "token";
             /**
              * Token
              * Format: password
+             * @description The token, on one line.
              */
             readonly token: string;
             /**
@@ -1105,24 +1102,37 @@ export interface components {
          * @description The new library, the commit its ref was pinned to, and the queued import.
          */
         readonly AddedLibrary: {
-            /** Library Id */
+            /**
+             * Library Id
+             * @description The library ID, `/owner/repo`.
+             */
             readonly library_id: string;
             /**
              * Ref
              * @description The tag or branch name, or the full SHA of a commit.
              */
             readonly ref: string;
+            /** @description Whether the ref is a tag, a branch or a commit. */
             readonly ref_kind: components["schemas"]["exactdocs__ingestion__models__RefKind"];
-            /** Commit Sha */
+            /**
+             * Commit Sha
+             * @description The full SHA of the commit the ref was pinned to: what the import takes.
+             */
             readonly commit_sha: string;
-            /** Job Id */
+            /**
+             * Job Id
+             * @description The queued import (`/jobs/{id}`).
+             */
             readonly job_id: string;
             /**
              * Include Paths
              * @description The library's paths: the ones sent, else those of `context7.json`.
              */
             readonly include_paths?: readonly string[];
-            /** Exclude Paths */
+            /**
+             * Exclude Paths
+             * @description The library's exclusions: the ones sent, else those of `context7.json`.
+             */
             readonly exclude_paths?: readonly string[];
             /** @description The repository's root `context7.json` at that commit; null when there is none or it is ignored (see `context7_warning`). */
             readonly context7?: components["schemas"]["Context7Out"] | null;
@@ -1137,17 +1147,27 @@ export interface components {
          * @description The existing library, the commit the new version's ref was pinned to, and its import.
          */
         readonly AddedVersion: {
-            /** Library Id */
+            /**
+             * Library Id
+             * @description The library ID, `/owner/repo`.
+             */
             readonly library_id: string;
             /**
              * Ref
              * @description The tag or branch name, or the full SHA of a commit.
              */
             readonly ref: string;
+            /** @description Whether the ref is a tag, a branch or a commit. */
             readonly ref_kind: components["schemas"]["exactdocs__ingestion__models__RefKind"];
-            /** Commit Sha */
+            /**
+             * Commit Sha
+             * @description The full SHA of the commit the ref was pinned to: what the import takes.
+             */
             readonly commit_sha: string;
-            /** Job Id */
+            /**
+             * Job Id
+             * @description The queued import (`/jobs/{id}`).
+             */
             readonly job_id: string;
         };
         /**
@@ -1432,20 +1452,35 @@ export interface components {
          * @description A library's scheduled check, and how the last one went.
          */
         readonly AutoSyncOut: {
-            /** Library */
+            /**
+             * Library
+             * @description The library ID, `/owner/repo`.
+             */
             readonly library: string;
             /**
              * Enabled
              * @description False when the library is never checked on its own.
              */
             readonly enabled: boolean;
-            /** Tag Pattern */
+            /**
+             * Tag Pattern
+             * @description The glob over tag names whose matching tags become `auto` versions; null imports no tag.
+             */
             readonly tag_pattern: string | null;
-            /** Keep Last */
+            /**
+             * Keep Last
+             * @description How many `auto` versions are kept, the newest.
+             */
             readonly keep_last: number;
-            /** Interval Minutes */
+            /**
+             * Interval Minutes
+             * @description How often the library is checked.
+             */
             readonly interval_minutes: number;
-            /** Sync Branches */
+            /**
+             * Sync Branches
+             * @description Whether every branch version is re-synced at each check.
+             */
             readonly sync_branches: boolean;
             /**
              * Checked At
@@ -1872,19 +1907,40 @@ export interface components {
          *     library added without paths imports.
          */
         readonly Context7Out: {
-            /** Project Title */
+            /**
+             * Project Title
+             * @description Its `projectTitle`; null when it has none.
+             */
             readonly project_title: string | null;
-            /** Description */
+            /**
+             * Description
+             * @description Its `description`; null when it has none.
+             */
             readonly description: string | null;
-            /** Folders */
+            /**
+             * Folders
+             * @description Its `folders`: the folders to import.
+             */
             readonly folders: readonly string[];
-            /** Exclude Folders */
+            /**
+             * Exclude Folders
+             * @description Its `excludeFolders`.
+             */
             readonly exclude_folders: readonly string[];
-            /** Exclude Files */
+            /**
+             * Exclude Files
+             * @description Its `excludeFiles`.
+             */
             readonly exclude_files: readonly string[];
-            /** Include Paths */
+            /**
+             * Include Paths
+             * @description `folders` as ExactDocs include patterns.
+             */
             readonly include_paths: readonly string[];
-            /** Exclude Paths */
+            /**
+             * Exclude Paths
+             * @description `excludeFolders` and `excludeFiles` as ExactDocs exclude patterns.
+             */
             readonly exclude_paths: readonly string[];
             /**
              * Rules
@@ -1976,13 +2032,14 @@ export interface components {
          */
         readonly DeployKeyIn: {
             /**
-             * @description discriminator enum property added by openapi-typescript
+             * @description Always `ssh_key`. (enum property replaced by openapi-typescript)
              * @enum {string}
              */
             readonly kind: "ssh_key";
             /**
              * Private Key
              * Format: password
+             * @description The private key as its file holds it, BEGIN and END lines included.
              */
             readonly private_key: string;
         };
@@ -2189,8 +2246,12 @@ export interface components {
          * @description A problem with a file: skipped (`is_skip`) or imported with a note. `code` is stable.
          */
         readonly FileProblemSummary: {
-            /** Path */
+            /**
+             * Path
+             * @description The file's repository path; empty for a problem of the whole import.
+             */
             readonly path: string;
+            /** @description What kind of problem it is. */
             readonly code: components["schemas"]["ProblemCode"];
             /**
              * Reason
@@ -2214,7 +2275,10 @@ export interface components {
          * @description A page of the jobs of one library, newest first.
          */
         readonly JobList: {
-            /** Jobs */
+            /**
+             * Jobs
+             * @description The jobs, highest ID (newest) first.
+             */
             readonly jobs: readonly components["schemas"]["JobSummary"][];
             /**
              * Next Cursor
@@ -2233,25 +2297,49 @@ export interface components {
          * @description A job and how far it got. ``total`` is 0 until the job knows its size.
          */
         readonly JobSummary: {
-            /** Id */
+            /**
+             * Id
+             * @description The job ID, for `/jobs/{id}`.
+             */
             readonly id: string;
-            /** Kind */
+            /**
+             * Kind
+             * @description What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect` or
+             *     `embed`.
+             */
             readonly kind: string;
-            /** Library */
+            /**
+             * Library
+             * @description The library ID, `/owner/repo`.
+             */
             readonly library: string;
-            /** Version */
+            /**
+             * Version
+             * @description The ref of the version the job is for; null for a job of the whole library.
+             */
             readonly version: string | null;
             /**
              * Commit Sha
              * @description The commit `version` was pinned to, if any.
              */
             readonly commit_sha: string | null;
+            /** @description `queued` and `running` jobs are unfinished; `succeeded` and `failed` ones are done. */
             readonly state: components["schemas"]["JobState"];
-            /** Done */
+            /**
+             * Done
+             * @description How much of `total` is done.
+             */
             readonly done: number;
-            /** Total */
+            /**
+             * Total
+             * @description The job's size, 0 until it is known: files for an import, versions for `reprocess`,
+             *     `retag` and `rechunk`, chunks for `embed`, cleanup steps for `collect`.
+             */
             readonly total: number;
-            /** Problems */
+            /**
+             * Problems
+             * @description The files skipped or imported with a note.
+             */
             readonly problems: readonly components["schemas"]["FileProblemSummary"][];
             /**
              * Chunked
@@ -2277,7 +2365,10 @@ export interface components {
              * @default 0
              */
             readonly taken: number;
-            /** Error */
+            /**
+             * Error
+             * @description Why the job failed, for people; null unless it failed.
+             */
             readonly error: string | null;
             /**
              * Error Code
@@ -2292,11 +2383,18 @@ export interface components {
             /**
              * Created At
              * Format: date-time
+             * @description When the job was queued.
              */
             readonly created_at: string;
-            /** Started At */
+            /**
+             * Started At
+             * @description When the job last started running; null while it waits.
+             */
             readonly started_at: string | null;
-            /** Finished At */
+            /**
+             * Finished At
+             * @description When the job ended; null while it is unfinished.
+             */
             readonly finished_at: string | null;
         };
         /**
@@ -2310,25 +2408,49 @@ export interface components {
          * @description The newest job of one version of a library, light enough to list for every library.
          */
         readonly LatestJob: {
-            /** Id */
+            /**
+             * Id
+             * @description The job ID, for `/jobs/{id}`.
+             */
             readonly id: string;
-            /** Kind */
+            /**
+             * Kind
+             * @description What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect` or
+             *     `embed`.
+             */
             readonly kind: string;
-            /** Library */
+            /**
+             * Library
+             * @description The library ID, `/owner/repo`.
+             */
             readonly library: string;
-            /** Version */
+            /**
+             * Version
+             * @description The ref of the version the job is for; null for a job of the whole library.
+             */
             readonly version: string | null;
+            /** @description `queued` and `running` jobs are unfinished; `succeeded` and `failed` ones are done. */
             readonly state: components["schemas"]["JobState"];
-            /** Done */
+            /**
+             * Done
+             * @description How much of `total` is done.
+             */
             readonly done: number;
-            /** Total */
+            /**
+             * Total
+             * @description The job's size, 0 until it is known: files for an import, versions for `reprocess`,
+             *     `retag` and `rechunk`, chunks for `embed`, cleanup steps for `collect`.
+             */
             readonly total: number;
             /**
              * Skipped
              * @description How many files the job skipped; see `/jobs/{id}`.
              */
             readonly skipped: number;
-            /** Error */
+            /**
+             * Error
+             * @description Why the job failed, for people; null unless it failed.
+             */
             readonly error: string | null;
             /**
              * Error Code
@@ -2338,11 +2460,18 @@ export interface components {
             /**
              * Created At
              * Format: date-time
+             * @description When the job was queued.
              */
             readonly created_at: string;
-            /** Started At */
+            /**
+             * Started At
+             * @description When the job last started running; null while it waits.
+             */
             readonly started_at: string | null;
-            /** Finished At */
+            /**
+             * Finished At
+             * @description When the job ended; null while it is unfinished.
+             */
             readonly finished_at: string | null;
         };
         /**
@@ -2350,7 +2479,10 @@ export interface components {
          * @description The newest job of every (library, version), ordered by library and version.
          */
         readonly LatestJobs: {
-            /** Jobs */
+            /**
+             * Jobs
+             * @description One job per (library, version); the jobs of a whole library count as one version.
+             */
             readonly jobs: readonly components["schemas"]["LatestJob"][];
         };
         /**
@@ -2358,7 +2490,10 @@ export interface components {
          * @description Whether the library's repository is private: it has a stored credential (token or key).
          */
         readonly LibraryAccess: {
-            /** Private */
+            /**
+             * Private
+             * @description True when a token or deploy key is stored for the library.
+             */
             readonly private: boolean;
         };
         /**
@@ -3160,7 +3295,10 @@ export interface components {
          * @description An older tag the repository's `context7.json` offers for import.
          */
         readonly PreviousVersionOut: {
-            /** Tag */
+            /**
+             * Tag
+             * @description The tag, as git names it.
+             */
             readonly tag: string;
             /**
              * Title
@@ -3401,9 +3539,15 @@ export interface components {
          * @description A tag or branch and the commit it points at.
          */
         readonly RefOut: {
-            /** Name */
+            /**
+             * Name
+             * @description The tag or branch name, without `refs/tags/` or `refs/heads/`.
+             */
             readonly name: string;
-            /** Commit Sha */
+            /**
+             * Commit Sha
+             * @description The full SHA of the commit it points at; for an annotated tag, the tagged commit.
+             */
             readonly commit_sha: string;
         };
         /**
@@ -3422,10 +3566,17 @@ export interface components {
          * @description The tag version whose re-import is queued, and the commits it moves between.
          */
         readonly ReimportedVersion: {
-            /** Library Id */
+            /**
+             * Library Id
+             * @description The library ID, `/owner/repo`.
+             */
             readonly library_id: string;
-            /** Ref */
+            /**
+             * Ref
+             * @description The tag.
+             */
             readonly ref: string;
+            /** @description Always `tag`: only a tag version is re-imported. */
             readonly ref_kind: components["schemas"]["exactdocs__ingestion__models__RefKind"];
             /**
              * Previous Commit Sha
@@ -3437,7 +3588,10 @@ export interface components {
              * @description The commit the tag names now, which the import takes.
              */
             readonly commit_sha: string;
-            /** Job Id */
+            /**
+             * Job Id
+             * @description The queued import (`/jobs/{id}`).
+             */
             readonly job_id: string;
         };
         /**
@@ -3445,7 +3599,10 @@ export interface components {
          * @description A removal is done for readers when this is returned; the disk is freed by a job.
          */
         readonly RemovalResult: {
-            /** Library */
+            /**
+             * Library
+             * @description The library ID, `/owner/repo`.
+             */
             readonly library: string;
             /**
              * Ref
@@ -3538,13 +3695,16 @@ export interface components {
              * @description The tag or branch name, or the full SHA of a commit.
              */
             readonly ref: string;
+            /** @description Whether the ref is a tag, a branch or a commit. */
             readonly ref_kind: components["schemas"]["exactdocs__ingestion__models__RefKind"];
-            /** Commit Sha */
+            /**
+             * Commit Sha
+             * @description The full SHA of the commit the ref names now: the tree that was listed.
+             */
             readonly commit_sha: string;
             /**
              * Files
-             * @description Sorted repository-relative paths, at most 1000. Untrusted text: show it as text, never as
-             *     markup or a link target.
+             * @description Sorted repository-relative paths, at most 1000. Untrusted text: show it as text, never as markup or a link target.
              */
             readonly files: readonly string[];
             /**
@@ -3562,7 +3722,10 @@ export interface components {
              * @description The paths applied: the ones sent, else those of `context7.json`.
              */
             readonly include_paths?: readonly string[];
-            /** Exclude Paths */
+            /**
+             * Exclude Paths
+             * @description The exclusions applied: the ones sent, else those of `context7.json`.
+             */
             readonly exclude_paths?: readonly string[];
             /** @description The repository's root `context7.json` at that commit; null when there is none or it is ignored (see `context7_warning`). */
             readonly context7?: components["schemas"]["Context7Out"] | null;
@@ -3574,18 +3737,27 @@ export interface components {
         };
         /**
          * RepositoryRefs
-         * @description What a repository offers as a ref, for the picker. Sorted by name, 1000 of each at most.
+         * @description What a repository offers as a ref, for the picker: its branches and its tags, by name.
          */
         readonly RepositoryRefs: {
-            /** Default Branch */
+            /**
+             * Default Branch
+             * @description The branch `HEAD` points at; null when the repository has none.
+             */
             readonly default_branch: string | null;
-            /** Branches */
+            /**
+             * Branches
+             * @description The branches, sorted by name.
+             */
             readonly branches: readonly components["schemas"]["RefOut"][];
-            /** Tags */
+            /**
+             * Tags
+             * @description The tags, sorted by name.
+             */
             readonly tags: readonly components["schemas"]["RefOut"][];
             /**
              * Truncated
-             * @description True when branches or tags were cut at 1000 each.
+             * @description True when branches or tags were cut: at most 1000 of each are listed.
              */
             readonly truncated: boolean;
         };
@@ -3982,9 +4154,15 @@ export interface components {
          * @description The outcome per version; ``queued`` ones have an import to poll by ``job_id``.
          */
         readonly SyncedLibrary: {
-            /** Library Id */
+            /**
+             * Library Id
+             * @description The library ID, `/owner/repo`.
+             */
             readonly library_id: string;
-            /** Versions */
+            /**
+             * Versions
+             * @description Every version of the library.
+             */
             readonly versions: readonly components["schemas"]["SyncedVersion"][];
         };
         /**
@@ -3992,9 +4170,14 @@ export interface components {
          * @description What the re-sync did with one version of the library.
          */
         readonly SyncedVersion: {
-            /** Ref */
+            /**
+             * Ref
+             * @description The version's ref.
+             */
             readonly ref: string;
+            /** @description Whether the ref is a tag, a branch or a commit. */
             readonly ref_kind: components["schemas"]["exactdocs__ingestion__models__RefKind"];
+            /** @description `queued`, `up_to_date`, `importing`, `pinned` or `failed`; see each value. */
             readonly status: components["schemas"]["SyncStatus"];
             /**
              * Previous Commit Sha
@@ -4085,9 +4268,15 @@ export interface components {
          * @description Articles whose path matches `pattern` (a glob like `docs/api/**`) get `tag`.
          */
         readonly TagRuleIn: {
-            /** Pattern */
+            /**
+             * Pattern
+             * @description Glob over article paths, e.g. `docs/api/**`.
+             */
             readonly pattern: string;
-            /** Tag */
+            /**
+             * Tag
+             * @description The tag a matching article gets; normalized like every tag (lower-case, trimmed).
+             */
             readonly tag: string;
         };
         /**
@@ -4113,11 +4302,20 @@ export interface components {
          *     So does, in a later version, the article git saw it renamed to.
          */
         readonly TaggedArticle: {
-            /** Library */
+            /**
+             * Library
+             * @description The library ID, `/owner/repo`.
+             */
             readonly library: string;
-            /** Path */
+            /**
+             * Path
+             * @description The article's repository path.
+             */
             readonly path: string;
-            /** Tags */
+            /**
+             * Tags
+             * @description The path's manual tags, normalized; empty when it has none.
+             */
             readonly tags: readonly string[];
         };
         /**
@@ -4215,14 +4413,27 @@ export interface components {
          * @description The settings as stored (normalized) and the job that brings every version in line.
          */
         readonly UpdatedLibrarySettings: {
-            /** Library Id */
+            /**
+             * Library Id
+             * @description The library ID, `/owner/repo`.
+             */
             readonly library_id: string;
-            /** Include Paths */
+            /**
+             * Include Paths
+             * @description The paths to import, as stored.
+             */
             readonly include_paths: readonly string[];
-            /** Exclude Paths */
+            /**
+             * Exclude Paths
+             * @description The paths to leave out, as stored.
+             */
             readonly exclude_paths: readonly string[];
-            /** Tag Rules */
+            /**
+             * Tag Rules
+             * @description The tag rules, as stored (tags normalized, duplicates dropped).
+             */
             readonly tag_rules: readonly components["schemas"]["TagRuleIn"][];
+            /** @description The chunking, as stored. */
             readonly chunking: components["schemas"]["ChunkingIn"];
             /**
              * @description `paths`: the selection changed, every version is fetched again at its commit; `chunking`: the
