@@ -132,7 +132,11 @@ print(json.dumps(problems))
 
 
 def default_ml_packages(lock: dict, root: str = "exactdocs") -> set[str]:
-    """ML packages reachable from `root` through non-optional dependencies of a parsed uv.lock."""
+    """ML packages reachable from `root` through non-optional dependencies of a parsed uv.lock.
+
+    Returns:
+        The names of those packages.
+    """
     by_name = {p["name"]: p for p in lock["package"]}
     seen: set[str] = set()
     todo = [root]
@@ -158,7 +162,11 @@ def normalize(name: str) -> str:
 
 
 def report(kind: str, size: int, budget: int, problems: list[str]) -> int:
-    """Print the size line and problems (also to the job summary); return the exit code."""
+    """Print the size line and problems (also to the job summary); return the exit code.
+
+    Returns:
+        1 when there are problems, else 0.
+    """
     line = f"{kind}: {size / MB:.1f} MB of {budget / MB:.0f} MB budget"
     if size > budget:
         problems.append(f"{line} - over budget")
@@ -172,7 +180,11 @@ def report(kind: str, size: int, budget: int, problems: list[str]) -> int:
 
 
 def wheel(path: Path) -> int:
-    """Check a built wheel: size, model files, bundled UI, default ML requirements."""
+    """Check a built wheel: size, model files, bundled UI, default ML requirements.
+
+    Returns:
+        The exit code: 1 when the wheel has problems, else 0.
+    """
     with zipfile.ZipFile(path) as z:
         names = z.namelist()
         meta = next(n for n in names if n.endswith(".dist-info/METADATA"))
@@ -234,7 +246,11 @@ def _run(ref: str, *command: str, root: bool = False) -> str:
 
 
 def image(ref: str, kind: str = "base") -> int:
-    """Check a docker image variant: size, installed packages, model files, default models."""
+    """Check a docker image variant: size, installed packages, model files, default models.
+
+    Returns:
+        The exit code: 1 when the image has problems, else 0.
+    """
     variant = IMAGE_VARIANTS[kind]
     # Apparent bytes of the files inside: `docker image inspect` .Size is the compressed size
     # under the containerd image store (115 MB in CI vs 352 MB with overlay2), so don't use it.

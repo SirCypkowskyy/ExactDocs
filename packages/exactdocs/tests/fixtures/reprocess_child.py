@@ -53,7 +53,11 @@ CHILD = Path(__file__)
 
 
 def tagged_repository(path: Path, files: int) -> str:
-    """A ``big_repository`` whose ``main`` is tagged ``v1`` and ``v2``; return its URL."""
+    """A ``big_repository`` whose ``main`` is tagged ``v1`` and ``v2``; return its URL.
+
+    Returns:
+        Its URL.
+    """
     url, _ = big_repository(path, files)
     for tag in TAGS:
         git("tag", tag, cwd=path)
@@ -61,7 +65,11 @@ def tagged_repository(path: Path, files: int) -> str:
 
 
 async def run(*args: str) -> tuple[int, str, str]:
-    """Run this script with ``args`` to its end; return its exit code, stdout and stderr."""
+    """Run this script with ``args`` to its end; return its exit code, stdout and stderr.
+
+    Returns:
+        Its exit code, stdout and stderr.
+    """
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         str(CHILD),
@@ -120,7 +128,11 @@ def _log_rechunks(log: Path, kill_at: int | None) -> None:
 
 
 async def _rechunk_state(container: Container) -> dict[str, object]:
-    """Pending manifests left, and the config hash of the chunks each version serves."""
+    """Pending manifests left, and the config hash of the chunks each version serves.
+
+    Returns:
+        ``pending`` and ``hashes``.
+    """
     async with container.engine.connect() as connection:
         pending = await connection.scalar(
             text("SELECT count(*) FROM catalog_manifests WHERE state = 'pending'")

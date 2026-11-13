@@ -269,7 +269,11 @@ async def test_without_pgvector_embed_jobs_send_nothing_and_the_estimate_still_c
 
 
 async def _wait_for_embed_jobs(container: Container) -> list:
-    """Wait until the library's embed jobs have all ended; return them."""
+    """Wait until the library's embed jobs have all ended; return them.
+
+    Returns:
+        The embed jobs.
+    """
     deadline = asyncio.get_running_loop().time() + EMBED_SECONDS
     while True:
         listed = await container.ingestion.list_library_jobs(ListLibraryJobsQuery(library=LIBRARY))

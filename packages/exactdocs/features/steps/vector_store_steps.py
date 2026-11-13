@@ -45,13 +45,21 @@ _CHUNKS = text(
 
 
 def made_up_vector(content: str, dimensions: int) -> list[float]:
-    """A deterministic stand-in for an embedding: the text's hash, spread over the dimensions."""
+    """A deterministic stand-in for an embedding: the text's hash, spread over the dimensions.
+
+    Returns:
+        The vector.
+    """
     seed = hashlib.sha256(content.encode()).digest()
     return [seed[i % len(seed)] - 127.5 + i / dimensions for i in range(dimensions)]
 
 
 async def _chunks(container: Container, ref: str) -> list[tuple[str, ChunkKey, str]]:
-    """Every chunk row of the version: its chunk ID, its key in the store, its text."""
+    """Every chunk row of the version: its chunk ID, its key in the store, its text.
+
+    Returns:
+        The chunk rows.
+    """
     async with container.engine.connect() as connection:
         rows = await connection.execute(_CHUNKS, {"version": f"{LIBRARY}/{ref}"})
         return [(r.chunk_id, (r.blob_sha, r.config_hash, r.position), r.content) for r in rows]
@@ -84,7 +92,11 @@ def _open(context: Context, model: str, dimensions: int, fill: list[str]) -> Emb
 def _nearest(
     context: Context, space: EmbeddingSpaceId, ref: str, query: list[float], limit: int
 ) -> tuple[list[VectorHit], set[str]]:
-    """Search one version; also return the chunk IDs that version has."""
+    """Search one version; also return the chunk IDs that version has.
+
+    Returns:
+        The hits, and the version's chunk IDs.
+    """
 
     async def go() -> tuple[list[VectorHit], set[str]]:
         container = Container.build(context.settings)

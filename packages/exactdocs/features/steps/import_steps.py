@@ -132,7 +132,11 @@ def _commit(context: Context, ref: str) -> str:
 
 
 def articles_of(context: Context, ref: str) -> list[dict]:
-    """Every article of a version, over the paged listing."""
+    """Every article of a version, over the paged listing.
+
+    Returns:
+        The articles, every page joined.
+    """
     found, cursor = [], None
     while True:
         params = {"ref": ref, "limit": 100} | ({"cursor": cursor} if cursor else {})
@@ -311,7 +315,11 @@ def step_lists_all(context: Context, target: str) -> None:
 
 
 def _search_all(context: Context, ref: str) -> list[tuple[str, str]]:
-    """(chunk ID, commit SHA) of every hit for a few words that the fixture articles share."""
+    """(chunk ID, commit SHA) of every hit for a few words that the fixture articles share.
+
+    Returns:
+        The pairs, in hit order.
+    """
     hits = []
     for word in ("token", "install", "configuration", "guide", "client"):
         response = context.client.get(

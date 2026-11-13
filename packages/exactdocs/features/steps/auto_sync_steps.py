@@ -56,7 +56,11 @@ def step_auto_branches(context: Context) -> None:
 
 
 def _wait_for_check(context: Context) -> None:
-    """Wait for a tick to check the library, then for every job it queued to end."""
+    """Wait for a tick to check the library, then for every job it queued to end.
+
+    Raises:
+        AssertionError: When no tick checks it, or its jobs do not end in time.
+    """
     deadline = time.monotonic() + JOB_SECONDS
     while time.monotonic() < deadline:
         state = context.client.get(f"/api/v1/libraries{LIBRARY}/auto-sync").json()
@@ -84,7 +88,11 @@ def _run_check(context: Context) -> None:
 
 
 def _versions(context: Context) -> dict[str, str]:
-    """The library's versions and their origin."""
+    """The library's versions and their origin.
+
+    Returns:
+        Each version's ref mapped to its origin.
+    """
     detail = context.client.get(f"/api/v1/libraries{LIBRARY}")
     assert detail.status_code == HTTPStatus.OK, detail.text
     return {v["ref"]: v["origin"] for v in detail.json()["versions"]}

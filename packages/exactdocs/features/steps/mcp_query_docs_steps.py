@@ -15,7 +15,11 @@ BROAD_QUERY = "the a to is of retry token install client docs guide"
 
 
 def _only_in(context: Context, ref: str) -> list[str]:
-    """Lines of ``ref``'s docs that no other imported version has."""
+    """Lines of ``ref``'s docs that no other imported version has.
+
+    Returns:
+        Those lines.
+    """
     git, repo = context.fixture_git, context.fixture_repo.path
     others = {r for r in ("v1.3.0", "v1.4.0") if r != ref}
 

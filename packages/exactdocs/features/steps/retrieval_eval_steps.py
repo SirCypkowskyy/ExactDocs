@@ -130,7 +130,11 @@ class _AnswersNothing:
 
 
 def _fingerprint_of(context: Context, label: str) -> str:
-    """The branch's dataset label stands for the real dataset; any other label for another one."""
+    """The branch's dataset label stands for the real dataset; any other label for another one.
+
+    Returns:
+        The fingerprint the label stands for.
+    """
     if label == context.eval_branch_dataset:
         return fingerprint(load_dataset())
     return f"sha256:{label}"

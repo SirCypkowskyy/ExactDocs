@@ -52,6 +52,7 @@ class GatedCheck:
 
         Raises:
             CheckBugError: When ``fails``.
+            asyncio.CancelledError: When cancelled, unless ``stubborn``.
         """
         self.started += 1
         number = self.started

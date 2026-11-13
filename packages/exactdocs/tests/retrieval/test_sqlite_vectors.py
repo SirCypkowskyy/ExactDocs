@@ -32,12 +32,20 @@ SPEC = EmbeddingSpec(profile_kind="openai", model="a", dimensions=3)
 
 
 def _broken_extension() -> str:
-    """Stand for a Python whose sqlite-vec does not load."""
+    """Stand for a Python whose sqlite-vec does not load.
+
+    Returns:
+        The Python's path.
+    """
     return "/nowhere/vec0"
 
 
 def _missing_package() -> str:
-    """Stand for an install without the ``[ai]`` extra."""
+    """Stand for an install without the ``[ai]`` extra.
+
+    Raises:
+        ModuleNotFoundError: Always.
+    """
     name = "sqlite_vec"
     raise ModuleNotFoundError(name)
 

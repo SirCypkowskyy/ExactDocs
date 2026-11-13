@@ -144,7 +144,11 @@ def _admin_rest(context: Context) -> None:
 
 
 def _settled(detail: dict) -> dict:
-    """What an add produces, minus what differs between two libraries (name, time)."""
+    """What an add produces, minus what differs between two libraries (name, time).
+
+    Returns:
+        The add's output, without the fields that differ.
+    """
     detail = {k: v for k, v in detail.items() if k not in {"id", "title", "description"}}
     detail["versions"] = [
         {k: v for k, v in x.items() if k != "imported_at"} for x in detail["versions"]
@@ -203,7 +207,11 @@ def step_revoked(context: Context) -> None:
 
 
 def _rest_preview(context: Context) -> dict:
-    """What the preview endpoint answers for the fixture at v1.4.0 and ``docs/**``."""
+    """What the preview endpoint answers for the fixture at v1.4.0 and ``docs/**``.
+
+    Returns:
+        The preview's JSON body.
+    """
     _admin_rest(context)
     response = context.client.post(
         "/api/v1/repositories/preview",

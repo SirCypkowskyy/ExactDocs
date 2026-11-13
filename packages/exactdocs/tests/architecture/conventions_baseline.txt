@@ -1,3 +1,0 @@
-# Docstrings the code had not yet when the conventions were enforced (see test_conventions.py).
-# Delete a line once it is fixed (and lower BASELINE_CEILING); never add one: new code follows
-# the conventions.

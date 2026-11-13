@@ -115,12 +115,20 @@ def step_scrape_as(context: Context, path: str, host: str) -> None:
 
 
 def _series(text: str, name: str) -> list[str]:
-    """The samples of one metric: ``name{labels} value`` lines."""
+    """The samples of one metric: ``name{labels} value`` lines.
+
+    Returns:
+        The sample lines.
+    """
     return [line for line in text.splitlines() if re.match(rf"{re.escape(name)}(\{{| )", line)]
 
 
 def _counted(text: str, name: str, **labels: str) -> float:
-    """The sum of the samples of ``name`` that carry every one of ``labels``."""
+    """The sum of the samples of ``name`` that carry every one of ``labels``.
+
+    Returns:
+        The sum, 0 when no sample matches.
+    """
     total = 0.0
     for line in _series(text, name):
         if all(f'{label}="{value}"' in line for label, value in labels.items()):

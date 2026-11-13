@@ -21,7 +21,11 @@ MAX_ARTICLE_BYTES = 2 * 1024 * 1024
 
 
 def refs(listing: str) -> dict[str, str]:
-    """``ref -> sha`` from ``git for-each-ref`` or ``git ls-remote`` output."""
+    """``ref -> sha`` from ``git for-each-ref`` or ``git ls-remote`` output.
+
+    Returns:
+        Each ref mapped to its SHA.
+    """
     pairs = [line.replace("\t", " ").split(" ", 1) for line in listing.splitlines()]
     return {ref: sha for sha, ref in pairs if not ref.endswith("^{}")}
 

@@ -638,7 +638,11 @@ async def test_an_unknown_library_has_no_schedule(module: IngestionModule) -> No
 
 
 async def _queues_v140(module: IngestionModule, jobs: InMemoryJobRepository) -> bool:
-    """Save the schedule (due at once), tick, and tell whether v1.4.0 was queued."""
+    """Save the schedule (due at once), tick, and tell whether v1.4.0 was queued.
+
+    Returns:
+        Whether v1.4.0 was queued.
+    """
     await module.set_auto_sync(schedule(interval_minutes=60))
     result = await module.run_scheduled_checks()
     queued = [jobs.jobs[JobId(i)] for i in result.imports]

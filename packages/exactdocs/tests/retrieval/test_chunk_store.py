@@ -138,7 +138,11 @@ class World:
         *,
         status: ManifestStatus | None = None,
     ) -> IndexedManifestOut:
-        """Index articles given as ``path -> blob`` (each blob has two chunks, named after it)."""
+        """Index articles given as ``path -> blob`` (each blob has two chunks, named after it).
+
+        Returns:
+            What indexing returned.
+        """
         done = await self.retrieval.index_manifest(
             IndexManifestCommand(
                 manifest_id=manifest_id,
@@ -179,7 +183,11 @@ class World:
         *,
         status: ManifestStatus,
     ) -> IndexedManifestOut:
-        """Index ``path -> [(heading path, content)]``; the blob follows the content."""
+        """Index ``path -> [(heading path, content)]``; the blob follows the content.
+
+        Returns:
+            What indexing returned.
+        """
         done = await self.retrieval.index_manifest(
             IndexManifestCommand(
                 manifest_id=manifest_id,

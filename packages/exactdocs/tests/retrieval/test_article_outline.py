@@ -306,7 +306,11 @@ def test_an_article_without_headings_is_only_a_preamble() -> None:
 
 
 def flat(tree) -> list[tuple[str, str | None, str | None, bool | None]]:
-    """Every node as ``(heading, chunk ID, anchor, starts chunk)``, in document order."""
+    """Every node as ``(heading, chunk ID, anchor, starts chunk)``, in document order.
+
+    Returns:
+        The tuples.
+    """
 
     def walk(nodes) -> list[tuple[str, str | None, str | None, bool | None]]:
         found = []

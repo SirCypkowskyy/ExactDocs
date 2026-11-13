@@ -223,7 +223,11 @@ async def test_no_job_starts_after_the_slot_is_lost(no_dbos: list[str]) -> None:
 
 
 async def _delay_cancellation(released: asyncio.Event) -> None:
-    """A job that keeps going once cancelled (cancelled again too) until ``released``."""
+    """A job that keeps going once cancelled (cancelled again too) until ``released``.
+
+    Raises:
+        asyncio.CancelledError: Once ``released``.
+    """
     try:
         await asyncio.sleep(3600)
     except asyncio.CancelledError:

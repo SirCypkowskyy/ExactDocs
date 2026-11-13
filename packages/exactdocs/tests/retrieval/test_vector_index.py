@@ -442,7 +442,11 @@ async def test_a_vector_is_at_distance_zero_from_itself_never_below(world: World
 
 
 def characters(blob: str, position: int) -> int:
-    """The characters ``pending`` counts for a chunk ``World.index`` stores: text and headings."""
+    """The characters ``pending`` counts for a chunk ``World.index`` stores: text and headings.
+
+    Returns:
+        The count.
+    """
     return len(f"{blob} section {position}") + len(f"{blob} {position}")
 
 

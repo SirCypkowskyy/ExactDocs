@@ -27,7 +27,11 @@ from fixture_repo import DocsRepo, git
 
 
 def repository(url: str) -> RepositoryUrl:
-    """A repository without going through ``parse``: the adapter must hold up on its own."""
+    """A repository without going through ``parse``: the adapter must hold up on its own.
+
+    Returns:
+        The repository.
+    """
     return RepositoryUrl(url=url, host_kind=RepositoryHost.GIT, library_id=ProposedId("/x/y"))
 
 
@@ -136,7 +140,11 @@ async def test_an_unknown_host_is_unreachable() -> None:
 
 
 def processes_mentioning(text: str) -> list[int]:
-    """Live processes (not zombies) whose command line contains ``text``."""
+    """Live processes (not zombies) whose command line contains ``text``.
+
+    Returns:
+        Their process IDs.
+    """
     found = []
     for stat in Path("/proc").glob("[0-9]*/stat"):
         try:
@@ -150,7 +158,11 @@ def processes_mentioning(text: str) -> list[int]:
 
 
 async def gone(text: str) -> bool:
-    """Wait briefly for every process mentioning ``text`` to be reaped."""
+    """Wait briefly for every process mentioning ``text`` to be reaped.
+
+    Returns:
+        Whether they were all reaped in time.
+    """
     for _ in range(50):
         if not processes_mentioning(text):
             return True
@@ -159,7 +171,11 @@ async def gone(text: str) -> bool:
 
 
 def fake_git(tmp_path: Path, script: str) -> str:
-    """A stand-in `git` executable running a shell script."""
+    """A stand-in `git` executable running a shell script.
+
+    Returns:
+        The executable's path.
+    """
     path = tmp_path / "fake-git"
     path.write_text("#!/bin/sh\n" + script)
     path.chmod(0o755)
@@ -191,7 +207,11 @@ async def test_a_helper_that_outlives_git_is_killed_too(tmp_path: Path) -> None:
 
 
 def open_files() -> int:
-    """File descriptors this process has open."""
+    """File descriptors this process has open.
+
+    Returns:
+        Their number.
+    """
     return len(list(Path("/proc/self/fd").iterdir()))
 
 
@@ -210,7 +230,11 @@ async def test_a_timed_out_call_leaves_no_pipe_open(tmp_path: Path) -> None:
 
 
 async def closed_again(count: int) -> bool:
-    """Wait briefly for the open file descriptors to drop back to ``count``."""
+    """Wait briefly for the open file descriptors to drop back to ``count``.
+
+    Returns:
+        Whether they did in time.
+    """
     for _ in range(50):
         if open_files() == count:
             return True
@@ -241,7 +265,11 @@ async def test_a_helper_outside_the_group_does_not_hold_up_a_timed_out_call(
 
 
 def fake_keygen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> GitCli:
-    """A ``ssh-keygen`` on ``PATH`` that hangs, and a ``GitCli`` that will run it."""
+    """A ``ssh-keygen`` on ``PATH`` that hangs, and a ``GitCli`` that will run it.
+
+    Returns:
+        The ``GitCli``.
+    """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     keygen = bin_dir / "ssh-keygen"
@@ -288,7 +316,11 @@ async def _run(*args: str) -> str:
 
 
 async def _host_key(tmp_path: Path, keygen: str, kind: str) -> tuple[str, str]:
-    """A fresh host key of ``kind``: its public line and the fingerprint ssh-keygen gives it."""
+    """A fresh host key of ``kind``: its public line and the fingerprint ssh-keygen gives it.
+
+    Returns:
+        The public line and the fingerprint.
+    """
     key = tmp_path / f"host_{kind}"
     await _run(keygen, "-q", "-t", kind, "-N", "", "-f", str(key))
     shown = await _run(keygen, "-l", "-E", "sha256", "-f", f"{key}.pub")

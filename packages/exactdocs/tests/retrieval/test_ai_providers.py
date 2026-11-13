@@ -768,7 +768,11 @@ async def test_a_profile_edited_over_the_api_counts_at_the_next_call() -> None:
 
 
 def _providers(world: World, roles: InstanceRoles | None = None) -> AiProviders:
-    """What an AI pipeline holds: the same stored profiles, overrides and factory as the module."""
+    """What an AI pipeline holds: the same stored profiles, overrides and factory as the module.
+
+    Returns:
+        The providers.
+    """
     return AiProviders(
         configured=(CORP,),
         stored=world.stored,

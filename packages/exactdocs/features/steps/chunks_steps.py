@@ -39,7 +39,11 @@ def _git_blob_sha(content: str) -> str:
 
 
 def _chunks(text: str) -> list[ChunkIn]:
-    """Two sections per article, named after its text, as the chunker would cut it."""
+    """Two sections per article, named after its text, as the chunker would cut it.
+
+    Returns:
+        The chunks.
+    """
     return [
         ChunkIn(
             heading_path=["Doc", f"{text} {part}"],

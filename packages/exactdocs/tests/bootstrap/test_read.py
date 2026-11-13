@@ -55,7 +55,11 @@ async def publish(
     activate: bool = True,
     renames: tuple[RenameIn, ...] = (),
 ) -> dict[str, list[str]]:
-    """Store, index and (unless told not to) activate a version; return chunk IDs by path."""
+    """Store, index and (unless told not to) activate a version; return chunk IDs by path.
+
+    Returns:
+        Each article path mapped to its chunk IDs.
+    """
     stored = await container.catalog.store_manifest(
         StoreManifestCommand(
             library=library,

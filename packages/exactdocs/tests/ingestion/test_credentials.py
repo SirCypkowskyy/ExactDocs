@@ -70,7 +70,11 @@ def test_a_token_and_a_key_are_validated_and_never_shown() -> None:
 
 
 async def _keygen(tmp_path: Path, name: str, *args: str) -> str:
-    """A throwaway private key made by the real ssh-keygen."""
+    """A throwaway private key made by the real ssh-keygen.
+
+    Returns:
+        The private key, in OpenSSH format.
+    """
     keygen = shutil.which("ssh-keygen")
     if keygen is None:
         pytest.skip("needs OpenSSH's ssh-keygen")

@@ -39,7 +39,11 @@ NOW = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 
 
 def version(ref: str, kind: RefKind = RefKind.TAG, *, sha: str = "a", age_days: int = 0) -> Version:
-    """A version imported `age_days` before NOW; `sha` is the start of its 40-character SHA."""
+    """A version imported `age_days` before NOW; `sha` is the start of its 40-character SHA.
+
+    Returns:
+        The version.
+    """
     return Version(
         ref=VersionRef(ref),
         kind=kind,

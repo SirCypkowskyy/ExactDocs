@@ -37,7 +37,11 @@ def _passes() -> dict[tuple[str, str], str]:
 
 
 def _in_pass(pattern: str, tags: list[str], digest: str = DIGEST) -> bool:
-    """Whether the action keeps an image in a pass: none of its tags nor its digest match."""
+    """Whether the action keeps an image in a pass: none of its tags nor its digest match.
+
+    Returns:
+        Whether the image is kept.
+    """
     return not any(re.search(pattern, t) for t in [*tags, digest])
 
 

@@ -78,7 +78,7 @@ class Violation:
     message: str
     """What is wrong and how to fix it."""
     subject: str = ""
-    """Qualified name of what is wrong (``Class.method``, ``Class.field``); the baseline key."""
+    """Qualified name of what is wrong (``Class.method``, ``Class.field``)."""
 
     def __str__(self) -> str:
         """Render as ``path:line: rule: message``.
@@ -813,42 +813,6 @@ def _sources() -> Iterable[Path]:
 # ---------------------------------------------------------------- the code base
 
 
-# Docstrings that existing code still lacks, one `<path> <qualified name> <rule>` per line. New
-# code gets no entry: the list only shrinks (an entry that no longer fails must be deleted), and
-# only the docstring rules may appear in it. Emptying it is tracked in its own issue.
-BASELINE = Path(__file__).parent / "conventions_baseline.txt"
-# The most entries the baseline may hold. Lower it when you delete lines; never raise it.
-BASELINE_CEILING = 0
-BASELINE_RULES = {
-    "function-without-docstring",
-    "docstring-missing-args",
-    "docstring-missing-returns",
-    "field-without-docstring",
-}
-
-
-def _key(violation: Violation) -> str:
-    """Baseline key of a violation: independent of line numbers.
-
-    Args:
-        violation: The violation.
-
-    Returns:
-        ``<path> <qualified name> <rule>``.
-    """
-    return f"{violation.path} {violation.subject} {violation.rule}"
-
-
-def _baseline() -> set[str]:
-    """Read the baseline.
-
-    Returns:
-        Its keys (comments and blank lines skipped).
-    """
-    lines = BASELINE.read_text().splitlines() if BASELINE.exists() else []
-    return {line.strip() for line in lines if line.strip() and not line.startswith("#")}
-
-
 def _code_base() -> list[Violation]:
     """Check every source file under ``packages/*/src``.
 
@@ -864,20 +828,11 @@ def _code_base() -> list[Violation]:
 
 
 def test_the_code_base_follows_the_conventions() -> None:
-    known = _baseline()
-    violations = [v for v in _code_base() if _key(v) not in known]
+    violations = _code_base()
     assert not violations, (
         f"{len(violations)} convention violation(s) (docs/architecture.md, Python conventions):\n"
         + "\n".join(map(str, violations))
     )
-
-
-def test_the_baseline_only_shrinks() -> None:
-    known = _baseline()
-    assert {key.rsplit(" ", 1)[-1] for key in known} <= BASELINE_RULES
-    assert len(known) <= BASELINE_CEILING, "new code must follow the conventions, not the baseline"
-    stale = known - {_key(v) for v in _code_base()}
-    assert not stale, f"fixed, now remove them from {BASELINE.name}: {sorted(stale)}"
 
 
 # ---------------------------------------------------------------- each rule, on fixtures

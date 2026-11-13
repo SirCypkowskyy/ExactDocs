@@ -163,7 +163,11 @@ async def test_a_sync_names_each_version_that_failed_and_why(
 def _moved_tag_sync(
     reimport: httpx2.Response, moved: tuple[str, ...] = ("v1",)
 ) -> tuple[httpx2.MockTransport, list[str]]:
-    """A sync that reports the ``moved`` tags as moved, and ``reimport`` as the answer to each."""
+    """A sync that reports the ``moved`` tags as moved, and ``reimport`` as the answer to each.
+
+    Returns:
+        The transport, and the requests it receives.
+    """
     asked: list[str] = []
     sha = "a" * 40
     body = {
@@ -445,7 +449,11 @@ class Recorder:
 
 @pytest.fixture
 def server(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> object:
-    """Point the CLI at a fake server and an empty config; set routes with ``server.use``."""
+    """Point the CLI at a fake server and an empty config; set routes with ``server.use``.
+
+    Returns:
+        The fake server.
+    """
     recorder = Recorder({})
     real = cli.ApiClient
 

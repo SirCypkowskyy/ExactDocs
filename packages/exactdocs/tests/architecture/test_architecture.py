@@ -50,7 +50,11 @@ FRAMEWORKS = [
 
 
 def _path(domain: str, part: str = "") -> str:
-    """Glob for a file (``x.py``) or everything under a folder of the domain."""
+    """Glob for a file (``x.py``) or everything under a folder of the domain.
+
+    Returns:
+        The glob.
+    """
     base = f"**/exactdocs/{domain}"
     if part.endswith(".py"):
         return f"{base}/{part}"

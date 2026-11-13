@@ -258,7 +258,11 @@ async def _search(world: World, ref: str = "v2") -> SearchDocsResult:
 
 
 def _notes(seen: Sequence[Request]) -> list[str]:
-    """Every user-channel part after the question, as the last request carried them."""
+    """Every user-channel part after the question, as the last request carried them.
+
+    Returns:
+        Their texts.
+    """
     return [text for text in seen[-1].user if text != QUESTION]
 
 

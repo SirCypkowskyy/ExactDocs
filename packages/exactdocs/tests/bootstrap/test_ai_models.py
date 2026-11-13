@@ -139,6 +139,9 @@ def official(fake: FakeGateway, monkeypatch: pytest.MonkeyPatch) -> FakeGateway:
 
     A profile signed with the server's cloud identity takes no ``base_url``: its endpoint is
     Google's or Azure's own, which a test cannot reach, so the derived URL is swapped.
+
+    Returns:
+        The fake gateway.
     """
     derived = ai_sdk.base_url
 
@@ -553,7 +556,11 @@ def test_a_missing_key_file_is_refused_at_start(tmp_path: Path) -> None:
 
 
 def _service_account(tmp_path: Path) -> Path:
-    """A service-account file with a throwaway RSA key (never used: no call is made)."""
+    """A service-account file with a throwaway RSA key (never used: no call is made).
+
+    Returns:
+        The file's path.
+    """
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     pem = key.private_bytes(
         serialization.Encoding.PEM,

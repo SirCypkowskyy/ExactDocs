@@ -177,7 +177,11 @@ def test_the_default_config_path_is_in_the_user_config_dir() -> None:
 
 # Local commands open the database; every other command must go through the REST client.
 def _commands(app: Any = cli.app, prefix: str = "") -> dict[str, Any]:
-    """Flatten the cyclopts app into ``{"admin create": function}`` (uses a private attribute)."""
+    """Flatten the cyclopts app into ``{"admin create": function}`` (uses a private attribute).
+
+    Returns:
+        Each command's full name mapped to its function.
+    """
     found: dict[str, Any] = {}
     for name, sub in app._commands.items():  # ruff: ignore[private-member-access]
         if name.startswith("-"):

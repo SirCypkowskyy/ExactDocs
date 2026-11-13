@@ -23,7 +23,11 @@ PROVIDER_MODULES = {"ports.driving", "dtos"}
 
 
 def bridge_edges(source: str) -> dict[str, set[tuple[str, str]]]:
-    """Map each class in `source` to its (consumer, provider) edges, read from its imports."""
+    """Map each class in `source` to its (consumer, provider) edges, read from its imports.
+
+    Returns:
+        Each class name mapped to its edges.
+    """
     tree = ast.parse(source)
     imported: dict[str, tuple[str, str]] = {}  # name -> (domain, module inside the domain)
     for node in tree.body:

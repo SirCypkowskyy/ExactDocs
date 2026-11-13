@@ -127,7 +127,11 @@ async def test_forget_drops_one_record_and_tolerates_a_missing_one(log: FailedSi
 
 
 async def _state(log: FailedSignInLog) -> tuple[dict[str, object], dict[str, object]]:
-    """Everything the log holds: its counts and its remembered sign-ins, by key."""
+    """Everything the log holds: its counts and its remembered sign-ins, by key.
+
+    Returns:
+        The counts and the remembered sign-ins.
+    """
     if isinstance(log, InMemoryFailedSignInLog):
         return dict(log.records), dict(log.sign_ins)
     assert isinstance(log, SqliteFailedSignInLog)
@@ -382,7 +386,11 @@ async def test_forget_remembered_waits_for_a_sign_in_holding_the_turn(
 
 
 async def _remember_many(log: SqliteFailedSignInLog, username: str, count: int) -> list[str]:
-    """Remember ``count`` addresses for ``username`` in one statement; return their keys."""
+    """Remember ``count`` addresses for ``username`` in one statement; return their keys.
+
+    Returns:
+        Their keys.
+    """
     keys = [f"{username}@address:2001:db8:{n:x}::/64" for n in range(count)]
     stamp = START.isoformat()
     async with log.engine.begin() as connection:

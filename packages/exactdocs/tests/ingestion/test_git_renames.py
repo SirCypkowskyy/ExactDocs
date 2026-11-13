@@ -137,7 +137,11 @@ async def test_without_git_it_says_so() -> None:
 
 
 def moved_repo(tmp_path: Path, files: dict[str, str]) -> tuple[str, str, str]:
-    """A repository whose second commit renames every file to ``files[old]``; (url, old, new)."""
+    """A repository whose second commit renames every file to ``files[old]``; (url, old, new).
+
+    Returns:
+        The URL, and the old and new commit SHAs.
+    """
     repo = tmp_path / "moved"
     repo.mkdir()
     git("init", "-q", "-b", "main", "--template=", str(repo))

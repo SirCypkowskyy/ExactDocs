@@ -56,7 +56,11 @@ class Collector:
         return found
 
     def received(self) -> bytes:
-        """Everything that arrived, traces, metrics and logs, as one blob of bytes."""
+        """Everything that arrived, traces, metrics and logs, as one blob of bytes.
+
+        Returns:
+            The bytes.
+        """
         with self.lock:
             return b"\n".join(body for _, body in self.requests)
 

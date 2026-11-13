@@ -41,7 +41,11 @@ def _reranker(
 
 
 def _cohere(body: dict[str, Any]) -> httpx2.Response:
-    """Cohere's shape: results best first, each with its index."""
+    """Cohere's shape: results best first, each with its index.
+
+    Returns:
+        The response.
+    """
     count = len(body["documents"])
     results = [{"index": i, "relevance_score": i / count} for i in reversed(range(count))]
     return httpx2.Response(200, json={"id": "x", "results": results, "meta": {}})
@@ -129,7 +133,11 @@ async def test_no_documents_means_no_call() -> None:
 
 
 def _two(index: object, score: object) -> Callable[[dict[str, Any]], httpx2.Response]:
-    """An answer for two candidates whose first item has this index and score."""
+    """An answer for two candidates whose first item has this index and score.
+
+    Returns:
+        A handler that answers so.
+    """
     items = [{"index": index, "relevance_score": score}, {"index": 0, "relevance_score": 2}]
     return lambda _: httpx2.Response(200, json={"results": items})
 

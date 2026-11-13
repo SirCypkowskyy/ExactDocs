@@ -86,10 +86,6 @@ ignore = [
     "typing-only-first-party-import",
     "typing-only-third-party-import",
     "typing-only-standard-library-import",
-    # pydoclint: Returns is enforced by tests/architecture/test_conventions.py (private functions
-    # too, with a shrinking baseline of existing gaps); both come back once the baseline is empty
-    "docstring-missing-returns",
-    "docstring-missing-exception",
     # keyword-only wiring of modules legitimately takes many arguments
     "too-many-arguments",
     "too-many-positional-arguments",

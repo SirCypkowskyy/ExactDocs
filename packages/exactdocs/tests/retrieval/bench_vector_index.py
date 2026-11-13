@@ -41,7 +41,11 @@ WRITE_BATCH = 2_000
 
 
 def _vector(seed: int, dimensions: int) -> list[float]:
-    """A Gaussian vector, the same for the same seed (rankings can be compared between runs)."""
+    """A Gaussian vector, the same for the same seed (rankings can be compared between runs).
+
+    Returns:
+        The vector.
+    """
     rng = random.Random(seed)
     return [rng.gauss(0, 1) for _ in range(dimensions)]
 

@@ -129,6 +129,9 @@ def wait_for_embedding(context: Context, library: str) -> list[dict]:
 
     Returns:
         Its ``embed`` jobs.
+
+    Raises:
+        AssertionError: When the jobs do not end in time.
     """
     deadline = time.monotonic() + EMBEDDING_SECONDS
     while time.monotonic() < deadline:

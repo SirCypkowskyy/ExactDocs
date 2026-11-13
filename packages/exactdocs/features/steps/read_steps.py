@@ -157,14 +157,22 @@ INSTALL_OUTLINE = [
 
 
 def outline_shape(sections: list[dict[str, Any]]) -> list[tuple[str, Any]]:
-    """The headings of an outline as nested ``(heading, children)`` pairs."""
+    """The headings of an outline as nested ``(heading, children)`` pairs.
+
+    Returns:
+        The nested pairs.
+    """
     return [(s["heading"], outline_shape(s["children"])) for s in sections]
 
 
 def outline_nodes(
     sections: list[dict[str, Any]], above: tuple[str, ...] = ()
 ) -> list[tuple[tuple[str, ...], dict[str, Any]]]:
-    """Every section of an outline with its heading path, in document order."""
+    """Every section of an outline with its heading path, in document order.
+
+    Returns:
+        ``(heading path, node)`` pairs.
+    """
     found = []
     for section in sections:
         path = (*above, section["heading"])

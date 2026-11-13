@@ -118,7 +118,11 @@ def step_same_articles(context: Context) -> None:
 
 
 def _read(context: Context, path: str) -> dict:
-    """The article as a reader gets it, less what a new commit changes by itself."""
+    """The article as a reader gets it, less what a new commit changes by itself.
+
+    Returns:
+        The article's JSON, less the commit-specific fields.
+    """
     response = context.client.get(
         f"/api/v1/libraries{LIBRARY}/article", params={"ref": REF, "path": path}
     )

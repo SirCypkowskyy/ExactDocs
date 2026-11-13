@@ -49,7 +49,11 @@ def chunker(request: pytest.FixtureRequest) -> Chunker:
 
 @pytest.fixture(params=CONFIGS, ids=CONFIG_IDS)
 def any_chunker(chunker: Chunker, request: pytest.FixtureRequest) -> Chunker:
-    """The adapter configured with each supported setting in turn."""
+    """The adapter configured with each supported setting in turn.
+
+    Returns:
+        The chunker.
+    """
     return chunker.configured(request.param)
 
 
@@ -191,7 +195,11 @@ def test_empty_article_has_no_chunks(chunker: Chunker) -> None:
 
 
 def _document(kinds: tuple[str, ...]) -> tuple[str, list[tuple[int, str]]]:
-    """A document made of the given blocks, and its real headings as (level, text)."""
+    """A document made of the given blocks, and its real headings as (level, text).
+
+    Returns:
+        The document, and its headings.
+    """
     table = "| a | b |\n| - | - |\n| 1\u2028 | 2 |\n\n"
     fence = "```py\n# looks like a heading\nx\u2029y\n\n## so does this\n```\n\n"
     headings, parts = [], []
@@ -325,7 +333,11 @@ INSTALL = TESTS / "fixtures/docs-repo/commits/v1.4.0/docs/guide/install.md"
 
 
 def _real_paths(body: str) -> set[tuple[str, ...]]:
-    """The full heading path of every top-level heading, whatever the split level."""
+    """The full heading path of every top-level heading, whatever the split level.
+
+    Returns:
+        The heading paths.
+    """
     chunks = MarkdownChunker().chunk(parse_article("a.md", body))
     return {c.heading_path for c in chunks}
 
@@ -454,7 +466,11 @@ def test_a_chunker_this_adapter_does_not_provide_is_refused(
 
 
 def _records(chunks: Sequence[ArticleChunk]) -> list[list[tuple[tuple[str, ...], str, bool]]]:
-    """Each chunk's heading records as ``(heading path, anchor, starts chunk)``."""
+    """Each chunk's heading records as ``(heading path, anchor, starts chunk)``.
+
+    Returns:
+        The records, one list per chunk.
+    """
     return [[(h.heading_path, h.anchor, h.starts_chunk) for h in c.headings or ()] for c in chunks]
 
 

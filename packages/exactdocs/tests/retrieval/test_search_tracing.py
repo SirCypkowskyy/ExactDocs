@@ -271,7 +271,14 @@ def search_metrics(
     chosen: str = "bm25",
     answered: str | None = None,
 ) -> list[dict[str, object]]:
-    """Time a search and its rank stage (failing, if asked) and return the recorded points."""
+    """Time a search and its rank stage (failing, if asked) and return the recorded points.
+
+    Returns:
+        The points: name, count and attributes.
+
+    Raises:
+        VersionNotIndexedError: With ``fail``, inside the spans; it never escapes them.
+    """
     reader = InMemoryMetricReader()
     tracer = OpenTelemetrySearchTracer(
         record_query_text=record_query_text,

@@ -65,7 +65,11 @@ def _name(tp: object) -> str:
 
 
 def shape(roots: tuple[type, ...]) -> dict[str, object]:
-    """Each reachable dataclass with its fields (name and type), each enum by its name."""
+    """Each reachable dataclass with its fields (name and type), each enum by its name.
+
+    Returns:
+        Each type's name mapped to its shape.
+    """
     found: dict[str, object] = {}
     todo: list[object] = list(roots)
     while todo:
