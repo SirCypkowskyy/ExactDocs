@@ -418,9 +418,9 @@ class AddLibraryCommand(_Dto):
     """How articles are cut into chunks; stored before the import is queued. Null: the
     defaults.
     """
-    context7_paths: bool = Field(default=True)
-    """Without paths, take those of the repository's root `context7.json`; false: no paths mean
-    every `.md`/`.mdx` file.
+    context7_paths: bool | None = Field(default=None)
+    """Without paths, take those of the repository's root `context7.json` (null or true); false:
+    no paths mean every `.md`/`.mdx` file.
     """
 
 

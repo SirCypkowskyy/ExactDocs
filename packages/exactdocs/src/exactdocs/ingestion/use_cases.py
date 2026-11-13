@@ -956,7 +956,9 @@ class AddLibraryUseCase:
         refs = await self.remote.list_refs(repository, credential=credential)
         resolved = resolve_ref(refs, command.ref)
         # Without paths the file decides them for good: a busy slot is a 429, not "every file".
-        prefill = command.context7_paths and not (selection.include or selection.exclude)
+        prefill = command.context7_paths is not False and not (
+            selection.include or selection.exclude
+        )
         context7 = await _fetch_context7(
             self.tree, repository, resolved, credential, busy_raises=prefill
         )

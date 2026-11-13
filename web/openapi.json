@@ -7548,10 +7548,16 @@
             "description": "How articles are cut into chunks; stored before the import is queued. Null: the\ndefaults."
           },
           "context7_paths": {
-            "type": "boolean",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Context7 Paths",
-            "description": "Without paths, take those of the repository's root `context7.json`; false: no paths mean\nevery `.md`/`.mdx` file.",
-            "default": true
+            "description": "Without paths, take those of the repository's root `context7.json` (null or true); false:\nno paths mean every `.md`/`.mdx` file."
           }
         },
         "additionalProperties": false,

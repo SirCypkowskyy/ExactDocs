@@ -1259,11 +1259,10 @@ export interface components {
             readonly chunking?: components["schemas"]["ChunkingIn"] | null;
             /**
              * Context7 Paths
-             * @description Without paths, take those of the repository's root `context7.json`; false: no paths mean
-             *     every `.md`/`.mdx` file.
-             * @default true
+             * @description Without paths, take those of the repository's root `context7.json` (null or true); false:
+             *     no paths mean every `.md`/`.mdx` file.
              */
-            readonly context7_paths: boolean;
+            readonly context7_paths?: boolean | null;
         };
         /**
          * AddVersionBody
