@@ -8478,11 +8478,13 @@
         "properties": {
           "error": {
             "type": "string",
-            "title": "Error"
+            "title": "Error",
+            "description": "A stable machine code of the error, e.g. `not_found` or `validation_error`. Branch on this,\nnot on `detail`."
           },
           "detail": {
             "type": "string",
-            "title": "Detail"
+            "title": "Detail",
+            "description": "What went wrong, for a person. Its wording may change between releases."
           },
           "fields": {
             "items": {
@@ -8490,6 +8492,7 @@
             },
             "type": "array",
             "title": "Fields",
+            "description": "On `validation_error`: one entry per invalid request field. Empty otherwise.",
             "default": []
           },
           "close_matches": {
@@ -8552,15 +8555,18 @@
               ]
             },
             "type": "array",
-            "title": "Loc"
+            "title": "Loc",
+            "description": "Where the field is: its location (`body`, `query`, `path`, `header` or `cookie`), then its\nname, then the keys or list indexes into it, e.g. `[\"body\", \"tag_rules\", 0, \"pattern\"]`."
           },
           "msg": {
             "type": "string",
-            "title": "Msg"
+            "title": "Msg",
+            "description": "What is wrong with it, for a person."
           },
           "type": {
             "type": "string",
-            "title": "Type"
+            "title": "Type",
+            "description": "A stable machine code of the problem, e.g. `missing` or `string_too_long`."
           }
         },
         "type": "object",

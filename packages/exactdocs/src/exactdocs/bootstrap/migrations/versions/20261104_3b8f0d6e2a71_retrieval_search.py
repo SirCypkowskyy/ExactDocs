@@ -23,7 +23,16 @@ depends_on = None
 
 
 def _row(rowid: int, heading_path: list[str], content: str) -> dict[str, object]:
-    """The row as this revision shapes it (frozen: later revisions change the live builder)."""
+    """The row as this revision shapes it (frozen: later revisions change the live builder).
+
+    Args:
+        rowid: The chunk's row ID.
+        heading_path: The chunk's headings, outermost first.
+        content: The chunk's text.
+
+    Returns:
+        The search table's row.
+    """
     heading = " / ".join(heading_path)
     return {
         "rowid": rowid,

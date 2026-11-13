@@ -31,7 +31,19 @@ class DomainErrorsAsToolErrors(Middleware):
     async def on_call_tool(
         self, context: MiddlewareContext[Any], call_next: CallNext[Any, Any]
     ) -> Any:  # ruff: ignore[any-type]
-        """Turn a masked error caused by a ``DomainError`` into a ``ToolError`` with its message."""
+        """Turn a masked error caused by a ``DomainError`` into a ``ToolError`` with its message.
+
+        Args:
+            context: The tool call.
+            call_next: The rest of the middleware chain and the tool.
+
+        Returns:
+            The tool's result.
+
+        Raises:
+            ToolError: The tool failed; with the domain error's code and message when that caused
+                it, masked otherwise.
+        """
         try:
             return await call_next(context)
         except ToolError as exc:
@@ -45,7 +57,20 @@ class DomainErrorsAsToolErrors(Middleware):
     async def on_read_resource(
         self, context: MiddlewareContext[Any], call_next: CallNext[Any, Any]
     ) -> Any:  # ruff: ignore[any-type]
-        """Refuse a repeated ``ref``; give a domain error its message, a missing one -32002."""
+        """Refuse a repeated ``ref``; give a domain error its message, a missing one -32002.
+
+        Args:
+            context: The resource read.
+            call_next: The rest of the middleware chain and the resource.
+
+        Returns:
+            The resource's contents.
+
+        Raises:
+            ResourceError: ``ref`` is given more than once, or the read failed (with the domain
+                error's code and message when that caused it, masked otherwise).
+            MCPError: The resource does not exist (``RESOURCE_NOT_FOUND``).
+        """
         uri = str(context.message.uri)
         if len(parse_qs(urlsplit(uri).query).get("ref", [])) > 1:
             msg = "ref given more than once"
@@ -77,6 +102,18 @@ class ExactDocsMCP(FastMCP):
     async def _on_list_resources(
         self, ctx: ServerRequestContext, params: PaginatedRequestParams | None
     ) -> ListResourcesResult:
+        """List one page of resources, sorted by URI, after the URI the cursor holds.
+
+        Args:
+            ctx: The MCP request context.
+            params: The request's parameters, with the cursor from the previous page, if any.
+
+        Returns:
+            The page, the next page's cursor if there is one, and ``truncated`` in ``_meta``.
+
+        Raises:
+            MCPError: The cursor is not one this server gave out (``INVALID_PARAMS``).
+        """
         full = await super()._on_list_resources(ctx, None)  # unpaged: no list_page_size is set
         after = None
         if params and params.cursor:
@@ -103,19 +140,43 @@ class ExactDocsMCP(FastMCP):
 
 
 def build_mcp(container: Container) -> FastMCP:
-    """One MCP server exposing every domain's read-only tools; over HTTP it wants an API token."""
+    """One MCP server exposing every domain's read-only tools; over HTTP it wants an API token.
+
+    Args:
+        container: The wired application.
+
+    Returns:
+        The MCP server.
+    """
     auth = ApiTokenVerifier(identify_token=container.identity.identify_token)
     return _build(container.catalog, container.retrieval, auth)
 
 
 def build_stdio_mcp(container: ReadOnlyContainer) -> FastMCP:
-    """Build the same tools over a read-only database, with no authentication (local process)."""
+    """Build the same tools over a read-only database, with no authentication (local process).
+
+    Args:
+        container: The read-only wiring.
+
+    Returns:
+        The MCP server.
+    """
     return _build(container.catalog, container.retrieval, None)
 
 
 def _build(
     catalog: CatalogModule, retrieval: RetrievalModule, auth: ApiTokenVerifier | None
 ) -> FastMCP:
+    """Build the MCP server: its instructions, the usage skill, every tool and the resources.
+
+    Args:
+        catalog: The catalog module, for the browsing tools and the article resources.
+        retrieval: The retrieval module, for the search and reading tools.
+        auth: The API token verifier, or ``None`` for no authentication.
+
+    Returns:
+        The MCP server.
+    """
     mcp = ExactDocsMCP(
         name="ExactDocs",
         version=__version__,
@@ -147,6 +208,11 @@ def _build(
         mime_type="text/markdown",
     )
     def usage_skill() -> str:
+        """Serve the usage skill.
+
+        Returns:
+            The skill's Markdown.
+        """
         return skill
 
     catalog_mcp.register_tools(

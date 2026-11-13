@@ -733,10 +733,13 @@ class ReadOnlyContainer:
     settings: Settings
     """The runtime configuration (which AI roles to load the SDKs for at start)."""
     engine: AsyncEngine
+    """The database, opened read-only."""
     spend_engine: AsyncEngine = field(repr=False)
     """Writes the AI spend ledger and nothing else (``open_spend_ledger_database``)."""
     catalog: CatalogModule
+    """The catalog domain, wired."""
     retrieval: RetrievalModule
+    """The retrieval domain, wired."""
     search_choice: PostgresSearchChoice | None = field(default=None, repr=False)
     """On PostgreSQL: the search engine, chosen in ``running()``."""
     local: LocalModels = field(repr=False)
@@ -744,10 +747,18 @@ class ReadOnlyContainer:
     local_roles: LocalRoles = field(default=(), repr=False)
     """The instance roles on local profiles, loaded at start."""
     _run: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    """Held for the duration of ``running()``, which runs once at a time."""
 
     @classmethod
     def build(cls, settings: Settings) -> Self:
-        """Open the database read-only; ``StartupError`` when it does not exist."""
+        """Open the database read-only; ``StartupError`` when it does not exist.
+
+        Args:
+            settings: The runtime configuration.
+
+        Returns:
+            The container, not running yet.
+        """
         engine = open_database(settings, read_only=True)
         spend_engine = open_spend_ledger_database(settings)
         # Opens the provider keys stored over the REST API when a key exists; never creates one.
@@ -777,6 +788,12 @@ class ReadOnlyContainer:
         """Check the schema is current (no migration), serve, then release the connections.
 
         Runs once at a time, like ``Container.running()``: ``RuntimeError`` otherwise.
+
+        Yields:
+            Control while the container serves.
+
+        Raises:
+            RuntimeError: The container is already running.
         """
         if not self._run.acquire(blocking=False):
             message = "this container is already running; run it once"
@@ -803,12 +820,19 @@ class Container:
     """Every domain module, wired. Built once per process."""
 
     settings: Settings
+    """The runtime configuration."""
     engine: AsyncEngine
+    """The database."""
     catalog: CatalogModule
+    """The catalog domain, wired."""
     identity: IdentityModule
+    """The identity domain, wired."""
     ingestion: IngestionModule
+    """The ingestion domain, wired."""
     retrieval: RetrievalModule
+    """The retrieval domain, wired."""
     job_worker: DbosJobWorker
+    """Runs the queued jobs (imports, syncs, embeddings) in ``running(jobs=True)``."""
     save_provider: SaveProvider
     """Retrieval's ``save_provider``, then the embedding queued when the embedding role's profile
     changed (REST ``/ai/providers``)."""
@@ -823,9 +847,10 @@ class Container:
     """Runs the ``local`` profiles' models."""
     local_roles: LocalRoles = field(default=(), repr=False)
     """The instance roles on local profiles, loaded at start."""
-    # Held for the duration of `running()`: a lock, so a run in another thread (a TestClient's
-    # event loop) is refused as well.
     _run: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    """Held for the duration of ``running()``: a lock, so a run in another thread (a
+    TestClient's event loop) is refused as well.
+    """
 
     @classmethod
     def build(
@@ -850,19 +875,32 @@ class Container:
 
         Creates the data directory (``StartupError`` when it is unusable) but opens no
         connection; ``running()`` migrates the schema and releases the engine afterwards.
-        ``remote``, ``gateway``, ``renames`` and ``files`` replace the system ``git`` for listing
-        refs, for fetching, for detecting renames and for reading instruction files (tests; a
-        given ``gateway`` detects none unless ``renames`` is given too); ``chunker`` replaces
-        the Markdown chunker (tests);
-        ``model_roles`` stands in for the role resolution over the configured AI profiles and
-        ``pipelines`` for the AI retrieval modes (tests); ``vector_extension`` finds sqlite-vec's
-        extension (tests: one that cannot load); ``model_factory`` and ``embedding_models``
-        replace pydantic-ai (tests and the eval suite: an in-process embedding model);
-        ``clock`` decides retrieval's spend windows (tests); ``agent_reads`` records the
-        agentic explorer's reads (the eval suite's trace check). An invalid AI configuration (or one
-        this installation cannot call) is a ``StartupError``. A missing
-        ``git`` is logged here and reported as ``git_not_installed`` by everything that needs
-        it, so the rest still runs.
+        An invalid AI configuration (or one this installation cannot call) is a
+        ``StartupError``. A missing ``git`` is logged here and reported as
+        ``git_not_installed`` by everything that needs it, so the rest still runs. Every
+        argument but ``settings`` replaces a production adapter, for tests and the eval suite.
+
+        Args:
+            settings: The runtime configuration.
+            remote: Lists a repository's refs instead of the system ``git``.
+            gateway: Fetches repositories instead of the system ``git``; it detects no renames
+                unless ``renames`` is given too.
+            renames: Detects renamed articles instead of the system ``git``.
+            tree: Looks at one commit's tree without a checkout (previews) instead of the system
+                ``git``.
+            files: Reads instruction files instead of the system ``git``.
+            chunker: Replaces the Markdown chunker.
+            model_roles: Stands in for the role resolution over the configured AI profiles.
+            pipelines: Stand in for the AI retrieval modes.
+            vector_extension: Finds sqlite-vec's extension (tests: one that cannot load).
+            model_factory: Replaces pydantic-ai's model construction.
+            embedding_models: Replace pydantic-ai's embedding models (the eval suite: an
+                in-process one).
+            clock: Decides retrieval's spend windows.
+            agent_reads: Records the agentic explorer's reads (the eval suite's trace check).
+
+        Returns:
+            The container, not running yet.
         """
         engine = open_database(settings)  # creates the data dir first (or says why not)
         _require_shared_key(settings, engine)
@@ -1115,6 +1153,15 @@ class Container:
         stopped first would dispose it under the other, stranding the connections the other had
         checked out (a job worker's poll). ``RuntimeError`` refuses it; the app's lifespan is
         such a run, so a container whose app is served is not run on its own as well.
+
+        Args:
+            jobs: Also run the job worker, and the recovery before it.
+
+        Yields:
+            Control while the container serves.
+
+        Raises:
+            RuntimeError: The container is already running.
         """
         if not self._run.acquire(blocking=False):
             message = "this container is already running; run it once (or through its app)"

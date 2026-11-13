@@ -37,8 +37,13 @@ class FieldError(BaseModel):
     model_config = ConfigDict(use_attribute_docstrings=True)
 
     loc: list[str | int]
+    """Where the field is: its location (`body`, `query`, `path`, `header` or `cookie`), then its
+    name, then the keys or list indexes into it, e.g. `["body", "tag_rules", 0, "pattern"]`.
+    """
     msg: str
+    """What is wrong with it, for a person."""
     type: str
+    """A stable machine code of the problem, e.g. `missing` or `string_too_long`."""
 
 
 class ErrorResponse(BaseModel):
@@ -49,8 +54,13 @@ class ErrorResponse(BaseModel):
     )
 
     error: str
+    """A stable machine code of the error, e.g. `not_found` or `validation_error`. Branch on this,
+    not on `detail`.
+    """
     detail: str
+    """What went wrong, for a person. Its wording may change between releases."""
     fields: list[FieldError] = []
+    """On `validation_error`: one entry per invalid request field. Empty otherwise."""
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -80,7 +90,11 @@ def error_responses() -> dict[int | str, dict[str, Any]]:
 
 
 def add_error_handlers(app: FastAPI) -> None:
-    """Answer every error under ``/api`` with ``ErrorResponse``; UI paths keep the defaults."""
+    """Answer every error under ``/api`` with ``ErrorResponse``; UI paths keep the defaults.
+
+    Args:
+        app: The app to register the handlers on.
+    """
     app.add_exception_handler(DomainError, _domain_error)
     app.add_exception_handler(RequestValidationError, _validation_error)
     app.add_exception_handler(HTTPException, _http_error)
@@ -88,11 +102,27 @@ def add_error_handlers(app: FastAPI) -> None:
 
 
 def _is_api(request: Request) -> bool:
+    """Tell whether a request is for the API (which answers errors as JSON).
+
+    Args:
+        request: The HTTP request.
+
+    Returns:
+        Whether its path is under ``/api/``.
+    """
     return request.url.path.startswith("/api/")
 
 
 async def _http_error(request: Request, exc: Exception) -> Response:
-    """Unknown route (404), wrong method (405) and other framework-raised errors."""
+    """Unknown route (404), wrong method (405) and other framework-raised errors.
+
+    Args:
+        request: The HTTP request.
+        exc: The error; anything but an ``HTTPException`` is handled as unexpected.
+
+    Returns:
+        An ``ErrorResponse`` under ``/api``, FastAPI's default answer elsewhere.
+    """
     if not isinstance(exc, HTTPException):
         return await _unhandled_error(request, exc)
     if not _is_api(request):
@@ -103,7 +133,15 @@ async def _http_error(request: Request, exc: Exception) -> Response:
 
 
 async def _unhandled_error(request: Request, _: Exception) -> Response:
-    """Last resort; the exception itself is still re-raised by Starlette for logging."""
+    """Last resort; the exception itself is still re-raised by Starlette for logging.
+
+    Args:
+        request: The HTTP request.
+        _: The error (never shown to the client).
+
+    Returns:
+        A 500 ``ErrorResponse`` under ``/api``, plain text elsewhere.
+    """
     if not _is_api(request):
         return PlainTextResponse("Internal Server Error", status_code=500)
     body = ErrorResponse(error="internal_error", detail="internal server error")
@@ -111,6 +149,15 @@ async def _unhandled_error(request: Request, _: Exception) -> Response:
 
 
 async def _domain_error(_: Request, exc: Exception) -> Response:
+    """Answer a ``DomainError`` with its code, message and status (``_STATUS_BY_ERROR``).
+
+    Args:
+        _: The HTTP request (unused).
+        exc: The error.
+
+    Returns:
+        The ``ErrorResponse``, with ``Retry-After`` for a busy or rate-limited answer.
+    """
     status = next((s for t, s in _STATUS_BY_ERROR.items() if isinstance(exc, t)), 400)
     code = exc.code if isinstance(exc, DomainError) else "error"
     # Only `ArticleNotFoundError` carries suggestions; the field is empty for every other error.
@@ -122,6 +169,15 @@ async def _domain_error(_: Request, exc: Exception) -> Response:
 
 
 async def _validation_error(_: Request, exc: Exception) -> Response:
+    """Answer an invalid request with 422 and one ``FieldError`` per invalid field.
+
+    Args:
+        _: The HTTP request (unused).
+        exc: The validation error.
+
+    Returns:
+        The 422 ``ErrorResponse``.
+    """
     errors = exc.errors() if isinstance(exc, RequestValidationError) else []
     fields = [FieldError(loc=e["loc"], msg=e["msg"], type=e["type"]) for e in errors]
     body = ErrorResponse(error="validation_error", detail="request is invalid", fields=fields)
@@ -129,7 +185,14 @@ async def _validation_error(_: Request, exc: Exception) -> Response:
 
 
 def v1_openapi(app: FastAPI) -> dict[str, Any]:
-    """Build the OpenAPI document of the ``/api/v1`` operations only (no MCP, health or UI)."""
+    """Build the OpenAPI document of the ``/api/v1`` operations only (no MCP, health or UI).
+
+    Args:
+        app: The app.
+
+    Returns:
+        The OpenAPI document, with each operation's description cut before its Python sections.
+    """
     routes = [
         ctx
         for ctx in iter_route_contexts(app.routes)
@@ -162,7 +225,14 @@ def _without_sections(docstring: str) -> str:
 
 
 def v1_openapi_json(app: FastAPI) -> str:
-    """Render the document as the committed ``web/openapi.json``."""
+    """Render the document as the committed ``web/openapi.json``.
+
+    Args:
+        app: The app.
+
+    Returns:
+        The document as indented JSON, ending in a newline.
+    """
     return json.dumps(v1_openapi(app), indent=2) + "\n"
 
 
@@ -180,11 +250,20 @@ class SetupGuard:
     """
 
     app: ASGIApp
+    """The wrapped app."""
     setup_required: Callable[[], Awaitable[bool]]
+    """Tell whether the instance still has no account."""
     _done: bool = False
+    """Set once an account exists; the database is not asked again."""
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Pass the request on, or answer 403 while the instance has no account."""
+        """Pass the request on, or answer 403 while the instance has no account.
+
+        Args:
+            scope: The ASGI scope.
+            receive: The ASGI receive channel.
+            send: The ASGI send channel.
+        """
         if scope["type"] == "http" and await self._refuse(scope["method"], scope["path"]):
             body = ErrorResponse(
                 error="setup_required",
@@ -196,6 +275,15 @@ class SetupGuard:
         await self.app(scope, receive, send)
 
     async def _refuse(self, method: str, path: str) -> bool:
+        """Tell whether a request must wait for the first account.
+
+        Args:
+            method: The HTTP method.
+            path: The request path.
+
+        Returns:
+            ``True`` for a guarded, non-exempt ``/api/v1`` request while setup is required.
+        """
         if self._done or not (path == V1_PREFIX or path.startswith(f"{V1_PREFIX}/")):
             return False
         if (method, path) in SETUP_EXEMPT:

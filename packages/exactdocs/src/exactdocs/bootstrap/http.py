@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.routing import APIRoute
+from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -31,7 +32,14 @@ from exactdocs.retrieval.adapters.driving import http as retrieval_http
 
 
 def create_app(container: Container) -> FastAPI:
-    """Build the single HTTP service: REST API, MCP (Streamable HTTP) and the web UI."""
+    """Build the single HTTP service: REST API, MCP (Streamable HTTP) and the web UI.
+
+    Args:
+        container: The wired application.
+
+    Returns:
+        The ASGI app.
+    """
     settings = container.settings
     # Nothing unless EXACTDOCS_TELEMETRY=otlp or EXACTDOCS_METRICS.
     start_telemetry(settings, scraped=True)
@@ -49,6 +57,14 @@ def create_app(container: Container) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
+        """Run the container and the MCP app for as long as the server runs.
+
+        Args:
+            _: The app (unused).
+
+        Yields:
+            Control while the server runs.
+        """
         async with container.running():
             try:
                 async with mcp_app.lifespan(mcp_app):
@@ -72,6 +88,11 @@ def create_app(container: Container) -> FastAPI:
     add_error_handlers(app)
 
     async def setup_required() -> bool:
+        """Tell whether the instance still needs its first admin.
+
+        Returns:
+            ``True`` until the first admin exists.
+        """
         return (await container.identity.get_setup_state()).setup_required
 
     # Innermost, so the host and origin checks below still run first.
@@ -133,7 +154,11 @@ def create_app(container: Container) -> FastAPI:
         return account.id
 
     async def require_session(request: Request) -> None:
-        """Sign-in by cookie only (401 otherwise): for what an API token must not do."""
+        """Sign-in by cookie only (401 otherwise): for what an API token must not do.
+
+        Args:
+            request: The HTTP request, for its session cookie.
+        """
         await session_caller(request.cookies.get(SESSION_COOKIE))
 
     protected.include_router(
@@ -214,29 +239,59 @@ def create_app(container: Container) -> FastAPI:
 
     @app.get(OPENAPI_PATH, include_in_schema=False)
     async def openapi_v1() -> dict[str, Any]:
+        """Serve the OpenAPI description of ``/api/v1``.
+
+        Returns:
+            The OpenAPI document.
+        """
         return v1_openapi(app)
 
-    # Every route of the MCP app (the endpoint, and OAuth/.well-known routes once auth is on)
-    # is served as-is, keeping the MCP app's own middleware; `/mcp/` is an alias some hosts
-    # (e.g. ChatGPT) are configured with.
-    for path in _route_paths(mcp_app.routes):
-        app.router.routes.append(Route(path, endpoint=mcp_app))
-    app.router.routes.append(
-        Route(f"{MCP_PATH}/", endpoint=_RewritePath(app=mcp_app, path=MCP_PATH))
-    )
+    _mount_mcp(app, mcp_app)
     if WEB_DIST.is_dir():
         # SPA: `index.html` only for HTML navigation requests; API and assets keep real 404s.
         app.frontend("/", directory=WEB_DIST, fallback="index.html")
     return app
 
 
+def _mount_mcp(app: FastAPI, mcp_app: Starlette) -> None:
+    """Serve every route of the MCP app as-is, keeping the MCP app's own middleware.
+
+    That is the endpoint, and the OAuth/.well-known routes once auth is on; `/mcp/` is an alias
+    some hosts (e.g. ChatGPT) are configured with.
+
+    Args:
+        app: The HTTP service.
+        mcp_app: FastMCP's Streamable HTTP app.
+    """
+    for path in _route_paths(mcp_app.routes):
+        app.router.routes.append(Route(path, endpoint=mcp_app))
+    app.router.routes.append(
+        Route(f"{MCP_PATH}/", endpoint=_RewritePath(app=mcp_app, path=MCP_PATH))
+    )
+
+
 def _operation_id(route: APIRoute) -> str:
-    """Short, stable OpenAPI operation IDs for generated clients: `catalog-list_all`."""
+    """Short, stable OpenAPI operation IDs for generated clients: `catalog-list_all`.
+
+    Args:
+        route: The route.
+
+    Returns:
+        ``<first tag>-<route name>`` (``default`` when the route has no tag).
+    """
     tag = route.tags[0] if route.tags else "default"
     return f"{tag}-{route.name}"
 
 
 def _route_paths(routes: Iterable[object]) -> list[str]:
+    """List the paths of the routes that have one.
+
+    Args:
+        routes: An app's routes.
+
+    Returns:
+        Their paths, in order.
+    """
     return [path for route in routes if isinstance(path := getattr(route, "path", None), str)]
 
 
@@ -245,9 +300,18 @@ class _RewritePath:
     """ASGI wrapper that serves another path's app (an alias without a redirect)."""
 
     app: ASGIApp
+    """The app that serves ``path``."""
     path: str
+    """The path the request is served as."""
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Serve the request as if it were for ``path``.
+
+        Args:
+            scope: The ASGI scope.
+            receive: The ASGI receive channel.
+            send: The ASGI send channel.
+        """
         aliased = {**scope, "path": self.path, "raw_path": self.path.encode()}
         await self.app(aliased, receive, send)
 
@@ -261,11 +325,20 @@ class OriginCheck:
     """
 
     app: ASGIApp
+    """The wrapped app."""
     trusted_hosts: list[str]
+    """Host names whose origins are allowed (``Settings.trusted_hosts``)."""
     allowed_origins: list[str]
+    """Further origins allowed as they are (``EXACTDOCS_ALLOWED_ORIGINS``)."""
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Pass the request on, or answer 403 for an unsafe request from a foreign origin."""
+        """Pass the request on, or answer 403 for an unsafe request from a foreign origin.
+
+        Args:
+            scope: The ASGI scope.
+            receive: The ASGI receive channel.
+            send: The ASGI send channel.
+        """
         if scope["type"] == "http" and scope["method"] in _UNSAFE_METHODS:
             origin = dict(scope["headers"]).get(b"origin", b"").decode()
             if origin and not self._allowed(origin):
@@ -275,4 +348,12 @@ class OriginCheck:
         await self.app(scope, receive, send)
 
     def _allowed(self, origin: str) -> bool:
+        """Tell whether an ``Origin`` may make unsafe requests.
+
+        Args:
+            origin: The request's ``Origin`` header.
+
+        Returns:
+            Whether it is an allowed origin or its host a trusted one.
+        """
         return origin in self.allowed_origins or urlsplit(origin).hostname in self.trusted_hosts

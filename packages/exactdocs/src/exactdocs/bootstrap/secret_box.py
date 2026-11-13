@@ -40,15 +40,33 @@ class FernetSecretBox:
     """
 
     fernet: MultiFernet = field(repr=False)
+    """The keys, the sealing one first; kept out of ``repr``."""
 
     @classmethod
     def from_secrets(cls, secret: str, *previous: str, purpose: bytes) -> Self:
-        """Derive the keys from ``EXACTDOCS_SECRET_KEY`` (and ``_PREVIOUS``), 32+ characters."""
+        """Derive the keys from ``EXACTDOCS_SECRET_KEY`` (and ``_PREVIOUS``), 32+ characters.
+
+        Args:
+            secret: The current secret key, which seals.
+            *previous: Earlier secret keys, which still open what they sealed.
+            purpose: The HKDF context of this use, shared with no other.
+
+        Returns:
+            The box.
+        """
         return cls(fernet=MultiFernet([_derive(text, purpose) for text in (secret, *previous)]))
 
     @classmethod
     def from_secret(cls, secret: str, *, purpose: bytes) -> Self:
-        """Derive the key from one secret text (at least 32 characters)."""
+        """Derive the key from one secret text (at least 32 characters).
+
+        Args:
+            secret: The secret key.
+            purpose: The HKDF context of this use, shared with no other.
+
+        Returns:
+            The box.
+        """
         return cls.from_secrets(secret, purpose=purpose)
 
     @classmethod
@@ -57,15 +75,35 @@ class FernetSecretBox:
 
         A symlink or a file of another user is refused. One that others could read is made
         private again, but its key must be treated as exposed (logged as an error).
+
+        Args:
+            path: The key file.
+            purpose: The HKDF context of this use, shared with no other.
+
+        Returns:
+            The box.
         """
         return cls.from_secret(read_key_file(path), purpose=purpose)
 
     def seal(self, plaintext: str) -> str:
-        """Encrypt and authenticate ``plaintext``."""
+        """Encrypt and authenticate ``plaintext``.
+
+        Args:
+            plaintext: The text to seal.
+
+        Returns:
+            The Fernet token.
+        """
         return self.fernet.encrypt(plaintext.encode()).decode()
 
     def open(self, sealed: str) -> str:
         """Decrypt; a token of another key or purpose (or tampered with) raises.
+
+        Args:
+            sealed: A Fernet token from ``seal``.
+
+        Returns:
+            The plaintext.
 
         Raises:
             SealedTextUnreadableError: when ``sealed`` does not open with any of the keys.
@@ -139,7 +177,17 @@ def read_key_file(path: Path) -> str:
 
 
 def _derive(secret: str, purpose: bytes) -> Fernet:
-    # The secret must be random (HKDF stretches nothing): `openssl rand -base64 32`.
+    """Derive one Fernet key for one use.
+
+    The secret must be random (HKDF stretches nothing): ``openssl rand -base64 32``.
+
+    Args:
+        secret: The secret key.
+        purpose: The HKDF context of this use.
+
+    Returns:
+        The Fernet key.
+    """
     return Fernet(base64.urlsafe_b64encode(derived_key(secret, purpose)))
 
 
@@ -149,6 +197,9 @@ def _create_key_file(path: Path) -> None:
     The key is written to a private temporary file, then hard-linked to ``path``, which fails
     when another process got there first (its key wins). Where hard links do not exist the
     file is created in place with ``O_EXCL`` instead.
+
+    Args:
+        path: The key file to create.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     key = secrets.token_urlsafe(48) + "\n"
@@ -168,6 +219,12 @@ def _create_key_file(path: Path) -> None:
 
 
 def _create_in_place(path: Path, key: str) -> None:
+    """Create the key file directly with ``O_EXCL``; one that already exists wins.
+
+    Args:
+        path: The key file to create.
+        key: The key text to write.
+    """
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, _OWNER_ONLY)
     except FileExistsError:

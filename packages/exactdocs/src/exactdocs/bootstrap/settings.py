@@ -393,6 +393,11 @@ class AiSettings(BaseModel):
 
 
 def _default_data_dir() -> Path:
+    """Return the platform's user-data directory for ExactDocs.
+
+    Returns:
+        The directory (not created here).
+    """
     return user_data_path("exactdocs", appauthor=False)
 
 
@@ -410,9 +415,13 @@ class Settings(BaseSettings):
     )
 
     host: str = "127.0.0.1"
+    """The address `serve` listens on."""
     port: int = 3000
-    # Docker sets EXACTDOCS_DATA_DIR=/data; `uvx` uses the platform user-data directory.
+    """The port `serve` listens on."""
     data_dir: Path = Field(default_factory=_default_data_dir)
+    """Where the instance keeps its data: the SQLite database, the secret key file, local models.
+    Docker sets `/data`; `uvx` uses the platform user-data directory.
+    """
     database_url: str | None = None
     """Overrides the SQLite file in the data directory: another SQLite file
     (`sqlite:////srv/exactdocs.db`) or a PostgreSQL database
@@ -429,44 +438,56 @@ class Settings(BaseSettings):
     """PostgreSQL only: the schema of the same database where DBOS keeps its workflows and their
     steps (SQLite keeps them in `<data dir>/jobs.sqlite`). ExactDocs never needs a second database.
     """
-    # Article files above this many bytes are skipped by an import, unread.
     max_article_bytes: int = Field(default=2 * 2**20, ge=1)
-    # An import fails when its selected articles add up to more bytes than this (they are held in
-    # memory, several times over, until stored).
+    """Article files above this many bytes are skipped by an import, unread."""
     max_import_bytes: int = Field(default=256 * 2**20, ge=1)
-    # An import parses and chunks this many files per durable step: an import interrupted by a
-    # crash or a restart resumes after the last step it completed.
+    """An import fails when its selected articles add up to more bytes than this (they are held
+    in memory, several times over, until stored).
+    """
     import_batch_files: int = Field(default=100, ge=1)
-    # How often the job worker looks for a queued job to start; an idle server polls no more
-    # often than this. Tests lower it.
+    """An import parses and chunks this many files per durable step: an import interrupted by a
+    crash or a restart resumes after the last step it completed.
+    """
     job_poll_seconds: float = Field(default=1.0, gt=0, le=60)
-    # When the scheduled check ticks (a DBOS cron expression, seconds first): each tick checks the
-    # libraries whose own interval is up (new tags imported, branches re-synced). Tests tick every
-    # second.
+    """How often the job worker looks for a queued job to start; an idle server polls no more
+    often than this. Tests lower it.
+    """
     auto_sync_schedule: str = "0 * * * * *"
-    # Images the articles reference: one above `max_image_bytes` is skipped unread, and a version
-    # keeps images until they add up to `max_images_bytes` (they are held in memory and in the
-    # database, about 8 times over at the peak; later ones are skipped and listed as problems).
+    """When the scheduled check ticks (a DBOS cron expression, seconds first): each tick checks
+    the libraries whose own interval is up (new tags imported, branches re-synced). Tests tick
+    every second.
+    """
     max_image_bytes: int = Field(default=2 * 2**20, ge=1)
+    """An image an article references above this many bytes is skipped unread."""
     max_images_bytes: int = Field(default=32 * 2**20, ge=1)
-    # Encrypts the stored tokens and deploy keys of private repositories. It must be random and
-    # at least 32 characters (`openssl rand -base64 32`). Unset: a random key is generated into
-    # `<data dir>/secret.key` (mode 0600) on first run. Without the key the credentials cannot be
-    # read: libraries keep serving their docs and ask for the token again (`credentials_required`).
+    """A version keeps images until they add up to this many bytes (they are held in memory and
+    in the database, about 8 times over at the peak); later ones are skipped and listed as
+    problems.
+    """
     secret_key: SecretStr | None = None
-    # The key that was `secret_key` before a rotation: credentials sealed with it still open, and
-    # are sealed with the new key when they are next saved. Remove it once they were all re-sent.
+    """Encrypts the stored tokens and deploy keys of private repositories. It must be random and
+    at least `MIN_SECRET_KEY_LENGTH` characters long (`openssl rand -base64 32` is). Unset: a
+    random key is generated into `<data dir>/secret.key` (mode 0600) on first run. Without the
+    key the credentials cannot be read: libraries keep serving their docs and ask for the token
+    again (`credentials_required`).
+    """
     secret_key_previous: SecretStr | None = None
-    # One whole `query-docs` payload, notice included, in tokens counted as characters / 4. That
-    # undercounts for CJK text and dense code. At least 500: the notice alone is ~100 tokens.
+    """The key that was `secret_key` before a rotation: credentials sealed with it still open,
+    and are sealed with the new key when they are next saved. Remove it once they were all
+    re-sent.
+    """
     query_docs_token_budget: int = Field(default=10_000, ge=500)
+    """One whole `query-docs` payload, notice included, in tokens counted as characters / 4. That
+    undercounts for CJK text and dense code. At least 500: the notice alone is ~100 tokens.
+    """
     ai: AiSettings = Field(default_factory=AiSettings)
     """AI retrieval (`EXACTDOCS_AI__...`, or `[ai]` in the `EXACTDOCS_CONFIG_FILE` TOML file;
     docs/decisions/ai-retrieval.md): the instance mode, provider profiles and model roles.
     """
-    # `otlp`: traces and metrics over OTLP/HTTP to the collector the standard
-    # `OTEL_EXPORTER_OTLP_ENDPOINT` names. Off: no telemetry SDK is set up, nothing is exported.
     telemetry: Literal["off", "otlp"] = "off"
+    """`otlp`: traces and metrics over OTLP/HTTP to the collector the standard
+    `OTEL_EXPORTER_OTLP_ENDPOINT` names. Off: no telemetry SDK is set up, nothing is exported.
+    """
     telemetry_query_text: bool = False
     """Keep the text of search queries in the traces (span attributes and request URLs). Off by
     default: queries can hold code, names or secrets, and traces are read by more people.
@@ -481,16 +502,21 @@ class Settings(BaseSettings):
     Unset, it needs no credentials. Surrounding whitespace and newlines are trimmed, as Prometheus
     trims its `credentials_file`; blank counts as unset.
     """
-    # DNS-rebinding guard for the whole app: extra Host names (e.g. `docs.example.com`,
-    # `*.example.com`) and browser origins (e.g. `https://docs.example.com`), comma-separated.
     allowed_hosts: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    """DNS-rebinding guard for the whole app: Host names it answers besides localhost (e.g.
+    `docs.example.com`, `*.example.com`), comma-separated.
+    """
     allowed_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
-    # The session cookie is `Secure` whenever a request arrives over HTTPS (uvicorn reads
-    # X-Forwarded-Proto from `forwarded_allow_ips`). Set this when TLS ends at a proxy that does
-    # not forward the scheme.
+    """DNS-rebinding guard for the whole app: further browser origins allowed to make unsafe
+    requests (e.g. `https://docs.example.com`), comma-separated.
+    """
     secure_cookies: bool = False
-    # Proxies whose X-Forwarded-* headers uvicorn trusts (comma-separated IPs or `*`).
+    """Always mark the session cookie `Secure`. It already is whenever a request arrives over
+    HTTPS (uvicorn reads X-Forwarded-Proto from `forwarded_allow_ips`); set this when TLS ends at
+    a proxy that does not forward the scheme.
+    """
     forwarded_allow_ips: str = "127.0.0.1,::1"
+    """Proxies whose X-Forwarded-* headers uvicorn trusts (comma-separated IPs or `*`)."""
 
     @classmethod
     def settings_customise_sources(
@@ -525,6 +551,17 @@ class Settings(BaseSettings):
     @field_validator("auto_sync_schedule")
     @classmethod
     def _schedule_is_a_cron_expression(cls, value: str) -> str:
+        """Refuse an ``auto_sync_schedule`` that is not a cron expression.
+
+        Args:
+            value: The raw setting.
+
+        Returns:
+            The expression, unchanged.
+
+        Raises:
+            ValueError: It is not a cron expression of 5 or 6 fields.
+        """
         if not croniter.is_valid(value, second_at_beginning=True):
             message = (
                 "EXACTDOCS_AUTO_SYNC_SCHEDULE must be a cron expression with 5 fields, or 6 with "
@@ -536,6 +573,14 @@ class Settings(BaseSettings):
     @field_validator("secret_key", "secret_key_previous", "models_dir", mode="before")
     @classmethod
     def _blank_secret_key_is_unset(cls, value: object) -> object:
+        """Treat a blank secret key or models directory as unset.
+
+        Args:
+            value: The raw setting.
+
+        Returns:
+            ``None`` for blank text, the value otherwise.
+        """
         return None if isinstance(value, str) and not value.strip() else value
 
     @field_validator("metrics_token", mode="before")
@@ -560,6 +605,14 @@ class Settings(BaseSettings):
     @field_validator("allowed_hosts", "allowed_origins", mode="before")
     @classmethod
     def _split_csv(cls, value: object) -> object:
+        """Split a comma-separated environment value into its non-blank items.
+
+        Args:
+            value: The raw setting.
+
+        Returns:
+            The trimmed items for text, the value otherwise.
+        """
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value

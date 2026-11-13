@@ -90,7 +90,17 @@ def serve(
     port: Annotated[int | None, Parameter(help="HTTP only: port to listen on.")] = None,
     reload: Annotated[bool, Parameter(help="HTTP only: restart on code changes.")] = False,
 ) -> None:
-    """Run the server: web UI + REST API + MCP over HTTP, or MCP only over stdio."""
+    """Run the server: web UI + REST API + MCP over HTTP, or MCP only over stdio.
+
+    Args:
+        stdio: Serve MCP over stdio instead of HTTP: read-only, needs an existing database.
+        host: HTTP only: address to bind.
+        port: HTTP only: port to listen on.
+        reload: HTTP only: restart on code changes.
+
+    Raises:
+        SystemExit: An HTTP option is given with --stdio.
+    """
     settings = Settings()
     if stdio:
         if host or port or reload:
@@ -146,7 +156,17 @@ type WaitTimeout = Annotated[
 
 
 def _call[T](work: Coroutine[object, object, T]) -> T:
-    """Run a client command's work; a ``ClientError`` ends the process with its message."""
+    """Run a client command's work; a ``ClientError`` ends the process with its message.
+
+    Args:
+        work: The command's coroutine.
+
+    Returns:
+        What the work returned.
+
+    Raises:
+        SystemExit: The work failed (its ``exit_code``) or was interrupted.
+    """
     try:
         return asyncio.run(work)
     except ClientError as exc:
@@ -157,7 +177,18 @@ def _call[T](work: Coroutine[object, object, T]) -> T:
 
 
 def _api(url: str | None = None, token: str | None = None) -> ApiClient:
-    """Build the client for the resolved server and token (flags > environment > config file)."""
+    """Build the client for the resolved server and token (flags > environment > config file).
+
+    Args:
+        url: The ``--url`` flag, if given.
+        token: The ``--token`` flag, if given.
+
+    Returns:
+        The client, not opened yet.
+
+    Raises:
+        SystemExit: No server or token is known, or the URL is not usable.
+    """
     try:
         config = ClientConfig.resolve(url=url, token=token)
         return ApiClient(config.url, config.token)
@@ -196,6 +227,19 @@ def login(
 
     With a token (--token, --token-stdin or EXACTDOCS_TOKEN) no new token is created and the
     expiry options do not apply. Otherwise the new token expires after 90 days unless told not to.
+
+    Args:
+        url: Server URL (default: EXACTDOCS_URL).
+        token: Use this existing API token instead of creating one.
+        token_stdin: Read an existing API token from one line of stdin.
+        username: Who signs in; asked for when omitted.
+        password_stdin: Read the password from one line of stdin instead of prompting.
+        name: Name of the new token (default: this machine's name).
+        expires_in: Days until the new token expires.
+        no_expiry: Create a token that never expires.
+
+    Raises:
+        SystemExit: The URL is not usable, or stdin holds no token.
     """
     try:
         server = normalize_url(url or os.environ.get("EXACTDOCS_URL") or "")
@@ -212,6 +256,14 @@ def login(
     expires_at = None if no_expiry else datetime.now(UTC) + timedelta(days=expires_in)
 
     async def work() -> str:
+        """Check the given token, or create one with the password, then store it.
+
+        Returns:
+            What was stored, for the confirmation line.
+
+        Raises:
+            ClientError: There is no username or password to read.
+        """
         async with ApiClient(server, token) as api:
             if token is None:
                 try:
@@ -236,6 +288,18 @@ def login(
 
 
 def _read_login(username: str | None, *, password_stdin: bool) -> tuple[str, str]:
+    """Read the username (unless given) and the password, never echoing the password.
+
+    Args:
+        username: The ``--username`` flag; asked for when ``None``.
+        password_stdin: Read the password from one line of stdin instead of prompting.
+
+    Returns:
+        The username and the password.
+
+    Raises:
+        EOFError: Stdin is empty, or is not a terminal to prompt on.
+    """
     name = username if username is not None else input("Username: ")
     if password_stdin:
         line = sys.stdin.readline()
@@ -278,9 +342,16 @@ async def _session(
     Setting a repository credential and managing tokens need a session: a leaked token must not
     be able to mint a successor or replace a stored credential (identity's token routes).
 
+    Args:
+        url: The ``--url`` flag, if given.
+        username: Who signs in; asked for when ``None``.
+        password_stdin: Read the password from one line of stdin instead of prompting.
+
     Yields:
         The signed-in client; the session ends when the block does.
 
+    Raises:
+        ClientError: There is no username or password to read.
     """
     server = resolve_url(url=url)
     try:
@@ -299,7 +370,20 @@ async def _session(
 def _credential(
     git_token_file: str | None, ssh_key: str | None, git_user: str | None
 ) -> dict | None:
-    """Read a repository credential from files (never from the command line)."""
+    """Read a repository credential from files (never from the command line).
+
+    Args:
+        git_token_file: File holding an access token for a private https repository.
+        ssh_key: File holding an SSH deploy key.
+        git_user: User name that goes with the token.
+
+    Returns:
+        The API's ``credential`` object, or ``None`` when no file is given.
+
+    Raises:
+        UsageError: Both a token file and a key are given (caught: the process ends).
+        SystemExit: The credential cannot be used, or both files are given.
+    """
     path = git_token_file or ssh_key
     try:
         if git_token_file and ssh_key:
@@ -357,6 +441,29 @@ def add(
 
     A private repository's credential is accepted from a signed-in session only, never from an
     API token: with --git-token-file or --ssh-key you are asked for your password.
+
+    Args:
+        git_url: The repository's clone URL.
+        id: Library ID /owner/repo.
+        ref: Tag, branch or commit (default: default branch).
+        path: Folder, file or glob to import; repeatable.
+        exclude: Path to leave out; repeatable.
+        tag_rule: PATTERN=TAG; repeatable.
+        git_token_file: File holding an access token for a private https repository.
+        git_user: User name that goes with the token.
+        ssh_key: File holding an SSH deploy key (ssh URL).
+        username: Who signs in; asked for when omitted.
+        password_stdin: Read the password from one line of stdin instead of prompting.
+        wait: Wait for the import and show its progress (on stderr).
+        wait_timeout: With --wait: seconds to follow the import before leaving it to the server.
+        json_output: Print JSON for scripts.
+        dry_run: List the files the import would take without adding anything.
+        url: Server URL (default: EXACTDOCS_URL, config).
+        token: ExactDocs API token (default: EXACTDOCS_TOKEN, config); ignored with a git
+            credential, which needs your password instead.
+
+    Raises:
+        SystemExit: A tag rule is malformed.
     """
     credential = _credential(git_token_file, ssh_key, git_user)
     try:  # before any request or password prompt, so a dry run catches a bad rule too
@@ -366,6 +473,11 @@ def add(
         raise SystemExit(exit_code(exc)) from None
 
     async def go(api: ApiClient) -> None:
+        """Preview the import, or add the library.
+
+        Args:
+            api: The API client.
+        """
         if dry_run:
             await lib.preview_import(
                 api,
@@ -392,6 +504,7 @@ def add(
         )
 
     async def work() -> None:
+        """Run it with the token, or with a session when a credential is sent."""
         if credential is None:
             async with _api(url, token) as api:
                 await go(api)
@@ -406,9 +519,16 @@ def add(
 def libraries(
     *, json_output: JsonOption = False, url: UrlOption = None, token: TokenOption = None
 ) -> None:
-    """List the libraries and their versions."""
+    """List the libraries and their versions.
+
+    Args:
+        json_output: Print JSON for scripts.
+        url: Server URL (default: EXACTDOCS_URL, config).
+        token: ExactDocs API token (default: EXACTDOCS_TOKEN, config); not a git token.
+    """
 
     async def work() -> None:
+        """List the libraries."""
         async with _api(url, token) as api:
             await lib.list_libraries(api, as_json=json_output)
 
@@ -426,9 +546,18 @@ def library(
     url: UrlOption = None,
     token: TokenOption = None,
 ) -> None:
-    """Find the ID of a library by name (like `ctx7 library`); QUERY ranks the matches."""
+    """Find the ID of a library by name (like `ctx7 library`); QUERY ranks the matches.
+
+    Args:
+        name: Library name to look for, e.g. react.
+        *query: What to look up; ranks the matches (default: the name).
+        json_output: Print JSON for scripts.
+        url: Server URL (default: EXACTDOCS_URL, config).
+        token: ExactDocs API token (default: EXACTDOCS_TOKEN, config); not a git token.
+    """
 
     async def work() -> None:
+        """Look the library up."""
         async with _api(url, token) as api:
             await lib.find_library(api, name, " ".join(query) or None, as_json=json_output)
 
@@ -454,12 +583,25 @@ def docs(
     url: UrlOption = None,
     token: TokenOption = None,
 ) -> None:
-    """Show what an agent gets for a question about a library (like `ctx7 docs`)."""
+    """Show what an agent gets for a question about a library (like `ctx7 docs`).
+
+    Args:
+        library_id: Library ID from 'exactdocs library', e.g. /owner/repo or /owner/repo@v1.
+        *query: The question; several words are joined.
+        language: Language you write in; chunks with code in it come first (no filter).
+        json_output: Print JSON for scripts.
+        url: Server URL (default: EXACTDOCS_URL, config).
+        token: ExactDocs API token (default: EXACTDOCS_TOKEN, config); not a git token.
+
+    Raises:
+        SystemExit: No question is given.
+    """
     if not query:
         sys.stderr.write("exactdocs: docs needs a question after the library ID\n")
         raise SystemExit(EXIT_USAGE)
 
     async def work() -> None:
+        """Ask the question."""
         async with _api(url, token) as api:
             await lib.query_docs(
                 api, library_id, " ".join(query), language=language, as_json=json_output
@@ -490,10 +632,31 @@ def version_add(
     url: UrlOption = None,
     token: CredentialTokenOption = None,
 ) -> None:
-    """Import another version (tag, branch or commit) of a library, with its settings."""
+    """Import another version (tag, branch or commit) of a library, with its settings.
+
+    Args:
+        library: The library, /owner/repo.
+        ref: Tag, branch or commit to import.
+        git_token_file: Replace the stored access token (file).
+        git_user: User name that goes with the token.
+        ssh_key: Replace the stored deploy key (file).
+        username: Who signs in; asked for when omitted.
+        password_stdin: Read the password from one line of stdin instead of prompting.
+        wait: Wait for the import and show its progress (on stderr).
+        wait_timeout: With --wait: seconds to follow the import before leaving it to the server.
+        json_output: Print JSON for scripts.
+        url: Server URL (default: EXACTDOCS_URL, config).
+        token: ExactDocs API token (default: EXACTDOCS_TOKEN, config); ignored with a git
+            credential, which needs your password instead.
+    """
     credential = _credential(git_token_file, ssh_key, git_user)
 
     async def go(api: ApiClient) -> None:
+        """Add the version.
+
+        Args:
+            api: The API client.
+        """
         await lib.add_version(
             api,
             library,
@@ -505,6 +668,7 @@ def version_add(
         )
 
     async def work() -> None:
+        """Run it with the token, or with a session when a credential is sent."""
         if credential is None:
             async with _api(url, token) as api:
                 await go(api)
@@ -536,12 +700,27 @@ def sync(
     url: UrlOption = None,
     token: TokenOption = None,
 ) -> None:
-    """Re-sync the branch versions of a library; moved tags are re-imported only on --confirm."""
+    """Re-sync the branch versions of a library; moved tags are re-imported only on --confirm.
+
+    Args:
+        library: The library, /owner/repo.
+        confirm: Confirm every tag of the library that moved upstream.
+        confirm_tag: Confirm only this moved tag; repeatable.
+        wait: Wait for the import and show its progress (on stderr).
+        wait_timeout: With --wait: seconds to follow the import before leaving it to the server.
+        json_output: Print JSON for scripts.
+        url: Server URL (default: EXACTDOCS_URL, config).
+        token: ExactDocs API token (default: EXACTDOCS_TOKEN, config); not a git token.
+
+    Raises:
+        SystemExit: Both --confirm and --confirm-tag are given.
+    """
     if confirm and confirm_tag:  # "every moved tag" and "only these" cannot both be meant
         sys.stderr.write("exactdocs: use --confirm or --confirm-tag, not both\n")
         raise SystemExit(EXIT_USAGE)
 
     async def work() -> None:
+        """Sync the library."""
         async with _api(url, token) as api:
             await lib.sync_library(
                 api,
@@ -564,7 +743,19 @@ def remove(
     url: UrlOption = None,
     token: TokenOption = None,
 ) -> None:
-    """Remove a version (/owner/repo/ref) or a whole library (/owner/repo) and its content."""
+    """Remove a version (/owner/repo/ref) or a whole library (/owner/repo) and its content.
+
+    Args:
+        target: /owner/repo/ref or /owner/repo.
+        yes: Do not ask first.
+        json_output: Print JSON for scripts.
+        url: Server URL (default: EXACTDOCS_URL, config).
+        token: ExactDocs API token (default: EXACTDOCS_TOKEN, config); not a git token.
+
+    Raises:
+        SystemExit: There is no terminal to confirm on, the target is malformed, or the removal
+            was not confirmed.
+    """
     if not yes:
         if not sys.stdin.isatty():
             sys.stderr.write("exactdocs: no terminal to confirm the removal; pass --yes\n")
@@ -584,6 +775,7 @@ def remove(
             raise SystemExit(EXIT_FAILED)
 
     async def work() -> None:
+        """Remove the target."""
         async with _api(url, token) as api:
             await lib.remove(api, target, as_json=json_output)
 
@@ -607,9 +799,20 @@ def token_create(
     json_output: JsonOption = False,
     url: UrlOption = None,
 ) -> None:
-    """Create an API token and print it once."""
+    """Create an API token and print it once.
+
+    Args:
+        name: The token's name.
+        expires_in: Days until it expires.
+        no_expiry: Never expires.
+        username: Who signs in; asked for when omitted.
+        password_stdin: Read the password from one line of stdin instead of prompting.
+        json_output: Print JSON for scripts.
+        url: Server URL (default: EXACTDOCS_URL, config).
+    """
 
     async def work() -> None:
+        """Sign in and create the token."""
         async with _session(url, username, password_stdin=password_stdin) as api:
             await lib.token_create(
                 api, name, None if no_expiry else expires_in, as_json=json_output
@@ -626,9 +829,17 @@ def token_list(
     json_output: JsonOption = False,
     url: UrlOption = None,
 ) -> None:
-    """List your API tokens."""
+    """List your API tokens.
+
+    Args:
+        username: Who signs in; asked for when omitted.
+        password_stdin: Read the password from one line of stdin instead of prompting.
+        json_output: Print JSON for scripts.
+        url: Server URL (default: EXACTDOCS_URL, config).
+    """
 
     async def work() -> None:
+        """Sign in and list the tokens."""
         async with _session(url, username, password_stdin=password_stdin) as api:
             await lib.token_list(api, as_json=json_output)
 
@@ -643,9 +854,17 @@ def token_revoke(
     password_stdin: PasswordStdin = False,
     url: UrlOption = None,
 ) -> None:
-    """Revoke an API token by its ID (see `token list`)."""
+    """Revoke an API token by its ID (see `token list`).
+
+    Args:
+        token_id: The token's ID.
+        username: Who signs in; asked for when omitted.
+        password_stdin: Read the password from one line of stdin instead of prompting.
+        url: Server URL (default: EXACTDOCS_URL, config).
+    """
 
     async def work() -> None:
+        """Sign in and revoke the token."""
         async with _session(url, username, password_stdin=password_stdin) as api:
             await lib.token_revoke(api, token_id)
 
@@ -660,7 +879,18 @@ def _config_conflict(
     token: str | None,
     needs_new_token: dict[str, bool],
 ) -> str | None:
-    """Return the first flag combination `config` refuses, as a message, or ``None``."""
+    """Return the first flag combination `config` refuses, as a message, or ``None``.
+
+    Args:
+        stdio: ``--stdio`` is given.
+        show_token: ``--show-token`` is given.
+        new_token: ``--new-token`` is given.
+        token: The ``--token`` flag.
+        needs_new_token: Each flag that needs ``--new-token``, and whether it is given.
+
+    Returns:
+        What is wrong, or ``None`` when the combination is fine.
+    """
     if stdio and (show_token or new_token):
         return "--stdio needs no token"
     if show_token and new_token:
@@ -715,7 +945,23 @@ def config(
         bool, Parameter(help="With --new-token: read the password from one line of stdin.")
     ] = False,
 ) -> None:
-    """Print a ready-to-paste MCP config for a client, never containing the token unless asked."""
+    """Print a ready-to-paste MCP config for a client, never containing the token unless asked.
+
+    Args:
+        client: The MCP client.
+        stdio: Local read-only `serve --stdio` instead of HTTP with a token.
+        url: Server URL (default: EXACTDOCS_URL, config).
+        token: ExactDocs API token (default: EXACTDOCS_TOKEN, config); not a git token.
+        show_token: Write your real API token into the snippet.
+        new_token: Create a token for this client (asks for your password) and write it in.
+        name: With --new-token: its name (default: mcp-<client>).
+        expires_in: With --new-token: days until it expires.
+        username: With --new-token: who signs in (asked for when omitted).
+        password_stdin: With --new-token: read the password from one line of stdin.
+
+    Raises:
+        SystemExit: The flags conflict.
+    """
     conflict = _config_conflict(
         stdio=stdio,
         show_token=show_token,
@@ -733,6 +979,11 @@ def config(
         raise SystemExit(EXIT_USAGE)
 
     async def work() -> tuple[str, str | None]:
+        """Find the server URL and the token to write, creating one with --new-token.
+
+        Returns:
+            The server URL (empty with --stdio) and the token, or ``None`` for a placeholder.
+        """
         if stdio:
             return "", None  # no URL involved
         if new_token:
@@ -775,7 +1026,12 @@ def create(
         bool, Parameter(help="Read the password from one line of stdin instead of prompting.")
     ] = False,
 ) -> None:
-    """Create the first admin account (only while no account exists)."""
+    """Create the first admin account (only while no account exists).
+
+    Args:
+        username: Asked for when omitted.
+        password_stdin: Read the password from one line of stdin instead of prompting.
+    """
     name, password = _read_credentials(username, password_stdin=password_stdin)
     created = _run(_create_first_admin(Settings(), name, password))
     sys.stdout.write(f"Created admin {created!r}.\n")
@@ -789,7 +1045,12 @@ def reset_password(
         bool, Parameter(help="Read the new password from one line of stdin instead of prompting.")
     ] = False,
 ) -> None:
-    """Set a new password for an account and sign it out everywhere (lost-password recovery)."""
+    """Set a new password for an account and sign it out everywhere (lost-password recovery).
+
+    Args:
+        username: Asked for when omitted.
+        password_stdin: Read the new password from one line of stdin instead of prompting.
+    """
     name, password = _read_credentials(username, password_stdin=password_stdin, new=True)
     reset = _run(_reset_password(Settings(), name, password))
     sys.stdout.write(f"Password of {reset.account.username!r} changed; all its sessions ended.\n")
@@ -807,6 +1068,19 @@ def reset_password(
 def _read_credentials(
     username: str | None, *, password_stdin: bool, new: bool = False
 ) -> tuple[str, str]:
+    """Read the username (unless given) and a password for a local admin command.
+
+    Args:
+        username: The ``--username`` flag; asked for when ``None``.
+        password_stdin: Read the password from one line of stdin instead of prompting.
+        new: The password is a new one (prompted for as such).
+
+    Returns:
+        The username and the password.
+
+    Raises:
+        SystemExit: There is no username or password to read.
+    """
     try:
         name = username if username is not None else input("Username: ")
         return name, _read_password(from_stdin=password_stdin, new=new)
@@ -819,7 +1093,17 @@ def _read_credentials(
 
 
 def _run[T](work: Coroutine[object, object, T]) -> T:
-    """Run a command's work, turning bad input and domain errors into a one-line exit."""
+    """Run a command's work, turning bad input and domain errors into a one-line exit.
+
+    Args:
+        work: The command's coroutine.
+
+    Returns:
+        What the work returned.
+
+    Raises:
+        SystemExit: The input is invalid (the password is never echoed), or a domain error.
+    """
     try:
         return asyncio.run(work)
     except ValidationError as exc:
@@ -836,6 +1120,19 @@ def _run[T](work: Coroutine[object, object, T]) -> T:
 
 
 def _read_password(*, from_stdin: bool, new: bool = False) -> str:
+    """Read a password from stdin or the terminal; a prompted one is asked for twice.
+
+    Args:
+        from_stdin: Read one line of stdin instead of prompting.
+        new: Prompt for a new password.
+
+    Returns:
+        The password.
+
+    Raises:
+        EOFError: Stdin is empty, or is not a terminal to prompt on.
+        SystemExit: The two prompted passwords differ.
+    """
     if from_stdin:
         line = sys.stdin.readline()
         if not line:
@@ -851,6 +1148,16 @@ def _read_password(*, from_stdin: bool, new: bool = False) -> str:
 
 
 async def _create_first_admin(settings: Settings, username: str, password: str) -> str:
+    """Create the first admin in the local database.
+
+    Args:
+        settings: The server's settings.
+        username: The admin's username.
+        password: The admin's password.
+
+    Returns:
+        The username as stored (normalized).
+    """
     container = _build(settings)
     async with container.running(jobs=False):  # the server runs the jobs
         command = CreateFirstAdminCommand(username=username, password=SecretStr(password))
@@ -858,6 +1165,16 @@ async def _create_first_admin(settings: Settings, username: str, password: str) 
 
 
 async def _reset_password(settings: Settings, username: str, password: str) -> PasswordReset:
+    """Reset an account's password in the local database.
+
+    Args:
+        settings: The server's settings.
+        username: The account's username.
+        password: The new password.
+
+    Returns:
+        The account, and whether its sign-in throttle was cleared.
+    """
     container = _build(settings)
     async with container.running(jobs=False):  # the server runs the jobs
         command = ResetPasswordCommand(username=username, password=SecretStr(password))
@@ -901,6 +1218,9 @@ def ai_check() -> None:
     Local: reads this server's settings (EXACTDOCS_AI__..., EXACTDOCS_CONFIG_FILE) and the profiles
     stored in its database, so run it where the server runs (in Docker: `docker exec <container>
     exactdocs ai check`). Keys are never printed. Exits 1 when a role fails, 2 when none is set.
+
+    Raises:
+        SystemExit: No role is configured, or a role failed.
     """
     checks = _run(_ai_check(Settings()))
     if not checks.checks:
@@ -946,6 +1266,9 @@ def ai_estimate() -> None:
     active version (libraries with AI on) without a vector from the configured embedding model,
     at 4 characters per token, priced with the bundled price list: an estimate. It calls no model
     and no tokenizer. Exits 2 when no embedding model is configured.
+
+    Raises:
+        SystemExit: No embedding model is configured.
     """
     estimate = _run(_ai_estimate(Settings()))
     if estimate.model is None:
@@ -1012,6 +1335,9 @@ def models_pull(
 
     Args:
         model: fastembed embedding models or cross-encoders (default: the two defaults).
+
+    Raises:
+        SystemExit: A model could not be pulled.
     """
     settings = Settings()
     models_dir = settings.effective_models_dir
@@ -1053,6 +1379,9 @@ def backup(
         path: Archive to write (.tar.gz), which must not exist; `-` for stdout.
         include_secret_key: Also store secret.key. The archive then opens the stored repository
             credentials: keep it as safe as the key.
+
+    Raises:
+        SystemExit: The archive would go to a terminal, or the backup failed.
     """
     settings = Settings()
     to_stdout = path == "-"
@@ -1115,6 +1444,9 @@ def restore(
 
     Args:
         path: Archive written by `exactdocs backup`.
+
+    Raises:
+        SystemExit: The restore failed.
     """
     settings = Settings()
     try:
@@ -1143,6 +1475,14 @@ def restore(
 
 
 async def _reindex(settings: Settings) -> tuple[SearchIndexStateOut, RebuiltIndexOut]:
+    """Rebuild the local database's search index.
+
+    Args:
+        settings: The server's settings.
+
+    Returns:
+        The index's state before the rebuild, and the rebuilt index.
+    """
     container = _build(settings)
     async with container.running(jobs=False):  # migrates first, as `serve` would
         state = await container.retrieval.get_search_index_state()
@@ -1150,7 +1490,17 @@ async def _reindex(settings: Settings) -> tuple[SearchIndexStateOut, RebuiltInde
 
 
 async def _serve_stdio(settings: Settings) -> None:
-    # Nothing unless EXACTDOCS_TELEMETRY=otlp; never on stdout. No /metrics: nowhere to serve it.
+    """Serve MCP over stdio from the existing database, read-only.
+
+    Telemetry is off unless ``EXACTDOCS_TELEMETRY=otlp``, and never on stdout. No ``/metrics``:
+    there is nowhere to serve it.
+
+    Args:
+        settings: The server's settings.
+
+    Raises:
+        SystemExit: The database cannot be opened or is not current.
+    """
     start_telemetry(settings)
     try:
         container = ReadOnlyContainer.build(settings)
@@ -1162,7 +1512,17 @@ async def _serve_stdio(settings: Settings) -> None:
 
 
 def _build(settings: Settings) -> Container:
-    """Build the container; an unusable data directory ends the process with a clear message."""
+    """Build the container; an unusable data directory ends the process with a clear message.
+
+    Args:
+        settings: The server's settings.
+
+    Returns:
+        The container, not running yet.
+
+    Raises:
+        SystemExit: The instance cannot start with these settings.
+    """
     try:
         return Container.build(settings)
     except StartupError as exc:
@@ -1171,7 +1531,14 @@ def _build(settings: Settings) -> Container:
 
 
 def _check_startup(settings: Settings) -> None:
-    """Fail before uvicorn starts (and before any reload worker) instead of with a traceback."""
+    """Fail before uvicorn starts (and before any reload worker) instead of with a traceback.
+
+    Args:
+        settings: The server's settings.
+
+    Raises:
+        SystemExit: ``git`` is not installed, or the instance cannot start with these settings.
+    """
     try:
         GitCli.locate()  # imports need git; --stdio only reads, so it skips this check
     except GitNotInstalledError as exc:
@@ -1184,7 +1551,11 @@ def _check_startup(settings: Settings) -> None:
 
 
 def asgi_app() -> object:
-    """ASGI factory used by uvicorn (also with ``--reload``)."""
+    """ASGI factory used by uvicorn (also with ``--reload``).
+
+    Returns:
+        The app.
+    """
     return create_app(Container.build(Settings()))
 
 

@@ -42,14 +42,25 @@ class ClientError(Exception):
 
 
 def config_path(env: Mapping[str, str] = os.environ) -> Path:
-    """Return the credentials file: ``EXACTDOCS_CLIENT_CONFIG`` or the user config dir's file."""
+    """Return the credentials file: ``EXACTDOCS_CLIENT_CONFIG`` or the user config dir's file.
+
+    Args:
+        env: The environment to read ``EXACTDOCS_CLIENT_CONFIG`` from.
+
+    Returns:
+        The file's path (it may not exist).
+    """
     if override := env.get(CONFIG_FILE_VARIABLE):
         return Path(override)
     return user_config_path("exactdocs", appauthor=False) / "config.json"
 
 
 def machine_name() -> str:
-    """Return the default token name: this machine's hostname."""
+    """Return the default token name: this machine's hostname.
+
+    Returns:
+        The hostname, cut to ``MAX_TOKEN_NAME_LENGTH`` (``exactdocs-cli`` when there is none).
+    """
     return (socket.gethostname() or "exactdocs-cli")[:MAX_TOKEN_NAME_LENGTH]
 
 
@@ -60,6 +71,16 @@ def normalize_url(url: str) -> str:
     are dropped, so two spellings of one server compare equal (a stored token is matched by URL).
     Plain ``http`` is accepted for loopback only: the token and the password would cross the
     network in the clear otherwise.
+
+    Args:
+        url: The URL as the user typed it.
+
+    Returns:
+        The canonical URL.
+
+    Raises:
+        ClientError: It is not an http(s) URL with a host, it holds credentials, a query or a
+            fragment, its host or port is malformed, or it is plain http to another machine.
     """
     parts = urlsplit(url.strip())
     if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
@@ -91,11 +112,26 @@ def normalize_url(url: str) -> str:
 
 
 def is_loopback_url(url: str) -> bool:
-    """Whether a (normalized) URL points at this machine."""
+    """Whether a (normalized) URL points at this machine.
+
+    Args:
+        url: The URL.
+
+    Returns:
+        ``True`` for ``localhost`` or a loopback address.
+    """
     return _is_loopback(urlsplit(url).hostname or "")
 
 
 def _is_loopback(host: str) -> bool:
+    """Whether a host name is this machine.
+
+    Args:
+        host: The host name or IP address.
+
+    Returns:
+        ``True`` for ``localhost`` or a loopback address.
+    """
     if host == "localhost":
         return True
     try:
@@ -109,7 +145,9 @@ class ClientConfig:
     """The server to talk to and the API token to do it with (never shown in a repr)."""
 
     url: str
+    """The server's normalized URL."""
     token: str = field(repr=False)
+    """The API token; kept out of ``repr``."""
 
     @classmethod
     def resolve(
@@ -123,6 +161,17 @@ class ClientConfig:
 
         A token from the config file is only used for the server it was issued by: pairing it
         with a different URL (a flag or the environment) would hand it to the wrong host.
+
+        Args:
+            url: The ``--url`` flag, if given.
+            token: The ``--token`` flag, if given.
+            env: The environment, for ``EXACTDOCS_URL``, ``EXACTDOCS_TOKEN`` and the config file.
+
+        Returns:
+            The server and its token.
+
+        Raises:
+            ClientError: No token is known for the chosen server.
         """
         chosen_url = resolve_url(url=url, env=env)
         stored = read_stored(config_path(env))
@@ -139,7 +188,18 @@ class ClientConfig:
 
 
 def resolve_url(*, url: str | None = None, env: Mapping[str, str] = os.environ) -> str:
-    """Return the server for a command that signs in with a password (no stored token needed)."""
+    """Return the server for a command that signs in with a password (no stored token needed).
+
+    Args:
+        url: The ``--url`` flag, if given.
+        env: The environment, for ``EXACTDOCS_URL`` and the config file.
+
+    Returns:
+        The normalized URL: the flag's, else the environment's, else the stored one.
+
+    Raises:
+        ClientError: No server is configured.
+    """
     chosen = url or env.get(URL_VARIABLE) or read_stored(config_path(env)).get("url")
     if not chosen:
         message = "no server configured; run `exactdocs login <url>` or set EXACTDOCS_URL"
@@ -148,7 +208,17 @@ def resolve_url(*, url: str | None = None, env: Mapping[str, str] = os.environ) 
 
 
 def read_stored(path: Path) -> dict[str, str]:
-    """Read the config file; a missing one is empty, an unreadable one is an error."""
+    """Read the config file; a missing one is empty, an unreadable one is an error.
+
+    Args:
+        path: The config file.
+
+    Returns:
+        Its text entries (``url``, ``token``); empty when the file does not exist.
+
+    Raises:
+        ClientError: The file cannot be read or is not a JSON object.
+    """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         if os.name == "posix" and path.stat().st_mode & 0o077:
@@ -165,7 +235,15 @@ def read_stored(path: Path) -> dict[str, str]:
 
 
 def store(path: Path, config: ClientConfig) -> None:
-    """Write the credentials atomically; the file is created readable by its owner only."""
+    """Write the credentials atomically; the file is created readable by its owner only.
+
+    Args:
+        path: The config file.
+        config: The server and token to store.
+
+    Raises:
+        ClientError: The file cannot be written.
+    """
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=".config.", suffix=".tmp")
     temporary = Path(name)  # mkstemp creates it 0600 and uniquely
@@ -183,7 +261,14 @@ def store(path: Path, config: ClientConfig) -> None:
 
 
 def forget(path: Path) -> bool:
-    """Delete the stored credentials; whether there were any."""
+    """Delete the stored credentials; whether there were any.
+
+    Args:
+        path: The config file.
+
+    Returns:
+        ``True`` when a file was deleted.
+    """
     try:
         path.unlink()
     except FileNotFoundError:
@@ -192,12 +277,26 @@ def forget(path: Path) -> bool:
 
 
 def printable(text: str) -> str:
-    """Drop control characters (a hostile server could send terminal escape sequences)."""
+    """Drop control characters (a hostile server could send terminal escape sequences).
+
+    Args:
+        text: Text from the server.
+
+    Returns:
+        The text with only printable characters.
+    """
     return "".join(c for c in text if c.isprintable())
 
 
 def printable_text(text: str) -> str:
-    """Like ``printable`` for a multi-line text: newlines and tabs stay (docs are read as text)."""
+    """Like ``printable`` for a multi-line text: newlines and tabs stay (docs are read as text).
+
+    Args:
+        text: Text from the server.
+
+    Returns:
+        The text with only printable characters, newlines and tabs.
+    """
     return "".join(c for c in text if c in "\n\t" or c.isprintable())
 
 
@@ -212,6 +311,15 @@ class ApiError(ClientError):
         fields: tuple[str, ...] = (),
         retry_after: int | None = None,
     ) -> None:
+        """Build the message to print from the server's error.
+
+        Args:
+            status: The HTTP status.
+            code: The stable machine code (``ErrorResponse.error``).
+            detail: The server's message.
+            fields: The invalid request fields, as dotted paths.
+            retry_after: Seconds to wait before trying again, when the server said.
+        """
         self.status = status
         self.code = code
         self.detail = printable(detail)
@@ -239,6 +347,13 @@ class ApiClient:
         *,
         transport: httpx2.AsyncBaseTransport | None = None,
     ) -> None:
+        """Prepare the HTTP client; nothing is sent yet.
+
+        Args:
+            url: The server URL (normalized here).
+            token: The API token to send as a bearer token, if any.
+            transport: An HTTP transport to use instead of the network (tests).
+        """
         self.url = normalize_url(url)
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         self._http = httpx2.AsyncClient(
@@ -253,12 +368,35 @@ class ApiClient:
         )
 
     async def __aenter__(self) -> Self:
+        """Enter the client's context.
+
+        Returns:
+            This client.
+        """
         return self
 
     async def __aexit__(self, *_: object) -> None:
+        """Close the HTTP connections.
+
+        Args:
+            *_: The exception, if any (unused).
+        """
         await self._http.aclose()
 
     async def _send(self, method: str, path: str, **kwargs: Any) -> httpx2.Response:  # ruff: ignore[any-type]
+        """Send one request to ``/api/v1<path>``.
+
+        Args:
+            method: The HTTP method.
+            path: The path under ``/api/v1``.
+            **kwargs: Passed on to ``httpx2.AsyncClient.request``.
+
+        Returns:
+            The response, whatever its status.
+
+        Raises:
+            ClientError: The server timed out, cannot be reached, or redirected the request.
+        """
         try:
             response = await self._http.request(method, f"/api/v1{path}", **kwargs)
         except httpx2.TimeoutException:
@@ -273,6 +411,15 @@ class ApiClient:
         return response
 
     def _error(self, response: httpx2.Response, body: object) -> ClientError:
+        """Turn an error answer into the exception to raise.
+
+        Args:
+            response: The response.
+            body: Its decoded JSON body, or ``None``.
+
+        Returns:
+            An ``ApiError`` for the API's error shape, a ``ClientError`` for anything else.
+        """
         if isinstance(body, dict) and isinstance(body.get("error"), str):
             fields = tuple(
                 ".".join(str(part) for part in item["loc"][1:] or item["loc"])
@@ -291,7 +438,19 @@ class ApiClient:
         return ClientError(message)
 
     async def request(self, method: str, path: str, **kwargs: Any) -> Any:  # ruff: ignore[any-type]
-        """Call ``/api/v1<path>``; return the decoded JSON body (``None`` for 204)."""
+        """Call ``/api/v1<path>``; return the decoded JSON body (``None`` for 204).
+
+        An error answer raises ``ApiError`` (``ClientError`` when it is not the API's error
+        shape), as does anything that goes wrong on the way.
+
+        Args:
+            method: The HTTP method.
+            path: The path under ``/api/v1``.
+            **kwargs: Passed on to ``httpx2.AsyncClient.request`` (e.g. ``json``, ``params``).
+
+        Returns:
+            The decoded JSON body, or ``None`` for 204.
+        """
         response = await self._send(method, path, **kwargs)
         if response.status_code == httpx2.codes.NO_CONTENT:
             return None
@@ -304,7 +463,20 @@ class ApiClient:
         raise self._error(response, body)
 
     async def request_text(self, method: str, path: str, **kwargs: Any) -> str:  # ruff: ignore[any-type]
-        """Call ``/api/v1<path>``; return a ``text/*`` success body (errors are JSON as usual)."""
+        """Call ``/api/v1<path>``; return a ``text/*`` success body (errors are JSON as usual).
+
+        Args:
+            method: The HTTP method.
+            path: The path under ``/api/v1``.
+            **kwargs: Passed on to ``httpx2.AsyncClient.request``.
+
+        Returns:
+            The body's text.
+
+        Raises:
+            ClientError: A success answer is not text. An error answer raises ``ApiError`` as
+                ``request`` does.
+        """
         response = await self._send(method, path, **kwargs)
         content_type = response.headers.get("content-type", "")
         if response.is_success and content_type.startswith("text/"):
@@ -321,7 +493,17 @@ class ApiClient:
     async def login(
         self, username: str, password: str, name: str, expires_at: datetime | None = None
     ) -> dict[str, Any]:
-        """Exchange credentials for a new named API token (``POST /tokens/login``)."""
+        """Exchange credentials for a new named API token (``POST /tokens/login``).
+
+        Args:
+            username: The account's username.
+            password: Its password.
+            name: The new token's name.
+            expires_at: When the token expires; never when ``None``.
+
+        Returns:
+            The decoded ``TokenGrant``, with the secret.
+        """
         body = {"username": username, "password": password, "name": name}
         if expires_at is not None:
             body["expires_at"] = expires_at.isoformat()
@@ -335,6 +517,10 @@ class ApiClient:
         """Start a browser-style session (``POST /session``); the client keeps its cookie.
 
         What a token cannot do (manage tokens, set a repository credential) needs a session.
+
+        Args:
+            username: The account's username.
+            password: Its password.
         """
         await self.request("POST", "/session", json={"username": username, "password": password})
 
