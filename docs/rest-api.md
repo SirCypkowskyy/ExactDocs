@@ -93,8 +93,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   maps of every version between `from` and `ref` are followed hop by hop, in either order of
   import (at most 100 versions apart): `new_path` is the path in `ref`, `old_path` the path asked
   about, `similarity` the lowest of the moves. Versions with no import link between them (two
-  branches, a branch and a tag, a version removed in between) answer `null`, never a path of
-  another version. Without `from`, one hop across the renames git saw when `ref` was imported:
+  branches, a branch and a tag, a version removed in between) answer `null`, and so does a path
+  renamed and later dropped before `ref`: never a path of another version. Without `from`, one hop across the renames git saw when `ref` was imported:
   `direction=forward` (default): `path` is from the version imported before `ref`; `back`: `path`
   is an article of `ref`. It answers 200 `{"renamed": {"library", "ref", "from_ref", "old_path",
   "new_path", "similarity"} | null}`; `null` means the path was not moved (or no renames are

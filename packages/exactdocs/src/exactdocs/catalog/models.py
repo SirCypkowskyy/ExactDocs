@@ -37,6 +37,7 @@ from exactdocs.catalog.errors import (
     InvalidSimilarityError,
     InvalidTagFilterError,
     InvalidVersionRefError,
+    RenameLinkMismatchError,
     SelfRenameError,
 )
 from exactdocs_kernel import MAX_TAG_LENGTH, MAX_TAGS, normalize_tag
@@ -744,6 +745,7 @@ class Manifest:
             DuplicateArticlePathError: An article or image path is listed twice.
             DuplicateRenameError: An old path is renamed twice.
             SelfRenameError: A tag's renames come from the tag itself.
+            RenameLinkMismatchError: A rename comes from another version than ``renamed_from``.
         """
         kept = [instruction.path for instruction in self.instructions]
         if len(kept) > MAX_INSTRUCTION_FILES:
@@ -762,6 +764,14 @@ class Manifest:
             self.renamed_from == self.ref or any(r.from_ref == self.ref for r in self.renames)
         ):
             raise SelfRenameError(str(self.ref))  # a branch's map builds up over its syncs
+        if self.renamed_from is not None and (
+            stray := next((r for r in self.renames if r.from_ref != self.renamed_from), None)
+        ):
+            # The chain across versions follows ``renamed_from``: a rename of another version
+            # would answer with a path that version has, not the one followed (#201).
+            raise RenameLinkMismatchError(
+                str(self.ref), str(stray.from_ref), str(self.renamed_from)
+            )
         image_paths = [image.path for image in self.images]
         if len(set(image_paths)) != len(image_paths):
             raise DuplicateArticlePathError(

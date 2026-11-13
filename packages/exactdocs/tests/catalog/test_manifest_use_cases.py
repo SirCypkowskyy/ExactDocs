@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from exactdocs.catalog.adapters.driven.memory import (
+    InMemoryArticleTitles,
     InMemoryImportedTags,
     InMemoryInstructionFiles,
     InMemoryLibraryRepository,
@@ -33,6 +34,7 @@ from exactdocs.catalog.dtos import (
     RemoveVersionCommand,
     RenameDirection,
     RenameIn,
+    ReplaceRenamesCommand,
     ResolveRenamedPathQuery,
     ResolveVersionQuery,
     StoreManifestCommand,
@@ -50,6 +52,7 @@ from exactdocs.catalog.errors import (
     ManifestNotFoundError,
     ManifestNotPendingError,
     ManifestOutdatedError,
+    RenameLinkMismatchError,
     SelfRenameError,
     VersionNotFoundError,
 )
@@ -156,6 +159,7 @@ def world() -> World:
             copier=InMemoryManifestCopier(repository=manifests),
             stored_articles=InMemoryStoredArticles(repository=manifests),
             instruction_files=InMemoryInstructionFiles(repository=manifests),
+            article_titles=InMemoryArticleTitles(repository=manifests),
         ),
         manifests,
         clock,
@@ -791,37 +795,38 @@ async def test_a_version_removed_in_between_breaks_the_chain(world: World) -> No
     assert await path_in(world, "guide/install.md", "v1.4.0", "v1.2.0") is None
 
 
-async def test_a_rename_against_another_version_than_the_link_is_not_followed(
+async def test_a_path_renamed_and_then_dropped_is_not_in_the_later_version(
     world: World,
 ) -> None:
-    await three_versions(world)
-    # v1.5.0 follows v1.4.0, yet its only rename names v1.2.0: never answer with that path.
-    stored = command(
-        "v1.5.0", commit_of("v1.5.0"), article("guide/start.md", "start"), kind=RefKind.TAG
-    )
-    await world.catalog.store_manifest(
-        stored.model_copy(
-            update={
-                "renamed_from": "v1.4.0",
-                "renames": [
-                    RenameIn(
-                        from_ref="v1.2.0",
-                        old_path="guide/install.md",
-                        new_path="guide/start.md",
-                        similarity=60,
-                    )
-                ],
-            }
-        )
-    )
-    (pending,) = [
-        m
-        for m in await world.manifests.list_live(LibraryId("/acme/payments"))
-        if m.state.value == "pending"
-    ]
-    await world.catalog.activate_manifest(ActivateManifestCommand(manifest_id=pending.id))
+    await linked(world, "v1.0.0", None, "x.md", "w.md")
+    await linked(world, "v1.1.0", "v1.0.0", "y.md", "w.md", renames=(("x.md", "y.md"),))
+    await linked(world, "v1.2.0", "v1.1.0", "w.md")  # y.md is gone
 
-    assert await path_in(world, "guide/setup.md", "v1.2.0", "v1.5.0") == "guide/install.md"
+    assert await path_in(world, "x.md", "v1.0.0", "v1.1.0") == "y.md"
+    assert await path_in(world, "x.md", "v1.0.0", "v1.2.0") is None  # never v1.1.0's path
+
+
+async def test_renames_of_another_version_than_the_link_are_refused(world: World) -> None:
+    await three_versions(world)
+    other = SETUP_TO_INSTALL.model_copy(update={"from_ref": "v1.2.0"})
+
+    with pytest.raises(RenameLinkMismatchError):
+        await world.catalog.store_manifest(
+            renamed("v1.5.0", commit_of("v1.5.0"), other).model_copy(
+                update={"renamed_from": "v1.4.0"}
+            )
+        )
+    with pytest.raises(RenameLinkMismatchError):
+        await world.catalog.replace_renames(
+            ReplaceRenamesCommand(
+                library="/Acme/Payments", ref="v1.4.0", renamed_from="v1.3.0", renames=[other]
+            )
+        )
+    found = await world.catalog.resolve_renamed_path(  # the refused map left nothing behind
+        ResolveRenamedPathQuery(library="/Acme/Payments", ref="v1.4.0", path="guide/setup.md")
+    )
+    assert found is not None
+    assert found.from_ref == "v1.3.0"
 
 
 async def test_an_unknown_from_version_is_an_error(world: World) -> None:

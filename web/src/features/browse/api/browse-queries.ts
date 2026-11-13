@@ -133,7 +133,8 @@ const renamedPathQueryOptions = (
 /**
  * Where `path`, which this version does not have, went when the version was imported: the new
  * path git saw it renamed to, or `null`. One hop: the version's own map (a link only knows the
- * version, not the one it came from); a failed lookup is no answer (the "not in this version" page stays). Same short timeout, no retry.
+ * version, not the one it came from); a failed lookup is no answer (the "not in this version"
+ * page stays). Same short timeout, no retry.
  */
 export const renamedInVersionQueryOptions = (version: VersionArgs, path: string) =>
   queryOptions({

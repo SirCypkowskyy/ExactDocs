@@ -32,9 +32,9 @@ const handledByBrowser = (event: MouseEvent) =>
  * pane then offers the version's root when it is not there).
  *
  * The renames are looked up when the list opens, once per version, and each link carries the path
- * it resolved to,
- * so a new tab or a copied link lands on the renamed article too. Only a click on a version whose
- * answer is still on its way waits for it, and a later click or navigation cancels that wait.
+ * it resolved to, so a new tab or a copied link lands on the renamed article too. Only a click on
+ * a version whose answer is still on its way waits for it, and a later click or navigation
+ * cancels that wait.
  */
 export function VersionPicker({
   owner,

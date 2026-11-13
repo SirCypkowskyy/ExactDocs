@@ -9,20 +9,27 @@ import pytest
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.catalog.adapters.driven.sqlite import SqliteManifestRepository
 from exactdocs.catalog.dtos import (
     ActivateManifestCommand,
     ArticleIn,
+    GetActiveManifestQuery,
     RenameIn,
     StoreManifestCommand,
 )
-from exactdocs.catalog.models import RefKind
+from exactdocs.catalog.models import ManifestId, ManifestRename, RefKind, VersionRef
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")
 URL = "/api/v1/libraries/acme/payments/renamed-path"
 
 
 async def publish(
-    container: Container, ref: str, commit: str, *renames: RenameIn, after: str | None = None
+    container: Container,
+    ref: str,
+    commit: str,
+    *renames: RenameIn,
+    after: str | None = None,
+    path: str = "guide/install.md",
 ) -> None:
     stored = await container.catalog.store_manifest(
         StoreManifestCommand(
@@ -32,7 +39,7 @@ async def publish(
             commit_sha=commit * 40,
             articles=[
                 ArticleIn(
-                    path="guide/install.md",
+                    path=path,
                     blob_sha=hashlib.sha1(ref.encode(), usedforsecurity=False).hexdigest(),
                     content_version=1,
                     title="Install",
@@ -49,18 +56,23 @@ async def publish(
 
 
 @pytest.fixture
-async def client(demo_catalog: dict[str, str]) -> AsyncIterator[httpx.AsyncClient]:
-    container = Container.build(Settings())
-    async with (
-        container.running(),
-        httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=create_app(container)),
-            base_url="http://localhost",
-            cookies=demo_catalog,
-        ) as client,
-    ):
-        await publish(container, "v1.2.0", "c")
-        await publish(container, "v1.3.0", "d", after="v1.2.0")  # nothing moved
+async def container() -> AsyncIterator[Container]:
+    built = Container.build(Settings())
+    async with built.running():
+        yield built
+
+
+@pytest.fixture
+async def client(
+    container: Container, demo_catalog: dict[str, str]
+) -> AsyncIterator[httpx.AsyncClient]:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(container)),
+        base_url="http://localhost",
+        cookies=demo_catalog,
+    ) as client:
+        await publish(container, "v1.2.0", "c", path="guide/setup.md")
+        await publish(container, "v1.3.0", "d", after="v1.2.0", path="guide/setup.md")
         await publish(
             container,
             "v1.4.0",
@@ -121,6 +133,40 @@ async def test_with_from_the_renames_between_two_versions_are_followed_both_ways
     assert back.json()["renamed"]["new_path"] == "guide/setup.md"
     assert (still.status_code, still.json()) == (200, {"renamed": None})
     assert unknown.status_code == 404
+
+
+async def test_a_rename_stored_against_another_version_than_the_link_breaks_the_chain(
+    client: httpx.AsyncClient, container: Container
+) -> None:
+    await publish(container, "v1.5.0", "f", after="v1.4.0", path="guide/start.md")
+    # A row stored before the catalog refused such a map: v1.5.0 follows v1.4.0, yet its only
+    # rename names v1.2.0. Never answer with it.
+    manifest = await container.catalog.get_active_manifest(
+        GetActiveManifestQuery(library="/acme/payments", ref="v1.5.0")
+    )
+    assert manifest.manifest_id is not None
+    await SqliteManifestRepository(engine=container.engine).replace_renames(
+        ManifestId(manifest.manifest_id),
+        [
+            ManifestRename(
+                from_ref=VersionRef("v1.2.0"),
+                old_path="guide/install.md",
+                new_path="guide/start.md",
+                similarity=60,
+            )
+        ],
+        renamed_from=VersionRef("v1.4.0"),
+    )
+
+    forward = await client.get(
+        URL, params={"ref": "v1.5.0", "from": "v1.2.0", "path": "guide/setup.md"}
+    )
+    back = await client.get(
+        URL, params={"ref": "v1.2.0", "from": "v1.5.0", "path": "guide/start.md"}
+    )
+
+    assert (forward.status_code, forward.json()) == (200, {"renamed": None})
+    assert (back.status_code, back.json()) == (200, {"renamed": None})
 
 
 async def test_a_blank_ref_means_the_default_version(client: httpx.AsyncClient) -> None:

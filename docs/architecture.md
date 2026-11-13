@@ -287,8 +287,10 @@ only holds each process's git work folders and `known_hosts`. What changes:
   query, the links are walked from the newer of the two versions back to the older (at most
   `MAX_RENAME_HOPS`), then one indexed rename lookup per version crossed moves the path. No link
   between the two (branches, a version removed in between, a version without one) is "did not
-  move"; a rename that names another version than the link is not followed. Detection never fails an import: any error
-  means "no renames known" (a branch keeps its earlier map). Cost, measured on `fastapi/fastapi`
+  move", and so is a rename that names another version than the link (a manifest with one is
+  refused when stored). A path the chain ends at is confirmed with one lookup in the target's
+  articles: renamed and then dropped is "did not move" too, never a path of another version.
+  Detection never fails an import: any error means "no renames known" (a branch keeps its earlier map). Cost, measured on `fastapi/fastapi`
   0.100.0 to 0.115.0 (about 1,400 Markdown files, 12 renames, 4 of them exact): fetching the two
   trees (`--depth=1 --filter=blob:none`, no checkout) takes about 1 s and 250 KB, and
   `git diff-tree -M --diff-filter=R` over a case-insensitive `*.md`/`*.mdx` pathspec then fetches

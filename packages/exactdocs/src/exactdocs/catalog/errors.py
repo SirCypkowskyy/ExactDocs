@@ -182,6 +182,22 @@ class SelfRenameError(ValidationError):
         super().__init__(f"renames of tag {ref!r} cannot come from {ref!r} itself")
 
 
+class RenameLinkMismatchError(ValidationError):
+    """A manifest's renames come from another version than the one it follows."""
+
+    def __init__(self, ref: str, from_ref: str, renamed_from: str) -> None:
+        """Name the version, where its renames come from and the version it follows.
+
+        Args:
+            ref: The manifest's ref.
+            from_ref: The version a rename names.
+            renamed_from: The version the manifest follows.
+        """
+        super().__init__(
+            f"renames of {ref!r} cannot come from {from_ref!r}: {ref!r} follows {renamed_from!r}"
+        )
+
+
 class DuplicateRenameError(ValidationError):
     """A manifest renames the same old path twice."""
 

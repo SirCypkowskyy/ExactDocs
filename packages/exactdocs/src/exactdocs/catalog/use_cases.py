@@ -844,9 +844,12 @@ class ReplaceRenamesUseCase:
         manifest = await self.manifests.get_active(library_id, VersionRef(command.ref))
         if manifest is None:
             raise VersionNotFoundError(str(library_id), command.ref)
-        await self.manifests.replace_renames(
-            manifest.id,
-            [
+        # Checked as the manifest would be stored with it, before anything is written: a tag's
+        # own renames (SelfRenameError), a rename of another version than the link
+        # (RenameLinkMismatchError).
+        checked = replace(
+            manifest,
+            renames=tuple(
                 ManifestRename(
                     from_ref=VersionRef(r.from_ref),
                     old_path=r.old_path,
@@ -854,8 +857,11 @@ class ReplaceRenamesUseCase:
                     similarity=r.similarity,
                 )
                 for r in command.renames
-            ],
+            ),
             renamed_from=_renamed_from(command.renamed_from, command.renames),
+        )
+        await self.manifests.replace_renames(
+            manifest.id, checked.renames, renamed_from=checked.renamed_from
         )
         by_path = await self.repository.get_manual_tags(library_id)
         retagged = [
@@ -1037,6 +1043,8 @@ class ResolveRenamedPathUseCase:
     """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
     """Stores the manifests with their articles, images and renames."""
+    titles: ArticleTitleFinder
+    """Confirms the path a chain ends at is an article of the version asked for."""
 
     async def __call__(self, query: ResolveRenamedPathQuery) -> RenamedPath | None:
         """Look the path up in the renames stored with the version's active manifest.
@@ -1056,24 +1064,26 @@ class ResolveRenamedPathUseCase:
             _, start = await _find_version(
                 self.repository, LibraryId(library), VersionRef(query.from_ref)
             )
-            return await self._across(library, VersionRef(ref), start.ref, query.path)
+            return await self._across(library, VersionRef(ref), manifest, start.ref, query.path)
         rename = await self.manifests.find_rename(manifest, query.path, query.direction)
         return None if rename is None else RenamedPath.from_model(library, ref, rename)
 
     async def _across(
-        self, library: str, to: VersionRef, start: VersionRef, path: str
+        self, library: str, to: VersionRef, target: ManifestId, start: VersionRef, path: str
     ) -> RenamedPath | None:
         """Follow ``path`` of ``start`` to ``to`` along the links between them, either way.
 
         The library's active manifests are read in one query; then one rename lookup per
-        version crossed, at most ``MAX_RENAME_HOPS``. Versions not linked (another branch, a
-        version removed in between, a chain too long) give ``None``: the path did not move, as
-        far as anyone knows. A rename recorded against another version than the link is not
-        followed, so the answer is never a path of another version.
+        version crossed, at most ``MAX_RENAME_HOPS``, and one lookup that the path found is an
+        article of ``to``. Versions not linked (another branch, a version removed in between, a
+        chain too long), a rename recorded against another version than the link, and a path
+        ``to`` does not have (renamed, then dropped) give ``None``: the answer is never a path
+        of another version.
 
         Args:
             library: The library ID.
             to: The version the path is wanted in.
+            target: The active manifest of ``to``.
             start: The version the path is from.
             path: The path in ``start``.
 
@@ -1099,12 +1109,14 @@ class ResolveRenamedPathUseCase:
         at, similarity = path, MAX_SIMILARITY
         for manifest in hops:
             rename = await self.manifests.find_rename(manifest.id, at, direction)
-            if rename is None or rename.from_ref != manifest.renamed_from:
-                continue
+            if rename is None:
+                continue  # nothing moved at this hop
+            if rename.from_ref != manifest.renamed_from:
+                return None  # stored before the link was checked: the chain is broken
             at = rename.new_path if direction is RenameDirection.FORWARD else rename.old_path
             similarity = min(similarity, rename.similarity)
-        if at == path:
-            return None
+        if at == path or at not in await self.titles.titles(target, [at]):
+            return None  # did not move, or moved and then dropped: not a path of ``to``
         return RenamedPath(
             library=library,
             ref=str(to),
