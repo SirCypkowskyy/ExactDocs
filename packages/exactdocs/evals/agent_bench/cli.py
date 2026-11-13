@@ -19,7 +19,7 @@ import yaml
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
-from agent_bench.agreement import SAMPLE_SIZE, agreement, sample
+from agent_bench.agreement import LABELLING_HEADER, SAMPLE_SIZE, agreement, sample
 from agent_bench.harness import (
     AGENT_INSTRUCTIONS,
     EMBEDDING_VARIABLE,
@@ -348,10 +348,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "sample":
         entries = sample(report, args.size, args.seed)
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(
-            yaml.safe_dump(entries, allow_unicode=True, sort_keys=False, width=100),
-            encoding="utf-8",
-        )
+        text = yaml.safe_dump(entries, allow_unicode=True, sort_keys=False, width=100)
+        args.out.write_text(LABELLING_HEADER + text, encoding="utf-8")
         sys.stdout.write(f"{len(entries)} answers to label in {args.out}\n")
         return 0
     labels = yaml.safe_load(args.labels.read_text(encoding="utf-8")) or []

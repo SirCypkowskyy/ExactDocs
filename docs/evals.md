@@ -609,13 +609,22 @@ judge gave the same grade.
 
 ```bash
 just agent-bench sample --report reports/evals/agent-bench.json --size 50   # -> agent-bench-labels.yaml
-# fill in `grade` (correct, partially_correct, wrong, refused) and `wrong_version` (true/false)
+# fill in `grade` and `wrong_version` (true/false) for each answer
 just agent-bench agreement --report reports/evals/agent-bench.json --labels reports/evals/agent-bench-labels.yaml
 ```
 
 `sample` picks answers reproducibly (`--seed`) and writes each with its question, version, kind,
 reference and facts, and blank labels; the judge's grade is left out so it cannot steer the
-labeller. `agreement` prints how many answers were labelled, how many the judge graded the same
+labeller. Label with the judge's grades, which the file's header repeats:
+
+- `correct`: states every fact, nothing the reference contradicts;
+- `partially_correct`: states some of the facts, nothing contradicted;
+- `wrong`: states none, contradicts the reference, or invents an API or behaviour;
+- `refused`: says the documentation does not cover it (or declines) and states no facts.
+
+For an `unanswerable` case, an answer saying the documentation does not cover it is labelled
+`refused`, not `correct` (the report counts it as right for that kind); answering anyway is
+`wrong`. `agreement` prints how many answers were labelled, how many the judge graded the same
 (`rate`), the same for `wrong_version`, and a confusion table (hand grade to judge grades).
 Entries left blank are skipped. Label answers from a real-model run: the stand-ins' answers are
 not worth labelling.

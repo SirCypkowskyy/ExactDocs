@@ -12,7 +12,7 @@ import pytest
 import yaml
 from pydantic_evals import Case
 
-from agent_bench.agreement import agreement, answer_id, sample
+from agent_bench.agreement import LABELLING_HEADER, agreement, answer_id, sample
 from agent_bench.cli import main, run_bench
 from agent_bench.harness import (
     AgentRun,
@@ -455,6 +455,8 @@ def test_the_cli_exports_a_sample_and_reads_the_labels_back(
     report.write_text(_report(rows).model_dump_json(), encoding="utf-8")
 
     assert main(["sample", "--report", str(report), "--out", str(labels)]) == 0
+    assert labels.read_text(encoding="utf-8").startswith(LABELLING_HEADER)
+    assert "is\n# `refused`, not `correct`" in LABELLING_HEADER
     entries = yaml.safe_load(labels.read_text(encoding="utf-8"))
     assert len(entries) == 2
     for entry in entries:

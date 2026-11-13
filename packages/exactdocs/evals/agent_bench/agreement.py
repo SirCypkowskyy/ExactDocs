@@ -16,6 +16,18 @@ from agent_bench.report import BenchReport, QuestionResult
 
 SAMPLE_SIZE: Final[int] = 50
 """Answers in a labelling sample by default (the issue asks for at least 50)."""
+LABELLING_HEADER: Final[str] = """\
+# Label each answer against its reference and facts, at its version: set `grade` to one of
+#   correct            states every fact, nothing the reference contradicts
+#   partially_correct  states some of the facts, nothing contradicted
+#   wrong              states none, contradicts the reference, or invents an API or behaviour
+#   refused            says the documentation does not cover it (or declines), states no facts
+# For an `unanswerable` case, an answer saying the documentation does not cover it is
+# `refused`, not `correct` (the report counts it as right there); answering anyway is `wrong`.
+# Set `wrong_version` to true when the answer states something true of another version only,
+# else false. Leave `grade` blank to skip an answer. Then run `just agent-bench agreement`.
+"""
+"""The comment at the top of a labelling sample file: the grades as the judge applies them."""
 
 
 def answer_id(row: QuestionResult) -> str:
