@@ -4524,8 +4524,9 @@ export interface components {
             readonly id?: string | null;
             /**
              * Refs
-             * @description The versions to have: tags, branches or full 40-character commit SHAs (a short SHA is
-             *     refused). The first one is imported when the library is created.
+             * @description The versions to have: tags, branches or full commit SHAs (40 hex characters, or 64 in
+             *     a SHA-256 repository; a short SHA is refused). The first one is imported when the library
+             *     is created.
              */
             readonly refs: readonly string[];
             /**

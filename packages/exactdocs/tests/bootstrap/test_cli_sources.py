@@ -158,6 +158,32 @@ def test_a_file_over_the_cap_or_missing_is_a_usage_error(tmp_path: Path) -> None
         read_sources(str(tmp_path / "none.yaml"))
 
 
+@pytest.mark.parametrize(
+    ("text", "line"),
+    [
+        # A small alias bomb: each level doubles the one before it.
+        (
+            (
+                "version: 1\n"
+                "a: &a [x, x]\n"
+                "b: &b [*a, *a]\n"
+                "c: &c [*b, *b]\n"
+                "d: &d [*c, *c]\n"
+                "libraries: [*d, *d]\n"
+            ),
+            2,
+        ),
+        # An anchor on its own is refused too: a sources file has no use for one.
+        ("version: 1\nlibraries:\n  - &lib {url: https://github.com/a/b, refs: [v1]}\n", 3),
+    ],
+)
+def test_yaml_anchors_and_aliases_are_a_usage_error(tmp_path: Path, text: str, line: int) -> None:
+    with pytest.raises(UsageError, match=f"anchor or alias at line {line}") as refused:
+        read_sources(_write(tmp_path, text))
+
+    assert exit_code(refused.value) == EXIT_USAGE
+
+
 def test_a_yaml_date_is_sent_as_text_for_the_server_to_judge(tmp_path: Path) -> None:
     loaded = read_sources(_write(tmp_path, "version: 1\nlibraries: [{refs: [2024-01-01]}]\n"))
 

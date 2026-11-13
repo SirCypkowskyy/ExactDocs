@@ -315,6 +315,37 @@ def test_a_trailing_git_suffix_or_slash_is_the_same_repository() -> None:
     assert plan_sources([_declared(url=RepositoryUrl.parse(URL + "/"))], [current]).unchanged
 
 
+@pytest.mark.parametrize(
+    "declared",
+    [
+        URL + ".GIT",
+        "HTTPS://GitHub.com/acme/docs",
+        "https://GITHUB.COM/acme/docs.Git/",
+    ],
+)
+def test_the_git_suffix_scheme_and_host_ignore_letter_case(declared: str) -> None:
+    current = _current(source=_source(URL))
+
+    assert plan_sources([_declared(url=RepositoryUrl.parse(declared))], [current]).unchanged
+
+
+def test_an_scp_like_host_ignores_letter_case() -> None:
+    current = _current(source=_source("git@github.com:acme/docs.git"))
+
+    declared = _declared(url=RepositoryUrl.parse("git@GitHub.com:acme/docs"))
+
+    assert plan_sources([declared], [current]).unchanged
+
+
+def test_the_path_keeps_its_letter_case_because_forges_differ() -> None:
+    current = _current(source=_source(URL))
+
+    declared = _declared(url=RepositoryUrl.parse("https://github.com/Acme/Docs"))
+
+    (error,) = plan_sources([declared], [current]).errors
+    assert error.code == "source_mismatch"
+
+
 # --- the schema -----------------------------------------------------------------------------
 
 
@@ -359,6 +390,20 @@ def test_a_full_sha_is_a_ref_and_names_and_digits_are_not_short_shas() -> None:
     entry = SourcesFile.model_validate(_file(refs=[SHA.upper(), "deadbeef", "20240101"]))
 
     assert entry.libraries[0].refs == [SHA, "deadbeef", "20240101"]
+
+
+def test_a_full_sha_256_is_a_ref_spelled_lower_case() -> None:
+    sha256 = "b" * 64
+
+    entry = SourcesFile.model_validate(_file(refs=[sha256.upper()]))
+
+    assert entry.libraries[0].refs == [sha256]
+
+
+@pytest.mark.parametrize("ref", ["a1" * 20 + "b", "a1" * 31 + "b"])
+def test_hex_between_the_full_lengths_is_a_short_sha(ref: str) -> None:
+    with pytest.raises(ValidationError, match="short commit SHA"):
+        SourcesFile.model_validate(_file(refs=[ref]))
 
 
 def test_the_number_of_libraries_is_capped() -> None:

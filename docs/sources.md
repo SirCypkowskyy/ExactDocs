@@ -10,7 +10,7 @@ shows what would change; `exactdocs sources apply` makes the change.
 version: 1
 libraries:
   - url: https://github.com/acme/payments
-    refs: [main, v1.4.0]          # tags, branches or full 40-character commit SHAs
+    refs: [main, v1.4.0]          # tags, branches or full commit SHAs
     include_paths: [docs/]
     exclude_paths: [docs/archive/]
     tag_rules:
@@ -26,9 +26,11 @@ libraries:
 The JSON Schema is generated from the server's model, committed as
 [`docs/schemas/exactdocs.sources.schema.json`](schemas/exactdocs.sources.schema.json) (`just
 sources-schema` regenerates it; a test fails when it drifts) and served at
-`GET /api/v1/sources/schema`. With the `yaml-language-server` modeline above, editors that use it
-(VS Code's YAML extension, for one) complete and check the file. Point the modeline at a local copy
-or your instance's URL if you prefer.
+`GET /api/v1/sources/schema`. With the `yaml-language-server` modeline above, which points at the
+committed file on GitHub, editors that use it (VS Code's YAML extension, for one) complete and
+check the file. To pin the schema to the version you run, point the modeline at a copy of the
+file in your repository instead (a relative path works). Do not point it at your instance: the
+endpoint is operator-only like plan and apply, and the editor sends no session or token.
 
 Only operators (accounts with the `admin` role) may plan or apply a sources file, with a session
 or an API token; anyone else gets 403 (CLI exit code 5).
@@ -37,8 +39,9 @@ or an API token; anyone else gets 403 (CLI exit code 5).
 
 - `version: 1` and `libraries`, a list of at most 300 entries. Unknown keys are refused, so a typo
   is a 422 naming the field (CLI exit code 2).
-- Each entry has a `url` and `refs` (at least one; a short SHA is refused because the version would
-  be named after the full SHA and every plan would show it again). `id` defaults to the ID derived
+- Each entry has a `url` and `refs` (at least one). A commit is declared by its full SHA: 40 hex
+  characters, or 64 in a SHA-256 repository, in any letter case. A short SHA is refused because
+  the version would be named after the full SHA and every plan would show it again. `id` defaults to the ID derived
   from the URL; one ID may appear once.
 - `include_paths`, `exclude_paths`, `tag_rules`, `chunking` and `auto_sync` are optional. **What
   an entry leaves out is not managed**: plan never reports it and apply never changes it, so a
@@ -59,8 +62,10 @@ uvx exactdocs sources plan exactdocs.sources.yaml            # readable diff
 uvx exactdocs sources plan exactdocs.sources.yaml --json     # the server's answer
 ```
 
-The CLI reads the YAML locally (`safe_load`, at most 1 MB) and sends it as JSON to
-`POST /api/v1/sources/plan`; the server never parses YAML. Plan writes nothing and queues nothing,
+The CLI reads the YAML locally and sends it as JSON to `POST /api/v1/sources/plan`; the server
+never parses YAML. The file may be at most 1 MB and may not use anchors or aliases (`&a`, `*a`):
+a few hundred bytes of nested aliases expand to gigabytes, and a sources file has no use for
+them (exit code 2). Plan writes nothing and queues nothing,
 and it does not ask the git remote, so it is fast and works offline: a ref that does not exist
 fails at apply. The diff has four parts:
 
@@ -72,7 +77,8 @@ fails at apply. The diff has four parts:
 - `undeclared`: libraries the file does not declare.
 
 `errors` lists entries apply leaves alone, such as `source_mismatch`: the `id` exists with
-another repository URL (a trailing `/` or `.git` does not count). A declared ref counts as present
+another repository URL. A trailing `/` or `.git` and the letter case of the scheme and host do not
+count; the path's letter case does, because forges differ on whether it matters. A declared ref counts as present
 when it is a version or its import is queued or running.
 
 ## Apply

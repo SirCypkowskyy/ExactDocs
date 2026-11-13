@@ -965,8 +965,63 @@ class SourcesFailedError(ClientError):
     """Apply ran, but at least one library has an error; the others were applied."""
 
 
+class _AnchorRefusedError(yaml.YAMLError):
+    """The sources file uses a YAML anchor or alias."""
+
+    def __init__(self, mark: yaml.Mark | None) -> None:
+        """Keep where the anchor or alias is.
+
+        Args:
+            mark: Its position in the file, if known.
+        """
+        super().__init__("anchor or alias")
+        self.problem_mark = mark
+
+
+class _NoAliasLoader(yaml.SafeLoader):
+    """``SafeLoader`` that refuses anchors and aliases while composing.
+
+    Aliases are expanded on load, so a few hundred bytes of nested ``&a``/``*a`` can grow
+    into gigabytes; the size cap does not bound that. A sources file has no use for them.
+    """
+
+    def compose_node(self, parent: yaml.Node | None, index: object) -> yaml.Node | None:
+        """Compose the next node, unless it is an alias or carries an anchor.
+
+        Args:
+            parent: The node it belongs to.
+            index: Its key or position in ``parent``.
+
+        Returns:
+            The node, as ``SafeLoader`` composes it.
+
+        Raises:
+            _AnchorRefusedError: The node is an alias or carries an anchor.
+        """
+        event = self.peek_event()
+        if isinstance(event, yaml.AliasEvent) or getattr(event, "anchor", None) is not None:
+            raise _AnchorRefusedError(event.start_mark)
+        return super().compose_node(parent, index)
+
+
+def _load_yaml(text: str) -> object:
+    """Load one YAML document with ``_NoAliasLoader``.
+
+    Args:
+        text: The document.
+
+    Returns:
+        Its content.
+    """
+    loader = _NoAliasLoader(text)
+    try:
+        return loader.get_single_data()
+    finally:
+        loader.dispose()
+
+
 def read_sources(path: str) -> dict[str, Any]:
-    """Load a sources file as YAML (``safe_load``), capped; the server gets it as JSON.
+    """Load a sources file as YAML (safe, no anchors or aliases), capped; the server gets JSON.
 
     Args:
         path: The file.
@@ -975,7 +1030,8 @@ def read_sources(path: str) -> dict[str, Any]:
         The file's content, JSON-safe (a YAML date becomes its text and the server refuses it).
 
     Raises:
-        UsageError: It cannot be read, is too large, is not YAML or is not a mapping.
+        UsageError: It cannot be read, is too large, is not YAML, uses an anchor or alias,
+            or is not a mapping.
     """
     try:
         data = _read_capped(path, MAX_SOURCES_BYTES, secret=False)
@@ -987,7 +1043,15 @@ def read_sources(path: str) -> dict[str, Any]:
         message = f"{printable(path)} is over {MAX_SOURCES_BYTES // 1024} KB"
         raise UsageError(message)
     try:
-        loaded = yaml.safe_load(text)
+        loaded = _load_yaml(text)
+    except _AnchorRefusedError as exc:
+        where = exc.problem_mark
+        line = f" at line {where.line + 1}" if where is not None else ""
+        message = (
+            f"{printable(path)} uses a YAML anchor or alias{line}; "
+            "a sources file cannot use them, write each value out"
+        )
+        raise UsageError(message) from None
     except yaml.YAMLError as exc:
         where = getattr(exc, "problem_mark", None)
         line = f" at line {where.line + 1}" if where is not None else ""

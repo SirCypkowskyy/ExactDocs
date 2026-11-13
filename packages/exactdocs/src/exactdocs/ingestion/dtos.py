@@ -1035,7 +1035,10 @@ def _source_ref(ref: str) -> str:
     if FULL_SHA.fullmatch(ref):
         return ref.lower()
     if SHORT_SHA.fullmatch(ref):
-        message = f"{ref!r} looks like a short commit SHA: declare the full 40-character SHA"
+        message = (
+            f"{ref!r} looks like a short commit SHA: "
+            "declare the full SHA (40 hex characters, 64 for SHA-256)"
+        )
         raise ValueError(message)
     return ref
 
@@ -1060,8 +1063,9 @@ class SourceLibrary(_Dto):
     added.
     """
     refs: list[_SourceRef] = Field(min_length=1, max_length=MAX_SOURCE_REFS)
-    """The versions to have: tags, branches or full 40-character commit SHAs (a short SHA is
-    refused). The first one is imported when the library is created.
+    """The versions to have: tags, branches or full commit SHAs (40 hex characters, or 64 in
+    a SHA-256 repository; a short SHA is refused). The first one is imported when the library
+    is created.
     """
     include_paths: list[str] | None = Field(default=None)
     """Folders, files or globs to import; empty: every `.md`/`.mdx` file (the repository's

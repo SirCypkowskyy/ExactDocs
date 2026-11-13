@@ -3137,7 +3137,10 @@ class SourcesPlan:
 
 
 def _same_repository(declared: RepositoryUrl, stored: RepositoryUrl) -> bool:
-    """Tell whether two URLs name one repository: a trailing ``/`` or ``.git`` does not count.
+    """Tell whether two URLs name one repository.
+
+    A trailing ``/`` or ``.git`` (in any letter case) and the letter case of the scheme and
+    host do not count. The path keeps its case: forges differ on whether it matters.
 
     Args:
         declared: The URL the file declares.
@@ -3146,20 +3149,28 @@ def _same_repository(declared: RepositoryUrl, stored: RepositoryUrl) -> bool:
     Returns:
         True when they are the same repository.
     """
+    return _repository_key(declared.url) == _repository_key(stored.url)
 
-    def bare(url: str) -> str:
-        """Drop the trailing ``/`` and ``.git``.
 
-        Args:
-            url: A URL.
+def _repository_key(url: str) -> str:
+    """Spell a URL the way ``_same_repository`` compares it.
 
-        Returns:
-            The URL without them.
-        """
-        url = url.rstrip("/")
-        return url.removesuffix(".git") if url.lower().endswith(".git") else url
+    Args:
+        url: A URL that passed ``RepositoryUrl.parse``.
 
-    return bare(declared.url) == bare(stored.url)
+    Returns:
+        The URL without a trailing ``/`` or ``.git``, its scheme and host in lower case.
+    """
+    url = url.rstrip("/")
+    if url[-len(".git") :].lower() == ".git":
+        url = url[: -len(".git")]
+    if "://" in url:
+        parts = urlsplit(url)
+        user, at, host = parts.netloc.rpartition("@")
+        return f"{parts.scheme.lower()}://{user}{at}{host.lower()}{parts.path}"
+    if match := _SCP_LIKE.fullmatch(url):
+        return f"{match['user']}@{match['host'].lower()}:{match['path']}"
+    return url
 
 
 def _schedule(auto_sync: AutoSync | None) -> tuple[object, ...] | None:
