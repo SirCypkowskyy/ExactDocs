@@ -55,6 +55,11 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   executor thread's connection a moment after `DBOS.destroy`). An engine owned by a session- or
   module-scoped fixture but used lazily by a test is flagged at the end of the first test that
   uses it: open (warm) its connection in the fixture itself, or dispose it after each test.
+- **The same goes for PostgreSQL** (psycopg, sync or async): `tests/fixtures/psycopg_guard.py`
+  fails the test that leaves one open ("was deleted while still open" otherwise lands in a later
+  test), naming the database and where the connection was opened. A pooled connection returned
+  after its engine was disposed stays open in a plain `QueuePool`; DBOS's system database uses
+  `ClosingQueuePool` for that reason.
 
 ## MCP tool snapshot
 

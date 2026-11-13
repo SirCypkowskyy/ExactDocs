@@ -61,6 +61,7 @@ from exactdocs.bootstrap.constants import (
     WORK_DIR,
 )
 from exactdocs.bootstrap.database import (
+    ClosingQueuePool,
     StartupError,
     check_schema_is_current,
     is_postgres,
@@ -717,6 +718,8 @@ def _dbos_database(settings: Settings, engine: AsyncEngine) -> dict[str, Any]:
             "system_schema": settings.dbos_system_schema,
             "executors": PostgresExecutorSlots(engine=engine, schema=settings.dbos_system_schema),
             "on_slot_lost": _stop_this_process,
+            # A connection one of DBOS's threads returns after DBOS stopped is closed (#333).
+            "engine_options": {"poolclass": ClosingQueuePool},
         }
     # NullPool: a connection one of DBOS's threads still holds when it stops is closed.
     return {"database": settings.data_dir / JOBS_FILE, "engine_options": {"poolclass": NullPool}}

@@ -23,6 +23,7 @@ from exactdocs.identity.adapters.driven.sqlite import (
 from exactdocs.identity.constants import SESSION_COOKIE
 from exactdocs.identity.models import Account, AccountId, Role, Session, Username, hash_token
 from fixture_repo import DocsRepo, served
+from psycopg_guard import no_psycopg_connection_left_open
 from sqlite_guard import no_connection_left_open
 
 IMPORTED = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
@@ -122,6 +123,13 @@ def on_pg_search(monkeypatch: pytest.MonkeyPatch) -> Iterator[PostgresDatabase]:
 def closes_its_sqlite_connections() -> Iterator[None]:
     """Fail the test that leaves a SQLite connection open, not a later one (#300)."""
     with no_connection_left_open():
+        yield
+
+
+@pytest.fixture(autouse=True)
+def closes_its_psycopg_connections() -> Iterator[None]:
+    """Fail the test that leaves a PostgreSQL connection open, not a later one (#333)."""
+    with no_psycopg_connection_left_open():
         yield
 
 
