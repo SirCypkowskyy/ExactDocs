@@ -318,6 +318,10 @@ class PostgresVectorIndex:
 
         Returns:
             The nearest chunks, nearest first, ties by chunk ID.
+
+        Raises:
+            ProgrammingError: The query failed although the space is not retired (a retired space
+                raises ``RetiredEmbeddingSpaceError`` instead).
         """
         schema = await self._schema()
         checked = checked_vector(query, await self._dimensions_of(space_id))
@@ -575,6 +579,9 @@ class PostgresVectorIndex:
 
         Returns:
             The schema, quoted.
+
+        Raises:
+            VectorStoreUnavailableError: The extension is still not there once created.
         """
         name = {"name": self.extension}
         found = (await connection.execute(text(_PG_EXTENSION_SCHEMA), name)).first()

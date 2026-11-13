@@ -274,6 +274,10 @@ class SqliteVectorIndex:
 
         Returns:
             The nearest chunks, nearest first, ties by chunk ID.
+
+        Raises:
+            OperationalError: The query failed although the space is not retired (a retired space
+                raises ``RetiredEmbeddingSpaceError`` instead).
         """
         tags = TAG_CONDITIONS[tag_filter.match if tag_filter.tags else None]
         statement = text(_VECTOR_NEAREST.format(table=vector_table(space_id), tags=tags))

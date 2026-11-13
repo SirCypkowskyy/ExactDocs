@@ -74,6 +74,13 @@ class SearchableVersions(Protocol):
         """Return the exact ``ref`` (the default version when ``None``) and the manifest it serves.
 
         ``None`` when there is no such version or it has no active manifest.
+
+        Args:
+            library: The library ID, any letter case.
+            ref: The exact ref; ``None`` for the default version.
+
+        Returns:
+            The version and its active manifest, or ``None``.
         """
         ...
 
@@ -82,7 +89,11 @@ class DefaultVersions(Protocol):
     """Every library's default version that has an active manifest, in one call."""
 
     async def all(self) -> Sequence[SearchableVersion]:
-        """Return them sorted by library ID; libraries with nothing readable are left out."""
+        """Return them sorted by library ID; libraries with nothing readable are left out.
+
+        Returns:
+            Each library's default version that can be searched.
+        """
         ...
 
 
@@ -90,7 +101,11 @@ class Libraries(Protocol):
     """The libraries the catalog lists, in retrieval's own terms."""
 
     async def all(self) -> Sequence[CatalogLibrary]:
-        """Return every library that has a default version; the rest cannot be queried."""
+        """Return every library that has a default version; the rest cannot be queried.
+
+        Returns:
+            The libraries, in retrieval's terms.
+        """
         ...
 
     async def canonical_id(self, library: str) -> str | None:
@@ -115,13 +130,26 @@ class ActiveManifests(Protocol):
     """
 
     async def active_id(self, target: DocTarget) -> str | None:
-        """Return the ID of the version's active manifest, or ``None`` when it has none."""
+        """Return the ID of the version's active manifest, or ``None`` when it has none.
+
+        Args:
+            target: The exact library version.
+
+        Returns:
+            The active manifest's ID, or ``None``.
+        """
         ...
 
     async def statuses(self, manifest_ids: Collection[str]) -> Mapping[str, ManifestStatus]:
         """Return the status of each ID the catalog knows; unknown IDs are left out.
 
         A status this domain has no name for is ``ManifestStatus.OTHER``.
+
+        Args:
+            manifest_ids: The manifests to look up.
+
+        Returns:
+            The status of each known manifest, by ID.
         """
         ...
 
@@ -133,6 +161,13 @@ class RenamedPaths(Protocol):
         """Return where ``old_path`` of the version before is in the target version, or ``None``.
 
         ``None`` also when nothing is known (no map, no active manifest): never an error.
+
+        Args:
+            target: The version the path is looked up in.
+            old_path: The article's path in the version before.
+
+        Returns:
+            The article's path now, or ``None``.
         """
         ...
 
@@ -167,6 +202,17 @@ class ChunkRepository(Protocol):
         A chunk set whose key is already stored is left as it is, but its digest must match
         (``ChunkSetMismatchError`` otherwise, nothing is stored). Returns how many chunk sets
         were new, or ``None`` without changing anything when this manifest ID is already indexed.
+
+        Args:
+            manifest: The manifest indexed.
+            chunk_sets: The chunk sets its rows point at, by key.
+            rows: The manifest's chunk rows.
+
+        Returns:
+            How many chunk sets were new; ``None`` when the manifest was already indexed.
+
+        Raises:
+            ChunkSetMismatchError: A stored set under one of the keys holds other chunks.
         """
         ...
 
@@ -174,17 +220,39 @@ class ChunkRepository(Protocol):
         """Return the stored chunk sets among ``keys``, chunks in order; the rest is left out.
 
         Batched, so a caller may pass thousands of keys.
+
+        Args:
+            keys: The (blob SHA, config hash) keys.
+
+        Returns:
+            The stored sets, by key.
         """
         ...
 
     async def get(self, manifest_id: str, chunk_id: ChunkId) -> StoredChunk | None:
-        """Return one chunk of the manifest with its content, or ``None``."""
+        """Return one chunk of the manifest with its content, or ``None``.
+
+        Args:
+            manifest_id: The manifest.
+            chunk_id: The chunk.
+
+        Returns:
+            The chunk with its row, or ``None`` when the manifest has no such chunk.
+        """
         ...
 
     async def get_many(
         self, manifest_id: str, chunk_ids: Sequence[ChunkId]
     ) -> Mapping[ChunkId, StoredChunk]:
-        """Return the chunks of the manifest that exist, by ID, in one query."""
+        """Return the chunks of the manifest that exist, by ID, in one query.
+
+        Args:
+            manifest_id: The manifest.
+            chunk_ids: The chunks.
+
+        Returns:
+            The chunks found, by ID; missing ones are left out.
+        """
         ...
 
     async def get_across(
@@ -193,6 +261,12 @@ class ChunkRepository(Protocol):
         """Return the chunks that exist, by (manifest ID, chunk ID), for several manifests at once.
 
         One query, whatever the number of manifests; missing pairs are left out.
+
+        Args:
+            wanted: The chunk IDs wanted, by manifest ID.
+
+        Returns:
+            The chunks found, by (manifest ID, chunk ID).
         """
         ...
 
@@ -200,25 +274,62 @@ class ChunkRepository(Protocol):
         """Return the sections of one article of the manifest in order, without their text.
 
         Empty if the manifest has no such article.
+
+        Args:
+            manifest_id: The manifest.
+            article_path: The article's path.
+
+        Returns:
+            The article's sections, in reading order.
         """
         ...
 
     async def counts(self, manifest_id: str) -> VersionCounts:
-        """Count the manifest's articles and chunks; zeros for an unknown manifest."""
+        """Count the manifest's articles and chunks; zeros for an unknown manifest.
+
+        Args:
+            manifest_id: The manifest.
+
+        Returns:
+            Its article and chunk counts.
+        """
         ...
 
     async def manifests_with_chunk(self, chunk_id: ChunkId) -> Sequence[IndexedManifest]:
-        """Return every indexed manifest that has a row for this chunk ID (any status)."""
+        """Return every indexed manifest that has a row for this chunk ID (any status).
+
+        Args:
+            chunk_id: The chunk ID.
+
+        Returns:
+            The manifests that have a row for it.
+        """
         ...
 
     async def find_manifests(
         self, *, manifest_id: str | None, library: str | None, indexed_before: datetime | None
     ) -> Sequence[IndexedManifest]:
-        """Return the indexed manifests that match every given filter."""
+        """Return the indexed manifests that match every given filter.
+
+        Args:
+            manifest_id: Only this manifest, if given.
+            library: Only manifests of this library (lower case), if given.
+            indexed_before: Only manifests indexed before this time, if given.
+
+        Returns:
+            The matching manifests.
+        """
         ...
 
     async def remove(self, manifest_ids: Collection[str]) -> Removed:
-        """Delete these manifests' rows, then every chunk set no manifest points at."""
+        """Delete these manifests' rows, then every chunk set no manifest points at.
+
+        Args:
+            manifest_ids: The manifests to delete.
+
+        Returns:
+            How many manifests and chunk sets were deleted.
+        """
         ...
 
     async def set_tags(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> int:
@@ -226,6 +337,13 @@ class ChunkRepository(Protocol):
 
         Chunks and the search index stay as they are. Paths without rows are ignored; returns
         how many rows were changed.
+
+        Args:
+            manifest_id: The manifest.
+            tags: Each article path's tags now.
+
+        Returns:
+            How many rows were changed.
         """
         ...
 
@@ -256,7 +374,11 @@ class SearchIndex(Protocol):
     """
 
     async def index(self, chunk_set: ChunkSet) -> None:
-        """Index a chunk set that ``ChunkRepository.add`` stored. Idempotent; indexes only gaps."""
+        """Index a chunk set that ``ChunkRepository.add`` stored. Idempotent; indexes only gaps.
+
+        Args:
+            chunk_set: The stored chunk set.
+        """
         ...
 
     async def search(
@@ -269,6 +391,15 @@ class SearchIndex(Protocol):
         of the chunk with offsets from ``highlights``. ``tag_filter`` is applied
         before ranking: the best ``limit`` of the chunks that pass, not the passing part of the
         best ``limit``. An unknown manifest or a query without words gives no hits.
+
+        Args:
+            manifest_id: The manifest searched.
+            query: The query text.
+            tag_filter: Which tags a chunk's article must carry.
+            limit: The most hits.
+
+        Returns:
+            The hits, best first.
         """
         ...
 
@@ -280,13 +411,31 @@ class SearchIndex(Protocol):
         Same rules as ``search``. Scores are comparable across manifests: the statistics are
         global over the stored chunks, never per manifest. A chunk set shared by two manifests
         is a hit for each (they are different library versions), with the same score.
+
+        Args:
+            manifest_ids: The manifests searched.
+            query: The query text.
+            tag_filter: Which tags a chunk's article must carry.
+            limit: The most hits.
+
+        Returns:
+            The hits, best first, each naming its manifest.
         """
         ...
 
     async def count_many(
         self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter
     ) -> Mapping[str, int]:
-        """Return how many chunks of each manifest match, uncapped; zero counts are left out."""
+        """Return how many chunks of each manifest match, uncapped; zero counts are left out.
+
+        Args:
+            manifest_ids: The manifests searched.
+            query: The query text.
+            tag_filter: Which tags a chunk's article must carry.
+
+        Returns:
+            How many chunks match, by manifest ID.
+        """
         ...
 
 
@@ -299,11 +448,19 @@ class SearchIndexMaintenance(Protocol):
     """
 
     async def state(self) -> SearchIndexState:
-        """Return the stored index's format and the one this build writes."""
+        """Return the stored index's format and the one this build writes.
+
+        Returns:
+            The stored and current formats and the engine.
+        """
         ...
 
     async def rebuild(self) -> RebuiltIndex:
-        """Build a new index of every stored chunk in the current format, then swap it in."""
+        """Build a new index of every stored chunk in the current format, then swap it in.
+
+        Returns:
+            The new index's format and how many chunks it holds.
+        """
         ...
 
 

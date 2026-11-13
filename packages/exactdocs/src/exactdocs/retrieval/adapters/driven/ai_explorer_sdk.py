@@ -505,6 +505,7 @@ class _RunEnders(AbstractCapability[Reads]):
                 for a failed or looping read of the snippet).
             _RepeatedCallError: This read call looped, or one before it did (to the sandbox).
             _SandboxLimitError: The snippet tripped a resource limit.
+            ToolRetryError: The snippet failed otherwise: the model is asked to retry.
         """
         if tool_def.kind != "function":  # the answer (output tool) is the output guardrail's
             return await handler(args)

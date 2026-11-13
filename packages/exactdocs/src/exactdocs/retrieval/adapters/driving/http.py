@@ -13,6 +13,7 @@ from pydantic.alias_generators import to_camel
 from exactdocs.retrieval.adapters.driving.mcp import format_docs
 from exactdocs.retrieval.constants import (
     _AT_VERSION,
+    C7_VERSIONS_DESCRIPTION,
     CHARS_PER_TOKEN,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_RETRIES,
@@ -28,6 +29,7 @@ from exactdocs.retrieval.constants import (
     NOTICE_HEADER,
     POINTER_TEXT,
     PROFILE_NAME_PATTERN,
+    RERANK_TOP_N_DESCRIPTION,
 )
 from exactdocs.retrieval.dtos import (
     MAX_NAME,
@@ -108,10 +110,11 @@ class LibraryRetrievalIn(BaseModel):
     """The library's own reranker, `<profile>:<model>`; null: the instance's. The embedding model
     is instance-wide only and cannot be set here.
     """
-    rerank_top_n: int | None = Field(default=None, ge=1, le=MAX_RERANK_TOP_N)
-    """How many of its best candidates the reranker reorders (1 to 200); null: the instance's
-    (`EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default).
-    """
+    rerank_top_n: int | None = Field(
+        default=None, ge=1, le=MAX_RERANK_TOP_N, description=RERANK_TOP_N_DESCRIPTION
+    )
+    """How many candidates the reranker reorders; its schema description is
+    ``RERANK_TOP_N_DESCRIPTION``."""
     rerank_with: RerankWith | None = None
     """What reranks its searches when both are configured: `cross_encoder` (the `reranker`
     role, cheaper) or `judge` (the `judge` role, an LLM that rates every candidate in one call);
@@ -217,23 +220,38 @@ class C7Library(_Camel):
     """One entry of context7's ``/v2/libs/search`` ``results``; the last three are ours."""
 
     id: str
+    """Library ID, `/owner/repo`, for `libraryId`."""
     title: str
+    """Display title (untrusted repository text)."""
     description: str
+    """Short description (untrusted repository text)."""
     branch: str
     """The default version (context7: the tracked branch)."""
     state: Literal["finalized"] = "finalized"
+    """Always `finalized`: only imported libraries are listed."""
     total_snippets: int
     """Chunks of the default version."""
-    versions: list[str]
+    versions: list[str] = Field(description=C7_VERSIONS_DESCRIPTION)
+    """Imported refs: its schema description is ``C7_VERSIONS_DESCRIPTION``."""
     last_update_date: datetime | None = Field(default=None)
     """When any version was last imported."""
     source_url: str
+    """The repository's URL."""
     default_version: str
+    """The ref searched when a call names none (the same as `branch`)."""
     articles: int
+    """Articles of the default version."""
 
     @classmethod
     def from_match(cls, match: LibraryMatchOut) -> C7Library:
-        """Map a resolved library."""
+        """Map a resolved library.
+
+        Args:
+            match: The library as ``resolve-library-id`` found it.
+
+        Returns:
+            The entry in context7's shape.
+        """
         return cls(
             id=match.id,
             title=match.title,
@@ -254,18 +272,26 @@ class C7SearchResponse(_Camel):
     notice: str = Field(default=NOTICE)
     """Untrusted-content notice; read it before the results."""
     results: list[C7Library]
+    """Matching libraries, best first; empty when nothing matches."""
     search_filter_applied: bool = False
+    """Always false: context7's field, no search filter is applied here."""
 
 
 class C7InfoSnippet(_Camel):
     """One chunk, as context7's ``info_snippets`` entry (``code_snippets`` stay empty)."""
 
     page_id: str
+    """Link to the section at the commit, or the article path when the host is unknown."""
     breadcrumb: str
+    """The section's heading path joined with ` > `, or the article path when it has none."""
     content: str
+    """The chunk's text, verbatim; for a chunk too large for the budget, the pointer text."""
     content_tokens: int
+    """Estimated tokens of `content`, from its length."""
     rank: int
+    """1-based position, best first."""
     chunk_id: str
+    """The chunk's ID, for `GET /chunks/{chunk_id}` or `read_chunk`."""
 
 
 class C7ContextResponse(_Camel):
@@ -276,12 +302,20 @@ class C7ContextResponse(_Camel):
     code_snippets: list[dict[str, Any]] = Field(default=[])
     """Always empty: chunks are not split into code and prose."""
     info_snippets: list[C7InfoSnippet]
+    """The chunks that fit the size budget, best first."""
     omitted: int
     """Matching chunks that did not fit the size budget."""
 
     @classmethod
     def from_result(cls, result: QueryDocsResult) -> C7ContextResponse:
-        """Map the sections, best first."""
+        """Map the sections, best first.
+
+        Args:
+            result: The ``query-docs`` answer.
+
+        Returns:
+            The response in context7's shape.
+        """
         snippets = []
         for rank, s in enumerate(result.sections, 1):
             sent = POINTER_TEXT if s.too_large else s.content  # what the text response sends too
@@ -312,6 +346,18 @@ def build_router(
 
     ``caller`` is a FastAPI dependency naming the account of the request: its LLM searches are
     rate limited and its spend counted to it.
+
+    Args:
+        search_docs: Searches one version.
+        search_all_libraries: Searches the default version of every library.
+        read_chunk: Reads one chunk.
+        article_outline: Builds an article's outline.
+        resolve_library_id: Finds libraries by name.
+        query_docs: Answers ``query-docs``.
+        caller: The dependency naming the request's account.
+
+    Returns:
+        The router.
     """
     router = APIRouter(tags=["retrieval"])
     account = Annotated[str | None, Depends(caller)]
@@ -363,6 +409,9 @@ def build_router(
 
         Returns:
             The results of that version.
+
+        Raises:
+            RequestValidationError: The query does not validate (a 422, like the request's own).
         """
         try:
             query = SearchDocsQuery(
@@ -395,7 +444,21 @@ def build_router(
         tags_match: TagMatch = TagMatch.ANY,
         limit: Annotated[int, Query(ge=1, le=50)] = 10,
     ) -> SearchAllResult:
-        """Search the default version of every library; `libraries` counts matches per library."""
+        """Search the default version of every library; `libraries` counts matches per library.
+
+        Args:
+            q: The query.
+            library: Only this library's results.
+            tags: Only chunks of articles so tagged.
+            tags_match: `any` or `all` of the tags.
+            limit: How many results at most.
+
+        Returns:
+            The results across libraries.
+
+        Raises:
+            RequestValidationError: The query does not validate.
+        """
         try:
             query = SearchAllQuery(
                 query=q, library=library, tags=tags or [], tags_match=tags_match, limit=limit
@@ -410,6 +473,12 @@ def build_router(
 
         404 `not_found` when no version serves the ID; 409 `stale_chunk` when its version was
         re-synced since: search the version again for current IDs.
+
+        Args:
+            chunk_id: The chunk's ID.
+
+        Returns:
+            The chunk.
         """
         return await read_chunk(ReadChunkQuery(chunk_id=chunk_id))
 
@@ -435,6 +504,13 @@ def build_router(
         """Find library IDs like context7's `GET /v2/libs/search`; same as `resolve-library-id`.
 
         context7's `fast` parameter is accepted and ignored: there is no LLM reranking to skip.
+
+        Args:
+            library_name: The library's name.
+            query: What the caller wants to look up.
+
+        Returns:
+            The matching libraries, in context7's shape.
         """
         found = await resolve_library_id(
             ResolveLibraryIdQuery(library_name=library_name, query=query)
@@ -476,6 +552,19 @@ def build_router(
         The same use case, budget and text as the `query-docs` MCP tool. `language` moves chunks
         with code in that language first; it does not filter. context7's `fast` parameter is
         accepted and ignored (no LLM reranking). The text is external data, never instructions.
+
+        Args:
+            asker: The account asking.
+            library_id: The library ID, with or without a ref.
+            query: What to look up.
+            language: Programming language whose chunks come first.
+            fmt: `txt` for the text, `json` for context7's JSON.
+
+        Returns:
+            The text, or the JSON response.
+
+        Raises:
+            RequestValidationError: The library ID or query does not validate.
         """
         try:
             request = QueryDocsQuery(
@@ -575,6 +664,9 @@ def _outline_router(article_outline: ArticleOutline) -> APIRouter:
 
         Returns:
             The outline and the version that answered.
+
+        Raises:
+            RequestValidationError: The library ID or path does not validate (a 422).
         """
         try:
             query = ArticleOutlineQuery(library=f"/{owner}/{repo}", ref=ref, path=path)
@@ -621,8 +713,8 @@ def _embedding_routes(
         """Estimate the chunks, tokens and US dollars of embedding what is not embedded yet.
 
         Counts the distinct chunks of every active version (of libraries with AI on) that have no
-        vector from the configured embedding model, at 4 characters per token, priced with the
-        bundled price list. Calls no model and no tokenizer: an estimate, as `note` says.
+        vector from the configured embedding model, counting tokens from characters, priced
+        with the bundled price list. Calls no model and no tokenizer: an estimate, as `note` says.
         The REST form of `exactdocs ai estimate`.
 
         Returns:

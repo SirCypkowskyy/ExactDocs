@@ -10,12 +10,26 @@ def _data(text: str, limit: int = MAX_DATA_CHARS) -> str:
     """Quote repository text for an error message: cut the raw text first, then repr.
 
     Cutting before ``repr`` keeps the closing quote, so the field always ends where it seems to.
+
+    Args:
+        text: Repository text.
+        limit: The most characters kept before ``...``.
+
+    Returns:
+        The text, cut and quoted.
     """
     return repr(text if len(text) <= limit else text[:limit] + "...")
 
 
 def _headings(path: tuple[str, ...]) -> str:
-    """Quote a heading path: at most ``MAX_HEADINGS`` segments of ``MAX_HEADING_CHARS`` each."""
+    """Quote a heading path: at most ``MAX_HEADINGS`` segments of ``MAX_HEADING_CHARS`` each.
+
+    Args:
+        path: The heading path, repository text.
+
+    Returns:
+        The quoted headings in brackets, ``...`` when some were left out.
+    """
     shown = [_data(h, MAX_HEADING_CHARS) for h in path[:MAX_HEADINGS]]
     return "[" + ", ".join(shown) + (", ..." if len(path) > MAX_HEADINGS else "") + "]"
 
@@ -24,6 +38,7 @@ class EmptySearchTextError(ValidationError):
     """The search text is blank."""
 
     def __init__(self) -> None:
+        """Create the error with its fixed message."""
         super().__init__("search text must not be empty")
 
 
@@ -45,6 +60,14 @@ class UnavailableModeError(ValidationError):
         *,
         vector_store: bool = True,
     ) -> None:
+        """Name the mode, why it cannot run and the modes that can.
+
+        Args:
+            mode: The mode asked for, quoted as untrusted text.
+            available: The modes that can run now.
+            missing_roles: The model roles it needs that are not configured.
+            vector_store: False when it needs the vector store and that cannot be loaded.
+        """
         if missing_roles:
             plural = "s" if len(missing_roles) > 1 else ""
             why = f": it needs the {' and '.join(missing_roles)} role{plural}, not configured"
@@ -82,6 +105,12 @@ class VersionNotIndexedError(NotFoundError):
     """There is no index for this exact library version, so there is no answer."""
 
     def __init__(self, library: str, version: str) -> None:
+        """Name the version that has no index.
+
+        Args:
+            library: The library ID.
+            version: The exact ref.
+        """
         super().__init__(f"no index for {library}@{version}")
         self.library = library
         self.version = version
@@ -91,6 +120,11 @@ class DuplicateChunkError(ValidationError):
     """Two chunks of one article would get the same chunk ID."""
 
     def __init__(self, article_path: str) -> None:
+        """Name the article.
+
+        Args:
+            article_path: The article with two chunks of one ID.
+        """
         super().__init__(f"article {article_path!r} has two chunks with the same ID")
         self.article_path = article_path
 
@@ -99,6 +133,11 @@ class ChunkNotFoundError(NotFoundError):
     """No version serves a chunk with this ID (it never existed, or was collected long ago)."""
 
     def __init__(self, chunk_id: str) -> None:
+        """Name the chunk ID that was asked for.
+
+        Args:
+            chunk_id: The ID.
+        """
         super().__init__(f"no chunk {chunk_id!r}; find chunk IDs with search_docs")
         self.chunk_id = chunk_id
 
@@ -143,10 +182,15 @@ class MovedSection:
     """
 
     article_path: str
+    """The article that now holds the section."""
     chunk_id: str | None = None
+    """The section's current chunk ID; ``None`` when only the article was found."""
     heading_path: tuple[str, ...] = ()
+    """The section's headings; empty for the preamble or when only the article was found."""
     anchor: str | None = None
+    """The section's anchor; ``None`` when only the article was found."""
     text_changed: bool = False
+    """True when the section was matched by its headings and its text differs."""
 
 
 class StaleChunkError(ConflictError):
@@ -161,6 +205,14 @@ class StaleChunkError(ConflictError):
     def __init__(
         self, chunk_id: str, library: str, version: str, moved: MovedSection | None = None
     ) -> None:
+        """Name the stale ID and, when it can be found, where its section is now.
+
+        Args:
+            chunk_id: The stale chunk ID.
+            library: The library ID of its version.
+            version: The exact ref of its version.
+            moved: Where the section lives in the active manifest, if it could be found.
+        """
         message = (
             f"chunk {_data(chunk_id)} is stale: its version was re-synced since the ID was issued. "
             "Run search_docs for the same library and ref again, or read the article with "
@@ -196,6 +248,12 @@ class ChunkSetMismatchError(ConflictError):
     """
 
     def __init__(self, blob_sha: str, config_hash: str) -> None:
+        """Name the chunk set's key.
+
+        Args:
+            blob_sha: The blob of the set.
+            config_hash: The chunking config of the set.
+        """
         super().__init__(
             f"chunk set ({blob_sha!r}, {config_hash!r}) is stored with different chunks; "
             "give the new chunking a new config_hash"
