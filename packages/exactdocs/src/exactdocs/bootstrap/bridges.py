@@ -694,6 +694,7 @@ class RetrievalChunkIndex:
                 ArticleChunk(
                     heading_path=tuple(c.heading_path),
                     occurrence_index=c.occurrence_index,
+                    part=c.part,
                     position=position,
                     content=c.content,
                     content_hash=c.content_hash,
@@ -1229,6 +1230,7 @@ def _index_command(manifest_id: str, version: ImportedVersion) -> IndexManifestC
                     ChunkIn(
                         heading_path=list(c.heading_path),
                         occurrence_index=c.occurrence_index,
+                        part=c.part,
                         content=c.content,
                         content_hash=c.content_hash,
                         anchor=c.anchor,

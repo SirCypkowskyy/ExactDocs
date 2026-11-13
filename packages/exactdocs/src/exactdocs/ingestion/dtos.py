@@ -771,12 +771,13 @@ class ChunkingIn(_Dto):
     """The deepest heading that starts a chunk: 2 cuts at `#` and `##` only."""
     min_chars: int = Field(default=0, ge=0, le=MAX_CHUNK_CHARS)
     """A chunk shorter than this is merged with the next one (the last with the one before), within
-    `max_chars`; the text before the first heading is never merged.
+    `max_chars`; the text before the first heading is never merged. At most 8,000 when sent: no
+    chunk is longer.
     """
     max_chars: int | None = Field(default=None, ge=1, le=MAX_CHUNK_CHARS)
     """A chunk longer than this is cut again at its deeper headings; never inside a code block or
-    table, so a section without deeper headings stays whole. Null: no bound. At least
-    `min_chars`.
+    table. Null: no bound. At least `min_chars`, and at most 8,000 when sent: whatever the
+    settings, a section longer than 8,000 characters is split between its top-level blocks.
     """
     chunker: Literal["markdown"] = Field(default=DEFAULT_CHUNKER)
     """`markdown`: cuts at headings with markdown-it-py (the only one supported)."""

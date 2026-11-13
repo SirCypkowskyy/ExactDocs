@@ -412,7 +412,10 @@ class ChunkIn(_Dto):
     heading_path: list[str]
     """The chunk's heading and every heading above it; empty for the text before the first one."""
     occurrence_index: int = Field(ge=0)
-    """Among the article's chunks with the same heading path: 0, 1, ... in reading order."""
+    """Among the article's sections with the same heading path: 0, 1, ... in reading order; every
+    part of a split section has its section's."""
+    part: int = Field(default=0, ge=0)
+    """Among the parts of a section split at its blocks: 0, 1, ...; 0 for a section not split."""
     content: str
     """The chunk's text, verbatim."""
     content_hash: str = Field(min_length=1)
@@ -423,7 +426,8 @@ class ChunkIn(_Dto):
     """Languages of the chunk's fenced code blocks."""
     headings: list[ChunkHeadingIn] | None = None
     """Every heading the chunk holds, in order, the one it is named after first; null: not
-    recorded (a chunk set stored before heading records existed)."""
+    recorded (a chunk set stored before heading records existed). A part after the first (`part`
+    above 0) holds no heading of its own, so none of its records starts it."""
 
     @model_validator(mode="after")
     def _headings_match_the_chunk(self) -> Self:
@@ -433,17 +437,17 @@ class ChunkIn(_Dto):
             The chunk unchanged.
 
         Raises:
-            ValueError: A record other than the first starts the chunk, or the first one is not
-                the chunk's own heading.
+            ValueError: A first part (`part` 0) with a heading does not have its own heading as
+                its first record and only starting one, or another chunk has a starting record.
         """
         if self.headings is None:
             return self
-        starting = [h for h in self.headings if h.starts_chunk]
-        own = [(self.heading_path, self.anchor)] if self.heading_path else []
-        if [(h.heading_path, h.anchor) for h in starting] != own or (
-            starting and not self.headings[0].starts_chunk
-        ):
+        starting = [(h.heading_path, h.anchor) for h in self.headings if h.starts_chunk]
+        own = [(self.heading_path, self.anchor)] if self.heading_path and not self.part else []
+        if starting != own or (starting and not self.headings[0].starts_chunk):
             message = "the first heading record, and only it, is the chunk's own heading"
+            if self.part:
+                message = "a part after the first of a section holds no heading of its own"
             raise ValueError(message)
         return self
 
@@ -504,7 +508,9 @@ class SetChunkOut(_Dto):
     heading_path: list[str]
     """The chunk's heading and every heading above it; empty for the text before the first one."""
     occurrence_index: int
-    """Among the article's chunks with the same heading path: 0, 1, ... in reading order."""
+    """Among the article's sections with the same heading path: 0, 1, ... in reading order."""
+    part: int = 0
+    """Among the parts of a section split at its blocks: 0, 1, ...; 0 for a section not split."""
     content: str
     """The chunk's text, verbatim."""
     content_hash: str

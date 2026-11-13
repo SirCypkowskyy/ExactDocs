@@ -331,6 +331,7 @@ def test_the_golden_case_files_follow_the_rules() -> None:
     assert [c.name for c in load_golden().cases] == [c.name for _, c in cases]
 
 
+@pytest.mark.eval
 def test_the_golden_sections_exist_at_the_pinned_commits() -> None:
     corpus, cache = load_corpus(), default_cache_dir()
     if not all(
