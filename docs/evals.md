@@ -6,11 +6,29 @@ repository imported for real, and reports per mode how often the right section c
 often anything of another version does, what it cost and how long it took. The decisions behind
 it are in [AI retrieval decisions](decisions/ai-retrieval.md#evaluation).
 
-The suite is development and CI tooling: it lives in
+The suite is development and release tooling: it lives in
 [`packages/exactdocs/evals/`](https://github.com/SirCypkowskyy/ExactDocs/tree/develop/packages/exactdocs/evals),
 outside the package, and [Pydantic Evals](https://ai.pydantic.dev/evals/) (`pydantic-evals`
 2.60.0) is in the `dev` dependency group, not in an extra. Nothing of it ships in the wheel or
 the image.
+
+## When it runs
+
+**On releases and locally, not on pull requests.** CI on a pull request or a push to `develop`
+or `main` runs no eval step, and `uv run pytest` skips the suite's end-to-end tests. The release
+workflow (`.github/workflows/release.yml`, job *Retrieval eval*) runs all of it before anything
+is published, and a failing gate stops the release (see [Tiers](#tiers)). So a ranking
+regression is caught when a release is cut, not on the pull request that caused it: **if you
+change ranking, chunking, the search index, a retrieval mode, the dataset or the fixture, run
+`just eval` (and `uv run pytest -m eval`) before you open the pull request**, and say in it that
+you did.
+
+The suite's pytest tests that import the fixture and run the suite end to end carry the marker
+`eval`, which `addopts` deselects (`-m "not eval"` in `pyproject.toml`). The quick ones (the
+dataset, fingerprints, evaluators and gates on stand-in retrievers) stay in the default run.
+`uv run pytest -m eval` (or `just test -m eval`) runs the marked ones; a new test that imports
+the fixture and searches it gets `@pytest.mark.eval`. The behave scenarios in
+`retrieval_eval.feature` take a few seconds and stay in the default run.
 
 ## Running it
 
@@ -18,10 +36,10 @@ the image.
 just eval                       # every mode; those that cannot run are listed with the reason
 just eval --modes bm25          # one mode
 just eval --report out.json     # JSON report elsewhere (default: reports/evals/retrieval.json)
-just eval --baseline develop.json --ratchet --reference-dataset develop.yaml   # what CI does
+just eval --baseline develop.json --ratchet --reference-dataset develop.yaml   # a branch against develop's baseline
 just eval --configured-models --local-roles embedding,reranker   # local models from EXACTDOCS_AI__...
-                                # (after `exactdocs models pull`; see the local-models CI job)
-just eval --offline-embedding   # hybrid on an in-process term-hash embedding (no model): what CI runs
+                                # (after `exactdocs models pull`; see the release's eval job)
+just eval --offline-embedding --ratchet   # hybrid on an in-process term-hash embedding (no model): what the release runs
 just eval --help
 ```
 
@@ -45,8 +63,9 @@ fusion and the wrong-version gate of hybrid, end to end; it finds no paraphrase 
 so its recall says nothing about whether hybrid should be a default: the report gives hybrid's
 `eligible_as_default` as `null` with `not_judged: "offline embedding"`, the summary says so, and
 the flag refuses `--write-baseline` and `--configured-models`. Tokens and USD per question are what
-the spend ledger grew by during each search, so hybrid's include its query's embedding. `uv run pytest` runs the same BM25 run
-(`tests/evals/`), so a ranking change that breaks a gate also fails the tests.
+the spend ledger grew by during each search, so hybrid's include its query's embedding.
+`uv run pytest -m eval` runs the same BM25 run (`tests/evals/`), so a ranking change that breaks a
+gate also fails those tests.
 
 ## The dataset
 
@@ -132,10 +151,11 @@ it, e.g. `EXACTDOCS_AI__JUDGE__MODEL=corp:gpt-4.1-mini EXACTDOCS_AI__RERANK_WITH
 `tokens_per_question` / `usd_per_question`. Compare with a run reranked by the cross-encoder (or
 none) on the same dataset; check `rerank_fallbacks` is 0, as a refused or timed-out judgment
 keeps the mode's order and was not measured. A hosted judge is `skipped` without
-`--allow-providers` (or `--local-roles judge` for one on this machine, such as Ollama). CI runs it
-only on a stand-in (`tests/evals/`, `offline_judge_container`): a pydantic-ai `FunctionModel`
-that rates candidates by the query words they share, priced, so the plumbing, the wrong-version
-rate of 0 and the cost per question are checked on every PR without a provider; its recall says
+`--allow-providers` (or `--local-roles judge` for one on this machine, such as Ollama). The release runs
+it only on a stand-in (`tests/evals/`, `offline_judge_container`, marked `eval`): a pydantic-ai
+`FunctionModel` that rates candidates by the query words they share, priced, so the plumbing, the
+wrong-version rate of 0 and the cost per question are checked at every release (and by
+`uv run pytest -m eval`) without a provider; its recall says
 nothing about a real judge. The manual *Retrieval eval (real providers)* workflow measures a
 real one with `EVAL_JUDGE_MODEL` and `EVAL_RERANK_WITH=judge`.
 
@@ -143,13 +163,17 @@ real one with `EVAL_JUDGE_MODEL` and `EVAL_RERANK_WITH=judge`.
 
 - **Wrong-version rate must be 0 for every mode that ran**, whatever its recall. One result of
   another version fails the suite.
-- **recall@5 may not drop more than 2 points below the baseline** stored on `develop`. A drop fails
-  the suite for BM25 and is a warning for the report-only modes. A gating mode with no baseline
-  entry is a warning (its recall is then not gated).
-- **The stored baseline only moves up** (`--ratchet`, on in CI): the branch's `baseline.json` may
-  not store a lower BM25 recall@5 than `develop`'s, and a value it raises must be what the run
-  measures (a stored recall@5 above the measured one fails).
-- Both compare with `develop`'s baseline only **on the same dataset**; when the dataset changed,
+- **recall@5 may not drop more than 2 points below the baseline**: at a release, the
+  `baseline.json` committed in the tagged tree; when you check a branch, the one you pass with
+  `--baseline` (such as `develop`'s). A drop fails the suite for BM25 and is a warning for the
+  report-only modes. A gating mode with no baseline entry is a warning (its recall is then not
+  gated).
+- **The stored baseline only moves up** (`--ratchet`): checked against `develop`'s copy, the
+  branch's `baseline.json` may not store a lower BM25 recall@5 than `develop`'s, and a value it
+  raises must be what the run measures (a stored recall@5 above the measured one fails). The
+  release passes `--ratchet` with no `--baseline`, so the committed file is compared with itself
+  and the check that remains is that it was recorded for this dataset.
+- A run compares with another baseline only **on the same dataset**; when the dataset changed,
   see [Changing the dataset](#changing-the-dataset).
 - **No agentic run may read outside the version asked for**, from its trace (above).
 - A question whose search raises fails the suite.
@@ -158,17 +182,16 @@ real one with `EVAL_JUDGE_MODEL` and `EVAL_RERANK_WITH=judge`.
   changing the default order (`DEFAULT_MODE_ORDER`) without that is not accepted. It holds only
   `bm25` today: for `hybrid` only a real embedding model's run counts (#245), never the term-hash
   stand-in's, whose report says `not judged (offline embedding)`; the same holds for
-  `hybrid_hyde`, which CI runs only on a stand-in LLM (below) and which needs a run with a real
-  LLM and embedding model before it can become a default.
+  `hybrid_hyde`, which the release runs only on a stand-in LLM (below) and which needs a run
+  with a real LLM and embedding model before it can become a default.
 
 The baseline is `packages/exactdocs/evals/retrieval_eval/baseline.json`: recall@1/5/10, MRR and
 the wrong-version rate of each mode that ran (no latency, which depends on the machine), and the
-`dataset` fingerprint they were measured on. CI compares with the copy on `develop`, checked out on
-its own (that file and `develop`'s `dataset.yaml`), so a pull request cannot lower
-the bar it is measured against; a failed checkout fails the job. Only when `develop` has no
-`baseline.json` at all does CI compare with the branch's own, with a warning in the summary. A
-change that improves ranking refreshes it in the same pull request, where the diff shows the new
-numbers:
+`dataset` fingerprint they were measured on. The release gates on the copy committed in the
+tagged tree; no pull request job checks it, so a reviewer checks a change to it in the diff. To
+hold a branch to `develop`'s bar, fetch `develop`'s `baseline.json` and `dataset.yaml` and run
+`just eval --baseline develop.json --ratchet --reference-dataset develop.yaml`. A change that
+improves ranking refreshes it in the same pull request, where the diff shows the new numbers:
 
 ```bash
 just eval --write-baseline
@@ -186,7 +209,9 @@ recall without anything getting worse), so:
 1. Change `dataset.yaml` (see [The dataset](#the-dataset)).
 2. Run `just eval --write-baseline` and commit the new `baseline.json` in the same pull request.
    It records the new fingerprint and the recall measured on the new dataset, which may be lower.
-3. In CI, `develop`'s baseline has another fingerprint, so the baseline is **reset**:
+3. Checked against `develop`'s baseline (`--baseline develop.json --ratchet
+   --reference-dataset develop.yaml`, the run to do before the pull request), `develop`'s
+   baseline has another fingerprint, so the baseline is **reset**:
     - the drop gate compares with the branch's `baseline.json`, and the ratchet against `develop`
       is off; once the pull request is merged it starts again from the new baseline;
     - the branch's stored recall@5 must be exactly what the run measures, neither above nor below,
@@ -196,15 +221,15 @@ recall without anything getting worse), so:
       dataset*). A question of the old dataset whose version or section the fixture no longer has
       fails the run instead of being skipped. So rewording or adding a question cannot hide a
       ranking regression: the old questions still catch it;
-    - the reset is reported as a warning annotation on the pull request's checks (*Eval baseline
-      reset*) and in the job summary (**Baseline reset: the dataset changed (...)**).
+    - the reset is reported as a warning annotation (*Eval baseline reset*) and in the summary
+      (**Baseline reset: the dataset changed (...)**).
 
-If `baseline.json` was not rewritten, its fingerprint is not the dataset's and CI fails with
-"was recorded for dataset ..., not this one".
+If `baseline.json` was not rewritten, its fingerprint is not the dataset's and a run with
+`--ratchet` (the release's included) fails with "was recorded for dataset ..., not this one".
 
 **The fixture is not part of the fingerprint.** A change to the fixture docs repository
 (`packages/exactdocs/tests/fixtures/docs-repo`), such as a new distractor article, is gated like a
-ranking change: recall@5 may not drop more than 2 points below `develop`'s baseline, and there is
+ranking change: recall@5 may not drop more than 2 points below the baseline, and there is
 no reset path (a reset still runs `develop`'s dataset against `develop`'s baseline, on the new
 fixture). A fixture change has to keep BM25's recall@5 within those 2 points.
 
@@ -496,16 +521,16 @@ stand-in judge through it.
 
 | Tier | Modes | Where they run for real |
 |---|---|---|
-| every PR (gating) | `bm25` | the *Python* CI job, step *Retrieval eval (BM25 gating, hybrid on term-hash)* on SQLite, and step *Retrieval eval on pg_search (BM25, gating)* on ParadeDB's BM25 against the branch's baseline (#104), with `--expect-engine pg_search` so a fallback to PostgreSQL full-text search fails it; no model. The suite runs on the database `EXACTDOCS_DATABASE_URL` names, so `EXACTDOCS_DATABASE_URL=postgresql+psycopg://.../<empty database> EXACTDOCS_SECRET_KEY=... just eval` runs it on PostgreSQL by hand |
-| local (report-only on PRs) | `hybrid`, with rerank when a reranker is configured | on every PR in the SQLite step on the term-hash stand-in (`--offline-embedding`): its wrong-version rate must be 0, its recall is not a measure of hybrid. With real models: the CI job *Retrieval eval (local models, report-only)* (#245), with the `[local]` extra and the default models cached between runs, no secret: `bm25` and `hybrid` on `BAAI/bge-small-en-v1.5`, then both reranked by `Xenova/ms-marco-MiniLM-L-6-v2` (reranker timeout raised to 30 s so every rerank is measured), compared with the baseline on `develop`. It never fails a pull request; its summary marks `default-eligible` |
-| provider | `hybrid_hyde`, `agentic`, and any mode reranked by the LLM judge | in tests with pydantic-ai's `TestModel` / `FunctionModel` (`hybrid_hyde`: `tests/evals/`, `run_on_fixture` with `offline_hyde_container`, the term-hash embedding and a priced stand-in LLM, `llm` in `local_roles`: wrong-version rate 0, and its tokens and USD reach `tokens_per_question` / `usd_per_question`; `agentic`: `test_agentic_is_evaluated_on_a_scripted_model_and_stays_in_the_version` runs the whole suite through the real pipeline, Code Mode and limits on a scripted `FunctionModel` in the *Python* CI job's pytest step, and fails on any wrong-version answer or any read outside the version in a run's trace); with a real provider only by hand: `just eval --configured-models --allow-providers`, or the manual *Retrieval eval (real providers)* workflow (`.github/workflows/eval-providers.yml`, `workflow_dispatch` only), which configures profile `eval` from the repository variables `EVAL_PROVIDER_KIND`, `EVAL_PROVIDER_BASE_URL`, `EVAL_PROVIDER_API_VERSION` and `EVAL_<ROLE>_MODEL` and the secret `EVAL_PROVIDER_API_KEY` |
+| release (gating) | `bm25` | the release's *Retrieval eval* job, before anything is published: step *Retrieval eval (BM25 gating, hybrid on term-hash)* on SQLite, and step *Retrieval eval on pg_search (BM25, gating)* on ParadeDB's BM25 (#104), both against the tagged tree's `baseline.json`, with `--expect-engine pg_search` so a fallback to PostgreSQL full-text search fails it; no model. The suite runs on the database `EXACTDOCS_DATABASE_URL` names, so `EXACTDOCS_DATABASE_URL=postgresql+psycopg://.../<empty database> EXACTDOCS_SECRET_KEY=... just eval` runs it on PostgreSQL by hand |
+| local (report-only) | `hybrid`, with rerank when a reranker is configured | at every release in the SQLite step on the term-hash stand-in (`--offline-embedding`): its wrong-version rate must be 0, its recall is not a measure of hybrid. With real models: the last steps of the same job (#245), with the `[local]` extra and the default models cached between releases, no secret: `bm25` and `hybrid` on `BAAI/bge-small-en-v1.5`, then both reranked by `Xenova/ms-marco-MiniLM-L-6-v2` (reranker timeout raised to 30 s so every rerank is measured), compared with the tagged tree's baseline. These steps never stop a release (`continue-on-error`); their summary marks `default-eligible` |
+| provider | `hybrid_hyde`, `agentic`, and any mode reranked by the LLM judge | in tests with pydantic-ai's `TestModel` / `FunctionModel` (`hybrid_hyde`: `tests/evals/`, `run_on_fixture` with `offline_hyde_container`, the term-hash embedding and a priced stand-in LLM, `llm` in `local_roles`: wrong-version rate 0, and its tokens and USD reach `tokens_per_question` / `usd_per_question`; `agentic`: `test_agentic_is_evaluated_on_a_scripted_model_and_stays_in_the_version` runs the whole suite through the real pipeline, Code Mode and limits on a scripted `FunctionModel` in the release's *Retrieval eval* job (`pytest -m eval`), and fails on any wrong-version answer or any read outside the version in a run's trace); with a real provider only by hand: `just eval --configured-models --allow-providers`, or the manual *Retrieval eval (real providers)* workflow (`.github/workflows/eval-providers.yml`, `workflow_dispatch` only), which configures profile `eval` from the repository variables `EVAL_PROVIDER_KIND`, `EVAL_PROVIDER_BASE_URL`, `EVAL_PROVIDER_API_VERSION` and `EVAL_<ROLE>_MODEL` and the secret `EVAL_PROVIDER_API_KEY` |
 
 A mode whose model role is not configured is reported as `unavailable`, with the role it lacks.
 Whether a configured mode may run is decided **per model role**, not per tier: every role its
 search calls (its own, and the reranker when one is configured) must be listed in `--local-roles`,
 the roles whose model runs on this machine, or the mode is `skipped` unless `--allow-providers` is
-given. So a `hybrid` run on a hosted embedding model is skipped like `agentic` is. No CI run in a
-pull request calls a hosted model, and none needs a secret to pass. (Provider profiles exist now
+given. So a `hybrid` run on a hosted embedding model is skipped like `agentic` is. No CI or
+release run calls a hosted model, and none needs a secret to pass. (Provider profiles exist now
 (#241); deriving `--local-roles` from a role's profile kind is a follow-up.)
 
 ## Adding a mode

@@ -593,7 +593,7 @@ def test_remove_asks_on_stderr_and_a_bad_target_is_refused_first(
     server: Recorder, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     answer = io.StringIO("n\n")
-    answer.isatty = lambda: True  # ty: ignore[invalid-assignment]
+    answer.isatty = lambda: True
     monkeypatch.setattr("sys.stdin", answer)
     with pytest.raises(SystemExit) as raised:
         cli.app(["remove", "/a/b", "--json"], exit_on_error=False)

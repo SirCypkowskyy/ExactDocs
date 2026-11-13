@@ -26,7 +26,7 @@ classifiers = [
 ai = [
     "pydantic-ai-slim[openai,anthropic,google]==2.60.0",
     "pydantic-ai-harness==0.60.0",
-    "pydantic-monty==1.3.0",
+    "pydantic-monty==1.5.0",
     "sqlite-vec==0.1.9",
     "pgvector==0.5.1",
     # Azure OpenAI and Claude on Azure AI Foundry with Entra ID (`auth = "entra"`): the sync token

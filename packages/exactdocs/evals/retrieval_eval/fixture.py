@@ -133,10 +133,10 @@ async def run_on_fixture(
         allow_providers: Run modes that call a hosted model.
         local_roles: The configured roles whose model runs on this machine.
         comparison: What to compare with (``compare``); none: no comparison.
-        dataset_file: The dataset to run: the repository's by default; CI also runs
-            ``develop``'s when the dataset changed.
+        dataset_file: The dataset to run: the repository's by default;
+            ``--reference-dataset`` also runs ``develop``'s when the dataset changed.
         not_judged: Modes whose eligibility as a default the run cannot tell, and why.
-        expect_engine: The full-text search engine that must answer (CI: ``pg_search`` on
+        expect_engine: The full-text search engine that must answer (the release: ``pg_search`` on
             ParadeDB); another one fails the suite, so a silent fallback cannot pass.
 
     Returns:
