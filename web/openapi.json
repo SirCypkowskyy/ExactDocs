@@ -2646,7 +2646,7 @@
           "catalog"
         ],
         "summary": "Get Renamed Path",
-        "description": "Follow `path` one hop across the renames git saw when `ref` was imported.\n\n`renamed` is `null` when it was not moved (or no renames are known). An unknown library\nor version, or a version without an active manifest, is a 404 instead.",
+        "description": "Follow `path` across the renames git saw when versions were imported.\n\nWith `from`, `path` is from that version, and the rename maps between it and `ref` are\nfollowed hop by hop (older to newer or back): `new_path` is its path in `ref`. Versions\nwith no import link between them (another branch, a version removed in between) give\n`null`. Without `from`, one hop across the renames git saw when `ref` was imported.\n\n`renamed` is `null` when it was not moved (or no renames are known). An unknown library\nor version, or a version without an active manifest, is a 404 instead.",
         "operationId": "catalog-get_renamed_path",
         "security": [
           {
@@ -2683,10 +2683,10 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 4096,
-              "description": "`forward`: the article's path in the version imported before `ref`. `back`: its path in `ref`.",
+              "description": "With `from`: the article's path in `from`. Otherwise `forward`: its path in the version imported before `ref`; `back`: its path in `ref`.",
               "title": "Path"
             },
-            "description": "`forward`: the article's path in the version imported before `ref`. `back`: its path in `ref`."
+            "description": "With `from`: the article's path in `from`. Otherwise `forward`: its path in the version imported before `ref`; `back`: its path in `ref`."
           },
           {
             "name": "ref",
@@ -2710,10 +2710,28 @@
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/RenameDirection",
-              "description": "`forward` (default): old to new path; `back`: new to old.",
+              "description": "`forward` (default): old to new path; `back`: new to old. Ignored with `from`.",
               "default": "forward"
             },
-            "description": "`forward` (default): old to new path; `back`: new to old."
+            "description": "`forward` (default): old to new path; `back`: new to old. Ignored with `from`."
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The exact imported ref `path` is from: the renames of every version between it and `ref` are followed, either way. None: one hop by `direction`.",
+              "title": "From"
+            },
+            "description": "The exact imported ref `path` is from: the renames of every version between it and `ref` are followed, either way. None: one hop by `direction`."
           }
         ],
         "responses": {
@@ -7990,7 +8008,7 @@
             "maximum": 1000000.0,
             "minimum": 0.0,
             "title": "Min Chars",
-            "description": "A chunk shorter than this is merged with the next one (the last with the one before), within\n`max_chars`; the text before the first heading is never merged.",
+            "description": "A chunk shorter than this is merged with the next one (the last with the one before), within\n`max_chars`; the text before the first heading is never merged. At most 8,000 when sent: no\nchunk is longer.",
             "default": 0
           },
           "max_chars": {
@@ -8005,7 +8023,7 @@
               }
             ],
             "title": "Max Chars",
-            "description": "A chunk longer than this is cut again at its deeper headings; never inside a code block or\ntable, so a section without deeper headings stays whole. Null: no bound. At least\n`min_chars`."
+            "description": "A chunk longer than this is cut again at its deeper headings; never inside a code block or\ntable. Null: no bound. At least `min_chars`, and at most 8,000 when sent: whatever the\nsettings, a section longer than 8,000 characters is split between its top-level blocks."
           },
           "chunker": {
             "type": "string",
@@ -11224,7 +11242,7 @@
           "ref": {
             "type": "string",
             "title": "Ref",
-            "description": "The version whose import saw the move."
+            "description": "The version whose import saw the move; with `from`, the version asked about."
           },
           "from_ref": {
             "type": "string",
@@ -11258,7 +11276,7 @@
           "similarity"
         ],
         "title": "RenamedPath",
-        "description": "`old_path` of version `from_ref` is `new_path` in `ref`, as git saw it."
+        "description": "`old_path` of version `from_ref` is `new_path` in `ref`, as git saw it.\n\nAsked with `from`, the move may span several versions, in either order of import:\n`old_path` is the path asked about and `new_path` its path in `ref`."
       },
       "RepoGuidance": {
         "type": "string",

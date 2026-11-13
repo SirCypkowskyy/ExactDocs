@@ -449,6 +449,9 @@ class StoreManifestCommand(_Dto):
     """Refuse (VersionNotFoundError) unless the library already has this version."""
     renames: list[RenameIn] = Field(default=[])
     """Files moved since an earlier version; kept and replaced with the manifest."""
+    renamed_from: str | None = Field(default=None, min_length=1)
+    """The version the renames were detected against, also when nothing moved; null: the
+    `from_ref` of the renames (none without renames)."""
     origin: VersionOrigin = Field(default=VersionOrigin.MANUAL)
     """Given to the version if this manifest's activation creates it."""
     instructions: list[InstructionFileIn] = Field(default=[], max_length=MAX_INSTRUCTION_FILES)
@@ -771,10 +774,12 @@ class GetArticleQuery(_Dto):
 
 
 class ResolveRenamedPathQuery(_Dto):
-    """Follow `path` across the renames of `ref` (default version without one) by `direction`.
+    """Follow `path` across renames into `ref` (default version without one).
 
-    One hop: the map covers the previous version only (a branch: its syncs so far). To follow a
-    file across several versions, ask once per version and chain the answers.
+    With `from_ref`: `path` is from that version, and the rename maps of every version between
+    the two are followed hop by hop, whichever of them was imported first. Without it, one hop
+    by `direction`: the map of `ref` covers the version before it only (a branch: its syncs so
+    far).
     """
 
     library: str = Field(min_length=1)
@@ -782,14 +787,17 @@ class ResolveRenamedPathQuery(_Dto):
     ref: str | None = None
     """Exact imported ref; null or blank: the default version."""
     path: str = Field(min_length=1, max_length=MAX_PATH)
-    """`forward`: a path of the version before `ref`; `back`: an article of `ref`."""
+    """With `from_ref`: a path of `from_ref`. Otherwise `forward`: a path of the version before
+    `ref`; `back`: an article of `ref`."""
     direction: RenameDirection = RenameDirection.FORWARD
-    """`forward`: old to new path; `back`: new to old."""
+    """`forward`: old to new path; `back`: new to old. Ignored with `from_ref`."""
+    from_ref: str | None = None
+    """Exact imported ref `path` is from; null or blank: one hop by `direction`."""
 
-    @field_validator("ref", mode="before")
+    @field_validator("ref", "from_ref", mode="before")
     @classmethod
     def _blank_ref_is_none(cls, value: object) -> object:
-        """Treat a blank ref as none: the default version.
+        """Treat a blank ref as none: the default version, or no `from_ref`.
 
         Args:
             value: The raw field.
@@ -801,12 +809,16 @@ class ResolveRenamedPathQuery(_Dto):
 
 
 class RenamedPath(_Dto):
-    """`old_path` of version `from_ref` is `new_path` in `ref`, as git saw it."""
+    """`old_path` of version `from_ref` is `new_path` in `ref`, as git saw it.
+
+    Asked with `from`, the move may span several versions, in either order of import:
+    `old_path` is the path asked about and `new_path` its path in `ref`.
+    """
 
     library: str
     """Library ID, `/owner/repo`."""
     ref: str
-    """The version whose import saw the move."""
+    """The version whose import saw the move; with `from`, the version asked about."""
     from_ref: str
     """The version `old_path` is from; for a branch, the branch itself."""
     old_path: str
@@ -815,6 +827,7 @@ class RenamedPath(_Dto):
     """The path in `ref`."""
     similarity: int = Field(description=SIMILARITY_DESCRIPTION)
     """How much of the content the move kept; its schema description is ``SIMILARITY_DESCRIPTION``.
+    Across several versions, the lowest of their moves.
     """
 
     @classmethod
@@ -1077,6 +1090,9 @@ class ReplaceRenamesCommand(_Dto):
     """The version whose active manifest gets the renames."""
     renames: list[RenameIn]
     """The new rename map; it replaces the old one."""
+    renamed_from: str | None = Field(default=None, min_length=1)
+    """The version the map was detected against, also when nothing moved; null: the `from_ref`
+    of the renames (none without renames)."""
 
 
 class RenamesReplaced(_Dto):

@@ -114,3 +114,5 @@ SIMILARITY_DESCRIPTION: Final[str] = (
     f"Percent of the content kept; {MAX_SIMILARITY} is a move unchanged."
 )
 """OpenAPI description of a rename's ``similarity``, built from ``MAX_SIMILARITY``."""
+MAX_RENAME_HOPS: Final[int] = 100
+"""Versions a path is followed across at most, from one version to another; farther is no move."""

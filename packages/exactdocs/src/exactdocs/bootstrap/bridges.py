@@ -606,6 +606,7 @@ class CatalogVersionPublisher:
                 ReplaceRenamesCommand(
                     library=library,
                     ref=ref,
+                    renamed_from=from_ref,
                     renames=[
                         RenameIn(
                             from_ref=from_ref,
@@ -694,6 +695,7 @@ class RetrievalChunkIndex:
                 ArticleChunk(
                     heading_path=tuple(c.heading_path),
                     occurrence_index=c.occurrence_index,
+                    part=c.part,
                     position=position,
                     content=c.content,
                     content_hash=c.content_hash,
@@ -1176,6 +1178,7 @@ def _store_command(version: ImportedVersion) -> StoreManifestCommand:
         commit_sha=version.commit_sha,
         must_exist=version.refresh,
         origin=CatalogVersionOrigin(version.origin.value),
+        renamed_from=version.renamed_from,
         renames=[
             RenameIn(
                 from_ref=version.renamed_from,
@@ -1245,6 +1248,7 @@ def _index_command(manifest_id: str, version: ImportedVersion) -> IndexManifestC
                     ChunkIn(
                         heading_path=list(c.heading_path),
                         occurrence_index=c.occurrence_index,
+                        part=c.part,
                         content=c.content,
                         content_hash=c.content_hash,
                         anchor=c.anchor,

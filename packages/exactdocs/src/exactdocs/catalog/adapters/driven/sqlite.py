@@ -126,6 +126,7 @@ manifests = Table(
     Column("created_at", Text, nullable=False),
     Column("superseded_at", Text),
     Column("origin", Text, nullable=False, server_default="manual"),  # for a new version
+    Column("renamed_from", Text),  # the version its rename map was detected against (#201)
 )
 article_contents = Table(
     "catalog_article_contents",
@@ -698,6 +699,9 @@ class SqliteManifestRepository:
                     state=manifest.state.value,
                     created_at=_iso(manifest.created_at),
                     origin=manifest.origin.value,
+                    renamed_from=None
+                    if manifest.renamed_from is None
+                    else manifest.renamed_from.value,
                 )
             )
             if manifest.entries:
@@ -791,16 +795,26 @@ class SqliteManifestRepository:
             return tuple(_rename(row) for row in rows)
 
     async def replace_renames(
-        self, manifest_id: ManifestId, renames: Sequence[ManifestRename]
+        self,
+        manifest_id: ManifestId,
+        renames: Sequence[ManifestRename],
+        *,
+        renamed_from: VersionRef | None,
     ) -> None:
         """Delete the manifest's renames, then add those into its entries; one transaction.
 
         Args:
             manifest_id: The manifest.
             renames: The new rename map.
+            renamed_from: The version the map was detected against.
         """
         wanted = sorted({r.new_path for r in renames})
         async with self._write() as connection:
+            await connection.execute(
+                update(manifests)
+                .where(manifests.c.id == manifest_id)
+                .values(renamed_from=None if renamed_from is None else renamed_from.value)
+            )
             await connection.execute(
                 delete(manifest_renames).where(manifest_renames.c.manifest_id == manifest_id)
             )
@@ -1359,6 +1373,7 @@ def _manifest(row: Row) -> Manifest:
         state=ManifestState(row.state),
         superseded_at=(datetime.fromisoformat(row.superseded_at) if row.superseded_at else None),
         origin=_origin(row.origin),
+        renamed_from=None if row.renamed_from is None else VersionRef(row.renamed_from),
     )
 
 
@@ -1818,6 +1833,7 @@ class SqliteManifestCopier:
                     state=ManifestState.PENDING.value,
                     created_at=_iso(at),
                     origin=row.origin,
+                    renamed_from=row.renamed_from,
                 )
             )
             for table in (

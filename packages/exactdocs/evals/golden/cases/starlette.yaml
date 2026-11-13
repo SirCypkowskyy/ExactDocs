@@ -1,0 +1,1074 @@
+# Golden-set cases for Starlette (corpus.yaml: starlette). Format and rules: docs/evals.md#the-golden-set.
+# Check with `just golden-validate --projects starlette`.
+name: starlette
+cases:
+- name: 'starlette 1.10.0: How do I run code when the application starts up and when it shuts down?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'How do I run code when the application starts up and when it shuts down?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/lifespan.md, heading_path: []}
+    reference: Pass an async context manager as `lifespan=` to `Starlette(...)`; the code before its
+      `yield` runs at startup and the code after it at shutdown.
+    facts:
+    - an async context manager is passed as the lifespan argument of Starlette
+    - code before the yield runs at startup, code after it at shutdown
+    - no request is served until the lifespan has run
+
+- name: 'starlette 1.10.0: Can I still register startup handlers with on_startup or @app.on_event?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'Can I still register startup handlers with on_startup or @app.on_event?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/release-notes.md, heading_path: ['1.0.0rc1 (February 23, 2026)', Removed]}
+    reference: No. 1.0.0rc1 removed the `on_startup` and `on_shutdown` parameters, the `on_event()`
+      decorator and `add_event_handler()`; use the `lifespan` parameter instead.
+    facts:
+    - on_startup and on_shutdown were removed in 1.0.0rc1
+    - the on_event() decorator was removed too
+    - the lifespan parameter replaces them
+
+- name: 'starlette 0.52.1: What is the default max_age of SessionMiddleware?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'What is the default max_age of SessionMiddleware?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/middleware.md, heading_path: [SessionMiddleware]}
+    reference: '`max_age` is the session expiry in seconds and defaults to 2 weeks; `None` keeps the
+      cookie for the browser session.'
+    facts:
+    - max_age is the session expiry time in seconds
+    - it defaults to 2 weeks
+    - None makes the cookie last as long as the browser session
+
+- name: 'starlette 0.52.1: Since when can lifespan state be read as request.state["key"]?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'Since when can lifespan state be read as request.state["key"]?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/lifespan.md, heading_path: [Accessing State]}
+    reference: Dictionary-style access to the state was introduced in Starlette 0.52.0 (January
+      2026), with `Request` generic over the state type for type safety.
+    facts:
+    - dictionary-style state access was introduced in 0.52.0
+    - Request is generic over the state type, so the access is typed
+
+- name: 'starlette 0.52.1: How do I create an HTTP client once at startup and use it in my request handlers?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'How do I create an HTTP client once at startup and use it in my request handlers?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/lifespan.md, heading_path: [Lifespan State]}
+    - {version: '0.52.1', article: docs/requests.md, heading_path: [Request, Other state]}
+    reference: Create the client in the lifespan and yield it in a state dict; handlers read it from
+      `request.state`, which receives a shallow copy of that state.
+    facts:
+    - the lifespan yields a dictionary of state
+    - handlers read the state from request.state
+    - the request gets a shallow copy of the lifespan state
+
+- name: 'starlette 0.27.0: How do I send a 103 Early Hints response?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'How do I send a 103 Early Hints response?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The Starlette 0.27.0 documentation does not cover Early Hints.
+
+# ---- 0.27.0 ----
+
+- name: 'starlette 0.27.0: How do I get the IP address of the client that made the request?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'How do I get the IP address of the client that made the request?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: '0.27.0', article: docs/requests.md, heading_path: [Request, Client Address]}
+    reference: >-
+      Read `request.client`, a named two-tuple: `request.client.host` is the hostname or IP
+      address and `request.client.port` the client port. Either item may be `None`.
+    facts:
+    - request.client is a named two-tuple
+    - request.client.host holds the hostname or IP address
+    - request.client.port holds the port
+    - either item may be None
+
+- name: 'starlette 0.27.0: Which status code does RedirectResponse send if I do not set one?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'Which status code does RedirectResponse send if I do not set one?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: '0.27.0', article: docs/responses.md, heading_path: [RedirectResponse]}
+    reference: >-
+      `RedirectResponse` returns an HTTP redirect with status 307 by default.
+    facts:
+    - RedirectResponse uses status code 307 by default
+
+- name: 'starlette 0.27.0: In a class-based websocket handler, what hooks can I override and what does the disconnect hook receive?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'In a class-based websocket handler, what hooks can I override and what does the disconnect hook receive?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: '0.27.0', article: docs/endpoints.md, heading_path: [WebSocketEndpoint]}
+    reference: >-
+      `WebSocketEndpoint` has three overridable methods: `on_connect(websocket, **kwargs)`,
+      `on_receive(websocket, data)` and `on_disconnect(websocket, close_code)`. An optional
+      `encoding` attribute (`'json'`, `'bytes'` or `'text'`) validates the data passed to
+      `on_receive`.
+    facts:
+    - the overridable methods are on_connect, on_receive and on_disconnect
+    - on_disconnect receives the websocket and the close_code
+    - the encoding attribute can be json, bytes or text
+
+- name: 'starlette 0.27.0: How can a route accept an ISO datetime in the URL and give my handler a datetime object?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'How can a route accept an ISO datetime in the URL and give my handler a datetime object?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: '0.27.0', article: docs/routing.md, heading_path: [Path Parameters]}
+    reference: >-
+      Write a custom convertor: subclass `starlette.convertors.Convertor`, set a `regex`, implement
+      `convert()` (string to datetime) and `to_string()`, register it with
+      `register_url_convertor("datetime", DateTimeConvertor())`, then use `{date:datetime}` in the
+      route path.
+    facts:
+    - subclass Convertor with a regex, convert() and to_string()
+    - register it with register_url_convertor
+    - use it in the path as {name:datetime}
+
+- name: 'starlette 0.27.0: My test needs to check the body of a 500 error page, but TestClient keeps raising the exception. How do I stop that?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'My test needs to check the body of a 500 error page, but TestClient keeps raising the exception. How do I stop that?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: '0.27.0', article: docs/testclient.md, heading_path: []}
+    reference: >-
+      By default `TestClient` raises any exception from the application. Create it with
+      `TestClient(app, raise_server_exceptions=False)` to get the 500 response instead.
+    facts:
+    - TestClient raises application exceptions by default
+    - pass raise_server_exceptions=False to get the 500 response
+
+- name: 'starlette 0.27.0: How do I restrict an endpoint to admins and hide it with a 404 from everyone else?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'How do I restrict an endpoint to admins and hide it with a 404 from everyone else?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: '0.27.0', article: docs/authentication.md, heading_path: [Permissions]}
+    reference: >-
+      Decorate the endpoint with `@requires(['authenticated', 'admin'], status_code=404)`. Without
+      `status_code`, a request missing the scopes gets a 403.
+    facts:
+    - the requires decorator takes one or several required scopes
+    - status_code=404 replaces the default 403 response
+    - by default 403 is returned when permissions are not granted
+
+- name: 'starlette 0.27.0: How do I serve the static assets that ship inside an installed Python package?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'How do I serve the static assets that ship inside an installed Python package?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: '0.27.0', article: docs/staticfiles.md, heading_path: [StaticFiles]}
+    reference: >-
+      Pass `packages=` to `StaticFiles`, e.g. `StaticFiles(directory='static',
+      packages=['bootstrap4'])`, and mount it. It looks for a `statics` directory in each package;
+      give a tuple such as `('bootstrap4', 'static')` to use another directory.
+    facts:
+    - StaticFiles takes a packages argument listing Python packages
+    - by default it looks for a statics directory in each package
+    - a tuple of package and directory name changes that directory
+
+- name: 'starlette 0.27.0: Why does a ContextVar I set in my endpoint have the old value when my BaseHTTPMiddleware reads it?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'Why does a ContextVar I set in my endpoint have the old value when my BaseHTTPMiddleware reads it?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: '0.27.0', article: docs/middleware.md, heading_path: [BaseHTTPMiddleware, Limitations]}
+    reference: >-
+      It is a known limitation: `BaseHTTPMiddleware` prevents changes to context variables from
+      propagating upwards, so a value set in the endpoint is not seen by the middleware. Use pure
+      ASGI middleware instead.
+    facts:
+    - BaseHTTPMiddleware prevents ContextVar changes from propagating upwards
+    - a value set in the endpoint is not visible in the middleware
+    - pure ASGI middleware avoids the limitation
+
+- name: 'starlette 0.27.0: What is the difference between raising HTTPException and an unexpected error in Starlette?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'What is the difference between raising HTTPException and an unexpected error in Starlette?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: '0.27.0', article: docs/exceptions.md, heading_path: [Errors and handled exceptions]}
+    reference: >-
+      `HTTPException` is a handled exception: it is turned into a normal HTTP response that goes back
+      through the middleware stack. Any other exception is an error that should bubble up through the
+      whole stack to the server; the 500 / `Exception` handler deals with it.
+    facts:
+    - handled exceptions are coerced into HTTP responses sent through the middleware stack
+    - other exceptions are errors that bubble through the entire middleware stack
+    - errors are handled by the 500 or Exception handler
+
+- name: 'starlette 0.27.0: Can I keep request-specific flags as attributes on my ASGI middleware object?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'Can I keep request-specific flags as attributes on my ASGI middleware object?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: '0.27.0', article: docs/middleware.md, heading_path: [Pure ASGI Middleware, Gotchas, ASGI middleware should be stateless]}
+    reference: >-
+      No. ASGI handles requests concurrently, so connection-specific state must be scoped to the
+      `__call__` implementation; storing it on the instance leads to conflicting reads and writes
+      across requests.
+    facts:
+    - ASGI middleware should be stateless
+    - connection-specific state belongs inside __call__
+    - instance state conflicts across concurrent requests
+
+- name: 'starlette 0.27.0: Why wrap my SECRET_KEY setting in Secret, and how do I get the real value back?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'Why wrap my SECRET_KEY setting in Secret, and how do I get the real value back?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: '0.27.0', article: docs/config.md, heading_path: [Secrets]}
+    reference: >-
+      `Secret` hides the value (its repr is `Secret('**********')`) so it is less likely to leak
+      into tracebacks or introspection. Cast it with `str()` to get the value, only where it is used.
+    facts:
+    - Secret helps keep the value out of tracebacks and introspection
+    - its repr masks the value
+    - str() returns the real value
+
+- name: 'starlette 0.27.0: Are on_startup and on_shutdown still the recommended way to run setup code?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'Are on_startup and on_shutdown still the recommended way to run setup code?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: '0.27.0', article: docs/release-notes.md, heading_path: ['0.26.0', Deprecated]}
+    - {version: '0.27.0', article: docs/lifespan.md, heading_path: []}
+    reference: >-
+      No. 0.26.0 deprecated the `on_startup` and `on_shutdown` events; the lifespan handler (an
+      async context manager passed as `lifespan=`) replaces them.
+    facts:
+    - on_startup and on_shutdown were deprecated in 0.26.0
+    - the lifespan handler is the replacement
+
+- name: 'starlette 0.27.0: What security problem does upgrading to 0.27.0 fix?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'What security problem does upgrading to 0.27.0 fix?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: '0.27.0', article: docs/release-notes.md, heading_path: ['0.27.0']}
+    - {version: '0.27.0', article: docs/release-notes.md, heading_path: ['0.27.0', Fixed]}
+    reference: >-
+      0.27.0 fixes a path traversal vulnerability in `StaticFiles` (advisory GHSA-v5gw-mw7f-84px),
+      by replacing `commonprefix` with `commonpath`.
+    facts:
+    - 0.27.0 fixes a path traversal vulnerability
+    - the vulnerability is in StaticFiles
+    - commonprefix was replaced by commonpath
+
+- name: 'starlette 0.27.0: In a Jinja template, how do I link to a CSS file served by a mounted StaticFiles app?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'In a Jinja template, how do I link to a CSS file served by a mounted StaticFiles app?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: '0.27.0', article: docs/templates.md, heading_path: []}
+    - {version: '0.27.0', article: docs/routing.md, heading_path: [Reverse URL lookups]}
+    reference: >-
+      Mount `StaticFiles` with a name, e.g. `Mount("/static", app=StaticFiles(directory="static"),
+      name="static")`. The template context includes `url_for`, so the template writes
+      `{{ url_for('static', path='/css/base.css') }}`.
+    facts:
+    - the StaticFiles mount needs a name
+    - the Jinja2 template context includes url_for automatically
+    - mounted apps take a path argument in url_for
+
+- name: 'starlette 0.27.0: How do I require an auth scope on a websocket route, and what status does a denied client get?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'How do I require an auth scope on a websocket route, and what status does a denied client get?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: '0.27.0', article: docs/authentication.md, heading_path: [Permissions]}
+    - {version: '0.27.0', article: docs/routing.md, heading_path: [WebSocket Routing]}
+    reference: >-
+      Decorate the websocket endpoint with `@requires(...)` and register it with `WebSocketRoute`.
+      `status_code` is not supported for websockets: a denied client always gets 403.
+    facts:
+    - websocket endpoints are registered with WebSocketRoute
+    - the requires decorator enforces the scopes
+    - status_code is not supported for websockets, 403 is always used
+
+- name: 'starlette 0.27.0: Where do I connect and disconnect the databases package so queries work in my endpoints?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'Where do I connect and disconnect the databases package so queries work in my endpoints?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: '0.27.0', article: docs/database.md, heading_path: []}
+    - {version: '0.27.0', article: docs/lifespan.md, heading_path: []}
+    reference: >-
+      In the lifespan: `await database.connect()` before `yield` and `await database.disconnect()`
+      after it, passed as `Starlette(lifespan=lifespan)`. Starlette serves no request until the
+      lifespan has started.
+    facts:
+    - database.connect() runs in the lifespan before the yield
+    - database.disconnect() runs after the yield
+    - no request is served until the lifespan has run
+
+- name: 'starlette 0.27.0: How many threads can run my sync endpoints at once, and how do I raise that limit?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'How many threads can run my sync endpoints at once, and how do I raise that limit?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The Starlette 0.27.0 documentation does not document the thread pool size or how to change it.
+
+- name: 'starlette 0.27.0: How do I change the client host and port that TestClient reports to my app?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'How do I change the client host and port that TestClient reports to my app?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The Starlette 0.27.0 documentation does not cover setting the TestClient client address.
+
+- name: 'starlette 0.27.0: How do I set a per-route timeout that aborts a handler running too long?'
+  inputs:
+    project: starlette
+    version: '0.27.0'
+    query: 'How do I set a per-route timeout that aborts a handler running too long?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The Starlette 0.27.0 documentation does not cover request or handler timeouts.
+
+# ---- 0.52.1 ----
+
+- name: 'starlette 0.52.1: Does TrustedHostMiddleware send example.com visitors to www.example.com, and can I turn that off?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'Does TrustedHostMiddleware send example.com visitors to www.example.com, and can I turn that off?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/middleware.md, heading_path: [TrustedHostMiddleware]}
+    reference: >-
+      Yes, through `www_redirect`: when true, requests to non-www versions of the allowed hosts are
+      redirected to their www counterparts. It defaults to `True`; pass `www_redirect=False` to
+      disable it.
+    facts:
+    - the option is www_redirect
+    - it redirects non-www allowed hosts to their www counterparts
+    - it defaults to True
+
+- name: 'starlette 0.52.1: What caps the size of a single non-file field when parsing multipart forms, and what is the default?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'What caps the size of a single non-file field when parsing multipart forms, and what is the default?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/requests.md, heading_path: [Request, Request Files]}
+    reference: >-
+      The `max_part_size` parameter of `request.form()`, which defaults to `1024*1024` (1 MiB). The
+      signature is `request.form(max_files=1000, max_fields=1000, max_part_size=1024*1024)`.
+    facts:
+    - the parameter is max_part_size of request.form()
+    - it defaults to 1024*1024
+    - max_files and max_fields default to 1000
+
+- name: 'starlette 0.52.1: How do I load a .env file that is not UTF-8?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'How do I load a .env file that is not UTF-8?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/config.md, heading_path: [Custom encoding for environment files]}
+    reference: >-
+      Pass `encoding` to `Config`, e.g. `Config(".env", encoding="latin-1")`. Environment files are
+      read as UTF-8 by default.
+    facts:
+    - Config takes an encoding argument
+    - environment files are read as UTF-8 by default
+
+- name: 'starlette 0.52.1: My sync def endpoints queue up under load. How do I let more of them run in parallel threads?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'My sync def endpoints queue up under load. How do I let more of them run in parallel threads?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/threadpool.md, heading_path: [Thread Pool, Concurrency Limitations]}
+    reference: >-
+      The default thread pool has only 40 tokens. Raise it through AnyIO:
+      `anyio.to_thread.current_default_thread_limiter().total_tokens = 100`. More threads cost
+      memory and performance, and the limit is shared with other libraries.
+    facts:
+    - the default thread pool size is 40 tokens
+    - set total_tokens on anyio.to_thread.current_default_thread_limiter()
+    - the limit is shared with other libraries such as FastAPI
+
+- name: 'starlette 0.52.1: How do I make TestClient pretend the request comes from localhost:8000?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'How do I make TestClient pretend the request comes from localhost:8000?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/testclient.md, heading_path: [Change client address]}
+    reference: >-
+      Pass the `client` argument: `TestClient(app, client=('localhost', 8000))`. By default the
+      client port is `50000`.
+    facts:
+    - TestClient takes a client argument with a host and port tuple
+    - the default client port is 50000
+
+- name: 'starlette 0.52.1: I have /users/{username} and /users/me routes, but /users/me never gets hit. Why?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'I have /users/{username} and /users/me routes, but /users/me never gets hit. Why?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/routing.md, heading_path: [Route priority]}
+    reference: >-
+      Routes are matched in order, so `/users/{username}` matches `/users/me` first. List the more
+      specific `/users/me` route before the general one.
+    facts:
+    - incoming paths are matched against the routes in order
+    - more specific routes must be listed before general ones
+
+- name: 'starlette 0.52.1: In what order does Starlette run its built-in middleware relative to mine?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'In what order does Starlette run its built-in middleware relative to mine?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/middleware.md, heading_path: [Using middleware]}
+    reference: >-
+      Middleware runs top to bottom. `ServerErrorMiddleware` is always the outermost layer, then your
+      middleware in list order, then `ExceptionMiddleware`, then routing and the endpoint.
+    facts:
+    - middleware is evaluated from top to bottom
+    - ServerErrorMiddleware is always the outermost layer
+    - ExceptionMiddleware runs after the user middleware, before routing
+
+- name: 'starlette 0.52.1: What happens when a public site preflights a request to my server on a private network?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'What happens when a public site preflights a request to my server on a private network?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/middleware.md, heading_path: [CORSMiddleware, Private Network Access (PNA)]}
+    reference: >-
+      The browser sends `Access-Control-Request-Private-Network: true` in the preflight. With
+      `allow_private_network=True`, `CORSMiddleware` answers with
+      `Access-Control-Allow-Private-Network: true`; otherwise (the default, `False`) it returns 400
+      and the request is blocked.
+    facts:
+    - the preflight carries Access-Control-Request-Private-Network true
+    - allow_private_network=True adds Access-Control-Allow-Private-Network true
+    - with False the middleware returns a 400 response
+
+- name: 'starlette 0.52.1: Do I still put request inside the context dict when calling TemplateResponse?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'Do I still put request inside the context dict when calling TemplateResponse?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/templates.md, heading_path: []}
+    - {version: '0.52.1', article: docs/release-notes.md, heading_path: ['0.29.0 (July 13, 2023)', Added]}
+    reference: >-
+      No. 0.29.0 added a `request` argument to `TemplateResponse`, and the docs now call
+      `templates.TemplateResponse(request, 'index.html')` instead of passing `{'request': request}`
+      in the context.
+    facts:
+    - 0.29.0 added a request argument to TemplateResponse
+    - the request is passed first, as TemplateResponse(request, name)
+
+- name: 'starlette 0.52.1: Can I attach middleware to one Route without wrapping it in a Mount?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'Can I attach middleware to one Route without wrapping it in a Mount?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/middleware.md, heading_path: [Applying middleware to groups of routes]}
+    - {version: '0.52.1', article: docs/release-notes.md, heading_path: ['0.33.0 (December 1, 2023)', Added]}
+    reference: >-
+      Yes. Since 0.33.0, `Route` and `WebSocketRoute` take a `middleware` argument, e.g.
+      `Route("/example", endpoint=..., middleware=[Middleware(GZipMiddleware)])`, and `Router`
+      accepts one too.
+    facts:
+    - 0.33.0 added middleware per Route and WebSocketRoute
+    - Route takes a middleware list
+    - Router also accepts middleware
+
+- name: 'starlette 0.52.1: Does FileResponse handle Range requests for resumable downloads?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'Does FileResponse handle Range requests for resumable downloads?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/responses.md, heading_path: [FileResponse]}
+    - {version: '0.52.1', article: docs/release-notes.md, heading_path: ['0.39.0 (September 23, 2024)', Added]}
+    reference: >-
+      Yes, since 0.39.0. It sends `Accept-Ranges: bytes` when the file exists, answers a valid
+      `Range` with `206 Partial Content` and an invalid one with `416 Range Not Satisfiable`. Only
+      the `bytes` unit is supported.
+    facts:
+    - HTTP Range support was added to FileResponse in 0.39.0
+    - a valid Range gets a 206 Partial Content response
+    - an invalid range gets 416 Range Not Satisfiable
+    - only the bytes range unit is supported
+
+- name: 'starlette 0.52.1: How do I refuse a websocket handshake with a 401 instead of the default 403?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'How do I refuse a websocket handshake with a 401 instead of the default 403?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/websockets.md, heading_path: [Send Denial Response]}
+    - {version: '0.52.1', article: docs/exceptions.md, heading_path: [HTTPException]}
+    reference: >-
+      Closing before `accept()` sends a 403. To send another response, call
+      `await websocket.send_denial_response(response)` (the server must support the WebSocket Denial
+      Response extension) or raise `HTTPException(status_code=401)` before `websocket.accept()`, so
+      the connection is not upgraded and the HTTP response is returned.
+    facts:
+    - closing before accept sends an HTTP 403
+    - send_denial_response sends a custom response and needs server support
+    - raising HTTPException before accept returns that HTTP response instead of upgrading
+
+- name: 'starlette 0.52.1: How do I feed SessionMiddleware a secret key from the environment without it showing up in logs?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'How do I feed SessionMiddleware a secret key from the environment without it showing up in logs?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/config.md, heading_path: [A full example]}
+    - {version: '0.52.1', article: docs/config.md, heading_path: [Secrets]}
+    - {version: '0.52.1', article: docs/middleware.md, heading_path: [SessionMiddleware]}
+    reference: >-
+      Read it with `config('SECRET_KEY', cast=Secret)` from a `Config(".env")`, and pass it as
+      `Middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)`. `Secret` masks the value in its
+      representation; `secret_key` should be a random string.
+    facts:
+    - read the key with config(..., cast=Secret)
+    - pass it as secret_key to SessionMiddleware
+    - Secret keeps the value out of its representation
+    - secret_key should be a random string
+
+- name: 'starlette 0.52.1: How do I post a file from a TestClient test and read its name and bytes in the endpoint?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'How do I post a file from a TestClient test and read its name and bytes in the endpoint?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: '0.52.1', article: docs/testclient.md, heading_path: []}
+    - {version: '0.52.1', article: docs/requests.md, heading_path: [Request, Request Files]}
+    reference: >-
+      In the test, `client.post("/form", files={"file": f})` with the file opened in binary mode. In
+      the endpoint, `async with request.form() as form:` gives `UploadFile` items: use
+      `form["file"].filename` and `await form["file"].read()`.
+    facts:
+    - TestClient.post takes a files mapping
+    - request.form() is used as an async context manager
+    - uploads are UploadFile objects with filename and an async read()
+
+- name: 'starlette 0.52.1: How do I add OpenTelemetry spans with a middleware that ships with Starlette?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'How do I add OpenTelemetry spans with a middleware that ships with Starlette?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The Starlette 0.52.1 documentation has no OpenTelemetry middleware and does not cover tracing.
+
+- name: 'starlette 0.52.1: How do I cap the total request body size for the whole app, uploads included?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'How do I cap the total request body size for the whole app, uploads included?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Starlette 0.52.1 documentation only covers per-form limits (max_files, max_fields,
+      max_part_size); it has no setting for the total request body size.
+
+- name: 'starlette 0.52.1: How do I accept WebTransport sessions in a Starlette app?'
+  inputs:
+    project: starlette
+    version: '0.52.1'
+    query: 'How do I accept WebTransport sessions in a Starlette app?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The Starlette 0.52.1 documentation does not cover WebTransport.
+
+# ---- 1.10.0 ----
+
+- name: 'starlette 1.10.0: What status does a client get when its upload is over the RequestBodyLimitMiddleware limit?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'What status does a client get when its upload is over the RequestBodyLimitMiddleware limit?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/middleware.md, heading_path: [RequestBodyLimitMiddleware]}
+    reference: >-
+      `413 Content Too Large`. The limit is `max_body_size` in bytes and counts the raw body,
+      including multipart file data and encoding overhead.
+    facts:
+    - oversized requests get a 413 Content Too Large response
+    - the limit is set with max_body_size in bytes
+    - multipart file data and encoding overhead count toward the limit
+
+- name: 'starlette 1.10.0: Which OpenTelemetryMiddleware option keeps /health and readiness probes out of my traces?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'Which OpenTelemetryMiddleware option keeps /health and readiness probes out of my traces?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/middleware.md, heading_path: [OpenTelemetry, Exclude URLs]}
+    reference: >-
+      `excluded_urls`: a comma-separated string or a sequence of regular expressions, e.g.
+      `excluded_urls=r"/health$,/readiness$"`. No span is created when one matches the full request
+      URL.
+    facts:
+    - the option is excluded_urls
+    - it takes a comma-separated string or a sequence of regular expressions
+    - a match against the full request URL means no span is created
+
+- name: 'starlette 1.10.0: What arguments does the request method for 103 Early Hints take?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'What arguments does the request method for 103 Early Hints take?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/early-hints.md, heading_path: [Request.send_early_hints]}
+    reference: >-
+      `request.send_early_hints(link, *additional_links)`: each argument is an RFC 8288 `Link` header
+      value. It does nothing when the ASGI server does not support Early Hints.
+    facts:
+    - the signature is send_early_hints(link, *additional_links)
+    - each argument is an RFC 8288 Link header value
+    - it does nothing if the ASGI server lacks Early Hints support
+
+- name: 'starlette 1.10.0: If I raise HTTPException(status_code=404) without a detail, what text does the client get?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'If I raise HTTPException(status_code=404) without a detail, what text does the client get?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/exceptions.md, heading_path: [HTTPException]}
+    reference: >-
+      `detail` defaults to the standard phrase for the status code (an empty string when there is
+      none), and `ExceptionMiddleware` returns it as a plain-text response.
+    facts:
+    - detail defaults to the standard phrase for the status code
+    - with no standard phrase it defaults to an empty string
+    - HTTPException responses are plain text by default
+
+- name: 'starlette 1.10.0: My app limits bodies to 10 MB but one upload endpoint needs 100 MB. How do I set that up?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'My app limits bodies to 10 MB but one upload endpoint needs 100 MB. How do I set that up?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/routing.md, heading_path: [Request body size limits]}
+    reference: >-
+      Set `max_body_size=10 * 1024 * 1024` on `Starlette` and `max_body_size=100 * 1024 * 1024` on
+      the upload `Route`; an inner route, mount or router limit overrides the outer one after
+      routing. Application middleware that reads the body is still held to the application limit.
+    facts:
+    - Starlette, Router, Mount and Route accept max_body_size
+    - an inner limit overrides the outer limit after routing
+    - body-reading application middleware is bound by the application limit
+
+- name: 'starlette 1.10.0: How do I clear a CHIPS partitioned cookie from a response?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'How do I clear a CHIPS partitioned cookie from a response?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/responses.md, heading_path: [Response, Delete Cookie]}
+    reference: >-
+      On Python 3.14+, call `response.delete_cookie("session", secure=True, samesite="none",
+      partitioned=True)` with the same `path` and `domain` as the original cookie. `secure=True` is
+      required, or browsers reject the expiration.
+    facts:
+    - pass partitioned=True to delete_cookie
+    - it needs Python 3.14 or later
+    - secure=True is required or browsers reject the expiration
+    - use the same path and domain as the original cookie
+
+- name: 'starlette 1.10.0: How can a test check the trailing headers my ASGI app sends after the body?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'How can a test check the trailing headers my ASGI app sends after the body?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/testclient.md, heading_path: [HTTP trailers]}
+    reference: >-
+      `TestClient` supports the ASGI HTTP trailer extension: read
+      `response.extensions["http.response.trailers"]`, a list of raw byte pairs kept apart from
+      `response.headers`. Responses that declare no trailers have no such extension.
+    facts:
+    - trailers are in response.extensions["http.response.trailers"]
+    - they are a list of raw byte pairs
+    - trailers stay separate from response.headers
+
+- name: 'starlette 1.10.0: Unhandled exceptions return a 500 without Access-Control-Allow-Origin, so the browser hides the error. How do I fix that?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'Unhandled exceptions return a 500 without Access-Control-Allow-Origin, so the browser hides the error. How do I fix that?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/middleware.md, heading_path: [CORSMiddleware, CORSMiddleware Global Enforcement]}
+    reference: >-
+      The error response comes from `ServerErrorMiddleware`, outside the inner middleware. Wrap the
+      whole application instead: `app = CORSMiddleware(app=app, allow_origins=[...])`, so even error
+      responses get the CORS headers.
+    facts:
+    - errors caught by ServerErrorMiddleware bypass inner CORSMiddleware
+    - wrap the entire Starlette app with CORSMiddleware
+    - then error responses also carry Access-Control-Allow-Origin
+
+- name: 'starlette 1.10.0: I append to a list stored in request.session but the change is lost on the next request. Why?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'I append to a list stored in request.session but the change is lost on the next request. Why?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/middleware.md, heading_path: [SessionMiddleware]}
+    reference: >-
+      `SessionMiddleware` does not track changes to nested values, so
+      `request.session["cart"].append(item)` does not mark the session modified. Assign the value
+      back, e.g. `request.session["cart"] = cart`.
+    facts:
+    - changes to nested values are not tracked automatically
+    - assign the updated value back to the session key
+
+- name: 'starlette 1.10.0: Why does Starlette run my def endpoints and sync background tasks in threads?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'Why does Starlette run my def endpoints and sync background tasks in threads?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/threadpool.md, heading_path: [Thread Pool]}
+    reference: >-
+      To avoid blocking the event loop: synchronous code (def endpoints, sync background tasks, file
+      serving and uploads) runs in a thread pool via `anyio.to_thread.run_sync`.
+    facts:
+    - synchronous code runs in a thread pool to avoid blocking the event loop
+    - Starlette uses anyio.to_thread.run_sync
+    - FileResponse and UploadFile also use the thread pool
+
+- name: 'starlette 1.10.0: If the first of several background tasks raises, do the others still run?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'If the first of several background tasks raises, do the others still run?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/background.md, heading_path: [BackgroundTasks]}
+    reference: >-
+      No. `BackgroundTasks` runs its tasks in order, and when one raises, the following tasks are not
+      executed.
+    facts:
+    - background tasks run in order
+    - after a task raises, the following tasks do not run
+
+- name: 'starlette 1.10.0: Can I still pass Jinja options like auto_reload=True straight to Jinja2Templates?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'Can I still pass Jinja options like auto_reload=True straight to Jinja2Templates?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/release-notes.md, heading_path: ['1.0.0rc1 (February 23, 2026)', Removed]}
+    - {version: '1.10.0', article: docs/templates.md, heading_path: [Using custom jinja2.Environment instance]}
+    reference: >-
+      No. 1.0.0rc1 removed the `**env_options` parameter of `Jinja2Templates`. Build a
+      `jinja2.Environment(...)` yourself and pass it as `Jinja2Templates(env=env)`.
+    facts:
+    - 1.0.0rc1 removed **env_options from Jinja2Templates
+    - pass a preconfigured jinja2.Environment through the env parameter
+
+- name: 'starlette 1.10.0: Do Jinja2Templates escape HTML in variables by default now?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'Do Jinja2Templates escape HTML in variables by default now?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/templates.md, heading_path: [Autoescape]}
+    - {version: '1.10.0', article: docs/release-notes.md, heading_path: ['1.0.0rc1 (February 23, 2026)', Fixed]}
+    reference: >-
+      Yes. 1.0.0rc1 enabled autoescape by default: with the `directory` argument, `.html`, `.htm` and
+      `.xml` templates are autoescaped through `jinja2.select_autoescape()`, which protects against XSS.
+    facts:
+    - autoescape became the default in 1.0.0rc1
+    - it applies to .html, .htm and .xml templates when directory is used
+    - it uses jinja2.select_autoescape()
+
+- name: 'starlette 1.10.0: Does GZipMiddleware still buffer streamed responses before sending them?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'Does GZipMiddleware still buffer streamed responses before sending them?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/middleware.md, heading_path: [GZipMiddleware]}
+    - {version: '1.10.0', article: docs/release-notes.md, heading_path: ['1.5.0 (August 8, 2026)', Fixed]}
+    reference: >-
+      No. Since 1.5.0 it flushes GZip output for each streamed chunk, so chunks reach the client as
+      they are produced; many small chunks compress less well, so batch them to maximise compression.
+    facts:
+    - 1.5.0 flushes GZip output for each streamed chunk
+    - chunks reach the client as they are produced
+    - many small chunks compress less effectively than a few large ones
+
+- name: 'starlette 1.10.0: Which HTTP client library does TestClient need now?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'Which HTTP client library does TestClient need now?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/testclient.md, heading_path: []}
+    - {version: '1.10.0', article: docs/release-notes.md, heading_path: ['1.2.0 (May 28, 2026)', Added]}
+    reference: >-
+      `httpx2`. 1.2.0 added httpx2 support to the test client; `TestClient` is now built on it and
+      plain `httpx` still works but is deprecated. `httpx2` is included in `starlette[full]`.
+    facts:
+    - 1.2.0 added httpx2 support to the test client
+    - TestClient is built on httpx2
+    - plain httpx is still supported but deprecated
+    - httpx2 is included in starlette[full]
+
+- name: 'starlette 1.10.0: How do I get OpenTelemetry server spans for my app without tracing the /health endpoint, and what do I need to install?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'How do I get OpenTelemetry server spans for my app without tracing the /health endpoint, and what do I need to install?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/middleware.md, heading_path: [OpenTelemetry]}
+    - {version: '1.10.0', article: docs/middleware.md, heading_path: [OpenTelemetry, Exclude URLs]}
+    - {version: '1.10.0', article: docs/index.md, heading_path: [Introduction, Dependencies]}
+    reference: >-
+      Install `opentelemetry-api` (or `starlette[full]`), configure an SDK tracer provider, and add
+      `Middleware(OpenTelemetryMiddleware, excluded_urls=r"/health$")`. Without a configured provider
+      the middleware skips tracing; the middleware is experimental.
+    facts:
+    - OpenTelemetryMiddleware needs the opentelemetry-api package
+    - excluded_urls keeps matching URLs out of tracing
+    - without a configured tracer provider the middleware skips tracing
+    - OpenTelemetryMiddleware is experimental
+
+- name: 'starlette 1.10.0: max_part_size does not stop huge file uploads. What limits the whole multipart body?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'max_part_size does not stop huge file uploads. What limits the whole multipart body?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/requests.md, heading_path: [Request, Request Files]}
+    - {version: '1.10.0', article: docs/middleware.md, heading_path: [RequestBodyLimitMiddleware]}
+    - {version: '1.10.0', article: docs/routing.md, heading_path: [Request body size limits]}
+    reference: >-
+      `max_part_size` limits only non-file fields; uploads are spooled to temporary storage. To limit
+      the complete body, set `max_body_size` on the application, router, mount or route, or add
+      `RequestBodyLimitMiddleware(max_body_size=...)`, which answers 413.
+    facts:
+    - max_part_size only limits non-file fields
+    - uploaded files are spooled to temporary storage
+    - max_body_size or RequestBodyLimitMiddleware limits the whole body
+
+- name: 'starlette 1.10.0: My sync tests define a pytest event_loop fixture, but TestClient ignores it. Where should I create my async resources?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'My sync tests define a pytest event_loop fixture, but TestClient ignores it. Where should I create my async resources?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/testclient.md, heading_path: [Asynchronous tests]}
+    - {version: '1.10.0', article: docs/lifespan.md, heading_path: [Lifespan State]}
+    - {version: '1.10.0', article: docs/lifespan.md, heading_path: [Running lifespan in tests]}
+    reference: >-
+      An `event_loop` fixture does not configure `TestClient`, which runs its own event loop. Create
+      and close the resources in the lifespan (yielding them as state) and use `TestClient` as a
+      context manager so the lifespan runs.
+    facts:
+    - an event_loop fixture does not make TestClient use that loop
+    - create and close the resources in the lifespan
+    - use TestClient as a context manager so the lifespan runs
+
+- name: 'starlette 1.10.0: How do I show my own 404 page both for unknown static files and for unknown routes?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'How do I show my own 404 page both for unknown static files and for unknown routes?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: '1.10.0', article: docs/staticfiles.md, heading_path: [StaticFiles]}
+    - {version: '1.10.0', article: docs/exceptions.md, heading_path: []}
+    reference: >-
+      Run `StaticFiles` with `html=True` and a `404.html` file, which it shows as the 404 response;
+      for the rest of the app, register a handler under `exception_handlers={404: not_found}` that
+      returns your page.
+    facts:
+    - in HTML mode StaticFiles shows 404.html as the 404 response
+    - exception_handlers can map the 404 status code to a handler
+    - the handler returns the custom response
+
+- name: 'starlette 1.10.0: How do I wrap an endpoint in a database transaction with the databases package?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'How do I wrap an endpoint in a database transaction with the databases package?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Starlette 1.10.0 documentation no longer covers the databases package or transactions; its
+      database page only lists async libraries to use.
+
+- name: 'starlette 1.10.0: How do I set up Alembic migrations for my Starlette project?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'How do I set up Alembic migrations for my Starlette project?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The Starlette 1.10.0 documentation does not cover Alembic or database migrations.
+
+- name: 'starlette 1.10.0: Does Starlette have a built-in dependency injection system like Depends()?'
+  inputs:
+    project: starlette
+    version: '1.10.0'
+    query: 'Does Starlette have a built-in dependency injection system like Depends()?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The Starlette 1.10.0 documentation does not describe a dependency injection system.

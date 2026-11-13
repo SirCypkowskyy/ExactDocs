@@ -1,6 +1,6 @@
 """Adapter contract: every ``ChunkRepository`` behaves the same, whatever stores the data."""
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Collection
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 
@@ -175,11 +175,15 @@ class World:
         self,
         manifest_id: str,
         ref: str,
-        articles: dict[str, list[tuple[list[str], str]]],
+        articles: Mapping[str, Sequence[tuple[list[str], str] | tuple[list[str], str, int]]],
         *,
         status: ManifestStatus,
     ) -> IndexedManifestOut:
-        """Index ``path -> [(heading path, content)]``; the blob follows the content."""
+        """Index ``path -> [(heading path, content[, part])]``; the blob follows the content.
+
+        A section's occurrence counts the sections before it with the same headings; a part
+        above 0 continues the section before it.
+        """
         done = await self.retrieval.index_manifest(
             IndexManifestCommand(
                 manifest_id=manifest_id,
@@ -193,13 +197,14 @@ class World:
                         tags=[],
                         chunks=[
                             ChunkIn(
-                                heading_path=headings,
-                                occurrence_index=[h for h, _ in sections[:n]].count(headings),
-                                content=content,
-                                content_hash=f"h-{content}",
-                                anchor=f"a-{headings[-1]}",
+                                heading_path=list(section[0]),
+                                occurrence_index=_occurrence(sections, n),
+                                part=_part(section),
+                                content=section[1],
+                                content_hash=f"h-{section[1]}",
+                                anchor=f"a-{section[0][-1]}",
                             )
-                            for n, (headings, content) in enumerate(sections)
+                            for n, section in enumerate(sections)
                         ],
                     )
                     for path, sections in articles.items()
@@ -217,6 +222,18 @@ class World:
 
     async def read(self, chunk_id: str):
         return await self.retrieval.read_chunk(ReadChunkQuery(chunk_id=chunk_id))
+
+
+def _part(section: tuple) -> int:
+    """The part a section tuple names; 0 without one."""
+    return section[2] if len(section) > 2 else 0
+
+
+def _occurrence(sections: Sequence[tuple], n: int) -> int:
+    """The occurrence of the section at ``n``: whole sections (part 0) before it, same headings."""
+    headings = sections[n][0]
+    starts = sum(1 for s in sections[: n + 1] if s[0] == headings and not _part(s))
+    return starts - 1
 
 
 @pytest.fixture(params=["memory", *SQL_BACKENDS])
@@ -476,6 +493,87 @@ async def test_an_inserted_duplicate_heading_does_not_steal_the_old_section(
     assert moved is not None
     assert moved.chunk_id == new.chunk_ids["g.md"][1]  # the same text, not the same occurrence
     assert not moved.text_changed
+
+
+async def test_a_split_section_does_not_steal_the_id_of_a_later_one_with_its_heading(
+    world: World,
+) -> None:
+    old = await world.index_sections(
+        "m1",
+        "main",
+        {"g.md": [(["G", "Example"], "A"), (["G", "Example"], "B")]},
+        status=ManifestStatus.SUPERSEDED,
+    )
+    new = await world.index_sections(
+        "m2",
+        "main",
+        {
+            "g.md": [
+                (["G", "Example"], "A paragraph 1", 0),  # A grew past the bound and was split
+                (["G", "Example"], "A paragraph 10", 1),
+                (["G", "Example"], "B, edited"),
+            ]
+        },
+        status=ManifestStatus.ACTIVE,
+    )
+
+    moved = await world.stale_location(old.chunk_ids["g.md"][1])  # B's old ID
+
+    assert moved is not None
+    assert moved.chunk_id == new.chunk_ids["g.md"][2]  # B, not the second part of A
+    assert moved.text_changed
+
+
+async def test_an_edited_part_resolves_to_the_same_part_of_its_section(world: World) -> None:
+    old = await world.index_sections(
+        "m1",
+        "main",
+        {"g.md": [(["G"], "intro"), (["G", "Long"], "p1", 0), (["G", "Long"], "p2", 1)]},
+        status=ManifestStatus.SUPERSEDED,
+    )
+    new = await world.index_sections(
+        "m2",
+        "main",
+        {"g.md": [(["G"], "intro"), (["G", "Long"], "p1 new", 0), (["G", "Long"], "p2 new", 1)]},
+        status=ManifestStatus.ACTIVE,
+    )
+
+    moved = await world.stale_location(old.chunk_ids["g.md"][2])
+
+    assert moved is not None
+    assert moved.chunk_id == new.chunk_ids["g.md"][2]
+
+
+async def test_a_section_split_since_resolves_to_its_first_part(world: World) -> None:
+    old = await world.index_sections(
+        "m1", "main", {"g.md": [(["G", "Long"], "short")]}, status=ManifestStatus.SUPERSEDED
+    )
+    new = await world.index_sections(
+        "m2",
+        "main",
+        {"g.md": [(["G", "Long"], "much longer", 0), (["G", "Long"], "and more", 1)]},
+        status=ManifestStatus.ACTIVE,
+    )
+
+    moved = await world.stale_location(old.chunk_ids["g.md"][0])
+
+    assert moved is not None
+    assert (moved.chunk_id, moved.text_changed) == (new.chunk_ids["g.md"][0], True)
+
+
+async def test_parts_are_stored_and_read_back_with_their_index(world: World) -> None:
+    sections = [(["G", "Long"], "p1", 0), (["G", "Long"], "p2", 1), (["G", "Long"], "p3", 2)]
+    await world.index_sections("m1", "main", {"g.md": sections}, status=ManifestStatus.ACTIVE)
+
+    stored = await world.chunks.article("m1", "g.md")
+
+    assert [(s.occurrence_index, s.part) for s in stored] == [(0, 0), (0, 1), (0, 2)]
+    assert len({s.chunk_id for s in stored}) == 3
+    blob = f"g.md:{hash(tuple(map(str, sections)))}"
+    found = await world.retrieval.get_chunk_sets(
+        GetChunkSetsQuery(config_hash=CONFIG, blob_shas=[blob])
+    )
+    assert [c.part for c in found.chunks[blob]] == [0, 1, 2]
 
 
 async def test_identical_sections_resolve_to_the_same_headings_first(world: World) -> None:

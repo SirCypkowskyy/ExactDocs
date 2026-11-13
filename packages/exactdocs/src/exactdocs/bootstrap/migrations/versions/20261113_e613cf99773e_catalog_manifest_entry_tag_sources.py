@@ -7,14 +7,14 @@ was tagged with may since have changed. An API reader sees such tags as `importe
 import or tag-rule change of the version records their sources.
 
 Revision ID: e613cf99773e
-Revises: 97095cfef767
+Revises: 4ffb525052ed
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "e613cf99773e"
-down_revision = "97095cfef767"
+down_revision = "4ffb525052ed"
 branch_labels = None
 depends_on = None
 

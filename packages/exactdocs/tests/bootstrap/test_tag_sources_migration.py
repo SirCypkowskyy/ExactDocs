@@ -8,7 +8,7 @@ from databases import SQL_BACKENDS
 from exactdocs.bootstrap.database import alembic_config, migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 
-BEFORE, AFTER = "97095cfef767", "e613cf99773e"
+BEFORE, AFTER = "4ffb525052ed", "e613cf99773e"
 COLUMNS = {"front_matter_tags", "rule_tags"}
 
 

@@ -1,6 +1,6 @@
 """Per-case evaluators: where the expected section ranked, the version of every hit, the cost."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Final
 
@@ -58,14 +58,40 @@ def wrong_version_hits(question: Question, answer: Answer) -> list[Hit]:
     ]
 
 
-def rank_of(expected: Hit, answer: Answer) -> int | None:
-    """Return the 1-based rank of ``expected`` in the answer, or ``None`` when it is missing."""
+type SectionMatch = Callable[[Hit, Hit], bool]
+"""Tells whether a returned hit (second) answers an expected section (first)."""
+
+
+def same_section(expected: Hit, hit: Hit) -> bool:
+    """Match a hit to an expected section exactly: same version, article and heading path.
+
+    Args:
+        expected: The expected section.
+        hit: A returned hit.
+
+    Returns:
+        True when they name the same section.
+    """
+    return (hit.version, hit.article, hit.heading_path) == (
+        expected.version,
+        expected.article,
+        expected.heading_path,
+    )
+
+
+def rank_of(expected: Hit, answer: Answer, matches: SectionMatch = same_section) -> int | None:
+    """Return the 1-based rank of ``expected`` in the answer, or ``None`` when it is missing.
+
+    Args:
+        expected: The expected section.
+        answer: What the mode returned.
+        matches: When a hit counts as the expected section (exact by default).
+
+    Returns:
+        The rank of the first hit that matches.
+    """
     for rank, hit in enumerate(answer.hits, start=1):
-        if (hit.version, hit.article, hit.heading_path) == (
-            expected.version,
-            expected.article,
-            expected.heading_path,
-        ):
+        if matches(expected, hit):
             return rank
     return None
 
@@ -77,6 +103,10 @@ class VersionAndRank(Evaluator[Question, Answer, CaseInfo]):
     Recall and rank are scored only for a case whose version has an answer; the version is
     asserted for every case, so a version with no answer must still return nothing of another.
     """
+
+    matches: SectionMatch = same_section
+    """When a hit counts as the expected section: the same heading path by default; the golden
+    benchmarks pass a rule that holds across chunking depths (``golden_run.nested_match``)."""
 
     def evaluate(
         self, ctx: EvaluatorContext[Question, Answer, CaseInfo]
@@ -97,7 +127,7 @@ class VersionAndRank(Evaluator[Question, Answer, CaseInfo]):
         }
         expected = ctx.expected_output.hits if ctx.expected_output else []
         if expected:
-            rank = rank_of(expected[0], ctx.output)
+            rank = rank_of(expected[0], ctx.output, self.matches)
             for k in RECALL_AT:
                 results[recall_key(k)] = 1.0 if rank is not None and rank <= k else 0.0
             results[RECIPROCAL_RANK] = 1.0 / rank if rank else 0.0

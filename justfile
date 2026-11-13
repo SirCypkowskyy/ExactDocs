@@ -73,6 +73,18 @@ bdd *args:
 eval *args:
     uv run python packages/exactdocs/evals/run_retrieval_eval.py {{ args }}
 
+# Golden set: fetch the pinned corpus and check every case's sections exist (docs/evals.md)
+golden-validate *args:
+    uv run python packages/exactdocs/evals/run_golden.py validate {{ args }}
+
+# Golden set: fetch and import every pinned version with the real importer; records the commits
+golden-import *args:
+    uv run python packages/exactdocs/evals/run_golden.py import {{ args }}
+
+# Ingestion benchmark: chunking configurations measured on the golden corpus, with BM25 recall (docs/evals.md)
+ingestion-bench *args:
+    uv run python packages/exactdocs/evals/run_ingestion_bench.py {{ args }}
+
 # Web unit tests (vitest)
 web-test:
     cd {{ web }} && pnpm test

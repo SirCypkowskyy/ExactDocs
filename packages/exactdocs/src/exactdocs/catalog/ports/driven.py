@@ -354,7 +354,11 @@ class ManifestRepository(Protocol):
         ...
 
     async def replace_renames(
-        self, manifest_id: ManifestId, renames: Sequence[ManifestRename]
+        self,
+        manifest_id: ManifestId,
+        renames: Sequence[ManifestRename],
+        *,
+        renamed_from: VersionRef | None,
     ) -> None:
         """Make ``renames`` the manifest's whole rename map, in one transaction.
 
@@ -364,6 +368,7 @@ class ManifestRepository(Protocol):
         Args:
             manifest_id: The manifest.
             renames: The new rename map.
+            renamed_from: The version the map was detected against (``Manifest.renamed_from``).
         """
         ...
 

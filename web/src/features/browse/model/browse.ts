@@ -198,25 +198,21 @@ export function resolveVersion(library: LibraryDetail, requested: string | undef
 }
 
 /**
- * One hop across the rename map git saw when `ref` was imported: `forward` takes a path of the
- * version imported before `ref` to its path in `ref`, `back` the other way. Null: not moved.
+ * Where the article at `path` of version `from` is in version `to`, as the server answers it: it
+ * follows the rename map of every version between the two, hop by hop, in either order of import
+ * (`renamed-path?ref=<to>&from=<from>`). Null: not moved, or no import links the two versions.
  */
-export type RenameLookup = (
-  ref: string,
-  path: string,
-  direction: RenameDirection,
-) => Promise<RenamedPath | null>;
+export type RenameLookup = (from: string, to: string, path: string) => Promise<RenamedPath | null>;
 
 /**
- * Where the article at `path` of version `from` is in version `to`. The rename map is asked
- * first: `to` may have renamed it from `from` (switching to the next version), or `from` may have
- * renamed it from `to` (switching back). A lookup that fails, or a map from another version, is
- * no answer, and the path is kept (the article pane then offers the root when it is not there).
+ * Where the article at `path` of version `from` is in version `to`. One lookup: the server walks
+ * the versions between the two, so a switch that skips the version where the rename happened
+ * (v1.2.0 to v1.4.0 when v1.4.0 renamed it from v1.3.0) still lands on the renamed article. Only
+ * the server can chain the hops: a null answer does not say which version a map came from, and
+ * the display order of the versions is not their import order.
  *
- * One hop only: a switch that skips the version where the rename happened (v1.2.0 to v1.4.0 when
- * v1.4.0 renamed it from v1.3.0) keeps the path. The client cannot chain the hops itself, because
- * a null answer does not say which version the map came from and the display order of the
- * versions is not their import order. Multi-hop lookup on the server: #201.
+ * A lookup that fails, or an answer about other versions, is no answer, and the path is kept (the
+ * article pane then offers the root when it is not there).
  */
 export async function pathInVersion(
   lookup: RenameLookup,
@@ -225,15 +221,12 @@ export async function pathInVersion(
   path: string,
 ): Promise<string> {
   if (from === to) return path;
-  const [forward, back] = await Promise.allSettled([
-    lookup(to, path, "forward"),
-    lookup(from, path, "back"),
-  ]);
-  if (forward.status === "fulfilled" && forward.value?.from_ref === from) {
-    return forward.value.new_path;
+  try {
+    const found = await lookup(from, to, path);
+    return found && found.from_ref === from && found.ref === to ? found.new_path : path;
+  } catch {
+    return path;
   }
-  if (back.status === "fulfilled" && back.value?.from_ref === to) return back.value.old_path;
-  return path;
 }
 
 const COMMIT_PATH: Record<string, string> = {

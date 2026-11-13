@@ -1,0 +1,1136 @@
+# Golden-set cases for Pydantic (corpus.yaml: pydantic). Format and rules: docs/evals.md#the-golden-set.
+# Check with `just golden-validate --projects pydantic`.
+name: pydantic
+cases:
+- name: 'pydantic v2.5.3: What is orm_mode called in Pydantic V2?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'What is orm_mode called in Pydantic V2?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/migration.md, heading_path: [Migration guide, Changes to config]}
+    reference: '`orm_mode` is renamed to `from_attributes`, and config is now set as a
+      `model_config` dict instead of a nested `class Config`.'
+    facts:
+    - orm_mode is renamed to from_attributes
+    - config is set with a model_config dict; class Config is deprecated
+
+- name: 'pydantic v1.10.22: How do I create a model from an ORM object?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'How do I create a model from an ORM object?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v1.10.22, article: docs/usage/models.md, heading_path: [ORM Mode (aka Arbitrary Class Instances)]}
+    reference: Set `orm_mode = True` in the model's `Config` and build the instance with
+      `Model.from_orm(obj)`.
+    facts:
+    - the Config property orm_mode must be set to True
+    - the from_orm constructor creates the instance
+
+- name: 'pydantic v2.14.3: How do I add a check that runs after Pydantic has validated a field?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'How do I add a check that runs after Pydantic has validated a field?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/concepts/validators.md, heading_path: [Field validators]}
+    reference: Use an after validator, either `Annotated[int, AfterValidator(func)]` or a
+      `@field_validator('field', mode='after')` class method; it returns the validated value and
+      raises `ValueError` to reject it.
+    facts:
+    - after validators run after Pydantic's internal validation
+    - they are declared with AfterValidator in Annotated or with @field_validator(mode='after')
+    - the validator must return the validated value
+
+- name: 'pydantic v2.14.3: What is the difference between strict mode and lax mode?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'What is the difference between strict mode and lax mode?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/concepts/strict_mode.md, heading_path: []}
+    reference: By default (lax mode) Pydantic coerces values, such as the string '123' to the int
+      123; strict mode errors instead when the data is not of the right type, though JSON input
+      may get looser rules.
+    facts:
+    - lax mode is the default and coerces values when possible
+    - strict mode raises a validation error instead of coercing
+    - strict mode may allow looser rules for JSON input, such as strings for dates
+
+- name: 'pydantic v1.10.22: How do I include a property in serialization with @computed_field?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'How do I include a property in serialization with @computed_field?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The Pydantic v1.10 documentation has no computed_field.
+
+# ---------------------------------------------------------------- identifier-lookup
+
+- name: 'pydantic v1.10.22: Which Config setting makes a model reject unknown keys instead of dropping them?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'Which Config setting makes a model reject unknown keys instead of dropping them?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v1.10.22, article: docs/usage/model_config.md, heading_path: ['Options']}
+    reference: >-
+      Set `extra = 'forbid'` (or `Extra.forbid`) in the model's `Config`; the default is
+      `Extra.ignore`, which silently ignores extra attributes, and `'allow'` assigns them to the model.
+    facts:
+    - the Config option is extra
+    - extra set to forbid makes validation fail when extra attributes are passed
+    - the default is Extra.ignore, which silently ignores them
+
+- name: 'pydantic v1.10.22: What validator argument applies it to every element of a List instead of the whole list?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'What validator argument applies it to every element of a List instead of the whole list?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v1.10.22, article: docs/usage/validators.md, heading_path: ['Pre and per-item validators']}
+    reference: >-
+      Pass `each_item=True` to `@validator`; the validator is then applied to the individual values
+      of a `List`, `Dict`, `Set` and so on rather than to the whole object.
+    facts:
+    - the keyword argument is each_item=True
+    - it applies the validator to individual values of containers such as List, Dict or Set
+
+- name: 'pydantic v1.10.22: Which method builds a model from already-trusted data while skipping validation?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'Which method builds a model from already-trusted data while skipping validation?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v1.10.22, article: docs/usage/models.md, heading_path: ['Helper Functions', 'Creating models without validation']}
+    reference: >-
+      `Model.construct()` creates a model without any validation (around 30x faster), so it should only
+      be used with data that is already validated or trusted; its optional `_fields_set` argument says
+      which fields were originally set.
+    facts:
+    - the method is construct()
+    - construct() performs no validation and can create invalid models
+    - it is generally around 30x faster than full validation
+    - the optional _fields_set argument sets which fields count as set
+
+- name: 'pydantic v2.5.3: Which error type do I get when I pass 0.5 to an int field?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'Which error type do I get when I pass 0.5 to an int field?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/errors/validation_errors.md, heading_path: ['int_from_float']}
+    reference: >-
+      The error type is `int_from_float`, raised when a `float` value is provided for an `int` field.
+    facts:
+    - the error type is int_from_float
+    - it is raised when a float is given for an int field
+
+- name: 'pydantic v2.5.3: How do I map a field to the first element of a nested list in the input?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'How do I map a field to the first element of a nested list in the input?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/concepts/fields.md, heading_path: ['Field aliases', 'AliasPath and AliasChoices']}
+    reference: >-
+      Use `AliasPath` as the field's `validation_alias`, e.g.
+      `Field(validation_alias=AliasPath('names', 0))`; `AliasChoices` instead lists alternative aliases.
+    facts:
+    - AliasPath specifies a path of keys and indexes to the value
+    - it is passed as validation_alias in Field
+    - AliasChoices gives a choice of several aliases
+
+- name: 'pydantic v2.5.3: What is the error code when a model defines both class Config and model_config?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'What is the error code when a model defines both class Config and model_config?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/errors/usage_errors.md, heading_path: ['Config and model_config both defined {#config-both}']}
+    reference: >-
+      Defining both raises a `PydanticUserError` with the code `config-both`, at class definition.
+    facts:
+    - a PydanticUserError is raised
+    - its code is config-both
+
+- name: 'pydantic v2.14.3: Which config keys decide whether input may use the field name, the alias, or both?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'Which config keys decide whether input may use the field name, the alias, or both?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/concepts/alias.md, heading_path: ['Alias Configuration', 'ConfigDict Settings', 'Validation']}
+    - {version: v2.14.3, article: docs/concepts/alias.md, heading_path: ['Alias Configuration', 'Runtime Settings', 'Validation']}
+    reference: >-
+      `validate_by_alias` (default `True`) and `validate_by_name` (default `False`) in `ConfigDict`;
+      set both to `True` to accept either. Per call, `model_validate()` and the `TypeAdapter`
+      methods take `by_alias` and `by_name`.
+    facts:
+    - validate_by_alias is True by default
+    - validate_by_name is False by default
+    - by_alias and by_name can be passed per call to the validation methods
+
+- name: 'pydantic v2.14.3: What annotation drops invalid items from a list instead of failing the whole list?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'What annotation drops invalid items from a list instead of failing the whole list?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/concepts/types.md, heading_path: ['Utility types', 'OnErrorOmit']}
+    reference: >-
+      `OnErrorOmit` (added in v2.6), e.g. `list[OnErrorOmit[int]]`: items that fail validation are
+      silently omitted and the valid ones kept, instead of a `ValidationError` for the whole collection.
+    facts:
+    - the annotation is OnErrorOmit
+    - items failing validation are silently omitted and valid ones kept
+    - it was added in v2.6
+
+- name: 'pydantic v2.14.3: Which mypy plugin setting removes the **kwargs from the generated __init__ signature?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'Which mypy plugin setting removes the **kwargs from the generated __init__ signature?'
+  metadata: {kind: identifier-lookup}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/integrations/mypy.md, heading_path: ['Configuring the Plugin', 'init_forbid_extra']}
+    reference: >-
+      `init_forbid_extra` (default `False`). Without it the plugin adds `**kwargs: Any` to the
+      synthesized `__init__`, unless the model's `extra` config is `'forbid'`.
+    facts:
+    - the setting is init_forbid_extra
+    - it defaults to False
+    - otherwise the plugin adds **kwargs Any unless extra is set to forbid
+
+# ---------------------------------------------------------------- how-to
+
+- name: 'pydantic v1.10.22: How do I load settings from a .env file, and does a real environment variable win over it?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'How do I load settings from a .env file, and does a real environment variable win over it?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v1.10.22, article: docs/usage/settings.md, heading_path: ['Dotenv (.env) support']}
+    - {version: v1.10.22, article: docs/usage/settings.md, heading_path: ['Field value priority']}
+    reference: >-
+      Install python-dotenv, then set `env_file` (and optionally `env_file_encoding`) on the
+      `BaseSettings` `Config`, or pass `_env_file=` when instantiating. Environment variables always take
+      priority over values loaded from the dotenv file.
+    facts:
+    - dotenv parsing requires python-dotenv (pip install pydantic[dotenv])
+    - set env_file on Config or pass _env_file when instantiating
+    - environment variables take priority over the dotenv file
+
+- name: 'pydantic v1.10.22: My validator does not run when the field is omitted; how do I make it run anyway?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'My validator does not run when the field is omitted; how do I make it run anyway?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v1.10.22, article: docs/usage/validators.md, heading_path: ['Validate Always']}
+    reference: >-
+      Validators are skipped when no value is supplied, for performance. Pass `always=True` to
+      `@validator`, usually together with `pre=True`, since otherwise the default `None` would be
+      validated and fail.
+    facts:
+    - by default validators are not called when a value is not supplied
+    - always=True makes the validator always run
+    - it is often combined with pre=True
+
+- name: 'pydantic v1.10.22: How do I install pydantic without the compiled binaries to keep the environment small?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'How do I install pydantic without the compiled binaries to keep the environment small?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v1.10.22, article: docs/install.md, heading_path: ['Compiled with Cython', 'Performance vs package size trade-off']}
+    reference: >-
+      Install with `pip --no-binary pydantic` and keep Cython out of the environment or set
+      `SKIP_CYTHON=1`, e.g. `SKIP_CYTHON=1 pip install --no-binary pydantic pydantic<2`.
+    facts:
+    - use the pip --no-binary pydantic option
+    - set the SKIP_CYTHON environment variable or keep Cython out of the environment
+
+- name: 'pydantic v2.5.3: How do I keep unknown keys passed to a model and read them back?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'How do I keep unknown keys passed to a model and read them back?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/concepts/models.md, heading_path: ['Extra fields']}
+    reference: >-
+      Set `model_config = ConfigDict(extra='allow')`; the extra data is stored in
+      `__pydantic_extra__`, and annotating `__pydantic_extra__` gives the extra values a type to be
+      validated against.
+    facts:
+    - set extra='allow' in model_config
+    - the extra fields are stored in __pydantic_extra__
+    - annotating __pydantic_extra__ makes the extra values validated
+
+- name: 'pydantic v2.5.3: How do I validate a list of TypedDicts without defining a BaseModel?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'How do I validate a list of TypedDicts without defining a BaseModel?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/concepts/type_adapter.md, heading_path: []}
+    reference: >-
+      Wrap the type in a `TypeAdapter`, e.g. `TypeAdapter(List[User])`, and call
+      `validate_python(data)`; it also offers serialization and JSON schema generation.
+    facts:
+    - TypeAdapter validates arbitrary types without a BaseModel
+    - validation is done with validate_python
+    - TypeAdapter also serializes and generates JSON schema
+
+- name: 'pydantic v2.14.3: How do I make validation of a big list stop at the first bad item?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'How do I make validation of a big list stop at the first bad item?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/concepts/types.md, heading_path: ['Utility types', 'FailFast']}
+    - {version: v2.14.3, article: docs/concepts/performance.md, heading_path: ['Performance tips', 'Failing early with FailFast']}
+    reference: >-
+      Annotate the collection with `FailFast()`, e.g. `Annotated[list[int], FailFast()]` (v2.8+);
+      validation stops at the first failing item, which is faster but reports fewer errors.
+    facts:
+    - apply the FailFast annotation to the collection type
+    - validation stops as soon as an item fails
+    - you trade error information for performance
+    - FailFast is available since v2.8
+
+- name: 'pydantic v2.14.3: How can I validate a truncated JSON string while an LLM is still streaming it?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'How can I validate a truncated JSON string while an LLM is still streaming it?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/concepts/experimental.md, heading_path: ['Experimental Features', 'Partial Validation']}
+    - {version: v2.14.3, article: docs/concepts/experimental.md, heading_path: ['Experimental Features', 'Partial Validation', 'Limitations of Partial Validation', 'TypeAdapter only']}
+    reference: >-
+      Use experimental partial validation (v2.10): pass `experimental_allow_partial` (`True`/`'on'`, or
+      `'trailing-strings'` to keep an incomplete trailing string) to `TypeAdapter.validate_json()`,
+      `validate_python()` or `validate_strings()`. It only works on `TypeAdapter`, not `BaseModel`.
+    facts:
+    - pass experimental_allow_partial to the TypeAdapter validation methods
+    - the trailing-strings mode keeps an incomplete string at the end
+    - it is only supported on TypeAdapter, not on BaseModel
+    - partial validation is experimental
+
+- name: 'pydantic v2.14.3: How do I mark a field as deprecated so reading it warns and the JSON schema says so?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'How do I mark a field as deprecated so reading it warns and the JSON schema says so?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/concepts/fields.md, heading_path: ['Deprecated fields']}
+    - {version: v2.14.3, article: docs/concepts/fields.md, heading_path: ['Deprecated fields', 'deprecated as a string']}
+    reference: >-
+      Pass `deprecated` to `Field()` (v2.7+): a string (used as the message), a `warnings.deprecated`
+      instance or `True`. Accessing the field emits a runtime deprecation warning and the JSON schema
+      gets `deprecated: true`.
+    facts:
+    - use the deprecated parameter of Field
+    - it accepts a message string, a warnings.deprecated instance or a boolean
+    - accessing the field emits a runtime deprecation warning
+    - the generated JSON schema sets the deprecated keyword
+
+- name: 'pydantic v2.14.3: My Lambda fails with no module named pydantic_core._pydantic_core; how should I package pydantic?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'My Lambda fails with no module named pydantic_core._pydantic_core; how should I package pydantic?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/integrations/aws_lambda.md, heading_path: ['Troubleshooting', 'Missing pydantic_core module']}
+    - {version: v2.14.3, article: docs/integrations/aws_lambda.md, heading_path: ['Installing pydantic for AWS Lambda functions']}
+    reference: >-
+      The error means pydantic was installed for the wrong platform. Install wheels built for the
+      Lambda runtime: `pip install --platform manylinux2014_x86_64 --target=<dir> --implementation cp
+      --python-version <runtime> --only-binary=:all: --upgrade pydantic`, and check that the compiled
+      library's suffix matches the Lambda Python version.
+    facts:
+    - the error indicates pydantic was installed incorrectly for the platform
+    - install with pip --platform matching the Lambda runtime and only pre-built binary wheels
+    - the Python version must match the Lambda runtime
+
+- name: 'pydantic v2.14.3: How do I give a TypedDict its own pydantic config without type checker errors?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'How do I give a TypedDict its own pydantic config without type checker errors?'
+  metadata: {kind: how-to}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/concepts/config.md, heading_path: ['Configuration on other supported types']}
+    reference: >-
+      Decorate it with `@with_config(ConfigDict(...))`, which avoids static type checking errors with
+      `TypedDict`; the alternative is a `__pydantic_config__` class attribute.
+    facts:
+    - use the @with_config decorator
+    - with_config avoids type checker errors with TypedDict
+    - the alternative is the __pydantic_config__ class attribute
+
+# ---------------------------------------------------------------- conceptual
+
+- name: 'pydantic v1.10.22: Is a field annotated Optional[int] required, and how do I make it required but nullable?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'Is a field annotated Optional[int] required, and how do I make it required but nullable?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v1.10.22, article: docs/usage/models.md, heading_path: ['Required fields', 'Required Optional fields']}
+    reference: >-
+      In v1 an annotation-only `Optional[...]` field is not required. To require a value that may still
+      be `None`, give the `Optional` field `...` as its default; since v1.2 the two forms no longer mean
+      the same thing.
+    facts:
+    - an annotation-only Optional field is optional
+    - Optional with an ellipsis default is required but accepts None
+    - since v1.2 the two forms are no longer equivalent
+
+- name: 'pydantic v1.10.22: Why did my Union[int, str] field turn "1" into an int, and how do I stop that?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'Why did my Union[int, str] field turn "1" into an int, and how do I stop that?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v1.10.22, article: docs/usage/model_config.md, heading_path: ['Smart Union']}
+    reference: >-
+      v1 validates a `Union` in order and coerces when it can, so the first member that accepts the
+      value wins. Enabling `Config.smart_union` checks all allowed types before coercing; it is slower
+      and does not support compound types such as `List[int]` vs `List[str]`.
+    facts:
+    - by default the Union members are tried in order and coercion applies
+    - Config.smart_union checks all types before trying to coerce
+    - smart_union is slower and does not support compound types yet
+
+- name: 'pydantic v1.10.22: When does __post_init__ run compared to __post_init_post_parse__ on a pydantic dataclass?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'When does __post_init__ run compared to __post_init_post_parse__ on a pydantic dataclass?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v1.10.22, article: docs/usage/dataclasses.md, heading_path: ['Initialize hooks']}
+    reference: >-
+      `__post_init__` runs before validation and `__post_init_post_parse__` after it. For stdlib
+      dataclasses, `Config.post_init_call = 'after_validation'` makes `__post_init__` run after
+      validation; `InitVar` fields are passed to both hooks.
+    facts:
+    - __post_init__ executes before validation
+    - __post_init_post_parse__ executes after validation
+    - InitVar fields are passed to both hooks
+
+- name: 'pydantic v2.5.3: How does v2 pick the Union member when the input could match several of them?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'How does v2 pick the Union member when the input could match several of them?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/concepts/unions.md, heading_path: ['Union Modes', 'Smart Mode']}
+    reference: >-
+      The default `union_mode='smart'` tries members left to right and scores matches: an exact type
+      match is returned at once, otherwise the leftmost strict-mode match, otherwise the leftmost lax
+      match; if all fail, all errors are returned.
+    facts:
+    - smart mode is the default union mode in v2
+    - an exact type match wins immediately
+    - otherwise the leftmost strict match is preferred over a lax match
+    - if every member fails, all the errors are returned
+
+- name: 'pydantic v2.5.3: What is the difference between before, after, wrap and plain validators?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'What is the difference between before, after, wrap and plain validators?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/concepts/validators.md, heading_path: ['Annotated Validators', 'Before, After, Wrap and Plain validators']}
+    reference: >-
+      After validators run after Pydantic's parsing and are type safe; before validators run first on
+      the raw input; plain validators are like before validators but end validation, so no inner
+      validation runs; wrap validators can run code before and after the inner validation or stop it.
+      Only one plain validator can be used.
+    facts:
+    - after validators run after Pydantic's internal parsing
+    - before validators run before it and receive the raw input
+    - plain validators terminate validation so Pydantic's own validation does not run
+    - wrap validators can run code before and after the inner validation
+
+- name: 'pydantic v2.5.3: Why is model_validate_json faster than calling json.loads and then model_validate?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'Why is model_validate_json faster than calling json.loads and then model_validate?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/concepts/performance.md, heading_path: ['Performance tips', 'Use model_validate_json() not model_validate(json.loads(...))']}
+    - {version: v2.5.3, article: docs/concepts/json.md, heading_path: ['JSON', 'Json Parsing']}
+    reference: >-
+      With `json.loads` the JSON is parsed in Python into a dict and then validated; `model_validate_json()`
+      parses and validates internally with Pydantic's built-in JSON parser.
+    facts:
+    - json.loads parses the JSON in Python into a dict before validation
+    - model_validate_json performs parsing and validation internally
+
+- name: 'pydantic v2.14.3: Does str_to_lower set on a parent model also apply to a nested model field?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'Does str_to_lower set on a parent model also apply to a nested model field?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/concepts/config.md, heading_path: ['Configuration propagation']}
+    reference: >-
+      No. Pydantic models and dataclasses each have their own configuration boundary, so the parent's
+      config is not propagated to them; it is propagated to stdlib dataclasses and TypedDicts unless
+      they set their own config.
+    facts:
+    - config is not propagated to nested Pydantic models or dataclasses
+    - config is propagated to stdlib dataclasses and TypedDicts
+    - a stdlib type with its own config keeps it
+
+- name: 'pydantic v2.14.3: What do I lose if I override __init__ on a BaseModel?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'What do I lose if I override __init__ on a BaseModel?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/concepts/models.md, heading_path: ['Validating data', 'Defining a custom __init__()']}
+    reference: >-
+      A custom `__init__()` is called from every validation method without validation, so it must call
+      `super().__init__(**kwargs)`, and validation parameters such as strictness, extra behavior and
+      context are lost. Prefer after validators or `model_post_init()`.
+    facts:
+    - a custom __init__ is called by all validation methods
+    - it must call super().__init__
+    - validation parameters such as strictness, extra behavior and context are lost
+    - model_post_init or after validators are the recommended alternatives
+
+- name: 'pydantic v2.14.3: In what order do stacked BeforeValidator, WrapValidator and AfterValidator run in Annotated?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'In what order do stacked BeforeValidator, WrapValidator and AfterValidator run in Annotated?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/concepts/validators.md, heading_path: ['Ordering of validators']}
+    reference: >-
+      Before and wrap validators run from right to left, then after validators run from left to right.
+      Decorator validators are converted to the annotated form and added last, so the same ordering
+      applies.
+    facts:
+    - before and wrap validators run right to left
+    - after validators then run left to right
+    - decorator validators are added last after the existing metadata
+
+- name: 'pydantic v2.14.3: On Python 3.14, can a model annotation refer to a name defined later?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'On Python 3.14, can a model annotation refer to a name defined later?'
+  metadata: {kind: conceptual}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/concepts/forward_annotations.md, heading_path: ['Python 3.14 and greater']}
+    reference: >-
+      Yes. Since Python 3.14 annotations are no longer evaluated eagerly, so an annotation can reference
+      objects that are not yet defined when it is written.
+    facts:
+    - Python 3.14 does not evaluate annotations eagerly
+    - annotations can reference objects not yet defined
+
+# ---------------------------------------------------------------- version-change
+
+- name: 'pydantic v2.5.3: What do I call instead of .dict() and parse_obj() now?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'What do I call instead of .dict() and parse_obj() now?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/migration.md, heading_path: ['Migration guide', 'Changes to pydantic.BaseModel']}
+    reference: >-
+      V2 renames the `BaseModel` methods to `model_*`: `dict()` becomes `model_dump()` and `parse_obj()`
+      becomes `model_validate()` (also `json()` to `model_dump_json()`, `copy()` to `model_copy()`). The
+      old names are kept but emit `DeprecationWarning`.
+    facts:
+    - dict() is replaced by model_dump()
+    - parse_obj() is replaced by model_validate()
+    - the old method names still work but emit DeprecationWarning
+
+- name: 'pydantic v2.5.3: My v1 model uses a __root__ field; what is the v2 way to define a custom root type?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'My v1 model uses a __root__ field; what is the v2 way to define a custom root type?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/migration.md, heading_path: ['Migration guide', 'Changes to pydantic.BaseModel']}
+    - {version: v2.5.3, article: docs/concepts/models.md, heading_path: ['RootModel and custom root types']}
+    reference: >-
+      The `__root__` field is replaced by the new `RootModel` type: subclass or parametrize
+      `RootModel[...]` with the root type, and pass the root value as the first and only argument to
+      `__init__` or `model_validate`.
+    facts:
+    - RootModel replaces the __root__ field of v1
+    - the root type is the generic parameter of RootModel
+    - the root value is passed as the first and only argument
+
+- name: 'pydantic v2.5.3: Where did BaseSettings go after upgrading to v2?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'Where did BaseSettings go after upgrading to v2?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/migration.md, heading_path: ['Migration guide', 'BaseSettings has moved to pydantic-settings']}
+    reference: >-
+      `BaseSettings` moved to the separate `pydantic-settings` package, and its `parse_env_var`
+      classmethod was removed; customise the settings sources to parse values yourself.
+    facts:
+    - BaseSettings moved to the separate pydantic-settings package
+    - the parse_env_var classmethod was removed
+
+- name: 'pydantic v2.5.3: Is a field typed Optional[str] with no default still optional after upgrading from v1?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'Is a field typed Optional[str] with no default still optional after upgrading from v1?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/migration.md, heading_path: ['Migration guide', 'Changes to Handling of Standard Types', 'Required, optional, and nullable fields']}
+    reference: >-
+      No. In V2 `Optional[T]` without a default is required and only allows `None` as a value, a
+      breaking change from V1; give it a default (`= None`) to make it optional. Fields typed `Any` also
+      no longer default to `None`.
+    facts:
+    - an Optional field without a default is required in V2
+    - it still accepts None as a value
+    - this is a breaking change from V1
+    - fields annotated Any no longer have a default of None
+
+- name: 'pydantic v2.5.3: My Field(regex=...) with a lookahead stopped working after the upgrade; why?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'My Field(regex=...) with a lookahead stopped working after the upgrade; why?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/migration.md, heading_path: ['Migration guide', 'Changes to Handling of Standard Types', 'Patterns / regex on strings']}
+    - {version: v2.5.3, article: docs/migration.md, heading_path: ['Migration guide', 'Changes to pydantic.Field']}
+    reference: >-
+      V2 renamed `regex` to `pattern` and validates patterns with the Rust regex crate, which runs in
+      linear time but drops look-arounds and backreferences. Set the `regex_engine` config to use
+      Python's regex library instead.
+    facts:
+    - the Field argument regex is replaced by pattern
+    - V2 uses the Rust regex crate instead of Python's re
+    - the Rust crate does not support look-arounds and backreferences
+    - the regex_engine config setting switches back to Python's regex library
+
+- name: 'pydantic v2.5.3: Does a TypeError raised inside a validator still turn into a ValidationError?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'Does a TypeError raised inside a validator still turn into a ValidationError?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/migration.md, heading_path: ['Migration guide', 'Changes to validators', 'TypeError is no longer converted to ValidationError in validators']}
+    reference: >-
+      No. In V1 a `TypeError` in a validator was wrapped into a `ValidationError`; in V2 it propagates
+      as a `TypeError`, for all validation decorators.
+    facts:
+    - in V1 a TypeError in a validator became a ValidationError
+    - in V2 the TypeError is no longer converted and is raised as is
+    - this applies to all validation decorators
+
+- name: 'pydantic v2.5.3: How do I port a ConstrainedInt subclass to v2?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'How do I port a ConstrainedInt subclass to v2?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/migration.md, heading_path: ['Migration guide', 'Constrained types']}
+    reference: >-
+      The `Constrained*` classes were removed; replace them with `Annotated[<type>, Field(...)]`, e.g.
+      `MyInt = Annotated[int, Field(ge=0)]`. For `ConstrainedStr` use `StringConstraints`.
+    facts:
+    - the Constrained classes were removed in V2
+    - replace them with Annotated and Field constraints
+    - StringConstraints replaces ConstrainedStr
+
+- name: 'pydantic v2.14.3: v1 accepted 10.2 for an int field; what does v2 do with it?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'v1 accepted 10.2 for an int field; what does v2 do with it?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/migration.md, heading_path: ['Migration guide', 'Type conversion from floats to integers']}
+    reference: >-
+      V1 accepted any float for an `int` field, possibly losing data. V2 only converts a float to an int
+      when its decimal part is zero (10.0 becomes 10); 10.2 raises a `ValidationError` of type
+      `int_from_float`.
+    facts:
+    - V1 accepted any float value for an int field
+    - V2 converts floats to int only when the decimal part is zero
+    - a fractional float raises an int_from_float validation error
+
+- name: 'pydantic v2.14.3: Can I import from pydantic.v1 while my project is still pinned to pydantic 1.x?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'Can I import from pydantic.v1 while my project is still pinned to pydantic 1.x?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/migration.md, heading_path: ['Continue using Pydantic V1 features', 'Using Pydantic v1 features in a v1/v2 environment']}
+    reference: >-
+      Yes, as of `pydantic>=1.10.17` the `pydantic.v1` namespace exists in V1 too. Replace `pydantic<2`
+      with `pydantic>=1.10.17` and change imports from `pydantic.<module>` to `pydantic.v1.<module>`.
+    facts:
+    - the pydantic.v1 namespace is available in V1 as of 1.10.17
+    - replace pydantic<2 with pydantic>=1.10.17
+    - imports change from pydantic.<module> to pydantic.v1.<module>
+
+- name: 'pydantic v2.14.3: Does Pydantic still ship a Hypothesis plugin?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'Does Pydantic still ship a Hypothesis plugin?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/integrations/hypothesis.md, heading_path: []}
+    reference: >-
+      No. Pydantic v2.0 dropped built-in Hypothesis support and no longer ships the plugin; it was
+      removed temporarily and may come back in a future release.
+    facts:
+    - Pydantic v2.0 dropped the built-in Hypothesis plugin
+    - the removal is described as temporary and the plugin may return
+
+- name: 'pydantic v2.14.3: Is there something newer than SerializeAsAny for dumping all fields of a subclass instance?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'Is there something newer than SerializeAsAny for dumping all fields of a subclass instance?'
+  metadata: {kind: version-change}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/concepts/serialization.md, heading_path: ['Serializing subclasses', 'Polymorphic serialization']}
+    reference: >-
+      Yes, polymorphic serialization, added in v2.13 as a better alternative to serialize-as-any. Enable
+      it with the `polymorphic_serialization` config setting on the polymorphic class or the
+      `polymorphic_serialization` argument of the serialization methods; it only applies to Pydantic
+      models and dataclasses.
+    facts:
+    - polymorphic serialization was added in v2.13
+    - it is enabled with the polymorphic_serialization config setting or runtime argument
+    - it only applies to Pydantic models and Pydantic dataclasses
+
+# ---------------------------------------------------------------- cross-page
+
+- name: 'pydantic v1.10.22: My custom type uses __get_validators__; how do I also control its JSON schema?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'My custom type uses __get_validators__; how do I also control its JSON schema?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v1.10.22, article: docs/usage/schema.md, heading_path: ['Modifying schema in custom fields']}
+    - {version: v1.10.22, article: docs/usage/types.md, heading_path: ['Custom Data Types', 'Classes with __get_validators__']}
+    reference: >-
+      Validation comes from the `__get_validators__` classmethod, which yields the validators; the
+      schema is customised by adding a `__modify_schema__` classmethod to the same class, which may also
+      take a `field` argument (an `Optional[ModelField]`).
+    facts:
+    - __get_validators__ is a classmethod that provides the validators for the type
+    - the __modify_schema__ classmethod customises the generated schema
+    - __modify_schema__ can take an optional field argument
+
+- name: 'pydantic v1.10.22: How do I make a model immutable and hashable, and will mypy catch assignments?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'How do I make a model immutable and hashable, and will mypy catch assignments?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v1.10.22, article: docs/usage/model_config.md, heading_path: ['Options']}
+    - {version: v1.10.22, article: docs/usage/models.md, heading_path: ['Faux Immutability']}
+    - {version: v1.10.22, article: docs/mypy_plugin.md, heading_path: ['Plugin Capabilities', 'Respect Config.allow_mutation']}
+    reference: >-
+      Set `allow_mutation = False` in `Config` to make assignments raise; `frozen = True` (beta) does the
+      same and also generates `__hash__()`. Immutability is shallow, e.g. a dict field can still be
+      changed. With the mypy plugin, assigning a field when `allow_mutation` is `False` is a mypy error.
+    facts:
+    - allow_mutation = False makes changing attributes raise errors
+    - frozen = True also generates a __hash__ method
+    - mutable values such as a dict field can still be changed
+    - the mypy plugin reports an error when assigning to a field with allow_mutation False
+
+- name: 'pydantic v1.10.22: My @validate_arguments function takes an argument of my own plain class; how do I allow it?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'My @validate_arguments function takes an argument of my own plain class; how do I allow it?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v1.10.22, article: docs/usage/validation_decorator.md, heading_path: ['Custom Config']}
+    - {version: v1.10.22, article: docs/usage/model_config.md, heading_path: ['Options']}
+    reference: >-
+      Pass a config to the decorator with the `config` keyword (a config class or a dict) setting
+      `arbitrary_types_allowed=True`; arbitrary types are then validated simply by checking that the
+      value is an instance of the type.
+    facts:
+    - validate_arguments takes a config keyword argument, a class or a dict
+    - arbitrary_types_allowed allows arbitrary user types
+    - arbitrary types are validated with an isinstance check
+
+- name: 'pydantic v2.5.3: How do I replace parse_obj_as(List[Item], data) in v2?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'How do I replace parse_obj_as(List[Item], data) in v2?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/migration.md, heading_path: ['Migration guide', 'Introduction of TypeAdapter']}
+    - {version: v2.5.3, article: docs/concepts/type_adapter.md, heading_path: ['Parsing data into a specified type']}
+    reference: >-
+      `parse_obj_as` and `schema_of` are deprecated; use `TypeAdapter`:
+      `TypeAdapter(List[Item]).validate_python(data)`, which behaves like `model_validate` for arbitrary
+      types. Its `json_schema()` replaces `schema_of`.
+    facts:
+    - parse_obj_as is deprecated in V2
+    - TypeAdapter replaces parse_obj_as and schema_of
+    - TypeAdapter(List[Item]).validate_python(data) parses the data
+
+- name: 'pydantic v2.5.3: How do I port a v1 @validator that used each_item=True and the field argument?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'How do I port a v1 @validator that used each_item=True and the field argument?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/migration.md, heading_path: ['Migration guide', 'Changes to validators', '@validator and @root_validator are deprecated']}
+    - {version: v2.5.3, article: docs/concepts/validators.md, heading_path: ['Field validators']}
+    reference: >-
+      Replace the deprecated `@validator` with `@field_validator`. It has no `each_item`: put the
+      constraint on the inner type instead, e.g. `List[Annotated[int, Field(ge=0)]]`. `field` and
+      `config` are no longer accepted; a third `ValidationInfo` argument gives e.g. `info.field_name`.
+    facts:
+    - '@validator is deprecated in favour of @field_validator'
+    - field_validator has no each_item; annotate the type argument of the container instead
+    - the field and config arguments can no longer be used in the signature
+    - the optional third argument is a ValidationInfo instance
+
+- name: 'pydantic v2.5.3: After upgrading, model_dump drops the extra fields of a subclass instance; how do I get them back?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'After upgrading, model_dump drops the extra fields of a subclass instance; how do I get them back?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v2.5.3, article: docs/migration.md, heading_path: ['Migration guide', 'Changes to pydantic.BaseModel']}
+    - {version: v2.5.3, article: docs/concepts/serialization.md, heading_path: ['Serializing subclasses', 'Subclass instances for fields of BaseModel, dataclasses, TypedDict']}
+    - {version: v2.5.3, article: docs/concepts/serialization.md, heading_path: ['Serializing subclasses', 'Serializing with duck-typing']}
+    reference: >-
+      V2 dumps a nested model only with the fields of the annotated type (V1 included all subclass
+      fields), to avoid accidental leaks. Annotate the field as `SerializeAsAny[User]` to serialize it as
+      if typed `Any` and restore the old duck-typing behavior.
+    facts:
+    - V2 only includes the fields defined on the annotated type of the field
+    - V1 included all fields of the subclass instance
+    - SerializeAsAny restores the duck-typing serialization behavior
+
+- name: 'pydantic v2.14.3: How do I make a whole model strict but let one field still coerce, and can I go strict for a single call?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'How do I make a whole model strict but let one field still coerce, and can I go strict for a single call?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/concepts/strict_mode.md, heading_path: ['As a configuration value']}
+    - {version: v2.14.3, article: docs/concepts/fields.md, heading_path: ['Strict fields']}
+    - {version: v2.14.3, article: docs/concepts/strict_mode.md, heading_path: ['As a validation parameter']}
+    reference: >-
+      Set `model_config = ConfigDict(strict=True)` and override the one field with `Field(strict=False)`.
+      For a single call, pass `strict=True` to the validation methods of models and type adapters.
+    facts:
+    - ConfigDict(strict=True) makes the model strict
+    - Field(strict=False) overrides strictness for one field
+    - strict=True can be passed per validation call
+
+- name: 'pydantic v2.14.3: How do I record failed validations in production with Logfire, and what does each record hold?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'How do I record failed validations in production with Logfire, and what does each record hold?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/integrations/logfire.md, heading_path: ['Pydantic Logfire', 'Record failed validations']}
+    - {version: v2.14.3, article: docs/errors/troubleshooting.md, heading_path: ['Troubleshooting Validation Errors with Logfire', 'Record a production failure']}
+    reference: >-
+      Install `logfire`, run `logfire auth`, then call `logfire.configure()` and
+      `logfire.instrument_pydantic(record='failure')` before defining or importing the models. Each
+      failure becomes a warning record with the rejected values from the structured errors, attached to
+      the surrounding trace; successful validations stay aggregate metrics.
+    facts:
+    - call logfire.instrument_pydantic(record='failure') before defining or importing the models
+    - failed validations become individual warning records
+    - records contain the rejected values from the structured errors
+    - successful validations are only collected as metrics
+
+- name: 'pydantic v2.14.3: How do I set up a tagged union of models, and why is it faster than a plain union?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'How do I set up a tagged union of models, and why is it faster than a plain union?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/concepts/unions.md, heading_path: ['Discriminated unions', 'Discriminated unions with string discriminators']}
+    - {version: v2.14.3, article: docs/concepts/unions.md, heading_path: ['Discriminated unions']}
+    - {version: v2.14.3, article: docs/concepts/fields.md, heading_path: ['Discriminator']}
+    - {version: v2.14.3, article: docs/concepts/performance.md, heading_path: ['Performance tips', 'Use tagged union, not union']}
+    reference: >-
+      Give every model a common field typed with `Literal` values and declare the union with
+      `Field(discriminator='<field>')` (or a `Discriminator`). Validation then goes straight to the
+      matching member instead of trying each, which is faster, avoids a pile of errors and adds an
+      OpenAPI `discriminator` to the JSON schema.
+    facts:
+    - each model has a common field typed with Literal values
+    - the union is declared with Field(discriminator=...)
+    - only the selected member is validated, which is more efficient and gives fewer errors
+    - the JSON schema gets the OpenAPI discriminator attribute
+
+- name: 'pydantic v2.14.3: On Lambda I get No package metadata was found for email-validator; what is it and how do I fix it?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'On Lambda I get No package metadata was found for email-validator; what is it and how do I fix it?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/integrations/aws_lambda.md, heading_path: ['Troubleshooting', 'No package metadata was found for email-validator']}
+    - {version: v2.14.3, article: docs/install.md, heading_path: ['Optional dependencies']}
+    reference: >-
+      email-validator is the optional `email` extra (`pip install 'pydantic[email]'`). Pydantic reads its
+      version through `importlib.metadata`, so the deployment must keep the package metadata: set `slim:
+      false` for serverless-python-requirements, or include email-validator's `dist-info` directory in
+      the `.zip`.
+    facts:
+    - email-validator is the optional email extra of pydantic
+    - Pydantic checks its version with importlib.metadata
+    - with the serverless framework set slim to false
+    - with a .zip archive include the dist-info directory of email-validator
+
+- name: 'pydantic v2.14.3: How do I parse an incomplete JSON document, both raw and validated against a type?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'How do I parse an incomplete JSON document, both raw and validated against a type?'
+  metadata: {kind: cross-page}
+  expected_output:
+    hits:
+    - {version: v2.14.3, article: docs/concepts/json.md, heading_path: ['JSON', 'Json Parsing', 'Partial JSON Parsing']}
+    - {version: v2.14.3, article: docs/concepts/experimental.md, heading_path: ['Experimental Features', 'Partial Validation']}
+    reference: >-
+      Raw: `pydantic_core.from_json(data, allow_partial=True)` (v2.7) returns what can be parsed, e.g.
+      `['aa', 'bb']` from `'["aa", "bb", "c'`. Validated: pass `experimental_allow_partial` to the
+      `TypeAdapter` validation methods (v2.10, experimental).
+    facts:
+    - pydantic_core.from_json with allow_partial=True parses incomplete JSON
+    - allow_partial is False by default and then raises a parsing error
+    - experimental_allow_partial on TypeAdapter methods validates partial data
+
+# ---------------------------------------------------------------- unanswerable
+
+- name: 'pydantic v1.10.22: How can invalid items be dropped from a list field instead of failing the whole model?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'How can invalid items be dropped from a list field instead of failing the whole model?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Pydantic v1.10 documentation has no way to omit invalid items (its V2 plan blog post only
+      mentions a future pydantic-core on_error option); OnErrorOmit exists only in the v2 documentation
+      (v2.6 and later).
+
+- name: 'pydantic v1.10.22: How do I get separate JSON schemas for a model as input and as serialized output?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'How do I get separate JSON schemas for a model as input and as serialized output?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Pydantic v1.10 documentation has a single schema per model; validation versus serialization
+      JSON schema modes are only documented in v2.
+
+- name: 'pydantic v1.10.22: Can Pydantic validate Protobuf messages or generate .proto files from models?'
+  inputs:
+    project: pydantic
+    version: v1.10.22
+    query: 'Can Pydantic validate Protobuf messages or generate .proto files from models?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: No pinned version of the Pydantic documentation mentions Protobuf.
+
+- name: 'pydantic v2.5.3: How do I validate a partial JSON string while it is still being streamed?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'How do I validate a partial JSON string while it is still being streamed?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Pydantic v2.5 documentation does not cover partial JSON parsing or partial validation; they
+      appear in later versions (from_json allow_partial in v2.7, experimental_allow_partial in v2.10).
+
+- name: 'pydantic v2.5.3: How do I stop validating a list at the first invalid item to save time?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'How do I stop validating a list at the first invalid item to save time?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: The Pydantic v2.5 documentation has no FailFast; it was added in v2.8.
+
+- name: 'pydantic v2.5.3: How do I mark a single model field as deprecated?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'How do I mark a single model field as deprecated?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Pydantic v2.5 documentation does not document deprecated fields; the deprecated parameter
+      of Field was added in v2.7.
+
+- name: 'pydantic v2.5.3: How do I send failed validations to Logfire?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'How do I send failed validations to Logfire?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Pydantic v2.5 documentation does not mention Logfire; the Logfire integration pages appear in
+      later versions.
+
+- name: 'pydantic v2.5.3: Can a model be exported as an Avro schema?'
+  inputs:
+    project: pydantic
+    version: v2.5.3
+    query: 'Can a model be exported as an Avro schema?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: No pinned version of the Pydantic documentation mentions Avro; only JSON Schema generation is documented.
+
+- name: 'pydantic v2.14.3: How do I install pydantic without compiling it with Cython, to save space?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'How do I install pydantic without compiling it with Cython, to save space?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: >-
+      The Pydantic v2.14 documentation says nothing about Cython or skipping compiled binaries; that
+      (SKIP_CYTHON, --no-binary) is only in the v1.10 install guide.
+
+- name: 'pydantic v2.14.3: Can model_dump output MessagePack directly?'
+  inputs:
+    project: pydantic
+    version: v2.14.3
+    query: 'Can model_dump output MessagePack directly?'
+  metadata: {kind: unanswerable}
+  expected_output:
+    hits: []
+    reference: No pinned version of the Pydantic documentation mentions MessagePack.

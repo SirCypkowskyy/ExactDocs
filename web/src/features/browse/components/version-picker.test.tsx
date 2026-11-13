@@ -18,14 +18,31 @@ const version = (ref: string, sha: string): Version => ({
   origin: "manual",
 });
 const versions = [version("v1.4.0", "b"), version("v1.3.0", "a"), version("v1.2.0", "9")];
-const rename: RenamedPath = {
-  library: "/fixture/docs-repo",
-  ref: "v1.4.0",
-  from_ref: "v1.3.0",
-  old_path: "guide/setup.md",
-  new_path: "guide/install.md",
-  similarity: 90,
-};
+/** The import order; v1.4.0 renamed `guide/setup.md` of v1.3.0 to `guide/install.md`. */
+const imported = ["v1.2.0", "v1.3.0", "v1.4.0"];
+const RENAMED_IN = imported.indexOf("v1.4.0");
+
+/** What the server answers for `path` of `from` in `to`, walking the versions in between. */
+function renamedPath(from: string, to: string, path: string): RenamedPath | null {
+  const [start, target] = [imported.indexOf(from), imported.indexOf(to)];
+  const moves: Record<string, string> =
+    start < RENAMED_IN && target >= RENAMED_IN
+      ? { "guide/setup.md": "guide/install.md" }
+      : start >= RENAMED_IN && target < RENAMED_IN
+        ? { "guide/install.md": "guide/setup.md" }
+        : {};
+  const moved = moves[path];
+  return moved
+    ? {
+        library: "/fixture/docs-repo",
+        ref: to,
+        from_ref: from,
+        old_path: path,
+        new_path: moved,
+        similarity: 90,
+      }
+    : null;
+}
 
 interface Served {
   /** Status of the rename lookups. */
@@ -37,8 +54,8 @@ interface Served {
 }
 
 /**
- * The library's API: the rename map of v1.4.0 (`guide/setup.md` of v1.3.0 is `guide/install.md`
- * there) and the default-version pin.
+ * The library's API: the rename lookup across versions (`guide/setup.md` of v1.3.0 became
+ * `guide/install.md` in v1.4.0) and the default-version pin.
  */
 function serve({ renames = 200, pin = 200, hold = {} }: Served = {}) {
   const json = (status: number, body: unknown) =>
@@ -52,10 +69,8 @@ function serve({ renames = 200, pin = 200, hold = {} }: Served = {}) {
       return json(pin, pin === 200 ? {} : { error: "not_found", detail: "gone" });
     }
     await hold[q.get("ref") ?? ""];
-    const forward = q.get("direction") === "forward" && q.get("path") === "guide/setup.md";
-    const back = q.get("direction") === "back" && q.get("path") === "guide/install.md";
-    const hit = q.get("ref") === "v1.4.0" && (forward || back);
-    return json(renames, renames === 200 ? { renamed: hit ? rename : null } : {});
+    const renamed = renamedPath(q.get("from") ?? "", q.get("ref") ?? "", q.get("path") ?? "");
+    return json(renames, renames === 200 ? { renamed } : {});
   });
   vi.stubGlobal("fetch", fetch);
   return fetch;
@@ -166,6 +181,34 @@ describe("VersionPicker follows renames", () => {
     expect(await screen.findByRole("status", { name: "Showing" })).toHaveTextContent(
       "v1.3.0 guide/setup.md",
     );
+  });
+
+  it("opens the renamed article when switching past the version that renamed it (#201)", async () => {
+    serve();
+    view("/libraries/fixture/docs-repo?version=v1.2.0&path=guide%2Fsetup.md");
+    await switchTo("v1.4.0");
+    expect(await showing()).toHaveTextContent("v1.4.0 guide/install.md");
+  });
+
+  it("follows the rename back past the version that renamed it", async () => {
+    serve();
+    view("/libraries/fixture/docs-repo?version=v1.4.0&path=guide%2Finstall.md");
+    await switchTo("v1.2.0");
+    expect(await showing()).toHaveTextContent("v1.2.0 guide/setup.md");
+  });
+
+  it("asks the server once per version it may switch to", async () => {
+    const fetch = serve();
+    view("/libraries/fixture/docs-repo?version=v1.3.0&path=guide%2Fsetup.md");
+    await openPicker();
+    await waitFor(() =>
+      expect(linkTo("v1.4.0")).toHaveAttribute("href", expect.stringContaining("install")),
+    );
+    const asked = fetch.mock.calls.map(([url]) => new URL(url, "http://test").searchParams);
+    expect(asked.map((q) => [q.get("from"), q.get("ref"), q.get("path")]).sort()).toEqual([
+      ["v1.3.0", "v1.2.0", "guide/setup.md"],
+      ["v1.3.0", "v1.4.0", "guide/setup.md"],
+    ]);
   });
 
   it("keeps a path that was not renamed", async () => {

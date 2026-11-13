@@ -984,6 +984,29 @@ async def test_renames_are_stored_with_their_manifest_and_found_by_old_path(stor
     assert await fetch(stores.manifests, "m1") == replace(moved, entries=(), renames=())
 
 
+async def test_the_version_a_manifest_follows_is_kept_without_renames_and_in_a_copy(
+    stores: Stores,
+) -> None:
+    linked = replace(
+        manifest("m1", "v1.4.0", "aaa111", entry("a.md", "b1"), kind=RefKind.TAG),
+        renamed_from=VersionRef("v1.3.0"),
+    )
+    await store(stores, linked)
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+
+    copied = await stores.copier.copy_active(
+        PAYMENTS.id, VersionRef("v1.4.0"), ManifestId("m2"), at=T0, content_version=1
+    )
+
+    assert (await fetch(stores.manifests, "m1")).renamed_from == VersionRef("v1.3.0")
+    assert copied is not None
+    assert copied[0].renamed_from == VersionRef("v1.3.0")
+    assert {m.id: m.renamed_from for m in await stores.manifests.list_live(PAYMENTS.id)} == {
+        ManifestId("m1"): VersionRef("v1.3.0"),
+        ManifestId("m2"): VersionRef("v1.3.0"),
+    }
+
+
 async def test_renames_go_with_their_manifest(stores: Stores) -> None:
     pending = replace(
         manifest("m1", "v1.4.0", "aaa111", entry("a.md", "b1"), kind=RefKind.TAG),
@@ -1017,14 +1040,20 @@ async def test_replacing_renames_keeps_only_renames_into_entries_once_per_old_pa
             rename("guide/setup.md", INSTALL, similarity=50),  # a second one of the old path
             rename("gone.md", "not/an/article.md"),
         ],
+        renamed_from=VersionRef("v1.3.0"),
     )
 
     assert await stores.manifests.list_renames(ManifestId("m1"), limit=9) == (
         rename("guide/setup.md", INSTALL, similarity=90),
     )
-    await stores.manifests.replace_renames(ManifestId("m1"), [])
+    assert (await fetch(stores.manifests, "m1")).renamed_from == VersionRef("v1.3.0")
+    await stores.manifests.replace_renames(ManifestId("m1"), [], renamed_from=VersionRef("v1.3.1"))
     assert await stores.manifests.list_renames(ManifestId("m1"), limit=9) == ()
-    await stores.manifests.replace_renames(ManifestId("nope"), [rename("a.md", INSTALL)])
+    # Nothing moved since v1.3.1: the link stays, so a path is still followed across it.
+    assert (await fetch(stores.manifests, "m1")).renamed_from == VersionRef("v1.3.1")
+    await stores.manifests.replace_renames(
+        ManifestId("nope"), [rename("a.md", INSTALL)], renamed_from=None
+    )
     assert (
         await stores.manifests.find_rename(ManifestId("nope"), INSTALL, RenameDirection.BACK)
         is None
