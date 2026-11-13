@@ -27,10 +27,12 @@ const handledByBrowser = (event: MouseEvent) =>
 
 /**
  * Switches the version and keeps the article, so the same page can be compared across versions.
- * An article renamed between the two versions is followed through the rename map; one that is
- * not there either way keeps its path (the article pane then offers the version's root).
+ * An article renamed between the two versions is followed through the rename maps of every
+ * version in between, even ones the list skips; one that did not move keeps its path (the article
+ * pane then offers the version's root when it is not there).
  *
- * The renames are looked up when the list opens, and each link carries the path it resolved to,
+ * The renames are looked up when the list opens, once per version, and each link carries the path
+ * it resolved to,
  * so a new tab or a copied link lands on the renamed article too. Only a click on a version whose
  * answer is still on its way waits for it, and a later click or navigation cancels that wait.
  */

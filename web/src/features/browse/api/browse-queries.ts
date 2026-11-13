@@ -103,7 +103,10 @@ export const accessQueryOptions = (owner: string, repo: string) =>
  */
 export const RENAME_LOOKUP_TIMEOUT_MS = 1500;
 
-/** Where `path` moved across the renames of the version (`null`: not moved); see `RenameLookup`. */
+/**
+ * Where `path` moved across the renames of the version, one hop (`forward`: from the version
+ * imported before it; `back`: to it). `null`: not moved.
+ */
 const renamedPathQueryOptions = (
   { owner, repo, ref, sha }: VersionArgs,
   path: string,
@@ -129,8 +132,8 @@ const renamedPathQueryOptions = (
 
 /**
  * Where `path`, which this version does not have, went when the version was imported: the new
- * path git saw it renamed to, or `null`. One hop, like the version switch; a failed lookup is
- * no answer (the "not in this version" page stays). Same short timeout, no retry.
+ * path git saw it renamed to, or `null`. One hop: the version's own map (a link only knows the
+ * version, not the one it came from); a failed lookup is no answer (the "not in this version" page stays). Same short timeout, no retry.
  */
 export const renamedInVersionQueryOptions = (version: VersionArgs, path: string) =>
   queryOptions({
@@ -153,8 +156,8 @@ const lasting = (error: unknown) => error instanceof HttpError && error.status <
 
 /**
  * The path of the article at `path` of `from` in `to`, following the renames between the two (see
- * `pathInVersion`). It never fails: without an answer the path is kept. The lookup on `from` is
- * shared by every target, so resolving N versions asks the server N + 1 times. An answer kept
+ * `pathInVersion`). It never fails: without an answer the path is kept. The server walks every
+ * version in between, so resolving N versions asks it N times, once per target. An answer kept
  * after a passing failure is stale at once, so a short stall does not stick for the full minute.
  */
 export const pathInVersionQueryOptions = (
@@ -176,15 +179,21 @@ export const pathInVersionQueryOptions = (
       to.commit_sha,
       path,
     ] as const,
-    queryFn: async ({ client }): Promise<PathInVersion> => {
+    queryFn: async ({ signal }): Promise<PathInVersion> => {
       let sure = true;
       const moved = await pathInVersion(
-        async (ref, at, direction) => {
-          const sha = ref === from.ref ? from.commit_sha : to.commit_sha;
+        async (start, target, at) => {
+          const query: QueryOf<"/api/v1/libraries/{owner}/{repo}/renamed-path"> = {
+            ref: target,
+            from: start,
+            path: at,
+          };
           try {
-            return await client.fetchQuery(
-              renamedPathQueryOptions({ owner, repo, ref, sha }, at, direction),
-            );
+            const answer = await getJson<RenameAnswer>(`${lib(owner, repo)}/renamed-path`, {
+              signal: AbortSignal.any([signal, AbortSignal.timeout(RENAME_LOOKUP_TIMEOUT_MS)]),
+              query,
+            });
+            return answer.renamed;
           } catch (error) {
             if (!lasting(error)) sure = false;
             throw error;
