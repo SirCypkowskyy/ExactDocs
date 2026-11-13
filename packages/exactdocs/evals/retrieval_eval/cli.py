@@ -66,21 +66,21 @@ def _parser() -> argparse.ArgumentParser:
         "--baseline",
         type=Path,
         default=None,
-        help=f"baseline JSON to compare recall@5 with (default: {BASELINE_FILE.name}; CI passes "
-        "the copy on develop); a path given here must exist",
+        help=f"baseline JSON to compare recall@5 with (default: {BASELINE_FILE.name}; pass "
+        "develop's copy to check a branch against it); a path given here must exist",
     )
     parser.add_argument(
         "--ratchet",
         action="store_true",
         help=f"fail when this branch's {BASELINE_FILE.name} stores a lower recall@5 for a gating "
-        "mode than --baseline (CI: the baseline only moves up), or was recorded for another "
+        "mode than --baseline (the baseline only moves up), or was recorded for another "
         "dataset; when --baseline was recorded for another dataset, the branch's is the bar",
     )
     parser.add_argument(
         "--reference-dataset",
         type=Path,
         default=None,
-        help="the dataset --baseline was measured on (CI: the copy on develop); when the dataset "
+        help="the dataset --baseline was measured on (e.g. develop's copy); when the dataset "
         "changed, it is run too and gated against --baseline, so old questions still catch a "
         "ranking regression",
     )
@@ -102,7 +102,7 @@ def _parser() -> argparse.ArgumentParser:
         "--expect-engine",
         default=None,
         help="fail unless this full-text search engine answers (fts5, pg_search, postgres_fts; "
-        "CI: pg_search on ParadeDB, so a silent fallback cannot pass)",
+        "the release: pg_search on ParadeDB, so a silent fallback cannot pass)",
     )
     parser.add_argument(
         "--write-baseline",

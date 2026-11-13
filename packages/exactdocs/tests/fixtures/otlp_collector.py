@@ -72,7 +72,7 @@ class Collector:
 
 
 def _value(value: object) -> object:
-    kind = value.WhichOneof("value")  # ty: ignore[unresolved-attribute]
+    kind = value.WhichOneof("value")  # ty: ignore[missing-attribute]
     return getattr(value, kind) if kind else None
 
 

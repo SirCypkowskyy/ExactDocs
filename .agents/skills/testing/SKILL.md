@@ -15,7 +15,7 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
 | Adapter contract | pytest, parametrized over adapters | `packages/exactdocs/tests/<domain>/` | every driven adapter (memory, sqlite, postgres) behaves the same | slower for DBs |
 | Architecture | pytest + **ArchUnitPython** | `packages/exactdocs/tests/architecture/` | boundaries in `docs/architecture.md` | fast |
 | Web | vitest + Testing Library | `web/src/**/*.test.tsx` | components and query logic of a feature | fast |
-| Retrieval eval | Pydantic Evals, `just eval` | `packages/exactdocs/evals/` (tests in `tests/evals/`) | recall, wrong-version rate, latency and cost per retrieval mode; gates in docs/evals.md | seconds |
+| Retrieval eval | Pydantic Evals, `just eval` | `packages/exactdocs/evals/` (tests in `tests/evals/`; the end-to-end ones are marked `eval`) | recall, wrong-version rate, latency and cost per retrieval mode; gates in docs/evals.md; runs on releases, not in CI | minutes |
 
 ## Rules of thumb
 
@@ -26,9 +26,10 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   for ports and no inheritance (see `FakeVersions` in `tests/retrieval/`).
 - **Assert outcomes, not calls.** Check returned DTOs and raised errors, not which methods were called.
 - **Version is a hard filter**: anything touching retrieval gets a "wrong version gets nothing" test.
-- **Retrieval ranking or a new mode**: run `just eval`; the wrong-version rate must stay 0 and BM25's
-  recall@5 within 2 points of `evals/retrieval_eval/baseline.json` (refresh it with
-  `--write-baseline` when ranking improves). A query added to `expected-queries.yaml` is added to
+- **Retrieval ranking or a new mode**: run `just eval` and `uv run pytest -m eval` before the PR.
+  CI does not run them; the release does, and a failing gate stops it. The wrong-version rate must
+  stay 0 and BM25's recall@5 within 2 points of `evals/retrieval_eval/baseline.json` (refresh it
+  with `--write-baseline` when ranking improves). A query added to `expected-queries.yaml` is added to
   the eval dataset too.
 - **Import and search tests use the fixture docs repository** (`packages/exactdocs/tests/fixtures/docs-repo/`):
   pytest fixture `docs_repo`, behave `context.fixture_repo`; read its README before changing content.
@@ -45,6 +46,8 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   `BEHAVE_SCENARIO_TIMEOUT` seconds (default 300) with every thread's stack (`environment.py`);
   still give a step's own waits a timeout, and end a `SlowDatabase` stall (`release()`) before the
   app stops.
+- A test that imports the fixture and runs the retrieval eval suite end to end gets
+  `@pytest.mark.eval` (deselected by default, run at release; docs/evals.md).
 - Async tests need no decorator (`asyncio_mode = "auto"`). Warnings are errors (`filterwarnings = error`).
 - **Close every SQLite connection a test opens**, or the garbage collector finalizes it during a
   later test, which then fails with "unclosed database". An autouse guard
@@ -73,7 +76,8 @@ A dependency bump can also change it; check that the diff is only generated nois
 ## Commands
 
 ```bash
-uv run pytest                                    # everything
+uv run pytest                                    # everything but the slow eval tests
+uv run pytest -m eval                            # the retrieval eval suite end to end
 uv run pytest packages/exactdocs/tests/catalog   # one domain
 uv run pytest -k version                         # by name
 uv run pytest --cov=exactdocs --cov-report=term-missing
