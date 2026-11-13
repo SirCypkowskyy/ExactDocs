@@ -155,7 +155,10 @@ async def test_another_accounts_token_is_a_404_like_a_missing_one(
 ) -> None:
     async with container.engine.begin() as connection:
         await connection.execute(
-            text("INSERT INTO identity_accounts VALUES ('bob', 'bob', 'x', 'admin', '2026-01-01');")
+            text(
+                "INSERT INTO identity_accounts (id, username, password_hash, role, created_at) "
+                "VALUES ('bob', 'bob', 'x', 'admin', '2026-01-01');"
+            )
         )
         await connection.execute(
             text(

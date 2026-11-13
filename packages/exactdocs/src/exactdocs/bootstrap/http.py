@@ -31,6 +31,42 @@ from exactdocs.ingestion.adapters.driving import http as ingestion_http
 from exactdocs.retrieval.adapters.driving import http as retrieval_http
 
 
+def _include_session_routers(v1: APIRouter, container: Container) -> identity_http.CurrentCaller:
+    """Add the routes that take a signed-in session and never an API token.
+
+    ``/tokens`` (a leaked token must not mint its own successor) and ``/users`` (nor create
+    accounts; operators only).
+
+    Args:
+        v1: The ``/api/v1`` router.
+        container: The wired domains.
+
+    Returns:
+        The dependency that requires a signed-in session, for other routes to use.
+    """
+    session_caller = identity_http.build_session_caller(
+        identify_caller=container.identity.identify_caller
+    )
+    v1.include_router(
+        identity_http.build_tokens_router(
+            create_token=container.identity.create_token,
+            list_tokens=container.identity.list_tokens,
+            revoke_token=container.identity.revoke_token,
+            session_caller=session_caller,
+        )
+    )
+    v1.include_router(
+        identity_http.build_users_router(
+            list_users=container.identity.list_users,
+            create_user=container.identity.create_user,
+            set_user_disabled=container.identity.set_user_disabled,
+            reset_password=container.identity.reset_password,
+            session_caller=session_caller,
+        )
+    )
+    return session_caller
+
+
 def create_app(container: Container) -> FastAPI:
     """Build the single HTTP service: REST API, MCP (Streamable HTTP) and the web UI.
 
@@ -124,17 +160,7 @@ def create_app(container: Container) -> FastAPI:
             secure_cookies=settings.secure_cookies,
         )
     )
-    session_caller = identity_http.build_session_caller(
-        identify_caller=container.identity.identify_caller
-    )
-    v1.include_router(
-        identity_http.build_tokens_router(
-            create_token=container.identity.create_token,
-            list_tokens=container.identity.list_tokens,
-            revoke_token=container.identity.revoke_token,
-            session_caller=session_caller,
-        )
-    )
+    session_caller = _include_session_routers(v1, container)
     # Everything else needs a caller: a session cookie or an API token. Add new domain routers here.
     current_caller = identity_http.build_current_caller(
         identify_caller=container.identity.identify_caller,
@@ -192,7 +218,7 @@ def create_app(container: Container) -> FastAPI:
             set_library_retrieval=container.set_library_retrieval,
         )
     )
-    # Every signed-in account is an admin until library roles exist (E12-05).
+    # Every signed-in account, operator or not, may do this until library roles exist (E12-05).
     protected.include_router(
         retrieval_http.build_ai_router(
             list_providers=container.retrieval.list_providers,

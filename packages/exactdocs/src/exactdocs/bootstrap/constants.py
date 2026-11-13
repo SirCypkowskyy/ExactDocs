@@ -14,6 +14,7 @@ from exactdocs_kernel import (
     BusyError,
     ConflictError,
     DomainError,
+    ForbiddenError,
     NotFoundError,
     RateLimitedError,
     UnauthenticatedError,
@@ -31,6 +32,10 @@ LOCAL_COMMANDS: Final[frozenset[str]] = frozenset(
         "restore",
         "admin create",
         "admin reset-password",
+        "user create",
+        "user disable",
+        "user enable",
+        "user reset-password",
         "ai check",
         "ai estimate",
         "models pull",
@@ -314,6 +319,7 @@ OPENAPI_PATH: Final[str] = f"{V1_PREFIX}/openapi.json"
 """Where the OpenAPI document of ``/api/v1`` is served."""
 _STATUS_BY_ERROR: Final[dict[type[DomainError], int]] = {
     UnauthenticatedError: 401,
+    ForbiddenError: 403,
     NotFoundError: 404,
     ConflictError: 409,
     BusyError: 429,
@@ -392,7 +398,10 @@ Explicit, so a state the catalog adds later cannot crash retrieval: it maps to `
 ERROR_DESCRIPTIONS: Final[dict[int, str]] = {
     400: "The request cannot be processed (error code in `error`).",
     401: "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
-    403: "Refused: the instance has no admin account yet (`setup_required`).",
+    403: (
+        "Refused: the instance has no admin account yet (`setup_required`), or the caller "
+        "may not do this (`forbidden`)."
+    ),
     404: "The thing does not exist or is not visible to the caller.",
     409: "The request conflicts with the current state.",
     422: "A field is invalid (`fields` names them) or a business rule is violated.",

@@ -10,6 +10,11 @@ from typing import Final, Literal, TypedDict
 # ---------------------------------------------------------------- models
 MAX_USERNAME_LENGTH: Final[int] = 64
 """Longest username, in characters."""
+RESERVED_IN_USERNAME: Final[str] = "@address:"
+"""Not allowed in the username of an account an operator creates: the sign-in throttle keeps an
+address's remembered sign-ins under ``<username>@address:...``, so such a name would share keys
+with another account's (see ``known_sign_ins_prefix``).
+"""
 MAX_TOKEN_NAME_LENGTH: Final[int] = 64
 """Longest name of an API token, in characters."""
 VALUE_PREFIX: Final[str] = "exd_"
@@ -60,6 +65,12 @@ USERNAME_DESCRIPTION: Final[str] = (
     "(Unicode NFKC, trimmed, case-folded), no whitespace or control characters."
 )
 """OpenAPI description of the first admin's username, built from the limit so it cannot drift."""
+NEW_USERNAME_DESCRIPTION: Final[str] = (
+    f"Login name of the new account: 1 to {MAX_USERNAME_LENGTH} characters once normalised "
+    "(Unicode NFKC, trimmed, case-folded), no whitespace or control characters, and not "
+    f"`{RESERVED_IN_USERNAME}`. Taken names are refused with `username_taken` (409)."
+)
+"""OpenAPI description of a new local account's username, built from the limits."""
 NEW_PASSWORD_DESCRIPTION: Final[str] = f"{MIN_PASSWORD_LENGTH} to {MAX_PASSWORD_LENGTH} characters."
 """OpenAPI description tail of a password being set, built from the limits so they cannot drift."""
 TOKEN_NAME_DESCRIPTION: Final[str] = (
@@ -120,6 +131,13 @@ SESSION_COOKIE: Final[str] = "exactdocs_session"
 COOKIE_PATH: Final[str] = "/api"
 """Only `/api` needs the cookie (the UI itself is static), so the browser never sends it to `/mcp`.
 """
+USERS_DESCRIPTION: Final[str] = (
+    "Operators only (`admin`): any other signed-in account is refused with `forbidden` (403). "
+    "Needs a signed-in session; an API token is refused (401), so a leaked token cannot create "
+    "accounts. There is no self-signup: accounts are created here, by `exactdocs user create` "
+    "or, for the first admin, by the setup."
+)
+"""OpenAPI description shared by the ``/users`` routes."""
 CREATE_TOKEN_DESCRIPTION: Final[str] = (
     "Create an API token for the signed-in account. The secret is in this response only. "
     f"An account holds at most {MAX_TOKENS_PER_ACCOUNT} tokens; one more is refused with "

@@ -30,6 +30,43 @@ class AccountRepository(Protocol):
         """
         ...
 
+    async def add(self, account: Account) -> bool:
+        """Store a further account; ``False`` when its username is taken.
+
+        Must be atomic: of two concurrent calls with the same username, at most one stores it.
+
+        Args:
+            account: The new account.
+
+        Returns:
+            ``True`` when it was stored, ``False`` when another account has the username.
+        """
+        ...
+
+    async def list_all(self) -> Sequence[Account]:
+        """Return every account, oldest first (then by username).
+
+        Returns:
+            The accounts.
+        """
+        ...
+
+    async def set_disabled_at(self, account_id: AccountId, disabled_at: datetime | None) -> bool:
+        """Disable the account from ``disabled_at`` on, or enable it again with ``None``.
+
+        Disabling never leaves the instance without an enabled admin: it is refused (``False``)
+        when the account is the last one. The check and the change are one atomic step, so two
+        admins disabled at the same time cannot both go.
+
+        Args:
+            account_id: The account's id.
+            disabled_at: When it was disabled, or ``None`` to enable it.
+
+        Returns:
+            ``False`` when disabling was refused to keep an enabled admin, else ``True``.
+        """
+        ...
+
     async def get(self, username: Username) -> Account | None:
         """Return the account with this username, or ``None``.
 

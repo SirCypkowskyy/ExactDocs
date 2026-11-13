@@ -204,6 +204,8 @@ def test_only_the_listed_commands_are_local() -> None:
             "sqlalchemy",
             "_create_first_admin",
             "_reset_password",
+            "_create_user",
+            "_set_user_disabled",
             "_serve_stdio",
             "_check_startup",
         ):

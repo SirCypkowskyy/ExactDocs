@@ -17,8 +17,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   Unknown routes and wrong methods are `not_found` / `method_not_allowed`; an unexpected failure
   is 500 `internal_error` (no internals in `detail`).
   `error` is the stable `DomainError.code` (`not_found` is 404, `conflict` 409, `validation_error`
-  and every `ValidationError` 422, `rate_limited` 429 with a `Retry-After` header in seconds,
-  anything else 400). Request validation failures are 422 with
+  and every `ValidationError` 422, `unauthenticated` 401, `forbidden` 403 (a signed-in caller who
+  may not do this), `rate_limited` 429 with a `Retry-After` header in seconds, anything else 400). Request validation failures are 422 with
   `error: "validation_error"` and one `fields` entry (`loc`, `msg`, `type`) per invalid field.
 - **First run**: until the first admin account exists, every `/api/v1` request except
   `POST /api/v1/setup`, `GET /api/v1/session` and the OpenAPI document is refused with 403
@@ -125,6 +125,25 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   at most 50 tokens (409 `too_many_tokens`). A password reset revokes all of the account's
   tokens. The three token routes need the **session cookie**, not a token, so a stolen token
   cannot create a successor.
+- **Users** (ACL-06): the local accounts, managed by an operator (an account with role `admin`;
+  the first admin is one). There is **no self-signup** route: an account is made by the setup
+  (the first admin only), by `exactdocs user create`, or here. `GET /users` lists every account
+  (`id`, `username`, `role`, `created_at`, `disabled`; oldest first). `POST /users`
+  (`{"username", "password", "role"?}`, role `user` (default) or `admin`) answers 201 with the
+  account; a taken name (compared case-insensitively) is 409 `username_taken`, and a name holding
+  `@address:` (the sign-in throttle's own key separator) is 422 `invalid_username`.
+  `POST /users/{id}/disable` locks the account out at once: its sessions are deleted, its API
+  tokens revoked, and sign-in answers it with the same 401 `invalid_credentials` as a wrong
+  password; a session or token that slipped through is refused on use. Disabling the last
+  enabled admin is 409 `last_operator`. `POST /users/{id}/enable` lets it sign in again with its
+  password (revoked tokens stay revoked). `PUT /users/{id}/password` (`{"password"}`) sets a new
+  password, ends every session, revokes the tokens and clears the username's sign-in throttle
+  count and remembered addresses, like `exactdocs admin reset-password`; it answers
+  `{"account", "throttle"}` (`cleared`, `busy` or `failed`; the password changed in every case).
+  An unknown id is 404 `unknown_account`. Every `/users` route needs the **session cookie** of an
+  operator: an API token is 401 (a stolen token cannot create accounts), and a signed-in account
+  that is not an `admin` gets 403 `forbidden`. Library roles (who may read or change a library)
+  are separate and not enforced yet (E12-05): every signed-in account may use every library.
 - **Editing a library**: `PATCH /libraries/{owner}/{repo}` (`{"title"?, "description"?}`). An edited
   field is kept across re-imports instead of following the default version's `context7.json` or
   root README (LIB-07).

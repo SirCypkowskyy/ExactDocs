@@ -39,6 +39,52 @@ class InMemoryAccountRepository:
         self.accounts[account.username] = account
         return True
 
+    async def add(self, account: Account) -> bool:
+        """Store a further account, unless its username is taken.
+
+        Args:
+            account: The new account.
+
+        Returns:
+            ``True`` when it was stored, ``False`` when another account has the username.
+        """
+        if account.username in self.accounts:
+            return False
+        self.accounts[account.username] = account
+        return True
+
+    async def list_all(self) -> list[Account]:
+        """Return every account, oldest first (then by username).
+
+        Returns:
+            The accounts.
+        """
+        return sorted(self.accounts.values(), key=lambda a: (a.created_at, a.username.value))
+
+    async def set_disabled_at(self, account_id: AccountId, disabled_at: datetime | None) -> bool:
+        """Disable or enable the account, never disabling the last enabled admin.
+
+        Args:
+            account_id: The account's id.
+            disabled_at: When it was disabled, or ``None`` to enable it.
+
+        Returns:
+            ``False`` when disabling was refused to keep an enabled admin, else ``True``.
+        """
+        account = await self.get_by_id(account_id)
+        if account is None:
+            return True
+        if disabled_at is not None and account.is_operator and not account.is_disabled:
+            others = [
+                a
+                for a in self.accounts.values()
+                if a.id != account_id and a.is_operator and not a.is_disabled
+            ]
+            if not others:
+                return False
+        self.accounts[account.username] = replace(account, disabled_at=disabled_at)
+        return True
+
     async def get(self, username: Username) -> Account | None:
         """Return the account with this username, or ``None``.
 

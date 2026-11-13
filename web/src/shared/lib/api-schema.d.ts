@@ -116,6 +116,101 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/users": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Users
+         * @description List every local account, disabled ones included, oldest first. Operators only (`admin`): any other signed-in account is refused with `forbidden` (403). Needs a signed-in session; an API token is refused (401), so a leaked token cannot create accounts. There is no self-signup: accounts are created here, by `exactdocs user create` or, for the first admin, by the setup.
+         */
+        readonly get: operations["identity-get_users"];
+        readonly put?: never;
+        /**
+         * Add User
+         * @description Create a local account with a password the operator passes on to its owner.
+         *
+         *     Operators only, with a session (see `GET /users`).
+         */
+        readonly post: operations["identity-add_user"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/users/{user_id}/disable": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Disable User
+         * @description Disable an account: its sessions end, its tokens are revoked, and it cannot sign in.
+         *
+         *     The last enabled admin cannot be disabled (409 `last_operator`). Disabling a disabled
+         *     account changes nothing. Operators only, with a session (see `GET /users`).
+         */
+        readonly post: operations["identity-disable_user"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/users/{user_id}/enable": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Enable User
+         * @description Let a disabled account sign in again, with its password unchanged.
+         *
+         *     Its revoked API tokens stay revoked. Operators only, with a session (see `GET /users`).
+         */
+        readonly post: operations["identity-enable_user"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/users/{user_id}/password": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set User Password
+         * @description Set a new password: every session of the account ends and its tokens are revoked.
+         *
+         *     The username's sign-in throttle count is dropped too, so its owner can sign in with the
+         *     new password at once (`throttle` says whether that worked). Operators only, with a
+         *     session (see `GET /users`).
+         */
+        readonly put: operations["identity-set_user_password"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries/{owner}/{repo}/asset": {
         readonly parameters: {
             readonly query?: never;
@@ -1041,7 +1136,7 @@ export interface components {
             readonly username: string;
             /**
              * Role
-             * @description What the account may do; `admin` is the only role so far.
+             * @description What the account may do: `admin` (an operator, who also manages accounts) or `user`.
              */
             readonly role: string;
         };
@@ -2026,6 +2121,30 @@ export interface components {
              * @description When the token stops working (in the future, with a timezone); omit it for no expiry.
              */
             readonly expires_at?: string | null;
+        };
+        /**
+         * CreateUserCommand
+         * @description A new local account, created by an operator. There is no self-signup.
+         */
+        readonly CreateUserCommand: {
+            /**
+             * Username
+             * @description Login name of the new account: 1 to 64 characters once normalised (Unicode NFKC, trimmed, case-folded), no whitespace or control characters, and not `@address:`. Taken names are refused with `username_taken` (409).
+             */
+            readonly username: string;
+            /**
+             * Password
+             * Format: password
+             * @description Password of the new account, 12 to 1024 characters.
+             */
+            readonly password: string;
+            /**
+             * Role
+             * @description `user` (the default) signs in and uses the instance; `admin` also manages accounts.
+             * @default user
+             * @enum {string}
+             */
+            readonly role: "admin" | "user";
         };
         /**
          * DefaultVersionPin
@@ -3149,6 +3268,18 @@ export interface components {
          */
         readonly ModelRole: "embedding" | "reranker" | "llm" | "judge";
         /**
+         * NewPassword
+         * @description A new password an operator sets for an account on the users page.
+         */
+        readonly NewPassword: {
+            /**
+             * Password
+             * Format: password
+             * @description The new password, 12 to 1024 characters.
+             */
+            readonly password: string;
+        };
+        /**
          * NewProviderIn
          * @description A new AI provider profile.
          */
@@ -3276,6 +3407,25 @@ export interface components {
              * @description The headings directly under it, in document order.
              */
             readonly children: readonly components["schemas"]["OutlineSectionOut"][];
+        };
+        /**
+         * PasswordReset
+         * @description The outcome of a password reset: the password, sessions and tokens are always done.
+         */
+        readonly PasswordReset: {
+            /** @description The account whose password changed, with its stored (normalised) username. */
+            readonly account: components["schemas"]["AccountSummary"];
+            /**
+             * Throttle
+             * @description What became of the username's sign-in throttle count and of the addresses the throttle
+             *     remembers for it: ``cleared`` (both are gone, or there were none), ``busy`` (the throttle
+             *     could not take its turn in time, so the count stays until it is waited out, or the addresses
+             *     go on skipping the username's count until they are forgotten) or ``failed`` (another error;
+             *     either may stay). The worse of the two is reported. Running the reset again is safe in
+             *     either case.
+             * @enum {string}
+             */
+            readonly throttle: "cleared" | "busy" | "failed";
         };
         /**
          * PreviewRepositoryCommand
@@ -4502,6 +4652,50 @@ export interface components {
             readonly versions: readonly string[];
         };
         /**
+         * UserList
+         * @description Every local account, oldest first.
+         */
+        readonly UserList: {
+            /**
+             * Users
+             * @description The accounts, oldest first.
+             */
+            readonly users: readonly components["schemas"]["UserSummary"][];
+        };
+        /**
+         * UserSummary
+         * @description An account as an operator sees it on the users page.
+         */
+        readonly UserSummary: {
+            /**
+             * Id
+             * @description Stable identifier of the account.
+             */
+            readonly id: string;
+            /**
+             * Username
+             * @description The login name, normalised (NFKC, trimmed, case-folded): `Admin` signs in as `admin`.
+             */
+            readonly username: string;
+            /**
+             * Role
+             * @description What the account may do: `admin` (an operator, who also manages accounts) or `user`.
+             */
+            readonly role: string;
+            /**
+             * Created At
+             * Format: date-time
+             * @description When the account was created.
+             */
+            readonly created_at: string;
+            /**
+             * Disabled
+             * @description `true` while the account is disabled: it cannot sign in, and its sessions and tokens are
+             *     refused.
+             */
+            readonly disabled: boolean;
+        };
+        /**
          * VersionOut
          * @description One imported version: the ref, what kind of ref it is, and the commit it stands for.
          */
@@ -4623,7 +4817,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -4697,7 +4891,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -4775,7 +4969,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -4858,7 +5052,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -4936,7 +5130,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -5021,7 +5215,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -5099,7 +5293,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -5173,7 +5367,391 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-get_users": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UserList"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-add_user": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CreateUserCommand"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UserSummary"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-disable_user": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly user_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UserSummary"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-enable_user": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly user_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UserSummary"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-set_user_password": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly user_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["NewPassword"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PasswordReset"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -5265,7 +5843,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -5346,7 +5924,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -5423,7 +6001,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -5502,7 +6080,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -5580,7 +6158,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -5668,7 +6246,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -5745,7 +6323,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -5826,7 +6404,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -5904,7 +6482,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -5982,7 +6560,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -6069,7 +6647,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -6148,7 +6726,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -6232,7 +6810,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -6310,7 +6888,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -6390,7 +6968,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -6475,7 +7053,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -6555,7 +7133,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -6642,7 +7220,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -6725,7 +7303,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -6801,7 +7379,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -6880,7 +7458,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -6961,7 +7539,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -7038,7 +7616,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -7119,7 +7697,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -7193,7 +7771,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -7271,7 +7849,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -7347,7 +7925,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -7427,7 +8005,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -7501,7 +8079,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -7581,7 +8159,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -7655,7 +8233,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -7729,7 +8307,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -7803,7 +8381,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -7877,7 +8455,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -7967,7 +8545,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -8045,7 +8623,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -8121,7 +8699,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -8199,7 +8777,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -8277,7 +8855,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -8371,7 +8949,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -8454,7 +9032,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -8540,7 +9118,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -8614,7 +9192,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -8690,7 +9268,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -8767,7 +9345,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -8847,7 +9425,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -8924,7 +9502,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -9005,7 +9583,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -9082,7 +9660,7 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Refused: the instance has no admin account yet (`setup_required`). */
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
             readonly 403: {
                 headers: {
                     readonly [name: string]: unknown;
