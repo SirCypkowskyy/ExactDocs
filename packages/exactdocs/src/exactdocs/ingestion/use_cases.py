@@ -225,7 +225,15 @@ log = logging.getLogger(__name__)
 
 
 def _credential(sent: CredentialIn | None, repository: RepositoryUrl) -> Credential | None:
-    """Convert what a client sent and refuse one the repository's transport cannot carry."""
+    """Convert what a client sent and refuse one the repository's transport cannot carry.
+
+    Args:
+        sent: The credential a client sent, if any.
+        repository: The repository it is for.
+
+    Returns:
+        The credential, or None when none was sent.
+    """
     if sent is None:
         return None
     credential = sent.to_model()
@@ -241,12 +249,26 @@ class EnqueueJobUseCase:
     """Implements ``ports.driving.EnqueueJob``."""
 
     jobs: JobRepository
+    """Where jobs are stored."""
     clock: Clock
+    """Tells the time."""
     handlers: Mapping[JobKind, JobHandler]
+    """What runs each job kind; a kind not in it is refused."""
     runner: JobRunner
+    """What runs queued jobs."""
 
     async def __call__(self, command: EnqueueJobCommand) -> JobSummary:
-        """Queue the job and hand it to the runner."""
+        """Queue the job and hand it to the runner.
+
+        Args:
+            command: The job's kind, library and version.
+
+        Returns:
+            The queued job.
+
+        Raises:
+            UnknownJobKindError: No handler runs jobs of that kind.
+        """
         kind = JobKind(command.kind)
         if kind not in self.handlers:
             raise UnknownJobKindError(kind)
@@ -279,9 +301,20 @@ class GetJobUseCase:
     """Implements ``ports.driving.GetJob``."""
 
     jobs: JobRepository
+    """Where jobs are stored."""
 
     async def __call__(self, query: GetJobQuery) -> JobSummary:
-        """Fetch one job by its ID."""
+        """Fetch one job by its ID.
+
+        Args:
+            query: The job's ID.
+
+        Returns:
+            The job.
+
+        Raises:
+            JobNotFoundError: No job has that ID.
+        """
         job = await self.jobs.get(JobId(query.job_id))
         if job is None:
             raise JobNotFoundError(query.job_id)
@@ -293,13 +326,24 @@ class GetLibraryAccessUseCase:
     """Implements ``ports.driving.GetLibraryAccess``."""
 
     vault: CredentialVault
+    """Where credentials are kept."""
     library_ids: LibraryIds
+    """Tells which libraries exist."""
 
     async def __call__(self, query: GetLibraryAccessQuery) -> LibraryAccess:
         """Report a library with a stored credential as private; ``UnknownLibraryError`` if none.
 
         Fails closed: a public repository that was given a token anyway counts as private, so its
         images are never linked to the host. Library IDs are lower-case.
+
+        Args:
+            query: The library.
+
+        Returns:
+            Whether it is private.
+
+        Raises:
+            UnknownLibraryError: No library has that ID.
         """
         library = query.library.lower()
         if not await self.library_ids.is_taken(ProposedId(library)):
@@ -312,9 +356,17 @@ class ListLibraryJobsUseCase:
     """Implements ``ports.driving.ListLibraryJobs``."""
 
     jobs: JobRepository
+    """Where jobs are stored."""
 
     async def __call__(self, query: ListLibraryJobsQuery) -> JobList:
-        """List a page of the library's jobs, newest first; only that page is read."""
+        """List a page of the library's jobs, newest first; only that page is read.
+
+        Args:
+            query: The library, the page size and the cursor.
+
+        Returns:
+            The page, and the cursor of the next one when there is one.
+        """
         before = decode_cursor(query.cursor) if query.cursor is not None else None
         jobs = await self.jobs.list_page_for_library(
             query.library,
@@ -333,9 +385,14 @@ class ListLatestJobsUseCase:
     """Implements ``ports.driving.ListLatestJobs``."""
 
     jobs: JobRepository
+    """Where jobs are stored."""
 
     async def __call__(self) -> LatestJobs:
-        """List the newest job of every (library, version), without their skipped files."""
+        """List the newest job of every (library, version), without their skipped files.
+
+        Returns:
+            The newest import or refresh of each (library, version).
+        """
         # ponytail: not paged; one row per imported version, fine until thousands exist.
         # Only imports are syncs; a collection job has no version and is no state of a library.
         latest = await self.jobs.list_latest()
@@ -349,9 +406,13 @@ class RecoverJobsUseCase:
     """Implements ``ports.driving.RecoverJobs``."""
 
     jobs: JobRepository
+    """Where jobs are stored."""
     clock: Clock
+    """Tells the time."""
     hooks: Mapping[JobKind, RecoveryHook]
+    """What cleans up after an interrupted job, by kind."""
     runner: JobRunner
+    """What runs queued jobs."""
 
     async def __call__(self, *, resuming: Collection[str] = ()) -> None:
         """Run the hook of every job left ``running``, then queue it again to run from scratch.
@@ -361,6 +422,9 @@ class RecoverJobsUseCase:
         A job in ``resuming`` is the runner's to resume (from its last durable step) and is
         left alone. Every other queued job is then submitted to the runner, oldest first: also
         the ones queued while it was not running.
+
+        Args:
+            resuming: IDs of the jobs the runner resumes on its own.
         """
         # Safe with several processes on one database: a job runs inside its workflow, and the
         # runner lists every executor's live workflows in ``resuming``, so another process's
@@ -391,7 +455,9 @@ class SubmitQueuedJobsUseCase:
     """Implements ``ports.driving.SubmitQueuedJobs``."""
 
     jobs: JobRepository
+    """Where jobs are stored."""
     runner: JobRunner
+    """What runs queued jobs."""
 
     async def __call__(self) -> None:
         """Submit every queued job, oldest first: one the runner did not take when queued runs."""
@@ -399,6 +465,13 @@ class SubmitQueuedJobsUseCase:
 
 
 async def _submit_queued(jobs: JobRepository, runner: JobRunner, skip: Collection[str]) -> None:
+    """Hand every queued job to the runner, oldest first.
+
+    Args:
+        jobs: Where jobs are stored.
+        runner: What runs queued jobs.
+        skip: IDs of jobs not to hand over.
+    """
     for job in await jobs.list_queued():
         if job.id not in skip:
             await runner.submit(job)
@@ -409,9 +482,13 @@ class RunJobUseCase:
     """Implements ``ports.driving.RunJob``."""
 
     jobs: JobRepository
+    """Where jobs are stored."""
     clock: Clock
+    """Tells the time."""
     handlers: Mapping[JobKind, JobHandler]
+    """What runs each job kind."""
     hooks: Mapping[JobKind, RecoveryHook]
+    """What cleans up after an interrupted job, by kind."""
 
     async def __call__(self, job_id: str, /) -> None:
         """Start (or resume) the job, run its handler and record how it ended.
@@ -419,6 +496,9 @@ class RunJobUseCase:
         A job found ``running`` was interrupted: its kind's recovery hook undoes what the
         interrupted step left half done (a hook that raises fails the job), then the job starts
         over, its handler replaying the durable steps it had completed.
+
+        Args:
+            job_id: The job's ID.
         """
         job = await self.jobs.get(JobId(job_id))
         if job is None or job.state not in ACTIVE_JOB_STATES:
@@ -446,11 +526,18 @@ class RunNextJobUseCase:
     """Implements ``ports.driving.RunNextJob``."""
 
     jobs: JobRepository
+    """Where jobs are stored."""
     clock: Clock
+    """Tells the time."""
     handlers: Mapping[JobKind, JobHandler]
+    """What runs each job kind."""
 
     async def __call__(self) -> bool:
-        """Claim the next job that may run, run it, and record how it ended."""
+        """Claim the next job that may run, run it, and record how it ended.
+
+        Returns:
+            True when a job ran, whether it succeeded or failed.
+        """
         job = await self.jobs.claim_next(self.clock.now())
         if job is None:
             return False
@@ -461,7 +548,14 @@ class RunNextJobUseCase:
 async def _run(
     jobs: JobRepository, clock: Clock, handlers: Mapping[JobKind, JobHandler], job: Job
 ) -> None:
-    """Run a started job's handler and store how it ended (raising only if that store fails)."""
+    """Run a started job's handler and store how it ended (raising only if that store fails).
+
+    Args:
+        jobs: Where jobs are stored.
+        clock: Tells the time.
+        handlers: What runs each job kind.
+        job: The started job.
+    """
     progress = _Progress(jobs=jobs, job=job)
     handler = handlers.get(job.kind)
     code = UNEXPECTED_ERROR
@@ -496,20 +590,43 @@ class _Progress:
     """
 
     jobs: JobRepository
+    """Where the job is stored."""
     job: Job
+    """The job as it is now."""
     saved_done: int = 0
+    """``done`` when the job was last stored."""
     reported: bool = False
+    """Whether any progress was reported yet."""
     saved_at: float = field(default_factory=time.monotonic)
+    """When the job was last stored (``time.monotonic``)."""
 
     async def chunking(self, *, chunked: int, reused: int) -> None:
+        """Record the chunking counts; store the job if it is due.
+
+        Args:
+            chunked: Articles cut into chunks.
+            reused: Articles whose stored chunks were reused.
+        """
         self.job = self.job.chunking(chunked=chunked, reused=reused)
         await self._save_if_due()
 
     async def parsing(self, *, parsed: int, taken: int) -> None:
+        """Record the parsing counts; store the job if it is due.
+
+        Args:
+            parsed: Articles parsed.
+            taken: Articles taken as stored.
+        """
         self.job = self.job.parsing(parsed=parsed, taken=taken)
         await self._save_if_due()
 
     async def report(self, *, done: int, total: int) -> None:
+        """Record the progress; the first, the last and every ``SAVE_EVERY_FILES`` are stored.
+
+        Args:
+            done: How much is done.
+            total: How much there is.
+        """
         self.job = self.job.progressed(done=done, total=total)
         first, self.reported = not self.reported, True
         if first or done == total or done - self.saved_done >= SAVE_EVERY_FILES:
@@ -518,20 +635,36 @@ class _Progress:
             await self._save_if_due()
 
     async def problem(self, path: str, code: ProblemCode, reason: str) -> None:
+        """Record a problem with a file; store the job if it is due.
+
+        Args:
+            path: The file's repository path.
+            code: What kind of problem it is.
+            reason: What happened, in words for users.
+        """
         self.job = self.job.with_problem(path, code, reason)
         await self._save_if_due()
 
     async def _save_if_due(self) -> None:
+        """Store the job when ``SAVE_EVERY_SECONDS`` have passed since it was last stored."""
         if time.monotonic() - self.saved_at >= SAVE_EVERY_SECONDS:
             await self._save()
 
     async def _save(self) -> None:
+        """Store the job now."""
         self.saved_done, self.saved_at = self.job.done, time.monotonic()
         await self.jobs.save(self.job)
 
 
 def _describe(error: Exception) -> str:
-    """Return the text users see: a domain error says what is wrong, else only its type."""
+    """Return the text users see: a domain error says what is wrong, else only its type.
+
+    Args:
+        error: Why the job failed.
+
+    Returns:
+        The text.
+    """
     return str(error) if isinstance(error, DomainError) else f"unexpected {type(error).__name__}"
 
 
@@ -542,6 +675,12 @@ def failure_code(error: Exception) -> str:
     ``auth_failed`` (callers that sent no credential turn an auth demand into
     ``NotAGitRepositoryError`` first, see ``_anonymous``); any other domain error keeps its own
     code (``no_articles``, ``host_key_changed``...), anything else is ``unexpected``.
+
+    Args:
+        error: Why the job failed.
+
+    Returns:
+        The code.
     """
     # Upstream failures, by what users can do about them; the git adapter's finer errors stay the
     # HTTP answer of the request that met them (adding a library), a job records the coarse code.
@@ -559,6 +698,13 @@ def _anonymous(error: DomainError, credential: Credential | None) -> DomainError
     A server that wants a login when none was sent is hiding the repository: it was deleted or
     made private (GitHub answers a missing repository with 401, never 404). Only when a token or
     key was sent and refused is it a credential problem.
+
+    Args:
+        error: What reading the repository raised.
+        credential: The credential it was read with, if any.
+
+    Returns:
+        ``NotAGitRepositoryError`` for a login demand without a credential, else ``error``.
     """
     if credential is None and isinstance(error, RepositoryAuthRequiredError):
         return NotAGitRepositoryError()
@@ -570,10 +716,22 @@ class CheckRepositoryUseCase:
     """Implements ``ports.driving.CheckRepository``."""
 
     remote: GitRemote
+    """Lists a repository's refs."""
     library_ids: LibraryIds
+    """Tells which library IDs are taken."""
 
     async def __call__(self, command: CheckRepositoryCommand) -> CheckedRepository:
-        """Parse the URL, refuse a taken ID, then ask the remote for its default branch."""
+        """Parse the URL, refuse a taken ID, then ask the remote for its default branch.
+
+        Args:
+            command: The URL and, optionally, a credential.
+
+        Returns:
+            The host, the proposed library ID, the default branch and the SSH host key.
+
+        Raises:
+            LibraryIdTakenError: A library already has the ID the URL proposes.
+        """
         repository = RepositoryUrl.parse(command.url)
         if await self.library_ids.is_taken(repository.library_id):
             raise LibraryIdTakenError(repository.library_id)
@@ -592,11 +750,18 @@ class ListRepositoryRefsUseCase:
     """Implements ``ports.driving.ListRepositoryRefs``."""
 
     remote: GitRemote
+    """Lists a repository's refs."""
 
     async def __call__(self, query: ListRepositoryRefsQuery) -> RepositoryRefs:
         """Parse the URL and list what the remote advertises, at most ``MAX_LISTED_REFS`` each.
 
         A credential is only used for this one listing: nothing is stored.
+
+        Args:
+            query: The URL and, optionally, a credential.
+
+        Returns:
+            The default branch, the branches and the tags.
         """
         repository = RepositoryUrl.parse(query.url)
         credential = _credential(query.credential, repository)
@@ -619,7 +784,9 @@ class PreviewRepositoryUseCase:
     """Implements ``ports.driving.PreviewRepository``."""
 
     remote: GitRemote
+    """Lists a repository's refs."""
     tree: RepositoryTree
+    """Lists a commit's files and reads its ``context7.json``."""
 
     async def __call__(self, command: PreviewRepositoryCommand) -> RepositoryPreview:
         """Validate, pin the ref, list the commit's tree and apply the selection to it.
@@ -629,6 +796,12 @@ class PreviewRepositoryUseCase:
         root ``context7.json`` is read too (that one blob, under a preview slot like the
         listing): without paths its selection is the one applied, as adding the library would,
         and the file is returned for the form.
+
+        Args:
+            command: The URL, the ref, the paths and, optionally, a credential.
+
+        Returns:
+            The matching files, the paths applied and the ``context7.json`` found.
         """
         repository = RepositoryUrl.parse(command.url)
         credential = _credential(command.credential, repository)
@@ -659,13 +832,29 @@ class PreviewRepositoryUseCase:
 
 
 def _prefilled(selection: PathSelection, context7: _Context7Read) -> PathSelection:
-    """Keep the paths a user sent; without any, take those of ``context7.json`` (LIB-06)."""
+    """Keep the paths a user sent; without any, take those of ``context7.json`` (LIB-06).
+
+    Args:
+        selection: The paths the user sent.
+        context7: What reading ``context7.json`` gave.
+
+    Returns:
+        The selection to apply.
+    """
     if selection.include or selection.exclude or context7.config is None:
         return selection
     return context7.config.selection or selection
 
 
 def _context7_out(context7: _Context7Read) -> Context7Out | None:
+    """Map a usable ``context7.json`` to the boundary.
+
+    Args:
+        context7: What reading it gave.
+
+    Returns:
+        The file's settings, or None when there is none or it is ignored.
+    """
     return None if context7.config is None else Context7Out.from_model(context7.config)
 
 
@@ -674,11 +863,17 @@ class AddLibraryUseCase:
     """Implements ``ports.driving.AddLibrary``."""
 
     remote: GitRemote
+    """Lists a repository's refs."""
     library_ids: LibraryIds
+    """Tells which library IDs are taken."""
     libraries: NewLibraries
+    """Where new libraries go."""
     enqueue_job: EnqueueJob
+    """Queues the import."""
     vault: CredentialVault
+    """Where the credential is kept."""
     tree: RepositoryTree | None = None
+    """Reads the root ``context7.json``; None: there is none."""
 
     async def __call__(self, command: AddLibraryCommand) -> AddedLibrary:
         """Check everything that can be checked first, then store the library and queue its import.
@@ -692,6 +887,15 @@ class AddLibraryUseCase:
         The credential, if any, is stored (encrypted) before the import is queued, because the
         import reads it. If that or queueing fails, the new library and its credential are
         removed again, so a retry is not met with a 409.
+
+        Args:
+            command: The repository, the ref, the paths and the settings of the new library.
+
+        Returns:
+            The new library, its pinned ref, its queued import and its ``context7.json``.
+
+        Raises:
+            LibraryIdTakenError: A library already has the ID.
         """
         repository = RepositoryUrl.parse(command.url)
         credential = _credential(command.credential, repository)
@@ -754,7 +958,17 @@ async def _enqueue_import(
     resolved: ResolvedRef,
     origin: VersionOrigin = VersionOrigin.MANUAL,
 ) -> JobSummary:
-    """Queue the import of a ref already pinned to its commit."""
+    """Queue the import of a ref already pinned to its commit.
+
+    Args:
+        enqueue_job: Queues the job.
+        library: The library ID.
+        resolved: The ref and its commit.
+        origin: Who asked for the version.
+
+    Returns:
+        The queued import.
+    """
     return await enqueue_job(
         EnqueueJobCommand(
             kind=IMPORT_JOB,
@@ -772,10 +986,15 @@ class AddVersionUseCase:
     """Implements ``ports.driving.AddVersion``."""
 
     remote: GitRemote
+    """Lists a repository's refs."""
     sources: LibrarySources
+    """Where a library's articles come from."""
     jobs: JobRepository
+    """Where jobs are stored."""
     enqueue_job: EnqueueJob
+    """Queues the import."""
     vault: CredentialVault
+    """Where the credential is kept."""
 
     async def __call__(self, command: AddVersionCommand) -> AddedVersion:
         """Pin the ref like ``AddLibrary`` does and queue the import with the library's settings.
@@ -787,6 +1006,17 @@ class AddVersionUseCase:
         branch at one commit stay two versions: the branch moves on).
         The in-progress check is made again, atomically, by the job repository when the job is
         stored, so two simultaneous requests cannot both queue an import of one ref.
+
+        Args:
+            command: The library, the ref and, optionally, a new credential.
+
+        Returns:
+            The pinned version and its queued import.
+
+        Raises:
+            VersionExistsError: The library has a version of that ref.
+            CommitImportedError: The commit is already a version under another ref.
+            VersionImportingError: An import of the ref is queued or running.
         """
         library = command.library
         source = await self.sources.get(library)
@@ -812,7 +1042,14 @@ class AddVersionUseCase:
 
 
 def _busy_refs(jobs: Sequence[Job]) -> dict[str, Job]:
-    """Return the library's unfinished import jobs by ref."""
+    """Return the library's unfinished import jobs by ref.
+
+    Args:
+        jobs: The library's jobs.
+
+    Returns:
+        Each queued or running import, by its version's ref.
+    """
     return {
         job.version: job
         for job in jobs
@@ -825,11 +1062,17 @@ class SyncLibraryUseCase:
     """Implements ``ports.driving.SyncLibrary``."""
 
     remote: GitRemote
+    """Lists a repository's refs."""
     sources: LibrarySources
+    """Where a library's articles come from."""
     jobs: JobRepository
+    """Where jobs are stored."""
     clock: Clock
+    """Tells the time."""
     enqueue_job: EnqueueJob
+    """Queues the imports."""
     vault: CredentialVault
+    """Where the library's credential is kept."""
 
     async def __call__(
         self, command: SyncLibraryCommand, *, refs: RemoteRefs | None = None
@@ -851,6 +1094,17 @@ class SyncLibraryUseCase:
         per distinct reason), so users see it next to the version that keeps serving. When a
         version that last failed is fine again, a succeeded job with no work says so. A version
         removed while this runs may still get such a record.
+
+        Args:
+            command: The library.
+            refs: The refs the remote advertised; ``None`` lists them now.
+
+        Returns:
+            What happened to each version.
+
+        Raises:
+            SyncFailedError: The remote could not be read; the failed jobs record it.
+            VersionImportingError: A branch's import is running and nothing could be queued.
         """
         library = command.library
         source = await self.sources.get(library)
@@ -895,9 +1149,32 @@ class SyncLibraryUseCase:
         busy: Mapping[str, Job],
         newest: Mapping[str, Job],
     ) -> SyncedVersion:
+        """Check one version against the remote's tips.
+
+        Args:
+            library: The library ID.
+            current: The version.
+            tips: The commit of each advertised branch and tag.
+            busy: The library's unfinished imports, by ref.
+            newest: The newest job of each version, by ref.
+
+        Returns:
+            What happened to the version.
+        """
+
         def outcome(
             status: SyncStatus, commit_sha: str, job_id: str | None = None
         ) -> SyncedVersion:
+            """Describe the version's outcome.
+
+            Args:
+                status: What happened.
+                commit_sha: The commit the version serves or will serve.
+                job_id: The job that says so, if any.
+
+            Returns:
+                The outcome.
+            """
             return SyncedVersion(
                 ref=current.ref,
                 ref_kind=current.kind,
@@ -908,6 +1185,14 @@ class SyncLibraryUseCase:
             )
 
         def failure(job: Job) -> SyncedVersion:
+            """Describe a version that could not be synced.
+
+            Args:
+                job: The failed job that records why.
+
+            Returns:
+                The ``failed`` outcome, with the job's error.
+            """
             return outcome(SyncStatus.FAILED, current.commit_sha, job.id).model_copy(
                 update={"error_code": job.error_code, "error": job.error}
             )
@@ -941,7 +1226,17 @@ class SyncLibraryUseCase:
     async def _confirm(
         self, library: str, current: ImportedRef, tip: str, last: Job | None
     ) -> str | None:
-        """Record a succeeded no-op job when the version last failed: its error is over."""
+        """Record a succeeded no-op job when the version last failed: its error is over.
+
+        Args:
+            library: The library ID.
+            current: The version.
+            tip: The commit its ref names, the one it serves.
+            last: The version's newest job, if any.
+
+        Returns:
+            The no-op job's ID, or ``None`` when the version did not last fail.
+        """
         if last is None or last.state is not JobState.FAILED:
             return None
         now = self.clock.now()
@@ -956,6 +1251,18 @@ class SyncLibraryUseCase:
         tip: str,
         outcome: Callable[[SyncStatus, str, str | None], SyncedVersion],
     ) -> SyncedVersion:
+        """Queue the import of a branch that moved.
+
+        Args:
+            library: The library ID.
+            current: The version.
+            tip: The commit the branch names now.
+            outcome: Describes the version's outcome.
+
+        Returns:
+            ``queued``; ``importing`` when another request queued it first; ``failed`` when it
+            could not be queued.
+        """
         try:
             job = await self.enqueue_job(
                 EnqueueJobCommand(
@@ -979,6 +1286,17 @@ class SyncLibraryUseCase:
     def _job(
         self, library: str, current: ImportedRef, now: datetime, *, commit_sha: str | None = None
     ) -> Job:
+        """Make a ``refresh`` job of the version, not yet stored.
+
+        Args:
+            library: The library ID.
+            current: The version.
+            now: The time it is queued.
+            commit_sha: The commit it is pinned to, if any.
+
+        Returns:
+            The queued job.
+        """
         return Job.queued(
             job_id=JobId(str(uuid.uuid7())),
             kind=REFRESH_JOB,
@@ -992,7 +1310,18 @@ class SyncLibraryUseCase:
     async def _failed(
         self, library: str, current: ImportedRef, reason: str, code: str, last: Job | None
     ) -> Job:
-        """Record a failed job, unless the version's newest job already says the same."""
+        """Record a failed job, unless the version's newest job already says the same.
+
+        Args:
+            library: The library ID.
+            current: The version.
+            reason: Why it failed, for users.
+            code: The stable code.
+            last: The version's newest job, if any.
+
+        Returns:
+            The failed job, new or the newest one.
+        """
         if (
             last is not None
             and last.state is JobState.FAILED
@@ -1009,6 +1338,15 @@ class _NoCheckpoints:
     """The default ``Checkpoints``: every step runs, nothing survives a crash."""
 
     async def step[T](self, name: str, run: Callable[[], Awaitable[T]], /) -> T:
+        """Run the step; nothing is recorded.
+
+        Args:
+            name: The step's name.
+            run: Runs the step.
+
+        Returns:
+            What ``run`` returned.
+        """
         del name
         return await run()
 
@@ -1018,10 +1356,15 @@ class ReimportVersionUseCase:
     """Implements ``ports.driving.ReimportVersion``."""
 
     remote: GitRemote
+    """Lists a repository's refs."""
     sources: LibrarySources
+    """Where a library's articles come from."""
     jobs: JobRepository
+    """Where jobs are stored."""
     enqueue_job: EnqueueJob
+    """Queues the import."""
     vault: CredentialVault
+    """Where the library's credential is kept."""
 
     async def __call__(self, command: ReimportVersionCommand) -> ReimportedVersion:
         """Ask the remote where the tag is now and queue its import there, as a sync would a branch.
@@ -1032,6 +1375,20 @@ class ReimportVersionUseCase:
         version is removed meanwhile. Its job becomes the version's newest, so the ``tag_moved``
         failure a sync recorded is no longer the version's state. The tag is checked again here,
         not taken from that record: only a tag that names another commit now is re-imported.
+
+        Args:
+            command: The library and the tag version.
+
+        Returns:
+            The commits the version moves between and the queued import.
+
+        Raises:
+            UnknownVersionError: The library has no version of that ref.
+            NotATagError: The version is a branch or a commit.
+            VersionImportingError: An import of it is queued or running.
+            _anonymous: The remote could not be read; ``_anonymous`` says what that means.
+            RefDeletedError: The tag is gone upstream.
+            TagNotMovedError: The tag still names the commit the version serves.
         """
         library = command.library
         source = await self.sources.get(library)  # an unknown library is not found
@@ -1087,9 +1444,17 @@ class TagLocks:
     _locks: weakref.WeakValueDictionary[str, asyncio.Lock] = field(
         default_factory=weakref.WeakValueDictionary
     )
+    """The locks held or waited for, by lower-case library ID."""
 
     def of(self, library: str) -> asyncio.Lock:
-        """Return the lock of ``library`` (`/owner/repo`, any letter case)."""
+        """Return the lock of ``library`` (`/owner/repo`, any letter case).
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            The library's lock, shared by every caller of this object.
+        """
         key = library.lower()
         lock = self._locks.get(key)
         if lock is None:
@@ -1103,7 +1468,17 @@ def _settings_change(
     tag_rules: Sequence[TagRule],
     chunking: ChunkingConfig,
 ) -> SettingsChange | None:
-    """Say what new settings ask of the versions: re-import, re-chunk, re-tag, or nothing."""
+    """Say what new settings ask of the versions: re-import, re-chunk, re-tag, or nothing.
+
+    Args:
+        current: The stored settings.
+        selection: The new paths.
+        tag_rules: The new tag rules.
+        chunking: The new chunking.
+
+    Returns:
+        The widest change, or ``None`` when nothing changed.
+    """
     if selection != current.selection:
         return SettingsChange.PATHS
     if chunking != current.chunking:
@@ -1128,6 +1503,12 @@ def _unhealed(jobs: Sequence[Job]) -> SettingsChange | None:
     A failed job is redone by any later job of the same or a greater reach that succeeded, or
     is still queued or running (it reads the settings when it runs): a failed ``reprocess``
     stays unhealed after a ``retag`` or a ``rechunk``, which do not re-import.
+
+    Args:
+        jobs: The library's jobs, newest first.
+
+    Returns:
+        The change to redo, or ``None``.
     """
     covered = 0
     worst: SettingsChange | None = None
@@ -1144,6 +1525,15 @@ def _unhealed(jobs: Sequence[Job]) -> SettingsChange | None:
 
 
 def _wider(one: SettingsChange, other: SettingsChange | None) -> SettingsChange:
+    """Pick the change of greater reach.
+
+    Args:
+        one: A change.
+        other: Another, if any.
+
+    Returns:
+        The one that redoes more; ``one`` on a tie.
+    """
     return one if other is None or one.reach >= other.reach else other
 
 
@@ -1152,9 +1542,13 @@ class UpdateLibrarySettingsUseCase:
     """Implements ``ports.driving.UpdateLibrarySettings``."""
 
     sources: LibrarySources
+    """Where a library's settings and versions are read."""
     settings: LibrarySettingsStore
+    """Where the settings are stored."""
     jobs: JobRepository
+    """Where jobs are stored."""
     enqueue_job: EnqueueJob
+    """Queues the re-processing job."""
     locks: LibraryLocks = field(default_factory=TagLocks)
     """Its own per-library locks (not the tag locks): edits of one library take turns."""
 
@@ -1172,6 +1566,12 @@ class UpdateLibrarySettingsUseCase:
         re-import the version that failed, and would hide the failure.
         Edits of one library take turns (``locks``): read, compare, store, queue and roll back
         are one step against another edit (one process serves the API).
+
+        Args:
+            command: The library and its new settings.
+
+        Returns:
+            The settings as stored, the change, the job and the versions it re-processes.
         """
         library = command.library.lower()
         selection = PathSelection.of(command.include_paths, command.exclude_paths)
@@ -1207,7 +1607,17 @@ class UpdateLibrarySettingsUseCase:
         tag_rules: Sequence[TagRule],
         sent: ChunkingConfig | None,
     ) -> tuple[SettingsChange | None, ChunkingConfig, list[str], str | None]:
-        """Compare, store and queue; chunking left out (``None``) keeps the stored one."""
+        """Compare, store and queue; chunking left out (``None``) keeps the stored one.
+
+        Args:
+            library: The library ID.
+            selection: The new paths.
+            tag_rules: The new tag rules.
+            sent: The new chunking; ``None`` keeps the stored one.
+
+        Returns:
+            The change, the chunking as stored, the versions' refs and the job's ID.
+        """
         current = await self.sources.get(library)
         chunking = current.chunking if sent is None else sent
         change = _settings_change(current, selection, tag_rules, chunking)
@@ -1232,7 +1642,15 @@ class UpdateLibrarySettingsUseCase:
         return change, chunking, refs, job_id
 
     async def _retry(self, library: str) -> tuple[SettingsChange | None, list[str], str | None]:
-        """Queue the library's widest failed re-processing not redone since; else do nothing."""
+        """Queue the library's widest failed re-processing not redone since; else do nothing.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            The change, the versions' refs and the job's ID; ``None``, ``[]``, ``None`` when
+            nothing failed.
+        """
         jobs = await self.jobs.list_for_library(library)  # newest first
         change = _unhealed(jobs)
         if change is None:
@@ -1241,6 +1659,16 @@ class UpdateLibrarySettingsUseCase:
         return change, refs, await self._queue(library, change, jobs)
 
     async def _queue(self, library: str, change: SettingsChange, jobs: Sequence[Job]) -> str:
+        """Queue the job of a change, or reuse a queued one that does at least as much.
+
+        Args:
+            library: The library ID.
+            change: What the versions need.
+            jobs: The library's jobs, newest first.
+
+        Returns:
+            The job's ID.
+        """
         reusable = {kind for kind, done in _job_changes().items() if done.reach >= change.reach}
         for job in jobs:
             if job.kind in reusable and job.state is JobState.QUEUED:
@@ -1256,15 +1684,27 @@ class _VersionOutcome:
     """What re-processing one version did: the result of its durable step (plain data)."""
 
     chunked: int = 0
+    """Articles cut into chunks."""
     reused: int = 0
+    """Articles whose stored chunks were reused."""
     parsed: int = 0
+    """Articles parsed."""
     taken: int = 0
+    """Articles taken as stored."""
     problems: tuple[FileProblem, ...] = ()
+    """The version's file problems, each reason starting with its ref."""
     failure: tuple[str, str] | None = None
     """``(code, reason)`` when the version could not be re-processed and kept what it had."""
 
     def plus(self, other: Self) -> Self:
-        """Return the counters of both added up (problems and failure are left out)."""
+        """Return the counters of both added up (problems and failure are left out).
+
+        Args:
+            other: Another version's outcome.
+
+        Returns:
+            The sums.
+        """
         return replace(
             self,
             chunked=self.chunked + other.chunked,
@@ -1286,34 +1726,74 @@ class _OneVersion:
     """
 
     progress: JobProgress
+    """The job's progress."""
     ref: str
+    """The version being re-imported."""
     before: _VersionOutcome
     """The counters of the versions before this one."""
     chunked: int = 0
+    """Articles of this version cut into chunks."""
     reused: int = 0
+    """Articles of this version whose stored chunks were reused."""
     parsed: int = 0
+    """Articles of this version parsed."""
     taken: int = 0
+    """Articles of this version taken as stored."""
     problems: list[FileProblem] = field(default_factory=list)
+    """This version's file problems."""
 
     async def report(self, *, done: int, total: int) -> None:
+        """Ignore a file report: the job counts versions.
+
+        Args:
+            done: Files done.
+            total: Files in all.
+        """
         del done, total
 
     async def problem(self, path: str, code: ProblemCode, reason: str) -> None:
+        """Keep a problem for the step's result, its reason prefixed with the ref.
+
+        Args:
+            path: The file's repository path.
+            code: What kind of problem it is.
+            reason: What happened.
+        """
         self.problems.append(FileProblem(path=path, code=code, reason=f"{self.ref}: {reason}"))
 
     async def chunking(self, *, chunked: int, reused: int) -> None:
+        """Keep the counts and pass the job's running totals on.
+
+        Args:
+            chunked: Articles of this version cut into chunks.
+            reused: Articles of this version whose chunks were reused.
+        """
         self.chunked, self.reused = chunked, reused
         await self.progress.chunking(
             chunked=self.before.chunked + chunked, reused=self.before.reused + reused
         )
 
     async def parsing(self, *, parsed: int, taken: int) -> None:
+        """Keep the counts and pass the job's running totals on.
+
+        Args:
+            parsed: Articles of this version parsed.
+            taken: Articles of this version taken as stored.
+        """
         self.parsed, self.taken = parsed, taken
         await self.progress.parsing(
             parsed=self.before.parsed + parsed, taken=self.before.taken + taken
         )
 
     def outcome(self, failure: tuple[str, str] | None = None) -> _VersionOutcome:
+        """Make the step's result.
+
+        Args:
+            failure: ``(code, reason)`` when the version failed.
+
+        Returns:
+            The version's counters, problems and failure.
+        """
         return _VersionOutcome(
             chunked=self.chunked,
             reused=self.reused,
@@ -1325,6 +1805,15 @@ class _OneVersion:
 
 
 async def _versions(sources: LibrarySources, library: str) -> tuple[ImportedRef, ...]:
+    """Read a library's versions, as plain data a durable step can store.
+
+    Args:
+        sources: Where a library's versions are read.
+        library: The library ID.
+
+    Returns:
+        The versions.
+    """
     return tuple(await sources.imported_versions(library))
 
 
@@ -1349,11 +1838,22 @@ class ReprocessLibraryUseCase:
     """
 
     sources: LibrarySources
+    """Where a library's versions are read."""
     importer: JobHandler
+    """The refresh importer, without checkpoints of its own."""
     checkpoints: Checkpoints = field(default_factory=_NoCheckpoints)
+    """Makes the job's steps durable."""
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
-        """Re-import every version; raising fails the job."""
+        """Re-import every version; raising fails the job.
+
+        Args:
+            job: The ``reprocess`` job.
+            progress: Where the job reports, counting versions.
+
+        Raises:
+            ReprocessFailedError: Some versions could not be re-imported.
+        """
         step = self.checkpoints.step
         versions = await step("list the versions", partial(_versions, self.sources, job.library))
         await progress.report(done=0, total=len(versions))
@@ -1376,13 +1876,33 @@ class ReprocessLibraryUseCase:
             raise ReprocessFailedError(failures)
 
     async def _one(self, job: Job, current: ImportedRef, tracker: _OneVersion) -> _VersionOutcome:
+        """Re-import one version, inside its durable step.
+
+        Args:
+            job: The ``reprocess`` job.
+            current: The version.
+            tracker: The version's progress.
+
+        Returns:
+            The version's outcome.
+        """
         return await _reimport(self.importer, job, current, tracker)
 
 
 async def _reimport(
     importer: JobHandler, job: Job, current: ImportedRef, tracker: _OneVersion
 ) -> _VersionOutcome:
-    """Re-import one version at the commit it serves; a failure is the outcome, not raised."""
+    """Re-import one version at the commit it serves; a failure is the outcome, not raised.
+
+    Args:
+        importer: The refresh importer.
+        job: The library job.
+        current: The version.
+        tracker: The version's progress.
+
+    Returns:
+        The version's outcome.
+    """
     one = replace(
         job,
         kind=REFRESH_JOB,
@@ -1416,13 +1936,26 @@ class RetagLibraryUseCase:
     """
 
     sources: LibrarySources
+    """Where a library's tag rules and versions are read."""
     tags: ImportedTagStore
+    """The imported tags of what each version serves."""
     index: ChunkIndex
+    """Where the chunks' tags are refreshed."""
     tag_locks: LibraryLocks
+    """The library's tag lock, shared with manual tagging."""
     checkpoints: Checkpoints = field(default_factory=_NoCheckpoints)
+    """Makes the job's steps durable."""
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
-        """Re-tag every version; raising fails the job."""
+        """Re-tag every version; raising fails the job.
+
+        Args:
+            job: The ``retag`` job.
+            progress: Where the job reports, counting versions.
+
+        Raises:
+            ReprocessFailedError: Some versions could not be re-tagged.
+        """
         step = self.checkpoints.step
         versions = await step("list the versions", partial(_versions, self.sources, job.library))
         await progress.report(done=0, total=len(versions))
@@ -1441,6 +1974,15 @@ class RetagLibraryUseCase:
             raise ReprocessFailedError(failures)
 
     async def _one(self, library: str, ref: str) -> _VersionOutcome:
+        """Re-tag one version, inside its durable step; a failure is the outcome.
+
+        Args:
+            library: The library ID.
+            ref: The version's ref.
+
+        Returns:
+            The version's outcome.
+        """
         try:
             return _VersionOutcome(reused=await self._retag(library, ref))
         except Exception as error:
@@ -1448,7 +1990,15 @@ class RetagLibraryUseCase:
             return _VersionOutcome(failure=(failure_code(error), _describe(error)))
 
     async def _retag(self, library: str, ref: str) -> int:
-        """Re-tag one version with the rules as they are now; return its stored articles."""
+        """Re-tag one version with the rules as they are now; return its stored articles.
+
+        Args:
+            library: The library ID.
+            ref: The version's ref.
+
+        Returns:
+            How many articles the version has; 0 when it serves nothing.
+        """
         rules = (await self.sources.get(library)).tag_rules
         async with self.tag_locks.of(library):
             stored = await self.tags.stored_tags(library, ref)
@@ -1484,17 +2034,34 @@ class RechunkLibraryUseCase:
     """
 
     sources: LibrarySources
+    """Where a library's settings and versions are read."""
     copier: VersionCopier
+    """Copies what a version serves into a pending manifest."""
     chunker: Chunker
+    """Cuts articles; configured with the library's chunking."""
     tags: ImportedTagStore
+    """The imported tags of the copy."""
     versions: VersionPublisher
+    """Activates or discards the copy."""
     index: ChunkIndex
+    """Where the copy's chunks are stored."""
     tag_locks: LibraryLocks
+    """The library's tag lock, shared with manual tagging."""
     importer: JobHandler
+    """The refresh importer, for a version whose stored text is outdated."""
     checkpoints: Checkpoints = field(default_factory=_NoCheckpoints)
+    """Makes the job's steps durable."""
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
-        """Re-chunk every version; raising fails the job."""
+        """Re-chunk every version; raising fails the job.
+
+        Args:
+            job: The ``rechunk`` job.
+            progress: Where the job reports, counting versions.
+
+        Raises:
+            ReprocessFailedError: Some versions could not be re-chunked.
+        """
         step = self.checkpoints.step
         versions = await step("list the versions", partial(_versions, self.sources, job.library))
         await progress.report(done=0, total=len(versions))
@@ -1517,6 +2084,18 @@ class RechunkLibraryUseCase:
             raise ReprocessFailedError(failures)
 
     async def _one(self, job: Job, current: ImportedRef, tracker: _OneVersion) -> _VersionOutcome:
+        """Re-chunk one version from its stored text, inside its durable step.
+
+        A version whose stored text is outdated, or only a parse can rebuild, is re-imported.
+
+        Args:
+            job: The ``rechunk`` job.
+            current: The version.
+            tracker: The version's progress.
+
+        Returns:
+            The version's outcome.
+        """
         try:
             source = await self.sources.get(job.library)
             chunker = self.chunker.configured(source.chunking)
@@ -1559,6 +2138,17 @@ class RechunkLibraryUseCase:
 
         ``False``, with nothing written, when an article to cut is one only its file can
         rebuild (``CopiedArticle.parsed``): the version is then re-imported instead.
+
+        Args:
+            library: The library ID.
+            ref: The version's ref.
+            copied: The pending copy.
+            source: The library's settings.
+            chunker: Cuts with the library's chunking.
+            tracker: The version's progress.
+
+        Returns:
+            True once the copy is active.
         """
         blobs = list(dict.fromkeys(a.blob_sha for a in copied.articles))
         found: dict[str, tuple[ArticleChunk, ...]] = {}
@@ -1639,16 +2229,27 @@ class ImportVersionUseCase:
     """
 
     gateway: GitGateway
+    """Fetches the pinned commit's files."""
     chunker: Chunker
+    """Cuts articles; configured with the library's chunking."""
     sources: LibrarySources
+    """Where the library's repository, settings and versions are read."""
     versions: VersionPublisher
+    """Stores, activates or discards the version's manifest."""
     index: ChunkIndex
+    """Where the version's chunks are stored."""
     vault: CredentialVault
+    """Where the library's credential is kept."""
     max_article_bytes: int = DEFAULT_MAX_ARTICLE_BYTES
+    """The most bytes one article may have; a bigger one is skipped."""
     max_import_bytes: int = DEFAULT_MAX_IMPORT_BYTES
+    """The most bytes of text the version's articles may add up to."""
     max_image_bytes: int = DEFAULT_MAX_IMAGE_BYTES
+    """The most bytes one image may have."""
     max_images_bytes: int = DEFAULT_MAX_IMAGES_BYTES
+    """The most bytes the version's images may add up to."""
     refresh: bool = False
+    """Re-import a version the catalog has: fail, not re-create it, if it was removed."""
     renames: RenameSource | None = None
     """Where renames come from; without it none are detected. Never a reason to fail."""
     stored: StoredArticleSource | None = None
@@ -1673,6 +2274,15 @@ class ImportVersionUseCase:
         first step it had not finished. The commit is fetched only when a step needs its files
         (a resume that only has publishing left fetches nothing). Every step is safe to run
         again: it reads the pinned commit, and what it stores is keyed by content.
+
+        Args:
+            job: The import job, pinned to a version and a commit.
+            progress: Where the job reports, counting files.
+
+        Raises:
+            ImportNotPinnedError: The job names no version or no commit.
+            _anonymous: The repository wanted a login; ``_anonymous`` says what that means.
+            NoArticlesError: No file of the commit matches the library's paths.
         """
         if job.version is None or job.commit_sha is None:
             raise ImportNotPinnedError
@@ -1752,6 +2362,12 @@ class ImportVersionUseCase:
 
         The version is live now: a catalog that cannot take them must not fail it. The catalog
         keeps a user's edits over both.
+
+        Args:
+            library: The library ID.
+            ref: The version's ref.
+            readme: What the root README says.
+            context7: What reading ``context7.json`` gave.
         """
         config = context7.config or Context7Config()
         try:
@@ -1770,6 +2386,9 @@ class ImportVersionUseCase:
 
         Any failure after the store discards what this run stored. What a run killed halfway
         left pending is discarded by the recovery hook before the job resumes.
+
+        Args:
+            version: The imported version.
         """
         manifest_id: str | None = None
         try:
@@ -1783,7 +2402,15 @@ class ImportVersionUseCase:
     async def _assets(
         self, checkout: _Checkout, wanted: Sequence[str]
     ) -> tuple[ReadmeSummary, _Context7Read, _ImageBudget]:
-        """Read the root README and ``context7.json``, and the wanted images the checkout holds."""
+        """Read the root README and ``context7.json``, and the wanted images the checkout holds.
+
+        Args:
+            checkout: The commit's checkout.
+            wanted: The image paths the articles reference.
+
+        Returns:
+            The README's summary, ``context7.json``, and the images read with the budget.
+        """
         folder = await checkout.folder()
         readme, context7 = await asyncio.to_thread(_root_files, folder, self.max_article_bytes)
         taken = _ImageBudget(per_image=self.max_image_bytes, total=self.max_images_bytes)
@@ -1805,6 +2432,16 @@ class ImportVersionUseCase:
         renames its earlier syncs found are chained with this sync's (``compose_renames``). Old
         paths are filtered by the library's *current* selection, which may differ from the one
         the previous version was imported with.
+
+        Args:
+            job: The import job.
+            source: The library's settings.
+            credential: The library's credential, if any.
+            refs: Full ref names to try when a bare SHA is refused.
+            articles: The version's articles.
+
+        Returns:
+            The ref the renames start from and the renames, or ``(None, ())``.
         """
         if self.renames is None or job.version is None or job.commit_sha is None:
             return None, ()
@@ -1862,6 +2499,13 @@ class ImportVersionUseCase:
         again against it (git rename detection only, no re-chunking), and manual tags follow
         the new map, chunks included. The version is live already: nothing here fails it, and
         a map git cannot give leaves the newer one as it was.
+
+        Args:
+            job: The import job.
+            kind: What the job's ref is.
+            source: The library's settings.
+            credential: The library's credential, if any.
+            refs: Full ref names to try when a bare SHA is refused.
         """
         if self.renames is None or job.version is None or job.commit_sha is None:
             return
@@ -1902,7 +2546,14 @@ class ImportVersionUseCase:
     async def _replace_renames(
         self, library: str, ref: str, from_ref: str, renames: Sequence[GitRename]
     ) -> None:
-        """Store the map with the version ``ref`` serves; copy the tags it moves to the chunks."""
+        """Store the map with the version ``ref`` serves; copy the tags it moves to the chunks.
+
+        Args:
+            library: The library ID.
+            ref: The version whose map is replaced.
+            from_ref: The version the renames start from.
+            renames: The renames.
+        """
         async with self.tag_locks.of(library):
             retagged = await self.versions.replace_renames(
                 library, ref, from_ref=from_ref, renames=renames
@@ -1913,7 +2564,16 @@ class ImportVersionUseCase:
 
     @staticmethod
     async def _quietly[T](job: Job, call: Awaitable[T], fallback: T) -> T:
-        """Await ``call``; a failure (never a cancellation) is logged and ``fallback`` returned."""
+        """Await ``call``; a failure (never a cancellation) is logged and ``fallback`` returned.
+
+        Args:
+            job: The import job, for the log.
+            call: What to await.
+            fallback: What to return when it fails.
+
+        Returns:
+            What ``call`` gave, or ``fallback``.
+        """
         try:
             return await call
         except DomainError as error:  # expected: unreachable, auth, too large, ...
@@ -1930,7 +2590,18 @@ class ImportVersionUseCase:
         taken: _ImageBudget,
         progress: JobProgress,
     ) -> tuple[ImportedImage, ...]:
-        """Add the images outside the selection (a step) to ``taken``'s; list the ones left out."""
+        """Add the images outside the selection (a step) to ``taken``'s; list the ones left out.
+
+        Args:
+            job: The import job.
+            source: The library's settings.
+            credential: The library's credential, if any.
+            taken: The images the checkout held, with their budget.
+            progress: Where the images left out are listed.
+
+        Returns:
+            Every image the version keeps.
+        """
         outside = await self.checkpoints.step(
             "fetch the images outside the selection",
             lambda: self._outside_images(job, source, credential, taken),
@@ -2037,6 +2708,15 @@ class ImportVersionUseCase:
         Returns only what this step adds (its images, skips and the paths the commit lacks), on
         what is left of ``taken``'s budget: the images of the checkout are stored once, by the
         step that read them.
+
+        Args:
+            job: The import job.
+            source: The library's settings.
+            credential: The library's credential, if any.
+            taken: The images the checkout held, with their budget.
+
+        Returns:
+            What this step adds, on what is left of ``taken``'s budget.
         """
         outside = _ImageBudget(
             per_image=taken.per_image, total=taken.total, count=taken.count, used=taken.used
@@ -2071,6 +2751,18 @@ class ImportVersionUseCase:
 
         One durable step per ``batch_files`` files. What a step returns is all that later steps
         and the progress depend on, so a replayed step leaves the job as the first run did.
+
+        Args:
+            checkout: The commit's checkout.
+            library: The library ID.
+            ref: The version's ref.
+            paths: The selected files.
+            source: The library's settings.
+            chunker: Cuts with the chunking the import read first.
+            progress: Where the job reports.
+
+        Returns:
+            The articles, and the image paths they reference (at most ``MAX_WANTED_IMAGES``).
         """
         total, config_hash = len(paths), chunker.config_hash
         await progress.report(done=0, total=total)
@@ -2126,6 +2818,14 @@ class ImportVersionUseCase:
 
         A file an earlier import stored at the same path with the same parser is not parsed: its
         title, front matter and text are taken as stored, its tags derived again.
+
+        Args:
+            checkout: The commit's checkout.
+            given: The batch's files and what the steps before it fixed.
+            progress: Where the job reports.
+
+        Returns:
+            The batch's articles, problems and counts.
         """
         read, used = await self._read(await checkout.folder(), given, progress)
         files = [(path, sha) for path, sha, _ in (r for r in read if not isinstance(r, Skip))]
@@ -2179,7 +2879,19 @@ class ImportVersionUseCase:
     async def _read(
         self, folder: Path, given: _BatchInput, progress: JobProgress
     ) -> tuple[list[tuple[str, str, str] | Skip], int]:
-        """Read the batch's files: ``(path, blob SHA, text)`` or why skipped; the bytes used."""
+        """Read the batch's files: ``(path, blob SHA, text)`` or why skipped; the bytes used.
+
+        Args:
+            folder: The checkout's folder.
+            given: The batch's files and the bytes the steps before it used.
+            progress: Where the job reports.
+
+        Returns:
+            Each file's text or skip, and the bytes of text used so far.
+
+        Raises:
+            ImportTooLargeError: The text adds up to more than ``max_import_bytes``.
+        """
         read: list[tuple[str, str, str] | Skip] = []
         used = given.used
         for offset, path in enumerate(given.paths, 1):
@@ -2202,6 +2914,14 @@ class ImportVersionUseCase:
         """Rebuild the articles earlier imports stored for these files, by ``(path, blob SHA)``.
 
         A file the store cannot answer for, or whose rebuild needs a parse, is left out.
+
+        Args:
+            library: The library ID.
+            ref: The version being imported.
+            files: ``(path, blob SHA)`` of each file read.
+
+        Returns:
+            The parsed articles, by ``(path, blob SHA)``.
         """
         if self.stored is None:
             return {}
@@ -2215,12 +2935,29 @@ class ImportVersionUseCase:
 
 
 async def _same[T](value: T) -> T:
+    """Return ``value``: a step whose result is fixed when the job first runs it.
+
+    Args:
+        value: The value.
+
+    Returns:
+        ``value``.
+    """
     return value
 
 
 def _cut(
     chunker: Chunker, articles: Mapping[str, ParsedArticle]
 ) -> dict[str, tuple[ArticleChunk, ...]]:
+    """Cut articles into chunks (CPU-bound: call it in a thread).
+
+    Args:
+        chunker: The configured chunker.
+        articles: The articles to cut, by blob SHA.
+
+    Returns:
+        Their chunks, by blob SHA.
+    """
     return {sha: tuple(chunker.chunk(a)) for sha, a in articles.items()}
 
 
@@ -2234,6 +2971,13 @@ async def _activate(
     """Give the manifest its library's manual tags, chunks included, then activate it.
 
     Last, so a tag set while the version was stored and indexed counts too.
+
+    Args:
+        versions: Publishes the version.
+        index: Where the chunks' tags are refreshed.
+        tag_locks: The library's tag lock.
+        library: The library ID.
+        manifest_id: The pending manifest.
     """
     async with tag_locks.of(library):
         tagged = await versions.apply_manual_tags(manifest_id)
@@ -2249,9 +2993,16 @@ async def _discard_shielded(
 
     Run as a task of its own and shielded, so that the clean-up is not cut short. A failing
     clean-up is logged, never hides the cause.
+
+    Args:
+        versions: Discards the pending manifests.
+        index: Discards the pending chunks.
+        library: The library ID.
+        manifest_id: Only this manifest's; ``None`` for all of the library's.
     """
 
     async def discard() -> None:
+        """Discard, logging a failure instead of raising it."""
         try:
             await _discard_pending(versions, index, library, manifest_id)
         except Exception:
@@ -2264,6 +3015,15 @@ async def _discard_shielded(
 
 
 def _full_refs(kind: RefKind, name: str) -> list[str]:
+    """Name the full ref a server may be asked for instead of a bare SHA.
+
+    Args:
+        kind: What the ref is.
+        name: The ref's name.
+
+    Returns:
+        ``refs/tags/<name>`` or ``refs/heads/<name>``; nothing for a commit.
+    """
     prefix = {RefKind.TAG: "refs/tags/", RefKind.BRANCH: "refs/heads/"}.get(kind)
     return [] if prefix is None else [prefix + name]
 
@@ -2276,16 +3036,36 @@ class _Checkout:
     """The commit's files, fetched when a step first needs them, removed with ``stack``."""
 
     fetch: Callable[[], AbstractAsyncContextManager[Path]]
+    """Fetches the commit's files."""
     stack: AsyncExitStack
+    """Removes the folder when the import is done."""
     fetched: Path | None = None
+    """The folder, once fetched."""
 
     async def folder(self) -> Path:
+        """Fetch the commit the first time; later calls return the same folder.
+
+        Returns:
+            The folder of the checked-out files.
+        """
         if self.fetched is None:
             self.fetched = await self.stack.enter_async_context(self.fetch())
         return self.fetched
 
 
 async def _list(checkout: _Checkout, source: ImportSource) -> list[str]:
+    """List the selected files of the checkout.
+
+    Args:
+        checkout: The commit's checkout.
+        source: The library's settings.
+
+    Returns:
+        The selected files, sorted.
+
+    Raises:
+        CheckoutUnreadableError: A folder of the checkout could not be listed.
+    """
     # Only the walk of the checkout is `checkout_unreadable`; a fetch that fails on the disk
     # (full, out of file handles) fails as itself.
     folder = await checkout.folder()
@@ -2300,24 +3080,35 @@ class _BatchInput:
     """What one parse-and-chunk step needs, all of it fixed by the steps before it."""
 
     paths: Sequence[str]
+    """The files of this step, in order."""
     first: int
     """How many files the steps before this one took."""
     total: int
+    """How many files the import takes in all."""
     used: int
     """Bytes of text taken by the steps before this one."""
     known: Mapping[str, tuple[ArticleChunk, ...]]
     """Chunks of the blobs the steps before this one took."""
     source: ImportSource
+    """The library's settings."""
     config_hash: str
+    """The chunker's ``config_hash``."""
     chunker: Chunker
+    """Cuts with the chunking the import read first."""
     library: str
+    """The library ID."""
     ref: str
+    """The version's ref."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _Article:
+    """An article of a step, with the images it references."""
+
     imported: ImportedArticle
+    """The article."""
     images: tuple[str, ...]
+    """The repository paths of the images it references."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2325,10 +3116,13 @@ class _Batch:
     """The durable result of one parse-and-chunk step."""
 
     articles: tuple[_Article, ...]
+    """The step's articles."""
     problems: tuple[tuple[str, ProblemCode, str], ...]
+    """``(path, code, reason)`` of each file skipped or imported with a note."""
     stored: frozenset[str]
     """Blobs whose chunks an earlier import had stored."""
     used: int
+    """Bytes of text taken by this step and the ones before it."""
     taken: int = 0
     """Articles not parsed: taken as an earlier import had stored them."""
 
@@ -2338,10 +3132,16 @@ class DiscardInterruptedImportUseCase:
     """Implements ``ports.driven.RecoveryHook`` for ``IMPORT_JOB``."""
 
     versions: VersionPublisher
+    """Discards the pending manifests."""
     index: ChunkIndex
+    """Discards the pending chunks."""
 
     async def __call__(self, job: Job, /) -> None:
-        """Drop what the interrupted run stored; a library has one running import at a time."""
+        """Drop what the interrupted run stored; a library has one running import at a time.
+
+        Args:
+            job: The interrupted import.
+        """
         await _discard_pending(self.versions, self.index, job.library, None)
 
 
@@ -2351,6 +3151,12 @@ async def _discard_pending(
     """Delete the pending chunks, then the pending manifests (the order matters, see the port).
 
     Both are attempted whatever happens to the first; the first error is raised afterwards.
+
+    Args:
+        versions: Discards the pending manifests.
+        index: Discards the pending chunks.
+        library: The library ID.
+        manifest_id: Only this manifest's; ``None`` for all of the library's.
     """
     errors: list[Exception] = []
     for discard in (index.discard, versions.discard):
@@ -2367,9 +3173,21 @@ def _selected_files(folder: Path, selection: PathSelection) -> list[str]:
     """List the checked-out files the library takes, repository-relative, sorted.
 
     A folder that cannot be listed raises, so that a version is never published without it.
+
+    Args:
+        folder: The checkout's folder.
+        selection: The library's paths.
+
+    Returns:
+        The selected files.
     """
 
     def fail(error: OSError) -> None:
+        """Raise a listing error (``error`` itself) instead of letting ``os.walk`` skip the folder.
+
+        Args:
+            error: Why a folder could not be listed.
+        """
         raise error
 
     found = []
@@ -2384,7 +3202,15 @@ def _selected_files(folder: Path, selection: PathSelection) -> list[str]:
 
 
 def _full_refs(kind: RefKind, version: str) -> list[str]:
-    """Return the full ref name to try when a server refuses a bare SHA (none for a commit)."""
+    """Return the full ref name to try when a server refuses a bare SHA (none for a commit).
+
+    Args:
+        kind: What the ref is.
+        version: The ref's name.
+
+    Returns:
+        ``refs/tags/<name>`` or ``refs/heads/<name>``; nothing for a commit.
+    """
     prefix = {RefKind.TAG: "refs/tags/", RefKind.BRANCH: "refs/heads/"}.get(kind)
     return [] if prefix is None else [prefix + version]
 
@@ -2394,12 +3220,19 @@ class _ImageBudget:
     """What the images of one version may still take; the images turned away, with why."""
 
     per_image: int
+    """The most bytes one image may have."""
     total: int
+    """The most bytes the version's images may add up to."""
     count: int = 0
+    """Images taken so far."""
     used: int = 0
+    """Bytes the images taken so far add up to."""
     images: list[ImportedImage] = field(default_factory=list)
+    """The images taken."""
     skipped: list[Skip | _Missing] = field(default_factory=list)
+    """The images turned away, with why."""
     absent: list[str] = field(default_factory=list)
+    """Wanted paths the folder read did not have."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2451,8 +3284,11 @@ class _Missing:
     """The repository has no file at this path (at the commit)."""
 
     path: str
+    """The referenced path."""
     code: ProblemCode = ProblemCode.MISSING_IMAGE
+    """Always ``missing_image``."""
     reason: str = "no such file in the repository at this commit"
+    """Why it is listed."""
 
 
 def _through_a_link(folder: Path, path: str) -> bool:
@@ -2460,6 +3296,13 @@ def _through_a_link(folder: Path, path: str) -> bool:
 
     ``_read`` only refuses a link as the last component. Git is run with ``core.symlinks=false``,
     so a real checkout holds none; this keeps a checkout that does from reading the host's files.
+
+    Args:
+        folder: The checkout's folder.
+        path: A repository path.
+
+    Returns:
+        True when a folder on the way is a symlink.
     """
     current = folder
     for part in path.split("/")[:-1]:
@@ -2478,6 +3321,14 @@ def _read_images(folder: Path, paths: Sequence[str], budget: _ImageBudget) -> li
     A file that is not a plain file, too big, not an allowed image by its content, or over the
     version's budget is turned away (``budget.skipped``) and the rest goes on. Content is
     hashed with git's blob rule, like articles.
+
+    Args:
+        folder: The checkout's folder.
+        paths: The image paths wanted.
+        budget: What the images may still take; filled in place.
+
+    Returns:
+        The paths the folder lacks.
     """
     absent: list[str] = []
     for path in paths:
@@ -2518,6 +3369,13 @@ def _readme(folder: Path, limit: int) -> ReadmeSummary:
     untrusted as any article. A README that is a symlink, not a plain file, too big or not
     UTF-8 counts as absent (the first of the two names that exists decides). This never raises:
     the summary is a nicety and must not fail an import whose articles are fine.
+
+    Args:
+        folder: The checkout's folder.
+        limit: The most bytes the README may have.
+
+    Returns:
+        Its title and description; empty when there is none.
     """
     for name in ("README.md", "README.mdx"):
         try:
@@ -2532,7 +3390,15 @@ def _readme(folder: Path, limit: int) -> ReadmeSummary:
 
 
 def _root_files(folder: Path, limit: int) -> tuple[ReadmeSummary, _Context7Read]:
-    """Read the root README and ``context7.json`` of a checkout; never raises."""
+    """Read the root README and ``context7.json`` of a checkout; never raises.
+
+    Args:
+        folder: The checkout's folder.
+        limit: The most bytes the README may have.
+
+    Returns:
+        The README's summary and what reading ``context7.json`` gave.
+    """
     return _readme(folder, limit), _context7(folder)
 
 
@@ -2541,10 +3407,16 @@ class _Context7Read:
     """The root ``context7.json`` of a checkout: parsed, or why it is ignored, or neither."""
 
     config: Context7Config | None = None
+    """The parsed file; ``None`` when there is none or it is ignored."""
     warning: str | None = None
+    """Why the file is ignored; ``None`` when it is not."""
 
     def notes(self) -> tuple[str, ...]:
-        """Why the file is ignored, or what was left out of it."""
+        """Why the file is ignored, or what was left out of it.
+
+        Returns:
+            The warning, else the parsed file's notes.
+        """
         return (self.warning,) if self.warning else (self.config.notes if self.config else ())
 
 
@@ -2553,6 +3425,12 @@ def _context7(folder: Path) -> _Context7Read:
 
     Like the README it is read whatever the selection says and is untrusted. A file that is
     not a plain file, too big or not a valid ``context7.json`` gives a warning and is ignored.
+
+    Args:
+        folder: The checkout's folder.
+
+    Returns:
+        The parsed file, or why it is ignored.
     """
     try:
         data = _read(folder / CONTEXT7_FILE, CONTEXT7_MAX_BYTES)
@@ -2582,6 +3460,19 @@ async def _fetch_context7(
     than a preview waits, the disk) is a warning and adding or previewing goes on without it,
     except that ``busy_raises`` lets ``PreviewBusyError`` through. Without a tree (a module
     built with no git) there is no file.
+
+    Args:
+        tree: Reads the file; None: there is none.
+        repository: The repository.
+        resolved: The pinned ref.
+        credential: The library's credential, if any.
+        busy_raises: Let ``PreviewBusyError`` through instead of a warning.
+
+    Returns:
+        The parsed file, or why it is ignored.
+
+    Raises:
+        PreviewBusyError: No preview slot was free in time, with ``busy_raises``.
     """
     if tree is None:
         return _Context7Read()
@@ -2610,6 +3501,14 @@ async def _fetch_context7(
 
 
 def _context7_of(found: FetchedFile) -> _Context7Read:
+    """Parse a fetched ``context7.json``.
+
+    Args:
+        found: What the tree read.
+
+    Returns:
+        The parsed file, or why it is ignored; nothing when the commit has none.
+    """
     if found.problem is not None:
         return _Context7Read(warning=str(InvalidContext7Error(found.problem)))
     if found.data is None:
@@ -2625,8 +3524,11 @@ class Skip:
     """Why a file is left out of the version (never echoes its content)."""
 
     code: ProblemCode
+    """What kind of problem it is."""
     reason: str
+    """Why, in words for users."""
     path: str = ""
+    """The file's repository path, once known."""
 
 
 def _load(folder: Path, path: str, limit: int) -> tuple[str, str, int] | Skip:
@@ -2640,6 +3542,14 @@ def _load(folder: Path, path: str, limit: int) -> tuple[str, str, int] | Skip:
     Chunk sets are reused by blob SHA, so changing ``_decode`` leaves already-imported blobs
     with their old text until they change; a UTF-8 BOM is stripped now (``utf-8-sig``), so
     blobs imported before that may still carry U+FEFF in their chunks.
+
+    Args:
+        folder: The checkout's folder.
+        path: The file's repository path.
+        limit: The most bytes it may have.
+
+    Returns:
+        The blob SHA, the text and the byte size, or why it is skipped.
     """
     try:
         path.encode()
@@ -2665,6 +3575,12 @@ def _decode(data: bytes) -> str | Skip:
     UTF-16/32 without a BOM (reported as binary, or imported as mojibake when it has no NULs),
     and other legacy charsets (CJK, Cyrillic) that happen to pass as Windows-1252. A real
     charset detector is not worth a dependency.
+
+    Args:
+        data: The file's bytes.
+
+    Returns:
+        The text, or why it is skipped.
     """
     for bom, codec in _BOMS:
         if data.startswith(bom):
@@ -2685,7 +3601,15 @@ def _decode(data: bytes) -> str | Skip:
 
 
 def _read(file: Path, limit: int) -> bytes | Skip:
-    """Return the bytes of a plain file of up to ``limit`` bytes, else why it is skipped."""
+    """Return the bytes of a plain file of up to ``limit`` bytes, else why it is skipped.
+
+    Args:
+        file: The file.
+        limit: The most bytes it may have.
+
+    Returns:
+        Its bytes, or why it is skipped.
+    """
     too_big = Skip(code=ProblemCode.TOO_LARGE, reason=f"larger than {limit} bytes")
     not_a_file = Skip(code=ProblemCode.NOT_A_FILE, reason="not a regular file")
     info = file.lstat()
@@ -2704,9 +3628,11 @@ def _read(file: Path, limit: int) -> bytes | Skip:
 def _open_plain(file: Path) -> Generator[BinaryIO]:
     """Open for reading without following a symlink; the descriptor is always closed.
 
+    Args:
+        file: The file.
+
     Yields:
         The binary file object.
-
     """
     fd = os.open(file, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     try:
@@ -2725,6 +3651,14 @@ async def _refuse_while_importing(jobs: JobRepository, library: str, version: st
     queued as a ``refresh`` job: it fails at store time if the version is gone, and a removal
     that comes after the store deletes its pending manifest, so it cannot re-create the version.
     An ``import`` job for a library that was removed fails at store time (no library).
+
+    Args:
+        jobs: Where jobs are stored.
+        library: The library ID.
+        version: The version being removed; ``None`` for the whole library.
+
+    Raises:
+        ImportInProgressError: An import of it is queued or running.
     """
     # ponytail: loads all of the library's jobs; a "has unfinished jobs" query if that grows.
     for job in await jobs.list_for_library(library):
@@ -2741,6 +3675,14 @@ async def _queue_collection(
     """Queue the job that frees the content; the removal itself is done, so never raise.
 
     A collection already waiting for the library will see this removal too: reuse it.
+
+    Args:
+        jobs: Where jobs are stored.
+        enqueue_job: Queues the collection.
+        removed: What the catalog removed.
+
+    Returns:
+        The collection job's ID; ``None`` when it could not be queued.
     """
     try:
         for job in await jobs.list_for_library(removed.library):
@@ -2754,7 +3696,12 @@ async def _queue_collection(
 
 
 async def _forget_chunks(index: ChunkIndex, removed: Removed) -> None:
-    """Drop the removed manifests' chunks now; if it fails the collection job sweeps them."""
+    """Drop the removed manifests' chunks now; if it fails the collection job sweeps them.
+
+    Args:
+        index: Where the chunks are.
+        removed: What the catalog removed.
+    """
     try:
         await index.remove(removed.manifest_ids)
     except Exception:
@@ -2773,11 +3720,21 @@ class TagArticleUseCase:
     """
 
     tags: ManualTagStore
+    """Where manual tags are kept."""
     index: ChunkIndex
+    """Where the chunks' tags are refreshed."""
     locks: LibraryLocks
+    """The library's tag lock, shared with the importer."""
 
     async def __call__(self, command: TagArticleCommand) -> TaggedArticle:
-        """Store the tags, then copy every touched article's tags onto its chunks."""
+        """Store the tags, then copy every touched article's tags onto its chunks.
+
+        Args:
+            command: The library, the article path and its new manual tags.
+
+        Returns:
+            The path with its manual tags now.
+        """
         async with self.locks.of(command.library):
             tagged = await self.tags.set_tags(command.library, command.path, command.tags)
             for manifest_id, articles in tagged.retagged.items():
@@ -2790,12 +3747,23 @@ class RemoveVersionUseCase:
     """Implements ``ports.driving.RemoveVersion``."""
 
     jobs: JobRepository
+    """Where jobs are stored."""
     removals: Removals
+    """Removes the version from the catalog."""
     index: ChunkIndex
+    """Where the version's chunks are removed."""
     enqueue_job: EnqueueJob
+    """Queues the collection."""
 
     async def __call__(self, command: RemoveVersionCommand) -> RemovalResult:
-        """Refuse during an import of the version, remove it from the catalog, then clean up."""
+        """Refuse during an import of the version, remove it from the catalog, then clean up.
+
+        Args:
+            command: The library and the version.
+
+        Returns:
+            What was removed, the default version now and the collection job.
+        """
         library = command.library.lower()  # library IDs are stored lower-case
         await _refuse_while_importing(self.jobs, library, command.ref)
         removed = await self.removals.remove_version(library, command.ref)
@@ -2814,15 +3782,29 @@ class RemoveLibraryUseCase:
     """Implements ``ports.driving.RemoveLibrary``."""
 
     jobs: JobRepository
+    """Where jobs are stored."""
     removals: Removals
+    """Removes the library from the catalog."""
     index: ChunkIndex
+    """Where the library's chunks are removed."""
     enqueue_job: EnqueueJob
+    """Queues the collection."""
     vault: CredentialVault
+    """Where the library's credential is forgotten."""
     schedules: AutoSyncStore
+    """Where the library's schedule is forgotten."""
     switch: ScheduleSwitch
+    """Turns the tick off once no library has a schedule."""
 
     async def __call__(self, command: RemoveLibraryCommand) -> RemovalResult:
-        """Refuse during any import of the library, remove it from the catalog, then clean up."""
+        """Refuse during any import of the library, remove it from the catalog, then clean up.
+
+        Args:
+            command: The library.
+
+        Returns:
+            What was removed and the collection job.
+        """
         library = command.library.lower()
         await _refuse_while_importing(self.jobs, library, None)
         removed = await self.removals.remove_library(library)
@@ -2850,10 +3832,17 @@ class CollectGarbageUseCase:
     """
 
     collectors: Sequence[Collector]
+    """Each domain's collector, in order."""
     grace_seconds: int = DEFAULT_GRACE_SECONDS
+    """How long something stays after it became unused."""
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
-        """Collect; raising fails the job."""
+        """Collect; raising fails the job.
+
+        Args:
+            job: The ``collect`` job.
+            progress: Where the job reports, counting collectors.
+        """
         errors: list[Exception] = []
         await progress.report(done=0, total=len(self.collectors))
         for done, collector in enumerate(self.collectors, 1):
@@ -2872,10 +3861,19 @@ class GetAutoSyncUseCase:
     """Implements ``ports.driving.GetAutoSync``."""
 
     sources: LibrarySources
+    """Tells which libraries exist."""
     schedules: AutoSyncStore
+    """Where schedules are kept."""
 
     async def __call__(self, query: GetAutoSyncQuery) -> AutoSyncOut:
-        """Return the library's schedule; ``enabled`` false when it has none."""
+        """Return the library's schedule; ``enabled`` false when it has none.
+
+        Args:
+            query: The library.
+
+        Returns:
+            The schedule.
+        """
         library = query.library.lower()
         await self.sources.get(library)  # an unknown library is not found
         found = await self.schedules.get(library)
@@ -2887,11 +3885,21 @@ class SetAutoSyncUseCase:
     """Implements ``ports.driving.SetAutoSync``."""
 
     sources: LibrarySources
+    """Tells which libraries exist."""
     schedules: AutoSyncStore
+    """Where schedules are kept."""
     switch: ScheduleSwitch
+    """Turns the tick on."""
 
     async def __call__(self, command: SetAutoSyncCommand) -> AutoSyncOut:
-        """Store the schedule; the library is due at once, so the next tick checks it."""
+        """Store the schedule; the library is due at once, so the next tick checks it.
+
+        Args:
+            command: The library and its schedule.
+
+        Returns:
+            The schedule as stored.
+        """
         library = command.library.lower()
         await self.sources.get(library)
         auto_sync = AutoSync(
@@ -2912,11 +3920,21 @@ class DisableAutoSyncUseCase:
     """Implements ``ports.driving.DisableAutoSync``."""
 
     sources: LibrarySources
+    """Tells which libraries exist."""
     schedules: AutoSyncStore
+    """Where schedules are kept."""
     switch: ScheduleSwitch
+    """Turns the tick off once no library has a schedule."""
 
     async def __call__(self, command: DisableAutoSyncCommand) -> AutoSyncOut:
-        """Forget the schedule; every version stays. The last one off stops the tick."""
+        """Forget the schedule; every version stays. The last one off stops the tick.
+
+        Args:
+            command: The library.
+
+        Returns:
+            The schedule, now off.
+        """
         library = command.library.lower()
         await self.sources.get(library)
         await self.schedules.delete(library)
@@ -2929,7 +3947,9 @@ class SwitchScheduleUseCase:
     """Implements ``ports.driving.SwitchSchedule``."""
 
     schedules: AutoSyncStore
+    """Where schedules are kept."""
     switch: ScheduleSwitch
+    """Turns the tick on or off."""
 
     async def __call__(self) -> None:
         """Tick only while some library has a schedule."""
@@ -2937,6 +3957,12 @@ class SwitchScheduleUseCase:
 
 
 async def _switch_to_need(schedules: AutoSyncStore, switch: ScheduleSwitch) -> None:
+    """Turn the tick on while some library has a schedule, off otherwise.
+
+    Args:
+        schedules: Where schedules are kept.
+        switch: Turns the tick on or off.
+    """
     await switch.turn(on=bool(await schedules.list_all()))
 
 
@@ -2945,10 +3971,18 @@ class _Tally:
     """What a tick did so far."""
 
     checked: list[str] = field(default_factory=list)
+    """The libraries checked."""
     imports: list[str] = field(default_factory=list)
+    """IDs of the ``auto`` imports queued."""
     removed: list[str] = field(default_factory=list)
+    """The ``auto`` versions removed, ``/owner/repo/ref``."""
 
     def out(self) -> ScheduledChecks:
+        """Map the tally to the boundary.
+
+        Returns:
+            What the tick did.
+        """
         return ScheduledChecks(checked=self.checked, imports=self.imports, removed=self.removed)
 
 
@@ -2970,19 +4004,34 @@ class RunScheduledChecksUseCase:
     """
 
     schedules: AutoSyncStore
+    """Where schedules are kept and checks recorded."""
     sources: LibrarySources
+    """Where a library's repository and versions are read."""
     remote: GitRemote
+    """Lists a repository's refs."""
     vault: CredentialVault
+    """Where the library's credential is kept."""
     jobs: JobRepository
+    """Where jobs are stored."""
     clock: Clock
+    """Tells the time: which libraries are due."""
     enqueue_job: EnqueueJob
+    """Queues the ``auto`` imports."""
     sync_library: SyncLibraryFromRefs
+    """Re-syncs the branches, from the refs listed for the tags."""
     remove_version: RemoveVersion
+    """Removes the ``auto`` versions that fell out of ``keep_last``."""
     switch: ScheduleSwitch
+    """Turns the tick off once no library has a schedule."""
     _running: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    """Held while a tick runs."""
 
     async def __call__(self) -> ScheduledChecks:
-        """Check every due library; a tick that meets one still running does nothing."""
+        """Check every due library; a tick that meets one still running does nothing.
+
+        Returns:
+            The libraries checked, the imports queued and the versions removed.
+        """
         tally = _Tally()
         if self._running.locked():
             return tally.out()
@@ -2994,6 +4043,12 @@ class RunScheduledChecksUseCase:
         return tally.out()
 
     async def _check_one(self, auto_sync: AutoSync, tally: _Tally) -> None:
+        """Check one library and record the check; a removed library's schedule is dropped.
+
+        Args:
+            auto_sync: The library's schedule.
+            tally: What the tick did so far; added to.
+        """
         library = auto_sync.library
         try:
             error = await self._check(auto_sync, tally)
@@ -3009,6 +4064,15 @@ class RunScheduledChecksUseCase:
         await self.schedules.record_check(auto_sync, auto_sync.checked(self.clock.now(), error))
 
     async def _check(self, auto_sync: AutoSync, tally: _Tally) -> str | None:
+        """Import new tags, remove old ``auto`` versions and re-sync branches, as configured.
+
+        Args:
+            auto_sync: The library's schedule.
+            tally: What the tick did so far; added to.
+
+        Returns:
+            What the check could not do, or None.
+        """
         library = auto_sync.library
         source = await self.sources.get(library)
         errors: list[str] = []
@@ -3036,6 +4100,16 @@ class RunScheduledChecksUseCase:
     async def _tags(
         self, auto_sync: AutoSync, tips: Sequence[ResolvedRef], tally: _Tally
     ) -> list[str]:
+        """Queue the imports and the removals ``plan_auto_imports`` asks for.
+
+        Args:
+            auto_sync: The library's schedule.
+            tips: The refs the remote advertises.
+            tally: What the tick did so far; added to.
+
+        Returns:
+            What could not be queued or removed.
+        """
         library = auto_sync.library
         versions = await self.sources.imported_versions(library)
         jobs = await self.jobs.list_for_library(library)  # newest first
@@ -3081,6 +4155,15 @@ def _failed_tags(
     the n-th in a row at the same commit, the tag waits 2**(n-1) - 1 more check intervals, at
     most ``UNEXPECTED_BACKOFF_CAP``. Any other failure (an unreachable repository, a refused
     credential...) is tried at the next check.
+
+    Args:
+        jobs: The library's jobs, newest first.
+        versions: The library's versions.
+        now: The time of the check.
+        interval: The library's check interval.
+
+    Returns:
+        The (tag, commit) pairs held back.
     """
     have = {v.ref for v in versions}
     imports: dict[str, list[Job]] = {}
@@ -3103,7 +4186,15 @@ def _failed_tags(
 
 
 def _backoff(tried: Sequence[Job], interval: timedelta) -> timedelta:
-    """How long after its last failure a tag that keeps failing ``unexpected`` waits."""
+    """How long after its last failure a tag that keeps failing ``unexpected`` waits.
+
+    Args:
+        tried: The tag's imports, newest first.
+        interval: The library's check interval.
+
+    Returns:
+        The wait, doubling with each failure in a row, at most ``UNEXPECTED_BACKOFF_CAP``.
+    """
     last = tried[0]
     in_a_row = 0
     for job in tried:  # newest first

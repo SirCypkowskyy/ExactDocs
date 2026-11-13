@@ -500,7 +500,6 @@ class IngestionModule:
         adds the ``embed`` job (one version embedded in the background, a durable step per batch
         through ``checkpoints``) and makes every job that stores chunks queue the embedding of
         what it stored.
-        what it stored.
 
         Args:
             jobs: Where jobs are stored.
