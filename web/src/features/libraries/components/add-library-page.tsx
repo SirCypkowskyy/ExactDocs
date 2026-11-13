@@ -194,7 +194,7 @@ function AddressStep({
 }: {
   url: string;
   error: string | undefined;
-  /** The library this address already is (`/owner/repo`): the error links to it. */
+  /** The library that holds the ID this address proposes (`/owner/repo`): the error links to it. */
   taken: string | undefined;
   alertId: string | undefined;
   access: ReturnType<typeof usePrivateAccess>;
@@ -240,7 +240,7 @@ function AddressStep({
   );
 }
 
-/** `/owner/repo` as a link to that library's page. */
+/** `/owner/repo` as a link to that library's page, named so it reads well out of context too. */
 function LibraryLink({ id }: { id: string }) {
   const [owner = "", repo = ""] = id.slice(1).split("/");
   return (
@@ -249,7 +249,7 @@ function LibraryLink({ id }: { id: string }) {
       params={{ owner, repo }}
       className="rounded-sm underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      Open it
+      Open {id}
     </Link>
   );
 }
@@ -338,7 +338,7 @@ export function AddLibraryPage() {
   const [errors, setErrors] = useState<{ [K in AddField]?: string | undefined }>({});
   const [showRuleErrors, setShowRuleErrors] = useState(false);
   const [problem, setProblem] = useState<AddProblem>();
-  /** The library the checked address already is; shown only with the address's error. */
+  /** The library holding the ID the checked address proposes; shown only with the address's error. */
   const [taken, setTaken] = useState<string>();
   const [pending, setPending] = useState(false);
   const [added, setAdded] = useState<AddedLibrary>();

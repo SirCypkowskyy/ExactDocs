@@ -9,7 +9,7 @@ interface FieldProps extends Omit<React.ComponentProps<"input">, "id"> {
   error?: string | undefined;
   /** Id of a form-level alert that explains this field too (a wrong password). */
   alertId?: string | undefined;
-  /** A way on from the error (a link), shown after its text. */
+  /** A way on from the error (a link), shown after its text but not part of the description. */
   errorAction?: React.ReactNode;
 }
 
@@ -36,8 +36,8 @@ export function Field({ id, label, hint, error, alertId, errorAction, ...props }
         </p>
       )}
       {error && (
-        <p id={`${id}-error`} className="fade-in text-sm font-medium text-destructive">
-          {error}
+        <p className="fade-in text-sm font-medium text-destructive">
+          <span id={`${id}-error`}>{error}</span>
           {errorAction && <> {errorAction}</>}
         </p>
       )}

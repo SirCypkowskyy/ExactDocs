@@ -125,13 +125,14 @@ export function explainCheckError(error: unknown, sent?: CredentialKind): AddPro
       return { message: "The server has no git installed, so it can't read repositories." };
     case "library_id_taken":
       // The check refuses before it reads anything: the ID this address proposes is in use.
+      // Only the IDs collide; that library may come from another host, so say no more than that.
       return error.libraryId
         ? {
             field: "url",
-            message: `This repository is already the library ${error.libraryId}.`,
+            message: `A library with this repository's ID, ${error.libraryId}, already exists.`,
             library: error.libraryId,
           }
-        : { field: "url", message: "This repository is already a library." };
+        : { field: "url", message: "A library with this repository's ID already exists." };
     default:
       return generic(error);
   }
