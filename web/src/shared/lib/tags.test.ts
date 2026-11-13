@@ -40,4 +40,14 @@ describe("isTagShaped", () => {
     expect(isTagShaped("x".repeat(41))).toBe(false);
     expect(isTagShaped("")).toBe(false);
   });
+
+  it("splits on whitespace as the server's str.split() does", () => {
+    for (const sep of ["\x1c", "\x1d", "\x1e", "\x1f", "\x85", "\u2028", "\u3000", "\t"]) {
+      expect(isTagShaped(`a${sep}b`)).toBe(true);
+      expect(isTagShaped(`${sep}ab${sep}`)).toBe(true);
+    }
+    // U+FEFF is whitespace to JavaScript but not to Python: the server refuses it.
+    expect(isTagShaped("\ufeffab")).toBe(false);
+    expect(isTagShaped("a\ufeffb")).toBe(false);
+  });
 });

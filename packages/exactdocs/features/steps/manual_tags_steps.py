@@ -132,6 +132,7 @@ def step_rule_library(context: Context, pattern: str, tag: str) -> None:
 
 @given('"{path}" declares the tags "{first}" and "{second}" in its front matter')
 def step_declares(context: Context, path: str, first: str, second: str) -> None:
+    # Checks the fixture rather than setting it up: ORIGINS_REF (v1.4.0) has this front matter.
     declared = _article(context, path, ORIGINS_REF)["front_matter"]["tags"]
     assert declared in ([first, second], f"{first}, {second}"), declared
 

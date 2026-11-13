@@ -65,10 +65,14 @@ export function addTag(
 
 /**
  * Whether the server's answer to adding one tag to a path that had `before` holds no new tag:
- * once the server made it a tag, what was typed is one the path already had.
+ * once the server made it a tag, what was typed is one the path already had. Looks for a new
+ * member rather than comparing lengths, so a tag removed meanwhile (another tab) does not hide
+ * a real addition.
  */
-export const addedNothing = (before: readonly string[], after: readonly string[]): boolean =>
-  after.length <= before.length;
+export function addedNothing(before: readonly string[], after: readonly string[]): boolean {
+  const had = new Set(before);
+  return after.every((t) => had.has(t));
+}
 
 /** The manual tags `removed.path` keeps without `removed.tag`; empty means remove them all. */
 export const withoutTag = (manual: readonly ManualTag[], removed: ManualTag): string[] =>

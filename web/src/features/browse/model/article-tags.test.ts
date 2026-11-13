@@ -95,6 +95,11 @@ describe("editing manual tags", () => {
     expect(addedNothing(["getting-started"], ["getting-started"])).toBe(true);
   });
 
+  it("sees a real addition even when another tab removed one of the path's tags meanwhile", () => {
+    expect(addedNothing(["old", "kept"], ["kept", "new"])).toBe(false);
+    expect(addedNothing(["old", "kept"], ["kept"])).toBe(true);
+  });
+
   it("removes a tag on the path it was set on, keeping that path's others", () => {
     expect(withoutTag(article.manual_tags, { tag: "legacy", path: "old/install.md" })).toEqual([]);
     const two = [...article.manual_tags, { tag: "keep", path: "guide/install.md" }];
