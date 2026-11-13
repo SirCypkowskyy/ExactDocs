@@ -1,6 +1,9 @@
 """`no_psycopg_connection_left_open()`: a test leaving a psycopg connection open fails (#333)."""
 
+import gc
 import threading
+import traceback
+import warnings
 from collections.abc import Iterator
 from contextlib import ExitStack
 
@@ -11,7 +14,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 import psycopg_guard
 from databases import ADMIN_URL, PostgresDatabase, postgres_database
-from psycopg_guard import no_psycopg_connection_left_open
+from psycopg_guard import _pick, no_psycopg_connection_left_open
 
 pytestmark = [
     pytest.mark.skipif(ADMIN_URL is None, reason="needs EXACTDOCS_TEST_POSTGRES_URL"),
@@ -131,3 +134,56 @@ def test_a_connection_opened_before_the_block_is_not_its_business(
 ) -> None:
     with psycopg.connect(plain(database)) as before, no_psycopg_connection_left_open():
         before.execute("SELECT 1")
+
+
+def test_a_failing_guard_leaves_no_warning_for_the_next_test(database: PostgresDatabase) -> None:
+    held = {"record": None}  # like a pool record: keeps the leaked connection alive past the guard
+    guard = watching()
+    held["record"] = psycopg.connect(plain(database))
+
+    with pytest.raises(AssertionError, match="still open"):
+        guard.close()
+
+    assert held["record"].closed
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        held.clear()  # what the next test's garbage collection would finalize
+        gc.collect()
+    assert not [each for each in caught if issubclass(each.category, ResourceWarning)]
+
+
+async def test_a_failing_guard_closes_a_leaked_async_connection(database: PostgresDatabase) -> None:
+    guard = watching()
+    leaked = await psycopg.AsyncConnection.connect(plain(database))
+
+    with pytest.raises(AssertionError, match="still open"):
+        guard.close()
+
+    assert leaked.closed
+
+
+def frame(filename: str, name: str) -> traceback.FrameSummary:
+    return traceback.FrameSummary(filename, 1, name, lookup_line=False)
+
+
+def test_a_connection_a_library_thread_opened_names_the_library() -> None:
+    site = "/venv/lib/python3.14/site-packages"
+    stack = [
+        frame("/usr/lib/python3.14/threading.py", "run"),
+        frame(f"{site}/dbos/_scheduler.py", "dynamic_scheduler_loop"),
+        frame(f"{site}/dbos/_sys_db.py", "get_workflows"),
+        frame(f"{site}/sqlalchemy/engine/base.py", "connect"),
+        frame(f"{site}/psycopg/connection.py", "connect"),
+    ]
+
+    assert _pick(stack) == (
+        "dbos/_scheduler.py:1 in dynamic_scheduler_loop",
+        "dbos/_sys_db.py:1 in get_workflows",
+    )
+
+
+def test_the_repository_frames_win_over_library_frames() -> None:
+    site = "/venv/lib/python3.14/site-packages"
+    stack = [frame(__file__, "open_it"), frame(f"{site}/dbos/_sys_db.py", "get_workflows")]
+
+    assert _pick(stack) == ("packages/exactdocs/tests/fixtures/test_psycopg_guard.py:1 in open_it",)

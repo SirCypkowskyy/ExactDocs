@@ -57,9 +57,11 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   uses it: open (warm) its connection in the fixture itself, or dispose it after each test.
 - **The same goes for PostgreSQL** (psycopg, sync or async): `tests/fixtures/psycopg_guard.py`
   fails the test that leaves one open ("was deleted while still open" otherwise lands in a later
-  test), naming the database and where the connection was opened. A pooled connection returned
-  after its engine was disposed stays open in a plain `QueuePool`; DBOS's system database uses
-  `ClosingQueuePool` for that reason.
+  test), naming the database and where the connection was opened, and closes the leaked ones so
+  the warning does not follow into the next test. A pooled connection returned after its engine
+  was disposed stays open in a plain `QueuePool`; DBOS's system database uses `ClosingQueuePool`
+  for that reason. It does not cover a checkout that *starts* after the dispose (see its
+  docstring).
 
 ## MCP tool snapshot
 

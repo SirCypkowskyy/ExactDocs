@@ -9,7 +9,11 @@ which can be during an unrelated later test; ``filterwarnings = error`` then fai
 from any thread, by wrapping ``BaseConnection.__init__`` (``psycopg.connect``,
 ``AsyncConnection.connect`` and SQLAlchemy's psycopg dialects all end there), and raises when one is
 still open after it. Each connection keeps where it was opened, so the failure names the code that
-leaked it.
+opened it: the repository's own innermost frames, or, when a library thread opened it with none of
+ours on the stack (DBOS's ``dynamic_scheduler_loop``), the innermost library frames that called the
+database layer. "Opened in thread" names the thread that opened the connection; for a pooled one
+that need not be the thread that leaked it. Before raising, the guard closes the leaked connections
+(best effort), so the "deleted while still open" warning cannot surface in a later test either.
 
 As with the SQLite guard, the check waits up to ``CLOSE_GRACE`` for connections a background thread
 is still closing (DBOS shuts its executor down without waiting), and only connections opened inside
@@ -18,6 +22,7 @@ own setup. A pooled connection that such a fixture's engine opens lazily inside 
 that test; warm the pool in the fixture, or dispose the engine at the end of each test using it.
 """
 
+import contextlib
 import threading
 import time
 import traceback
@@ -40,6 +45,8 @@ SHOWN_FRAMES = 4
 
 _REPOSITORY = str(Path(__file__).parents[4])
 _LIBRARIES = ("site-packages", "/lib/python")
+_DATABASE_LAYER = ("/psycopg/", "/psycopg_pool/", "/sqlalchemy/")
+"""Libraries skipped in the fallback: every connection passes through them."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,15 +66,39 @@ _lock = threading.Lock()
 
 
 def _where() -> tuple[str, ...]:
-    """Return the innermost frames of the repository's own code that led to this connection."""
-    frames = [
+    """Return the innermost frames that led to this connection; see ``_pick``."""
+    # Without source lines: this runs for every connection a test opens.
+    stack = traceback.StackSummary.extract(traceback.walk_stack(None), lookup_lines=False)
+    return _pick(list(reversed(stack)))
+
+
+def _pick(stack: list[traceback.FrameSummary]) -> tuple[str, ...]:
+    """Pick the frames a failure shows from a stack, outermost first.
+
+    Args:
+        stack: The stack, outermost frame first.
+
+    Returns:
+        The innermost ``SHOWN_FRAMES`` frames of the repository's own code; when there are none (a
+        library thread opened the connection), the innermost library frames outside the database
+        layer, shown from ``site-packages/`` on.
+    """
+    stack = [frame for frame in stack if frame.filename != __file__]
+    ours = [
         f"{frame.filename.removeprefix(_REPOSITORY + '/')}:{frame.lineno} in {frame.name}"
-        for frame in traceback.extract_stack()[:-3]  # this function and the ``__init__`` wrapper
+        for frame in stack
         if frame.filename.startswith(_REPOSITORY)
         and not any(part in frame.filename for part in _LIBRARIES)
-        and frame.filename != __file__
     ]
-    return tuple(frames[-SHOWN_FRAMES:])
+    if ours:
+        return tuple(ours[-SHOWN_FRAMES:])
+    libraries = [
+        f"{frame.filename.rpartition('site-packages/')[2]}:{frame.lineno} in {frame.name}"
+        for frame in stack
+        if "site-packages/" in frame.filename
+        and not any(part in frame.filename for part in _DATABASE_LAYER)
+    ]
+    return tuple(libraries[-SHOWN_FRAMES:])
 
 
 def _watched(init: Init) -> Init:
@@ -117,7 +148,13 @@ def no_psycopg_connection_left_open() -> Generator[None]:
         "Close them (`with psycopg.connect(...)`), dispose the engine, or run the container "
         "(`async with container.running()`)."
     )
-    left.clear()  # finalize the leaked connections here, not when a later test collects garbage
+    # Close them here: something else (a pool record) may still hold them, and a later test
+    # would then get their "deleted while still open" warning when the garbage collector runs.
+    # ``pgconn.finish()`` closes sync and async connections alike, without an event loop.
+    for each in left:
+        with contextlib.suppress(Exception):
+            each.connection.pgconn.finish()
+    left.clear()
     raise AssertionError(message)
 
 

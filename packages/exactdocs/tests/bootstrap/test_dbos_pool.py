@@ -6,6 +6,7 @@ recording a step returns its connection after that, to the disposed pool, where 
 """
 
 import asyncio
+import threading
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -63,6 +64,65 @@ def test_a_connection_returned_after_dispose_is_closed(database: PostgresDatabas
 
     assert raw is not None
     assert raw.closed
+
+
+def test_a_recreated_pool_keeps_what_is_returned_to_it(database: PostgresDatabase) -> None:
+    engine = create_engine(database.url, poolclass=ClosingQueuePool)
+    engine.dispose()
+
+    with engine.connect() as connection:
+        raw = connection.connection.dbapi_connection
+
+    assert isinstance(engine.pool, ClosingQueuePool)
+    assert raw is not None
+    assert not raw.closed  # back in the live pool, for reuse
+    engine.dispose()
+    assert raw.closed
+
+
+def test_a_check_in_does_not_wait_for_another_pools_dispose(database: PostgresDatabase) -> None:
+    one = create_engine(database.url, poolclass=ClosingQueuePool)
+    other = create_engine(database.url, poolclass=ClosingQueuePool).pool
+    assert isinstance(other, ClosingQueuePool)
+    late = one.connect()
+    holding, release, returned = threading.Event(), threading.Event(), threading.Event()
+
+    def hold_others_lock() -> None:  # as ``other.dispose()`` does while it closes connections
+        with other._disposing:  # ruff: ignore[private-member-access]
+            holding.set()
+            release.wait(10.0)
+
+    threading.Thread(target=hold_others_lock, daemon=True).start()
+    holding.wait(5.0)
+    threading.Thread(target=lambda: (late.close(), returned.set()), daemon=True).start()
+
+    try:
+        assert returned.wait(1.0)
+    finally:
+        release.set()
+        returned.wait(5.0)
+        one.dispose()
+        other.dispose()
+
+
+def test_a_return_inside_the_pools_own_dispose_lock_does_not_deadlock(
+    database: PostgresDatabase,
+) -> None:
+    engine = create_engine(database.url, poolclass=ClosingQueuePool)
+    pool = engine.pool
+    assert isinstance(pool, ClosingQueuePool)
+    late = engine.connect()
+    done = threading.Event()
+
+    def return_holding_the_lock() -> None:
+        with pool._disposing:  # ruff: ignore[private-member-access]
+            late.close()
+        done.set()
+
+    threading.Thread(target=return_holding_the_lock, daemon=True).start()
+
+    assert done.wait(5.0)
+    engine.dispose()
 
 
 def test_a_plain_queue_pool_leaves_it_open(database: PostgresDatabase) -> None:
