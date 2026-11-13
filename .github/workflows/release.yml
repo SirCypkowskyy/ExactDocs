@@ -122,6 +122,13 @@ jobs:
             --expect-engine pg_search --report reports/evals/retrieval-pg-search.json
       - name: The suite end to end (pytest -m eval)
         run: uv run pytest -m eval packages/exactdocs/tests/evals --junitxml=reports/pytest-eval.xml
+      # Fetches the golden corpus (each pinned commit, --depth 1, about 65 MB), imports it with
+      # every chunking configuration and fails when one measures worse than the recorded run in
+      # packages/exactdocs/evals/results/ (docs/evals.md#the-ingestion-benchmark). No model.
+      - name: Ingestion benchmark (model-free, against the recorded run)
+        run: >-
+          uv run python packages/exactdocs/evals/run_ingestion_bench.py --check
+          --out reports/evals
       # Report-only from here (continue-on-error): a failed pull or a model's numbers never stop
       # the release; a wrong version (rate above 0) still shows as a failed step. The models are
       # cached between releases under a key named after the pinned revisions, so a new pin gets a

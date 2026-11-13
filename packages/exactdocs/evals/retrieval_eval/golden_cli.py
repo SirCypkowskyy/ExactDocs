@@ -15,7 +15,13 @@ from pathlib import Path
 from typing import Final
 
 from exactdocs.bootstrap.container import Container
-from exactdocs.catalog.dtos import CreateLibraryCommand, GetLibraryQuery, HostKind
+from exactdocs.catalog.dtos import (
+    ChunkingIn,
+    CreateLibraryCommand,
+    GetLibraryQuery,
+    HostKind,
+    SetLibrarySettingsCommand,
+)
 from exactdocs.ingestion.constants import IMPORT_JOB
 from exactdocs.ingestion.models import Job, JobId, ProblemCode, RefKind
 from exactdocs_kernel import SystemClock
@@ -99,7 +105,10 @@ class ImportedVersion:
 
 
 async def import_corpus(
-    container: Container, projects: Sequence[Project], repos: dict[str, Path]
+    container: Container,
+    projects: Sequence[Project],
+    repos: dict[str, Path],
+    chunking: ChunkingIn | None = None,
 ) -> list[ImportedVersion]:
     """Import every pinned version of the projects with the real importer, at its commit.
 
@@ -107,6 +116,7 @@ async def import_corpus(
         container: The container, running.
         projects: The projects to import.
         repos: The cached repository of each project (``fetch``).
+        chunking: How each library cuts its articles; ``None``: the default settings.
 
     Returns:
         One record per version, with the commit the catalog recorded for it.
@@ -124,6 +134,15 @@ async def import_corpus(
                 exclude_paths=project.exclude,
             )
         )
+        if chunking is not None:
+            await container.catalog.set_library_settings(
+                SetLibrarySettingsCommand(
+                    id=project.library,
+                    include_paths=project.include,
+                    exclude_paths=project.exclude,
+                    chunking=chunking,
+                )
+            )
         for version in project.versions:
             record = ImportedVersion(
                 project=project.id,
@@ -183,7 +202,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _selected(corpus: Corpus, projects: str) -> list[Project]:
+def selected(corpus: Corpus, projects: str) -> list[Project]:
     """Pick the projects asked for.
 
     Args:
@@ -217,7 +236,7 @@ def _validate(corpus: Corpus, cases_dir: Path, repos: dict[str, Path], projects:
     """
     cases, problems = load_cases(cases_dir)
     problems += schema_problems(cases, corpus)
-    wanted = {p.id for p in _selected(corpus, projects)}
+    wanted = {p.id for p in selected(corpus, projects)}
     checked = [(project, case) for project, case in cases if project in wanted]
     problems += section_problems(checked, corpus, repos)
     if problems:
@@ -279,7 +298,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     args = _parser().parse_args(argv)
     corpus = load_corpus(args.corpus)
-    projects = _selected(corpus, args.projects)
+    projects = selected(corpus, args.projects)
     try:
         repos = {p.id: fetch(p, args.cache_dir, offline=args.offline) for p in projects}
     except RuntimeError as error:

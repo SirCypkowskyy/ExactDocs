@@ -81,6 +81,10 @@ golden-validate *args:
 golden-import *args:
     uv run python packages/exactdocs/evals/run_golden.py import {{ args }}
 
+# Ingestion benchmark: chunking configurations measured on the golden corpus, with BM25 recall (docs/evals.md)
+ingestion-bench *args:
+    uv run python packages/exactdocs/evals/run_ingestion_bench.py {{ args }}
+
 # Web unit tests (vitest)
 web-test:
     cd {{ web }} && pnpm test
