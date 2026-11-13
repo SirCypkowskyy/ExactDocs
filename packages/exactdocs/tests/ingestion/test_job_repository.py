@@ -189,6 +189,93 @@ async def test_a_page_of_a_library_is_one_select_bounded_by_the_cursor_and_limit
         assert not any("TEMP B-TREE" in step for step in plan), plan
 
 
+async def test_a_library_lists_only_its_unfinished_jobs_newest_first(
+    repository: JobRepository,
+) -> None:
+    await repository.add(queued("job-1", version="v1").started(T0).succeeded(T0))
+    await repository.add(queued("job-2", version="v2").started(T0).failed("boom", T0))
+    await repository.add(
+        queued("job-3", version="v3")
+        .started(T0)
+        .with_problem("logo.png", ProblemCode.BINARY, "binary file")
+    )
+    await repository.add(queued("job-4", version="v4"))
+    await repository.add(queued("job-5", library="/acme/ledger"))  # another library
+
+    unfinished = await repository.list_unfinished_for_library("/acme/payments")
+
+    assert [(job.id, job.state) for job in unfinished] == [
+        ("job-4", JobState.QUEUED),
+        ("job-3", JobState.RUNNING),
+    ]
+    assert [p.path for p in unfinished[1].problems] == ["logo.png"]
+    assert await repository.list_unfinished_for_library("/acme/nobody") == []
+
+
+@pytest.mark.parametrize("backend", SQL_BACKENDS)
+async def test_a_library_s_unfinished_jobs_are_one_select_that_skips_its_finished_ones(
+    backend: str, request: pytest.FixtureRequest
+) -> None:
+    if backend == "postgres":
+        request.getfixturevalue("on_postgres")
+    engine = open_database(Settings())
+    await migrate(engine)
+    repository = SqliteJobRepository(engine=engine)
+    async with engine.begin() as connection:  # one insert: a thousand adds would be slow
+        await connection.execute(
+            jobs.insert(),
+            [
+                {
+                    "id": f"job-{number:04}",
+                    "kind": "import",
+                    "library": "/acme/payments",
+                    "version": f"v{number}",
+                    "state": "succeeded",
+                    "done": 0,
+                    "total": 0,
+                    "problems": json.dumps([{"path": "a.png", "code": "binary", "reason": "x"}]),
+                    "created_at": T0.isoformat(),
+                }
+                for number in range(1000)
+            ],
+        )
+    await repository.add(queued("job-1000", version="v1000").started(T0))
+    await repository.add(queued("job-1001", version="v1001"))
+    if backend == "sqlite":  # with statistics the planner knows the library's rows are many
+        async with engine.begin() as connection:
+            await connection.exec_driver_sql("ANALYZE")
+    sent: list[tuple[str, list[object]]] = []
+
+    def record(*args: object) -> None:  # (conn, cursor, statement, parameters, context, many)
+        statement, parameters = str(args[2]), args[3]
+        if statement.lstrip().upper().startswith("SELECT") and "ingestion_jobs" in statement:
+            values = parameters.values() if isinstance(parameters, Mapping) else parameters
+            assert isinstance(values, Iterable)
+            sent.append((statement, list(values)))
+
+    event.listen(engine.sync_engine, "before_cursor_execute", record)
+    try:
+        unfinished = await repository.list_unfinished_for_library("/acme/payments")
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", record)
+    (statement, parameters), *others = sent
+    plan: list[str] = []
+    if backend == "sqlite":
+        async with engine.connect() as connection:
+            rows = await connection.exec_driver_sql(
+                f"EXPLAIN QUERY PLAN {statement}", tuple(parameters)
+            )
+            plan = [row.detail for row in rows]
+    await engine.dispose()
+
+    assert [job.id for job in unfinished] == ["job-1001", "job-1000"]
+    assert others == []  # one query, not one per job or a second pass
+    assert "state IN ('queued', 'running')" in statement  # literal: the partial index applies
+    assert parameters == ["/acme/payments"]
+    if backend == "sqlite":  # the partial index alone: no finished job read, no sort
+        assert plan == ["SEARCH ingestion_jobs USING INDEX ingestion_jobs_unfinished (library=?)"]
+
+
 async def test_the_latest_job_of_each_library_and_version_is_listed(
     repository: JobRepository,
 ) -> None:

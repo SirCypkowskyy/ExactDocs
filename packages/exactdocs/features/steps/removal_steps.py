@@ -10,6 +10,7 @@ from behave.runner import Context
 from sqlalchemy import text
 
 from exactdocs.bootstrap.container import Container
+from exactdocs.ingestion.adapters.driven.sqlite import jobs
 from steps.mcp_steps import call_tool
 from steps.search_steps import git_blob_sha, import_versions, read_version
 
@@ -36,6 +37,38 @@ def step_remove_library(context: Context, library: str) -> None:
     context.response = context.client.delete(API)
     assert context.response.status_code == HTTPStatus.OK, context.response.text
     context.removal = context.response.json()
+
+
+@given('"{library}" has a long job history and an import of "{ref}" still running')
+def step_long_history(context: Context, library: str, ref: str) -> None:
+    assert library == LIBRARY
+    moment = "2026-01-01T00:00:00.000000+00:00"
+    row = {"kind": "import", "library": library, "done": 0, "total": 0, "created_at": moment}
+    finished = [
+        {
+            **row,
+            "id": f"0000-history-{n:05}",
+            "version": ref,
+            "state": "succeeded",
+            "problems": '[{"path": "logo.png", "code": "binary", "reason": "binary file"}]',
+        }
+        for n in range(2000)
+    ]
+    running = {**row, "id": "0000-running", "version": ref, "state": "running", "problems": "[]"}
+
+    async def insert() -> None:
+        container = Container.build(context.settings)
+        async with container.running(jobs=False), container.engine.begin() as connection:
+            await connection.execute(jobs.insert(), [*finished, running])
+
+    asyncio.run(insert())
+
+
+@then('the removal is refused because "{ref}" is still being imported')
+def step_removal_refused(context: Context, ref: str) -> None:
+    assert context.response.status_code == HTTPStatus.CONFLICT, context.response.text
+    assert context.response.json()["error"] == "import_in_progress", context.response.json()
+    assert context.client.get(f"{API}/versions/{ref}").status_code == HTTPStatus.OK
 
 
 def _assert_not_served(context: Context, ref: str | None) -> None:

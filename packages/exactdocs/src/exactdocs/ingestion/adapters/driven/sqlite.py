@@ -26,7 +26,13 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from exactdocs.ingestion.constants import ACTIVE_JOB_STATES, IMPORT_KINDS, LEGACY_CODES, JobKind
+from exactdocs.ingestion.constants import (
+    ACTIVE_JOB_STATES,
+    IMPORT_KINDS,
+    LEGACY_CODES,
+    UNFINISHED_JOBS_SQL,
+    JobKind,
+)
 from exactdocs.ingestion.errors import (
     CredentialsRequiredError,
     InvalidCredentialError,
@@ -80,6 +86,14 @@ jobs = Table(
     # A page of a library's jobs is a range of this index (`id < :before ORDER BY id DESC`).
     Index("ingestion_jobs_library_id", "library", "id"),
     Index("ingestion_jobs_state", "state"),
+    # A library's unfinished jobs, newest first, without reading its finished ones (#329).
+    Index(
+        "ingestion_jobs_unfinished",
+        "library",
+        "id",
+        sqlite_where=text(UNFINISHED_JOBS_SQL),
+        postgresql_where=text(UNFINISHED_JOBS_SQL),
+    ),
     # At most one unfinished import per (library, ref): the atomic form of "version_importing".
     Index(
         "ingestion_jobs_active_import",
@@ -166,6 +180,27 @@ class SqliteJobRepository:
             Every job of the library.
         """
         query = select(jobs).where(jobs.c.library == library).order_by(jobs.c.id.desc())
+        async with self.engine.connect() as connection:
+            return [_job(row) for row in await connection.execute(query)]
+
+    async def list_unfinished_for_library(self, library: str) -> Sequence[Job]:
+        """Return the library's ``queued`` and ``running`` jobs, newest first.
+
+        One SELECT that reads the partial index ``ingestion_jobs_unfinished`` (``library, id``
+        over unfinished rows only), so the library's finished jobs and their problems are never
+        read, and the rows come out in ID order without a sort.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            The library's unfinished jobs, highest ID first.
+        """
+        query = (
+            select(jobs)
+            .where(jobs.c.library == library, text(UNFINISHED_JOBS_SQL))
+            .order_by(jobs.c.id.desc())
+        )
         async with self.engine.connect() as connection:
             return [_job(row) for row in await connection.execute(query)]
 

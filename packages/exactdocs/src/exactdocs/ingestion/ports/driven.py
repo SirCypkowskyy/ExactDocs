@@ -84,6 +84,20 @@ class JobRepository(Protocol):
         """
         ...
 
+    async def list_unfinished_for_library(self, library: str) -> Sequence[Job]:
+        """Return the library's ``queued`` and ``running`` jobs, newest first.
+
+        Reads only those jobs, however many finished ones the library has: telling whether a
+        ref is busy, and reusing a job that still waits, need nothing else.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            The library's unfinished jobs, with their problems, highest ID first.
+        """
+        ...
+
     async def list_page_for_library(
         self, library: str, *, before: str | None, limit: int
     ) -> Sequence[Job]:

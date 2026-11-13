@@ -40,3 +40,10 @@ Feature: Removing a version or a library
     Then the library "/fixture/docs-repo" does not appear in browse, search, list_libraries or search_docs
     And all content of "v1.3.0" is still kept for "/mirror/docs-repo"
     And the search index holds exactly the rows of the stored chunks
+
+  Scenario: A version whose import is unfinished is kept, however long the library's job history
+    Given "/fixture/docs-repo" has a long job history and an import of "v1.3.0" still running
+    When the user removes version "v1.3.0" of "/fixture/docs-repo"
+    Then the removal is refused because "v1.3.0" is still being imported
+    When the user removes version "v1.4.0" of "/fixture/docs-repo"
+    Then it does not appear in browse, search, list_libraries or search_docs

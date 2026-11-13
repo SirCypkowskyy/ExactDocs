@@ -66,6 +66,7 @@ from exactdocs.ingestion.use_cases import (
     UpdateLibrarySettingsUseCase,
 )
 from exactdocs_kernel import NotFoundError
+from unfinished_jobs import HistoryWithoutUnfinished
 
 LIBRARY = "/acme/docs"
 LOCKED = "the database is locked"
@@ -318,6 +319,32 @@ async def test_a_queued_reprocess_job_is_reused_for_any_later_edit(sources, jobs
 
     assert first.job_id == again.job_id == tags.job_id
     assert len(await jobs.list_for_library(LIBRARY)) == 1
+
+
+async def test_the_job_to_reuse_is_found_among_the_unfinished_jobs(sources, clock):
+    jobs = HistoryWithoutUnfinished()  # a queued job is only seen by asking for unfinished ones
+    module, _ = make_module(sources, jobs, clock)
+    first = await module.update_library_settings(command(exclude=["a/"]))
+
+    again = await module.update_library_settings(command(exclude=["b/"]))
+
+    assert again.job_id == first.job_id
+    assert len(await jobs.list_unfinished_for_library(LIBRARY)) == 1
+
+
+async def test_a_retry_reuses_the_retry_still_queued_found_among_the_unfinished_jobs(
+    sources, clock
+):
+    jobs = HistoryWithoutUnfinished()
+    module, _ = make_module(sources, jobs, clock)
+    await module.update_library_settings(command(exclude=["a/"]))
+    await _fail_running(jobs, clock)
+
+    retry = await module.update_library_settings(command(exclude=["a/"]))
+    again = await module.update_library_settings(command(exclude=["a/"]))
+
+    assert retry.job_id is not None
+    assert again.job_id == retry.job_id
 
 
 async def test_a_queued_retag_job_does_not_stand_in_for_changed_paths(sources, jobs, clock):

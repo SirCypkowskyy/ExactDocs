@@ -90,6 +90,22 @@ class InMemoryJobRepository:
         mine = [job for job in self.jobs.values() if job.library == library]
         return sorted(mine, key=lambda job: job.id, reverse=True)
 
+    async def list_unfinished_for_library(self, library: str) -> Sequence[Job]:
+        """Return the library's ``queued`` and ``running`` jobs, newest first.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            The library's unfinished jobs, highest ID first.
+        """
+        mine = [
+            job
+            for job in self.jobs.values()
+            if job.library == library and job.state in ACTIVE_JOB_STATES
+        ]
+        return sorted(mine, key=lambda job: job.id, reverse=True)
+
     async def list_page_for_library(
         self, library: str, *, before: str | None, limit: int
     ) -> Sequence[Job]:
