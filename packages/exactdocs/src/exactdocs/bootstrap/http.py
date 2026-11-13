@@ -160,6 +160,14 @@ def create_app(container: Container) -> FastAPI:
             secure_cookies=settings.secure_cookies,
         )
     )
+    # Browser navigations to and back from an identity provider (behind the setup guard too).
+    v1.include_router(
+        identity_http.build_external_sign_in_router(
+            start_external_sign_in=container.identity.start_external_sign_in,
+            finish_external_sign_in=container.identity.finish_external_sign_in,
+            secure_cookies=settings.secure_cookies,
+        )
+    )
     session_caller = _include_session_routers(v1, container)
     # Everything else needs a caller: a session cookie or an API token. Add new domain routers here.
     current_caller = identity_http.build_current_caller(

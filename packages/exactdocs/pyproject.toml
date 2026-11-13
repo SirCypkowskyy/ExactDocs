@@ -63,6 +63,10 @@ dependencies = [
     "exactdocs-kernel=={{ version }}",
     "aiosqlite>=0.21",
     "argon2-cffi>=25",
+    # External sign-in (#105): PKCE and OIDC claim rules (Authlib), JWT and JWKS (joserfc,
+    # Authlib's own JOSE library). Both came in through FastMCP already; the floors are releases
+    # more than 14 days old when taken (Authlib 1.9.1 of 2026-10-14, joserfc 1.7.7 of 2026-10-19).
+    "authlib>=1.9.1",
     "croniter>=6",
     "cryptography>=46",
     "alembic>=1.16",
@@ -71,6 +75,7 @@ dependencies = [
     "fastapi>=0.120",
     "fastmcp>=4",
     "httpx2>=2",
+    "joserfc>=1.7.7",
     "markdown-it-py>=4",
     "mcp>=2",
     # The OpenTelemetry SDK and OTLP/HTTP exporter for EXACTDOCS_TELEMETRY=otlp; imported only

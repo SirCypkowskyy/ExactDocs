@@ -31,6 +31,7 @@ from exactdocs.identity.dtos import (
 from exactdocs.identity.errors import InvalidCredentialsError, SignInThrottledError
 from exactdocs.identity.models import FailedSignIns, address_key
 from exactdocs.identity.module import IdentityModule
+from identity_stand_ins import no_external_sign_in
 
 HORSE = "correct horse battery staple"
 WRONG = "wrong horse battery staple"
@@ -82,6 +83,7 @@ async def world() -> World:
         hasher=hasher,
         failures=failures,
         clock=clock,
+        **no_external_sign_in(),
     )
     await identity.create_first_admin(
         CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
@@ -522,6 +524,7 @@ async def test_a_concurrent_burst_gets_no_more_guesses_than_the_free_ones() -> N
         hasher=Argon2idPasswordHasher(argon2=slow),  # the real adapter, its KDF stubbed
         failures=InMemoryFailedSignInLog(),
         clock=MovableClock(),
+        **no_external_sign_in(),
     )
     await identity.create_first_admin(
         CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))

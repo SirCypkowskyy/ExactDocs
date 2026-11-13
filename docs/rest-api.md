@@ -28,7 +28,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Authentication**: every `/api/v1` operation needs a caller (401 `unauthenticated` otherwise):
   the session cookie, or `Authorization: Bearer exd_...` with an API token (a wrong bearer is
   refused even if a valid cookie is sent too). Exempt: `POST /setup`, the three `/session`
-  operations and the OpenAPI document; a test pins that list, and
+  operations, `POST /tokens/login`, the two external sign-in navigations
+  (`GET /auth/{provider}/start` and `/callback`) and the OpenAPI document; a test pins that list, and
   the OpenAPI document marks every other operation with the `SessionCookie` security scheme.
   `POST /session` (`{"username", "password"}`) answers 201 with the session state and sets the
   `exactdocs_session` cookie; a wrong password and an unknown user are the same 401
@@ -43,7 +44,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   its username's count, and lets that address skip the username's count for 30 days. The counts
   live in the server's memory on SQLite (a restart clears them) and in the database on
   PostgreSQL, where every server process shares them. Only these two operations document 429. `GET /session` returns `{"state": "setup_required" | "signed_out" |
-  "signed_in", "account": ...}` and never fails; `DELETE /session` ends the session on the server
+  "signed_in", "account": ..., "providers": [{"name", "display_name"}]}` and never fails
+  (`providers` lists the configured identity providers, empty while setup is due); `DELETE /session` ends the session on the server
   and is always 204. The cookie is an opaque random token (stored hashed), HttpOnly,
   SameSite=Lax, `Secure` over HTTPS (or with `EXACTDOCS_SECURE_COOKIES`), `Path=/api`, ends after
   7 days idle or 30 days in all. Unsafe requests with a foreign `Origin` are refused with 403
@@ -51,6 +53,27 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   cookie ends that old session. The cookie's `Max-Age` is the 30-day limit; idle expiry is
   server-side only and accurate to about an hour (last use is written at most hourly), so do not
   test exact 7-day boundaries from a client.
+- **External sign-in** (OIDC, ACL-01): browser navigations, not API calls; both answer with a
+  303 redirect, are reachable without a caller and stay behind the setup guard.
+  `GET /auth/{provider}/start?return_to=/path` stores a sign-in attempt (random `state`, `nonce`
+  and PKCE verifier, 10 minutes, usable once, in the database so any server process can finish
+  it), sets the `exactdocs_sign_in` binding cookie (random, only its SHA-256 stored; HttpOnly,
+  SameSite=Lax, `Path=/api/v1/auth`, `Max-Age=600`, `Secure` as the session cookie) and redirects
+  to the provider (`response_mode=query`, PKCE `S256`). `GET /auth/{provider}/callback` needs that
+  cookie and the attempt's `state`, deletes the attempt in the statement that reads it, exchanges
+  the code, validates the ID token, finds or creates the account, sets the usual
+  `exactdocs_session` cookie, clears the binding cookie and redirects to `return_to` (a path on
+  this server; anything else is `/`). A refusal clears the binding cookie, creates no session and
+  redirects to `/sign-in?error=<code>`: `sign_in_failed` (forged, replayed or expired callback, or
+  an ID token that fails a check), `sign_in_cancelled` (the provider answered an error),
+  `not_allowed` (in no allowed group; any access the account had ends), `account_disabled`,
+  `username_unavailable` (the username and `<username>@<provider>` are both taken) or
+  `provider_unavailable` (also from `start`). An unknown provider is 404 `unknown_provider`.
+  The redirect URI is `<EXACTDOCS_PUBLIC_URL>/api/v1/auth/{provider}/callback`, never built from
+  the request. An external account's sessions and API tokens are refused once its access ends
+  (a lost group or a revoked refresh token at revalidation, or no successful check within the
+  grace period), until its next allowed sign-in. `DELETE /session` ends the ExactDocs session
+  only, not the provider's.
 - **Pagination**: list endpoints take `limit` (1 to 200, default 50) and an opaque `cursor`, and
   return `next_cursor` (`null` on the last page). Pass it back unchanged; a malformed cursor is a
   422 `invalid_cursor`. Helper: `exactdocs_kernel.paginate`.
@@ -127,8 +150,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   cannot create a successor.
 - **Users** (ACL-06): the local accounts, managed by an operator (an account with role `admin`;
   the first admin is one). There is **no self-signup** route: an account is made by the setup
-  (the first admin only), by `exactdocs user create`, or here. `GET /users` lists every account
-  (`id`, `username`, `role`, `created_at`, `disabled`; oldest first). `POST /users`
+  (the first admin only), by `exactdocs user create`, by a first sign-in through an identity
+  provider, or here. `GET /users` lists every account (`id`, `username`, `role`, `created_at`,
+  `disabled`, `provider` (`null` for a local account) and `groups` (the provider's, as of the
+  latest sign-in or revalidation); oldest first). `POST /users`
   (`{"username", "password", "role"?}`, role `user` (default) or `admin`) answers 201 with the
   account; a taken name (compared case-insensitively) is 409 `username_taken`, and a name holding
   `@address:` (the sign-in throttle's own key separator) is 422 `invalid_username`.
@@ -140,6 +165,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   password, ends every session, revokes the tokens and clears the username's sign-in throttle
   count and remembered addresses, like `exactdocs admin reset-password`; it answers
   `{"account", "throttle"}` (`cleared`, `busy` or `failed`; the password changed in every case).
+  An account of an identity provider has no password: 409 `external_account`.
   An unknown id is 404 `unknown_account`. Every `/users` route needs the **session cookie** of an
   operator: an API token is 401 (a stolen token cannot create accounts), and a signed-in account
   that is not an `admin` gets 403 `forbidden`. Library roles (who may read or change a library)

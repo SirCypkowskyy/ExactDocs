@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 
@@ -11,11 +11,15 @@ from exactdocs.identity.models import (
     Account,
     AccountId,
     ApiToken,
+    ExternalIdentity,
     FailedSignIns,
+    Role,
     Session,
+    SignInAttempt,
     Username,
     known_sign_ins_prefix,
 )
+from exactdocs.identity.ports.driven import LinkOutcome
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -419,3 +423,161 @@ class InMemoryFailedSignInLog:
             if record.count < FREE_FAILURES or record.is_forgotten(now):
                 return key
         return next(iter(self.records))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemorySignInAttemptRepository:
+    """Implements ``ports.driven.SignInAttemptRepository``. For tests."""
+
+    attempts: dict[str, SignInAttempt] = field(default_factory=dict)
+    """The attempts, by binding hash."""
+
+    async def add(self, attempt: SignInAttempt, *, expired_before: datetime) -> None:
+        """Store a new attempt after pruning the expired ones.
+
+        Args:
+            attempt: The attempt.
+            expired_before: Attempts started before this are dropped.
+        """
+        for key in [k for k, a in self.attempts.items() if a.created_at < expired_before]:
+            del self.attempts[key]
+        self.attempts[attempt.binding_hash] = attempt
+
+    async def take(self, binding_hash: str) -> SignInAttempt | None:
+        """Remove and return the attempt of this binding.
+
+        Args:
+            binding_hash: The hash of the browser's binding value.
+
+        Returns:
+            The attempt, or ``None``.
+        """
+        return self.attempts.pop(binding_hash, None)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryExternalIdentityRepository:
+    """Implements ``ports.driven.ExternalIdentityRepository`` over an in-memory account store."""
+
+    accounts: InMemoryAccountRepository
+    """The accounts the links point to (they share its storage, as the tables do)."""
+    links: dict[tuple[str, str], ExternalIdentity] = field(default_factory=dict)
+    """The links, by (issuer, subject)."""
+    groups: dict[AccountId, frozenset[str]] = field(default_factory=dict)
+    """Each linked account's groups."""
+
+    async def get(self, issuer: str, subject: str) -> ExternalIdentity | None:
+        """Return the link of this identity, or ``None``.
+
+        Args:
+            issuer: The provider's issuer.
+            subject: The person's identifier at the issuer.
+
+        Returns:
+            The link, or ``None``.
+        """
+        return self.links.get((issuer, subject))
+
+    async def get_for_account(self, account_id: AccountId) -> ExternalIdentity | None:
+        """Return the link of this account, or ``None``.
+
+        Args:
+            account_id: The account's id.
+
+        Returns:
+            The link, or ``None``.
+        """
+        return next((ln for ln in self.links.values() if ln.account_id == account_id), None)
+
+    async def create_linked_account(
+        self, account: Account, identity: ExternalIdentity, groups: frozenset[str]
+    ) -> LinkOutcome:
+        """Store a new account, its link and its groups, all or nothing.
+
+        Args:
+            account: The new account.
+            identity: Its link.
+            groups: Its groups.
+
+        Returns:
+            ``created``, ``username_taken`` or ``already_linked``.
+        """
+        if (identity.issuer, identity.subject) in self.links:
+            return "already_linked"
+        if not await self.accounts.add(account):
+            return "username_taken"
+        self.links[identity.issuer, identity.subject] = identity
+        self.groups[account.id] = groups
+        return "created"
+
+    async def record_check(
+        self, identity: ExternalIdentity, *, role: Role, groups: frozenset[str]
+    ) -> None:
+        """Store a successful sign-in or revalidation.
+
+        Args:
+            identity: The link as it is now.
+            role: The account's role now.
+            groups: The account's groups now.
+        """
+        self.links[identity.issuer, identity.subject] = identity
+        self.groups[identity.account_id] = groups
+        account = await self.accounts.get_by_id(identity.account_id)
+        if account is not None:
+            self.accounts.accounts[account.username] = replace(account, role=role)
+
+    async def revoke(self, account_id: AccountId, now: datetime) -> None:
+        """End the account's access now, dropping its tokens and groups.
+
+        Args:
+            account_id: The account.
+            now: The current time.
+        """
+        link = await self.get_for_account(account_id)
+        if link is not None:
+            self.links[link.issuer, link.subject] = replace(
+                link, access_until=now, sealed_tokens=None
+            )
+        self.groups.pop(account_id, None)
+
+    async def forget_tokens(self, account_id: AccountId) -> None:
+        """Drop the account's sealed tokens.
+
+        Args:
+            account_id: The account.
+        """
+        link = await self.get_for_account(account_id)
+        if link is not None:
+            self.links[link.issuer, link.subject] = replace(link, sealed_tokens=None)
+
+    async def claim_due(
+        self, now: datetime, *, lease_until: datetime, limit: int
+    ) -> list[ExternalIdentity]:
+        """Return due links that hold a token, leasing them until ``lease_until``.
+
+        Args:
+            now: The current time.
+            lease_until: Until when the claimed links are not due again.
+            limit: The most links to claim.
+
+        Returns:
+            The claimed links, as they were before the lease.
+        """
+        due = sorted(
+            (ln for ln in self.links.values() if ln.sealed_tokens and ln.next_check_at <= now),
+            key=lambda ln: ln.next_check_at,
+        )[:limit]
+        for link in due:
+            self.links[link.issuer, link.subject] = replace(link, next_check_at=lease_until)
+        return due
+
+    async def groups_by_account(self) -> Mapping[AccountId, tuple[str, list[str]]]:
+        """Return the provider and the groups of every linked account.
+
+        Returns:
+            For each linked account: its provider's name and its groups, sorted.
+        """
+        return {
+            ln.account_id: (ln.provider, sorted(self.groups.get(ln.account_id, ())))
+            for ln in self.links.values()
+        }

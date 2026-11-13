@@ -216,6 +216,8 @@ OPEN_ROUTES = {
     ("POST", "/api/v1/session"),
     ("DELETE", "/api/v1/session"),
     ("POST", "/api/v1/tokens/login"),
+    ("GET", "/api/v1/auth/{provider}/start"),
+    ("GET", "/api/v1/auth/{provider}/callback"),
     ("GET", "/api/v1/openapi.json"),
 }
 

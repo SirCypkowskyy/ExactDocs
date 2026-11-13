@@ -50,6 +50,14 @@ reached through it would share one /64.
 """
 _MAX_DOUBLINGS: Final[int] = 8
 """FIRST_WAIT * 2**8 is past LONGEST_WAIT; also keeps the arithmetic small."""
+SIGN_IN_ATTEMPT_LIFETIME: Final[timedelta] = timedelta(minutes=10)
+"""An external sign-in must come back from the identity provider within this long after it
+started; a later callback is refused, and the attempt's row is pruned."""
+MAX_RETURN_TO_LENGTH: Final[int] = 2048
+"""Longest path an external sign-in may return to; a longer one becomes ``/``."""
+PROVIDER_NAME_PATTERN: Final[str] = r"^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"
+"""A sign-in provider's name: lower-case letters, digits and inner hyphens, at most 32 characters.
+It appears in URLs (``/api/v1/auth/<name>/...``) and in the ``<username>@<name>`` fallback."""
 
 # ---------------------------------------------------------------- dtos
 MIN_PASSWORD_LENGTH: Final[int] = 12
@@ -82,6 +90,18 @@ TOKEN_NAME_DESCRIPTION: Final[str] = (
 """OpenAPI description of a new token's name, built from the limits so they cannot drift."""
 
 # ---------------------------------------------------------------- use_cases
+SIGN_IN_SECRET_BYTES: Final[int] = 32
+"""256 bits for each secret of an external sign-in attempt: the browser binding, ``state`` and
+``nonce``."""
+CODE_VERIFIER_BYTES: Final[int] = 48
+"""The PKCE code verifier: 48 random bytes are 64 URL-safe characters (RFC 7636 allows 43 to 128).
+"""
+REVALIDATION_BATCH: Final[int] = 50
+"""External identities one revalidation pass claims at a time; the pass claims again until none is
+due."""
+REVALIDATION_LEASE: Final[timedelta] = timedelta(minutes=10)
+"""A claimed external identity is not due again for this long, so another process skips it while
+this one checks it; a process that dies mid-check leaves it due again after the lease."""
 MAX_TOKENS_PER_ACCOUNT: Final[int] = 50
 """API tokens one account may hold at a time."""
 TOKEN_BYTES: Final[int] = 32
@@ -101,6 +121,30 @@ MAX_FAILED_SIGN_IN_KEYS: Final[int] = 10_000
 """Enough for every address and username a busy instance sees in an hour, and small in memory (~200
 bytes a record): a flood of made-up usernames cannot grow the log without bound.
 """
+
+# ---------------------------------------------------------------- adapters.driven.oidc
+ID_TOKEN_LEEWAY: Final[timedelta] = timedelta(seconds=60)
+"""Clock skew allowed on an ID token's ``exp``, ``iat`` and ``nbf``."""
+DISCOVERY_TTL: Final[timedelta] = timedelta(hours=1)
+"""How long one process keeps an issuer's discovery document before it fetches it again."""
+JWKS_REFETCH_INTERVAL: Final[timedelta] = timedelta(minutes=1)
+"""An ID token signed by a key the cached JWKS does not hold fetches the JWKS again (key rotation),
+at most this often: a flood of tokens with made-up ``kid`` values cannot flood the issuer."""
+ASYMMETRIC_ALGORITHMS: Final[frozenset[str]] = frozenset(
+    {"RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512", "EdDSA"}
+)
+"""The ID token signatures accepted, when the issuer advertises them: never ``none``, never an
+``HS*`` MAC (whose key would be the client secret, or worse, the issuer's public key)."""
+OIDC_TIMEOUT: Final[float] = 10.0
+"""Seconds one call to an identity provider may take (discovery, JWKS, token, userinfo)."""
+MAX_PROVIDER_RESPONSE_BYTES: Final[int] = 1 * 2**20
+"""An identity provider's answer above this size is refused unread to the end."""
+_BAD_REQUEST: Final[int] = 400
+"""The token endpoint's status for a refused grant (RFC 6749 section 5.2)."""
+_UNAUTHORIZED: Final[int] = 401
+"""The token endpoint's status for a refused client."""
+_SUCCESS: Final[range] = range(200, 300)
+"""Statuses of a usable answer."""
 
 # ---------------------------------------------------------------- adapters.driven.sqlite
 MAX_CONCURRENT_SIGN_IN_TURNS: Final[int] = 4
@@ -128,6 +172,12 @@ read-then-write atomic across processes; the second is ``hashtext`` of the throt
 # ---------------------------------------------------------------- adapters.driving.http
 SESSION_COOKIE: Final[str] = "exactdocs_session"
 """Name of the web session cookie."""
+SIGN_IN_COOKIE: Final[str] = "exactdocs_sign_in"
+"""Name of the cookie that binds an external sign-in attempt to the browser that started it."""
+SIGN_IN_COOKIE_PATH: Final[str] = "/api/v1/auth"
+"""The binding cookie is only sent to the external sign-in routes (start and callback)."""
+SIGN_IN_PAGE: Final[str] = "/sign-in"
+"""The web UI's sign-in page: a refused external sign-in comes back here with ``?error=<code>``."""
 COOKIE_PATH: Final[str] = "/api"
 """Only `/api` needs the cookie (the UI itself is static), so the browser never sends it to `/mcp`.
 """

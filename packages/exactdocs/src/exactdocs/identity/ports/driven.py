@@ -1,15 +1,19 @@
 """Driven (secondary) ports: what identity needs from infrastructure."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
-from typing import Protocol
+from typing import Literal, Protocol
 
 from exactdocs.identity.models import (
     Account,
     AccountId,
     ApiToken,
+    ExternalGrant,
+    ExternalIdentity,
     FailedSignIns,
+    Role,
     Session,
+    SignInAttempt,
     Username,
 )
 
@@ -354,5 +358,221 @@ class PasswordHasher(Protocol):
 
         Returns:
             ``True`` when the password matches.
+        """
+        ...
+
+
+class SignInProvider(Protocol):
+    """One configured identity provider, spoken to in its own protocol (OIDC today).
+
+    The adapter validates everything the provider sends (the ID token's signature, issuer,
+    audience, times and nonce) before it returns claims. It raises ``ProviderUnavailableError``
+    when the provider cannot be reached or answers unusably, ``ExternalSignInFailedError`` when
+    what it sent does not check out, and ``ProviderAccessRevokedError`` when it refuses a
+    refresh token. It never logs or raises with a token.
+    """
+
+    async def authorization_url(self, *, state: str, nonce: str, code_verifier: str) -> str:
+        """Return where to send the browser to sign in (authorization code flow, PKCE S256).
+
+        Only the S256 challenge of ``code_verifier`` leaves the server here.
+
+        Args:
+            state: Comes back unchanged with the code.
+            nonce: Must come back in the ID token.
+            code_verifier: The attempt's PKCE verifier.
+
+        Returns:
+            The provider's authorization URL with every parameter.
+        """
+        ...
+
+    async def exchange(self, *, code: str, code_verifier: str, nonce: str) -> ExternalGrant:
+        """Trade the authorization code for tokens and return the validated claims.
+
+        Args:
+            code: The authorization code from the callback.
+            code_verifier: The attempt's PKCE verifier.
+            nonce: The attempt's nonce, which the ID token must hold.
+
+        Returns:
+            Who signed in, their groups and the refresh token (if any).
+        """
+        ...
+
+    async def refresh(self, refresh_token: str, *, subject: str) -> ExternalGrant:
+        """Use a refresh token to read the person's claims again.
+
+        Args:
+            refresh_token: The stored refresh token.
+            subject: Whom the token belongs to: claims of anyone else are refused.
+
+        Returns:
+            The current claims and the refresh token to keep (a rotated one, or the same).
+        """
+        ...
+
+
+class SecretBox(Protocol):
+    """Seals the refresh tokens of external identities (bootstrap's box, its own HKDF purpose).
+
+    Nothing here logs or raises with a token or a sealed text; ``open`` raises
+    ``exactdocs_kernel.SealedTextUnreadableError`` for a text it cannot open.
+    """
+
+    def seal(self, plaintext: str) -> str:
+        """Encrypt and authenticate a token.
+
+        Args:
+            plaintext: The token.
+
+        Returns:
+            The sealed text, safe to store.
+        """
+        ...
+
+    def open(self, sealed: str) -> str:
+        """Decrypt a sealed token.
+
+        Args:
+            sealed: What ``seal`` returned.
+
+        Returns:
+            The token.
+        """
+        ...
+
+
+class SignInAttemptRepository(Protocol):
+    """External sign-ins started and not finished yet, keyed by the hash of the browser binding."""
+
+    async def add(self, attempt: SignInAttempt, *, expired_before: datetime) -> None:
+        """Store a new attempt, first removing the attempts started before ``expired_before``.
+
+        Args:
+            attempt: The attempt.
+            expired_before: Attempts started before this are too old to finish.
+        """
+        ...
+
+    async def take(self, binding_hash: str) -> SignInAttempt | None:
+        """Remove and return the attempt of this browser binding, in one atomic step.
+
+        Of two concurrent calls (a replayed callback, another process), at most one gets it.
+
+        Args:
+            binding_hash: The hash of the browser's binding value.
+
+        Returns:
+            The attempt, or ``None`` when there is none (never started, or already taken).
+        """
+        ...
+
+
+LinkOutcome = Literal["created", "username_taken", "already_linked"]
+"""What became of storing a new account with its link: stored, refused because the username is
+taken, or refused because another sign-in linked the identity first."""
+
+
+class ExternalIdentityRepository(Protocol):
+    """Links between external identities and accounts, with each account's groups.
+
+    Shares the accounts' storage: creating a linked account and recording a sign-in change the
+    account (its row, its role) in the same transaction as the link.
+    """
+
+    async def get(self, issuer: str, subject: str) -> ExternalIdentity | None:
+        """Return the link of this identity, or ``None``.
+
+        Args:
+            issuer: The provider's issuer.
+            subject: The person's identifier at the issuer.
+
+        Returns:
+            The link, or ``None``.
+        """
+        ...
+
+    async def get_for_account(self, account_id: AccountId) -> ExternalIdentity | None:
+        """Return the link of this account, or ``None`` (a local account has none).
+
+        Args:
+            account_id: The account's id.
+
+        Returns:
+            The link, or ``None``.
+        """
+        ...
+
+    async def create_linked_account(
+        self, account: Account, identity: ExternalIdentity, groups: frozenset[str]
+    ) -> LinkOutcome:
+        """Store a new account, its link and its groups, all or nothing.
+
+        Args:
+            account: The new account (without a password).
+            identity: Its link.
+            groups: Its groups, as ExactDocs stores them.
+
+        Returns:
+            ``created``; ``username_taken`` when another account has the username;
+            ``already_linked`` when the identity was linked meanwhile (nothing is stored).
+        """
+        ...
+
+    async def record_check(
+        self, identity: ExternalIdentity, *, role: Role, groups: frozenset[str]
+    ) -> None:
+        """Store a successful sign-in or revalidation, in one transaction.
+
+        The link's times and tokens, the account's role and its groups (replacing the old ones).
+
+        Args:
+            identity: The link as it is now.
+            role: The account's role now.
+            groups: The account's groups now, as ExactDocs stores them.
+        """
+        ...
+
+    async def revoke(self, account_id: AccountId, now: datetime) -> None:
+        """End the account's access at ``now`` and drop its sealed tokens and groups.
+
+        Args:
+            account_id: The account.
+            now: The current time.
+        """
+        ...
+
+    async def forget_tokens(self, account_id: AccountId) -> None:
+        """Drop the account's sealed tokens (nothing happens for a local account).
+
+        Args:
+            account_id: The account.
+        """
+        ...
+
+    async def claim_due(
+        self, now: datetime, *, lease_until: datetime, limit: int
+    ) -> list[ExternalIdentity]:
+        """Return links due for a check that have a token to check with, and lease them.
+
+        Each returned link is due again only at ``lease_until``, so another process (or pass)
+        skips it meanwhile; two concurrent claims never return the same link.
+
+        Args:
+            now: The current time: links with ``next_check_at`` at or before it are due.
+            lease_until: Until when the claimed links are not due again.
+            limit: The most links to claim.
+
+        Returns:
+            The claimed links, as they were before the lease.
+        """
+        ...
+
+    async def groups_by_account(self) -> Mapping[AccountId, tuple[str, list[str]]]:
+        """Return the provider and the groups of every linked account.
+
+        Returns:
+            For each linked account: its provider's name and its groups, sorted.
         """
         ...

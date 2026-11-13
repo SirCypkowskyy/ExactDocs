@@ -119,7 +119,8 @@ def step_no_sign_up(context: Context) -> None:
         status = _send(context, "POST", path, json=body).status_code
         assert status in {HTTPStatus.UNAUTHORIZED, HTTPStatus.NOT_FOUND}, (path, status)
     assert _sign_in(context, "mallory", body["password"]).status_code == HTTPStatus.UNAUTHORIZED
-    # And the API publishes no open operation but setup, the session and the token login.
+    # And the API publishes no open operation but setup, the session, the token login and the
+    # external sign-in navigations (which create an account only for an allowed identity).
     spec = _send(context, "GET", "/api/v1/openapi.json").json()
     open_operations = {
         (method.upper(), path)
@@ -133,6 +134,8 @@ def step_no_sign_up(context: Context) -> None:
         ("POST", "/api/v1/session"),
         ("DELETE", "/api/v1/session"),
         ("POST", "/api/v1/tokens/login"),
+        ("GET", "/api/v1/auth/{provider}/start"),
+        ("GET", "/api/v1/auth/{provider}/callback"),
     }, open_operations
 
 

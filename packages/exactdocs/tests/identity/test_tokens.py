@@ -28,6 +28,7 @@ from exactdocs.identity.errors import (
 )
 from exactdocs.identity.models import hash_token
 from exactdocs.identity.module import IdentityModule
+from identity_stand_ins import no_external_sign_in
 
 START = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 
@@ -67,6 +68,7 @@ async def world() -> World:
         hasher=FakeHasher(),
         failures=InMemoryFailedSignInLog(),
         clock=clock,
+        **no_external_sign_in(),
     )
     ada = await identity.create_first_admin(
         CreateFirstAdminCommand(username="ada", password=SecretStr("correct horse battery staple"))
@@ -214,6 +216,7 @@ async def test_a_failing_last_used_write_does_not_fail_the_authentication(
         hasher=FakeHasher(),
         failures=InMemoryFailedSignInLog(),
         clock=MovableClock(),
+        **no_external_sign_in(),
     )
     ada = await identity.create_first_admin(
         CreateFirstAdminCommand(username="ada", password=SecretStr("correct horse battery staple"))

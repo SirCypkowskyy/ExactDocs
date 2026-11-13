@@ -2,6 +2,8 @@ import type { components } from "@/shared/lib/api-schema";
 
 export type SessionState = components["schemas"]["SessionState"];
 export type Account = components["schemas"]["AccountSummary"];
+/** An identity provider the sign-in page offers next to the password form. */
+export type SignInProvider = components["schemas"]["SignInProviderSummary"];
 
 // Mirrors the backend's rules (identity/dtos.py, identity/model); the server stays the authority.
 export const MIN_PASSWORD_LENGTH = 12;

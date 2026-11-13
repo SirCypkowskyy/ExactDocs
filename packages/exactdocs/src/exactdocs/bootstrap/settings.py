@@ -1,8 +1,10 @@
 import os
+import re
 import tomllib
 from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
+from urllib.parse import urlsplit
 
 from croniter import croniter
 from platformdirs import user_data_path
@@ -26,6 +28,8 @@ from exactdocs.bootstrap.constants import (
     SECRETS_REFUSED_IN_FILE,
     SETTINGS_FILE_VARIABLE,
 )
+from exactdocs.identity.adapters.driven.oidc import secure_url
+from exactdocs.identity.constants import PROVIDER_NAME_PATTERN
 from exactdocs.retrieval.constants import (
     DEFAULT_AGENT_CACHE_TTL_DAYS,
     DEFAULT_AGENT_REPEATED_CALLS,
@@ -392,6 +396,131 @@ class AiSettings(BaseModel):
         return value
 
 
+class SignInProviderSettings(BaseModel):
+    """An identity provider to sign in with (``[auth.providers.<name>]`` in the TOML file).
+
+    Or ``EXACTDOCS_AUTH__PROVIDERS__<NAME>__<FIELD>`` in the environment, where lists are JSON
+    (``EXACTDOCS_AUTH__PROVIDERS__CORP__ALLOWED_GROUPS='["payments"]'``). The TOML file may
+    not hold ``client_secret``: use ``client_secret_file`` or the environment. ADFS 2016+ is
+    an ``oidc`` provider (issuer ``https://<host>/adfs``).
+    """
+
+    model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
+
+    kind: Literal["oidc"]
+    """`oidc`: OpenID Connect with discovery, authorization code + PKCE S256 (Keycloak, Entra ID,
+    Okta, Google, ADFS). `oauth2` and `github` follow (#383)."""
+    display_name: str | None = None
+    """What the sign-in button says (`Sign in with <display_name>`); default: the name."""
+    issuer: str
+    """The issuer URL, exactly as its discovery document's `issuer` says (HTTPS; plain HTTP only
+    to a loopback host, for development)."""
+    client_id: str = Field(min_length=1)
+    """The client ID registered at the issuer."""
+    client_secret: SecretStr | None = None
+    """The client secret (environment only, never the TOML file); unset for a public client."""
+    client_secret_file: Path | None = None
+    """A file holding the client secret (Docker and Kubernetes secrets), read at every use."""
+    scopes: list[str] = Field(
+        default_factory=lambda: ["openid", "profile", "email", "offline_access"]
+    )
+    """The scopes asked for; `openid` is required, `offline_access` asks for the refresh token
+    the revalidation needs."""
+    username_claim: str = "preferred_username"
+    """The claim naming a new account (ADFS: `upn` or `unique_name`); when absent, the local part
+    of the email. Only read when the account is created."""
+    email_claim: str = "email"
+    """The email claim."""
+    groups_claim: str = "groups"
+    """The groups claim, a dotted path (Keycloak: `realm_access.roles`; ADFS: `group`); read from
+    userinfo when the ID token lacks it."""
+    group_prefix: str = ""
+    """Put before each group name ExactDocs stores for the account (e.g. `corp:`)."""
+    allowed_groups: list[str] = Field(default_factory=list)
+    """Groups (as the provider names them) whose members may sign in."""
+    allow_any_user: bool = False
+    """Admit everyone the provider vouches for; required when `allowed_groups` is empty."""
+    admin_groups: list[str] = Field(default_factory=list)
+    """Groups whose members are `admin` (else `user`), recomputed at every sign-in and
+    revalidation."""
+    revalidate_minutes: int = Field(default=60, ge=1)
+    """How often memberships are checked again with the stored refresh token."""
+    revalidate_grace_minutes: int = Field(default=1440, ge=1)
+    """How long access lasts without a successful check (the provider unreachable, or no refresh
+    token at all); then it fails closed until the next sign-in."""
+
+    @field_validator("client_secret", "client_secret_file", "display_name", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value: object) -> object:
+        """Treat a blank value as unset.
+
+        Args:
+            value: The raw value.
+
+        Returns:
+            ``None`` for blank text, otherwise the value unchanged.
+        """
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @model_validator(mode="after")
+    def _consistent(self) -> Self:
+        """Refuse a provider that would sign in nobody on purpose, or insecurely.
+
+        Returns:
+            The settings, unchanged.
+
+        Raises:
+            ValueError: The issuer is not HTTPS (nor loopback HTTP), `openid` is not asked for,
+                both secret settings are given, or nobody is admitted without
+                `allow_any_user`.
+        """
+        if not secure_url(self.issuer):
+            message = "issuer must be an https:// URL (http:// only to a loopback host)"
+            raise ValueError(message)
+        if "openid" not in self.scopes:
+            message = "scopes must include openid"
+            raise ValueError(message)
+        if self.client_secret is not None and self.client_secret_file is not None:
+            message = "set client_secret or client_secret_file, not both"
+            raise ValueError(message)
+        if not self.allowed_groups and not self.allow_any_user:
+            message = "set allowed_groups, or allow_any_user = true to admit everyone"
+            raise ValueError(message)
+        return self
+
+
+class AuthSettings(BaseModel):
+    """The ``auth`` section: sign-in through identity providers (``EXACTDOCS_AUTH__...``)."""
+
+    model_config = ConfigDict(use_attribute_docstrings=True, frozen=True)
+
+    providers: dict[str, SignInProviderSettings] = Field(default_factory=dict)
+    """Named identity providers (`[auth.providers.<name>]`); names are lower-case `[a-z0-9-]`.
+    Configured or not decides whether external sign-in is offered; password sign-in stays."""
+    revalidate_poll_seconds: float = Field(default=300, gt=0)
+    """How often the server looks for external identities whose memberships are due a check."""
+
+    @field_validator("providers")
+    @classmethod
+    def _names(cls, value: dict[str, SignInProviderSettings]) -> dict[str, SignInProviderSettings]:
+        """Refuse provider names that cannot go in a URL or a username.
+
+        Args:
+            value: The providers, by name.
+
+        Returns:
+            The providers, unchanged.
+
+        Raises:
+            ValueError: A name is not lower-case ``[a-z0-9-]``.
+        """
+        for name in value:
+            if not re.fullmatch(PROVIDER_NAME_PATTERN, name):
+                message = f"provider name {name!r} must be lower-case letters, digits and hyphens"
+                raise ValueError(message)
+        return value
+
+
 def _default_data_dir() -> Path:
     """Return the platform's user-data directory for ExactDocs.
 
@@ -517,6 +646,13 @@ class Settings(BaseSettings):
     """
     forwarded_allow_ips: str = "127.0.0.1,::1"
     """Proxies whose X-Forwarded-* headers uvicorn trusts (comma-separated IPs or `*`)."""
+    public_url: str | None = None
+    """The URL people reach the server at (`https://docs.example.com`), without a path. Required
+    once a sign-in provider is configured: the redirect URI registered at the provider is
+    `<public_url>/api/v1/auth/<name>/callback`, never built from a request's Host."""
+    auth: AuthSettings = Field(default_factory=AuthSettings)
+    """Sign-in through identity providers (`[auth.providers.<name>]` in the
+    `EXACTDOCS_CONFIG_FILE` TOML file, or `EXACTDOCS_AUTH__PROVIDERS__<NAME>__<FIELD>`)."""
 
     @classmethod
     def settings_customise_sources(
@@ -602,6 +738,52 @@ class Settings(BaseSettings):
             return value.strip() or None
         return value
 
+    @field_validator("public_url", mode="before")
+    @classmethod
+    def _public_url(cls, value: object) -> object:
+        """Read the public URL without its trailing slash; blank is unset.
+
+        Args:
+            value: The raw setting.
+
+        Returns:
+            The URL, or ``None``.
+
+        Raises:
+            ValueError: It is not an absolute http(s) URL without a path, query or fragment.
+        """
+        if not isinstance(value, str):
+            return value
+        url = value.strip().rstrip("/")
+        if not url:
+            return None
+        parts = urlsplit(url)
+        if parts.scheme not in {"http", "https"} or not parts.netloc or parts.path:
+            message = "EXACTDOCS_PUBLIC_URL must be like https://docs.example.com (no path)"
+            raise ValueError(message)
+        if parts.query or parts.fragment:
+            message = "EXACTDOCS_PUBLIC_URL may not hold a query or a fragment"
+            raise ValueError(message)
+        return url
+
+    @model_validator(mode="after")
+    def _public_url_for_providers(self) -> Self:
+        """Require ``public_url`` once a sign-in provider is configured.
+
+        Returns:
+            The settings, unchanged.
+
+        Raises:
+            ValueError: A provider is configured without ``EXACTDOCS_PUBLIC_URL``.
+        """
+        if self.auth.providers and self.public_url is None:
+            message = (
+                "EXACTDOCS_PUBLIC_URL is required once a sign-in provider is configured: it "
+                "gives the redirect URI <public_url>/api/v1/auth/<name>/callback"
+            )
+            raise ValueError(message)
+        return self
+
     @field_validator("allowed_hosts", "allowed_origins", mode="before")
     @classmethod
     def _split_csv(cls, value: object) -> object:
@@ -675,17 +857,36 @@ def read_config_file(path: Path) -> dict[str, Any]:
         message = f"{SETTINGS_FILE_VARIABLE}: {path} is not valid TOML ({error})"
         raise SettingsError(message) from None
     found = sorted(SECRETS_REFUSED_IN_FILE & data.keys())
-    providers = data.get("ai", {}).get("providers", {})
-    if isinstance(providers, dict):
-        found += [
-            f"ai.providers.{name}.api_key"
-            for name, table in providers.items()
-            if isinstance(table, dict) and "api_key" in table
-        ]
+    found += _secrets_in(data, "ai", "api_key")
+    found += _secrets_in(data, "auth", "client_secret")
     if found:
         message = (
             f"{path} holds secrets ({', '.join(found)}): keep keys out of the configuration file; "
-            "use api_key_file or the environment (EXACTDOCS_AI__PROVIDERS__<NAME>__API_KEY)"
+            "use api_key_file / client_secret_file or the environment "
+            "(EXACTDOCS_AI__PROVIDERS__<NAME>__API_KEY, "
+            "EXACTDOCS_AUTH__PROVIDERS__<NAME>__CLIENT_SECRET)"
         )
         raise SettingsError(message)
     return data
+
+
+def _secrets_in(data: dict[str, Any], section: str, secret: str) -> list[str]:
+    """Return where the file's ``[<section>.providers.<name>]`` tables hold ``secret``.
+
+    Args:
+        data: The parsed file.
+        section: ``ai`` or ``auth``.
+        secret: The field that must not be in the file.
+
+    Returns:
+        The dotted paths of the secrets found.
+    """
+    table = data.get(section, {})
+    providers = table.get("providers", {}) if isinstance(table, dict) else {}
+    if not isinstance(providers, dict):
+        return []
+    return [
+        f"{section}.providers.{name}.{secret}"
+        for name, entry in providers.items()
+        if isinstance(entry, dict) and secret in entry
+    ]

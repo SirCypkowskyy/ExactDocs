@@ -1,0 +1,360 @@
+"""The OIDC adapter against an in-process issuer: discovery, PKCE, and every ID token check."""
+
+import base64
+import hashlib
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from urllib.parse import parse_qs, urlsplit
+
+import httpx2
+import pytest
+
+from exactdocs.identity.adapters.driven.oidc import OidcClaimNames, OidcProvider, secure_url
+from exactdocs.identity.errors import (
+    ExternalSignInFailedError,
+    ProviderAccessRevokedError,
+    ProviderUnavailableError,
+)
+from fake_oidc import (
+    CLIENT_ID,
+    CLIENT_SECRET,
+    ISSUER,
+    FakeIssuer,
+    hs256_with_public_key,
+    signed_by_stranger,
+    unsigned,
+)
+
+REDIRECT = "https://docs.example.com/api/v1/auth/corp/callback"
+NOW = datetime(2026, 11, 13, 9, 0, tzinfo=UTC)
+
+
+@dataclass(slots=True)
+class Clock:
+    at: datetime = NOW
+
+    def now(self) -> datetime:
+        return self.at
+
+
+@dataclass(slots=True)
+class Setup:
+    issuer: FakeIssuer
+    provider: OidcProvider
+    clock: Clock
+
+
+@pytest.fixture
+async def setup() -> AsyncIterator[Setup]:
+    clock = Clock()
+    issuer = FakeIssuer(now=clock.now)
+    issuer.add_user("u-1", "alice", email="alice@example.com", groups=["payments"])
+    async with httpx2.AsyncClient(transport=issuer.transport()) as client:
+        provider = OidcProvider(
+            issuer=ISSUER,
+            client_id=CLIENT_ID,
+            client_secret=lambda: CLIENT_SECRET,
+            redirect_uri=REDIRECT,
+            scopes=("openid", "profile", "email", "offline_access"),
+            client=client,
+            clock=clock,
+        )
+        yield Setup(issuer=issuer, provider=provider, clock=clock)
+
+
+async def sign_in(setup: Setup, subject: str = "u-1", *, nonce: str = "n-1", **kw: Any) -> Any:
+    verifier = kw.pop("verifier", "v" * 64)
+    url = await setup.provider.authorization_url(state="s-1", nonce=nonce, code_verifier=verifier)
+    callback = setup.issuer.authorize(url, subject)
+    code = parse_qs(urlsplit(callback).query)["code"][0]
+    return await setup.provider.exchange(
+        code=code,
+        code_verifier=kw.pop("exchange_verifier", verifier),
+        nonce=kw.pop("expect", nonce),
+    )
+
+
+async def test_the_authorization_url_asks_for_a_code_with_pkce_s256(setup: Setup) -> None:
+    verifier = "v" * 64
+    url = await setup.provider.authorization_url(state="s", nonce="n", code_verifier=verifier)
+
+    query = {k: v[0] for k, v in parse_qs(urlsplit(url).query).items()}
+    assert url.startswith(f"{ISSUER}/authorize?")
+    assert query == {
+        "response_type": "code",
+        "response_mode": "query",
+        "client_id": CLIENT_ID,
+        "redirect_uri": REDIRECT,
+        "scope": "openid profile email offline_access",
+        "state": "s",
+        "nonce": "n",
+        "code_challenge": query["code_challenge"],
+        "code_challenge_method": "S256",
+    }
+    assert verifier not in url
+    digest = hashlib.sha256(verifier.encode()).digest()  # base64url(sha256(verifier)), unpadded
+    assert query["code_challenge"] == base64.urlsafe_b64encode(digest).decode().rstrip("=")
+
+
+async def test_a_sign_in_returns_the_validated_claims_and_the_refresh_token(setup: Setup) -> None:
+    grant = await sign_in(setup)
+
+    assert grant.claims.issuer == ISSUER
+    assert grant.claims.subject == "u-1"
+    assert grant.claims.username == "alice"
+    assert grant.claims.email == "alice@example.com"
+    assert grant.claims.groups == frozenset({"payments"})
+    assert grant.refresh_token in setup.issuer.refresh_tokens
+    [form] = setup.issuer.token_requests
+    assert form["grant_type"] == "authorization_code"
+    assert "client_secret" not in form  # client_secret_basic, as advertised
+
+
+async def test_the_discovery_is_fetched_once_and_cached(setup: Setup) -> None:
+    await sign_in(setup)
+    await sign_in(setup)
+    assert setup.issuer.discovery_fetches == 1
+    assert setup.issuer.jwks_fetches == 1
+
+    setup.clock.at += timedelta(hours=1)
+    await sign_in(setup)
+    assert setup.issuer.discovery_fetches == 2
+
+
+async def test_a_wrong_pkce_verifier_is_refused_by_the_issuer(setup: Setup) -> None:
+    with pytest.raises(ExternalSignInFailedError):
+        await sign_in(setup, exchange_verifier="w" * 64)
+
+
+def tamper_claims(**changes: Any) -> Callable[[dict[str, Any], dict[str, Any]], None]:
+    def tamper(_: dict[str, Any], claims: dict[str, Any]) -> None:
+        for name, value in changes.items():
+            if value is None:
+                claims.pop(name, None)
+            else:
+                claims[name] = value
+
+    return tamper
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        pytest.param(tamper_claims(iss="https://evil.example.com"), id="wrong iss"),
+        pytest.param(tamper_claims(aud="someone-else"), id="wrong aud"),
+        pytest.param(tamper_claims(aud=["someone-else", "another"]), id="aud list without us"),
+        pytest.param(tamper_claims(aud=[CLIENT_ID, "another"]), id="several aud, no azp"),
+        pytest.param(
+            tamper_claims(aud=[CLIENT_ID, "another"], azp="another"), id="several aud, azp other"
+        ),
+        pytest.param(tamper_claims(azp="another"), id="azp of another client"),
+        pytest.param(tamper_claims(exp=int(NOW.timestamp()) - 61), id="expired"),
+        pytest.param(tamper_claims(iat=int(NOW.timestamp()) + 61), id="iat in the future"),
+        pytest.param(tamper_claims(nbf=int(NOW.timestamp()) + 61), id="not yet valid"),
+        pytest.param(tamper_claims(exp=None), id="no exp"),
+        pytest.param(tamper_claims(iat=None), id="no iat"),
+        pytest.param(tamper_claims(sub=None), id="no sub"),
+        pytest.param(tamper_claims(nonce=None), id="no nonce"),
+        pytest.param(tamper_claims(nonce="another"), id="wrong nonce"),
+        pytest.param(unsigned, id="alg none"),
+        pytest.param(signed_by_stranger, id="signed by a key not in the JWKS"),
+        pytest.param(lambda header, claims: f"{header}.{claims}", id="not a JWT"),
+    ],
+)
+async def test_an_id_token_that_fails_a_check_is_refused(
+    setup: Setup, tamper: Callable[[dict[str, Any], dict[str, Any]], str | None]
+) -> None:
+    setup.issuer.tamper = tamper
+
+    with pytest.raises(ExternalSignInFailedError):
+        await sign_in(setup)
+
+
+async def test_hs256_with_the_public_key_as_secret_is_refused(setup: Setup) -> None:
+    setup.issuer.tamper = hs256_with_public_key(setup.issuer)
+
+    with pytest.raises(ExternalSignInFailedError):
+        await sign_in(setup)
+
+
+async def test_hs256_is_refused_even_when_the_issuer_advertises_it(setup: Setup) -> None:
+    setup.issuer.algorithms = ["HS256", "RS256"]
+    setup.issuer.tamper = hs256_with_public_key(setup.issuer)
+
+    with pytest.raises(ExternalSignInFailedError):
+        await sign_in(setup)
+
+
+async def test_an_issuer_with_only_symmetric_algorithms_is_not_used(setup: Setup) -> None:
+    setup.issuer.algorithms = ["HS256", "none"]
+
+    with pytest.raises(ProviderUnavailableError):
+        await setup.provider.authorization_url(state="s", nonce="n", code_verifier="v" * 64)
+
+
+async def test_the_times_allow_sixty_seconds_of_skew(setup: Setup) -> None:
+    setup.issuer.tamper = tamper_claims(
+        exp=int(NOW.timestamp()) - 59, iat=int(NOW.timestamp()) + 59
+    )
+
+    assert (await sign_in(setup)).claims.subject == "u-1"
+
+
+async def test_several_audiences_pass_when_azp_is_this_client(setup: Setup) -> None:
+    setup.issuer.tamper = tamper_claims(aud=[CLIENT_ID, "api"], azp=CLIENT_ID)
+
+    assert (await sign_in(setup)).claims.subject == "u-1"
+
+
+async def test_a_rotated_key_is_fetched_once_and_then_trusted(setup: Setup) -> None:
+    await sign_in(setup)
+    setup.clock.at += timedelta(minutes=1)
+    setup.issuer.rotate_key()
+
+    assert (await sign_in(setup)).claims.subject == "u-1"
+    assert (await sign_in(setup)).claims.subject == "u-1"
+    assert setup.issuer.jwks_fetches == 2
+
+
+async def test_unknown_keys_fetch_the_jwks_at_most_once_a_minute(setup: Setup) -> None:
+    await sign_in(setup)
+    for _ in range(5):  # a storm of tokens naming keys nobody published, within the minute
+        setup.issuer.tamper = made_up_kid
+        with pytest.raises(ExternalSignInFailedError):
+            await sign_in(setup)
+    assert setup.issuer.jwks_fetches == 1
+
+    setup.clock.at += timedelta(minutes=1)
+    for _ in range(5):  # the next minute: one refetch, whatever the storm
+        setup.issuer.tamper = made_up_kid
+        with pytest.raises(ExternalSignInFailedError):
+            await sign_in(setup)
+    assert setup.issuer.jwks_fetches == 2
+
+    setup.issuer.rotate_key()  # within that minute the new key is not fetched yet
+    with pytest.raises(ExternalSignInFailedError):
+        await sign_in(setup)
+    setup.clock.at += timedelta(minutes=1)
+    assert (await sign_in(setup)).claims.subject == "u-1"
+    assert setup.issuer.jwks_fetches == 3
+
+
+def made_up_kid(header: dict[str, Any], _: dict[str, Any]) -> None:
+    header["kid"] = "made-up"
+
+
+async def test_a_discovery_naming_another_issuer_is_not_used(setup: Setup) -> None:
+    setup.issuer.discovered_issuer = f"{ISSUER}/"
+
+    with pytest.raises(ProviderUnavailableError):
+        await sign_in(setup)
+
+
+async def test_an_issuer_that_is_down_is_unavailable(setup: Setup) -> None:
+    setup.issuer.down = True
+
+    with pytest.raises(ProviderUnavailableError):
+        await setup.provider.authorization_url(state="s", nonce="n", code_verifier="v" * 64)
+
+
+async def test_groups_missing_from_the_id_token_come_from_userinfo(setup: Setup) -> None:
+    setup.issuer.groups_in_id_token = False
+
+    assert (await sign_in(setup)).claims.groups == frozenset({"payments"})
+
+
+async def test_userinfo_of_another_subject_is_refused(setup: Setup) -> None:
+    setup.issuer.groups_in_id_token = False
+    setup.issuer.userinfo_subject = "u-2"
+
+    with pytest.raises(ExternalSignInFailedError):
+        await sign_in(setup)
+
+
+async def test_a_dotted_groups_claim_reads_nested_claims(setup: Setup) -> None:
+    setup.provider.claims = OidcClaimNames(groups="realm_access.roles", username="upn")
+    setup.issuer.tamper = tamper_claims(realm_access={"roles": ["docs"]}, upn="alice@corp.example")
+    setup.issuer.groups_in_id_token = True
+
+    grant = await sign_in(setup)
+
+    assert grant.claims.groups == frozenset({"docs"})
+    assert grant.claims.username == "alice@corp.example"
+
+
+async def test_a_single_group_as_text_is_one_group(setup: Setup) -> None:
+    setup.provider.claims = OidcClaimNames(groups="group")  # ADFS sends one group as text
+    setup.issuer.tamper = tamper_claims(group="docs-readers")
+
+    assert (await sign_in(setup)).claims.groups == frozenset({"docs-readers"})
+
+
+async def test_a_refresh_reads_the_current_groups(setup: Setup) -> None:
+    grant = await sign_in(setup)
+    setup.issuer.users["u-1"].groups = ["ops"]
+
+    refreshed = await setup.provider.refresh(grant.refresh_token, subject="u-1")
+
+    assert refreshed.claims.groups == frozenset({"ops"})
+    assert refreshed.refresh_token == grant.refresh_token  # not rotated: the same one is kept
+
+
+async def test_a_refresh_without_an_id_token_reads_userinfo(setup: Setup) -> None:
+    grant = await sign_in(setup)
+    setup.issuer.refresh_id_token = False
+    setup.issuer.users["u-1"].groups = ["ops"]
+
+    refreshed = await setup.provider.refresh(grant.refresh_token, subject="u-1")
+
+    assert refreshed.claims.groups == frozenset({"ops"})
+
+
+async def test_a_refresh_of_another_subject_is_refused(setup: Setup) -> None:
+    grant = await sign_in(setup)
+
+    with pytest.raises(ExternalSignInFailedError):
+        await setup.provider.refresh(grant.refresh_token, subject="u-2")
+
+
+async def test_a_revoked_refresh_token_is_refused_as_revoked(setup: Setup) -> None:
+    grant = await sign_in(setup)
+    setup.issuer.revoke_refresh_tokens("u-1")
+
+    with pytest.raises(ProviderAccessRevokedError):
+        await setup.provider.refresh(grant.refresh_token, subject="u-1")
+
+
+async def test_a_refused_client_is_not_blamed_on_the_person(setup: Setup) -> None:
+    grant = await sign_in(setup)
+    setup.provider.client_secret = lambda: "rotated-without-telling-us"
+
+    with pytest.raises(ProviderUnavailableError):
+        await setup.provider.refresh(grant.refresh_token, subject="u-1")
+
+
+async def test_a_refresh_while_the_issuer_is_down_is_unavailable(setup: Setup) -> None:
+    grant = await sign_in(setup)
+    setup.issuer.down = True
+
+    with pytest.raises(ProviderUnavailableError):
+        await setup.provider.refresh(grant.refresh_token, subject="u-1")
+
+
+@pytest.mark.parametrize(
+    ("url", "secure"),
+    [
+        ("https://idp.example.com", True),
+        ("https://login.microsoftonline.com/tenant/v2.0", True),
+        ("http://localhost:8080/realms/x", True),
+        ("http://127.0.0.1:8080", True),
+        ("http://[::1]:8080", True),
+        ("http://idp.example.com", False),
+        ("http://10.0.0.1", False),
+        ("ftp://idp.example.com", False),
+        ("https://", False),
+    ],
+)
+def test_only_https_or_loopback_http_is_used(url: str, secure: bool) -> None:
+    assert secure_url(url) is secure

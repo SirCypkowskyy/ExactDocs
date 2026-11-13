@@ -470,6 +470,246 @@
         }
       }
     },
+    "/api/v1/auth/{provider}/start": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Start",
+        "description": "Start signing in through an identity provider (a browser navigation).\n\nRedirects to the provider with a binding cookie; when the provider cannot be reached,\nback to the sign-in page with `?error=provider_unavailable`.",
+        "operationId": "identity-start",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider"
+            }
+          },
+          {
+            "name": "return_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 2048
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Return To"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "To the identity provider, or back to the sign-in page"
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/{provider}/callback": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Callback",
+        "description": "Finish signing in: the identity provider sends the browser here.\n\nThe binding cookie is cleared whatever happens. Refusals go back to the sign-in page\nwith `?error=` and one of `sign_in_failed`, `sign_in_cancelled`, `not_allowed`,\n`account_disabled`, `username_unavailable` or `provider_unavailable`; no session is\ncreated then.",
+        "operationId": "identity-callback",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider"
+            }
+          },
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 512
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Error"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Signed in, or back to the sign-in page with `?error=`"
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/tokens": {
       "get": {
         "tags": [
@@ -12496,6 +12736,14 @@
               }
             ],
             "description": "The signed-in account; `null` unless `state` is `signed_in`."
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/SignInProviderSummary"
+            },
+            "type": "array",
+            "title": "Providers",
+            "description": "The identity providers one may sign in with besides a password; empty when none is\nconfigured (and while setup is due: the first admin is always local)."
           }
         },
         "additionalProperties": false,
@@ -12515,6 +12763,28 @@
         ],
         "title": "SettingsChange",
         "description": "What an edit of a library's settings asks of its versions; each does what follows it too.\n\n``PATHS`` re-imports with the new chunking and tag rules, ``CHUNKING`` re-tags as well."
+      },
+      "SignInProviderSummary": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "The provider's name: sign in at `GET /api/v1/auth/{name}/start`."
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name",
+            "description": "What its sign-in button says."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "display_name"
+        ],
+        "title": "SignInProviderSummary",
+        "description": "A configured identity provider, as the sign-in page offers it."
       },
       "SpaceState": {
         "type": "string",
@@ -13187,6 +13457,26 @@
             "type": "boolean",
             "title": "Disabled",
             "description": "`true` while the account is disabled: it cannot sign in, and its sessions and tokens are\nrefused."
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider",
+            "description": "The sign-in provider the account signs in through; `null` for a local account (password)."
+          },
+          "groups": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Groups",
+            "description": "The account's groups at its identity provider, as of its latest sign-in or revalidation\n(with the provider's `group_prefix`); empty for a local account."
           }
         },
         "additionalProperties": false,

@@ -25,6 +25,7 @@ from exactdocs.identity.errors import (
 )
 from exactdocs.identity.models import AccountId, Session, hash_token
 from exactdocs.identity.module import IdentityModule
+from identity_stand_ins import no_external_sign_in
 
 HORSE = "correct horse battery staple"
 START = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
@@ -67,6 +68,7 @@ async def world() -> World:
         hasher=FakeHasher(),
         failures=InMemoryFailedSignInLog(),
         clock=clock,
+        **no_external_sign_in(),
     )
     await identity.create_first_admin(
         CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
@@ -206,6 +208,7 @@ async def test_session_state_tells_setup_signed_out_and_signed_in(world: World) 
         hasher=FakeHasher(),
         failures=InMemoryFailedSignInLog(),
         clock=MovableClock(),
+        **no_external_sign_in(),
     )
     assert (await empty.get_session_state(None)).state == "setup_required"
 

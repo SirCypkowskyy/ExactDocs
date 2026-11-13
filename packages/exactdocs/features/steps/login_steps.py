@@ -76,7 +76,8 @@ def step_active(context: Context, username: str) -> None:
 
 @then("the UI session is not active")
 def step_not_active(context: Context) -> None:
-    assert context.client.get("/api/v1/session").json() == {"state": "signed_out", "account": None}
+    state = context.client.get("/api/v1/session").json()
+    assert state == {"state": "signed_out", "account": None, "providers": []}
 
 
 @then("the session cookie is HttpOnly and SameSite=Lax")

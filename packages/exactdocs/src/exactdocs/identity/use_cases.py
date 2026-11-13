@@ -1,21 +1,28 @@
 """Identity use cases. Each one satisfies a driving port structurally, without inheriting it."""
 
+import hmac
 import logging
 import math
 import secrets
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
-from datetime import timedelta
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta
+from typing import Literal
 from uuid import uuid7
 
 from pydantic import SecretStr
 
 from exactdocs.identity.constants import (
     ABSOLUTE_TIMEOUT,
+    CODE_VERIFIER_BYTES,
     IDLE_TIMEOUT,
     MAX_TOKENS_PER_ACCOUNT,
     PREFIX_SHOWN,
     RESERVED_IN_USERNAME,
+    REVALIDATION_BATCH,
+    REVALIDATION_LEASE,
+    SIGN_IN_ATTEMPT_LIFETIME,
+    SIGN_IN_SECRET_BYTES,
     TOKEN_BYTES,
     TOUCH_INTERVAL,
     VALUE_PREFIX,
@@ -26,13 +33,19 @@ from exactdocs.identity.dtos import (
     CreateFirstAdminCommand,
     CreateTokenCommand,
     CreateUserCommand,
+    ExternalSignInResult,
+    ExternalSignInStart,
+    FinishExternalSignInCommand,
     LoginForTokenCommand,
     PasswordReset,
     ResetPasswordCommand,
+    RevalidationReport,
     SessionGrant,
     SessionState,
     SetupState,
     SetUserDisabledCommand,
+    SignInProviderSummary,
+    StartExternalSignInCommand,
     ThrottleReset,
     TokenGrant,
     TokenList,
@@ -41,41 +54,60 @@ from exactdocs.identity.dtos import (
     UserSummary,
 )
 from exactdocs.identity.errors import (
+    AccountDisabledError,
     AlreadySetUpError,
+    ExternalAccountError,
+    ExternalSignInFailedError,
     InvalidCredentialsError,
     InvalidTokenError,
     InvalidTokenExpiryError,
     InvalidUsernameError,
     LastOperatorError,
+    NotAllowedError,
     NotSetUpError,
     NotSignedInError,
+    ProviderAccessRevokedError,
+    ProviderUnavailableError,
     ReservedUsernameError,
+    SignInCancelledError,
     SignInThrottledError,
     TooManyTokensError,
     UnknownAccountError,
+    UnknownSignInProviderError,
     UnknownTokenError,
     UsernameTakenError,
+    UsernameUnavailableError,
 )
 from exactdocs.identity.models import (
     Account,
     AccountId,
     ApiToken,
+    ExternalGrant,
+    ExternalIdentity,
     Role,
     Session,
+    SignInAttempt,
+    SignInPolicy,
     Username,
     address_key,
     hash_token,
     known_sign_in_key,
+    safe_return_to,
+    username_candidates,
 )
 from exactdocs.identity.ports.driven import (
     AccountRepository,
+    ExternalIdentityRepository,
     FailedSignInLog,
     PasswordHasher,
+    SecretBox,
     SessionRepository,
+    SignInAttemptRepository,
+    SignInProvider,
     TokenRepository,
 )
 from exactdocs.identity.ports.driving import Authenticate, CreateToken, IdentifyCaller
-from exactdocs_kernel import Clock
+from exactdocs_kernel import Clock, SealedTextUnreadableError
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -191,9 +223,9 @@ class AuthenticateUseCase:
         if wait > timedelta(0):
             raise SignInThrottledError(math.ceil(wait.total_seconds()))
         account = await self.repository.get(username) if username else None
-        if account is None:
+        if account is None or account.password_hash is None:
             # Spend the same time as a real check, so response time does not reveal which
-            # usernames exist.
+            # usernames exist, nor which sign in through an identity provider (no password).
             await self.hasher.hash(password)
             raise InvalidCredentialsError
         if not await self.hasher.verify(account.password_hash, password):
@@ -250,26 +282,68 @@ class SignInUseCase:
             The new session, with its secret token.
         """
         account = await self.authenticate(query, client=client)
-        now = self.clock.now()
-        if previous_token:
-            await self.sessions.delete(hash_token(previous_token))
-        await self.sessions.delete_expired(
-            idle_before=now - IDLE_TIMEOUT, created_before=now - ABSOLUTE_TIMEOUT
+        return await _start_session(self.sessions, self.clock, account, previous_token)
+
+
+async def _start_session(
+    sessions: SessionRepository,
+    clock: Clock,
+    account: AccountSummary,
+    previous_token: str | None,
+) -> SessionGrant:
+    """Start a session for an account whose sign-in just succeeded (password or provider).
+
+    The session the request arrived with (``previous_token``) is deleted, so signing in again
+    does not leave a stale row behind, and expired sessions are pruned.
+
+    Args:
+        sessions: Where browser sessions are stored.
+        clock: The current time.
+        account: The account signing in.
+        previous_token: The caller's current session token, if any.
+
+    Returns:
+        The new session, with its secret token.
+    """
+    now = clock.now()
+    if previous_token:
+        await sessions.delete(hash_token(previous_token))
+    await sessions.delete_expired(
+        idle_before=now - IDLE_TIMEOUT, created_before=now - ABSOLUTE_TIMEOUT
+    )
+    token = secrets.token_urlsafe(TOKEN_BYTES)  # a new one every time: no session fixation
+    await sessions.add(
+        Session(
+            token_hash=hash_token(token),
+            account_id=AccountId(account.id),
+            created_at=now,
+            last_used_at=now,
         )
-        token = secrets.token_urlsafe(TOKEN_BYTES)  # a new one every time: no session fixation
-        await self.sessions.add(
-            Session(
-                token_hash=hash_token(token),
-                account_id=AccountId(account.id),
-                created_at=now,
-                last_used_at=now,
-            )
-        )
-        return SessionGrant(
-            token=SecretStr(token),
-            account=account,
-            max_age=int(ABSOLUTE_TIMEOUT.total_seconds()),
-        )
+    )
+    return SessionGrant(
+        token=SecretStr(token), account=account, max_age=int(ABSOLUTE_TIMEOUT.total_seconds())
+    )
+
+
+async def _external_access_ended(
+    externals: ExternalIdentityRepository, account: Account, now: datetime
+) -> bool:
+    """Whether an external account's access has ended (``access_until`` passed, or no link).
+
+    A local account's access never ends this way.
+
+    Args:
+        externals: The links of external identities.
+        account: The account.
+        now: The current time.
+
+    Returns:
+        ``True`` for an external account without access at ``now``.
+    """
+    if not account.is_external:
+        return False
+    link = await externals.get_for_account(account.id)
+    return link is None or not link.has_access(now)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -296,6 +370,8 @@ class IdentifyCallerUseCase:
     """Where browser sessions are stored."""
     accounts: AccountRepository
     """Where accounts are stored."""
+    externals: ExternalIdentityRepository
+    """The links of external accounts, whose access ends at their ``access_until``."""
     clock: Clock
     """The current time."""
 
@@ -310,7 +386,7 @@ class IdentifyCallerUseCase:
 
         Raises:
             NotSignedInError: No token, or its session is unknown, expired or of a deleted or
-                disabled account.
+                disabled account, or of an external account whose access has ended.
         """
         if not token:
             raise NotSignedInError
@@ -324,9 +400,15 @@ class IdentifyCallerUseCase:
         account = (
             None if session.is_expired(now) else await self.accounts.get_by_id(session.account_id)
         )
-        if account is None or account.is_disabled:
+        if (
+            account is None
+            or account.is_disabled
+            or await _external_access_ended(self.externals, account, now)
+        ):
             # Expired, or its account is gone or disabled. Disabling deletes the account's
             # sessions already; this also refuses one a sign-in racing the disable created.
+            # An external account whose access ended (lost membership, no check within the
+            # grace) fails closed here even when no revalidation ran.
             await self.sessions.delete(token_hash)
             raise NotSignedInError
         if now - session.last_used_at >= TOUCH_INTERVAL:
@@ -342,6 +424,8 @@ class GetSessionStateUseCase:
     """Where accounts are stored."""
     identify_caller: IdentifyCaller
     """Resolves the session token."""
+    policies: Mapping[str, SignInPolicy] = field(default_factory=dict)
+    """The configured identity providers, offered on the sign-in page."""
 
     async def __call__(self, token: str | None) -> SessionState:
         """Report the setup, signed-out or signed-in state for the token.
@@ -350,15 +434,16 @@ class GetSessionStateUseCase:
             token: The session token, or ``None`` when the request carried none.
 
         Returns:
-            The setup and sign-in state.
+            The setup and sign-in state, with the identity providers one may sign in with.
         """
         if not await self.accounts.any_exists():
-            return SessionState(state="setup_required")
+            return SessionState(state="setup_required")  # the first admin is always local
+        providers = [SignInProviderSummary.from_model(p) for p in self.policies.values()]
         try:
             account = await self.identify_caller(token)
         except NotSignedInError:
-            return SessionState(state="signed_out")
-        return SessionState(state="signed_in", account=account)
+            return SessionState(state="signed_out", providers=providers)
+        return SessionState(state="signed_in", account=account, providers=providers)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -401,10 +486,15 @@ class ResetPasswordUseCase:
         Returns:
             The account, and what became of its username's throttle count and remembered
             sign-ins.
+
+        Raises:
+            ExternalAccountError: The account signs in through an identity provider.
         """
         account = await _find_account(
             self.accounts, account_id=command.id, username=command.username
         )
+        if account.is_external:
+            raise ExternalAccountError  # it signs in through its provider: no password to set
         password_hash = await self.hasher.hash(command.password.get_secret_value())
         await self.accounts.set_password_hash(account.id, password_hash)
         await self.sessions.delete_for_account(account.id)
@@ -494,14 +584,21 @@ class ListUsersUseCase:
 
     accounts: AccountRepository
     """Where accounts are stored."""
+    externals: ExternalIdentityRepository
+    """The links of external accounts, for their provider and groups."""
 
     async def __call__(self) -> UserList:
-        """List every local account, disabled ones included.
+        """List every account, disabled ones included, with where each signs in.
 
         Returns:
             The accounts, oldest first.
         """
-        return UserList(users=[UserSummary.from_model(a) for a in await self.accounts.list_all()])
+        links = await self.externals.groups_by_account()
+        users = []
+        for account in await self.accounts.list_all():
+            provider, groups = links.get(account.id, (None, []))
+            users.append(UserSummary.from_model(account, provider=provider, groups=groups))
+        return UserList(users=users)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -565,6 +662,8 @@ class SetUserDisabledUseCase:
     """Where browser sessions are stored."""
     tokens: TokenRepository
     """Where API tokens are stored."""
+    externals: ExternalIdentityRepository
+    """The links of external accounts: disabling drops their sealed provider tokens."""
     clock: Clock
     """The current time."""
 
@@ -576,7 +675,9 @@ class SetUserDisabledUseCase:
         revoked, so nothing issued before survives an enable either. Enabling first ends any
         session or token stored while the account was disabled (one that raced the disable),
         then lets the account sign in again, with its password unchanged. An unknown account is
-        refused with ``UnknownAccountError``.
+        refused with ``UnknownAccountError``. Disabling an external account also drops its
+        sealed provider tokens: nothing checks its memberships any more, and it stays disabled
+        whatever its provider says.
 
         Args:
             command: The account (its username or id), and whether to disable or enable it.
@@ -601,6 +702,7 @@ class SetUserDisabledUseCase:
             raise LastOperatorError
         if command.disabled:
             await self._end_sessions_and_tokens(account.id)
+            await self.externals.forget_tokens(account.id)
         return UserSummary.from_model(replace(account, disabled_at=disabled_at))
 
     async def _end_sessions_and_tokens(self, account_id: AccountId) -> None:
@@ -733,6 +835,8 @@ class IdentifyTokenUseCase:
     """Where API tokens are stored."""
     accounts: AccountRepository
     """Where accounts are stored."""
+    externals: ExternalIdentityRepository
+    """The links of external accounts, whose tokens are refused once their access ended."""
     clock: Clock
     """The current time."""
 
@@ -746,7 +850,8 @@ class IdentifyTokenUseCase:
             The account the token acts as.
 
         Raises:
-            InvalidTokenError: The token is unknown, expired, or its account is gone or disabled.
+            InvalidTokenError: The token is unknown, expired, or its account is gone or disabled,
+                or is an external account whose access has ended (until it signs in again).
         """
         token_hash = hash_token(token)
         # Looked up by the hash of a random secret, like sessions: no timing to learn from.
@@ -757,7 +862,11 @@ class IdentifyTokenUseCase:
         if found.is_expired(now):
             raise InvalidTokenError
         account = await self.accounts.get_by_id(found.account_id)
-        if account is None or account.is_disabled:
+        if (
+            account is None
+            or account.is_disabled
+            or await _external_access_ended(self.externals, account, now)
+        ):
             raise InvalidTokenError
         if found.last_used_at is None or now - found.last_used_at >= TOUCH_INTERVAL:
             try:
@@ -765,3 +874,410 @@ class IdentifyTokenUseCase:
             except Exception:  # ruff: ignore[blind-except] - bookkeeping must not break a valid token
                 logger.warning("could not record API token use")
         return AccountSummary.from_model(account)
+
+
+def _configured(
+    providers: Mapping[str, SignInProvider], policies: Mapping[str, SignInPolicy], name: str
+) -> tuple[SignInProvider, SignInPolicy]:
+    """Return the configured provider of this name with its policy.
+
+    Args:
+        providers: The configured providers, by name.
+        policies: Their policies, by name.
+        name: The provider's name.
+
+    Returns:
+        The provider and its policy.
+
+    Raises:
+        UnknownSignInProviderError: No provider of this name is configured.
+    """
+    provider, policy = providers.get(name), policies.get(name)
+    if provider is None or policy is None:
+        raise UnknownSignInProviderError
+    return provider, policy
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StartExternalSignInUseCase:
+    """Implements ``ports.driving.StartExternalSignIn``."""
+
+    providers: Mapping[str, SignInProvider]
+    """The configured identity providers, by name."""
+    policies: Mapping[str, SignInPolicy]
+    """Their policies, by name."""
+    attempts: SignInAttemptRepository
+    """Where started sign-ins wait for their callback."""
+    clock: Clock
+    """The current time."""
+
+    async def __call__(self, command: StartExternalSignInCommand) -> ExternalSignInStart:
+        """Create a sign-in attempt and return where to send the browser.
+
+        The attempt holds fresh random ``state``, ``nonce`` and PKCE verifier, and is keyed by
+        the hash of a random browser binding: the browser gets the binding as a cookie, the
+        provider gets only ``state``, ``nonce`` and the verifier's S256 challenge.
+
+        Args:
+            command: The provider and where to go once signed in.
+
+        Returns:
+            The provider's authorization URL and the binding for the browser.
+        """
+        provider, policy = _configured(self.providers, self.policies, command.provider)
+        binding = secrets.token_urlsafe(SIGN_IN_SECRET_BYTES)
+        attempt = SignInAttempt(
+            binding_hash=hash_token(binding),
+            provider=policy.name,
+            state=secrets.token_urlsafe(SIGN_IN_SECRET_BYTES),
+            nonce=secrets.token_urlsafe(SIGN_IN_SECRET_BYTES),
+            code_verifier=secrets.token_urlsafe(CODE_VERIFIER_BYTES),
+            return_to=safe_return_to(command.return_to),
+            created_at=self.clock.now(),
+        )
+        # First the provider (it may be down): nothing is stored for a sign-in that cannot start.
+        url = await provider.authorization_url(
+            state=attempt.state, nonce=attempt.nonce, code_verifier=attempt.code_verifier
+        )
+        await self.attempts.add(
+            attempt, expired_before=attempt.created_at - SIGN_IN_ATTEMPT_LIFETIME
+        )
+        return ExternalSignInStart(
+            redirect_url=url,
+            binding=SecretStr(binding),
+            max_age=int(SIGN_IN_ATTEMPT_LIFETIME.total_seconds()),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FinishExternalSignInUseCase:
+    """Implements ``ports.driving.FinishExternalSignIn``.
+
+    The callback must come from the browser that started the attempt (its binding cookie), with
+    the attempt's ``state``, within ``SIGN_IN_ATTEMPT_LIFETIME``, through the same provider; the
+    attempt is taken (deleted) before anything else, so a callback works once at most. Then the
+    provider's adapter exchanges the code with the attempt's PKCE verifier and validates the ID
+    token (with the attempt's ``nonce``). The identity reaches its account by (issuer, subject)
+    only; a first sign-in creates an account, never taking over one by name.
+    """
+
+    providers: Mapping[str, SignInProvider]
+    """The configured identity providers, by name."""
+    policies: Mapping[str, SignInPolicy]
+    """Their policies, by name."""
+    attempts: SignInAttemptRepository
+    """Where started sign-ins wait for their callback."""
+    accounts: AccountRepository
+    """Where accounts are stored."""
+    externals: ExternalIdentityRepository
+    """The links of external identities to accounts."""
+    sessions: SessionRepository
+    """Where browser sessions are stored."""
+    box: SecretBox
+    """Seals the refresh token before it is stored."""
+    clock: Clock
+    """The current time."""
+
+    async def __call__(
+        self, command: FinishExternalSignInCommand, previous_token: str | None = None
+    ) -> ExternalSignInResult:
+        """Check the callback, find or create the account and start a session.
+
+        Args:
+            command: The callback and the browser's binding.
+            previous_token: The caller's current session token, if any.
+
+        Returns:
+            The new session, and where to send the browser.
+
+        Raises:
+            SignInCancelledError: The provider answered with an error instead of a code.
+            ExternalSignInFailedError: No code came back.
+        """
+        provider, policy = _configured(self.providers, self.policies, command.provider)
+        attempt = await self._take_attempt(command)
+        if command.error is not None:
+            logger.info("external sign-in through %s: the provider answered an error", policy.name)
+            raise SignInCancelledError
+        if not command.code:
+            raise ExternalSignInFailedError
+        grant = await provider.exchange(
+            code=command.code, code_verifier=attempt.code_verifier, nonce=attempt.nonce
+        )
+        account = await self._account_for(policy, grant)
+        session = await _start_session(
+            self.sessions, self.clock, AccountSummary.from_model(account), previous_token
+        )
+        return ExternalSignInResult(session=session, return_to=attempt.return_to)
+
+    async def _take_attempt(self, command: FinishExternalSignInCommand) -> SignInAttempt:
+        """Take the browser's attempt and check that this callback belongs to it.
+
+        Args:
+            command: The callback and the browser's binding.
+
+        Returns:
+            The attempt, now deleted.
+
+        Raises:
+            ExternalSignInFailedError: No binding, no attempt for it (never started, or used
+                already), another provider, a ``state`` that does not match, or too late.
+        """
+        if command.binding is None:
+            logger.info("external sign-in refused: the browser sent no binding cookie")
+            raise ExternalSignInFailedError
+        attempt = await self.attempts.take(hash_token(command.binding.get_secret_value()))
+        if attempt is None:
+            logger.info("external sign-in refused: no attempt for this browser (or used already)")
+            raise ExternalSignInFailedError
+        state = (command.state or "").encode()
+        if (
+            attempt.provider != command.provider
+            or not hmac.compare_digest(attempt.state.encode(), state)
+            or attempt.is_expired(self.clock.now())
+        ):
+            logger.info("external sign-in refused: provider, state or age does not match")
+            raise ExternalSignInFailedError
+        return attempt
+
+    async def _account_for(self, policy: SignInPolicy, grant: ExternalGrant) -> Account:
+        """Return the account of the identity, after recording this sign-in.
+
+        Args:
+            policy: The provider's policy.
+            grant: The validated claims and the refresh token.
+
+        Returns:
+            The account, with its role as of now.
+
+        Raises:
+            ExternalSignInFailedError: The link names an account that does not exist.
+            AccountDisabledError: The linked account is disabled.
+            NotAllowedError: The provider puts the person in no allowed group (their access, if
+                they had any, ends now).
+        """
+        claims = grant.claims
+        now = self.clock.now()
+        link = await self.externals.get(claims.issuer, claims.subject)
+        account = None if link is None else await self.accounts.get_by_id(link.account_id)
+        if link is not None and account is None:  # deleting an account deletes its link
+            raise ExternalSignInFailedError
+        if account is not None and account.is_disabled:
+            raise AccountDisabledError
+        if not policy.admits(claims.groups):
+            if account is not None:
+                await self._end_access(account.id, now)
+            logger.info("external sign-in through %s refused: not in an allowed group", policy.name)
+            raise NotAllowedError
+        role = policy.role_for(claims.groups)
+        groups = policy.stored_groups(claims.groups)
+        sealed = None if grant.refresh_token is None else self.box.seal(grant.refresh_token)
+        identity = ExternalIdentity(
+            issuer=claims.issuer,
+            subject=claims.subject,
+            account_id=AccountId(""),
+            provider=policy.name,
+            sealed_tokens=sealed,
+            signed_in_at=now,
+            checked_at=now,
+            next_check_at=now + policy.revalidate_every,
+            access_until=policy.access_until(now, refreshable=sealed is not None),
+        )
+        if account is not None:
+            await self.externals.record_check(
+                replace(identity, account_id=account.id), role=role, groups=groups
+            )
+            return replace(account, role=role)
+        return await self._create_account(policy, grant, identity, role=role, groups=groups)
+
+    async def _create_account(
+        self,
+        policy: SignInPolicy,
+        grant: ExternalGrant,
+        identity: ExternalIdentity,
+        *,
+        role: Role,
+        groups: frozenset[str],
+    ) -> Account:
+        """Create the account of a first sign-in (just in time), linked to the identity.
+
+        The username comes from the provider (or the email's local part); when another account
+        has it, ``<username>@<provider>``. An existing account is never linked by its name.
+
+        Args:
+            policy: The provider's policy.
+            grant: The validated claims and the refresh token.
+            identity: The link to store (its account id is filled in here).
+            role: The new account's role.
+            groups: The new account's groups.
+
+        Returns:
+            The new account; or, when a concurrent first sign-in linked the identity first,
+            that one's account.
+
+        Raises:
+            UsernameUnavailableError: No usable username, or every candidate is taken.
+        """
+        candidates = username_candidates(grant.claims, policy.name)
+        if not candidates:
+            raise UsernameUnavailableError
+        for username in candidates:
+            account = Account(
+                id=AccountId(uuid7().hex),
+                username=username,
+                password_hash=None,
+                role=role,
+                created_at=identity.signed_in_at,
+            )
+            linked = replace(identity, account_id=account.id)
+            outcome = await self.externals.create_linked_account(account, linked, groups)
+            if outcome == "created":
+                return account
+            if outcome == "already_linked":
+                return await self._account_for(policy, grant)  # the link exists now
+        raise UsernameUnavailableError([c.value for c in candidates])
+
+    async def _end_access(self, account_id: AccountId, now: datetime) -> None:
+        """End an external account's access now: its sessions go, its tokens are refused.
+
+        Args:
+            account_id: The account.
+            now: The current time.
+        """
+        await self.externals.revoke(account_id, now)
+        await self.sessions.delete_for_account(account_id)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RevalidateExternalAccountsUseCase:
+    """Implements ``ports.driving.RevalidateExternalAccounts``.
+
+    Each due link (``next_check_at`` passed, a refresh token stored) is claimed with a lease, so
+    processes sharing a database share the work, then refreshed with its provider: still allowed
+    moves ``access_until`` forward and refreshes groups and role; a refused token or a lost
+    membership ends the account's access and its sessions; an unreachable provider leaves
+    ``access_until`` as it is (access ends once it passes, failing closed) and the link is
+    tried again after the lease.
+    """
+
+    providers: Mapping[str, SignInProvider]
+    """The configured identity providers, by name."""
+    policies: Mapping[str, SignInPolicy]
+    """Their policies, by name."""
+    accounts: AccountRepository
+    """Where accounts are stored."""
+    externals: ExternalIdentityRepository
+    """The links of external identities to accounts."""
+    sessions: SessionRepository
+    """Where browser sessions are stored."""
+    box: SecretBox
+    """Opens the stored refresh tokens and seals rotated ones."""
+    clock: Clock
+    """The current time."""
+
+    async def __call__(self) -> RevalidationReport:
+        """Check every due link, a batch at a time, until none is due.
+
+        Returns:
+            How many were extended, revoked and left as they were.
+        """
+        counts = {"extended": 0, "revoked": 0, "unreachable": 0}
+        while True:
+            now = self.clock.now()
+            due = await self.externals.claim_due(
+                now, lease_until=now + REVALIDATION_LEASE, limit=REVALIDATION_BATCH
+            )
+            for link in due:
+                try:
+                    counts[await self._check(link)] += 1
+                except Exception:  # one link must not stop the rest
+                    logger.exception("revalidating an external identity failed; retried later")
+            if len(due) < REVALIDATION_BATCH:
+                return RevalidationReport(**counts)
+
+    async def _check(self, link: ExternalIdentity) -> str:
+        """Check one link with its provider and record the outcome.
+
+        Args:
+            link: The claimed link.
+
+        Returns:
+            ``extended``, ``revoked`` or ``unreachable``.
+        """
+        found = await self._refresh(link)
+        if found == "unreachable":
+            return found
+        if found is None:
+            return await self._revoke(link)
+        policy, grant, refresh_token = found
+        claims = grant.claims
+        if claims.subject != link.subject or claims.issuer != link.issuer:
+            return await self._revoke(link)
+        if not policy.admits(claims.groups):
+            logger.info("an account left the allowed groups of %s: access ended", policy.name)
+            return await self._revoke(link)
+        now = self.clock.now()
+        await self.externals.record_check(
+            replace(
+                link,
+                sealed_tokens=self.box.seal(grant.refresh_token or refresh_token),
+                checked_at=now,
+                next_check_at=now + policy.revalidate_every,
+                access_until=policy.access_until(now, refreshable=True),
+            ),
+            role=policy.role_for(claims.groups),
+            groups=policy.stored_groups(claims.groups),
+        )
+        return "extended"
+
+    async def _refresh(
+        self, link: ExternalIdentity
+    ) -> tuple[SignInPolicy, ExternalGrant, str] | Literal["unreachable"] | None:
+        """Ask the link's provider for the person's current claims with the stored token.
+
+        Args:
+            link: The claimed link.
+
+        Returns:
+            The provider's policy, the fresh grant and the refresh token used; ``unreachable``
+            when the provider cannot be reached; ``None`` when access must end (the provider is
+            no longer configured, the account is disabled or gone, the token does not open or
+            the provider refused it).
+        """
+        provider = self.providers.get(link.provider)
+        policy = self.policies.get(link.provider)
+        if provider is None or policy is None or link.sealed_tokens is None:
+            logger.warning("sign-in provider %r is not configured: access ended", link.provider)
+            return None
+        account = await self.accounts.get_by_id(link.account_id)
+        if account is None or account.is_disabled:
+            return None
+        try:
+            refresh_token = self.box.open(link.sealed_tokens)
+        except SealedTextUnreadableError:
+            logger.warning("an external identity's refresh token does not open: access ended")
+            return None
+        try:
+            grant = await provider.refresh(refresh_token, subject=link.subject)
+        except ProviderUnavailableError:
+            logger.warning(
+                "sign-in provider %s unreachable; access kept until it ends", policy.name
+            )
+            return "unreachable"
+        except ProviderAccessRevokedError, ExternalSignInFailedError:
+            logger.info("sign-in provider %s refused a refresh: access ended", policy.name)
+            return None
+        return policy, grant, refresh_token
+
+    async def _revoke(self, link: ExternalIdentity) -> str:
+        """End the link's access now and the account's sessions.
+
+        Args:
+            link: The link.
+
+        Returns:
+            ``revoked``.
+        """
+        await self.externals.revoke(link.account_id, self.clock.now())
+        await self.sessions.delete_for_account(link.account_id)
+        return "revoked"
