@@ -401,6 +401,12 @@ measured, coverage may not drop, the integrity and heading counts (`articles_wit
 another golden set (another fingerprint) or other projects fails until the run is recorded again.
 When a change to the importer improves the numbers, record the run in the same pull request.
 
+Like the retrieval eval, it runs on releases, not on pull requests: the release workflow's
+*Retrieval eval* job runs `--check` (step *Ingestion benchmark*) and a regression stops the
+release. If you change the parser, the chunker or the import path, run `just ingestion-bench
+--offline --check` before you open the pull request. Pull request CI only runs the benchmark's
+quick tests (`tests/evals/test_ingestion.py`, `ingestion_bench.feature`) on a tiny local corpus.
+
 ### Configurations
 
 | Name | Settings | What it does |
