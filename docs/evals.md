@@ -673,6 +673,164 @@ or recall@5 or nDCG@10 more than 2 points below the recorded run (the same golde
 are required). The local and hosted parts never run in CI; refresh the recorded run by hand when
 ranking, chunking or a model changes. Pull request CI runs the quick tests only.
 
+## The agent benchmark
+
+Retrieval numbers do not show that a coding agent reaches the right answer. The agent benchmark
+(#348) measures that: a [pydantic-ai](https://ai.pydantic.dev/) agent whose only documentation
+is ExactDocs answers the golden-set questions, and an LLM judge grades each answer against the
+case's reference answer and facts. It lives in
+[`packages/exactdocs/evals/agent_bench/`](https://github.com/SirCypkowskyy/ExactDocs/tree/develop/packages/exactdocs/evals/agent_bench)
+and never runs in CI with a model: locally, or from the manual *Agent benchmark (real providers)*
+workflow.
+
+### How a run works
+
+For each retrieval configuration, the projects of the asked cases are imported with the real
+importer at their pinned commits (as `golden-import` does), and embedded when the configuration
+names an embedding model. Configurations that share an embedding model share one import. Then
+ExactDocs is started **as shipped**, `exactdocs serve --stdio` on that data directory with the
+configuration's settings, and each agent model answers every case through a pydantic-ai
+`MCPToolset` on that server. The agent has no other tool.
+
+What the agent is told is what a coding agent knows from a project, never the answer:
+
+- the instructions, the same for every model: its only documentation source is the ExactDocs
+  tools; find the library, search exactly the version the project uses, read what it needs, answer
+  briefly from what it read, and say so when that version's documentation does not cover the
+  question instead of answering from memory or another version;
+- the prompt: `My project uses <project title> at version <version>.` and the question. The
+  ExactDocs library ID is not given: finding it (`list_libraries`, `resolve-library-id`) is part
+  of the task.
+
+Both are recorded in the report (`meta.agent_instructions`, `meta.prompt`).
+
+A `process_tool_call` hook records, per question: every tool call (name, arguments cut to 200
+characters, time, error), the sections read in full (`read_chunk`, the chunks `query-docs`
+returned, whole articles from `read_article`) with their version, and how each search was
+answered (`bm25`, or `bm25 (mode_unavailable)` when the server fell back). The run also records
+the input and output tokens over every model request, the USD from ExactDocs' own price list
+(`GenaiPrices`, the bundled `genai-prices` data; `unpriced` when the model is not in it, as for
+the stand-ins), and the wall time. A run that hits the request limit (`--max-requests`, default
+20) or a provider error keeps its record with the error and is graded wrong.
+
+### The judge
+
+The judge is a pydantic-ai agent with a typed output (grade, `wrong_version`, reason), run as a
+Pydantic Evals evaluator. It gets the question, the version, the kind, the reference answer, the
+facts and the answer as JSON, not the documentation, and grades:
+
+| Grade | When |
+|---|---|
+| `correct` | every required fact, in any wording, and nothing the reference contradicts |
+| `partially_correct` | some of the facts, nothing contradicted |
+| `wrong` | none of them, something the reference contradicts, or an invented API or behaviour |
+| `refused` | says the documentation does not cover it, or declines, and states no facts |
+
+For an `unanswerable` case, the judge grades an answer that says the documentation of that version
+does not cover it `refused`, and one that answers anyway (from another version, from memory,
+invented) `wrong`. The report counts `refused` as accurate for an `unanswerable` case only: there
+it is the right answer, for any other kind it is a miss. Each question keeps its raw grade.
+`wrong_version` is set when the answer states something true of another version only; the report
+counts those separately (*Wrong for the version*). Its instructions are in
+`agent_bench/judge.py`.
+
+### The report
+
+`reports/evals/agent-bench.json` (and `.md` next to it, also appended to `$GITHUB_STEP_SUMMARY`),
+one cell per agent model and retrieval configuration:
+
+- grades and accuracy (share `correct`, plus `refused` on `unanswerable` cases), overall, per kind
+  and per project; errors;
+- *Wrong for the version*: answers the judge flagged `wrong_version`;
+- *Read the answer*: of the answerable questions, the share where the agent read in full every
+  section the case names (at its version). Search snippets do not count. This is the measure of
+  "the cited chunks contain the required facts": a case's sections are, by construction, where
+  its facts are stated;
+- *Read another version*: questions where the agent read something of the asked library at
+  another version;
+- tool calls, tokens and USD per question, median wall time, and how the searches were answered.
+
+`meta` holds what a rerun needs: the agent models, the judge model, each configuration's
+settings, the limits, the instructions and prompt, the ExactDocs version and repository commit,
+and every imported version with its pinned and recorded commit. `questions` holds every question's
+record (tool calls, chunks read as `<chunk ID>@<version>`, tokens, USD, answer, judge's reason).
+
+### Running it
+
+```bash
+just agent-bench run --offline --projects starlette,zod --limit 4   # stand-ins, no provider
+just agent-bench run \
+  --agent-model openai:gpt-5-mini --agent-model anthropic:claude-sonnet-4-5 \
+  --judge-model openai:gpt-5 \
+  --retrieval bm25:mode=bm25 \
+  --retrieval 'hybrid:mode=hybrid,embedding.model=eval:text-embedding-3-small'
+just agent-bench run --help
+```
+
+- `--agent-model` (repeat for several) and `--judge-model` are
+  [pydantic-ai model names](https://ai.pydantic.dev/models/overview/) (`<provider>:<model>`); the
+  provider's usual variables give the key (`OPENAI_API_KEY`, `OPENAI_BASE_URL` for a gateway,
+  `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`). Use a judge from another vendor than the agents where
+  you can.
+- `--retrieval name[:key=value,...]` (repeat for several) names one configuration: each key is
+  an ExactDocs AI setting path set as `EXACTDOCS_AI__<KEY>` (`mode=hybrid` is
+  `EXACTDOCS_AI__MODE=hybrid`, `embedding.model=eval:...` is `EXACTDOCS_AI__EMBEDDING__MODEL`),
+  on top of the environment, for both the import and the server. Profiles (`eval:` above) come
+  from the environment as for any instance (`EXACTDOCS_AI__PROVIDERS__EVAL__...`). The default is
+  `bm25:mode=bm25` and `hybrid:mode=hybrid`; without an embedding model the second falls back to
+  BM25, which the report shows. The configurations of the retrieval benchmark (#347) are written
+  the same way.
+- `--projects`, `--kinds`, `--limit N` (cases per project) pick the cases; `--concurrency`
+  asks several questions at once (wall time then includes contention); `--work-dir` keeps the
+  data directories and each server's log (`server-<configuration>.log`).
+- `--offline` uses the stand-ins in `agent_bench/offline.py` (pydantic-ai `FunctionModel`s):
+  `offline:search` answers from the search snippets, `offline:read` reads the top section first,
+  and the judge grades by word overlap with the facts. They prove the plumbing, not quality.
+
+The manual workflow *Agent benchmark (real providers)* (`.github/workflows/agent-bench.yml`,
+`workflow_dispatch` only, environment `eval-providers`) runs the same command. Its inputs are
+`agent_models` (comma-separated), `judge_model`, `retrieval` (configurations separated by spaces)
+and `args` (e.g. `--projects zod --limit 10`). Keys: the secrets `AGENT_BENCH_OPENAI_API_KEY`,
+`AGENT_BENCH_ANTHROPIC_API_KEY`, `AGENT_BENCH_GOOGLE_API_KEY` (and the variable
+`AGENT_BENCH_OPENAI_BASE_URL` for an OpenAI-compatible gateway) for the agents and the judge; the
+`eval` profile of the retrieval workflow (`EVAL_PROVIDER_*`) for the server's models. The report
+is uploaded as the artifact `agent-bench`.
+
+### Judge agreement
+
+The judge is checked against people: at least 50 answers labelled by hand, and the share where the
+judge gave the same grade.
+
+```bash
+just agent-bench sample --report reports/evals/agent-bench.json --size 50   # -> agent-bench-labels.yaml
+# fill in `grade` and `wrong_version` (true/false) for each answer
+just agent-bench agreement --report reports/evals/agent-bench.json --labels reports/evals/agent-bench-labels.yaml
+```
+
+`sample` picks answers reproducibly (`--seed`) and writes each with its question, version, kind,
+reference and facts, and blank labels; the judge's grade is left out so it cannot steer the
+labeller. Label with the judge's grades, which the file's header repeats:
+
+- `correct`: states every fact, nothing the reference contradicts;
+- `partially_correct`: states some of the facts, nothing contradicted;
+- `wrong`: states none, contradicts the reference, or invents an API or behaviour;
+- `refused`: says the documentation does not cover it (or declines) and states no facts.
+
+For an `unanswerable` case, an answer saying the documentation does not cover it is labelled
+`refused`, not `correct` (the report counts it as right for that kind); answering anyway is
+`wrong`. `agreement` prints how many answers were labelled, how many the judge graded the same
+(`rate`), the same for `wrong_version`, and a confusion table (hand grade to judge grades).
+Entries left blank are skipped. Label answers from a real-model run: the stand-ins' answers are
+not worth labelling.
+
+### Tests
+
+`tests/evals/test_agent_bench.py`: the recording, grounding, pricing, the stand-in judge, the
+judge evaluator, the report and agreement run in CI. The end-to-end test, marked `eval`
+(`uv run pytest -m eval`), imports a two-version corpus built in a temporary repository, starts
+`exactdocs serve --stdio` on it under two configurations and runs both stand-in agents and the
+stand-in judge through it.
+
 ## Tiers
 
 | Tier | Modes | Where they run for real |
