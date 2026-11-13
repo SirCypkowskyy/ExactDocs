@@ -3203,20 +3203,6 @@ def _selected_files(folder: Path, selection: PathSelection) -> list[str]:
     return sorted(found)
 
 
-def _full_refs(kind: RefKind, version: str) -> list[str]:
-    """Return the full ref name to try when a server refuses a bare SHA (none for a commit).
-
-    Args:
-        kind: What the ref is.
-        version: The ref's name.
-
-    Returns:
-        ``refs/tags/<name>`` or ``refs/heads/<name>``; nothing for a commit.
-    """
-    prefix = {RefKind.TAG: "refs/tags/", RefKind.BRANCH: "refs/heads/"}.get(kind)
-    return [] if prefix is None else [prefix + version]
-
-
 @dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- spent on import
 class _ImageBudget:
     """What the images of one version may still take; the images turned away, with why."""
