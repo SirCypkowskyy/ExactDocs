@@ -144,6 +144,24 @@ describe("add library model", () => {
     expect(explainCheckError(e(403, "setup_required")).link?.href).toBe("/setup");
     expect(explainCheckError(new TypeError("offline")).message).toMatch(/Can't reach the server/);
     expect(explainAddError(e(409, "library_id_taken"), null).field).toBe("id");
+    const taken = explainCheckError(
+      new HttpError(409, "/v1/repositories/check", {
+        error: "library_id_taken",
+        detail: "d",
+        fields: [],
+        library_id: "/acme/payments",
+      }),
+    );
+    expect(taken).toEqual({
+      field: "url",
+      message: "A library with this repository's ID, /acme/payments, already exists.",
+      library: "/acme/payments",
+    });
+    // A server that does not name the library still gets words, not "the server went wrong".
+    expect(explainCheckError(e(409, "library_id_taken"))).toEqual({
+      field: "url",
+      message: "A library with this repository's ID already exists.",
+    });
     expect(explainAddError(e(422, "unknown_ref"), "v9").message).toMatch(/v9/);
     expect(explainAddError(e(422, "ambiguous_ref"), "abc1234").field).toBe("ref");
     expect(explainAddError(e(422, "invalid_path_pattern"), null).field).toBe("paths");
@@ -276,6 +294,38 @@ describe("add library flow", () => {
     await checkRepo("not a url");
     expect(await screen.findByText(/no spaces/)).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("says the ID a checked repository proposes is taken, and links to that library", async () => {
+    serve({
+      check: () => ({
+        status: 409,
+        body: {
+          error: "library_id_taken",
+          detail: "library '/acme/payments' already exists: choose another library ID",
+          fields: [],
+          close_matches: [],
+          library_id: "/acme/payments",
+        },
+      }),
+    });
+    renderAdd();
+    await checkRepo();
+    const address = screen.getByLabelText("Repository address");
+    await waitFor(() => expect(address).toHaveAttribute("aria-invalid", "true"));
+    const message = "A library with this repository's ID, /acme/payments, already exists.";
+    // The description is the sentence alone: the link is the next Tab stop, not stray text in it.
+    expect(address).toHaveAccessibleDescription(message);
+    const link = screen.getByRole("link", { name: "Open /acme/payments" });
+    expect(link).toHaveAttribute("href", "/libraries/acme/payments");
+    expect(link.closest("p")).toHaveTextContent(message);
+    expect(screen.queryByText(/Something went wrong on the server/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Library ID")).not.toBeInTheDocument();
+
+    // Another address: the message and its link go with the old one.
+    await userEvent.type(address, "x");
+    expect(document.getElementById("url-error")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open /acme/payments" })).not.toBeInTheDocument();
   });
 
   it("sends a signed-out user to sign in", async () => {

@@ -184,6 +184,7 @@ interface Checked extends CheckedRepository {
 function AddressStep({
   url,
   error,
+  taken,
   alertId,
   access,
   accessError,
@@ -193,6 +194,8 @@ function AddressStep({
 }: {
   url: string;
   error: string | undefined;
+  /** The library that holds the ID this address proposes (`/owner/repo`): the error links to it. */
+  taken: string | undefined;
   alertId: string | undefined;
   access: ReturnType<typeof usePrivateAccess>;
   accessError: string | undefined;
@@ -213,6 +216,7 @@ function AddressStep({
         placeholder="https://github.com/acme/payments"
         value={url}
         error={error}
+        errorAction={taken ? <LibraryLink id={taken} /> : undefined}
         alertId={alertId}
         hint={error ? undefined : "A git repository with Markdown docs."}
         onChange={(e) => onEdit(e.target.value)}
@@ -233,6 +237,20 @@ function AddressStep({
       />
       <RepoFound checked={checked} />
     </div>
+  );
+}
+
+/** `/owner/repo` as a link to that library's page, named so it reads well out of context too. */
+function LibraryLink({ id }: { id: string }) {
+  const [owner = "", repo = ""] = id.slice(1).split("/");
+  return (
+    <Link
+      to="/libraries/$owner/$repo"
+      params={{ owner, repo }}
+      className="rounded-sm underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      Open {id}
+    </Link>
   );
 }
 
@@ -320,6 +338,8 @@ export function AddLibraryPage() {
   const [errors, setErrors] = useState<{ [K in AddField]?: string | undefined }>({});
   const [showRuleErrors, setShowRuleErrors] = useState(false);
   const [problem, setProblem] = useState<AddProblem>();
+  /** The library holding the ID the checked address proposes; shown only with the address's error. */
+  const [taken, setTaken] = useState<string>();
   const [pending, setPending] = useState(false);
   const [added, setAdded] = useState<AddedLibrary>();
   const current = useRef(url);
@@ -329,6 +349,7 @@ export function AddLibraryPage() {
   const busy = useRef(false);
 
   function fail(p: AddProblem) {
+    setTaken(p.field === "url" ? p.library : undefined);
     if (p.field) {
       const field = p.field;
       setErrors({ [field]: p.message });
@@ -517,6 +538,7 @@ export function AddLibraryPage() {
             <AddressStep
               url={url}
               error={errors.url}
+              taken={errors.url ? taken : undefined}
               alertId={problem?.message ? ALERT_ID : undefined}
               access={access}
               accessError={errors.credential}
