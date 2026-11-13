@@ -31,6 +31,7 @@ from exactdocs.catalog.dtos import (
     GetVersionTagsQuery,
     HostKind,
     ImageIn,
+    ImportedArticleTags,
     InstructionFileIn,
     ListArticlesQuery,
     ListLibrariesQuery,
@@ -46,9 +47,7 @@ from exactdocs.catalog.dtos import (
     StoredFileIn,
     StoreManifestCommand,
     TagRuleIn,
-)
-from exactdocs.catalog.dtos import (
-    ArticleTags as CatalogArticleTags,
+    TagSourcesIn,
 )
 from exactdocs.catalog.dtos import (
     ChunkingIn as CatalogChunkingIn,
@@ -113,6 +112,7 @@ from exactdocs.ingestion.models import (
     EmbedPlan,
     GitRename,
     ImportedRef,
+    ImportedTags,
     ImportedVersion,
     ImportSource,
     InstructionPolicy,
@@ -1029,13 +1029,13 @@ class CatalogImportedTags:
         )
 
     async def set_imported_tags(
-        self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]
+        self, manifest_id: str, tags: Mapping[str, ImportedTags]
     ) -> dict[str, tuple[str, ...]]:
-        """Write the imported tags; return every tag of the articles that changed.
+        """Write the imported tags and their sources; return every tag of the articles that changed.
 
         Args:
             manifest_id: The manifest.
-            tags: The imported tags of each article, by path.
+            tags: The imported tags of each article, with their sources, by path.
 
         Returns:
             Every tag of each changed article, by path.
@@ -1043,7 +1043,10 @@ class CatalogImportedTags:
         done = await self.set_imported_tags_of(
             SetImportedTagsCommand(
                 manifest_id=manifest_id,
-                articles=[CatalogArticleTags(path=p, tags=list(t)) for p, t in tags.items()],
+                articles=[
+                    ImportedArticleTags(path=p, tags=list(t.tags), tag_sources=_tag_sources(t))
+                    for p, t in tags.items()
+                ],
             )
         )
         return {a.path: tuple(a.tags) for a in done.articles}
@@ -1226,7 +1229,8 @@ def _store_command(version: ImportedVersion) -> StoreManifestCommand:
                 blob_sha=a.blob_sha,
                 content_version=PARSER_VERSION,
                 title=a.title,
-                tags=list(a.tags),
+                tags=list(a.imported.tags),
+                tag_sources=_tag_sources(a.imported),
                 front_matter=a.front_matter,
                 content=a.content,
             )
@@ -1240,6 +1244,18 @@ def _store_command(version: ImportedVersion) -> StoreManifestCommand:
             InstructionFileIn(path=i.path, content=i.content) for i in version.instructions
         ],
     )
+
+
+def _tag_sources(imported: ImportedTags) -> TagSourcesIn:
+    """Map ingestion's imported tags to the catalog's record of their sources.
+
+    Args:
+        imported: An article's imported tags and their sources.
+
+    Returns:
+        The catalog's DTO.
+    """
+    return TagSourcesIn(front_matter=list(imported.front_matter), rules=list(imported.rules))
 
 
 def _index_command(manifest_id: str, version: ImportedVersion) -> IndexManifestCommand:

@@ -42,6 +42,7 @@ from exactdocs.catalog.errors import (
 from exactdocs.catalog.models import (
     ContentKey,
     HostKind,
+    ImportedTags,
     Library,
     LibraryId,
     Manifest,
@@ -57,7 +58,9 @@ from exactdocs.catalog.models import (
     RenameDirection,
     StoredImage,
     TagMatch,
+    TagOrigin,
     TagSelection,
+    TagSources,
     VersionOrigin,
     VersionRef,
 )
@@ -1204,9 +1207,12 @@ async def test_imported_tags_are_replaced_and_manual_ones_kept(stores: Stores) -
     many = {f"n{i}.md": ("n",) for i in range(1200)}  # more than one batch of paths
 
     touched = await stores.imported_tags.set_imported_tags(
-        ManifestId("m1"), {"a.md": ("api", "new"), "b.md": (), **many}
+        ManifestId("m1"),
+        {k: ImportedTags(tags=v) for k, v in {"a.md": ("api", "new"), "b.md": (), **many}.items()},
     )
-    other = await stores.imported_tags.set_imported_tags(ManifestId("nope"), {"a.md": ("z",)})
+    other = await stores.imported_tags.set_imported_tags(
+        ManifestId("nope"), {"a.md": ImportedTags(tags=("z",))}
+    )
     listed = await stores.manifests.list_entries(
         ManifestId("m1"), prefix="", tags=TagSelection.of(["api"]), after=None, limit=10
     )
@@ -1228,12 +1234,63 @@ async def test_imported_tags_of_more_entries_than_one_query_takes_are_all_writte
     await store(stores, manifest("m1", "main", "a1", *entries))
     wanted = {p: ("t", str(i % 2)) for i, p in enumerate(paths)}
 
-    touched = await stores.imported_tags.set_imported_tags(ManifestId("m1"), wanted)
-    again = await stores.imported_tags.set_imported_tags(ManifestId("m1"), wanted)
+    imported = {p: ImportedTags(tags=t) for p, t in wanted.items()}
+    touched = await stores.imported_tags.set_imported_tags(ManifestId("m1"), imported)
+    again = await stores.imported_tags.set_imported_tags(ManifestId("m1"), imported)
     counted = await stores.manifests.count_tags(ManifestId("m1"), limit=10)
 
     assert touched == again == wanted  # unchanged entries are reported too
     assert dict(counted) == {"t": 1201, "0": 601, "1": 600}
+
+
+async def test_imported_tags_keep_their_sources_and_overlapping_origins_are_all_listed(
+    stores: Stores,
+) -> None:
+    sources = TagSources(front_matter=("guide", "install"), rules=("guides", "guide"))
+    tagged = replace(entry("a.md", "a", tags=("guides", "guide", "install")), sources=sources)
+    await store(stores, manifest("m1", "main", "a1", tagged))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    await stores.manifests.set_manual_tags(
+        ManifestId("m1"),
+        {"a.md": (ManualTag(tag="guides", path="a.md"), ManualTag(tag="mine", path="a.md"))},
+    )
+
+    found = await stores.manifests.get_article(PAYMENTS.id, VersionRef("main"), "a.md")
+
+    assert found is not None
+    assert found.entry.sources == sources
+    assert found.entry.tag_origins == (
+        ("guides", (TagOrigin.PATH_RULE, TagOrigin.MANUAL)),
+        ("guide", (TagOrigin.FRONT_MATTER, TagOrigin.PATH_RULE)),
+        ("install", (TagOrigin.FRONT_MATTER,)),
+        ("mine", (TagOrigin.MANUAL,)),
+    )
+
+
+async def test_an_entry_stored_without_sources_reads_as_imported_until_it_is_retagged(
+    stores: Stores,
+) -> None:
+    await store(stores, manifest("m1", "main", "a1", entry("a.md", "a", tags=("api", "x"))))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+
+    before = await stores.manifests.get_article(PAYMENTS.id, VersionRef("main"), "a.md")
+    await stores.imported_tags.set_imported_tags(
+        ManifestId("m1"),
+        {"a.md": ImportedTags(tags=("api", "x"), sources=TagSources(front_matter=("x",)))},
+    )
+    after = await stores.manifests.get_article(PAYMENTS.id, VersionRef("main"), "a.md")
+
+    assert before is not None
+    assert before.entry.sources is None
+    assert before.entry.tag_origins == (
+        ("api", (TagOrigin.IMPORTED,)),
+        ("x", (TagOrigin.IMPORTED,)),
+    )
+    assert after is not None  # same tags: the sources are written all the same
+    assert after.entry.tag_origins == (
+        ("api", (TagOrigin.IMPORTED,)),  # no source gives it: still not known
+        ("x", (TagOrigin.FRONT_MATTER,)),
+    )
 
 
 async def test_manual_tags_of_entries_combine_with_imported_ones_and_can_be_undone(

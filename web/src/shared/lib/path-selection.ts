@@ -1,5 +1,5 @@
 // A library's file selection and tag rules as typed in a form: the add form and the settings page share them.
-import { normalizeTag } from "./tags";
+import { isTagShaped } from "./tags";
 
 /** Most tag rules a library may have (the API's limit). */
 export const MAX_TAG_RULES = 64;
@@ -41,7 +41,7 @@ export function validateRule(rule: TagRuleDraft): { pattern?: string; tag?: stri
     problems.pattern = "Use a path inside the repository, like docs/api/**.";
   }
   if (!tag) problems.tag = "Add a tag, like api.";
-  else if (!normalizeTag(tag)) {
+  else if (!isTagShaped(tag)) {
     problems.tag = TAG_RULE_HINT;
   }
   return problems;

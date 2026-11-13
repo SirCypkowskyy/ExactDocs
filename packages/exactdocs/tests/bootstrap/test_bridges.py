@@ -24,10 +24,12 @@ from exactdocs.catalog.adapters.driven.memory import (
 from exactdocs.catalog.dtos import (
     ActivateManifestCommand,
     ArticleIn,
+    GetArticleQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
     ManifestStates,
     StoreManifestCommand,
+    TagOrigin,
 )
 from exactdocs.catalog.models import (
     HostKind,
@@ -45,6 +47,7 @@ from exactdocs.ingestion.models import (
     ChunkingConfig,
     CopiedArticle,
     ImportedRef,
+    ImportedTags,
     PathSelection,
     ProposedId,
     StoredArticle,
@@ -387,13 +390,23 @@ async def test_imported_tags_are_read_and_written_through_the_catalog() -> None:
     await catalog.activate_manifest(ActivateManifestCommand(manifest_id=stored.manifest_id))
 
     found = await bridge.stored_tags("/acme/payments", "v1.4.0")
-    written = await bridge.set_imported_tags(stored.manifest_id, {"a.md": ("api", "x")})
+    written = await bridge.set_imported_tags(
+        stored.manifest_id,
+        {"a.md": ImportedTags(tags=("api", "x"), front_matter=("x",), rules=("api",))},
+    )
+    read = await catalog.get_article(
+        GetArticleQuery(library="/acme/payments", ref="v1.4.0", path="a.md")
+    )
 
     assert found == StoredTags(
         manifest_id=stored.manifest_id,
         articles=(StoredArticleTags(path="a.md", front_matter={"tags": ["x"]}, tags=("x",)),),
     )
     assert written == {"a.md": ("api", "x")}
+    assert [(o.tag, o.origins) for o in read.tag_origins] == [
+        ("api", [TagOrigin.PATH_RULE]),
+        ("x", [TagOrigin.FRONT_MATTER]),
+    ]
     assert await bridge.stored_tags("/acme/payments", "nope") is None
     assert await bridge.stored_tags("/acme/nope", "v1.4.0") is None
 

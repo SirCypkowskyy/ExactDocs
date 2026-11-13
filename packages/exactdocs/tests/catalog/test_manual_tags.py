@@ -24,6 +24,7 @@ from exactdocs.catalog.dtos import (
     SetManualTagsCommand,
     StoreManifestCommand,
     TagFilter,
+    TagSourcesIn,
 )
 from exactdocs.catalog.errors import (
     InvalidArticlePathError,
@@ -40,6 +41,8 @@ from exactdocs.catalog.models import (
     ManualTag,
     ManualTags,
     RefKind,
+    TagOrigin,
+    TagSources,
 )
 from exactdocs.catalog.module import CatalogModule
 
@@ -165,6 +168,71 @@ def test_an_entry_shows_imported_tags_first_then_the_manual_ones_it_lacks() -> N
     )
 
     assert entry.all_tags == ("guide", "api", "onboarding")
+
+
+def test_a_tag_lists_every_origin_it_has_in_one_order() -> None:
+    entry = ManifestEntry(
+        path="a.md",
+        blob_sha="a" * 40,
+        content_version=1,
+        title="A",
+        tags=("guides", "guide", "install"),
+        sources=TagSources(front_matter=("guide", "install", "capped"), rules=("guides", "guide")),
+        manual_tags=(
+            ManualTag(tag="guides", path="a.md"),
+            ManualTag(tag="guides", path="old.md"),
+            ManualTag(tag="capped", path="a.md"),
+        ),
+    )
+
+    assert entry.tag_origins == (
+        ("guides", (TagOrigin.PATH_RULE, TagOrigin.MANUAL)),
+        ("guide", (TagOrigin.FRONT_MATTER, TagOrigin.PATH_RULE)),
+        ("install", (TagOrigin.FRONT_MATTER,)),
+        # The import's cap left it out: only the hand edit gives it.
+        ("capped", (TagOrigin.MANUAL,)),
+    )
+
+
+def test_imported_tags_of_an_entry_stored_without_sources_have_an_unknown_origin() -> None:
+    entry = ManifestEntry(
+        path="a.md",
+        blob_sha="a" * 40,
+        content_version=1,
+        title="A",
+        tags=("api",),
+        manual_tags=(ManualTag(tag="api", path="a.md"), ManualTag(tag="mine", path="a.md")),
+    )
+
+    assert entry.tag_origins == (
+        ("api", (TagOrigin.IMPORTED, TagOrigin.MANUAL)),
+        ("mine", (TagOrigin.MANUAL,)),
+    )
+
+
+async def test_an_article_says_where_each_tag_comes_from_also_when_it_has_several_origins(
+    catalog: CatalogModule,
+) -> None:
+    install = article("docs/guide/install.md", "guides", "guide", "install").model_copy(
+        update={"tag_sources": TagSourcesIn(front_matter=["guide", "install"], rules=["guides"])}
+    )
+    await publish(catalog, "v1.4.0", install, article("docs/old.md", "x"))
+    await tag(catalog, "docs/guide/install.md", "guides")
+
+    found = await catalog.get_article(
+        GetArticleQuery(library=LIBRARY, ref="v1.4.0", path="docs/guide/install.md")
+    )
+    old = await catalog.get_article(
+        GetArticleQuery(library=LIBRARY, ref="v1.4.0", path="docs/old.md")
+    )
+
+    assert [(o.tag, o.origins) for o in found.tag_origins] == [
+        ("guides", [TagOrigin.PATH_RULE, TagOrigin.MANUAL]),
+        ("guide", [TagOrigin.FRONT_MATTER]),
+        ("install", [TagOrigin.FRONT_MATTER]),
+    ]
+    assert [t.tag for t in found.tag_origins] == found.tags
+    assert [(o.tag, o.origins) for o in old.tag_origins] == [("x", [TagOrigin.IMPORTED])]
 
 
 def test_reaching_merges_the_tags_of_every_path_an_article_came_from() -> None:

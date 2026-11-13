@@ -96,6 +96,7 @@ from exactdocs.catalog.models import (
     ChunkingConfig,
     ContentKey,
     HostKind,
+    ImportedTags,
     Library,
     LibraryId,
     LibrarySettings,
@@ -515,6 +516,7 @@ class StoreManifestUseCase:
                             content_version=a.content_version,
                             title=a.title,
                             tags=tuple(a.tags),
+                            sources=None if a.tag_sources is None else a.tag_sources.to_model(),
                             front_matter=a.front_matter,
                             size=len(a.content.encode()),
                         )
@@ -785,7 +787,13 @@ class SetImportedTagsUseCase:
         manifest_id = ManifestId(command.manifest_id)
         if await self.manifests.get(manifest_id) is None:
             raise ManifestNotFoundError(command.manifest_id)
-        tags = {a.path: tuple(dict.fromkeys(a.tags)) for a in command.articles}
+        tags = {
+            a.path: ImportedTags(
+                tags=tuple(dict.fromkeys(a.tags)),
+                sources=None if a.tag_sources is None else a.tag_sources.to_model(),
+            )
+            for a in command.articles
+        }
         touched = await self.writer.set_imported_tags(manifest_id, tags)
         return RetaggedManifest.of(command.manifest_id, touched)
 

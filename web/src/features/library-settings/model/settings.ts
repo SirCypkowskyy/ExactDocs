@@ -15,7 +15,6 @@ import {
   validatePatterns,
   validateRule,
 } from "@/shared/lib/path-selection";
-import { normalizeTag } from "@/shared/lib/tags";
 
 export type SettingsLibrary = components["schemas"]["LibraryDetail"];
 export type SettingsVersion = components["schemas"]["VersionOut"];
@@ -415,9 +414,13 @@ export const settingsOf = (draft: SelectionDraft): Required<Omit<SettingsIn, "ch
 const same = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((x, i) => x === b[i]);
 
-/** `API` and `api` are one tag: compare rules the way the server stores them. */
+/**
+ * `API` and `api` are one tag, so letter case alone is no change. Only the server makes the tag
+ * (case folding, spaces as `-`): a spelling this still takes for a change saves the rules again,
+ * and the server finds nothing to re-tag.
+ */
 const ruleKey = (r: { pattern: string; tag: string }) =>
-  `${r.pattern.trim()}\u0000${normalizeTag(r.tag) ?? r.tag.trim()}`;
+  `${r.pattern.trim()}\u0000${r.tag.trim().toLowerCase()}`;
 
 /**
  * What saving the form would ask of every version: `paths` (fetched and imported again), `tags`

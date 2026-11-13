@@ -5,15 +5,34 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BROWSE_KEY } from "@/shared/lib/query-keys";
 import { TagEditor } from "./tag-editor";
 
+type Origin = "front_matter" | "path_rule" | "imported" | "manual";
+
 const article = {
   path: "guide/install.md",
   tags: ["guide", "setup", "onboarding", "legacy"],
-  front_matter: { tags: ["setup"] },
+  tag_origins: [
+    { tag: "guide", origins: ["path_rule"] },
+    { tag: "setup", origins: ["front_matter"] },
+    { tag: "onboarding", origins: ["manual"] },
+    { tag: "legacy", origins: ["manual"] },
+  ] as { tag: string; origins: Origin[] }[],
   manual_tags: [
     { tag: "onboarding", path: "guide/install.md" },
     { tag: "legacy", path: "old/install.md" },
   ],
 };
+
+/** The server's answer to a change of manual tags: what it stored (deduplicated), or nothing. */
+const stored = (s: Sent, made: (tag: string) => string = (t) => t) =>
+  s.method === "DELETE"
+    ? new Response(null, { status: 204 })
+    : Response.json({
+        library: "/acme/payments",
+        path: s.url.searchParams.get("path"),
+        tags: [...new Set((s.body as { tags: string[] }).tags.map(made))],
+      });
+/** Roughly what the server does to a tag, enough for these tests. */
+const made = (tag: string) => tag.toLowerCase().split(/\s+/).join("-");
 
 interface Sent {
   method: string;
@@ -66,9 +85,7 @@ describe("TagEditor", () => {
   });
 
   it("adds a tag to the path's manual tags and reloads the library's browse queries of every version", async () => {
-    const sent = serve((s) =>
-      Response.json({ library: "/acme/payments", path: "guide/install.md", tags: s.body }),
-    );
+    const sent = serve((s) => stored(s, made));
     const client = mount();
     const other = [...BROWSE_KEY, "acme", "payments", "v1.0.0", "sha", "tags"];
     const unrelated = [...BROWSE_KEY, "acme", "billing", "v1.0.0", "sha", "tags"];
@@ -83,11 +100,28 @@ describe("TagEditor", () => {
     expect(sent[0]?.method).toBe("PUT");
     expect(sent[0]?.url.pathname).toBe("/api/v1/libraries/acme/payments/tags");
     expect(sent[0]?.url.searchParams.get("path")).toBe("guide/install.md");
-    expect(sent[0]?.body).toEqual({ tags: ["onboarding", "getting-started"] });
+    // Sent as typed: the server makes the tag.
+    expect(sent[0]?.body).toEqual({ tags: ["onboarding", "Getting Started"] });
     await waitFor(() => expect(client.getQueryState(other)?.isInvalidated).toBe(true));
     expect(client.getQueryState(everywhere)?.isInvalidated).toBe(true);
     expect(client.getQueryState(unrelated)?.isInvalidated).toBe(false);
     expect(screen.getByRole("textbox", { name: "New tag" })).toHaveValue("");
+    expect(screen.getByRole("status")).toHaveTextContent("");
+  });
+
+  it("says so when the server makes what was typed into a tag the path already had", async () => {
+    serve((s) => stored(s, made));
+    mount(new QueryClient(), {
+      ...article,
+      tags: [...article.tags, "getting-started"],
+      manual_tags: [...article.manual_tags, { tag: "getting-started", path: "guide/install.md" }],
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Add tag" }));
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "New tag" }),
+      "Getting  Started{Enter}",
+    );
+    expect(await screen.findByText(/already has that tag/)).toBeVisible();
   });
 
   it("removes an inherited tag on the path it was set on, with DELETE when none is left", async () => {
@@ -102,9 +136,7 @@ describe("TagEditor", () => {
   });
 
   it("removes one of the path's own tags with PUT of the rest", async () => {
-    const sent = serve((s) =>
-      Response.json({ library: "/acme/payments", path: "x", tags: s.body }),
-    );
+    const sent = serve((s) => stored(s));
     mount(new QueryClient(), {
       ...article,
       manual_tags: [
@@ -166,7 +198,7 @@ describe("TagEditor", () => {
   });
 
   it("moves focus to the next tag's remove button after a removal, else to Add tag", async () => {
-    serve((s) => Response.json({ library: "/acme/payments", path: "x", tags: s.body }));
+    serve((s) => stored(s));
     const client = mount();
     await userEvent.click(screen.getByRole("button", { name: "Remove tag onboarding" }));
     await waitFor(() =>
@@ -182,24 +214,40 @@ describe("TagEditor", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Add tag" })).toHaveFocus());
   });
 
-  it("says that the front matter declares a manual tag too, and that a removed one stays when imported", async () => {
+  it("shows a tag with several origins under each, and that a removed one stays when imported", async () => {
     serve();
     const shown = {
       ...article,
       tags: ["guide"],
+      tag_origins: [{ tag: "guide", origins: ["front_matter", "path_rule", "manual"] as Origin[] }],
       manual_tags: [{ tag: "guide", path: "guide/install.md" }],
     };
-    const client = mount(new QueryClient(), { ...shown, front_matter: { tags: ["guide"] } });
+    const client = mount(new QueryClient(), shown);
+    expect(screen.getByRole("list", { name: "Tags from front matter" })).toHaveTextContent("guide");
+    expect(screen.getByRole("list", { name: "Tags from path rules" })).toHaveTextContent("guide");
     const byHand = screen.getByRole("list", { name: "Tags added by hand" });
-    expect(within(byHand).getByText("also in front matter")).toBeVisible();
-    // A tag set by hand is listed once, under "by hand", whatever else gives it.
-    expect(screen.queryByRole("list", { name: "Tags from path rules" })).toBeNull();
-    client.show(shown);
+    expect(within(byHand).getByText("guide")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Remove tag guide" }));
-    client.show({ ...shown, manual_tags: [] });
+    const imported = { tag: "guide", origins: ["front_matter", "path_rule"] as Origin[] };
+    client.show({ ...shown, tag_origins: [imported], manual_tags: [] });
     expect(await screen.findByRole("status")).toHaveTextContent(
       "guide stays on this article: its import gives it too.",
     );
     expect(screen.getByRole("list", { name: "Tags from path rules" })).toHaveTextContent("guide");
+  });
+
+  it("lists imported tags of an older version apart, as their origin was not recorded", () => {
+    serve();
+    mount(new QueryClient(), {
+      ...article,
+      tags: ["guide"],
+      tag_origins: [{ tag: "guide", origins: ["imported"] }],
+      manual_tags: [],
+    });
+    expect(
+      screen.getByRole("list", { name: "Tags from front matter or path rules" }),
+    ).toHaveTextContent("guide");
+    expect(screen.queryByRole("list", { name: "Tags from path rules" })).toBeNull();
+    expect(screen.getByText(/imported before ExactDocs kept which is which/)).toBeVisible();
   });
 });

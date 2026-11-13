@@ -14,13 +14,13 @@ from exactdocs.catalog.adapters.driven.memory import (
 from exactdocs.catalog.dtos import (
     ActivateManifestCommand,
     ArticleIn,
-    ArticleTags,
     ChunkingIn,
     CopyManifestCommand,
     GetArticleQuery,
     GetLibraryQuery,
     GetManifestStatesQuery,
     GetVersionTagsQuery,
+    ImportedArticleTags,
     SetImportedTagsCommand,
     SetLibrarySettingsCommand,
     SetManualTagsCommand,
@@ -176,8 +176,8 @@ async def test_imported_tags_are_replaced_and_listings_see_them_with_manual_ones
         SetImportedTagsCommand(
             manifest_id=manifest_id,
             articles=[
-                ArticleTags(path="docs/a.md", tags=["new"]),
-                ArticleTags(path="x.md", tags=[]),
+                ImportedArticleTags(path="docs/a.md", tags=["new"]),
+                ImportedArticleTags(path="x.md", tags=[]),
             ],
         )
     )

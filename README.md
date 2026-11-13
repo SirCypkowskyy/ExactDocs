@@ -446,9 +446,10 @@ and instance modes are: their scores must compare across libraries.
 Articles are chunked by Markdown headings with [markdown-it-py](https://github.com/executablebooks/markdown-it-py),
 never splitting code blocks or tables (Chonkie was dropped: its Markdown recipe needs the Hugging
 Face Hub and the network, which a model-free, offline-capable image cannot have). Articles are
-tagged from front matter and path rules, and by hand: the article page of the web UI shows each
-tag under where it comes from and adds or removes manual tags, which hold for every version
-(`PUT`/`DELETE /api/v1/libraries/{owner}/{repo}/tags?path=`). Listings and search filter by tag.
+tagged from front matter and path rules, and by hand: articles (REST and MCP) say where each tag
+comes from (`tag_origins`, several origins when it comes from several places), and the article page
+of the web UI shows each tag under each of its origins and adds or removes manual tags, which hold
+for every version (`PUT`/`DELETE /api/v1/libraries/{owner}/{repo}/tags?path=`). Listings and search filter by tag.
 Each library chooses its split level (`h1`...`h6`) and chunk sizes (`max_chars` cuts long
 sections again at deeper headings, `min_chars` merges tiny ones) with
 `PUT /api/v1/libraries/{owner}/{repo}/settings` (left out, the stored chunking is kept); every
@@ -562,6 +563,9 @@ Model endpoints are **provider profiles**, named once and used by every role as
 `EXACTDOCS_CONFIG_FILE` (the environment wins, field by field); they need the `exactdocs[ai]` extra
 (`uvx --from 'exactdocs[ai]' exactdocs serve`). Nothing of it is imported, and nothing is sent
 anywhere, while no profile is configured.
+
+Which configuration to pick for no models, local models or hosted models, with the benchmark
+numbers behind it, is on [Recommended defaults](https://sircypkowskyy.github.io/ExactDocs/benchmark/defaults/).
 
 ```toml
 # EXACTDOCS_CONFIG_FILE=/etc/exactdocs/exactdocs.toml

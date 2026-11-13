@@ -42,7 +42,9 @@ from exactdocs.catalog.models import (
     RenameDirection,
     StoredArticle,
     TagMatch,
+    TagOrigin,
     TagSelection,
+    TagSources,
     Version,
     VersionOrigin,
 )
@@ -350,6 +352,26 @@ class ResolveVersionQuery(_Dto):
     """`/owner/repo` (the default version) or `/owner/repo/<ref>`."""
 
 
+class TagSourcesIn(_Dto):
+    """An article's imported tags by source, as the import found them."""
+
+    front_matter: list[str] = []
+    """Declared in the front matter, normalized."""
+    rules: list[str] = []
+    """Given by the library's tag rules that match the article's path."""
+
+    def to_model(self) -> TagSources:
+        """Map to the model.
+
+        Returns:
+            The sources, duplicates dropped.
+        """
+        return TagSources(
+            front_matter=tuple(dict.fromkeys(self.front_matter)),
+            rules=tuple(dict.fromkeys(self.rules)),
+        )
+
+
 class ArticleIn(_Dto):
     """One article to store: where it lives, its git blob SHA, its metadata and its Markdown."""
 
@@ -365,6 +387,8 @@ class ArticleIn(_Dto):
     """The article's title."""
     tags: list[str] = []
     """Tags from front matter and the library's path rules."""
+    tag_sources: TagSourcesIn | None = None
+    """Which of `tags` come from the front matter and which from path rules; null: not known."""
     front_matter: dict[str, Any] = {}
     """The parsed front matter; untrusted repository data."""
     content: str
@@ -875,6 +899,18 @@ class ManualTagInfo(_Dto):
     """
 
 
+class TagOriginsInfo(_Dto):
+    """One tag of an article, and every place it comes from."""
+
+    tag: str
+    """The tag, as in `tags`."""
+    origins: list[TagOrigin]
+    """Where it comes from, at least one: `front_matter`, `path_rule`, `imported` (front matter
+    or a path rule, not recorded which: a version imported before origins were kept), `manual`
+    (set by hand; `manual_tags` says on which path).
+    """
+
+
 class ArticleInfo(_Dto):
     """Where an article comes from and its metadata: everything but the text."""
 
@@ -896,6 +932,10 @@ class ArticleInfo(_Dto):
     """The article's title; untrusted repository text."""
     tags: list[str]
     """Every tag: from front matter, path rules and by hand."""
+    tag_origins: list[TagOriginsInfo]
+    """Every tag of `tags`, in the same order, with where it comes from. A tag can have several
+    origins, e.g. a path rule and a hand edit.
+    """
     manual_tags: list[ManualTagInfo]
     """The tags among `tags` set by hand, each with the path it was set on: this one or one it was
     renamed from. A tag set on both is listed for each.
@@ -931,6 +971,9 @@ class ArticleInfo(_Dto):
             path=entry.path,
             title=entry.title,
             tags=list(entry.all_tags),
+            tag_origins=[
+                TagOriginsInfo(tag=tag, origins=list(origins)) for tag, origins in entry.tag_origins
+            ],
             manual_tags=[ManualTagInfo(tag=t.tag, path=t.path) for t in entry.manual_tags],
             size=entry.size,
             front_matter=entry.front_matter,
@@ -1464,12 +1507,23 @@ class VersionTags(_Dto):
     """Every article of the manifest; empty without one."""
 
 
+class ImportedArticleTags(_Dto):
+    """An article's new imported tags, and where they come from."""
+
+    path: str
+    """The article's path."""
+    tags: list[str]
+    """Its imported tags: path rules and front matter (manual tags are kept apart)."""
+    tag_sources: TagSourcesIn | None = None
+    """Which of `tags` come from the front matter and which from path rules; null: not known."""
+
+
 class SetImportedTagsCommand(_Dto):
     """Replace the imported tags of some articles of a manifest."""
 
     manifest_id: str = Field(min_length=1)
     """The manifest."""
-    articles: list[ArticleTags]
+    articles: list[ImportedArticleTags]
     """The articles to retag; the others keep their tags."""
 
 

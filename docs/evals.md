@@ -6,6 +6,10 @@ repository imported for real, and reports per mode how often the right section c
 often anything of another version does, what it cost and how long it took. The decisions behind
 it are in [AI retrieval decisions](decisions/ai-retrieval.md#evaluation).
 
+The results of the benchmarks below (the golden set, ingestion, retrieval and agent) and the
+defaults they recommend are published in the [Benchmark](benchmark/index.md) section; this page
+is the reference for running them.
+
 The suite is development and release tooling: it lives in
 [`packages/exactdocs/evals/`](https://github.com/SirCypkowskyy/ExactDocs/tree/develop/packages/exactdocs/evals),
 outside the package, and [Pydantic Evals](https://ai.pydantic.dev/evals/) (`pydantic-evals`
