@@ -1,0 +1,56 @@
+# Deploys develop as the trial instance https://exact-docs.gburek.app (docs/deployment.md,
+# "Trial instance"). It runs on a runner on the GB10 host itself, labelled `exactdocs-deploy`, never
+# on the CI VMs (label `exactdocs`), and never for a pull request: that runner can reach the host's
+# Docker daemon.
+name: Trial deploy
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+concurrency:
+  group: trial-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy exact-docs.gburek.app
+    # Only develop (a dispatch from another branch is refused), only this repository.
+    if: github.ref == 'refs/heads/develop' && github.repository == 'SirCypkowskyy/ExactDocs'
+    runs-on: [self-hosted, linux, ARM64, exactdocs-deploy]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Refuse any host but dellpromaxgb10
+        run: |
+          host=$(hostname)
+          echo "runner host: $host"
+          if [ "$host" != dellpromaxgb10 ]; then
+            echo "::error::trial-deploy runs only on dellpromaxgb10, not on '$host'"
+            exit 1
+          fi
+
+      - name: Build and deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_TUNNEL_ID: ${{ vars.CLOUDFLARE_TUNNEL_ID }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+        run: deploy/trial/deploy.sh "$GITHUB_SHA"
+
+      - name: Public health check
+        run: |
+          for i in $(seq 30); do
+            if curl -fsS --max-time 10 https://exact-docs.gburek.app/healthz; then echo; exit 0; fi
+            echo "attempt $i/30 failed; retrying in 5 s"
+            sleep 5
+          done
+          echo "::error::https://exact-docs.gburek.app/healthz did not answer 200"
+          exit 1

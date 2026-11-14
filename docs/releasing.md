@@ -308,7 +308,10 @@ Actions cache instead (`scope=exactdocs-<variant>`), because it builds multi-arc
 ## CI/CD and runners
 
 Every workflow runs on two LXD virtual machines on the GB10 host (see `deploy/runners/README.md`),
-matched by the labels `self-hosted, linux, ARM64, exactdocs`.
+matched by the labels `self-hosted, linux, ARM64, exactdocs`. The one exception is
+`trial-deploy.yml`: each push to `develop` redeploys the trial instance at
+<https://exact-docs.gburek.app> from a runner on the host itself, labelled `exactdocs-deploy`
+(see [Trial instance](deployment.md#trial-instance)).
 
 ```mermaid
 flowchart LR

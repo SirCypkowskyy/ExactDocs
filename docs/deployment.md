@@ -542,3 +542,50 @@ not counted as requests.
     Without the token, anyone who reaches the port can scrape. The Host allowlist applies either
     way (an unknown `Host` gets 400), but it is a DNS-rebinding guard, not access control; blocking
     `/metrics` at your reverse proxy also works.
+
+## Trial instance
+
+The project's own trial instance at <https://exact-docs.gburek.app> runs `develop`. Each push to
+`develop` (or a manual run of `.github/workflows/trial-deploy.yml` on `develop`) rebuilds it
+from that commit with `deploy/trial/deploy.sh`. It runs the hardened single-container setup above,
+with the `local` image target. It shares the Cloudflare tunnel of the other services on the GB10
+host.
+
+```mermaid
+flowchart LR
+    push["push to develop"] --> wf["trial-deploy.yml<br/>runner exactdocs-deploy on the host"]
+    subgraph gb10 ["dellpromaxgb10"]
+        wf -->|"build, admin create, run"| app["exactdocs-trial<br/>172.17.0.1:18090 to 3000"]
+        app --- vol[("exactdocs-trial-data<br/>/data")]
+        cfd["cloudflared<br/>(default bridge)"] --> app
+    end
+    wf -->|"tunnel rule + DNS (API)"| cf["Cloudflare<br/>exact-docs.gburek.app"]
+    user["visitor"] --> cf --> cfd
+```
+
+- **Runner.** The CI VMs cannot reach the host's Docker daemon (on purpose), so the deploy has a
+  runner of its own on the host, labelled `exactdocs-deploy` and *not* `exactdocs`. That keeps CI
+  and pull-request jobs off it. The workflow runs only for `develop`, never for a pull request,
+  and it stops unless `hostname` is `dellpromaxgb10`. Register that runner once on the host, as a
+  user in the `docker` group, with `./config.sh --url https://github.com/SirCypkowskyy/ExactDocs
+  --token <token> --name exactdocs-deploy --labels exactdocs-deploy`. The default labels
+  `self-hosted`, `Linux` and `ARM64` are added automatically. Never add `exactdocs`.
+- **Network.** The container publishes `172.17.0.1:18090` only (the docker0 bridge). The
+  `cloudflared` container reaches it, the LAN does not. `EXACTDOCS_FORWARDED_ALLOW_IPS=172.17.0.1`
+  trusts the bridge gateway that Docker forwards those connections from. `EXACTDOCS_ALLOWED_HOSTS`
+  and `EXACTDOCS_PUBLIC_URL` name the public host.
+- **First admin.** Before the server starts, `admin create --password-stdin` runs on the data
+  volume, so no visitor ever sees the setup page. The admin is `admin`, and its password is only in
+  `~/exactdocs-trial/admin-password` (mode 600) on the host. The deploy then checks that
+  `/api/v1/session` no longer says `setup_required`. If it still does, the deploy stops the
+  container and removes the route.
+- **State on the host.** `~/exactdocs-trial/` holds `trial.env` (`EXACTDOCS_SECRET_KEY`, generated
+  once and never overwritten), `admin-password`, `deploy.lock` (`flock`, one deploy at a time) and
+  `backups/` (the tunnel config before each change, the last 50).
+- **Cloudflare.** `deploy/trial/cloudflare.sh` follows the rules of the tunnel it shares. It adds
+  or removes only `exact-docs.gburek.app` and puts that rule before any wildcard. It backs up the
+  whole config before each write and never restarts `cloudflared`. DNS (a proxied CNAME, comment
+  `managed-by=exactdocs-trial-deploy`) is best effort, since the zone's wildcard may cover it
+  already. The API token `exactdocs-deploy` may edit tunnels in the account and DNS in
+  `gburek.app`, and nothing else. It is the repository secret `CLOUDFLARE_API_TOKEN`, next to the
+  variables `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_TUNNEL_ID` and `CLOUDFLARE_ZONE_ID`.
