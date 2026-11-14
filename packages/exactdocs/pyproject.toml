@@ -31,7 +31,7 @@ ai = [
     "pgvector==0.5.1",
     # Azure OpenAI and Claude on Azure AI Foundry with Entra ID (`auth = "entra"`): the sync token
     # provider only (`azure.identity.aio` would need aiohttp).
-    "azure-identity==1.26.0",
+    "azure-identity==1.27.0",
 ]
 # Local models (docs/decisions/ai-retrieval.md, *Local and offline models*): an embedding model and
 # a cross-encoder in this process, on CPU, without torch. Imported only once a role names a
