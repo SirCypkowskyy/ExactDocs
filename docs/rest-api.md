@@ -327,6 +327,19 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `DELETE .../auto-sync` turns it off and keeps every version. 404 for an unknown library, 422
   for a value out of range. Saving it again makes the library due at the next tick; removing the
   library removes its schedule.
+- **Sources file** (TEAM-02, [Sources file](sources.md)): `POST /sources/plan` with
+  `{"sources": <the file as JSON>, "prune": false}` compares the declared libraries with the
+  instance and writes nothing: `create`, `update` (per library the managed settings that change,
+  `refs_to_add`, `auto_sync`, `job_kind`, `undeclared_versions`), `unchanged`, `undeclared`,
+  `errors` (`source_mismatch`) and `changes` (false: apply would write nothing). `POST
+  /sources/apply` with the same body plans again and applies it library by library (creations,
+  updates, then removals only with `prune`); one failing library does not stop the others, and
+  `results` has each library's `action`, `jobs` and `error`. Settings the file leaves out are not
+  managed. 422 for an invalid file (an unknown key, a short SHA, a duplicate ID) or a setting the
+  server cannot store (`invalid_sources`, naming the entry). `GET /sources/schema` returns the
+  file's JSON Schema (committed as `docs/schemas/exactdocs.sources.schema.json`). Operators
+  only: the account's role must be `admin` (403 `forbidden` otherwise), signed in with a session
+  or an API token (the CLI and CI only have tokens).
 - **Push webhooks** (TEAM-03): `PUT /libraries/{owner}/{repo}/webhook` creates or rotates the
   library's webhook secret and answers it once, with `url` (where the forge posts) and
   `created_at`; the old secret stops working at once. `GET .../webhook` says `enabled`, `url` and

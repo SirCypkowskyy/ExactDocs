@@ -1,46 +1,62 @@
 """Data crossing the ingestion boundary (into and out of driving ports). Immutable, validated."""
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from exactdocs.ingestion.constants import (
+    CHANGE_JOBS,
     DEFAULT_CHUNKER,
     DEFAULT_INTERVAL_MINUTES,
     DEFAULT_KEEP_LAST,
     ERROR_CODE,
+    FULL_SHA,
     MAX_CHUNK_CHARS,
     MAX_HEADING_LEVEL,
     MAX_INTERVAL_MINUTES,
     MAX_KEEP_LAST,
+    MAX_SOURCE_REF,
+    MAX_SOURCE_REFS,
+    MAX_SOURCES,
     MAX_TAG_PATTERN,
     MAX_TAG_RULES,
     MIN_INTERVAL_MINUTES,
     PREVIEW_FILES_DESCRIPTION,
     REFS_TRUNCATED_DESCRIPTION,
+    SHORT_SHA,
+    SOURCES_SCHEMA_DIALECT,
+    SOURCES_SCHEMA_TITLE,
 )
 from exactdocs.ingestion.constants._dtos import (
     _CONTEXT7,
     _CONTEXT7_WARNING,
     _CREDENTIAL_DESCRIPTION,
 )
+from exactdocs.ingestion.errors import InvalidRepositoryUrlError
 from exactdocs.ingestion.models import (
     AccessToken,
     AutoSync,
     ChunkingConfig,
     Context7Config,
     Credential,
+    DeclaredLibrary,
     DeployKey,
     FileProblem,
     Job,
     JobState,
+    LibraryUpdate,
     ProblemCode,
     RefKind,
     RepositoryHost,
+    RepositoryUrl,
     ResolvedRef,
     SettingsChange,
+    SourcesField,
+    SourcesPlan,
     SyncStatus,
+    TagRule,
     VersionOrigin,
     Webhook,
 )
@@ -399,6 +415,14 @@ class AddLibraryCommand(_Dto):
     """Tags for articles by path; they are added to the front-matter tags."""
     credential: CredentialIn | None = Field(default=None, description=_CREDENTIAL_DESCRIPTION)
     """The library's credential; its schema description is ``_CREDENTIAL_DESCRIPTION``."""
+    chunking: ChunkingIn | None = Field(default=None)
+    """How articles are cut into chunks; stored before the import is queued. Null: the
+    defaults.
+    """
+    context7_paths: bool | None = Field(default=None)
+    """Without paths, take those of the repository's root `context7.json` (null or true); false:
+    no paths mean every `.md`/`.mdx` file.
+    """
 
 
 class _PinnedImport(_Dto):
@@ -989,6 +1013,445 @@ class QueuedEmbedding(_Dto):
 
     queued: int
     """Jobs queued now."""
+
+
+# ---------------------------------------------------------------- the sources file (TEAM-02)
+
+_SourceRef = Annotated[str, Field(min_length=1, max_length=MAX_SOURCE_REF)]
+
+
+def _source_ref(ref: str) -> str:
+    """Check one declared ref; a full commit SHA is spelled lower-case, as versions are.
+
+    Args:
+        ref: The ref as declared.
+
+    Returns:
+        The ref to compare with versions.
+
+    Raises:
+        ValueError: It is blank, has spaces or control characters, or is a short commit SHA.
+    """
+    if not ref.strip() or any(c.isspace() or not c.isprintable() for c in ref):
+        message = "a ref has no spaces or control characters"
+        raise ValueError(message)
+    if FULL_SHA.fullmatch(ref):
+        return ref.lower()
+    if SHORT_SHA.fullmatch(ref):
+        message = (
+            f"{ref!r} looks like a short commit SHA: "
+            "declare the full SHA (40 hex characters, 64 for SHA-256)"
+        )
+        raise ValueError(message)
+    return ref
+
+
+class SourceLibrary(_Dto):
+    """One library of a sources file. A setting left out is not managed: never compared or changed.
+
+    `include_paths`, `exclude_paths` and `tag_rules` are compared as sets, after the server's
+    normalization (a reordered list or a tag in other letter case is no change).
+    """
+
+    url: str = Field(
+        min_length=1,
+        max_length=2048,
+        description=CheckRepositoryCommand.model_fields["url"].description,
+    )
+    """The repository URL; its schema description is ``CheckRepositoryCommand.url``'s."""
+    id: str | None = Field(
+        default=None, min_length=1, max_length=200, pattern=r"^/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
+    )
+    """`/owner/repo`, any letter case; left out: the ID derived from `url`, as when a library is
+    added.
+    """
+    refs: list[_SourceRef] = Field(min_length=1, max_length=MAX_SOURCE_REFS)
+    """The versions to have: tags, branches or full commit SHAs (40 hex characters, or 64 in
+    a SHA-256 repository; a short SHA is refused). The first one is imported when the library
+    is created.
+    """
+    include_paths: list[str] | None = Field(default=None)
+    """Folders, files or globs to import; empty: every `.md`/`.mdx` file (the repository's
+    `context7.json` does not fill in a managed empty list). Left out: not managed.
+    """
+    exclude_paths: list[str] | None = Field(default=None)
+    """Folders, files or globs to leave out; they win. Left out: not managed."""
+    tag_rules: list[TagRuleIn] | None = Field(default=None, max_length=MAX_TAG_RULES)
+    """Tags for articles by path, as a whole set. Left out: not managed."""
+    chunking: ChunkingIn | None = Field(default=None)
+    """How articles are cut into chunks. Left out: not managed."""
+    auto_sync: AutoSyncIn | Literal[False] | None = Field(default=None)
+    """The scheduled check, as a whole (what it leaves out takes its default); `false` turns it
+    off. Left out: not managed.
+    """
+
+    @field_validator("refs")
+    @classmethod
+    def _refs(cls, refs: list[str]) -> list[str]:
+        """Check each ref and refuse one declared twice.
+
+        Args:
+            refs: The refs as declared.
+
+        Returns:
+            The refs, full SHAs lower-case.
+
+        Raises:
+            ValueError: A ref is malformed or declared twice.
+        """
+        checked = [_source_ref(r) for r in refs]
+        if len(set(checked)) != len(checked):
+            message = "a ref is declared twice"
+            raise ValueError(message)
+        return checked
+
+    def library_id(self) -> str | None:
+        """Return the canonical library ID: `id`, else the one derived from `url`.
+
+        Returns:
+            The lower-case ID, or None when `url` gives none (plan reports that entry).
+        """
+        if self.id is not None:
+            return self.id.lower()
+        try:
+            return RepositoryUrl.parse(self.url).library_id.lower()
+        except InvalidRepositoryUrlError:
+            return None
+
+
+class SourcesFile(_Dto):
+    """`exactdocs.sources.yaml`: the libraries an instance should have, for code review.
+
+    It holds no credential: a private library is added in the UI with its credential first,
+    then managed by the file.
+    """
+
+    version: Literal[1]
+    """The file format's version: 1."""
+    libraries: list[SourceLibrary] = Field(default_factory=list, max_length=MAX_SOURCES)
+    """The declared libraries, each ID once."""
+
+    @model_validator(mode="after")
+    def _unique_ids(self) -> Self:
+        """Refuse two entries for one library ID (any letter case).
+
+        Returns:
+            The file.
+
+        Raises:
+            ValueError: An ID is declared twice.
+        """
+        seen: set[str] = set()
+        for entry in self.libraries:
+            library_id = entry.library_id()
+            if library_id is None:
+                continue
+            if library_id in seen:
+                message = f"library {library_id!r} is declared twice"
+                raise ValueError(message)
+            seen.add(library_id)
+        return self
+
+
+def sources_json_schema() -> dict[str, object]:
+    """Return the JSON Schema of ``SourcesFile``: what is committed and served.
+
+    Returns:
+        The schema, with its dialect and title.
+    """
+    return {
+        "$schema": SOURCES_SCHEMA_DIALECT,
+        **SourcesFile.model_json_schema(),
+        "title": SOURCES_SCHEMA_TITLE,
+    }
+
+
+class PlanSourcesCommand(_Dto):
+    """Compare a sources file with the instance; nothing is changed."""
+
+    sources: SourcesFile
+    """The file, as JSON (the server never parses YAML)."""
+    prune: bool = Field(default=False)
+    """Mark undeclared libraries and `manual` versions as removed by apply."""
+
+
+class ApplySourcesCommand(PlanSourcesCommand):
+    """Plan again, then apply the plan library by library; only `prune` removes anything."""
+
+
+class PathsChange(_Dto):
+    """A managed path list as stored and as declared."""
+
+    before: list[str]
+    """As stored."""
+    after: list[str]
+    """As declared, normalized."""
+
+
+class TagRulesChange(_Dto):
+    """The managed tag rules as stored and as declared."""
+
+    before: list[TagRuleIn]
+    """As stored."""
+    after: list[TagRuleIn]
+    """As declared, normalized."""
+
+
+class ChunkingChange(_Dto):
+    """The managed chunking as stored and as declared."""
+
+    before: ChunkingIn
+    """As stored."""
+    after: ChunkingIn
+    """As declared."""
+
+
+class AutoSyncChange(_Dto):
+    """The managed scheduled check as it is and as declared; null is off."""
+
+    before: AutoSyncIn | None
+    """As it is; null: off."""
+    after: AutoSyncIn | None
+    """As declared; null: off."""
+
+
+class LibraryUpdateOut(_Dto):
+    """What apply changes in an existing library; null or empty: nothing of that kind."""
+
+    library_id: str
+    """The library ID, `/owner/repo`."""
+    include_paths: PathsChange | None
+    """The include paths, when they change."""
+    exclude_paths: PathsChange | None
+    """The exclude paths, when they change."""
+    tag_rules: TagRulesChange | None
+    """The tag rules, when they change."""
+    chunking: ChunkingChange | None
+    """The chunking, when it changes."""
+    refs_to_add: list[str]
+    """Declared refs that are neither versions nor being imported: each queues an import."""
+    auto_sync: AutoSyncChange | None
+    """The scheduled check, when it is turned on, off or changed."""
+    job_kind: str | None
+    """The job the settings change queues: `reprocess`, `rechunk` or `retag`; null: none."""
+    undeclared_versions: list[str]
+    """`manual` versions the file does not declare (`auto` ones belong to the schedule)."""
+    remove_undeclared_versions: bool
+    """True with `prune`: apply removes `undeclared_versions`."""
+
+    @classmethod
+    def from_model(cls, update: LibraryUpdate) -> Self:
+        """Map one library's difference.
+
+        Args:
+            update: The difference.
+
+        Returns:
+            It at the boundary.
+        """
+        declared, source = update.declared, update.current.source
+        changed = set(update.changed)
+
+        def paths(
+            name: SourcesField, before: tuple[str, ...], after: tuple[str, ...] | None
+        ) -> PathsChange | None:
+            """Describe one path list when it changes.
+
+            Args:
+                name: Which list.
+                before: As stored.
+                after: As declared.
+
+            Returns:
+                The change, or None.
+            """
+            if name not in changed or after is None:
+                return None
+            return PathsChange(before=list(before), after=list(after))
+
+        return cls(
+            library_id=update.library_id,
+            include_paths=paths(
+                SourcesField.INCLUDE_PATHS, source.selection.include, declared.include
+            ),
+            exclude_paths=paths(
+                SourcesField.EXCLUDE_PATHS, source.selection.exclude, declared.exclude
+            ),
+            tag_rules=TagRulesChange(
+                before=_rules_out(source.tag_rules), after=_rules_out(declared.tag_rules)
+            )
+            if SourcesField.TAG_RULES in changed and declared.tag_rules is not None
+            else None,
+            chunking=ChunkingChange(
+                before=ChunkingIn.of(source.chunking), after=ChunkingIn.of(declared.chunking)
+            )
+            if SourcesField.CHUNKING in changed and declared.chunking is not None
+            else None,
+            refs_to_add=list(update.refs_to_add),
+            auto_sync=AutoSyncChange(
+                before=_schedule_out(update.current.auto_sync),
+                after=_schedule_out(declared.auto_sync),
+            )
+            if update.auto_sync_changes
+            else None,
+            job_kind=None if update.reprocess is None else CHANGE_JOBS[update.reprocess],
+            undeclared_versions=list(update.undeclared_versions),
+            remove_undeclared_versions=update.prune and bool(update.undeclared_versions),
+        )
+
+
+def _rules_out(rules: Sequence[TagRule]) -> list[TagRuleIn]:
+    """Map tag rules to the boundary.
+
+    Args:
+        rules: The rules.
+
+    Returns:
+        The rules at the boundary.
+    """
+    return [TagRuleIn(pattern=r.pattern, tag=r.tag) for r in rules]
+
+
+def _schedule_out(auto_sync: AutoSync | None) -> AutoSyncIn | None:
+    """Map a schedule's settings to the boundary.
+
+    Args:
+        auto_sync: The schedule; None: off.
+
+    Returns:
+        Its settings, or None.
+    """
+    if auto_sync is None:
+        return None
+    return AutoSyncIn(
+        tag_pattern=auto_sync.tag_pattern,
+        keep_last=auto_sync.keep_last,
+        interval_minutes=auto_sync.interval_minutes,
+        sync_branches=auto_sync.sync_branches,
+    )
+
+
+def declared_out(declared: DeclaredLibrary) -> SourceLibrary:
+    """Map a declared library (normalized) back to a file entry, with its ID.
+
+    Args:
+        declared: The declaration.
+
+    Returns:
+        The entry, as plan lists it under `create`.
+    """
+    schedule: AutoSyncIn | Literal[False] | None = None
+    if declared.manages_auto_sync:
+        schedule = _schedule_out(declared.auto_sync) or False
+    return SourceLibrary(
+        url=declared.url.url,
+        id=declared.library_id,
+        refs=list(declared.refs),
+        include_paths=None if declared.include is None else list(declared.include),
+        exclude_paths=None if declared.exclude is None else list(declared.exclude),
+        tag_rules=None if declared.tag_rules is None else _rules_out(declared.tag_rules),
+        chunking=None if declared.chunking is None else ChunkingIn.of(declared.chunking),
+        auto_sync=schedule,
+    )
+
+
+class UndeclaredLibraryOut(_Dto):
+    """A library of the instance that the file does not declare."""
+
+    library_id: str
+    """The library ID, `/owner/repo`."""
+    source_url: str
+    """Its repository."""
+    will_be_removed: bool
+    """True with `prune`: apply removes it."""
+
+
+class SourceErrorOut(_Dto):
+    """A declared library that cannot be reconciled; apply leaves it alone."""
+
+    library_id: str
+    """The declared library ID."""
+    error: str
+    """A stable machine code: `source_mismatch` (the ID exists with another repository URL)."""
+    detail: str
+    """What is wrong, for people."""
+
+
+class SourcesPlanOut(_Dto):
+    """The difference between a sources file and the instance."""
+
+    create: list[SourceLibrary]
+    """Declared libraries that do not exist, normalized and with their ID."""
+    update: list[LibraryUpdateOut]
+    """Existing libraries that differ from their declaration, or have undeclared versions."""
+    unchanged: list[str]
+    """Existing libraries that match their declaration."""
+    undeclared: list[UndeclaredLibraryOut]
+    """Libraries the file does not declare."""
+    errors: list[SourceErrorOut]
+    """Declared libraries that cannot be reconciled."""
+    prune: bool
+    """Whether apply removes undeclared libraries and `manual` versions."""
+    changes: bool
+    """Whether apply would change anything (false: it calls no write)."""
+
+    @classmethod
+    def from_model(cls, plan: SourcesPlan) -> Self:
+        """Map the plan.
+
+        Args:
+            plan: The plan.
+
+        Returns:
+            The plan at the boundary.
+        """
+        return cls(
+            create=[declared_out(d) for d in plan.create],
+            update=[LibraryUpdateOut.from_model(u) for u in plan.update],
+            unchanged=list(plan.unchanged),
+            undeclared=[
+                UndeclaredLibraryOut(
+                    library_id=c.library_id, source_url=c.source.url.url, will_be_removed=plan.prune
+                )
+                for c in plan.undeclared
+            ],
+            errors=[
+                SourceErrorOut(library_id=e.library_id, error=e.code, detail=e.message)
+                for e in plan.errors
+            ],
+            prune=plan.prune,
+            changes=bool(
+                plan.create
+                or any(u.writes for u in plan.update)
+                or (plan.prune and plan.undeclared)
+            ),
+        )
+
+
+class LibraryOutcome(_Dto):
+    """What apply did with one library."""
+
+    library_id: str
+    """The library ID, `/owner/repo`."""
+    action: Literal["created", "updated", "unchanged", "removed", "failed"]
+    """What was done; `failed`: nothing was (an error of the plan, or the first write failed)."""
+    jobs: list[str]
+    """The jobs queued (`/jobs/{id}`): imports, re-processing, the collection of removed content."""
+    error_code: str | None = Field(default=None)
+    """The stable code of what failed, e.g. `unknown_ref`; null when nothing did."""
+    error: str | None = Field(default=None)
+    """What failed, for people; a library created or updated before it stays so."""
+
+
+class AppliedSources(_Dto):
+    """The plan that was applied and what was done, library by library."""
+
+    plan: SourcesPlanOut
+    """The plan, computed again at apply time."""
+    results: list[LibraryOutcome]
+    """Created, then updated or unchanged, then removed libraries, then the plan's errors."""
+    failed: int
+    """How many libraries have an `error`."""
 
 
 # ---------------------------------------------------------------- push webhooks (TEAM-03)

@@ -5508,6 +5508,301 @@
         }
       }
     },
+    "/api/v1/sources/schema": {
+      "get": {
+        "tags": [
+          "ingestion",
+          "ingestion"
+        ],
+        "summary": "Get Sources Schema",
+        "description": "Return the JSON Schema of `exactdocs.sources.yaml` (also in `docs/schemas/`).",
+        "operationId": "ingestion-get_sources_schema",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Ingestion-Get Sources Schema"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/sources/plan": {
+      "post": {
+        "tags": [
+          "ingestion",
+          "ingestion"
+        ],
+        "summary": "Plan Sources",
+        "description": "Compare a sources file (sent as JSON) with the instance; nothing is written or queued.\n\n`create` lists the declared libraries that do not exist; `update`, per library, each\nmanaged setting that changes, the refs to add, the scheduled-check change, the job the\nsettings change queues and the `manual` versions the file does not declare; `unchanged`\nand `undeclared` the rest. A setting an entry leaves out is not managed. `errors` lists\nentries apply leaves alone (`source_mismatch`: the ID exists with another URL). The git\nremote is not asked: a ref that does not exist fails at apply. 422 for an invalid file.",
+        "operationId": "ingestion-plan_sources",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanSourcesCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcesPlanOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/sources/apply": {
+      "post": {
+        "tags": [
+          "ingestion",
+          "ingestion"
+        ],
+        "summary": "Apply Sources",
+        "description": "Plan again, then create, update and (only with `prune`) remove, library by library.\n\nA created library imports its first ref, then its other refs are added, then its\nscheduled check is set. Settings are written only when they change, so applying the\nsame file again (even while its imports run) writes nothing. One library failing does\nnot stop the others: its outcome has `error`. Without `prune` nothing is removed.",
+        "operationId": "ingestion-apply_sources",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplySourcesCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppliedSources"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/repositories/check": {
       "post": {
         "tags": [
@@ -7682,6 +7977,29 @@
             ],
             "title": "Credential",
             "description": "A token (https URL) or deploy key (ssh URL) for a private repository. It is stored encrypted, offered only to the repository's own host and never returned."
+          },
+          "chunking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChunkingIn"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How articles are cut into chunks; stored before the import is queued. Null: the\ndefaults."
+          },
+          "context7_paths": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context7 Paths",
+            "description": "Without paths, take those of the repository's root `context7.json` (null or true); false:\nno paths mean every `.md`/`.mdx` file."
           }
         },
         "additionalProperties": false,
@@ -7902,6 +8220,57 @@
         ],
         "title": "AnthropicPlatform",
         "description": "Where an ``anthropic`` profile reaches Claude."
+      },
+      "AppliedSources": {
+        "properties": {
+          "plan": {
+            "$ref": "#/components/schemas/SourcesPlanOut",
+            "description": "The plan, computed again at apply time."
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryOutcome"
+            },
+            "type": "array",
+            "title": "Results",
+            "description": "Created, then updated or unchanged, then removed libraries, then the plan's errors."
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "description": "How many libraries have an `error`."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "plan",
+          "results",
+          "failed"
+        ],
+        "title": "AppliedSources",
+        "description": "The plan that was applied and what was done, library by library."
+      },
+      "ApplySourcesCommand": {
+        "properties": {
+          "sources": {
+            "$ref": "#/components/schemas/SourcesFile",
+            "description": "The file, as JSON (the server never parses YAML)."
+          },
+          "prune": {
+            "type": "boolean",
+            "title": "Prune",
+            "description": "Mark undeclared libraries and `manual` versions as removed by apply.",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sources"
+        ],
+        "title": "ApplySourcesCommand",
+        "description": "Plan again, then apply the plan library by library; only `prune` removes anything."
       },
       "Article": {
         "properties": {
@@ -8228,6 +8597,40 @@
         ],
         "title": "AuthenticateQuery",
         "description": "A username and password to check."
+      },
+      "AutoSyncChange": {
+        "properties": {
+          "before": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutoSyncIn"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "As it is; null: off."
+          },
+          "after": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutoSyncIn"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "As declared; null: off."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "before",
+          "after"
+        ],
+        "title": "AutoSyncChange",
+        "description": "The managed scheduled check as it is and as declared; null is off."
       },
       "AutoSyncIn": {
         "properties": {
@@ -8920,6 +9323,26 @@
         ],
         "title": "ChunkOut",
         "description": "A chunk verbatim, with its place in the article and where it came from."
+      },
+      "ChunkingChange": {
+        "properties": {
+          "before": {
+            "$ref": "#/components/schemas/ChunkingIn",
+            "description": "As stored."
+          },
+          "after": {
+            "$ref": "#/components/schemas/ChunkingIn",
+            "description": "As declared."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "before",
+          "after"
+        ],
+        "title": "ChunkingChange",
+        "description": "The managed chunking as stored and as declared."
       },
       "ChunkingIn": {
         "properties": {
@@ -10265,6 +10688,68 @@
         "title": "LibraryList",
         "description": "A page of the libraries visible to the caller, sorted by ID."
       },
+      "LibraryOutcome": {
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "title": "Library Id",
+            "description": "The library ID, `/owner/repo`."
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "created",
+              "updated",
+              "unchanged",
+              "removed",
+              "failed"
+            ],
+            "title": "Action",
+            "description": "What was done; `failed`: nothing was (an error of the plan, or the first write failed)."
+          },
+          "jobs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Jobs",
+            "description": "The jobs queued (`/jobs/{id}`): imports, re-processing, the collection of removed content."
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code",
+            "description": "The stable code of what failed, e.g. `unknown_ref`; null when nothing did."
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "What failed, for people; a library created or updated before it stays so."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "library_id",
+          "action",
+          "jobs"
+        ],
+        "title": "LibraryOutcome",
+        "description": "What apply did with one library."
+      },
       "LibraryPatch": {
         "properties": {
           "title": {
@@ -10919,6 +11404,119 @@
         "title": "LibrarySummary",
         "description": "A library and its imported versions."
       },
+      "LibraryUpdateOut": {
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "title": "Library Id",
+            "description": "The library ID, `/owner/repo`."
+          },
+          "include_paths": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PathsChange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The include paths, when they change."
+          },
+          "exclude_paths": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PathsChange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The exclude paths, when they change."
+          },
+          "tag_rules": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TagRulesChange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tag rules, when they change."
+          },
+          "chunking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChunkingChange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The chunking, when it changes."
+          },
+          "refs_to_add": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Refs To Add",
+            "description": "Declared refs that are neither versions nor being imported: each queues an import."
+          },
+          "auto_sync": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutoSyncChange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The scheduled check, when it is turned on, off or changed."
+          },
+          "job_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Kind",
+            "description": "The job the settings change queues: `reprocess`, `rechunk` or `retag`; null: none."
+          },
+          "undeclared_versions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Undeclared Versions",
+            "description": "`manual` versions the file does not declare (`auto` ones belong to the schedule)."
+          },
+          "remove_undeclared_versions": {
+            "type": "boolean",
+            "title": "Remove Undeclared Versions",
+            "description": "True with `prune`: apply removes `undeclared_versions`."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "library_id",
+          "include_paths",
+          "exclude_paths",
+          "tag_rules",
+          "chunking",
+          "refs_to_add",
+          "auto_sync",
+          "job_kind",
+          "undeclared_versions",
+          "remove_undeclared_versions"
+        ],
+        "title": "LibraryUpdateOut",
+        "description": "What apply changes in an existing library; null or empty: nothing of that kind."
+      },
       "ListRepositoryRefsQuery": {
         "properties": {
           "url": {
@@ -11471,6 +12069,55 @@
         ],
         "title": "PasswordReset",
         "description": "The outcome of a password reset: the password, sessions and tokens are always done."
+      },
+      "PathsChange": {
+        "properties": {
+          "before": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Before",
+            "description": "As stored."
+          },
+          "after": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "After",
+            "description": "As declared, normalized."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "before",
+          "after"
+        ],
+        "title": "PathsChange",
+        "description": "A managed path list as stored and as declared."
+      },
+      "PlanSourcesCommand": {
+        "properties": {
+          "sources": {
+            "$ref": "#/components/schemas/SourcesFile",
+            "description": "The file, as JSON (the server never parses YAML)."
+          },
+          "prune": {
+            "type": "boolean",
+            "title": "Prune",
+            "description": "Mark undeclared libraries and `manual` versions as removed by apply.",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sources"
+        ],
+        "title": "PlanSourcesCommand",
+        "description": "Compare a sources file with the instance; nothing is changed."
       },
       "PreviewRepositoryCommand": {
         "properties": {
@@ -12958,6 +13605,246 @@
         "title": "SettingsChange",
         "description": "What an edit of a library's settings asks of its versions; each does what follows it too.\n\n``PATHS`` re-imports with the new chunking and tag rules, ``CHUNKING`` re-tags as well."
       },
+      "SourceErrorOut": {
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "title": "Library Id",
+            "description": "The declared library ID."
+          },
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "description": "A stable machine code: `source_mismatch` (the ID exists with another repository URL)."
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "description": "What is wrong, for people."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "library_id",
+          "error",
+          "detail"
+        ],
+        "title": "SourceErrorOut",
+        "description": "A declared library that cannot be reconciled; apply leaves it alone."
+      },
+      "SourceLibrary": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Url",
+            "description": "HTTPS, HTTP, SSH (`ssh://` or `git@host:org/repo.git`) or file URL, without credentials."
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1,
+                "pattern": "^/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id",
+            "description": "`/owner/repo`, any letter case; left out: the ID derived from `url`, as when a library is\nadded."
+          },
+          "refs": {
+            "items": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Refs",
+            "description": "The versions to have: tags, branches or full commit SHAs (40 hex characters, or 64 in\na SHA-256 repository; a short SHA is refused). The first one is imported when the library\nis created."
+          },
+          "include_paths": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Paths",
+            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx` file (the repository's\n`context7.json` does not fill in a managed empty list). Left out: not managed."
+          },
+          "exclude_paths": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exclude Paths",
+            "description": "Folders, files or globs to leave out; they win. Left out: not managed."
+          },
+          "tag_rules": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TagRuleIn"
+                },
+                "type": "array",
+                "maxItems": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag Rules",
+            "description": "Tags for articles by path, as a whole set. Left out: not managed."
+          },
+          "chunking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChunkingIn"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How articles are cut into chunks. Left out: not managed."
+          },
+          "auto_sync": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutoSyncIn"
+              },
+              {
+                "type": "boolean",
+                "const": false
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Sync",
+            "description": "The scheduled check, as a whole (what it leaves out takes its default); `false` turns it\noff. Left out: not managed."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "url",
+          "refs"
+        ],
+        "title": "SourceLibrary",
+        "description": "One library of a sources file. A setting left out is not managed: never compared or changed.\n\n`include_paths`, `exclude_paths` and `tag_rules` are compared as sets, after the server's\nnormalization (a reordered list or a tag in other letter case is no change)."
+      },
+      "SourcesFile": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Version",
+            "description": "The file format's version: 1."
+          },
+          "libraries": {
+            "items": {
+              "$ref": "#/components/schemas/SourceLibrary"
+            },
+            "type": "array",
+            "maxItems": 300,
+            "title": "Libraries",
+            "description": "The declared libraries, each ID once."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "version"
+        ],
+        "title": "SourcesFile",
+        "description": "`exactdocs.sources.yaml`: the libraries an instance should have, for code review.\n\nIt holds no credential: a private library is added in the UI with its credential first,\nthen managed by the file."
+      },
+      "SourcesPlanOut": {
+        "properties": {
+          "create": {
+            "items": {
+              "$ref": "#/components/schemas/SourceLibrary"
+            },
+            "type": "array",
+            "title": "Create",
+            "description": "Declared libraries that do not exist, normalized and with their ID."
+          },
+          "update": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryUpdateOut"
+            },
+            "type": "array",
+            "title": "Update",
+            "description": "Existing libraries that differ from their declaration, or have undeclared versions."
+          },
+          "unchanged": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unchanged",
+            "description": "Existing libraries that match their declaration."
+          },
+          "undeclared": {
+            "items": {
+              "$ref": "#/components/schemas/UndeclaredLibraryOut"
+            },
+            "type": "array",
+            "title": "Undeclared",
+            "description": "Libraries the file does not declare."
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/SourceErrorOut"
+            },
+            "type": "array",
+            "title": "Errors",
+            "description": "Declared libraries that cannot be reconciled."
+          },
+          "prune": {
+            "type": "boolean",
+            "title": "Prune",
+            "description": "Whether apply removes undeclared libraries and `manual` versions."
+          },
+          "changes": {
+            "type": "boolean",
+            "title": "Changes",
+            "description": "Whether apply would change anything (false: it calls no write)."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "create",
+          "update",
+          "unchanged",
+          "undeclared",
+          "errors",
+          "prune",
+          "changes"
+        ],
+        "title": "SourcesPlanOut",
+        "description": "The difference between a sources file and the instance."
+      },
       "SpaceState": {
         "type": "string",
         "enum": [
@@ -13319,6 +14206,34 @@
         "title": "TagRuleOut",
         "description": "Articles whose path matches `pattern` get `tag`."
       },
+      "TagRulesChange": {
+        "properties": {
+          "before": {
+            "items": {
+              "$ref": "#/components/schemas/TagRuleIn"
+            },
+            "type": "array",
+            "title": "Before",
+            "description": "As stored."
+          },
+          "after": {
+            "items": {
+              "$ref": "#/components/schemas/TagRuleIn"
+            },
+            "type": "array",
+            "title": "After",
+            "description": "As declared, normalized."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "before",
+          "after"
+        ],
+        "title": "TagRulesChange",
+        "description": "The managed tag rules as stored and as declared."
+      },
       "TaggedArticle": {
         "properties": {
           "library": {
@@ -13500,6 +14415,34 @@
         ],
         "title": "TokenSummary",
         "description": "A token as listed: everything but the secret."
+      },
+      "UndeclaredLibraryOut": {
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "title": "Library Id",
+            "description": "The library ID, `/owner/repo`."
+          },
+          "source_url": {
+            "type": "string",
+            "title": "Source Url",
+            "description": "Its repository."
+          },
+          "will_be_removed": {
+            "type": "boolean",
+            "title": "Will Be Removed",
+            "description": "True with `prune`: apply removes it."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "library_id",
+          "source_url",
+          "will_be_removed"
+        ],
+        "title": "UndeclaredLibraryOut",
+        "description": "A library of the instance that the file does not declare."
       },
       "UpdatedLibrarySettings": {
         "properties": {
