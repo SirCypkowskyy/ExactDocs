@@ -1,6 +1,6 @@
 # Search and AI models
 
-Out of the box every search is BM25, pinned to one version, with no model and no network. If you
+By default every search is BM25, pinned to one version, with no model and no network. If you
 configure model endpoints, or run the bundled local models, a search can also use vectors, a
 reranker, an LLM that writes a hypothetical answer, or an agent that browses the docs. Each of
 these is opt-in, and each one falls back to a cheaper mode rather than failing the search.

@@ -436,7 +436,7 @@ ExactDocs makes no outbound connections you did not configure: only your git hos
 endpoints and, if you turn it on, your trace collector. There are no analytics and no update
 checks. The Prometheus endpoint, if you turn it on, waits to be scraped and sends nothing.
 
-This is tested, not just promised, in
+A test checks this:
 [`test_no_outbound.py`](https://github.com/SirCypkowskyy/ExactDocs/blob/develop/packages/exactdocs/tests/bootstrap/test_no_outbound.py).
 An import over git and HTTP, REST search and both MCP search tools run with FastMCP's update check
 forced off and no telemetry configured, then again with telemetry on and a collector on loopback,
