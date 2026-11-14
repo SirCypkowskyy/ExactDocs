@@ -481,10 +481,15 @@ several providers at once. [Configuration](configuration.md#sign-in-providers) l
 and [Deployment](deployment.md#behind-a-reverse-proxy) explains the public URL behind a proxy.
 
 The flow is the authorization code flow with PKCE (`S256`), `state` and `nonce`. ExactDocs reads
-the provider's discovery document from the issuer and checks the ID token's signature against the
-provider's keys, along with its issuer, audience, nonce and times. The issuer must be HTTPS.
-[REST API](rest-api.md) and [Architecture](architecture.md#external-sign-in-oidc) describe each
-check.
+the provider's discovery document from the issuer's `/.well-known/openid-configuration` on the
+first sign-in and caches it for an hour; its `issuer` must equal the configured one exactly. The ID
+token must be signed by a key from the provider's JWKS with an asymmetric algorithm the provider
+advertises (never `none` or `HS*`), and carry the configured issuer, the client ID in `aud` (and in
+`azp` when it is present or `aud` names several audiences), the attempt's `nonce`, and times that
+are valid within 60 s of leeway. A new signing key is fetched when a token first names it, at most
+once a minute. The issuer must be HTTPS. [REST API](rest-api.md) and
+[Architecture](architecture.md#external-sign-in-oidc) describe the sign-in routes and the stored
+data.
 
 **Accounts.** The first allowed sign-in creates an account with the role `user`, or `admin` through
 `admin_groups`. The account is linked to the identity by its issuer and subject only, never by

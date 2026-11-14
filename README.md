@@ -7,10 +7,10 @@ search and read them over MCP, pinned to the exact tag, branch or commit you imp
 the same docs in a web UI. It is a self-hosted, drop-in alternative to context7.
 
 [Documentation](https://sircypkowskyy.github.io/ExactDocs/) ·
-[Getting started](https://sircypkowskyy.github.io/ExactDocs/getting-started/) ·
-[MCP](https://sircypkowskyy.github.io/ExactDocs/mcp/) ·
-[Configuration](https://sircypkowskyy.github.io/ExactDocs/configuration/) ·
-[Deployment](https://sircypkowskyy.github.io/ExactDocs/deployment/)
+[Getting started](docs/getting-started.md) ·
+[MCP](docs/mcp.md) ·
+[Configuration](docs/configuration.md) ·
+[Deployment](docs/deployment.md)
 
 > [!NOTE]
 > The latest release is **v0.2.0** (MVP-1): one admin account and no external services, with the
@@ -74,7 +74,7 @@ uvx exactdocs serve
 4. Ask your agent something. It finds the library with `resolve-library-id` and reads it with
    `query-docs`, as it would with context7.
 
-[Getting started](https://sircypkowskyy.github.io/ExactDocs/getting-started/) walks through the
+[Getting started](docs/getting-started.md) walks through the
 same steps over REST, and covers the command line, private repositories, the sources file,
 webhooks, user accounts and sign-in through an identity provider.
 
@@ -102,7 +102,7 @@ webhooks, user accounts and sign-in through an identity provider.
 Articles are also MCP resources (`exactdocs://{owner}/{repo}/{path*}{?ref}`), and the two context7
 operations are available over REST for integrations that do not speak MCP. Every tool is
 read-only, and everything it returns is marked as external content, never instructions.
-[MCP](https://sircypkowskyy.github.io/ExactDocs/mcp/) has the full reference.
+[MCP](docs/mcp.md) has the full reference.
 
 ### Retrieval
 
@@ -116,9 +116,9 @@ read-only, and everything it returns is marked as external content, never instru
 A cross-encoder (hosted, TEI or local) or an LLM judge can rerank the results of any mode. Every
 mode stays pinned to the version, stays within the budgets you set, and falls back to a cheaper
 mode with a `fallback_reason` instead of failing. BM25 remains the default until the
-[eval suite](https://sircypkowskyy.github.io/ExactDocs/evals/) shows that another mode beats it;
-[Recommended defaults](https://sircypkowskyy.github.io/ExactDocs/benchmark/defaults/) has the
-benchmark numbers. See [Search and AI models](https://sircypkowskyy.github.io/ExactDocs/search/).
+[eval suite](docs/evals.md) shows that another mode beats it;
+[Recommended defaults](docs/benchmark/defaults.md) has the
+benchmark numbers. See [Search and AI models](docs/search.md).
 
 ### The rest
 
@@ -171,8 +171,8 @@ flowchart TD
 An import fetches only the pinned commit and only the selected files, splits every article at its
 headings and indexes it. A new version becomes visible in one step, once it is complete, and a
 re-sync of a branch re-chunks only the files that changed. The backend is a modular monolith with
-ports and adapters; [Architecture](https://sircypkowskyy.github.io/ExactDocs/architecture/) and
-[Flows](https://sircypkowskyy.github.io/ExactDocs/flows/) explain it.
+ports and adapters; [Architecture](docs/architecture.md) and
+[Flows](docs/flows.md) explain it.
 
 ## Deploying it
 
@@ -206,9 +206,9 @@ volumes:
 > `EXACTDOCS_FORWARDED_ALLOW_IPS` to the proxy's own address. Otherwise the server refuses the
 > host name, and every client looks like the proxy to the sign-in throttle.
 
-[Deployment](https://sircypkowskyy.github.io/ExactDocs/deployment/) covers reverse proxies, health
+[Deployment](docs/deployment.md) covers reverse proxies, health
 checks, upgrades, backups, PostgreSQL and Supabase, and observability.
-[Configuration](https://sircypkowskyy.github.io/ExactDocs/configuration/) lists every setting.
+[Configuration](docs/configuration.md) lists every setting.
 
 ## Development
 
@@ -276,8 +276,8 @@ Read [docs/architecture.md](docs/architecture.md) (modular monolith, ports and a
 - [ ] `llms.txt` and website crawling, package-registry and lockfile resolution
 - [ ] Prebuilt index snapshots, more formats (reST, AsciiDoc, notebooks)
 
-The [user stories](https://sircypkowskyy.github.io/ExactDocs/user-stories/) and the
-[delivery plan](https://sircypkowskyy.github.io/ExactDocs/plan/) have the details.
+The [user stories](docs/user-stories.md) and the
+[delivery plan](docs/plan.md) have the details.
 
 ## Contributing
 
