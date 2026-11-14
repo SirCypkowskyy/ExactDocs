@@ -613,7 +613,7 @@ decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
   database file exists, answers within 2 s and is at this version's schema revision, else 503
   `{"status": "not_ready", "reason": ...}` with a fixed sentence. Both keep their budget while a
   database statement is still running. Only exact `GET`/`HEAD`
-  requests on these paths skip the `Host` check (README *Health checks*).
+  requests on these paths skip the `Host` check ([Deployment](deployment.md#health-checks)).
 
 ## Job problems
 

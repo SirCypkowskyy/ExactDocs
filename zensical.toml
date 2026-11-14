@@ -15,6 +15,14 @@ docs_dir = "docs"
 site_dir = "site"
 nav = [
   { "Home" = "index.md" },
+  { "Guide" = [
+    { "Getting started" = "getting-started.md" },
+    { "MCP" = "mcp.md" },
+    { "Sources file" = "sources.md" },
+    { "Configuration" = "configuration.md" },
+    { "Search and AI models" = "search.md" },
+    { "Deployment" = "deployment.md" },
+  ] },
   { "Product" = [
     { "User stories" = "user-stories.md" },
     { "Delivery plan" = "plan.md" },
@@ -24,7 +32,6 @@ nav = [
     { "Architecture" = "architecture.md" },
     { "Flows" = "flows.md" },
     { "REST API" = "rest-api.md" },
-    { "Sources file" = "sources.md" },
     { "Retrieval evals" = "evals.md" },
     { "Branching and releases" = "releasing.md" },
   ] },
