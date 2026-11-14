@@ -342,12 +342,21 @@ async def test_an_empty_catalog_says_how_to_add(
     assert "exactdocs add" in capsys.readouterr().out
 
 
-# The README's `uvx exactdocs ...` examples must parse against the real command tree.
-README = Path(__file__).parents[4] / "README.md"
+# The `uvx exactdocs ...` examples in the README and the guide pages must parse against the real
+# command tree.
+ROOT = Path(__file__).parents[4]
+EXAMPLE_PAGES = (
+    ROOT / "README.md",
+    *(
+        ROOT / "docs" / f"{name}.md"
+        for name in ("index", "getting-started", "mcp", "deployment", "sources")
+    ),
+)
 
 
 def _readme_commands() -> list[str]:
-    blocks = re.findall(r"```bash\n(.*?)```", README.read_text(encoding="utf-8"), re.DOTALL)
+    text = "\n".join(page.read_text(encoding="utf-8") for page in EXAMPLE_PAGES)
+    blocks = re.findall(r"```bash\n(.*?)```", text, re.DOTALL)
     lines = (line for block in blocks for line in block.splitlines())
     found = [re.sub(r"^.*?uvx ", "", line) for line in lines if r"uvx exactdocs " in line]
     return [re.sub(r"\s+#.*$", "", c).replace("uvx ", "") for c in found]
