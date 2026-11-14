@@ -3,6 +3,7 @@ updates:
   - package-ecosystem: uv
     directory: /
     schedule: { interval: weekly }
+    cooldown: { default-days: 4 }
     target-branch: develop
     groups:
       python: { patterns: ["*"] }
