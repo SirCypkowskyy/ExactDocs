@@ -21,6 +21,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 
+import yaml
+
 from exactdocs.bootstrap.client import (
     ApiClient,
     ApiError,
@@ -39,6 +41,7 @@ from exactdocs.bootstrap.constants import (
     LIBRARY_ID,
     MAX_REFS_SHOWN,
     MAX_SECRET_BYTES,
+    MAX_SOURCES_BYTES,
     PAGE,
     POLL_RETRIES,
     POLL_SECONDS,
@@ -279,14 +282,16 @@ async def _watch(
         await asyncio.sleep(interval)
 
 
-def _read_capped(path: str) -> bytes:
+def _read_capped(path: str, cap: int = MAX_SECRET_BYTES, *, secret: bool = True) -> bytes:
     """Return the file's bytes (one more than the cap if it is longer); refuse non-regular files.
 
     Args:
         path: The file.
+        cap: The most bytes it may have.
+        secret: Warn when others can read it.
 
     Returns:
-        At most ``MAX_SECRET_BYTES + 1`` bytes.
+        At most ``cap + 1`` bytes.
 
     Raises:
         UsageError: It is not a regular file.
@@ -297,9 +302,9 @@ def _read_capped(path: str) -> bytes:
         if not stat.S_ISREG(info.st_mode):
             message = f"{printable(path)} is not a regular file"
             raise UsageError(message)
-        if os.name == "posix" and info.st_mode & 0o077:
+        if secret and os.name == "posix" and info.st_mode & 0o077:
             to_stderr(f"warning: {printable(path)} is readable by others; run chmod 600")
-        return handle.read(MAX_SECRET_BYTES + 1)
+        return handle.read(cap + 1)
 
 
 def read_secret(path: str) -> str:
@@ -951,3 +956,265 @@ async def query_docs(
         return
     text = printable_text(await api.request_text("GET", "/c7/docs", params=params))
     sys.stdout.write(text if text.endswith("\n") else text + "\n")
+
+
+# --- the sources file (exactdocs.sources.yaml) ----------------------------------------------
+
+
+class SourcesFailedError(ClientError):
+    """Apply ran, but at least one library has an error; the others were applied."""
+
+
+class _AnchorRefusedError(yaml.YAMLError):
+    """The sources file uses a YAML anchor or alias."""
+
+    def __init__(self, mark: yaml.Mark | None) -> None:
+        """Keep where the anchor or alias is.
+
+        Args:
+            mark: Its position in the file, if known.
+        """
+        super().__init__("anchor or alias")
+        self.problem_mark = mark
+
+
+class _NoAliasLoader(yaml.SafeLoader):
+    """``SafeLoader`` that refuses anchors and aliases while composing.
+
+    Aliases are expanded on load, so a few hundred bytes of nested ``&a``/``*a`` can grow
+    into gigabytes; the size cap does not bound that. A sources file has no use for them.
+    """
+
+    def compose_node(self, parent: yaml.Node | None, index: object) -> yaml.Node | None:
+        """Compose the next node, unless it is an alias or carries an anchor.
+
+        Args:
+            parent: The node it belongs to.
+            index: Its key or position in ``parent``.
+
+        Returns:
+            The node, as ``SafeLoader`` composes it.
+
+        Raises:
+            _AnchorRefusedError: The node is an alias or carries an anchor.
+        """
+        event = self.peek_event()
+        if isinstance(event, yaml.AliasEvent) or getattr(event, "anchor", None) is not None:
+            raise _AnchorRefusedError(event.start_mark)
+        return super().compose_node(parent, index)
+
+
+def _load_yaml(text: str) -> object:
+    """Load one YAML document with ``_NoAliasLoader``.
+
+    Args:
+        text: The document.
+
+    Returns:
+        Its content.
+    """
+    loader = _NoAliasLoader(text)
+    try:
+        return loader.get_single_data()
+    finally:
+        loader.dispose()
+
+
+def read_sources(path: str) -> dict[str, Any]:
+    """Load a sources file as YAML (safe, no anchors or aliases), capped; the server gets JSON.
+
+    Args:
+        path: The file.
+
+    Returns:
+        The file's content, JSON-safe (a YAML date becomes its text and the server refuses it).
+
+    Raises:
+        UsageError: It cannot be read, is too large, is not YAML, uses an anchor or alias,
+            or is not a mapping.
+    """
+    try:
+        data = _read_capped(path, MAX_SOURCES_BYTES, secret=False)
+        text = data.decode("utf-8")
+    except (OSError, UnicodeError) as exc:
+        message = f"cannot read {printable(path)} ({exc.__class__.__name__})"
+        raise UsageError(message) from None
+    if len(data) > MAX_SOURCES_BYTES:
+        message = f"{printable(path)} is over {MAX_SOURCES_BYTES // 1024} KB"
+        raise UsageError(message)
+    try:
+        loaded = _load_yaml(text)
+    except _AnchorRefusedError as exc:
+        where = exc.problem_mark
+        line = f" at line {where.line + 1}" if where is not None else ""
+        message = (
+            f"{printable(path)} uses a YAML anchor or alias{line}; "
+            "a sources file cannot use them, write each value out"
+        )
+        raise UsageError(message) from None
+    except yaml.YAMLError as exc:
+        where = getattr(exc, "problem_mark", None)
+        line = f" at line {where.line + 1}" if where is not None else ""
+        message = f"{printable(path)} is not valid YAML{line}"
+        raise UsageError(message) from None
+    if not isinstance(loaded, dict):
+        message = f"{printable(path)} is not a sources file: expected `version` and `libraries`"
+        raise UsageError(message)
+    return json.loads(json.dumps(loaded, default=str))
+
+
+def _paths_change(name: str, change: dict[str, Any] | None) -> list[str]:
+    """Describe one changed setting in a line, if it changes.
+
+    Args:
+        name: The setting.
+        change: Its ``before`` and ``after``, or None.
+
+    Returns:
+        The line, or nothing.
+    """
+    if change is None:
+        return []
+    return [f"      {name}: {json.dumps(change['before'])} -> {json.dumps(change['after'])}"]
+
+
+def _schedule_text(schedule: dict[str, Any] | None) -> str:
+    """Describe a scheduled check briefly.
+
+    Args:
+        schedule: Its settings; None: off.
+
+    Returns:
+        The description.
+    """
+    if schedule is None:
+        return "off"
+    tags = schedule["tag_pattern"] or "no tags"
+    branches = ", branches" if schedule["sync_branches"] else ""
+    return f"{tags} keep {schedule['keep_last']} every {schedule['interval_minutes']} min{branches}"
+
+
+def _update_lines(update: dict[str, Any]) -> list[str]:
+    """Describe what apply changes in one library.
+
+    Args:
+        update: One ``update`` entry of the plan.
+
+    Returns:
+        The lines under the library's line.
+    """
+    lines = [
+        *_paths_change("include_paths", update["include_paths"]),
+        *_paths_change("exclude_paths", update["exclude_paths"]),
+        *_paths_change("tag_rules", update["tag_rules"]),
+        *_paths_change("chunking", update["chunking"]),
+    ]
+    if update["refs_to_add"]:
+        lines.append(f"      refs to add: {', '.join(update['refs_to_add'])}")
+    if (schedule := update["auto_sync"]) is not None:
+        before, after = _schedule_text(schedule["before"]), _schedule_text(schedule["after"])
+        lines.append(f"      auto_sync: {before} -> {after}")
+    if update["job_kind"]:
+        lines.append(f"      queues: {update['job_kind']}")
+    if update["undeclared_versions"]:
+        fate = "removed" if update["remove_undeclared_versions"] else "kept; --prune removes them"
+        lines.append(
+            f"      undeclared versions ({fate}): {', '.join(update['undeclared_versions'])}"
+        )
+    return lines
+
+
+def _plan_lines(plan: dict[str, Any]) -> list[str]:
+    """Render a plan as a readable diff, one section per part.
+
+    Args:
+        plan: The plan as the server returned it.
+
+    Returns:
+        The lines.
+    """
+    lines: list[str] = []
+    if plan["create"]:
+        lines.append("create:")
+        lines += [f"  + {c['id']}  ({', '.join(c['refs'])})" for c in plan["create"]]
+    if plan["update"]:
+        lines.append("update:")
+        for update in plan["update"]:
+            lines += [f"  ~ {update['library_id']}", *_update_lines(update)]
+    if plan["unchanged"]:
+        lines.append("unchanged:")
+        lines += [f"  = {library}" for library in plan["unchanged"]]
+    if plan["undeclared"]:
+        lines.append("undeclared:")
+        lines += [
+            f"  - {u['library_id']}  (will be removed)"
+            if u["will_be_removed"]
+            else f"  ? {u['library_id']}  (kept; --prune removes it)"
+            for u in plan["undeclared"]
+        ]
+    if plan["errors"]:
+        lines.append("errors:")
+        lines += [f"  ! {e['library_id']}: {e['detail']} [{e['error']}]" for e in plan["errors"]]
+    if not plan["changes"]:
+        lines.append("No changes.")
+    return lines
+
+
+async def plan_sources(api: ApiClient, path: str, *, prune: bool, as_json: bool) -> None:
+    """``POST /sources/plan`` with the file and print the diff; nothing changes on the server.
+
+    Args:
+        api: The API client.
+        path: The sources file.
+        prune: Show undeclared libraries and versions as removed.
+        as_json: Print JSON for scripts instead of text.
+    """
+    body = {"sources": read_sources(path), "prune": prune}
+    plan = await api.request("POST", "/sources/plan", json=body)
+    if as_json:
+        dump(plan)
+        return
+    for line in _plan_lines(plan):
+        say(line)
+
+
+async def apply_sources(api: ApiClient, path: str, *, prune: bool, as_json: bool) -> None:
+    """``POST /sources/apply`` with the file and print what was done, library by library.
+
+    Args:
+        api: The API client.
+        path: The sources file.
+        prune: Remove undeclared libraries and ``manual`` versions.
+        as_json: Print JSON for scripts instead of text.
+
+    Raises:
+        SourcesFailedError: At least one library failed (after printing every outcome).
+    """
+    body = {"sources": read_sources(path), "prune": prune}
+    applied = await api.request("POST", "/sources/apply", json=body)
+    if as_json:
+        dump(applied)
+    else:
+        for line in _plan_lines(applied["plan"]):
+            say(line)
+        if applied["plan"]["changes"] or applied["failed"]:
+            say("applied:")
+            say(table(["LIBRARY", "ACTION", "JOBS"], [_outcome_row(r) for r in applied["results"]]))
+        for result in applied["results"]:
+            if result["error"]:
+                to_stderr(f"{result['library_id']}: {result['error']} [{result['error_code']}]")
+    if applied["failed"]:
+        message = f"{applied['failed']} of the libraries failed; the others were applied"
+        raise SourcesFailedError(message)
+
+
+def _outcome_row(result: dict[str, Any]) -> list[str]:
+    """One row of the apply table.
+
+    Args:
+        result: One library's outcome.
+
+    Returns:
+        Its cells.
+    """
+    return [result["library_id"], result["action"], ", ".join(result["jobs"]) or "-"]

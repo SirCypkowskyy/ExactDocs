@@ -24,6 +24,7 @@ nav = [
     { "Architecture" = "architecture.md" },
     { "Flows" = "flows.md" },
     { "REST API" = "rest-api.md" },
+    { "Sources file" = "sources.md" },
     { "Retrieval evals" = "evals.md" },
     { "Branching and releases" = "releasing.md" },
   ] },

@@ -240,6 +240,32 @@ def build_tokens_router(
     return router
 
 
+def build_operator(*, caller: CurrentCaller, action: str) -> Callable[..., Awaitable[None]]:
+    """Return the dependency that lets only an ``admin`` through (403 for anyone else).
+
+    Args:
+        caller: Who may call at all: the session caller, or the session-or-token one.
+        action: What only an admin does, for the 403's message.
+
+    Returns:
+        The dependency.
+    """
+
+    async def operator(account: Annotated[AccountSummary, Depends(caller)]) -> None:
+        """Let only an operator through.
+
+        Args:
+            account: The calling account.
+
+        Raises:
+            NotAnOperatorError: The account is not an ``admin``.
+        """
+        if account.role != Role.ADMIN.value:
+            raise NotAnOperatorError(action)
+
+    return operator
+
+
 def build_users_router(
     *,
     list_users: ListUsers,
@@ -263,19 +289,7 @@ def build_users_router(
     Returns:
         The router.
     """
-
-    async def operator(account: Annotated[AccountSummary, Depends(session_caller)]) -> None:
-        """Let only an operator through.
-
-        Args:
-            account: The signed-in account.
-
-        Raises:
-            NotAnOperatorError: The account is not an ``admin``.
-        """
-        if account.role != Role.ADMIN.value:
-            raise NotAnOperatorError
-
+    operator = build_operator(caller=session_caller, action="manages user accounts")
     router = APIRouter(tags=["identity"], dependencies=[Depends(operator)])
 
     @router.get(

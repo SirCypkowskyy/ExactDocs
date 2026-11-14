@@ -106,6 +106,10 @@ api:
     uv run python -c "import tempfile; from pathlib import Path; from exactdocs.bootstrap.container import Container; from exactdocs.bootstrap.http import create_app; from exactdocs.bootstrap.rest import v1_openapi_json; from exactdocs.bootstrap.settings import Settings; print(v1_openapi_json(create_app(Container.build(Settings(data_dir=Path(tempfile.mkdtemp()))))), end='')" > {{ web }}/openapi.json
     cd {{ web }} && pnpm gen:api
 
+# Regenerate docs/schemas/exactdocs.sources.schema.json from the sources file's model (commit it)
+sources-schema:
+    uv run python -c "import json; from exactdocs.ingestion.dtos import sources_json_schema; print(json.dumps(sources_json_schema(), indent=2))" > docs/schemas/exactdocs.sources.schema.json
+
 # Everything CI runs, in CI order
 check: lint test bdd web-test web-build docs-build
 

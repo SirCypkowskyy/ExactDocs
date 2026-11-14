@@ -116,6 +116,7 @@ from exactdocs.ingestion.models import (
     ImportedVersion,
     ImportSource,
     InstructionPolicy,
+    KnownLibrary,
     NewLibrary,
     PathSelection,
     ProposedId,
@@ -450,6 +451,14 @@ class CatalogNewLibraries:
                 include_paths=list(library.selection.include),
                 exclude_paths=list(library.selection.exclude),
                 tag_rules=[TagRuleIn(pattern=r.pattern, tag=r.tag) for r in library.tag_rules],
+                chunking=None
+                if (config := library.chunking) is None
+                else CatalogChunkingIn(
+                    split_level=config.split_depth,
+                    min_chars=config.min_chars,
+                    max_chars=config.max_chars,
+                    chunker=config.chunker,
+                ),
             )
         )
         return created.id
@@ -461,6 +470,31 @@ class CatalogNewLibraries:
             library_id: The library ID.
         """
         await self.discard_library(DiscardLibraryCommand(id=library_id))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CatalogKnownLibraries:
+    """Implements ``ingestion.ports.driven.KnownLibraries`` using the catalog."""
+
+    list_libraries: ListLibraries
+    """The catalog's paged library list."""
+
+    async def all(self) -> list[KnownLibrary]:
+        """Read every page of the catalog's list, libraries without versions too.
+
+        Returns:
+            Every library, its ID as the catalog spells it.
+        """
+        found: list[KnownLibrary] = []
+        cursor = None
+        while True:
+            page = await self.list_libraries(ListLibrariesQuery(limit=MAX_LIMIT, cursor=cursor))
+            found += [
+                KnownLibrary(library_id=lib.id, source_url=lib.source_url) for lib in page.libraries
+            ]
+            cursor = page.next_cursor
+            if cursor is None:
+                return found
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

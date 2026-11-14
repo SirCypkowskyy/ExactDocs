@@ -261,6 +261,12 @@ def create_app(container: Container) -> FastAPI:
             reimport_version=container.ingestion.reimport_version,
             tag_article=container.ingestion.tag_article,
             update_library_settings=container.ingestion.update_library_settings,
+            plan_sources=container.ingestion.plan_sources,
+            apply_sources=container.ingestion.apply_sources,
+            # A session or a token: a leaked admin token can already add and remove libraries.
+            require_operator=identity_http.build_operator(
+                caller=current_caller, action="applies a sources file"
+            ),
         )
     )
     _include_sync_triggers(container, v1=v1, protected=protected, session_caller=session_caller)

@@ -110,7 +110,12 @@ uvx exactdocs add git@github.com:acme/private.git --ssh-key ./deploy_key
 uvx exactdocs token create ci --expires-in 30    # asks for your password
 uvx exactdocs token list
 uvx exactdocs token revoke 0198f2c1
+uvx exactdocs sources plan exactdocs.sources.yaml   # the diff of a declared set of libraries
+uvx exactdocs sources apply exactdocs.sources.yaml --prune  # apply it; --prune removes the rest
 ```
+
+The libraries can also be declared in `exactdocs.sources.yaml` and reviewed like code: see
+[Sources file](docs/sources.md).
 
 See what an agent would get, with the commands and flags of `ctx7` (`library <name> [query]`,
 `docs <libraryId> <query> [--language L] [--json]`):
