@@ -30,9 +30,9 @@ docs = ["zensical>=0.0.74"]
 [tool.uv]
 package = false
 default-groups = ["dev"]
-# A new dependency must be at least 14 days old. The `[local]` extra (#245) pulls these two
+# A new dependency must be at least 4 days old. The `[local]` extra (#245) pulls these two
 # transitively, and their newest releases were younger than that when it was locked: hold them
-# at what was out by then. #280 drops both entries (after 2026-11-23): until then no bump moves
+# at what was out by then. #280 drops both entries: until then no bump moves
 # them.
 exclude-newer-package = { filelock = "2026-10-28T00:00:00Z", hf-xet = "2026-10-28T00:00:00Z" }
 
