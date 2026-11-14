@@ -63,6 +63,8 @@ POLL_RETRIES: Final[int] = 3
 """Consecutive failed polls (timeouts, 5xx) before the wait gives up."""
 MAX_SECRET_BYTES: Final[int] = 64 * 1024
 """A private key is about 3 KB."""
+MAX_SOURCES_BYTES: Final[int] = 1024 * 1024
+"""The largest sources file the CLI reads; a few hundred libraries take far less."""
 EXIT_INTERRUPTED: Final[int] = 130
 """Exit status after Ctrl+C (128 + SIGINT), as shells report it."""
 LIBRARY_ID: Final[re.Pattern[str]] = re.compile(
@@ -351,6 +353,15 @@ AI_KEYS_PURPOSE: Final[bytes] = b"exactdocs ai provider keys v1"
 Its own context: a provider key never opens with the credentials' key, nor the reverse. Never
 change it: every stored provider key is sealed with the key derived from it.
 """
+SIGN_IN_TOKENS_PURPOSE: Final[bytes] = b"exactdocs sign-in tokens v1"
+"""HKDF context (``purpose``) of the key that seals the refresh tokens of external identities.
+
+Its own context: a refresh token never opens with another use's key, nor the reverse. Never change
+it: every stored refresh token is sealed with the key derived from it (changing it ends the access
+of every external account at its next revalidation, until it signs in again).
+"""
+SIGN_IN_STOP_SECONDS: Final[float] = 5.0
+"""How long stopping the server waits for a revalidation pass to stop once cancelled."""
 WEBHOOK_SECRETS_PURPOSE: Final[bytes] = b"exactdocs webhook secrets v1"
 """HKDF context (``purpose``) of the key that seals the libraries' push webhook secrets.
 

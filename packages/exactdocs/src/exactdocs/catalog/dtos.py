@@ -1270,6 +1270,8 @@ class CreateLibraryCommand(_Dto):
     """Folders, files or globs to leave out; they win."""
     tag_rules: list[TagRuleIn] = Field(default_factory=list, max_length=MAX_TAG_RULES)
     """Tags given to articles by path."""
+    chunking: ChunkingIn | None = None
+    """How articles are cut; null: the defaults."""
 
 
 _Title = Annotated[str, Field(min_length=1, max_length=MAX_TITLE)]

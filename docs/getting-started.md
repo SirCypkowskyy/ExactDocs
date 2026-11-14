@@ -2,7 +2,8 @@
 
 This page takes you from nothing to an agent that answers from your own docs: start the server,
 create the first account, import a library and connect an MCP client. It ends with the command
-line, private repositories, keeping branch versions fresh and adding more accounts.
+line, private repositories, declaring libraries in a file, keeping branch versions fresh, adding
+more accounts and signing in through an identity provider.
 
 ## Start the server
 
@@ -151,6 +152,8 @@ uvx exactdocs add git@github.com:acme/private.git --ssh-key ./deploy_key
 uvx exactdocs token create ci --expires-in 30    # asks for your password
 uvx exactdocs token list
 uvx exactdocs token revoke 0198f2c1
+uvx exactdocs sources plan exactdocs.sources.yaml   # what a declared set of libraries would change
+uvx exactdocs sources apply exactdocs.sources.yaml --prune  # apply it; --prune removes the rest
 ```
 
 `--wait` only watches. It follows an import for `--wait-timeout` seconds (600 by default) and
@@ -280,6 +283,31 @@ import fetches only the pinned commit (no history, no unselected files) into a t
 under the data directory (`work/`), with hooks, submodules and symlinks off. Git 2.30 or newer is
 recommended; a server without partial-clone support just sends more data.
 
+## Declare libraries in a file
+
+Instead of adding libraries one by one, you can list them in an `exactdocs.sources.yaml` and keep
+it in a repository, so that changes to the set of imported docs go through code review. The same
+file can rebuild a second instance, such as staging or a fresh volume after a restore.
+
+```yaml
+version: 1
+libraries:
+  - url: https://github.com/acme/payments
+    refs: [main, v1.4.0]
+    include_paths: [docs/]
+    auto_sync: {tag_pattern: "v*", keep_last: 3}
+```
+
+`exactdocs sources plan` shows what would change and writes nothing: the libraries it would
+create or update, the ones that already match and the ones the file does not declare.
+`exactdocs sources apply` makes those changes, one library at a time, and removes nothing unless
+you add `--prune`. Settings that an entry leaves out are not managed, so you can still tune them
+in the UI. Only admins may plan or apply, with a session or an API token, which suits a CI job.
+
+The file holds no credentials. Add a private library in the UI with its token or key first, then
+manage it with the file. [Sources file](sources.md) has every field, the JSON Schema for editor
+completion, and what plan and apply compare.
+
 ## Keep branch versions fresh
 
 A tag version stays at the commit it was imported from (a moved tag is only re-imported when you
@@ -353,6 +381,10 @@ Lost the admin password? Run `exactdocs admin reset-password` on the machine (sa
 `admin create`). It sets a new password, signs the admin out everywhere and revokes the API
 tokens.
 
+Password sign-in always stays available, also when you add an
+[identity provider](#sign-in-through-an-identity-provider). The setup creates the first admin as a
+local account, so it works as a break-glass account even while every provider is down.
+
 ### Failed sign-ins are throttled
 
 The throttle covers the web UI's sign-in and `exactdocs login` alike. Every attempt counts against
@@ -417,6 +449,88 @@ other accounts neither see nor reach (403).
 - The Users page offers no reset of your own password, since it would sign you out. Use
   `exactdocs user reset-password <you>` or ask another admin. A reset also clears the username's
   sign-in throttle, as `admin reset-password` does.
+- The Users page also lists the accounts made by a first sign-in through an identity provider,
+  with their provider and groups.
+
+### Sign in through an identity provider
+
+People can sign in with the identity they already have, through any OpenID Connect provider
+(Keycloak, Entra ID, Okta, Google, ADFS 2016+). Access follows the provider: someone who leaves an
+allowed group loses access to ExactDocs without anyone touching it. Configure the provider in the
+TOML file that `EXACTDOCS_CONFIG_FILE` names, and set the public URL:
+
+```toml
+# exactdocs.toml (EXACTDOCS_CONFIG_FILE); the client secret never goes in this file
+public_url = "https://docs.example.com"
+
+[auth.providers.corp]            # the name: lower-case letters, digits, hyphens
+kind = "oidc"
+display_name = "Corp SSO"        # the button says "Sign in with Corp SSO"
+issuer = "https://idp.example.com/realms/corp"   # exactly as discovery's `issuer`
+client_id = "exactdocs"
+# client_secret: EXACTDOCS_AUTH__PROVIDERS__CORP__CLIENT_SECRET, or client_secret_file = "/run/secrets/corp"
+allowed_groups = ["docs-readers"]   # or allow_any_user = true; one of the two is required
+admin_groups = ["exactdocs-admins"] # role admin while in one of them, else user
+# groups_claim = "groups"           # a dotted path: Keycloak "realm_access.roles", ADFS "group"
+```
+
+At the provider, register `https://docs.example.com/api/v1/auth/corp/callback` as the client's
+redirect URI. The client can be confidential (with a secret) or public (without one). The sign-in
+page then shows a **Sign in with Corp SSO** button next to the password form. You can configure
+several providers at once. [Configuration](configuration.md#sign-in-providers) lists every field,
+and [Deployment](deployment.md#behind-a-reverse-proxy) explains the public URL behind a proxy.
+
+The flow is the authorization code flow with PKCE (`S256`), `state` and `nonce`. ExactDocs reads
+the provider's discovery document from the issuer and checks the ID token's signature against the
+provider's keys, along with its issuer, audience, nonce and times. The issuer must be HTTPS.
+[REST API](rest-api.md) and [Architecture](architecture.md#external-sign-in-oidc) describe each
+check.
+
+**Accounts.** The first allowed sign-in creates an account with the role `user`, or `admin` through
+`admin_groups`. The account is linked to the identity by its issuer and subject only, never by
+email or username, so a sign-in can never take over an existing account. It is named after the
+provider's username (or the local part of the email). When another account already has that name,
+local or from another provider, it is named `<username>@<provider>` instead, and when that is taken
+too, the sign-in is refused with `username_unavailable` until an operator frees a name. A rename at
+the provider does not rename the account.
+
+An account from a provider has no password. Password sign-in and `exactdocs login` treat it as
+unknown, and a password reset is refused with `external_account`. Its owner creates API tokens on
+the **Account** page in the web UI.
+
+**Groups and role.** The groups are read at every sign-in and every revalidation, and they decide
+the role: someone who leaves the admin group is demoted at once, even if they were the last admin.
+Only members of `allowed_groups` get in, unless `allow_any_user = true` admits everyone the
+provider vouches for.
+
+**Revalidation.** ExactDocs asks for `offline_access` and keeps the refresh token, encrypted with
+the [secret key](configuration.md#the-secret-key). Every `revalidate_minutes` (60 by default) it
+asks the provider again:
+
+- still allowed: the groups and role are refreshed;
+- a lost group or a revoked refresh token: the account's sessions end and its API tokens are
+  refused until its next allowed sign-in;
+- the provider cannot be reached: access continues for at most `revalidate_grace_minutes` (a day
+  by default), then ends.
+
+A provider that issues no refresh token limits each session to `revalidate_grace_minutes` after
+sign-in. Disabling an account deletes its refresh token, and a disabled account stays disabled
+whatever the provider says. Signing out ends the ExactDocs session only, so the session at the
+provider may sign you straight back in.
+
+??? note "ADFS and Entra ID"
+    **ADFS** (2016+) is an `oidc` provider with the issuer `https://<adfs host>/adfs`. Create an
+    application group with a server application (client ID and secret) and the redirect URI above,
+    and enable refresh tokens. Set `username_claim = "upn"` (or `unique_name`) and
+    `groups_claim = "group"`, and add an issuance transform rule on the web API that sends the
+    groups, for example *Send LDAP Attributes as Claims* from Active Directory, mapping
+    `Token-Groups - Unqualified Names` to the outgoing claim type `group`.
+
+    **Entra ID** puts at most 200 groups in a token. Beyond that, filter the groups sent to the app
+    on the Entra side, or use app roles with `groups_claim = "roles"`.
+
+OAuth2-only providers, and GitHub or GitHub Enterprise with organization and team checks, are
+planned ([#383](https://github.com/SirCypkowskyy/ExactDocs/issues/383)).
 
 !!! note "No per-library permissions yet"
     Until library roles arrive, every signed-in account may read and change every library and the
@@ -424,8 +538,7 @@ other accounts neither see nor reach (403).
 
 ### Planned: teams
 
-The plan for teams is sign-in through OIDC/OAuth and sharing libraries with users or
-identity-provider groups, in four roles:
+The plan for teams is to share libraries with users or identity-provider groups, in four roles:
 
 | Role | Can |
 |---|---|
@@ -435,6 +548,5 @@ identity-provider groups, in four roles:
 | creator | the single owner (whoever created it): also remove admins and transfer ownership |
 
 Who may create libraries will be an instance-level permission mapped from users or IdP groups. MCP
-tokens act as their user, so an agent will see exactly the libraries its user may view. Libraries
-will also be declarable in an `exactdocs.sources.yaml` in your own repository. See the
+tokens act as their user, so an agent will see exactly the libraries its user may view. See the
 [roadmap](https://github.com/SirCypkowskyy/ExactDocs#roadmap).

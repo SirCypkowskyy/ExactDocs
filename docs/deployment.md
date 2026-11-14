@@ -44,13 +44,20 @@ volumes:
 
 ## Behind a reverse proxy
 
-Set three things:
+Set these:
 
 - `EXACTDOCS_ALLOWED_HOSTS`: the public host name(s). The server answers only to localhost and the
   names listed here; this is its guard against DNS rebinding.
 - `EXACTDOCS_FORWARDED_ALLOW_IPS`: the proxy's own address, so that `X-Forwarded-*` is trusted.
 - `EXACTDOCS_SECURE_COOKIES=true`, if TLS ends at a proxy that does not forward
-  `X-Forwarded-Proto` from a trusted address.
+  `X-Forwarded-Proto` from a trusted address. An `https://` `EXACTDOCS_PUBLIC_URL` makes the
+  cookies `Secure` too, so with one set you can leave this out.
+
+If people sign in through an identity provider, also set `EXACTDOCS_PUBLIC_URL` to the address
+they use, such as `https://docs.example.com` (no path). The redirect URI that ExactDocs sends to
+the provider is built from it, never from the request's `Host` header, so it stays right behind
+any proxy. The server refuses to start with a provider configured and no public URL (see
+[Sign in through an identity provider](getting-started.md#sign-in-through-an-identity-provider)).
 
 If the proxy is not listed in `EXACTDOCS_FORWARDED_ALLOW_IPS`, every client looks like the proxy,
 and 5 failed sign-ins from anyone throttle everyone.
@@ -285,6 +292,9 @@ vector_store_unavailable`), the server logs why, and `/healthz` names the missin
 - The sign-in throttle's counts live in the database (`identity_failed_sign_ins`,
   `identity_known_sign_ins`), so failed sign-ins count the same on every process. They survive a
   restart, and old ones are deleted whenever a new one is written.
+- Accounts of an identity provider are checked again with the provider by every process in turn:
+  each one claims a batch of the identities that are due, so no identity is checked twice. A
+  sign-in started on one process can finish on another, because the attempt is in the database.
 - Back up with PostgreSQL's own tools: `pg_dump -Fc exactdocs > exactdocs.dump` (DBOS's job steps
   are in it too), plus `EXACTDOCS_SECRET_KEY`. `exactdocs backup` and `restore` copy a SQLite file
   only. Stop every ExactDocs process before a `pg_restore`, and start them once it is done.
@@ -326,6 +336,11 @@ services:
       EXACTDOCS_DATABASE_URL: postgresql://exactdocs:${POSTGRES_PASSWORD}@db:5432/exactdocs
       EXACTDOCS_SECRET_KEY: ${EXACTDOCS_SECRET_KEY:?set EXACTDOCS_SECRET_KEY}
       WEB_CONCURRENCY: "2" # server processes; on PostgreSQL every one serves and runs jobs
+      # Sign-in through an OIDC provider (docs/getting-started.md, "Sign in through an identity
+      # provider"): the provider in the TOML file ([auth.providers.corp]), its secret from the env.
+      # EXACTDOCS_PUBLIC_URL: https://docs.example.com
+      # EXACTDOCS_CONFIG_FILE: /run/exactdocs.toml
+      # EXACTDOCS_AUTH__PROVIDERS__CORP__CLIENT_SECRET: ${CORP_CLIENT_SECRET}
     ports: ["127.0.0.1:3000:3000"]
     read_only: true
     tmpfs: [/tmp]

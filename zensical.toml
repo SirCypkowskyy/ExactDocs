@@ -18,6 +18,7 @@ nav = [
   { "Guide" = [
     { "Getting started" = "getting-started.md" },
     { "MCP" = "mcp.md" },
+    { "Sources file" = "sources.md" },
     { "Configuration" = "configuration.md" },
     { "Search and AI models" = "search.md" },
     { "Deployment" = "deployment.md" },

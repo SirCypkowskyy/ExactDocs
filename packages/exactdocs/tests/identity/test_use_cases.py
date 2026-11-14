@@ -18,6 +18,7 @@ from exactdocs.identity.errors import (
 )
 from exactdocs.identity.models import Account, AccountId, Username
 from exactdocs.identity.module import IdentityModule
+from identity_stand_ins import no_external_sign_in
 
 HORSE = "correct horse battery staple"
 NOW = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
@@ -93,6 +94,7 @@ def identity(repository: InMemoryAccountRepository, hasher: FakeHasher) -> Ident
         hasher=hasher,
         failures=InMemoryFailedSignInLog(),
         clock=FixedClock(),
+        **no_external_sign_in(),
     )
 
 
@@ -122,6 +124,7 @@ async def test_the_password_is_stored_hashed_never_in_clear(
 
     stored = await repository.get(Username("ada"))
     assert stored is not None
+    assert stored.password_hash is not None
     assert HORSE not in stored.password_hash
     assert HORSE not in repr(stored)
     assert HORSE not in created.model_dump_json()
@@ -151,6 +154,7 @@ async def test_a_lost_race_to_the_repository_is_refused_too(
         hasher=hasher,
         failures=InMemoryFailedSignInLog(),
         clock=FixedClock(),
+        **no_external_sign_in(),
     )
 
     with pytest.raises(AlreadySetUpError):

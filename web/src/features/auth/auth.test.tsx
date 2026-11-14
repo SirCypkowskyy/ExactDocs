@@ -337,3 +337,55 @@ describe("sign-out error placement", () => {
     expect(alert).not.toHaveClass("right-0");
   });
 });
+
+describe("sign-in through an identity provider", () => {
+  const providers = [{ name: "corp", display_name: "Corp SSO" }];
+
+  it("offers a button per provider that starts the sign-in for where the visitor was going", () => {
+    renderWithClient(
+      <SignInPage next="/libraries/a?v=1" providers={providers} onSignedIn={vi.fn()} />,
+    );
+    const link = screen.getByRole("link", { name: "Sign in with Corp SSO" });
+    expect(link).toHaveAttribute(
+      "href",
+      "/api/v1/auth/corp/start?return_to=%2Flibraries%2Fa%3Fv%3D1",
+    );
+    // The password form stays: local accounts and the break-glass admin sign in there.
+    expect(screen.getByLabelText("Password")).toBeInTheDocument();
+  });
+
+  it("never sends the visitor anywhere but this server after signing in", () => {
+    renderWithClient(
+      <SignInPage next="https://evil.example/" providers={providers} onSignedIn={vi.fn()} />,
+    );
+    expect(screen.getByRole("link", { name: "Sign in with Corp SSO" })).toHaveAttribute(
+      "href",
+      "/api/v1/auth/corp/start?return_to=%2F",
+    );
+  });
+
+  it("shows no provider section when none is configured", () => {
+    renderWithClient(<SignInPage onSignedIn={vi.fn()} />);
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toHaveTextContent("");
+  });
+
+  it.each([
+    ["not_allowed", /not in a group allowed/],
+    ["account_disabled", /account is disabled/],
+    ["username_unavailable", /username is taken/],
+    ["provider_unavailable", /can't be reached/],
+    ["sign_in_cancelled", /did not sign you in/],
+    ["sign_in_failed", /could not be completed/],
+  ])("explains a refused sign-in (%s)", (code, message) => {
+    renderWithClient(<SignInPage error={code} providers={providers} onSignedIn={vi.fn()} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(message);
+  });
+
+  it("shows nothing for a code it does not know (the query string is not trusted)", () => {
+    renderWithClient(
+      <SignInPage error="you have won a prize" providers={providers} onSignedIn={vi.fn()} />,
+    );
+    expect(screen.queryByText(/prize/)).not.toBeInTheDocument();
+  });
+});

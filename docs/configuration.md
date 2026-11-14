@@ -8,14 +8,16 @@ and BM25 search. Everything on this page is optional.
 Settings are environment variables named `EXACTDOCS_<SETTING>`. Nested settings use a double
 underscore, as in `EXACTDOCS_AI__MODE` or `EXACTDOCS_AI__PROVIDERS__CORP__KIND`. They can also come
 from a `.env` file in the working directory, or from a TOML file named by `EXACTDOCS_CONFIG_FILE`
-(for example the `[ai]` tables on [Search and AI models](search.md)).
+(for example the `[ai]` tables on [Search and AI models](search.md), or the `[auth]` tables
+below).
 
 When the same setting appears in several places, the environment wins over `.env`, and both win
 over the TOML file, field by field.
 
 !!! warning "No secrets in the TOML file"
-    The TOML file may not hold API keys or `secret_key`. Those come from the environment, or for a
-    provider, from the file its `api_key_file` names.
+    The TOML file may not hold API keys, client secrets or `secret_key`, and the server refuses to
+    start if it does. Those come from the environment, or from the file that a model provider's
+    `api_key_file` or a sign-in provider's `client_secret_file` names.
 
 ## Settings
 
@@ -36,8 +38,44 @@ over the TOML file, field by field.
 | `EXACTDOCS_SECRET_KEY_PREVIOUS` | unset | The old key during a rotation |
 | `EXACTDOCS_ALLOWED_HOSTS` | unset | Host names besides localhost that the server answers to, comma-separated (for example `docs.example.com,*.corp.example`). Needed behind a reverse proxy or on a LAN address |
 | `EXACTDOCS_ALLOWED_ORIGINS` | unset | Browser origins allowed to make state-changing requests, comma-separated |
-| `EXACTDOCS_SECURE_COOKIES` | `false` | The session cookie is always `Secure` over HTTPS. Set `true` when TLS ends at a proxy that does not forward `X-Forwarded-Proto` from a trusted address |
+| `EXACTDOCS_SECURE_COOKIES` | `false` | The session cookie is always `Secure` over HTTPS, and whenever `EXACTDOCS_PUBLIC_URL` is `https://`. Set `true` when TLS ends at a proxy that does not forward `X-Forwarded-Proto` from a trusted address and no public URL is set |
 | `EXACTDOCS_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-*` headers are trusted, for the scheme and for the client address the sign-in throttle counts. See [Behind a reverse proxy](deployment.md#behind-a-reverse-proxy) |
+| `EXACTDOCS_PUBLIC_URL` | unset | The URL people reach the server at, without a path (`https://docs.example.com`). Required once a sign-in provider is configured: the redirect URI to register at the provider is `<public_url>/api/v1/auth/<name>/callback`, never built from a request's `Host` |
+
+### Sign-in providers
+
+People can sign in through OpenID Connect providers as well as with a password;
+[Getting started](getting-started.md#sign-in-through-an-identity-provider) shows a complete
+example and what happens at sign-in. Each provider is a `[auth.providers.<name>]` table in the
+TOML file, or `EXACTDOCS_AUTH__PROVIDERS__<NAME>__<FIELD>` in the environment, where lists are
+JSON (`EXACTDOCS_AUTH__PROVIDERS__CORP__ALLOWED_GROUPS='["docs-readers"]'`). The name is
+lower-case letters, digits and hyphens, and it appears in the callback URL. A provider that is
+not valid stops the server at start, with a message naming the field.
+
+| Field | Default | What it does |
+|---|---|---|
+| `kind` | required | `oidc`, the only kind so far: OpenID Connect with discovery and the authorization code flow with PKCE. ADFS 2016+ is an `oidc` provider |
+| `display_name` | the name | What the button says: **Sign in with** *display_name* |
+| `issuer` | required | The issuer URL, exactly as the discovery document's `issuer` says. HTTPS; plain HTTP only to a loopback host, for development |
+| `client_id` | required | The client ID registered at the provider |
+| `client_secret` | unset | The client secret, from the environment only (`EXACTDOCS_AUTH__PROVIDERS__<NAME>__CLIENT_SECRET`). Leave it and `client_secret_file` unset for a public client |
+| `client_secret_file` | unset | A file holding the client secret, read at every use (Docker and Kubernetes secrets). Not together with `client_secret` |
+| `scopes` | `["openid", "profile", "email", "offline_access"]` | The scopes asked for. `openid` is required; `offline_access` gets the refresh token that revalidation needs |
+| `allowed_groups` | `[]` | Groups, as the provider names them, whose members may sign in |
+| `allow_any_user` | `false` | Admit everyone the provider vouches for. Either this or `allowed_groups` is required |
+| `admin_groups` | `[]` | Members of these groups get the role `admin`, everyone else `user`, decided again at every sign-in and revalidation |
+| `groups_claim` | `groups` | The claim holding the groups, a dotted path (Keycloak: `realm_access.roles`; ADFS: `group`). Read from userinfo when the ID token lacks it |
+| `group_prefix` | empty | Put before each group name ExactDocs stores for the account (for example `corp:`). Matching against `allowed_groups` and `admin_groups` uses the provider's names |
+| `username_claim` | `preferred_username` | The claim that names a new account (ADFS: `upn` or `unique_name`); without it, the local part of the email. Read only when the account is created |
+| `email_claim` | `email` | The email claim |
+| `revalidate_minutes` | `60` | How often the groups are checked again with the stored refresh token |
+| `revalidate_grace_minutes` | `1440` | How long access lasts without a successful check (the provider is unreachable, or it gave no refresh token). After that, access ends until the next sign-in |
+
+One setting applies to all providers:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `EXACTDOCS_AUTH__REVALIDATE_POLL_SECONDS` | `300` | How often the server looks for accounts whose groups are due a check |
 
 ### Server and imports
 
@@ -61,7 +99,7 @@ over the TOML file, field by field.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `EXACTDOCS_CONFIG_FILE` | unset | A TOML file with the same settings; the environment wins over it |
+| `EXACTDOCS_CONFIG_FILE` | unset | A TOML file with the same settings (the `[ai]` and `[auth]` sections among them); the environment wins over it |
 | `EXACTDOCS_AI__MODE` | unset (`auto`) | The retrieval mode of searches that name none, for libraries without their own: `bm25`, `hybrid`, `hybrid_hyde` or `agentic`. Unset or `auto` means the best default mode the configured models allow, which is BM25 until the eval suite makes another mode a default. An unknown name stops the server at start; a mode whose model is not configured falls back with `fallback_reason: mode_unavailable` |
 | `EXACTDOCS_AI__RERANK_WITH` | `cross_encoder` | What reranks searches when both a cross-encoder and a judge could: `cross_encoder` or `judge`. See [LLM judge](search.md#llm-judge) |
 | `EXACTDOCS_AI__PROVIDERS__<NAME>__<FIELD>`, `EXACTDOCS_AI__<ROLE>__MODEL` | unset | Provider profiles and model roles. See [AI providers and model roles](search.md#ai-providers-and-model-roles) |
@@ -93,8 +131,8 @@ by the server.
 
 ## The secret key
 
-`EXACTDOCS_SECRET_KEY` encrypts the stored tokens and deploy keys of private repositories, and keys
-the HMACs of the agentic answer cache. Unset, ExactDocs generates one into `<data dir>/secret.key`
+`EXACTDOCS_SECRET_KEY` encrypts the stored tokens and deploy keys of private repositories and the
+refresh tokens of identity providers, and keys the HMACs of the agentic answer cache. Unset, ExactDocs generates one into `<data dir>/secret.key`
 (mode 0600) on first run.
 
 It must be random and at least 32 characters:
@@ -105,7 +143,8 @@ openssl rand -base64 32
 
 It is stretched with HKDF, not with a password hash, so a passphrase is not safe. Without the key
 the stored credentials cannot be read: libraries keep serving their docs and ask for the token
-again (`credentials_required`).
+again (`credentials_required`), and accounts of an identity provider lose access at their next
+check until they sign in again.
 
 On PostgreSQL, set it explicitly and use the same value in every process. Otherwise each process
 generates its own key and cannot open the credentials another one stored.

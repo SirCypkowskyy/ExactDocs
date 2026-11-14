@@ -16,7 +16,7 @@ the same docs in a web UI. It is a self-hosted, drop-in alternative to context7.
 > The latest release is **v0.2.0** (MVP-1): one admin account and no external services, with the
 > whole loop working in the web UI, over REST and over MCP. This README describes the `develop`
 > branch, which also has the MVP-2 polish, the AI retrieval modes, PostgreSQL, local user accounts,
-> webhooks and observability; they ship in the next release. Anything marked *planned* is not
+> sign-in through OIDC, webhooks, a sources file and observability; they ship in the next release. Anything marked *planned* is not
 > built yet (see the [roadmap](#roadmap)).
 
 ## Why ExactDocs
@@ -75,8 +75,8 @@ uvx exactdocs serve
    `query-docs`, as it would with context7.
 
 [Getting started](https://sircypkowskyy.github.io/ExactDocs/getting-started/) walks through the
-same steps over REST, and covers the command line, private repositories, webhooks and user
-accounts.
+same steps over REST, and covers the command line, private repositories, the sources file,
+webhooks, user accounts and sign-in through an identity provider.
 
 > [!TIP]
 > For a local agent that only reads, `uvx exactdocs serve --stdio` needs no token, no port and no
@@ -126,6 +126,10 @@ benchmark numbers. See [Search and AI models](https://sircypkowskyy.github.io/Ex
   versions, search, manage tokens, users and AI settings.
 - A command line that is a client of the REST API (`login`, `add`, `sync`, `remove`, `token`,
   `config`), plus `ctx7`-style `library` and `docs` commands.
+- Libraries declared in an `exactdocs.sources.yaml` that you review like code: `sources plan`
+  shows the diff, `sources apply` makes it.
+- Local accounts managed by an admin, and sign-in through any OpenID Connect provider (Keycloak,
+  Entra ID, Okta, Google, ADFS), with access and roles that follow the provider's groups.
 - Branch versions kept fresh by hand, on a schedule or by a webhook from GitHub, GitLab or
   Bitbucket; new tags imported automatically if you want.
 - `context7.json` support, custom chunking, tags from front matter, path rules or by hand, images
@@ -261,9 +265,10 @@ Read [docs/architecture.md](docs/architecture.md) (modular monolith, ports and a
 - [x] Local user accounts created, disabled and reset by an operator (no self-signup)
 - [x] OpenTelemetry traces and metrics to your own collector, Prometheus metrics
 - [x] Webhooks that sync a library on push
-- [ ] Sign-in through OIDC with groups from the identity provider
+- [x] Sign-in through OIDC with groups from the identity provider
+- [x] Libraries declared in an `exactdocs.sources.yaml` and applied with a dry-run diff
+- [ ] Sign-in through OAuth2-only providers and GitHub, with organization and team checks
 - [ ] Sharing libraries with viewer, contributor, admin and creator roles, enforced in the UI, REST and MCP
-- [ ] Libraries declared in an `exactdocs.sources.yaml` and applied with a dry-run diff
 - [ ] MCP Apps: articles and results rendered as UI in hosts that support them (Claude, ChatGPT)
 
 **Later**

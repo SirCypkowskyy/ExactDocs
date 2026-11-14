@@ -29,9 +29,10 @@ flowchart LR
 
 | Page | What is in it |
 |---|---|
-| [Getting started](getting-started.md) | Start the server, create the admin, import a library, use the CLI, private repositories, webhooks, accounts |
+| [Getting started](getting-started.md) | Start the server, create the admin, import a library, use the CLI, private repositories, the sources file, webhooks, accounts, sign-in through an identity provider |
 | [MCP](mcp.md) | Connecting Claude, Cursor, VS Code and Codex; tokens; stdio; every tool and resource; context7 over REST |
-| [Configuration](configuration.md) | Every environment variable, the TOML file and the secret key |
+| [Sources file](sources.md) | Declaring libraries in `exactdocs.sources.yaml`, with `sources plan` and `sources apply` |
+| [Configuration](configuration.md) | Every environment variable, the TOML file, sign-in providers and the secret key |
 | [Search and AI models](search.md) | Retrieval modes, chunking and tags, AI providers, reranking, agentic search, local models, budgets |
 | [Deployment](deployment.md) | Image variants, hardened Docker, reverse proxies, health checks, upgrades, backups, PostgreSQL, Supabase, observability |
 

@@ -56,6 +56,8 @@ export function explainUserError(error: unknown): string {
       return "This is the last enabled admin. Make another admin first, or the instance would have nobody to manage accounts.";
     case "unknown_account":
       return "That account no longer exists. The list has been refreshed.";
+    case "external_account":
+      return "This account signs in through an identity provider: it has no password to reset.";
     case "forbidden":
       return "Only an admin can manage user accounts.";
   }

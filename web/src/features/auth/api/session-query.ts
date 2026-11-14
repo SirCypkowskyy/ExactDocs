@@ -1,4 +1,5 @@
 import { type QueryClient, queryOptions } from "@tanstack/react-query";
+import { API_BASE_URL } from "@/shared/config/env";
 import { getJson, sendJson } from "@/shared/lib/http";
 import { AdminCreated } from "../model/errors";
 import type { Account, Credentials, SessionState } from "../model/session";
@@ -37,6 +38,15 @@ export async function setUp(queryClient: QueryClient, credentials: Credentials) 
   } catch {
     throw new AdminCreated();
   }
+}
+
+/**
+ * Where the browser goes to sign in through an identity provider: a full navigation, not a fetch
+ * (the provider sends the browser back to the server, which sets the session cookie).
+ */
+export function externalSignInHref(provider: string, next?: string) {
+  const query = new URLSearchParams({ return_to: next ?? "/" });
+  return `${API_BASE_URL}/v1/auth/${encodeURIComponent(provider)}/start?${query}`;
 }
 
 export async function signOut(queryClient: QueryClient) {

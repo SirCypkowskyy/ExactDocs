@@ -53,8 +53,9 @@ export function UsersPage({ currentUserId }: { currentUserId: string }) {
             Users
           </h1>
           <p className="mt-1.5 text-muted-foreground">
-            Local accounts on this server. Nobody can sign up: accounts are created here or with{" "}
-            <code className="text-sm">exactdocs user create</code>.
+            Accounts on this server. Nobody can sign up: accounts are created here, with{" "}
+            <code className="text-sm">exactdocs user create</code>, or by a first sign-in through an
+            identity provider.
           </p>
         </div>
         <Button onClick={() => setCreating(true)}>New user</Button>
@@ -117,12 +118,36 @@ export function UsersPage({ currentUserId }: { currentUserId: string }) {
                         "Active"
                       )}
                       {" · "}
+                      {user.provider ? `Signs in with ${user.provider}` : "Password"}
+                      {" · "}
                       Created {date.format(new Date(user.created_at))}
                     </p>
+                    {user.provider && (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {user.groups && user.groups.length > 0 ? (
+                          <>
+                            <span className="sr-only">Groups: </span>
+                            <span className="flex flex-wrap gap-1.5">
+                              {user.groups.map((group) => (
+                                <span
+                                  key={group}
+                                  className="rounded-sm bg-accent px-1.5 py-0.5 font-mono text-xs text-foreground"
+                                >
+                                  {group}
+                                </span>
+                              ))}
+                            </span>
+                          </>
+                        ) : (
+                          "No groups at the identity provider"
+                        )}
+                      </p>
+                    )}
                   </div>
                   <div className="flex gap-1">
-                    {/* A reset ends every session of the account, the operator's own included. */}
-                    {!you && (
+                    {/* A reset ends every session of the account, the operator's own included.
+                        An account of an identity provider has no password to reset. */}
+                    {!you && !user.provider && (
                       <Button
                         variant="ghost"
                         aria-label={`Reset the password of ${user.username}`}

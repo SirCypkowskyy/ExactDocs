@@ -19,7 +19,10 @@ const PASSWORD = "bob's long passphrase";
 
 /** A tiny in-memory users API: list, create, disable, enable, reset. */
 function stubApi() {
-  let users = [user("a", "ada", { role: "admin" }), user("b", "bob")];
+  let users = [
+    user("a", "ada", { role: "admin", provider: null, groups: [] }),
+    user("b", "bob", { provider: null, groups: [] }),
+  ];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     if (url === "/api/v1/users" && method === "GET") return json({ users });
@@ -238,5 +241,41 @@ describe("user form rules", () => {
         }),
       ),
     ).toMatch(/request is invalid/);
+  });
+
+  it("shows where an account signs in, its groups, and offers no password reset for it", async () => {
+    const accounts = [
+      user("a", "ada", { role: "admin", provider: null, groups: [] }),
+      user("c", "carol", { provider: "corp", groups: ["docs", "payments"] }),
+      user("d", "dave", { provider: "corp", groups: [] }),
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json({ users: accounts })),
+    );
+    renderPage();
+    const list = await screen.findByRole("list", { name: "User accounts" });
+    const [ada, carol, dave] = within(list).getAllByRole("listitem") as [
+      HTMLElement,
+      HTMLElement,
+      HTMLElement,
+    ];
+    expect(ada).toHaveTextContent(/Password/);
+    expect(carol).toHaveTextContent(/Signs in with corp/);
+    expect(carol).toHaveTextContent(/Groups: docspayments/);
+    expect(dave).toHaveTextContent(/No groups at the identity provider/);
+    expect(
+      within(carol).queryByRole("button", { name: /reset the password/i }),
+    ).not.toBeInTheDocument();
+    expect(within(carol).getByRole("button", { name: "Disable carol" })).toBeInTheDocument();
+  });
+
+  it("explains that an account of an identity provider has no password", () => {
+    const error = new HttpError(409, "/v1/users/c/password", {
+      error: "external_account",
+      detail: "no password",
+      fields: [],
+    });
+    expect(explainUserError(error)).toMatch(/identity provider/);
   });
 });

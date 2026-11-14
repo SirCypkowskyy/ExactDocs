@@ -71,6 +71,7 @@ from exactdocs.ingestion.constants import (
     README_DESCRIPTION_MAX,
     README_TITLE_MAX,
     SIGNATURE_SCHEME,
+    SOURCE_MISMATCH,
     TAGS,
     JobKind,
 )
@@ -2217,6 +2218,8 @@ class NewLibrary:
     """Which files are articles."""
     tag_rules: tuple[TagRule, ...] = ()
     """Tags given to articles by path."""
+    chunking: ChunkingConfig | None = None
+    """How articles are cut into chunks; ``None``: the defaults."""
 
 
 # ---------------------------------------------------------------- import
@@ -2982,6 +2985,345 @@ class EmbeddedBatch:
     """Vectors stored."""
     finished: bool
     """Nothing of the version is left to embed, or nothing more may be sent."""
+
+
+# ---------------------------------------------------------------- the sources file (TEAM-02)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class KnownLibrary:
+    """A library the instance has, as listed: its ID and where it comes from."""
+
+    library_id: str
+    """The canonical library ID."""
+    source_url: str
+    """The repository URL it was added with."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DeclaredLibrary:
+    """A library as a sources file declares it, normalized the way the server stores it.
+
+    A setting left ``None`` is not managed: plan never compares it and apply never changes it.
+    ``manages_auto_sync`` says whether the scheduled check is managed; then ``auto_sync`` is the
+    wanted schedule, ``None`` meaning off.
+    """
+
+    library_id: str
+    """The canonical (lower-case) library ID."""
+    url: RepositoryUrl
+    """The repository."""
+    refs: tuple[str, ...]
+    """The versions to have, in the file's order: the first one is imported when it is created."""
+    include: tuple[str, ...] | None = None
+    """The paths to import; ``None``: not managed."""
+    exclude: tuple[str, ...] | None = None
+    """The paths to leave out; ``None``: not managed."""
+    tag_rules: tuple[TagRule, ...] | None = None
+    """The tag rules; ``None``: not managed."""
+    chunking: ChunkingConfig | None = None
+    """The chunking; ``None``: not managed."""
+    manages_auto_sync: bool = False
+    """Whether the scheduled check is managed."""
+    auto_sync: AutoSync | None = None
+    """The wanted schedule when managed; ``None`` turns it off."""
+
+    @property
+    def manages_paths(self) -> bool:
+        """Whether either path list is managed: then empty lists mean every file."""
+        return self.include is not None or self.exclude is not None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CurrentLibrary:
+    """What the instance has for a library, as far as a sources file can declare it."""
+
+    library_id: str
+    """The canonical library ID."""
+    source: ImportSource
+    """Its repository and settings."""
+    versions: tuple[ImportedRef, ...] = ()
+    """Its versions."""
+    busy_refs: frozenset[str] = frozenset()
+    """Refs whose import is queued or running: present already for a sources file."""
+    auto_sync: AutoSync | None = None
+    """Its scheduled check; ``None``: off."""
+
+
+class SourcesField(StrEnum):
+    """A library setting a sources file manages."""
+
+    INCLUDE_PATHS = "include_paths"
+    EXCLUDE_PATHS = "exclude_paths"
+    TAG_RULES = "tag_rules"
+    CHUNKING = "chunking"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LibraryUpdate:
+    """How an existing library differs from its declaration, and what apply does about it."""
+
+    declared: DeclaredLibrary
+    """The declaration."""
+    current: CurrentLibrary
+    """The library as it is."""
+    changed: tuple[SourcesField, ...] = ()
+    """The managed settings that differ (as sets: order and spelling do not count)."""
+    refs_to_add: tuple[str, ...] = ()
+    """Declared refs that are neither versions nor being imported."""
+    auto_sync_changes: bool = False
+    """The scheduled check is turned on, off or changed."""
+    reprocess: SettingsChange | None = None
+    """What the settings change asks of the versions; ``None``: no re-processing job."""
+    undeclared_versions: tuple[str, ...] = ()
+    """``manual`` versions the file does not declare (``auto`` ones belong to the schedule)."""
+    prune: bool = False
+    """Whether apply removes ``undeclared_versions``."""
+
+    @property
+    def library_id(self) -> str:
+        """The library ID."""
+        return self.current.library_id
+
+    @property
+    def selection(self) -> PathSelection:
+        """The paths to store: the declared ones, the stored ones where the file has none."""
+        stored = self.current.source.selection
+        include, exclude = self.declared.include, self.declared.exclude
+        return PathSelection(
+            include=stored.include if include is None else include,
+            exclude=stored.exclude if exclude is None else exclude,
+        )
+
+    @property
+    def tag_rules(self) -> tuple[TagRule, ...]:
+        """The tag rules to store: the declared ones, else the stored ones."""
+        declared = self.declared.tag_rules
+        return self.current.source.tag_rules if declared is None else declared
+
+    @property
+    def writes(self) -> bool:
+        """Whether apply calls any write port for the library."""
+        return bool(
+            self.changed
+            or self.refs_to_add
+            or self.auto_sync_changes
+            or (self.prune and self.undeclared_versions)
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SourceError:
+    """A declared library that plan cannot reconcile; apply leaves it alone."""
+
+    library_id: str
+    """The declared library ID."""
+    code: str
+    """A stable machine code, e.g. ``source_mismatch``."""
+    message: str
+    """What is wrong, for people."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SourcesPlan:
+    """The difference between a sources file and the instance (``plan_sources``)."""
+
+    create: tuple[DeclaredLibrary, ...] = ()
+    """Declared libraries that do not exist."""
+    update: tuple[LibraryUpdate, ...] = ()
+    """Existing libraries that differ from their declaration (or have undeclared versions)."""
+    unchanged: tuple[str, ...] = ()
+    """Existing libraries that match their declaration."""
+    undeclared: tuple[CurrentLibrary, ...] = ()
+    """Libraries the file does not declare."""
+    errors: tuple[SourceError, ...] = ()
+    """Declared libraries that cannot be reconciled."""
+    prune: bool = False
+    """Whether apply removes undeclared libraries and versions."""
+
+
+def _same_repository(declared: RepositoryUrl, stored: RepositoryUrl) -> bool:
+    """Tell whether two URLs name one repository.
+
+    A trailing ``/`` or ``.git`` (in any letter case) and the letter case of the scheme and
+    host do not count. The path keeps its case: forges differ on whether it matters.
+
+    Args:
+        declared: The URL the file declares.
+        stored: The URL the library was created from.
+
+    Returns:
+        True when they are the same repository.
+    """
+    return _repository_key(declared.url) == _repository_key(stored.url)
+
+
+def _repository_key(url: str) -> str:
+    """Spell a URL the way ``_same_repository`` compares it.
+
+    Args:
+        url: A URL that passed ``RepositoryUrl.parse``.
+
+    Returns:
+        The URL without a trailing ``/`` or ``.git``, its scheme and host in lower case.
+    """
+    url = url.rstrip("/")
+    if url[-len(".git") :].lower() == ".git":
+        url = url[: -len(".git")]
+    if "://" in url:
+        parts = urlsplit(url)
+        user, at, host = parts.netloc.rpartition("@")
+        return f"{parts.scheme.lower()}://{user}{at}{host.lower()}{parts.path}"
+    if match := _SCP_LIKE.fullmatch(url):
+        return f"{match['user']}@{match['host'].lower()}:{match['path']}"
+    return url
+
+
+def _schedule(auto_sync: AutoSync | None) -> tuple[object, ...] | None:
+    """Return what a sources file can say about a schedule (not when it last ran).
+
+    Args:
+        auto_sync: A schedule, or ``None`` for off.
+
+    Returns:
+        Its settings, or ``None``.
+    """
+    if auto_sync is None:
+        return None
+    return (
+        auto_sync.tag_pattern,
+        auto_sync.keep_last,
+        auto_sync.interval_minutes,
+        auto_sync.sync_branches,
+    )
+
+
+def _changed_fields(declared: DeclaredLibrary, source: ImportSource) -> tuple[SourcesField, ...]:
+    """List the managed settings that differ from the stored ones, compared as sets.
+
+    Args:
+        declared: The declaration.
+        source: The stored settings.
+
+    Returns:
+        The fields that differ, in ``SourcesField`` order.
+    """
+    stored = source.selection
+    pairs: tuple[tuple[SourcesField, object, object], ...] = (
+        (SourcesField.INCLUDE_PATHS, declared.include, frozenset(stored.include)),
+        (SourcesField.EXCLUDE_PATHS, declared.exclude, frozenset(stored.exclude)),
+        (SourcesField.TAG_RULES, declared.tag_rules, frozenset(source.tag_rules)),
+    )
+    changed = [
+        name for name, wanted, have in pairs if wanted is not None and frozenset(wanted) != have
+    ]
+    if declared.chunking is not None and declared.chunking != source.chunking:
+        changed.append(SourcesField.CHUNKING)
+    return tuple(changed)
+
+
+def _reprocess_of(changed: Collection[SourcesField]) -> SettingsChange | None:
+    """Say which re-processing a settings change queues (as ``UpdateLibrarySettings`` does).
+
+    Args:
+        changed: The settings that change.
+
+    Returns:
+        The widest change, or ``None``.
+    """
+    if {SourcesField.INCLUDE_PATHS, SourcesField.EXCLUDE_PATHS} & set(changed):
+        return SettingsChange.PATHS
+    if SourcesField.CHUNKING in changed:
+        return SettingsChange.CHUNKING
+    if SourcesField.TAG_RULES in changed:
+        return SettingsChange.TAGS
+    return None
+
+
+def _update_of(declared: DeclaredLibrary, current: CurrentLibrary, *, prune: bool) -> LibraryUpdate:
+    """Compare one declared library with what the instance has.
+
+    Args:
+        declared: The declaration.
+        current: The library as it is.
+        prune: Whether undeclared versions are removed.
+
+    Returns:
+        The difference (``writes`` false and no undeclared version: unchanged).
+    """
+    present = {v.ref for v in current.versions} | current.busy_refs
+    changed = _changed_fields(declared, current.source)
+    reprocess = _reprocess_of(changed)
+    if not (current.versions or current.busy_refs):
+        reprocess = None  # nothing to re-process: imports to come read the new settings
+    wanted = set(declared.refs)
+    return LibraryUpdate(
+        declared=declared,
+        current=current,
+        changed=changed,
+        refs_to_add=tuple(r for r in declared.refs if r not in present),
+        auto_sync_changes=declared.manages_auto_sync
+        and _schedule(declared.auto_sync) != _schedule(current.auto_sync),
+        reprocess=reprocess,
+        undeclared_versions=tuple(
+            v.ref
+            for v in current.versions
+            if v.origin is VersionOrigin.MANUAL and v.ref not in wanted
+        ),
+        prune=prune,
+    )
+
+
+def plan_sources(
+    declared: Sequence[DeclaredLibrary], current: Sequence[CurrentLibrary], *, prune: bool = False
+) -> SourcesPlan:
+    """Compare a sources file with the instance (pure; nothing is called).
+
+    A declared library that does not exist is created; one that exists with the same repository
+    is compared setting by setting, only for the settings it manages; one whose ID exists with
+    another repository is a ``source_mismatch`` error. A declared ref is present when it is a
+    version or its import is queued or running, so an apply right after another one is a no-op.
+    ``manual`` versions the file does not declare and libraries it does not declare are always
+    listed, and removed by apply only with ``prune``; ``auto`` versions are never listed.
+
+    Args:
+        declared: The libraries the file declares, IDs unique.
+        current: Every library of the instance.
+        prune: Whether apply removes what the file does not declare.
+
+    Returns:
+        The plan.
+    """
+    have = {c.library_id: c for c in current}
+    create: list[DeclaredLibrary] = []
+    update: list[LibraryUpdate] = []
+    unchanged: list[str] = []
+    errors: list[SourceError] = []
+    for wanted in declared:
+        found = have.get(wanted.library_id)
+        if found is None:
+            create.append(wanted)
+        elif not _same_repository(wanted.url, found.source.url):
+            message = (
+                f"library {wanted.library_id!r} exists with another repository URL; "
+                "declare that URL or another id"
+            )
+            errors.append(
+                SourceError(library_id=wanted.library_id, code=SOURCE_MISMATCH, message=message)
+            )
+        elif (diff := _update_of(wanted, found, prune=prune)).writes or diff.undeclared_versions:
+            update.append(diff)
+        else:
+            unchanged.append(found.library_id)
+    named = {d.library_id for d in declared}
+    return SourcesPlan(
+        create=tuple(create),
+        update=tuple(update),
+        unchanged=tuple(unchanged),
+        undeclared=tuple(c for c in current if c.library_id not in named),
+        errors=tuple(errors),
+        prune=prune,
+    )
 
 
 # ---------------------------------------------------------------- push webhooks (TEAM-03)
