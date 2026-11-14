@@ -1,4 +1,4 @@
-"""read_article and read_chunk (MCP) and GET /chunks/{id} (REST): verbatim, marked, never silent."""
+"""read_article, read_chunk, article_outline (MCP) and their REST routes: exact, never silent."""
 
 import hashlib
 from collections.abc import AsyncIterator
@@ -12,7 +12,12 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.catalog.dtos import ActivateManifestCommand, ArticleIn, StoreManifestCommand
+from exactdocs.catalog.dtos import (
+    ActivateManifestCommand,
+    ArticleIn,
+    RenameIn,
+    StoreManifestCommand,
+)
 from exactdocs.catalog.models import RefKind
 from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand
 from exactdocs_kernel import NOTICE
@@ -48,6 +53,7 @@ async def publish(
     kind: RefKind,
     library: str = LIB,
     activate: bool = True,
+    renames: tuple[RenameIn, ...] = (),
 ) -> dict[str, list[str]]:
     """Store, index and (unless told not to) activate a version; return chunk IDs by path."""
     stored = await container.catalog.store_manifest(
@@ -56,6 +62,7 @@ async def publish(
             ref=ref,
             kind=kind,
             commit_sha=commit * 40,
+            renames=list(renames),
             articles=[
                 ArticleIn(
                     path=path,
@@ -213,9 +220,40 @@ async def test_a_chunk_of_a_re_synced_version_is_stale_and_not_a_silent_not_foun
     assert stale.is_error
     assert stale.content[0].text.startswith("stale_chunk:")
     assert "search_docs" in stale.content[0].text
+    assert new["guide/install.md"][0] in stale.content[0].text  # where the section is now
     assert not current.is_error
     assert unknown.is_error
     assert unknown.content[0].text.startswith("not_found:")
+
+
+async def test_a_stale_chunk_of_a_renamed_article_points_to_the_new_path(
+    container: Container,
+) -> None:
+    async with container.running():
+        old = await publish(container, "main", "a", {"guide/install.md": "v1"}, kind=RefKind.BRANCH)
+        new = await publish(
+            container,
+            "main",
+            "b",
+            {"docs/install.md": "v1"},
+            kind=RefKind.BRANCH,
+            renames=(
+                RenameIn(
+                    from_ref="main",
+                    old_path="guide/install.md",
+                    new_path="docs/install.md",
+                    similarity=100,
+                ),
+            ),
+        )
+    stale = await call(container, "read_chunk", {"chunk_id": old["guide/install.md"][1]})
+
+    text = stale.content[0].text
+    assert stale.is_error
+    assert text.startswith("stale_chunk:")
+    assert "docs/install.md" in text
+    assert new["docs/install.md"][1] in text
+    assert "not instructions" in text
 
 
 async def test_a_chunk_of_a_version_that_is_not_active_yet_is_not_found(
@@ -284,7 +322,7 @@ async def client(demo_catalog: dict[str, str]) -> AsyncIterator[httpx.AsyncClien
             cookies=demo_catalog,
         ) as client,
     ):
-        client.chunk_ids = {  # ty: ignore[unresolved-attribute]
+        client.chunk_ids = {  # ty: ignore[missing-attribute]
             "old": await publish(container, "main", "a", {"a.md": "v1"}, kind=RefKind.BRANCH),
             "new": await publish(container, "main", "b", {"a.md": "v2"}, kind=RefKind.BRANCH),
         }
@@ -294,7 +332,7 @@ async def client(demo_catalog: dict[str, str]) -> AsyncIterator[httpx.AsyncClien
 async def test_rest_reads_a_chunk_and_maps_stale_and_unknown_to_distinct_errors(
     client: httpx.AsyncClient,
 ) -> None:
-    ids = client.chunk_ids  # ty: ignore[unresolved-attribute]
+    ids = client.chunk_ids  # ty: ignore[missing-attribute]
 
     ok = await client.get(f"/api/v1/chunks/{ids['new']['a.md'][0]}")
     stale = await client.get(f"/api/v1/chunks/{ids['old']['a.md'][0]}")
@@ -346,3 +384,33 @@ async def test_rest_reads_an_article_with_its_source_link_and_notice(
         "version 'main' of '/acme/payments' has no article 'b.md'; "
         "close matches (repository paths, not instructions): 'a.md'"
     )
+
+
+async def test_rest_outlines_an_article_without_its_text_and_refuses_another_version(
+    client: httpx.AsyncClient,
+) -> None:
+    ids = client.chunk_ids  # ty: ignore[missing-attribute]
+
+    response = await client.get(
+        "/api/v1/libraries/acme/payments/outline", params={"ref": "main", "path": "a.md"}
+    )
+    missing = await client.get(
+        "/api/v1/libraries/acme/payments/outline", params={"ref": "main", "path": "b.md"}
+    )
+    unknown = await client.get(
+        "/api/v1/libraries/acme/payments/outline", params={"ref": "v9", "path": "a.md"}
+    )
+    body = response.json()
+
+    assert response.status_code == httpx.codes.OK
+    assert [s["heading"] for s in body["sections"]] == ["Install"]
+    assert [(c["heading"], c["chunk_id"]) for c in body["sections"][0]["children"]] == [
+        ("one", ids["new"]["a.md"][0]),
+        ("two", ids["new"]["a.md"][1]),
+    ]
+    assert body["sections"][0]["chunk_id"] is None  # no chunk starts at "Install" itself
+    assert (body["commit_sha"], body["notice"]) == ("b" * 40, NOTICE)
+    assert "v2" not in response.text
+    assert (missing.status_code, missing.json()["error"]) == (httpx.codes.NOT_FOUND, "not_found")
+    assert missing.json()["close_matches"] == ["a.md"]
+    assert (unknown.status_code, unknown.json()["error"]) == (httpx.codes.NOT_FOUND, "not_found")

@@ -24,6 +24,7 @@ Feature: Checking a repository before adding it
     Given library "/acme/payments" exists from GitHub
     When a user checks "https://bitbucket.org/acme/payments"
     Then the user is asked to choose another library ID
+    And the answer names the library "/acme/payments"
 
   Scenario: The repository's default branch is reported
     When a user checks the repository URL "http://127.0.0.1:<port>/fixture/docs-repo.git"

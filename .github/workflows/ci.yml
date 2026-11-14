@@ -20,7 +20,43 @@ jobs:
   python:
     name: Python (ruff, ty, pytest, behave)
     runs-on: [self-hosted, linux, ARM64, exactdocs]
-    timeout-minutes: 20
+    timeout-minutes: 40
+    # PostgreSQL for the adapter contract tests and the @postgres scenarios (#103): ParadeDB, which
+    # also has pg_search and pgvector. A service container on the runner VM's own Docker, on a
+    # free host port. Its POSTGRES_USER is a superuser: the tests create a database per test, and
+    # a role without CREATEDB for the scenario that needs one.
+    services:
+      postgres:
+        image: paradedb/paradedb:0.26.3-pg17@sha256:950f68abebc78e28fd2ecfc8ed915aa29d07b5dd8cba25b2f513ca4e211dda70
+        env:
+          POSTGRES_USER: exactdocs
+          POSTGRES_PASSWORD: exactdocs-ci
+          POSTGRES_DB: exactdocs
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U exactdocs -d exactdocs"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+      # #279: PgBouncer in transaction mode in front of that server (every database, as
+      # `exactdocs`), for the pooler scenario and tests (EXACTDOCS_TEST_PGBOUNCER_URL). It runs
+      # DISCARD ALL after every transaction, so session state never survives to the next one,
+      # whichever server connection that gets: the start-up probe must warn, every time.
+      pgbouncer:
+        image: edoburu/pgbouncer:v1.26.1-p0@sha256:488422e38cff912895d0d65d8963fcd306e6ac589a724398b6eb8e294e94d624
+        env:
+          DB_HOST: postgres
+          DB_USER: exactdocs
+          DB_PASSWORD: exactdocs-ci
+          AUTH_TYPE: scram-sha-256
+          POOL_MODE: transaction
+          SERVER_RESET_QUERY: DISCARD ALL
+          SERVER_RESET_QUERY_ALWAYS: "1"
+          MAX_PREPARED_STATEMENTS: "200"
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U exactdocs -d exactdocs"
+          --health-interval 2s --health-timeout 5s --health-retries 30
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
@@ -28,16 +64,48 @@ jobs:
           enable-cache: true
       - name: Install
         run: uv sync --locked
+      # #244: Supabase's own PostgreSQL image, with SSL on (a throwaway certificate), for the
+      # @supabase scenarios and the ranking suite: its `postgres` role is no superuser, as on a
+      # Supabase project, and each scenario sets up a role of its own with deploy/supabase.sql.
+      - name: Start supabase/postgres
+        run: |
+          url=$(deploy/supabase-test-db.sh "exactdocs-supabase-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}")
+          password=${url#postgresql://postgres:}
+          echo "::add-mask::${password%%@*}" # on its own: a log may show it outside the URL
+          echo "::add-mask::$url"
+          echo "EXACTDOCS_TEST_SUPABASE_URL=$url" >> "$GITHUB_ENV"
       - name: ruff format
         run: uv run ruff format --check --diff .
       - name: ruff check
         run: uv run ruff check --output-format=github .
       - name: ty
         run: uv run ty check --output-format=github
-      - name: pytest (unit, integration, architecture)
+      - name: pytest (unit, integration, architecture; adapters on SQLite and PostgreSQL)
+        env:
+          EXACTDOCS_TEST_POSTGRES_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/exactdocs
+          EXACTDOCS_REQUIRE_POSTGRES: "1"
+          EXACTDOCS_TEST_PGBOUNCER_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.pgbouncer.ports['5432'] }}/exactdocs
+          EXACTDOCS_REQUIRE_PGBOUNCER: "1" # the pooler tests and scenario never skip here
+          EXACTDOCS_TEST_PG_SEARCH: "1" # the server has pg_search: the BM25 variants run (#104)
         run: uv run pytest --cov=exactdocs --cov=exactdocs_kernel --cov-report=term-missing --junitxml=reports/pytest.xml
       - name: behave (acceptance)
+        env:
+          EXACTDOCS_TEST_POSTGRES_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/exactdocs
+          EXACTDOCS_REQUIRE_POSTGRES: "1"
+          EXACTDOCS_TEST_PGBOUNCER_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.pgbouncer.ports['5432'] }}/exactdocs
+          EXACTDOCS_REQUIRE_PGBOUNCER: "1" # the pooler tests and scenario never skip here
+          EXACTDOCS_TEST_PG_SEARCH: "1"
+          EXACTDOCS_REQUIRE_SUPABASE: "1" # the @supabase scenarios never skip here
         run: uv run behave --format=progress --junit --junit-directory=reports/behave
+      # The shared ranking suite again, on Supabase's image (postgres_fts: it has no pg_search).
+      - name: Ranking suite on supabase/postgres
+        run: |
+          EXACTDOCS_TEST_POSTGRES_URL="$EXACTDOCS_TEST_SUPABASE_URL" EXACTDOCS_REQUIRE_POSTGRES=1 \
+            uv run pytest packages/exactdocs/tests/retrieval/ranking -k postgres_fts \
+            --junitxml=reports/pytest-supabase-ranking.xml
+      - name: Stop supabase/postgres
+        if: ${{ always() }}
+        run: docker rm -f "exactdocs-supabase-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null || true
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
@@ -101,6 +169,7 @@ jobs:
         with:
           context: .
           file: deploy/Dockerfile
+          target: base
           load: true
           tags: exactdocs:ci
           build-args: |
@@ -108,9 +177,10 @@ jobs:
             REVISION=${{ github.sha }}
             CREATED=${{ steps.created.outputs.at }}
             DEBIAN_REFRESH=${{ steps.created.outputs.week }}
-      # RUN-02: size budgets and no model weights (budgets and reasoning: docs/releasing.md).
-      - name: Image size budget and no model files
-        run: python3 deploy/check_artifacts.py image exactdocs:ci
+      # RUN-02: size budgets, no ML package and no model weights (budgets and reasoning:
+      # docs/releasing.md). The -ai and -local variants: job image-variants.
+      - name: Image size budget, no ML package and no model files
+        run: python3 deploy/check_artifacts.py image exactdocs:ci base
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
       - name: Wheel size budget, no model files, no ML dependencies
         run: |
@@ -176,15 +246,187 @@ jobs:
           docker exec exactdocs-ci ssh -V
           docker run --rm "${flags[@]}" -v "$RUNNER_TEMP/fixture-repo:/fixture:ro" --entrypoint sh exactdocs:ci \
             -c 'git config --global safe.directory "*" && git ls-remote file:///fixture | grep -q refs/heads/'
+      # #103: the README's PostgreSQL example as written (two server processes on ParadeDB), with
+      # this build's image and the fixture repository mounted; the smoke flow runs against it.
+      - name: PostgreSQL compose example (README) runs the smoke flow
+        env:
+          EXACTDOCS_IMAGE: exactdocs:ci
+          COMPOSE_PROJECT_NAME: exactdocs-ci-pg
+        run: |
+          # The runner VMs declare their tools in deploy/runners/create-vms.sh; CI changes nothing on
+          # the host. A VM provisioned before the compose plugin was added gets a standalone, pinned
+          # compose binary in this job's temp directory instead, with a warning.
+          compose=(docker compose)
+          if ! docker compose version >/dev/null 2>&1; then
+            echo "::warning::this runner lacks the docker compose plugin: install docker-compose-v2 on the VM (deploy/runners/README.md); using a pinned standalone compose for this job"
+            # docker/compose v2.32.4 (released 2025-01), linux-aarch64 (the runners are ARM64);
+            # sha256 from the release's docker-compose-linux-aarch64.sha256.
+            curl -fsSL -o "$RUNNER_TEMP/docker-compose" \
+              https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-aarch64
+            echo "0c4591cf3b1ed039adcd803dbbeddf757375fc08c11245b0154135f838495a2f  $RUNNER_TEMP/docker-compose" \
+              | sha256sum -c -
+            chmod +x "$RUNNER_TEMP/docker-compose"
+            compose=("$RUNNER_TEMP/docker-compose")
+          fi
+          export POSTGRES_PASSWORD=$(openssl rand -hex 16) EXACTDOCS_SECRET_KEY=$(openssl rand -base64 32)
+          cat > "$RUNNER_TEMP/compose.fixture.yaml" <<YAML
+          services:
+            exactdocs:
+              volumes: ["$RUNNER_TEMP/fixture-repo:/fixture/docs-repo:ro"]
+          YAML
+          compose+=(-f deploy/compose.postgres.yaml -f "$RUNNER_TEMP/compose.fixture.yaml")
+          trap '"${compose[@]}" logs; "${compose[@]}" down -v' EXIT
+          "${compose[@]}" up -d --wait --wait-timeout 180
+          deploy/smoke.sh http://127.0.0.1:3000 file:///fixture/docs-repo /fixture/docs-repo v1.3.0 \
+            "$(git -C "$RUNNER_TEMP/fixture-repo" rev-parse v1.3.0)"
+          # Both server processes run DBOS, each under an executor slot of its own.
+          slots=$("${compose[@]}" exec -T db psql -U exactdocs -d exactdocs -Atc \
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = 1163412547 AND objsubid = 2")
+          test "$slots" = 2 || { echo "::error::expected 2 executor slots, got $slots"; exit 1; }
+
+  # #246: the two AI variants of the image, from the same Dockerfile (targets `ai` and `local`),
+  # one after the other in one job: `local` builds on `ai`'s layers, and the runners are two.
+  # Each gets its own size budget, package and model-file check, Trivy scan and smoke test; the
+  # `-local` one also searches with `--network none`, on the models baked into the image.
+  image-variants:
+    name: Docker image variants (-ai, -local)
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker
+      - id: created
+        run: |
+          echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+      - name: Build -ai
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          target: ai
+          load: true
+          tags: exactdocs:ci-ai
+          build-args: |
+            VERSION=0.0.0.dev0
+            REVISION=${{ github.sha }}
+            CREATED=${{ steps.created.outputs.at }}
+            DEBIAN_REFRESH=${{ steps.created.outputs.week }}
+      # The default models are pulled at their pinned revisions into a BuildKit cache mount on
+      # the runner VM: the first build on a VM downloads them (about 160 MB), later ones do not.
+      - name: Build -local
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          target: local
+          load: true
+          tags: exactdocs:ci-local
+          build-args: |
+            VERSION=0.0.0.dev0
+            REVISION=${{ github.sha }}
+            CREATED=${{ steps.created.outputs.at }}
+            DEBIAN_REFRESH=${{ steps.created.outputs.week }}
+      # Budgets and reasoning: docs/releasing.md. -ai: no ML package but pydantic-ai, no model
+      # file; -local: the default models at their pinned revisions, read-only. Neither: aiohttp.
+      - name: Image size budgets, packages and models
+        if: ${{ !cancelled() }}
+        run: |
+          status=0
+          python3 deploy/check_artifacts.py image exactdocs:ci-ai ai || status=1
+          python3 deploy/check_artifacts.py image exactdocs:ci-local local || status=1
+          exit "$status"
+      - name: Trivy scan (-ai)
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/trivy-gate
+        with:
+          image: exactdocs:ci-ai
+          report-name: trivy-report-ai
+      - name: Trivy scan (-local)
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/trivy-gate
+        with:
+          image: exactdocs:ci-local
+          report-name: trivy-report-local
+      - name: Build a fixture docs repository
+        if: ${{ !cancelled() }}
+        run: python3 packages/exactdocs/tests/fixtures/fixture_repo.py "$RUNNER_TEMP/fixture-repo"
+      # The same flow as the base image's smoke test, with no model configured: both variants
+      # stay BM25 servers until a role is set (RUN-02).
+      - name: Smoke test -ai and -local (read-only rootfs, no capabilities)
+        if: ${{ !cancelled() }}
+        run: |
+          flags=(--read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges)
+          sha=$(git -C "$RUNNER_TEMP/fixture-repo" rev-parse v1.3.0)
+          # The loop stops each container (--rm removes it); the trap only cleans up after a
+          # failure, so a container that is already gone is no error.
+          trap 'for n in ai local; do docker logs "exactdocs-ci-$n" 2>&1 | tail -n 50 || true; docker stop "exactdocs-ci-$n" >/dev/null 2>&1 || true; done' EXIT
+          for variant in ai local; do
+            name="exactdocs-ci-$variant"
+            echo "::group::$variant"
+            docker run -d --rm --name "$name" "${flags[@]}" -p 127.0.0.1::3000 \
+              -v "$RUNNER_TEMP/fixture-repo:/fixture/docs-repo:ro" "exactdocs:ci-$variant"
+            port=$(docker port "$name" 3000/tcp | head -n1 | cut -d: -f2)
+            deploy/smoke.sh "http://127.0.0.1:${port}" file:///fixture/docs-repo /fixture/docs-repo v1.3.0 "$sha"
+            test "$(docker exec "$name" id -u)" = 10001
+            docker exec "$name" sh -c '! command -v pip && test -z "$(find / -xdev -perm /6000 -type f 2>/dev/null)"'
+            docker stop "$name"
+            echo "::endgroup::"
+          done
+      # #242: the vector store needs a Python that loads SQLite extensions: the image's own
+      # (python:3.14-slim-trixie) with the sqlite-vec of the [ai] extra, natively (arm64). amd64
+      # cannot be checked on this runner: tried once in #257 (run 42399925910), `docker run
+      # --platform linux/amd64` of the image's python3 died with "x86_64-binfmt-P: QEMU internal
+      # SIGSEGV" and then hung until killed. It was checked by hand on an amd64 host (PR #257).
+      - name: sqlite-vec loads and searches in the -ai image's Python
+        if: ${{ !cancelled() }}
+        run: |
+          docker run --rm -i --network none --read-only --tmpfs /tmp --cap-drop ALL \
+            --entrypoint python exactdocs:ci-ai - < deploy/check_sqlite_vec.py
+      # The scenario of #246: no network at all, the fixture imported and searched in hybrid
+      # mode with the default embedding model and reranker of the image. The reranker's timeout
+      # is raised as in the release's local-models eval: a runner's CPU may take more than 5 s
+      # for 32 long candidates, and a timed-out rerank would say `reranked: false`.
+      - name: -local with --network none searches hybrid, reranked
+        if: ${{ !cancelled() }}
+        run: |
+          docker run -d --rm --name exactdocs-ci-offline --network none \
+            --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+            -e EXACTDOCS_AI__PROVIDERS__LOCAL__KIND=local \
+            -e EXACTDOCS_AI__EMBEDDING__MODEL=local:BAAI/bge-small-en-v1.5 \
+            -e EXACTDOCS_AI__RERANKER__MODEL=local:Xenova/ms-marco-MiniLM-L-6-v2 \
+            -e EXACTDOCS_AI__RERANKER__TIMEOUT=30 \
+            -v "$RUNNER_TEMP/fixture-repo:/fixture/docs-repo:ro" exactdocs:ci-local
+          trap 'docker logs exactdocs-ci-offline 2>&1 | tail -n 80 || true; docker stop exactdocs-ci-offline >/dev/null 2>&1 || true' EXIT
+          test "$(docker inspect -f '{{.HostConfig.NetworkMode}}' exactdocs-ci-offline)" = none
+          docker exec -i exactdocs-ci-offline python - file:///fixture/docs-repo /fixture/docs-repo v1.3.0 \
+            < deploy/smoke_local.py
+      # The runner VMs are persistent (50 GiB): drop this run's variant images (about 1.4 GB
+      # together) so they do not pile up; the BuildKit cache keeps their layers for the next run.
+      - name: Remove the variant images
+        if: always()
+        run: |
+          docker image rm exactdocs:ci-ai exactdocs:ci-local >/dev/null 2>&1 || true
+          docker image prune -f
 
   # RUN-01: what a `uvx exactdocs serve` user gets. Builds the wheels with the web UI inside, starts
-  # them the way uvx does, then drives the whole loop in Chromium (e2e/, one test).
+  # them the way uvx does, upgrades a previous release's data directory with them (RUN-04), then
+  # drives the whole loop in Chromium (e2e/, one test).
+  #
+  # The self-hosted runner keeps uv's cache between runs, and uv reuses a cached wheel of the same
+  # file name: with one version for every build, uvx served an older build. So the wheels get a
+  # version unique to the commit, and every step that runs them uses a cache that starts empty in
+  # this job (runner.temp is per job). Not --no-cache: the --offline step needs a filled cache.
   uvx:
-    name: uvx smoke + browser end-to-end (built wheel)
+    name: uvx smoke, upgrade + browser end-to-end (built wheel)
     runs-on: [self-hosted, linux, ARM64, exactdocs]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-tags: true # only for a manual run on a tagged checkout: CI has no tag builds, and a PR's HEAD is the merge commit
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
         with:
           enable-cache: true
@@ -202,36 +444,75 @@ jobs:
         run: |
           (cd web && pnpm install --frozen-lockfile && pnpm build)
           cp -r web/dist packages/exactdocs/src/exactdocs/_web
-          export UV_DYNAMIC_VERSIONING_BYPASS=0.0.0.dev0
+          version="0.0.0.dev0+g${GITHUB_SHA::7}"
+          echo "WHEEL_VERSION=$version" >> "$GITHUB_ENV"
+          export UV_DYNAMIC_VERSIONING_BYPASS="$version"
           uv build --wheel --package exactdocs-kernel --out-dir "$RUNNER_TEMP/dist"
           uv build --wheel --package exactdocs --out-dir "$RUNNER_TEMP/dist"
           python3 deploy/check_artifacts.py wheel "$RUNNER_TEMP"/dist/exactdocs-0*.whl
+      # What the build under test must report, taken from the checkout (not from that build).
+      - name: Alembic head of this checkout
+        run: |
+          head=$(python3 deploy/upgrade_check.py --print-head)
+          echo "ALEMBIC_HEAD=$head" | tee -a "$GITHUB_ENV"
+      # The cache above starts empty, so uvx resolves and downloads every dependency first: 40 s
+      # and more on this runner. Done here, on its own, the readiness wait below times only the
+      # server's startup (a few seconds), and the later steps reuse what this one installed.
+      - name: Install the wheels with uvx (resolve and download, before any server starts)
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache
+        run: |
+          start=$SECONDS
+          uvx --prerelease=allow --find-links "$RUNNER_TEMP/dist" --from "exactdocs==$WHEEL_VERSION" \
+            exactdocs --version
+          echo "uvx install: $((SECONDS - start))s"
       - name: uvx exactdocs serve answers /api/health
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache
         run: |
           export EXACTDOCS_DATA_DIR="$RUNNER_TEMP/smoke-data"
           port=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
-          uvx --prerelease=allow --find-links "$RUNNER_TEMP/dist" --from exactdocs==0.0.0.dev0 \
-            exactdocs serve --port "$port" &
+          log="$RUNNER_TEMP/smoke-server.log"
+          # --offline: installed by the step above, so nothing is downloaded inside the wait
+          uvx --offline --prerelease=allow --find-links "$RUNNER_TEMP/dist" --from "exactdocs==$WHEEL_VERSION" \
+            exactdocs serve --port "$port" >"$log" 2>&1 &
           pid=$!
-          trap 'kill $pid' EXIT
+          # on failure, show what the server said (or that it said nothing)
+          trap 'rc=$?; kill $pid 2>/dev/null || true; [ "$rc" = 0 ] || { echo "--- server log ---"; cat "$log"; }' EXIT
+          # readiness, not liveness: /api/health answers before the database does
+          start=$SECONDS ready=
           for _ in $(seq 1 60); do
-            kill -0 "$pid" || { echo "::error::the server exited early"; exit 1; }
-            curl -fsS "http://127.0.0.1:$port/api/health" && break
+            kill -0 "$pid" 2>/dev/null || { echo "::error::the server exited early"; exit 1; }
+            curl -fsS "http://127.0.0.1:$port/readyz" 2>/dev/null && { ready=1; break; }
             sleep 1
           done
-          curl -fsS "http://127.0.0.1:$port/api/health"
+          [ -n "$ready" ] || { echo "::error::the server did not answer /readyz in 60 s"; exit 1; }
+          echo "serve to /readyz: $((SECONDS - start))s"
+          health=$(curl -fsS "http://127.0.0.1:$port/api/health")
+          echo "$health"
+          # the build under test, not a cached one: it migrated to this checkout's head
+          grep -q "\"schema_revision\":\"$ALEMBIC_HEAD\"" <<<"$health" \
+            || { echo "::error::schema_revision is not $ALEMBIC_HEAD: a stale wheel ran"; exit 1; }
           curl -fsS "http://127.0.0.1:$port/" | grep -qi '<div id="root"'
       - name: Without git on PATH, start fails with a clear message
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache
         run: |
           # only what uv and the generated entry point need; git is not linked
           bin="$RUNNER_TEMP/no-git-bin"; mkdir "$bin"
           for tool in uvx sh realpath dirname; do ln -s "$(command -v "$tool")" "$bin/$tool"; done
           if out=$(timeout 120 env PATH="$bin" EXACTDOCS_DATA_DIR="$RUNNER_TEMP/nogit-data" uvx --offline --prerelease=allow \
-              --find-links "$RUNNER_TEMP/dist" --from exactdocs==0.0.0.dev0 exactdocs serve 2>&1); then
+              --find-links "$RUNNER_TEMP/dist" --from "exactdocs==$WHEEL_VERSION" exactdocs serve 2>&1); then
             echo "::error::serve started without git"; exit 1
           fi
           echo "$out"
           grep -q "git is not installed" <<<"$out"
+      # RUN-04: a data directory written by the newest stable release (from PyPI) is migrated and
+      # served unchanged by these wheels, and `exactdocs reindex` runs while it serves.
+      - name: Upgrade from the previous release, then reindex while serving
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache
+        run: python3 deploy/upgrade_check.py --wheels "$RUNNER_TEMP/dist" --head "$ALEMBIC_HEAD"
       # The runners may have no browser: cache Playwright's (keyed by its version) and install the
       # missing part only. System libraries need root; installed when sudo is passwordless.
       - name: Playwright
@@ -250,6 +531,8 @@ jobs:
           if sudo -n true 2>/dev/null; then pnpm exec playwright install-deps chromium
           else echo "::warning::no passwordless sudo, system libraries for Chromium not installed"; fi
       - name: Browser end-to-end test (server started with uvx from the wheel)
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache
         run: python3 e2e/run.py --wheels "$RUNNER_TEMP/dist"
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}

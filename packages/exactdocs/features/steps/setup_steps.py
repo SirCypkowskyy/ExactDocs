@@ -63,7 +63,7 @@ def step_cli(context: Context, username: str, password: str) -> None:
 
 async def _authenticate(settings: Settings, username: str, password: str) -> str | None:
     container = Container.build(settings)
-    async with container.running():
+    async with container.running(jobs=False):
         query = AuthenticateQuery(username=username, password=SecretStr(password))
         try:
             return (await container.identity.authenticate(query)).role

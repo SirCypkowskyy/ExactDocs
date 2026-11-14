@@ -30,7 +30,9 @@ def test_something(docs_repo):  # pytest, session scoped: tests/conftest.py
     docs_repo.path, docs_repo.file_url, docs_repo.http_url
 ```
 
-In behave, `context.fixture_repo` has the same three attributes (`features/environment.py`).
+In behave, `context.fixture_repo` has the same three attributes (`features/environment.py`). A test that
+changes or deletes the repository serves its own copy with `serve_copy(base)` (behave:
+`context.fixture_serve_copy`), whose `token` can be changed to make the server refuse the old one.
 `file_url` is `file:///.../fixture/docs-repo`; `http_url` is
 `http://127.0.0.1:<port>/fixture/docs-repo.git`, served by `git http-backend`, with filters and
 fetching commits by SHA enabled. To build it by hand, for example for a smoke test with the repository mounted into a container:
@@ -53,12 +55,14 @@ python packages/exactdocs/tests/fixtures/fixture_repo.py /tmp/out/fixture/docs-r
 | `snake_case`, `camelCase`, `--flag`, `pkg.mod.fn` | `docs/reference/naming.md` |
 | `retry_policy`, only in `v1.4.0` and `next` | `docs/guide/resilience.md` |
 | root README, `AGENTS.md` | `README.md`, `AGENTS.md` |
+| root `context7.json` (folders `docs`, excludes `archive` and `CHANGELOG.md`, rules, `previousVersions`) | `context7.json` (`next` only) |
 | file renamed between tags | `docs/guide/setup.md` -> `docs/guide/install.md` |
 | Latin-1 file | `docs/legacy/latin1.md` |
 | undecodable file (no NUL, invalid as UTF-8, ASCII and cp1252) | `docs/legacy/undecodable.md` |
 | binary files | `docs/assets/logo.png`, `docs/legacy/binary.md` (a PNG named `.md`) |
 | oversized file (> 2 MiB) | `docs/reference/oversized.md` (generated, `v1.3.0` on) |
 | path to exclude | `docs/archive/` |
+| images referenced by an article: inside `docs/`, outside it, SVG, missing, external | `docs/guide/diagrams.md` (`next` only), `docs/assets/logo.png`, `docs/assets/flow.svg`, `img/flow.png` |
 
 The words *retry*, *retries* and *policy* appear in `v1.3.0` nowhere, on purpose: a search for
 `retry_policy` must come back empty there even when a tokenizer splits it into parts.
@@ -104,6 +108,9 @@ Rules for content:
   - `top_n: 3` accepts the section anywhere in the first three hits (default: first);
   - `xfail: "<reason and #issue>"` marks a known gap; the suite expects it to fail (strict), so
     delete the key when the issue is fixed.
+- Add the same case to the retrieval eval dataset
+  (`packages/exactdocs/evals/retrieval_eval/dataset.yaml`, `kind: identifier`); a test fails until
+  the two agree. See [docs/evals.md](../../../../../docs/evals.md).
 - Versions are `v1.3.0`, `v1.4.0` and `next`. `test_fixture_repo.py` checks that every entry
   points at a heading that exists and contains the query, so a typo fails fast. Whether the
   section really ranks first is asserted by the ranking suite, not here.
@@ -117,3 +124,6 @@ prints the actual top 5. To add a case, add an entry to `expected-queries.yaml` 
 content it needs is missing, add it under the *latest* commit that can hold it (see "Adding content
 without breaking the SHAs") and update `GOLDEN_SHAS`. To run the suite on another engine, add it to
 `ENGINES` and to `open_container` in `tests/retrieval/ranking/conftest.py`: the cases stay the same.
+With `EXACTDOCS_TEST_POSTGRES_URL` set it also runs on PostgreSQL full-text search (`postgres_fts`,
+`postgres_fts_c`) and, with `EXACTDOCS_TEST_PG_SEARCH=1` (a server with the extension), on
+ParadeDB's BM25 (`pg_search`); CI runs all of them on ParadeDB.

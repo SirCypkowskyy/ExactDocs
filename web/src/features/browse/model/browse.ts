@@ -7,6 +7,9 @@ export type Article = components["schemas"]["Article"];
 export type ArticleSummary = components["schemas"]["ArticleSummary"];
 export type ArticleList = components["schemas"]["ArticleList"];
 export type LibraryAccess = components["schemas"]["LibraryAccess"];
+export type RenameAnswer = components["schemas"]["RenameAnswer"];
+export type RenamedPath = components["schemas"]["RenamedPath"];
+export type RenameDirection = components["schemas"]["RenameDirection"];
 
 /** What the browse page keeps in the URL: refs and paths are never path segments. */
 export interface BrowseSearch {
@@ -194,18 +197,53 @@ export function resolveVersion(library: LibraryDetail, requested: string | undef
   return { version: fallback, missing: requested };
 }
 
+/**
+ * Where the article at `path` of version `from` is in version `to`, as the server answers it: it
+ * follows the rename map of every version between the two, hop by hop, in either order of import
+ * (`renamed-path?ref=<to>&from=<from>`). Null: not moved, or no import links the two versions.
+ */
+export type RenameLookup = (from: string, to: string, path: string) => Promise<RenamedPath | null>;
+
+/**
+ * Where the article at `path` of version `from` is in version `to`. One lookup: the server walks
+ * the versions between the two, so a switch that skips the version where the rename happened
+ * (v1.2.0 to v1.4.0 when v1.4.0 renamed it from v1.3.0) still lands on the renamed article. Only
+ * the server can chain the hops: a null answer does not say which version a map came from, and
+ * the display order of the versions is not their import order.
+ *
+ * A lookup that fails, or an answer about other versions, is no answer, and the path is kept (the
+ * article pane then offers the root when it is not there).
+ */
+export async function pathInVersion(
+  lookup: RenameLookup,
+  from: string,
+  to: string,
+  path: string,
+): Promise<string> {
+  if (from === to) return path;
+  try {
+    const found = await lookup(from, to, path);
+    return found && found.from_ref === from && found.ref === to ? found.new_path : path;
+  } catch {
+    return path;
+  }
+}
+
 const COMMIT_PATH: Record<string, string> = {
   github: "commit",
   gitlab: "-/commit",
   bitbucket: "commits",
   gitea: "commit",
 };
-export const HOST_NAMES: Record<string, string> = {
+const HOST_NAMES: Record<string, string> = {
   github: "GitHub",
   gitlab: "GitLab",
   bitbucket: "Bitbucket",
   gitea: "Gitea",
 };
+
+/** The host's display name, for labels. */
+export const hostName = (host: string): string => HOST_NAMES[host] ?? "the host";
 
 /** Only http(s) links are ever rendered from repository data. */
 export function safeHref(url: string | null | undefined): string | undefined {
@@ -266,4 +304,17 @@ export function showFileName(title: string, name: string): boolean {
   const stem = squash(name.replace(/\.[^.]+$/, ""));
   const words = squash(title);
   return stem !== "" && !words.startsWith(stem);
+}
+
+/** What the picker offers about the default: pin the shown version, and/or drop the pin. */
+export interface PinChoices {
+  /** Pin `current`: it stays the default when a higher release is imported. */
+  pin: boolean;
+  /** Drop the pin: the default follows the default-version rule again. */
+  unpin: boolean;
+}
+
+/** Pinning the version that already is the pinned default is no choice; anything else is. */
+export function pinChoices(current: Version, pinned: boolean): PinChoices {
+  return { pin: !(pinned && current.is_default), unpin: pinned };
 }

@@ -19,6 +19,13 @@ Feature: A branch version re-syncs on demand and re-processes only what changed
     Then only "docs/guide/install.md" is re-chunked and every other article is reused
     And the version keeps its ID with the new commit SHA
 
+  Scenario: Only changed articles are parsed again
+    Given "/fixture/docs-repo/next" is imported
+    And a commit changed "docs/guide/install.md" on branch "next"
+    When the user syncs the library
+    Then only "docs/guide/install.md" is parsed and every other article is taken from the catalog
+    And every other article reads as it did before the sync
+
   Scenario: A changed section's old chunk ID is stale
     Given "/fixture/docs-repo/next" is imported
     And an agent holds the chunk ID of a section of "docs/guide/install.md"
@@ -26,6 +33,7 @@ Feature: A branch version re-syncs on demand and re-processes only what changed
     And the user syncs the library
     When the agent reads that chunk ID
     Then it gets the error "stale_chunk"
+    And the error names the section's new chunk ID
 
   Scenario: A tag is never re-synced
     Given "/fixture/docs-repo/v1.3.0" is imported

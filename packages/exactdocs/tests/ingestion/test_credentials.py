@@ -1,6 +1,9 @@
-"""Credentials: validation, use cases and the vault (encryption itself: test_secret_box)."""
+"""Credentials: validation, use cases and the vault (encryption: bootstrap/test_secret_box)."""
 
+import asyncio
+import shutil
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 
@@ -11,6 +14,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
     NoIndex,
     NoRemovals,
 )
+from exactdocs.ingestion.constants import JobKind
 from exactdocs.ingestion.dtos import (
     AccessTokenIn,
     AddLibraryCommand,
@@ -30,7 +34,6 @@ from exactdocs.ingestion.models import (
     Credential,
     DeployKey,
     ImportSource,
-    JobKind,
     NewLibrary,
     PathSelection,
     RemoteRef,
@@ -64,6 +67,55 @@ def test_a_token_and_a_key_are_validated_and_never_shown() -> None:
     for bad in ("", "not a key", KEY.replace("OPENSSH", "ENCRYPTED PRIVATE KEY", 1)):
         with pytest.raises(InvalidCredentialError):
             DeployKey(private_key=bad)
+
+
+async def _keygen(tmp_path: Path, name: str, *args: str) -> str:
+    """A throwaway private key made by the real ssh-keygen."""
+    keygen = shutil.which("ssh-keygen")
+    if keygen is None:
+        pytest.skip("needs OpenSSH's ssh-keygen")
+    key = tmp_path / name
+    process = await asyncio.create_subprocess_exec(
+        keygen, "-q", "-f", str(key), *args, stdin=asyncio.subprocess.DEVNULL
+    )
+    assert await process.wait() == 0
+    return key.read_text(encoding="ascii")
+
+
+@pytest.mark.parametrize(
+    ("args", "passphrase"),
+    [
+        (("-t", "ed25519", "-N", ""), False),
+        (("-t", "ed25519", "-N", "pass phrase"), True),
+        (("-t", "rsa", "-b", "2048", "-m", "PEM", "-N", ""), False),
+        (("-t", "rsa", "-b", "2048", "-m", "PEM", "-N", "pass phrase"), True),
+        (("-t", "ecdsa", "-m", "PKCS8", "-N", ""), False),
+        (("-t", "ecdsa", "-m", "PKCS8", "-N", "pass phrase"), True),
+    ],
+)
+async def test_a_deploy_key_with_a_passphrase_is_refused_with_words_that_say_so(
+    tmp_path: Path, args: tuple[str, ...], passphrase: bool
+) -> None:
+    key = await _keygen(tmp_path, "key", *args)
+
+    if not passphrase:
+        assert DeployKey(private_key=key).private_key == key
+        return
+    with pytest.raises(InvalidCredentialError, match="has a passphrase") as raised:
+        DeployKey(private_key=key)
+    body = key.splitlines()[2]
+    assert body not in str(raised.value)
+
+
+def test_a_deploy_key_sent_on_one_line_is_refused_naming_the_lost_line_breaks() -> None:
+    flat = KEY.replace("\n", "")
+
+    with pytest.raises(InvalidCredentialError, match="lost its line breaks") as raised:
+        DeployKey(private_key=flat)
+
+    assert "AAAA" not in str(raised.value)
+    with pytest.raises(InvalidCredentialError, match="OpenSSH or PEM"):
+        DeployKey(private_key="-----BEGIN OPENSSH PRIVATE KEY-----AAAA")  # no END: not a key
 
 
 @pytest.mark.parametrize(
@@ -162,7 +214,7 @@ def build(
         remote=remote,
         library_ids=catalog,
         libraries=catalog,
-        sources=InMemoryLibrarySources({"/acme/orders": source}),
+        sources=InMemoryLibrarySources(sources={"/acme/orders": source}),
         vault=vault,
         removals=NoRemovals(),
         index=NoIndex(),
@@ -237,7 +289,7 @@ async def test_check_offers_the_credential_and_reports_the_ssh_host_key() -> Non
 
 async def test_adding_a_version_uses_the_stored_credential() -> None:
     remote = FakeRemote()
-    vault = InMemoryCredentialVault({"/acme/orders": AccessToken(token=TOKEN)})
+    vault = InMemoryCredentialVault(credentials={"/acme/orders": AccessToken(token=TOKEN)})
 
     await build(remote, vault).add_version(AddVersionCommand(library="/acme/orders", ref="main"))
 
@@ -258,7 +310,7 @@ async def test_adding_a_version_with_an_unreadable_credential_says_credentials_r
 
 async def test_sending_the_credential_again_replaces_the_stored_one() -> None:
     remote = FakeRemote()
-    vault = InMemoryCredentialVault({"/acme/orders": AccessToken(token="old-" + TOKEN)})
+    vault = InMemoryCredentialVault(credentials={"/acme/orders": AccessToken(token="old-" + TOKEN)})
     command = AddVersionCommand(
         library="/acme/orders", ref="main", credential=AccessTokenIn(kind="token", token=TOKEN)
     )
@@ -271,7 +323,7 @@ async def test_sending_the_credential_again_replaces_the_stored_one() -> None:
 
 async def test_a_rejected_new_credential_does_not_replace_the_stored_one() -> None:
     old = AccessToken(token="old-" + TOKEN)
-    vault = InMemoryCredentialVault({"/acme/orders": old})
+    vault = InMemoryCredentialVault(credentials={"/acme/orders": old})
     command = AddVersionCommand(
         library="/acme/orders", ref="main", credential=AccessTokenIn(kind="token", token=TOKEN)
     )
@@ -283,7 +335,7 @@ async def test_a_rejected_new_credential_does_not_replace_the_stored_one() -> No
 
 
 async def test_re_adding_a_library_without_a_credential_forgets_the_old_one() -> None:
-    vault = InMemoryCredentialVault({"/acme/orders": AccessToken(token="old-" + TOKEN)})
+    vault = InMemoryCredentialVault(credentials={"/acme/orders": AccessToken(token="old-" + TOKEN)})
 
     await build(FakeRemote(), vault).add_library(
         AddLibraryCommand(url="https://other.example.com/acme/orders")

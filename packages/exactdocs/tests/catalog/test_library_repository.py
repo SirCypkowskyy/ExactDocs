@@ -5,8 +5,8 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import text
 
+from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.memory import InMemoryLibraryRepository
@@ -67,14 +67,16 @@ LEDGER = Library(
 )
 
 
-@pytest.fixture(params=["memory", "sqlite"])
+@pytest.fixture(params=["memory", *SQL_BACKENDS])
 async def repository(request: pytest.FixtureRequest) -> AsyncIterator[LibraryRepository]:
     if request.param == "memory":
         yield InMemoryLibraryRepository()
         return
+    if request.param == "postgres":
+        request.getfixturevalue("on_postgres")
     container = Container.build(Settings())
-    async with container.running():
-        yield SqliteLibraryRepository(container.engine)
+    async with container.running(jobs=False):
+        yield SqliteLibraryRepository(engine=container.engine)
 
 
 async def test_starts_empty(repository: LibraryRepository) -> None:
@@ -133,20 +135,43 @@ async def test_a_library_without_versions_is_kept(repository: LibraryRepository)
     assert await repository.get(LEDGER.id) == LEDGER
 
 
-async def test_sqlite_keeps_a_pinned_version_when_the_library_is_saved_again() -> None:
-    # LIB-10 (MVP-2) will own `pinned_version`; until then saving must not clobber the column.
-    container = Container.build(Settings())
-    async with container.running():
-        repository = SqliteLibraryRepository(container.engine)
-        await repository.save(PAYMENTS)
-        async with container.engine.begin() as connection:
-            await connection.execute(text("UPDATE catalog_libraries SET pinned_version = 'v1.4.0'"))
+async def test_a_pin_names_an_imported_version_and_survives_a_save(
+    repository: LibraryRepository,
+) -> None:
+    await repository.save(PAYMENTS)
 
-        await repository.save(replace(PAYMENTS, title="Renamed"))
+    assert await repository.pin_default(PAYMENTS.id, VersionRef("main"))
+    await repository.save(replace(PAYMENTS, title="Renamed"))  # from a read before the pin
 
-        async with container.engine.connect() as connection:
-            pinned = await connection.execute(text("SELECT pinned_version FROM catalog_libraries"))
-            assert pinned.scalar_one() == "v1.4.0"
+    saved = await repository.get(PAYMENTS.id)
+    assert saved is not None
+    assert (saved.title, saved.pinned_version) == ("Renamed", VersionRef("main"))
+    assert saved.default_version() == version("main", RefKind.BRANCH, "b1")
+    assert await repository.list_all() == (saved,)
+
+
+async def test_unpinning_clears_the_pin(repository: LibraryRepository) -> None:
+    await repository.save(PAYMENTS)
+    await repository.pin_default(PAYMENTS.id, VersionRef("main"))
+
+    assert await repository.pin_default(PAYMENTS.id, None)
+
+    saved = await repository.get(PAYMENTS.id)
+    assert saved is not None
+    assert saved.pinned_version is None
+
+
+async def test_a_pin_on_a_version_or_library_that_is_not_there_writes_nothing(
+    repository: LibraryRepository,
+) -> None:
+    await repository.save(PAYMENTS)
+
+    assert not await repository.pin_default(PAYMENTS.id, VersionRef("v9.9.9"))
+    assert not await repository.pin_default(PAYMENTS.id, VersionRef("MAIN"))  # case-sensitive
+    assert not await repository.pin_default(LEDGER.id, None)
+
+    assert await repository.get(PAYMENTS.id) == PAYMENTS
+    assert await repository.get(LEDGER.id) is None
 
 
 async def test_add_refuses_a_taken_id_and_leaves_the_first_library_alone(
@@ -219,11 +244,53 @@ async def test_set_text_changes_only_the_given_fields_and_marks_them(
     assert await repository.get(LibraryId("/x/y")) is None
 
 
+async def test_set_settings_replaces_only_the_settings(repository: LibraryRepository) -> None:
+    await repository.save(PAYMENTS)
+    await repository.pin_default(PAYMENTS.id, VersionRef("main"))
+    settings = LibrarySettings(
+        include_paths=("guide/",),
+        tag_rules=(TagRule(pattern="guide/**", tag="guide"),),
+        chunking=PAYMENTS.settings.chunking,
+    )
+
+    await repository.set_settings(PAYMENTS.id, settings)
+    await repository.set_settings(LibraryId("/x/y"), settings)
+
+    assert await repository.get(PAYMENTS.id) == replace(
+        PAYMENTS, settings=settings, pinned_version=VersionRef("main")
+    )
+    assert await repository.get(LibraryId("/x/y")) is None
+
+
 async def test_follow_readme_keeps_edited_fields(repository: LibraryRepository) -> None:
     await repository.save(replace(PAYMENTS, title_edited=True, description_edited=False))
 
-    await repository.follow_readme(PAYMENTS.id, title="README", description="README text")
+    await repository.follow_readme(
+        PAYMENTS.id, title="README", description="README text", rules=["Use v2 client"]
+    )
 
     assert await repository.get(PAYMENTS.id) == replace(
-        PAYMENTS, title_edited=True, description="README text", description_edited=False
+        PAYMENTS,
+        title_edited=True,
+        description="README text",
+        description_edited=False,
+        rules=("Use v2 client",),
     )
+
+
+async def test_rules_are_written_only_by_follow_readme(repository: LibraryRepository) -> None:
+    await repository.save(PAYMENTS)
+    await repository.follow_readme(
+        PAYMENTS.id, title="T", description="D", rules=["Use v2 client", "Pin the SDK"]
+    )
+
+    # A save from a copy read before the rules arrived does not undo them.
+    await repository.save(replace(PAYMENTS, title="T", description="D"))
+    kept = await repository.get(PAYMENTS.id)
+    await repository.follow_readme(PAYMENTS.id, title="T", description="D", rules=[])
+    cleared = await repository.get(PAYMENTS.id)
+
+    assert kept is not None
+    assert kept.rules == ("Use v2 client", "Pin the SDK")
+    assert cleared is not None
+    assert cleared.rules == ()

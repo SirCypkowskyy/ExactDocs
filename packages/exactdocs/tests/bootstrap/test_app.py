@@ -17,6 +17,7 @@ from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
 from exactdocs.catalog.dtos import LibrarySummary
 from exactdocs.catalog.models import HostKind, Library, LibraryId, RefKind, Version, VersionRef
+from exactdocs.retrieval.constants import FORMAT
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")
 
@@ -57,6 +58,26 @@ async def test_health_reports_the_schema_revision(client: httpx.AsyncClient) -> 
     response = await client.get("/api/health")
 
     assert response.json()["schema_revision"] == alembic_head()
+
+
+async def test_health_reports_the_search_index_format(client: httpx.AsyncClient) -> None:
+    body = (await client.get("/api/health")).json()
+
+    assert (body["search_index_format"], body["reindex_required"]) == (FORMAT, False)
+    assert body["search_engine"] == "fts5"
+
+
+async def test_health_stays_up_without_a_recorded_index_format(
+    client: httpx.AsyncClient, container: Container
+) -> None:
+    async with container.engine.begin() as connection:
+        await connection.exec_driver_sql("DELETE FROM retrieval_search_format")
+
+    response = await client.get("/api/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["search_index_format"], body["reindex_required"]) == (None, True)
 
 
 async def test_lists_demo_libraries(client: httpx.AsyncClient) -> None:
@@ -113,7 +134,12 @@ async def test_a_library_is_shown_with_its_default_version(client: httpx.AsyncCl
         "v1.3.0": False,
         "v1.4.0": True,
     }
-    assert body["settings"]["chunking"] == {"split_level": 6, "min_chars": 0, "max_chars": None}
+    assert body["settings"]["chunking"] == {
+        "split_level": 6,
+        "min_chars": 0,
+        "max_chars": None,
+        "chunker": "markdown",
+    }
 
 
 @pytest.mark.parametrize("ref", ["v1.3.0", "v1.4.0", "main"])
@@ -127,7 +153,7 @@ async def test_a_version_is_addressed_by_its_ref(client: httpx.AsyncClient, ref:
 async def test_the_ref_is_everything_after_versions_even_with_slashes_or_a_short_sha(
     client: httpx.AsyncClient, container: Container
 ) -> None:
-    repository = SqliteLibraryRepository(container.engine)
+    repository = SqliteLibraryRepository(engine=container.engine)
     payments = await repository.get(LibraryId("/acme/payments"))
     assert payments is not None
     imported_at = datetime(2026, 11, 4, tzinfo=UTC)
@@ -227,8 +253,10 @@ async def test_mcp_exposes_read_only_tools(container: Container) -> None:
         "list_libraries",
         "list_articles",
         "search_docs",
+        "search_all_docs",
         "read_article",
         "read_chunk",
+        "article_outline",
         "resolve-library-id",
         "query-docs",
     }
@@ -287,8 +315,22 @@ def test_settings_defaults_are_local_and_private(tmp_path_factory: pytest.TempPa
     )
 
 
-def test_unknown_host_is_rejected_app_wide(localhost_client: TestClient) -> None:
-    response = localhost_client.get("/api/health", headers={"host": "evil.example"})
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/v1/openapi.json"),
+        ("GET", "/mcp"),
+        ("GET", "/"),
+        # Only exact GET/HEAD requests on the probe paths skip the check (test_probes.py).
+        ("POST", "/healthz"),
+        ("GET", "/healthz/"),
+        ("GET", "/api/health/x"),
+    ],
+)
+def test_unknown_host_is_rejected_app_wide(
+    localhost_client: TestClient, method: str, path: str
+) -> None:
+    response = localhost_client.request(method, path, headers={"host": "evil.example"})
 
     assert response.status_code == 400
 
@@ -384,3 +426,22 @@ async def test_mcp_search_accepts_a_blank_ref_as_the_default_version(container: 
         )
 
     assert "not_found" in str(result.content)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"query": ""},
+        {"query": "x" * 1001},
+        {"query": "x", "limit": 51},
+        {"query": "x", "library": "react"},
+    ],
+)
+async def test_mcp_search_all_input_is_capped_and_the_library_shape_checked(
+    container: Container, arguments: dict[str, Any]
+) -> None:
+    async with container.running(), Client(build_mcp(container)) as mcp:
+        result = await mcp.call_tool("search_all_docs", arguments, raise_on_error=False)
+
+    assert result.is_error
+    assert "not_found" not in str(result.content)

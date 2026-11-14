@@ -4,20 +4,32 @@ import pytest
 
 from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
+    CatalogDefaultVersions,
+    CatalogImportedTags,
     CatalogLibraries,
     CatalogLibraryIds,
+    CatalogLibrarySettings,
+    CatalogLibrarySources,
     CatalogSearchableVersions,
+    CatalogStoredArticles,
+    CatalogVersionCopier,
 )
 from exactdocs.catalog.adapters.driven.memory import (
+    InMemoryImportedTags,
     InMemoryLibraryRepository,
+    InMemoryManifestCopier,
     InMemoryManifestRepository,
+    InMemoryStoredArticles,
 )
 from exactdocs.catalog.dtos import (
     ActivateManifestCommand,
     ArticleIn,
+    GetArticleQuery,
+    GetLibraryQuery,
     GetManifestStatesQuery,
     ManifestStates,
     StoreManifestCommand,
+    TagOrigin,
 )
 from exactdocs.catalog.models import (
     HostKind,
@@ -25,10 +37,26 @@ from exactdocs.catalog.models import (
     LibraryId,
     RefKind,
     Version,
+    VersionOrigin,
     VersionRef,
 )
 from exactdocs.catalog.module import CatalogModule
-from exactdocs.ingestion.models import ProposedId
+from exactdocs.ingestion.constants import PARSER_VERSION
+from exactdocs.ingestion.errors import StoredTextOutdatedError
+from exactdocs.ingestion.models import (
+    ChunkingConfig,
+    CopiedArticle,
+    ImportedRef,
+    ImportedTags,
+    PathSelection,
+    ProposedId,
+    StoredArticle,
+    StoredArticleTags,
+    StoredTags,
+    TagRule,
+)
+from exactdocs.ingestion.models import RefKind as IngestionRefKind
+from exactdocs.ingestion.models import VersionOrigin as IngestionOrigin
 from exactdocs.retrieval.models import DocTarget, ManifestStatus, SourceHost
 from exactdocs_kernel import MAX_LIMIT
 
@@ -56,14 +84,26 @@ PAYMENTS = Library(
 )
 _LIBRARIES = InMemoryLibraryRepository.of([PAYMENTS])
 CATALOG = CatalogModule.build(
-    repository=_LIBRARIES, manifests=InMemoryManifestRepository(_LIBRARIES)
+    repository=_LIBRARIES,
+    manifests=(written := InMemoryManifestRepository(libraries=_LIBRARIES)),
+    imported_tags=InMemoryImportedTags(repository=written),
+    copier=InMemoryManifestCopier(repository=written),
+    stored_articles=InMemoryStoredArticles(repository=written),
 )
-ACTIVE = CatalogActiveManifests(CATALOG.get_active_manifest, CATALOG.get_manifest_states)
+ACTIVE = CatalogActiveManifests(
+    get_active_manifest=CATALOG.get_active_manifest, get_manifest_states=CATALOG.get_manifest_states
+)
 
 
 _TAKEN = InMemoryLibraryRepository.of([PAYMENTS])
 LIBRARY_IDS = CatalogLibraryIds(
-    CatalogModule.build(repository=_TAKEN, manifests=InMemoryManifestRepository(_TAKEN)).get_library
+    get_library=CatalogModule.build(
+        repository=_TAKEN,
+        manifests=(written := InMemoryManifestRepository(libraries=_TAKEN)),
+        imported_tags=InMemoryImportedTags(repository=written),
+        copier=InMemoryManifestCopier(repository=written),
+        stored_articles=InMemoryStoredArticles(repository=written),
+    ).get_library
 )
 
 
@@ -120,7 +160,9 @@ async def test_a_state_the_catalog_adds_later_maps_to_other_so_it_is_kept() -> N
         states = {"m1": "failed", "m2": "active"}  # "failed" does not exist yet
         return ManifestStates.model_construct(states=states)
 
-    bridge = CatalogActiveManifests(CATALOG.get_active_manifest, newer_catalog)
+    bridge = CatalogActiveManifests(
+        get_active_manifest=CATALOG.get_active_manifest, get_manifest_states=newer_catalog
+    )
 
     assert await bridge.statuses(["m1", "m2"]) == {
         "m1": ManifestStatus.OTHER,
@@ -128,7 +170,9 @@ async def test_a_state_the_catalog_adds_later_maps_to_other_so_it_is_kept() -> N
     }
 
 
-SEARCHABLE = CatalogSearchableVersions(CATALOG.get_library, CATALOG.get_active_manifest)
+SEARCHABLE = CatalogSearchableVersions(
+    get_library=CATALOG.get_library, get_active_manifest=CATALOG.get_active_manifest
+)
 
 
 async def test_a_searchable_version_needs_an_active_manifest_and_names_its_source() -> None:
@@ -165,12 +209,321 @@ async def test_the_library_bridge_reads_every_page_and_skips_libraries_without_a
     ]
     repository = InMemoryLibraryRepository.of(many)
     catalog = CatalogModule.build(
-        repository=repository, manifests=InMemoryManifestRepository(repository)
+        repository=repository,
+        manifests=(written := InMemoryManifestRepository(libraries=repository)),
+        imported_tags=InMemoryImportedTags(repository=written),
+        copier=InMemoryManifestCopier(repository=written),
+        stored_articles=InMemoryStoredArticles(repository=written),
     )
 
-    found = await CatalogLibraries(catalog.list_libraries).all()
+    found = await CatalogLibraries(
+        list_libraries=catalog.list_libraries, get_library=catalog.get_library
+    ).all()
 
     assert len(found) == MAX_LIMIT + 4  # lib-000 has no version
     assert found[0].id == "/acme/lib-001"
     assert (found[0].title, found[0].default_version) == ("Lib 1", "v1.4.0")
     assert found[0].version_count == len(PAYMENTS.versions)
+
+
+@pytest.mark.parametrize(
+    ("asked", "found"),
+    [("/acme/payments", "/acme/payments"), ("/ACME/Payments", "/acme/payments"), ("/acme/x", None)],
+)
+async def test_the_library_bridge_spells_an_id_as_the_catalog_does(
+    asked: str, found: str | None
+) -> None:
+    repository = InMemoryLibraryRepository.of([PAYMENTS])
+    catalog = CatalogModule.build(
+        repository=repository,
+        manifests=(written := InMemoryManifestRepository(libraries=repository)),
+        imported_tags=InMemoryImportedTags(repository=written),
+        copier=InMemoryManifestCopier(repository=written),
+        stored_articles=InMemoryStoredArticles(repository=written),
+    )
+    libraries = CatalogLibraries(
+        list_libraries=catalog.list_libraries, get_library=catalog.get_library
+    )
+
+    assert await libraries.canonical_id(asked) == found
+
+
+async def test_default_versions_come_in_one_call_with_active_manifests_only() -> None:
+    other = Library(
+        id=LibraryId("/acme/other"),
+        title="Other",
+        source_url="https://gitlab.com/acme/other",
+        host=HostKind.GITLAB,
+        versions=PAYMENTS.versions,
+    )
+    repository = InMemoryLibraryRepository.of([PAYMENTS, other])
+    catalog = CatalogModule.build(
+        repository=repository,
+        manifests=(written := InMemoryManifestRepository(libraries=repository)),
+        imported_tags=InMemoryImportedTags(repository=written),
+        copier=InMemoryManifestCopier(repository=written),
+        stored_articles=InMemoryStoredArticles(repository=written),
+    )
+    stored = await catalog.store_manifest(
+        StoreManifestCommand(
+            library="/acme/other",
+            ref="v1.4.0",
+            kind=RefKind.TAG,
+            commit_sha="d" * 40,
+            articles=[
+                ArticleIn(
+                    path="a.md",
+                    blob_sha="e" * 40,
+                    content_version=1,
+                    title="A",
+                    tags=[],
+                    front_matter={},
+                    content="x",
+                )
+            ],
+        )
+    )
+    await catalog.activate_manifest(ActivateManifestCommand(manifest_id=stored.manifest_id))
+
+    found = await CatalogDefaultVersions(
+        list_default_manifests=catalog.list_default_manifests
+    ).all()
+
+    # /acme/payments has a default version (v1.4.0) but nothing active: it is left out.
+    assert [(v.library, v.version, v.manifest_id) for v in found] == [
+        ("/acme/other", "v1.4.0", stored.manifest_id)
+    ]
+    assert (found[0].commit_sha, found[0].host) == ("d" * 40, SourceHost.GITLAB)
+    assert found[0].repository_url == "https://gitlab.com/acme/other"
+
+
+async def test_library_sources_report_each_versions_origin_and_the_pinned_default() -> None:
+    at = datetime(2026, 11, 4, tzinfo=UTC)
+    library = Library(
+        id=LibraryId("/acme/ledger"),
+        title="Ledger",
+        source_url="https://github.com/acme/ledger",
+        host=HostKind.GITHUB,
+        versions=frozenset(
+            {
+                Version(
+                    ref=VersionRef(ref),
+                    kind=RefKind.TAG,
+                    commit_sha=sha * 40,
+                    imported_at=at,
+                    origin=VersionOrigin.AUTO,
+                )
+                for ref, sha in (("v1.3.0", "a"), ("v1.4.0", "b"))
+            }
+        ),
+        pinned_version=VersionRef("v1.3.0"),
+    )
+    repository = InMemoryLibraryRepository.of([library])
+    catalog = CatalogModule.build(
+        repository=repository,
+        manifests=(written := InMemoryManifestRepository(libraries=repository)),
+        imported_tags=InMemoryImportedTags(repository=written),
+        copier=InMemoryManifestCopier(repository=written),
+        stored_articles=InMemoryStoredArticles(repository=written),
+    )
+    sources = CatalogLibrarySources(
+        get_library=catalog.get_library, list_renames=catalog.list_renames
+    )
+
+    found = sorted(await sources.imported_versions("/acme/ledger"), key=lambda v: v.ref)
+
+    assert found == [
+        ImportedRef(
+            ref="v1.3.0",
+            kind=IngestionRefKind.TAG,
+            commit_sha="a" * 40,
+            origin=IngestionOrigin.AUTO,
+            pinned=True,
+        ),
+        ImportedRef(
+            ref="v1.4.0",
+            kind=IngestionRefKind.TAG,
+            commit_sha="b" * 40,
+            origin=IngestionOrigin.AUTO,
+            pinned=False,
+        ),
+    ]
+
+
+def _tagging_catalog() -> CatalogModule:
+    libraries = InMemoryLibraryRepository.of([PAYMENTS])
+    manifests = InMemoryManifestRepository(libraries=libraries)
+    return CatalogModule.build(
+        repository=libraries,
+        manifests=manifests,
+        imported_tags=InMemoryImportedTags(repository=manifests),
+        copier=InMemoryManifestCopier(repository=manifests),
+        stored_articles=InMemoryStoredArticles(repository=manifests),
+    )
+
+
+async def test_imported_tags_are_read_and_written_through_the_catalog() -> None:
+    catalog = _tagging_catalog()
+    bridge = CatalogImportedTags(
+        get_version_tags=catalog.get_version_tags, set_imported_tags_of=catalog.set_imported_tags
+    )
+    stored = await catalog.store_manifest(
+        StoreManifestCommand(
+            library="/acme/payments",
+            ref="v1.4.0",
+            kind=RefKind.TAG,
+            commit_sha="a" * 40,
+            articles=[
+                ArticleIn(
+                    path="a.md",
+                    blob_sha="1" * 40,
+                    content_version=1,
+                    title="A",
+                    tags=["x"],
+                    front_matter={"tags": ["x"]},
+                    content="a",
+                )
+            ],
+        )
+    )
+    assert await bridge.stored_tags("/acme/payments", "v1.4.0") is None  # nothing active yet
+    await catalog.activate_manifest(ActivateManifestCommand(manifest_id=stored.manifest_id))
+
+    found = await bridge.stored_tags("/acme/payments", "v1.4.0")
+    written = await bridge.set_imported_tags(
+        stored.manifest_id,
+        {"a.md": ImportedTags(tags=("api", "x"), front_matter=("x",), rules=("api",))},
+    )
+    read = await catalog.get_article(
+        GetArticleQuery(library="/acme/payments", ref="v1.4.0", path="a.md")
+    )
+
+    assert found == StoredTags(
+        manifest_id=stored.manifest_id,
+        articles=(StoredArticleTags(path="a.md", front_matter={"tags": ["x"]}, tags=("x",)),),
+    )
+    assert written == {"a.md": ("api", "x")}
+    assert [(o.tag, o.origins) for o in read.tag_origins] == [
+        ("api", [TagOrigin.PATH_RULE]),
+        ("x", [TagOrigin.FRONT_MATTER]),
+    ]
+    assert await bridge.stored_tags("/acme/payments", "nope") is None
+    assert await bridge.stored_tags("/acme/nope", "v1.4.0") is None
+
+
+async def test_settings_are_stored_on_the_catalog_library() -> None:
+    catalog = _tagging_catalog()
+    bridge = CatalogLibrarySettings(set_library_settings=catalog.set_library_settings)
+
+    await bridge.save(
+        "/acme/payments",
+        PathSelection.of(["docs/"], ["docs/old/"]),
+        TagRule.many([("docs/api/**", "api")]),
+        ChunkingConfig(split_depth=2, min_chars=10, max_chars=900),
+    )
+
+    settings = (await catalog.get_library(GetLibraryQuery(id="/acme/payments"))).settings
+    assert (settings.include_paths, settings.exclude_paths) == (["docs/"], ["docs/old/"])
+    assert [(r.pattern, r.tag) for r in settings.tag_rules] == [("docs/api/**", "api")]
+    assert settings.chunking.model_dump() == {
+        "split_level": 2,
+        "min_chars": 10,
+        "max_chars": 900,
+        "chunker": "markdown",
+    }
+
+
+async def test_a_version_is_copied_for_re_chunking_through_the_catalog() -> None:
+    catalog = _tagging_catalog()
+    bridge = CatalogVersionCopier(copy_manifest=catalog.copy_manifest)
+    stored = await catalog.store_manifest(
+        StoreManifestCommand(
+            library="/acme/payments",
+            ref="v1.4.0",
+            kind=RefKind.TAG,
+            commit_sha="a" * 40,
+            articles=[
+                ArticleIn(
+                    path="a.md",
+                    blob_sha="1" * 40,
+                    content_version=PARSER_VERSION,
+                    title="A",
+                    tags=["x"],
+                    front_matter={"tags": ["x"]},
+                    content="# A",
+                )
+            ],
+        )
+    )
+    await catalog.activate_manifest(ActivateManifestCommand(manifest_id=stored.manifest_id))
+
+    copied = await bridge.copy("/acme/payments", "v1.4.0", content_version=PARSER_VERSION)
+
+    assert copied is not None
+    assert copied.manifest_id != stored.manifest_id
+    assert (copied.kind, copied.commit_sha) == (IngestionRefKind.TAG, "a" * 40)
+    assert copied.articles == (
+        CopiedArticle(
+            path="a.md",
+            blob_sha="1" * 40,
+            title="A",
+            front_matter={"tags": ["x"]},
+            tags=("x",),
+            content="# A",
+        ),
+    )
+    with pytest.raises(StoredTextOutdatedError):
+        await bridge.copy("/acme/payments", "v1.4.0", content_version=PARSER_VERSION + 1)
+    assert await bridge.copy("/acme/payments", "nope", content_version=PARSER_VERSION) is None
+    assert await bridge.copy("/acme/nope", "v1.4.0", content_version=PARSER_VERSION) is None
+
+
+async def test_the_chunking_settings_reach_the_importer() -> None:
+    catalog = _tagging_catalog()
+    await CatalogLibrarySettings(set_library_settings=catalog.set_library_settings).save(
+        "/acme/payments",
+        PathSelection.of(["docs/"]),
+        (),
+        ChunkingConfig(split_depth=3, min_chars=5),
+    )
+
+    source = await CatalogLibrarySources(
+        get_library=catalog.get_library, list_renames=catalog.list_renames
+    ).get("/acme/payments")
+
+    assert source.chunking == ChunkingConfig(split_depth=3, min_chars=5)
+
+
+async def test_stored_articles_are_found_through_the_catalog_by_parser_version() -> None:
+    catalog = _tagging_catalog()
+    bridge = CatalogStoredArticles(find_stored_articles=catalog.find_stored_articles)
+    await catalog.store_manifest(
+        StoreManifestCommand(
+            library="/acme/payments",
+            ref="v1.4.0",
+            kind=RefKind.TAG,
+            commit_sha="a" * 40,
+            articles=[
+                ArticleIn(
+                    path="a.md",
+                    blob_sha="1" * 40,
+                    content_version=PARSER_VERSION,
+                    title="A",
+                    tags=["api", "x"],
+                    front_matter={"tags": ["x"]},
+                    content="# A\n",
+                )
+            ],
+        )
+    )
+    files = [("a.md", "1" * 40), ("b.md", "2" * 40)]
+
+    found = await bridge.find("/acme/payments", "v1.4.0", PARSER_VERSION, files)
+
+    assert found == [
+        StoredArticle(
+            path="a.md", blob_sha="1" * 40, title="A", front_matter={"tags": ["x"]}, content="# A\n"
+        )
+    ]
+    assert await bridge.find("/acme/payments", "v1.4.0", PARSER_VERSION + 1, files) == []
+    assert await bridge.find("/acme/unknown", "v1.4.0", PARSER_VERSION, files) == []

@@ -14,11 +14,23 @@ class ApiTokenVerifier(TokenVerifier):
     """
 
     def __init__(self, *, identify_token: IdentifyToken) -> None:
+        """Create the verifier.
+
+        Args:
+            identify_token: The driving port that resolves an API token to its account.
+        """
         super().__init__()
         self._identify_token = identify_token
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        """Return the access of the token's account, or ``None`` (a 401) for a bad token."""
+        """Return the access of the token's account, or ``None`` (a 401) for a bad token.
+
+        Args:
+            token: The bearer token of the request.
+
+        Returns:
+            The access of the token's account, or ``None`` when the token is no good.
+        """
         try:
             account = await self._identify_token(token)
         except InvalidTokenError:

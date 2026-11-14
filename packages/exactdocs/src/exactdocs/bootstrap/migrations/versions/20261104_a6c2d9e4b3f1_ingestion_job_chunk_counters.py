@@ -25,6 +25,9 @@ def upgrade() -> None:
         ["library", "version"],
         unique=True,
         sqlite_where=sa.text("state IN ('queued', 'running') AND kind IN ('import', 'refresh')"),
+        postgresql_where=sa.text(
+            "state IN ('queued', 'running') AND kind IN ('import', 'refresh')"
+        ),
     )
 
 

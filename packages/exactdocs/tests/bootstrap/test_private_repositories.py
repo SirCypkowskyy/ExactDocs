@@ -10,13 +10,16 @@ import httpx
 import pytest
 from sqlalchemy import text
 
-from exactdocs.bootstrap.container import KNOWN_HOSTS_FILE, Container
+from exactdocs.bootstrap.constants import CREDENTIALS_KEY_PURPOSE as CREDENTIALS
+from exactdocs.bootstrap.constants import KEY_FILE, KNOWN_HOSTS_FILE
+from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
+from exactdocs.bootstrap.secret_box import FernetSecretBox
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.ingestion.adapters.driven.secret_box import KEY_FILE, FernetSecretBox
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteCredentialVault
+from exactdocs.ingestion.constants import REFRESH_JOB
 from exactdocs.ingestion.dtos import EnqueueJobCommand
-from exactdocs.ingestion.models import REFRESH_JOB, AccessToken, RefKind
+from exactdocs.ingestion.models import AccessToken, RefKind
 from fixture_repo import DocsRepo
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")
@@ -90,6 +93,12 @@ async def test_secrets_never_reach_logs_responses_or_the_database(
         url=docs_repo.private_url,
         credential={"kind": "ssh_key", "private_key": KEY},
     )
+    listed = await post("/api/v1/repositories/refs", url=docs_repo.private_url, credential=ok)
+    refused = await post(
+        "/api/v1/repositories/refs",
+        url=docs_repo.private_url,
+        credential={"kind": "token", "token": wrong},
+    )
     added = await post(
         "/api/v1/libraries",
         url=docs_repo.private_url,
@@ -110,6 +119,9 @@ async def test_secrets_never_reach_logs_responses_or_the_database(
     assert (insecure.status_code, insecure.json()["error"]) == (422, "invalid_credential")
     assert (wrong_kind.status_code, wrong_kind.json()["error"]) == (422, "invalid_credential")
     assert (added.status_code, job["state"]) == (201, "succeeded")
+    assert listed.status_code == 200
+    assert "v1.3.0" in [t["name"] for t in listed.json()["tags"]]
+    assert (refused.status_code, refused.json()["error"]) == (422, "repository_auth_required")
     secrets = (token, wrong, KEY_BODY)
     for secret in secrets:
         assert not any(secret in text for text in texts), secret
@@ -208,6 +220,22 @@ async def test_an_api_token_cannot_send_a_credential_but_may_add_public_docs(
     assert (await client.get("/api/v1/libraries/fixture/docs-repo")).status_code == 404
 
 
+async def test_a_key_sent_on_one_line_through_the_api_is_refused_saying_why(
+    client: httpx.AsyncClient,
+) -> None:
+    flat = await client.post(
+        "/api/v1/repositories/check",
+        json={
+            "url": "git@git.example.com:acme/x.git",
+            "credential": {"kind": "ssh_key", "private_key": KEY.replace("\n", "")},
+        },
+    )
+
+    assert (flat.status_code, flat.json()["error"]) == (422, "invalid_credential")
+    assert "lost its line breaks" in flat.json()["detail"]
+    assert KEY_BODY not in flat.text
+
+
 async def test_a_session_may_send_a_credential(
     client: httpx.AsyncClient, docs_repo: DocsRepo
 ) -> None:
@@ -257,7 +285,8 @@ async def test_a_credential_row_of_another_host_makes_the_import_fail_closed(
     assert (await _job(client, added.json()["job_id"]))["state"] == "succeeded"
     # a row from before the library moved: sealed for another host
     vault = SqliteCredentialVault(
-        container.engine, FernetSecretBox.from_file(container.settings.data_dir / KEY_FILE)
+        engine=container.engine,
+        box=FernetSecretBox.from_file(container.settings.data_dir / KEY_FILE, purpose=CREDENTIALS),
     )
     await vault.save(
         "/fixture/docs-repo", "https://elsewhere.example.com", AccessToken(token="t0ken")
@@ -301,3 +330,32 @@ async def test_syncing_and_refreshing_a_private_library_use_its_stored_token(
         )
     )
     assert (await _job(client, job.id))["state"] == "succeeded"
+
+
+async def test_previewing_a_private_repository_needs_a_session_and_the_token(
+    client: httpx.AsyncClient, docs_repo: DocsRepo
+) -> None:
+    created = await client.post("/api/v1/tokens", json={"name": "mcp client"})
+    bearer = {"Authorization": f"Bearer {created.json()['token']}"}
+    credential = {"kind": "token", "token": docs_repo.token}
+    body = {"url": docs_repo.private_url, "ref": "v1.4.0", "include_paths": ["docs/"]}
+
+    anonymous = await client.post("/api/v1/repositories/preview", json=body)
+    allowed = await client.post(
+        "/api/v1/repositories/preview", json={**body, "credential": credential}
+    )
+    async with httpx.AsyncClient(
+        transport=client._transport,  # ruff: ignore[private-member-access]
+        base_url="http://localhost",
+        headers=bearer,
+    ) as api:
+        by_token = await api.post(
+            "/api/v1/repositories/preview", json={**body, "credential": credential}
+        )
+
+    assert anonymous.status_code == 422
+    assert anonymous.json()["error"] == "repository_auth_required"
+    assert allowed.status_code == 200
+    assert "docs/guide/install.md" in allowed.json()["files"]
+    assert by_token.status_code == 401
+    assert docs_repo.token not in anonymous.text + allowed.text + by_token.text

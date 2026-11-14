@@ -9,8 +9,10 @@ import { LibrarySettingsPage } from "./index";
 import {
   changedFields,
   explainAddVersion,
+  explainReimport,
   explainRemove,
   explainSync,
+  failureWords,
   syncHeadline,
   validateDetails,
 } from "./model/settings";
@@ -65,10 +67,14 @@ interface Routes {
   patch?: (body: Record<string, unknown>) => Reply;
   addVersion?: (body: Record<string, unknown>) => Reply;
   sync?: () => Reply;
+  reimport?: (body: Record<string, unknown>) => Reply;
   removeVersion?: (ref: string) => Reply;
   removeLibrary?: () => Reply;
   /** Held until released: lets a test act while a DELETE is in flight. */
   gate?: Promise<unknown>;
+  /** The library has a stored token or key. */
+  private?: boolean;
+  refs?: () => Reply;
 }
 
 function serve(routes: Routes = {}) {
@@ -80,7 +86,12 @@ function serve(routes: Routes = {}) {
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
       calls.push({ method, url, body });
       const reply = (r: Reply) => Response.json(r.body, { status: r.status });
-      if (url.includes("/v1/repositories/refs")) return Response.json(REFS);
+      if (url.includes("/v1/repositories/refs")) {
+        return reply(routes.refs?.() ?? { status: 200, body: REFS });
+      }
+      if (url.endsWith("/access") && routes.private !== undefined) {
+        return Response.json({ private: routes.private });
+      }
       if (method === "PATCH") {
         return reply(routes.patch?.(body) ?? { status: 200, body: { ...library, ...body } });
       }
@@ -94,6 +105,21 @@ function serve(routes: Routes = {}) {
               ref_kind: "tag",
               commit_sha: SHA,
               job_id: "j9",
+            },
+          },
+        );
+      }
+      if (method === "POST" && url.endsWith("/versions/reimport")) {
+        return reply(
+          routes.reimport?.(body) ?? {
+            status: 202,
+            body: {
+              library_id: "/acme/payments",
+              ref: body.ref,
+              ref_kind: "tag",
+              previous_commit_sha: SHA,
+              commit_sha: SHA2,
+              job_id: "j11",
             },
           },
         );
@@ -149,6 +175,7 @@ const jobs = {
       job {jobId} for {label}
     </p>
   ),
+  Preview: () => null,
 };
 
 function renderPage(lib = library) {
@@ -170,7 +197,10 @@ function renderPage(lib = library) {
   return queryClient;
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("settings model", () => {
   it("validates the title and the description", () => {
@@ -210,10 +240,28 @@ describe("settings model", () => {
     expect(explainAddVersion(new TypeError("net"), "v1").message).toMatch(/Can't reach/);
     expect(explainSync(e(409, "version_importing")).message).toMatch(/still importing/);
     expect(explainSync(e(409, "version_importing")).tone).toBe("info");
-    expect(explainSync(e(422, "repository_unreachable")).tone).toBeUndefined();
+    expect(explainSync(e(422, "repo_unreachable")).tone).toBeUndefined();
+    expect(explainSync(e(422, "repo_unreachable")).message).toMatch(/couldn't be read/);
+    expect(explainSync(e(422, "auth_failed")).message).toMatch(/refused or can't be read/);
+    expect(explainSync(e(422, "auth_failed")).message).toMatch(/send the token or key again/);
+    expect(explainSync(e(422, "host_key_changed")).message).toMatch(/SSH host key .* changed/);
+    expect(explainSync(e(422, "host_key_changed")).message).not.toMatch(/deleted/);
+    expect(explainReimport(e(422, "not_a_tag")).message).toMatch(/branch is updated with Re-sync/);
+    expect(explainReimport(e(422, "host_key_changed")).message).toMatch(/SSH host key/);
+    expect(explainReimport(e(422, "repository_unreachable")).message).toMatch(/couldn't be read/);
+    expect(explainReimport(e(409, "version_importing")).final).toBeFalsy();
     expect(explainRemove(e(409, "import_in_progress"), "version v1").message).toMatch(
       /never cancels/,
     );
+  });
+
+  it("explains a failed version without guessing when its code is unknown", () => {
+    const v = (error_code: string | null) =>
+      ({ ref: "main", ref_kind: "branch", status: "failed", error_code }) as never;
+    expect(failureWords(v("ref_deleted"))).toMatch(/branch is gone/);
+    expect(failureWords(v("tag_moved"))).toMatch(/unless you confirm it/);
+    expect(failureWords(v(null))).toMatch(/^It could not be synced\./);
+    expect(failureWords(v("something_new"))).not.toMatch(/queued/);
   });
 
   it("headlines a re-sync", () => {
@@ -336,6 +384,74 @@ describe("adding a version", () => {
     await waitFor(() => expect(screen.getByLabelText("Version to import")).toHaveFocus());
   });
 
+  /**
+   * Holds animation frames until `run()`, so a focus request made a frame late can never land
+   * before the test has checked focus and moved it elsewhere.
+   */
+  function holdFrames() {
+    const held: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => held.push(cb));
+    return {
+      run: () => {
+        for (const cb of held.splice(0)) cb(performance.now());
+      },
+    };
+  }
+
+  it("does not pull focus away once the refusal is on screen", async () => {
+    const frames = holdFrames();
+    serve({ addVersion: () => failure(422, "unknown_ref") });
+    renderPage();
+    await userEvent.selectOptions(await open(), "tag:v1.3.0");
+    await userEvent.click(screen.getByRole("button", { name: "Add version" }));
+    await screen.findByText(/no branch, tag or commit/);
+    // Focus is where the refusal points as soon as the user can see it, not a frame later.
+    expect(screen.getByLabelText("Version to import")).toHaveFocus();
+    const elsewhere = screen.getByRole("button", { name: "Cancel" });
+    elsewhere.focus();
+    frames.run();
+    expect(elsewhere).toHaveFocus();
+  });
+
+  it("does not pull focus away once the missing choice is on screen", async () => {
+    const frames = holdFrames();
+    serve();
+    renderPage();
+    await open();
+    await userEvent.click(screen.getByRole("button", { name: "Add version" }));
+    await screen.findByText(/Choose a branch or tag from the list/);
+    expect(screen.getByLabelText("Version to import")).toHaveFocus();
+    const elsewhere = screen.getByRole("button", { name: "Cancel" });
+    elsewhere.focus();
+    frames.run();
+    expect(elsewhere).toHaveFocus();
+  });
+
+  it("focuses the typed ref as it appears and leaves focus alone after", async () => {
+    const frames = holdFrames();
+    serve();
+    renderPage();
+    await userEvent.selectOptions(await open(), "other");
+    expect(screen.getByLabelText("Branch, tag or commit")).toHaveFocus();
+    const elsewhere = screen.getByRole("button", { name: "Cancel" });
+    elsewhere.focus();
+    frames.run();
+    expect(elsewhere).toHaveFocus();
+  });
+
+  it("returns focus to the add button on cancel, and leaves it alone after", async () => {
+    const frames = holdFrames();
+    serve();
+    renderPage();
+    await open();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Add a version" })).toHaveFocus();
+    const elsewhere = screen.getByRole("button", { name: "Re-sync now" });
+    elsewhere.focus();
+    frames.run();
+    expect(elsewhere).toHaveFocus();
+  });
+
   it("keeps a typed ref when the list of branches cannot load", async () => {
     const calls = serve();
     const real = globalThis.fetch;
@@ -393,10 +509,73 @@ describe("re-sync", () => {
   });
 
   it("explains a branch that is gone", async () => {
-    serve({ sync: () => synced([v({ status: "failed" })]) });
+    serve({ sync: () => synced([v({ status: "failed", error_code: "ref_deleted" })]) });
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
     expect(await screen.findByText(/branch is gone from the repository/)).toBeInTheDocument();
+  });
+
+  const moved = {
+    ref: "v1.4.0",
+    ref_kind: "tag",
+    status: "failed",
+    commit_sha: SHA,
+    job_id: "f1",
+    error_code: "tag_moved",
+  };
+
+  it("explains a tag that moved, and that it is re-imported only when confirmed", async () => {
+    const calls = serve({ sync: () => synced([v(moved)], 200) });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
+    expect(await screen.findByText(/tag now points at another commit/)).toBeInTheDocument();
+    expect(screen.getByText(/not re-imported unless you confirm it/)).toBeInTheDocument();
+    expect(screen.getByText("v1.4.0")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Re-import the new commit of v1.4.0" }),
+    ).toBeInTheDocument();
+    expect(calls.some((c) => c.url.endsWith("/reimport"))).toBe(false);
+  });
+
+  it("re-imports a moved tag on confirmation and follows its job", async () => {
+    const calls = serve({ sync: () => synced([v(moved), v({ status: "up_to_date" })], 200) });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Re-import the new commit of v1.4.0" }),
+    );
+    expect(await screen.findByText("job j11 for v1.4.0")).toBeInTheDocument();
+    const sent = calls.find((c) => c.url.endsWith("/versions/reimport"));
+    expect(sent).toMatchObject({
+      method: "POST",
+      url: "/api/v1/libraries/acme/payments/versions/reimport",
+      body: { ref: "v1.4.0" },
+    });
+    // The error is over: the row is an update now, with the commits it moves between.
+    expect(screen.queryByText(/tag now points at another commit/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Re-import/ })).not.toBeInTheDocument();
+    expect(screen.getByText("1 version is updating.")).toBeInTheDocument();
+    const commits = (_: string, el: Element | null) =>
+      el?.tagName === "P" &&
+      el.textContent === `${SHA.slice(0, 7)}${SHA2.slice(0, 7)} (previous commit to new commit)`;
+    expect(screen.getByText(commits)).toBeInTheDocument();
+  });
+
+  it("explains a confirmation the server refuses, and keeps the row", async () => {
+    serve({
+      sync: () => synced([v(moved)], 200),
+      reimport: () => failure(409, "tag_not_moved"),
+    });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Re-import the new commit of v1.4.0" }),
+    );
+    const said = await screen.findByText(/nothing to re-import/);
+    expect(said.closest("p")).toHaveClass("bg-accent"); // not a mistake: neutral
+    expect(screen.getByText(/tag now points at another commit/)).toBeInTheDocument();
+    // Asking again would get the same answer.
+    expect(screen.queryByRole("button", { name: /Re-import/ })).not.toBeInTheDocument();
   });
 
   it("explains 409 and 422", async () => {
@@ -407,7 +586,7 @@ describe("re-sync", () => {
     // A wait state is neutral, not red.
     expect(wait.closest("p")).toHaveClass("bg-accent");
 
-    serve({ sync: () => failure(422, "repository_unreachable", "failed job j7: unreachable") });
+    serve({ sync: () => failure(422, "repo_unreachable", "failed job j7: unreachable") });
     await userEvent.click(screen.getByRole("button", { name: "Re-sync now" }));
     expect(await screen.findByText(/couldn't be read/)).toBeInTheDocument();
     // Job IDs mean nothing to a person: they are not shown.
@@ -603,5 +782,111 @@ describe("removal while a request is in flight", () => {
     expect(confirm).toHaveClass("aria-disabled:cursor-not-allowed");
     expect(confirm).not.toHaveClass("aria-disabled:cursor-progress");
     expect(within(dialog).getByLabelText(/Type main/)).toHaveClass("text-base");
+  });
+});
+
+describe("adding a version of a private library", () => {
+  const TOKEN = ["typed", "replacement", "value"].join("-");
+  const cached = (queryClient: QueryClient) =>
+    JSON.stringify([
+      queryClient
+        .getQueryCache()
+        .getAll()
+        .map((q) => [q.queryKey, q.state.data]),
+      queryClient
+        .getMutationCache()
+        .getAll()
+        .map((m) => [m.state.variables, m.state.data]),
+    ]);
+
+  it("asks for the token again when the stored one can't be read, and sends it once", async () => {
+    let first = true;
+    const calls = serve({
+      addVersion: (body) => {
+        if (first) {
+          first = false;
+          return failure(422, "credentials_required");
+        }
+        return {
+          status: 202,
+          body: {
+            library_id: "/acme/payments",
+            ref: body.ref,
+            ref_kind: "tag",
+            commit_sha: SHA,
+            job_id: "j9",
+          },
+        };
+      },
+    });
+    const queryClient = renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Add a version" }));
+    await userEvent.selectOptions(await screen.findByLabelText("Version to import"), "tag:v1.3.0");
+    await userEvent.click(screen.getByRole("button", { name: "Add version" }));
+
+    const box = await screen.findByLabelText("Access token");
+    expect(box).toHaveAttribute("type", "password");
+    expect(await screen.findByText(/can't be read any more/)).toBeInTheDocument();
+    await waitFor(() => expect(box).toHaveFocus());
+    await userEvent.type(box, TOKEN);
+    expect(box.getAttribute("value")).toBeNull();
+    expect(document.documentElement.outerHTML).not.toContain(TOKEN);
+    await userEvent.click(screen.getByRole("button", { name: "Add version" }));
+
+    expect(await screen.findByText("Importing v1.3.0")).toBeInTheDocument();
+    const posts = calls.filter((c) => c.url.endsWith("/versions") && c.method === "POST");
+    expect(posts.map((c) => c.body)).toEqual([
+      { ref: "v1.3.0" },
+      { ref: "v1.3.0", credential: { kind: "token", token: TOKEN } },
+    ]);
+    expect(calls.some((c) => c.url.includes(TOKEN))).toBe(false);
+    expect(cached(queryClient)).not.toContain(TOKEN);
+    expect(document.body.innerHTML).not.toContain(TOKEN);
+  });
+
+  it("lists a private repository's refs only with a typed token, by POST", async () => {
+    const calls = serve({ private: true });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Add a version" }));
+    const box = await screen.findByLabelText("Access token");
+    expect(screen.getByText(/Leave it empty to use the token stored/)).toBeInTheDocument();
+    expect(await screen.findByText(/enter it above to see them/)).toBeInTheDocument();
+    // Nothing is asked without a credential; typing alone asks nothing; leaving the box does, once.
+    expect(calls.filter((c) => c.url.includes("/repositories/refs"))).toEqual([]);
+    await userEvent.type(box, TOKEN);
+    const refs = () => calls.filter((c) => c.url.includes("/repositories/refs"));
+    expect(refs().filter((c) => c.method === "POST")).toEqual([]);
+    await userEvent.tab();
+    const picker = await screen.findByRole("combobox", { name: "Version to import" });
+    expect(within(picker).getByRole("option", { name: "v1.3.0" })).toBeInTheDocument();
+    expect(refs().filter((c) => c.method === "POST")).toEqual([
+      {
+        method: "POST",
+        url: "/api/v1/repositories/refs",
+        body: { url: library.source_url, credential: { kind: "token", token: TOKEN } },
+      },
+    ]);
+    expect(calls.some((c) => c.url.includes(TOKEN))).toBe(false);
+  });
+
+  it("says at once that a replacement token can't read the repository", async () => {
+    serve({ private: true, refs: () => failure(422, "repository_auth_required") });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Add a version" }));
+    await userEvent.type(await screen.findByLabelText("Access token"), TOKEN);
+    await userEvent.tab();
+    expect(await screen.findByText(/refused this token/)).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn't load branches and tags/)).not.toBeInTheDocument();
+  });
+
+  it("explains a refused replacement and a changed host key", () => {
+    const e = (code: string) =>
+      new HttpError(422, "/v1/x", { error: code, detail: "d", fields: [] });
+    expect(explainAddVersion(e("repository_auth_required"), "v1", "token")).toMatchObject({
+      field: "credential",
+      message: expect.stringMatching(/refused this token/),
+    });
+    expect(explainAddVersion(e("repository_auth_required"), "v1").field).toBe("credential");
+    expect(explainAddVersion(e("host_key_changed"), "v1").message).toMatch(/different host key/);
   });
 });

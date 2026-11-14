@@ -39,6 +39,7 @@ async def client(container: Container) -> AsyncIterator[httpx.AsyncClient]:
         ("POST", "/api/v1/libraries"),
         ("DELETE", "/api/v1/libraries"),
         ("GET", "/api/v1/nope"),
+        ("POST", "/api/v1/tokens/login"),
         ("POST", "/api/v1/session"),  # only `GET /session` is exempt
         ("GET", "/api/v1/setup"),
         ("GET", "/api/v1/setup/"),
@@ -116,7 +117,7 @@ async def test_an_admin_created_elsewhere_ends_the_setup_state(client: httpx.Asy
     # The CLI creates the admin in another process while the server is already running.
     assert (await client.get("/api/v1/libraries")).status_code == 403
     other = Container.build(Settings())
-    async with other.running():
+    async with other.running(jobs=False):  # as the CLI does: the server runs the jobs
         await other.identity.create_first_admin(
             CreateFirstAdminCommand(
                 username=CREDENTIALS["username"], password=SecretStr(CREDENTIALS["password"])

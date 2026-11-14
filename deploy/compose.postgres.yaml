@@ -1,0 +1,41 @@
+# ExactDocs on PostgreSQL: several server processes share one database (docs/deployment.md, "PostgreSQL").
+#   export POSTGRES_PASSWORD=$(openssl rand -hex 24) EXACTDOCS_SECRET_KEY=$(openssl rand -base64 32)
+#   docker compose -f compose.postgres.yaml up -d
+services:
+  db:
+    restart: unless-stopped
+    # PostgreSQL 17 with pg_search and pgvector; any PostgreSQL 14 or newer works as well.
+    image: paradedb/paradedb:0.26.3-pg17@sha256:950f68abebc78e28fd2ecfc8ed915aa29d07b5dd8cba25b2f513ca4e211dda70
+    environment:
+      POSTGRES_USER: exactdocs
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: exactdocs
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U exactdocs -d exactdocs"]
+      interval: 2s
+      retries: 30
+    volumes: ["exactdocs-db:/var/lib/postgresql/data"]
+  exactdocs:
+    # A process whose executor slot another one took stops itself; this brings it back.
+    restart: unless-stopped
+    image: ${EXACTDOCS_IMAGE:-ghcr.io/sircypkowskyy/exactdocs:latest}
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      EXACTDOCS_DATABASE_URL: postgresql://exactdocs:${POSTGRES_PASSWORD}@db:5432/exactdocs
+      EXACTDOCS_SECRET_KEY: ${EXACTDOCS_SECRET_KEY:?set EXACTDOCS_SECRET_KEY}
+      WEB_CONCURRENCY: "2" # server processes; on PostgreSQL every one serves and runs jobs
+      # Sign-in through an OIDC provider (docs/getting-started.md, "Sign in through an identity
+      # provider"): the provider in the TOML file ([auth.providers.corp]), its secret from the env.
+      # EXACTDOCS_PUBLIC_URL: https://docs.example.com
+      # EXACTDOCS_CONFIG_FILE: /run/exactdocs.toml
+      # EXACTDOCS_AUTH__PROVIDERS__CORP__CLIENT_SECRET: ${CORP_CLIENT_SECRET}
+    ports: ["127.0.0.1:3000:3000"]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes: ["exactdocs-data:/data"]
+volumes:
+  exactdocs-db:
+  exactdocs-data:

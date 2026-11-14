@@ -23,7 +23,16 @@ depends_on = None
 
 
 def _row(rowid: int, heading_path: list[str], content: str) -> dict[str, object]:
-    """The row as this revision shapes it (frozen: later revisions change the live builder)."""
+    """The row as this revision shapes it (frozen: later revisions change the live builder).
+
+    Args:
+        rowid: The chunk's row ID.
+        heading_path: The chunk's headings, outermost first.
+        content: The chunk's text.
+
+    Returns:
+        The search table's row.
+    """
     heading = " / ".join(heading_path)
     return {
         "rowid": rowid,
@@ -66,6 +75,8 @@ def upgrade() -> None:
         """
     )
     op.drop_table("retrieval_chunks_old")
+    if op.get_bind().dialect.name != "sqlite":
+        return  # FTS5 is SQLite's; PostgreSQL gets its own index in 0c4e8a2f6b19
 
     # `-_.` stay inside a token so `max_retries` and `--dry-run` are found whole (see
     # `identifier_tokens`). The rowid is `retrieval_chunks.id`.
@@ -101,6 +112,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if op.get_bind().dialect.name != "sqlite":
+        return
     op.execute("DROP TRIGGER retrieval_chunks_search_delete")
     op.execute("DROP TABLE retrieval_search")
     # The id column stays: it is harmless and rebuilding the table again buys nothing.

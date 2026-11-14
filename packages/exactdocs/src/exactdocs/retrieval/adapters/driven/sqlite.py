@@ -1,43 +1,97 @@
 import json
+import logging
+import struct
 from collections.abc import Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from itertools import batched
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     Column,
+    ColumnElement,
+    Delete,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     Row,
+    Select,
     Table,
     Text,
     UniqueConstraint,
+    and_,
+    bindparam,
     delete,
     distinct,
     exists,
     func,
     insert,
+    or_,
     select,
     tuple_,
+    update,
 )
+from sqlalchemy.dialects.postgresql import Insert as PostgresInsert
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import Insert as SqliteInsert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from exactdocs.retrieval.errors import ChunkSetMismatchError
+from exactdocs.retrieval.constants import (
+    AGENT_CACHE_PER_SCOPE,
+    BUDGET_WINDOW_PREFIX,
+    SPEND_COUNTERS,
+    SPEND_SCOPE_LIBRARY,
+    STORED_PROFILE_FIELDS,
+    VECTOR_BATCH,
+)
+from exactdocs.retrieval.errors import (
+    ChunkSetMismatchError,
+    InvalidModelRefError,
+    InvalidProviderError,
+)
 from exactdocs.retrieval.models import (
+    AgentCacheScope,
+    AnthropicPlatform,
+    AzureAuth,
+    BudgetLimit,
+    CachedAgentAnswer,
+    CachedPick,
+    CachedQuestion,
     Chunk,
+    ChunkHeading,
     ChunkId,
+    ChunkKey,
     ChunkSet,
     ChunkSetKey,
+    EmbeddingSource,
+    HydeKey,
     IndexedManifest,
+    KeySource,
+    LibraryAi,
     ManifestChunk,
+    ModelRef,
+    ProfileOrigin,
+    ProviderKind,
+    ProviderProfile,
     Removed,
+    RepoGuidance,
+    RerankWith,
+    RetrievalMode,
+    SectionRef,
+    SpendEntry,
+    SpendKey,
+    SpendWindow,
     StoredChunk,
     VersionCounts,
 )
+
+logger = logging.getLogger(__name__)
 
 # Retrieval's tables, prefixed `retrieval_`. The schema itself is created by an Alembic revision
 # in `exactdocs.bootstrap`; this is only the adapter's query-side description of it. There is no
@@ -60,10 +114,14 @@ chunks = Table(
     Column("position", Integer, nullable=False),
     Column("heading_path", Text, nullable=False),  # JSON list
     Column("occurrence_index", Integer, nullable=False),
+    # the part of a section split at its blocks (#141); 0 for a whole section
+    Column("part", Integer, nullable=False, server_default="0"),
     Column("content", Text, nullable=False),
     Column("content_hash", Text, nullable=False),
     Column("anchor", Text, nullable=False),
     Column("code_languages", Text, nullable=False),  # JSON list
+    # JSON list of [heading path, anchor, starts chunk]; NULL: stored before they were recorded
+    Column("headings", Text, nullable=True),
     ForeignKeyConstraint(
         ["blob_sha", "config_hash"],
         ["retrieval_chunk_sets.blob_sha", "retrieval_chunk_sets.config_hash"],
@@ -107,20 +165,130 @@ manifest_chunks = Table(
     Index("ix_retrieval_manifest_chunks_chunk_id", "chunk_id"),
 )
 
+library_settings = Table(
+    "retrieval_library_settings",
+    metadata,
+    # The library ID case-folded: IDs match in any letter case.
+    Column("library", Text, primary_key=True),
+    Column("mode", Text),  # RetrievalMode value; NULL: the instance's mode applies
+    # AI overrides (RET-06): off sends nothing of the library to any provider. `<profile>:<model>`.
+    Column("ai_enabled", Integer, nullable=False, server_default="1"),
+    Column("llm", Text),
+    Column("judge", Text),
+    Column("reranker", Text),
+    Column("rerank_top_n", Integer),  # NULL: the instance's top N
+    Column("rerank_with", Text),  # RerankWith value (#96); NULL: the instance's choice
+    # The library's own budgets (#102); NULL: not limited by the library.
+    Column("daily_usd_micros", BigInteger),
+    Column("monthly_usd_micros", BigInteger),
+    Column("daily_tokens", BigInteger),
+    Column("monthly_tokens", BigInteger),
+    # What its AGENTS.md / CLAUDE.md do for agentic retrieval (RET-08): RepoGuidance value.
+    Column("repo_guidance", Text, nullable=False, server_default="off"),
+)
+# Provider profiles managed over the REST API. The key is sealed by the secret box (its own HKDF
+# purpose); every other field is JSON in `settings`, as `ProviderProfile` names them.
+ai_providers = Table(
+    "retrieval_ai_providers",
+    metadata,
+    Column("name", Text, primary_key=True),
+    Column("kind", Text, nullable=False),
+    Column("settings", Text, nullable=False),
+    Column("sealed_key", Text),
+)
+
+# The spend ledger (docs/decisions/ai-retrieval.md, *Cost and budgets*): one row per scope and UTC
+# window, added to atomically. US dollars are whole millionths, so additions stay exact.
+ai_spend = Table(
+    "retrieval_ai_spend",
+    metadata,
+    Column("scope_kind", Text, primary_key=True),
+    Column("scope_id", Text, primary_key=True),
+    Column("window_kind", Text, primary_key=True),  # SpendWindow value
+    Column("window_start", Text, primary_key=True),  # ISO date, UTC
+    Column("input_tokens", Integer, nullable=False, server_default="0"),
+    Column("output_tokens", Integer, nullable=False, server_default="0"),
+    Column("requests", Integer, nullable=False, server_default="0"),
+    Column("usd_micros", Integer, nullable=False, server_default="0"),
+    Column("unpriced", Integer, nullable=False, server_default="0"),  # requests without a price
+    # Of the tokens, those of in-process (local) models: no token budget counts them (#284).
+    Column("local_tokens", Integer, nullable=False, server_default="0"),
+)
+# HyDE's hypothetical answers (#94), by the searched manifest, the `llm` model and a SHA-256 of
+# the normalized query (never its text). A changed version has a new manifest, so a new key; the
+# rows of a removed manifest are deleted with its chunks.
+hyde_answers = Table(
+    "retrieval_hyde_answers",
+    metadata,
+    Column("manifest_id", Text, primary_key=True),
+    Column("model", Text, primary_key=True),  # <profile>:<model>
+    Column("query_hash", Text, primary_key=True),
+    Column("answer", Text, nullable=False),
+    Column("created_at", Text, nullable=False),  # ISO 8601, UTC: the TTL prunes by it
+    Index("ix_retrieval_hyde_answers_created_at", "created_at"),
+)
+# The agentic answer cache (#100), by scope (the searched manifest, the `llm` model and a SHA-256
+# fingerprint of the tag filter, the agent's limits and the similarity space) and an HMAC of the
+# normalized question. The question is kept only as HMACs of it and of each term, and with an
+# embedding model as its embedding (float32, little-endian), never as text.
+agentic_answers = Table(
+    "retrieval_agentic_answers",
+    metadata,
+    Column("manifest_id", Text, primary_key=True),
+    Column("model", Text, primary_key=True),  # <profile>:<model>
+    Column("fingerprint", Text, primary_key=True),
+    Column("question_hash", Text, primary_key=True),
+    Column("library", Text, nullable=False),  # case folded: a library's settings forget it
+    Column("similarity", Text, nullable=False),  # bm25, or the embedding model's identity
+    Column("terms", Text, nullable=False),  # JSON list of the terms' HMACs
+    Column("guards", Text, nullable=False),  # JSON list of the numbers' and negations' HMACs
+    Column("vector", LargeBinary, nullable=True),
+    Column("picks", Text, nullable=False),  # JSON: chunk_id, justification, explored_path
+    Column("answer_limit", Integer, nullable=False),
+    Column("candidates", Integer, nullable=False),
+    Column("complete", Integer, nullable=False),
+    Column("created_at", Text, nullable=False),  # ISO 8601, UTC: the TTL prunes by it
+    Index("ix_retrieval_agentic_answers_created_at", "created_at"),
+    Index("ix_retrieval_agentic_answers_library", "library"),
+)
+# The replay tokens each row has taken (the harness's ``SpendEntry.token``): a response replayed
+# after a crash adds to a row once. Dropped once their window is over.
+ai_spend_replays = Table(
+    "retrieval_ai_spend_replays",
+    metadata,
+    Column("token", Text, primary_key=True),
+    Column("scope_kind", Text, primary_key=True),
+    Column("scope_id", Text, primary_key=True),
+    Column("window_kind", Text, primary_key=True),
+    Column("window_start", Text, primary_key=True),
+)
+
 
 def _iso(moment: datetime) -> str:
-    """UTC ISO 8601, so stored timestamps compare as text."""
+    """UTC ISO 8601, so stored timestamps compare as text.
+
+    Args:
+        moment: A timezone-aware time.
+
+    Returns:
+        The time in UTC, ISO 8601.
+    """
     return moment.astimezone(UTC).isoformat()
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteChunkRepository:
     """Implements ``ports.driven.ChunkRepository`` with SQLAlchemy Core on SQLite."""
 
     engine: AsyncEngine
+    """The application database."""
 
     def _write(self) -> AbstractAsyncContextManager[AsyncConnection]:
-        # BEGIN IMMEDIATE: see the catalog's manifest repository.
+        """Begin a write transaction with BEGIN IMMEDIATE (see the catalog's manifest repository).
+
+        Returns:
+            The transaction's connection, as a context manager.
+        """
         return self.engine.execution_options(begin_immediate=True).begin()
 
     async def add(
@@ -129,7 +297,19 @@ class SqliteChunkRepository:
         chunk_sets: Mapping[ChunkSetKey, ChunkSet],
         rows: Sequence[ManifestChunk],
     ) -> int | None:
-        """Store rows and the new chunk sets; ``None`` when the manifest is already indexed."""
+        """Store rows and the new chunk sets; ``None`` when the manifest is already indexed.
+
+        Args:
+            manifest: The manifest indexed.
+            chunk_sets: The chunk sets its rows point at, by key.
+            rows: The manifest's chunk rows.
+
+        Returns:
+            How many chunk sets were new; ``None`` when the manifest was already indexed.
+
+        Raises:
+            ChunkSetMismatchError: A stored set under one of the keys holds other chunks.
+        """
         async with self._write() as connection:
             if await connection.scalar(
                 select(exists().where(indexed_manifests.c.manifest_id == manifest.manifest_id))
@@ -166,10 +346,12 @@ class SqliteChunkRepository:
                     "position": i,
                     "heading_path": json.dumps(c.heading_path),
                     "occurrence_index": c.occurrence_index,
+                    "part": c.part,
                     "content": c.content,
                     "content_hash": c.content_hash,
                     "anchor": c.anchor,
                     "code_languages": json.dumps(c.code_languages),
+                    "headings": _headings_json(c.headings),
                 }
                 for s in new
                 for i, c in enumerate(s.chunks)
@@ -206,7 +388,14 @@ class SqliteChunkRepository:
             return len(new)
 
     async def get_sets(self, keys: Sequence[ChunkSetKey]) -> Mapping[ChunkSetKey, ChunkSet]:
-        """Return the stored chunk sets among ``keys``, with their chunks in order."""
+        """Return the stored chunk sets among ``keys``, with their chunks in order.
+
+        Args:
+            keys: The (blob SHA, config hash) keys.
+
+        Returns:
+            The stored sets, by key.
+        """
         found: dict[ChunkSetKey, list[Chunk]] = {}
         async with self.engine.connect() as connection:
             for start in range(0, len(keys), 400):  # two bound variables per key
@@ -224,10 +413,12 @@ class SqliteChunkRepository:
                         Chunk(
                             heading_path=tuple(json.loads(row.heading_path)),
                             occurrence_index=row.occurrence_index,
+                            part=row.part,
                             content=row.content,
                             content_hash=row.content_hash,
                             anchor=row.anchor,
                             code_languages=tuple(json.loads(row.code_languages)),
+                            headings=_headings(row.headings),
                         )
                     )
         return {
@@ -236,63 +427,122 @@ class SqliteChunkRepository:
         }
 
     async def get(self, manifest_id: str, chunk_id: ChunkId) -> StoredChunk | None:
-        """Return one chunk of the manifest with its content, or ``None``."""
+        """Return one chunk of the manifest with its content, or ``None``.
+
+        Args:
+            manifest_id: The manifest.
+            chunk_id: The chunk.
+
+        Returns:
+            The chunk with its row, or ``None`` when the manifest has no such chunk.
+        """
         return (await self.get_many(manifest_id, [chunk_id])).get(chunk_id)
 
     async def get_many(
         self, manifest_id: str, chunk_ids: Sequence[ChunkId]
     ) -> Mapping[ChunkId, StoredChunk]:
-        """Return the chunks of the manifest that exist, by ID, in one query."""
+        """Return the chunks of the manifest that exist, by ID, in one query.
+
+        Args:
+            manifest_id: The manifest.
+            chunk_ids: The chunks.
+
+        Returns:
+            The chunks found, by ID; missing ones are left out.
+        """
         if not chunk_ids:
             return {}
+        query = _stored_chunks().where(
+            manifest_chunks.c.manifest_id == manifest_id,
+            manifest_chunks.c.chunk_id.in_(list(chunk_ids)),
+        )
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(query)).all()
+        return {ChunkId(row.chunk_id): _stored(manifest_id, row) for row in rows}
+
+    async def get_across(
+        self, wanted: Mapping[str, Collection[ChunkId]]
+    ) -> Mapping[tuple[str, ChunkId], StoredChunk]:
+        """Return the chunks that exist, by (manifest ID, chunk ID), in one query.
+
+        Args:
+            wanted: The chunk IDs wanted, by manifest ID.
+
+        Returns:
+            The chunks found, by (manifest ID, chunk ID).
+        """
+        if not wanted:
+            return {}
+        # Chunk IDs hash their version, so the cross product of the two lists holds little more
+        # than the wanted pairs (at most 51 manifests x 51 IDs: a page of results); the rest is
+        # dropped below.
+        every_id = list({i for ids in wanted.values() for i in ids})
         query = (
-            select(manifest_chunks, chunks, indexed_manifests.c.version_id)
-            .select_from(
-                manifest_chunks.join(
-                    indexed_manifests,
-                    indexed_manifests.c.manifest_id == manifest_chunks.c.manifest_id,
-                ).join(
-                    chunks,
-                    (chunks.c.blob_sha == manifest_chunks.c.blob_sha)
-                    & (chunks.c.config_hash == manifest_chunks.c.config_hash)
-                    & (chunks.c.position == manifest_chunks.c.position),
-                )
-            )
-            .where(
-                manifest_chunks.c.manifest_id == manifest_id,
-                manifest_chunks.c.chunk_id.in_(list(chunk_ids)),
-            )
+            _stored_chunks()
+            .where(manifest_chunks.c.manifest_id.in_(list(wanted)))
+            .where(manifest_chunks.c.chunk_id.in_(every_id))
         )
         async with self.engine.connect() as connection:
             rows = (await connection.execute(query)).all()
         return {
-            ChunkId(row.chunk_id): StoredChunk(
-                manifest_id=manifest_id,
-                version_id=row.version_id,
-                row=ManifestChunk(
-                    chunk_id=ChunkId(row.chunk_id),
-                    article_path=row.article_path,
-                    position=row.position,
-                    total=row.total,
-                    prev_chunk_id=None if row.prev_chunk_id is None else ChunkId(row.prev_chunk_id),
-                    next_chunk_id=None if row.next_chunk_id is None else ChunkId(row.next_chunk_id),
-                    tags=tuple(json.loads(row.tags)),
-                    chunk_set=(row.blob_sha, row.config_hash),
-                ),
-                chunk=Chunk(
-                    heading_path=tuple(json.loads(row.heading_path)),
-                    occurrence_index=row.occurrence_index,
-                    content=row.content,
-                    content_hash=row.content_hash,
-                    anchor=row.anchor,
-                    code_languages=tuple(json.loads(row.code_languages)),
-                ),
-            )
+            (row.manifest_id, ChunkId(row.chunk_id)): _stored(row.manifest_id, row)
             for row in rows
+            if row.chunk_id in wanted[row.manifest_id]
         }
 
+    async def article(self, manifest_id: str, article_path: str) -> Sequence[SectionRef]:
+        """Return the sections of one article in order: one indexed query, no chunk text.
+
+        Args:
+            manifest_id: The manifest.
+            article_path: The article's path.
+
+        Returns:
+            The article's sections, in reading order.
+        """
+        query = (
+            _stored_chunks()
+            .with_only_columns(
+                manifest_chunks.c.chunk_id,
+                manifest_chunks.c.position,
+                chunks.c.heading_path,
+                chunks.c.occurrence_index,
+                chunks.c.part,
+                chunks.c.content_hash,
+                chunks.c.anchor,
+                chunks.c.headings,
+            )
+            .where(
+                manifest_chunks.c.manifest_id == manifest_id,
+                manifest_chunks.c.article_path == article_path,
+            )
+            .order_by(manifest_chunks.c.position)
+        )
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(query)).all()
+        return [
+            SectionRef(
+                chunk_id=ChunkId(r.chunk_id),
+                position=r.position,
+                heading_path=tuple(json.loads(r.heading_path)),
+                occurrence_index=r.occurrence_index,
+                part=r.part,
+                content_hash=r.content_hash,
+                anchor=r.anchor,
+                headings=_headings(r.headings),
+            )
+            for r in rows
+        ]
+
     async def counts(self, manifest_id: str) -> VersionCounts:
-        """Count the manifest's articles and chunks."""
+        """Count the manifest's articles and chunks.
+
+        Args:
+            manifest_id: The manifest.
+
+        Returns:
+            Its article and chunk counts.
+        """
         query = select(func.count(distinct(manifest_chunks.c.article_path)), func.count()).where(
             manifest_chunks.c.manifest_id == manifest_id
         )
@@ -301,7 +551,14 @@ class SqliteChunkRepository:
         return VersionCounts(articles=articles, chunks=chunk_count)
 
     async def manifests_with_chunk(self, chunk_id: ChunkId) -> Sequence[IndexedManifest]:
-        """Return every indexed manifest that has a row for this chunk ID (any status)."""
+        """Return every indexed manifest that has a row for this chunk ID (any status).
+
+        Args:
+            chunk_id: The chunk ID.
+
+        Returns:
+            The manifests that have a row for it.
+        """
         query = (
             select(indexed_manifests)
             .join(manifest_chunks, manifest_chunks.c.manifest_id == indexed_manifests.c.manifest_id)
@@ -314,7 +571,16 @@ class SqliteChunkRepository:
     async def find_manifests(
         self, *, manifest_id: str | None, library: str | None, indexed_before: datetime | None
     ) -> Sequence[IndexedManifest]:
-        """Return the indexed manifests that match every given filter."""
+        """Return the indexed manifests that match every given filter.
+
+        Args:
+            manifest_id: Only this manifest, if given.
+            library: Only manifests of this library (lower case), if given.
+            indexed_before: Only manifests indexed before this time, if given.
+
+        Returns:
+            The matching manifests.
+        """
         query = select(indexed_manifests)
         if manifest_id is not None:
             query = query.where(indexed_manifests.c.manifest_id == manifest_id)
@@ -327,7 +593,14 @@ class SqliteChunkRepository:
         return tuple(_manifest(r) for r in found)
 
     async def remove(self, manifest_ids: Collection[str]) -> Removed:
-        """Delete these manifests' rows, then every chunk set no row points at."""
+        """Delete these manifests' rows, then every chunk set no row points at.
+
+        Args:
+            manifest_ids: The manifests to delete.
+
+        Returns:
+            How many manifests and chunk sets were deleted.
+        """
         async with self._write() as connection:
             gone = 0
             for batch in _batches(list(manifest_ids)):
@@ -348,8 +621,182 @@ class SqliteChunkRepository:
             )
         return Removed(manifests=gone, chunk_sets=unused.rowcount)
 
+    async def set_tags(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> int:
+        """One UPDATE per article: its rows are found by the (manifest, path) index.
+
+        Args:
+            manifest_id: The manifest.
+            tags: Each article path's tags now.
+
+        Returns:
+            How many rows were changed.
+        """
+        if not tags:
+            return 0
+        statement = (
+            update(manifest_chunks)
+            .where(
+                manifest_chunks.c.manifest_id == bindparam("manifest"),
+                manifest_chunks.c.article_path == bindparam("path"),
+                manifest_chunks.c.tags != bindparam("new_tags"),
+            )
+            .values(tags=bindparam("new_tags"))
+        )
+        async with self._write() as connection:
+            changed = 0
+            for path, article_tags in tags.items():
+                result = await connection.execute(
+                    statement,
+                    {"manifest": manifest_id, "path": path, "new_tags": json.dumps(article_tags)},
+                )
+                changed += result.rowcount
+        return changed
+
+    async def embedding_sources(
+        self, manifest_id: str, keys: Collection[ChunkKey]
+    ) -> Mapping[ChunkKey, EmbeddingSource]:
+        """Read the heading path and text of these chunks, with the manifest's first path of each.
+
+        Args:
+            manifest_id: The manifest.
+            keys: The stored chunks.
+
+        Returns:
+            The sources found.
+        """
+        columns = tuple_(
+            manifest_chunks.c.blob_sha, manifest_chunks.c.config_hash, manifest_chunks.c.position
+        )
+        found: dict[ChunkKey, EmbeddingSource] = {}
+        async with self.engine.connect() as connection:
+            for batch in batched(
+                sorted(keys), VECTOR_BATCH, strict=False
+            ):  # three bound variables per key
+                rows = await connection.execute(
+                    select(
+                        manifest_chunks.c.article_path,
+                        chunks.c.blob_sha,
+                        chunks.c.config_hash,
+                        chunks.c.position,
+                        chunks.c.heading_path,
+                        chunks.c.content,
+                    )
+                    .select_from(
+                        manifest_chunks.join(
+                            chunks,
+                            (chunks.c.blob_sha == manifest_chunks.c.blob_sha)
+                            & (chunks.c.config_hash == manifest_chunks.c.config_hash)
+                            & (chunks.c.position == manifest_chunks.c.position),
+                        )
+                    )
+                    .where(manifest_chunks.c.manifest_id == manifest_id, columns.in_(batch))
+                    .order_by(manifest_chunks.c.article_path)
+                )
+                for row in rows:
+                    key: ChunkKey = (row.blob_sha, row.config_hash, row.position)
+                    if key not in found:
+                        found[key] = EmbeddingSource(
+                            article_path=row.article_path,
+                            heading_path=tuple(json.loads(row.heading_path)),
+                            content=row.content,
+                        )
+        return found
+
+
+def _stored_chunks() -> Select[Any]:
+    """Manifest rows joined with their chunk and version, ready for a WHERE.
+
+    Returns:
+        The select, without a WHERE.
+    """
+    return select(manifest_chunks, chunks, indexed_manifests.c.version_id).select_from(
+        manifest_chunks.join(
+            indexed_manifests, indexed_manifests.c.manifest_id == manifest_chunks.c.manifest_id
+        ).join(
+            chunks,
+            (chunks.c.blob_sha == manifest_chunks.c.blob_sha)
+            & (chunks.c.config_hash == manifest_chunks.c.config_hash)
+            & (chunks.c.position == manifest_chunks.c.position),
+        )
+    )
+
+
+def _stored(manifest_id: str, row: Row[Any]) -> StoredChunk:
+    """Map a row of ``_stored_chunks`` to a stored chunk.
+
+    Args:
+        manifest_id: The manifest the row was read for.
+        row: The row.
+
+    Returns:
+        The chunk with its manifest row.
+    """
+    return StoredChunk(
+        manifest_id=manifest_id,
+        version_id=row.version_id,
+        row=ManifestChunk(
+            chunk_id=ChunkId(row.chunk_id),
+            article_path=row.article_path,
+            position=row.position,
+            total=row.total,
+            prev_chunk_id=None if row.prev_chunk_id is None else ChunkId(row.prev_chunk_id),
+            next_chunk_id=None if row.next_chunk_id is None else ChunkId(row.next_chunk_id),
+            tags=tuple(json.loads(row.tags)),
+            chunk_set=(row.blob_sha, row.config_hash),
+        ),
+        chunk=Chunk(
+            heading_path=tuple(json.loads(row.heading_path)),
+            occurrence_index=row.occurrence_index,
+            part=row.part,
+            content=row.content,
+            content_hash=row.content_hash,
+            anchor=row.anchor,
+            code_languages=tuple(json.loads(row.code_languages)),
+            headings=_headings(row.headings),
+        ),
+    )
+
+
+def _headings_json(headings: tuple[ChunkHeading, ...] | None) -> str | None:
+    """Encode a chunk's heading records for the ``headings`` column.
+
+    Args:
+        headings: The records, or ``None`` when they were not recorded.
+
+    Returns:
+        A JSON list of ``[heading path, anchor, starts chunk]``, or ``None``.
+    """
+    if headings is None:
+        return None
+    return json.dumps([[h.heading_path, h.anchor, h.starts_chunk] for h in headings])
+
+
+def _headings(stored: str | None) -> tuple[ChunkHeading, ...] | None:
+    """Decode the ``headings`` column.
+
+    Args:
+        stored: The column's value.
+
+    Returns:
+        The records, or ``None`` for a chunk stored before they were recorded.
+    """
+    if stored is None:
+        return None
+    return tuple(
+        ChunkHeading(heading_path=tuple(path), anchor=anchor, starts_chunk=starts)
+        for path, anchor, starts in json.loads(stored)
+    )
+
 
 def _manifest(row: Row[Any]) -> IndexedManifest:
+    """Map a ``retrieval_indexed_manifests`` row.
+
+    Args:
+        row: The row.
+
+    Returns:
+        The indexed manifest.
+    """
     return IndexedManifest(
         manifest_id=row.manifest_id,
         version_id=row.version_id,
@@ -359,5 +806,864 @@ def _manifest(row: Row[Any]) -> IndexedManifest:
 
 
 def _batches(items: list[str], size: int = 500) -> list[list[str]]:
-    """Slices small enough for SQLite's bound-variable limit."""
+    """Slices small enough for SQLite's bound-variable limit.
+
+    Args:
+        items: The values to bind.
+        size: The most values per slice.
+
+    Returns:
+        The slices, in order.
+    """
     return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteLibraryModes:
+    """Implements ``ports.driven.LibraryModes`` in ``retrieval_library_settings``."""
+
+    engine: AsyncEngine
+    """The application database."""
+
+    async def _row(self, library: str) -> Row[Any] | None:
+        """Read the library's row.
+
+        Args:
+            library: The library ID, any letter case.
+
+        Returns:
+            The row, or ``None``.
+        """
+        async with self.engine.connect() as connection:
+            result = await connection.execute(
+                select(library_settings).where(library_settings.c.library == library.casefold())
+            )
+            return result.first()
+
+    async def mode_of(self, library: str) -> RetrievalMode | None:
+        """Read the stored mode; a value this build does not know counts as none.
+
+        Args:
+            library: The library ID, any letter case.
+
+        Returns:
+            Its mode, or ``None``.
+        """
+        row = await self._row(library)
+        stored = None if row is None else row.mode
+        return RetrievalMode(stored) if stored in RetrievalMode else None
+
+    async def ai_of(self, library: str) -> LibraryAi:
+        """Read the stored overrides; one that no longer parses counts as unset.
+
+        Args:
+            library: The library ID, any letter case.
+
+        Returns:
+            Its overrides, or the defaults.
+        """
+        row = await self._row(library)
+        if row is None:
+            return LibraryAi()
+        return LibraryAi(
+            enabled=bool(row.ai_enabled),
+            llm=_stored_ref(row.llm),
+            judge=_stored_ref(row.judge),
+            reranker=_stored_ref(row.reranker),
+            rerank_top_n=row.rerank_top_n,
+            rerank_with=_stored_rerank_with(row.rerank_with),
+            budgets=_stored_budgets(row),
+            repo_guidance=_stored_guidance(row.repo_guidance),
+        )
+
+    async def budgets(self) -> dict[str, tuple[BudgetLimit, ...]]:
+        """Read the own budgets of every library that has some, in one query.
+
+        Returns:
+            Each such library's budgets, by case-folded library ID.
+        """
+        columns = library_settings.c
+        query = select(library_settings).where(
+            or_(
+                columns.daily_usd_micros.is_not(None),
+                columns.monthly_usd_micros.is_not(None),
+                columns.daily_tokens.is_not(None),
+                columns.monthly_tokens.is_not(None),
+            )
+        )
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(query)).all()
+        return {row.library: _stored_budgets(row) for row in rows}
+
+    async def forget(self, library: str) -> None:
+        """Delete the library's row.
+
+        Args:
+            library: The library ID, any letter case.
+        """
+        async with self.engine.execution_options(begin_immediate=True).begin() as connection:
+            await connection.execute(
+                delete(library_settings).where(library_settings.c.library == library.casefold())
+            )
+
+    async def save(self, library: str, mode: RetrievalMode | None, ai: LibraryAi) -> None:
+        """Replace the library's row; the defaults delete it.
+
+        Args:
+            library: The library ID, any letter case.
+            mode: The mode, or ``None``.
+            ai: The AI overrides.
+        """
+        key = library.casefold()
+        async with self.engine.execution_options(begin_immediate=True).begin() as connection:
+            await connection.execute(
+                delete(library_settings).where(library_settings.c.library == key)
+            )
+            if mode is not None or not ai.is_default:
+                await connection.execute(
+                    insert(library_settings).values(
+                        library=key,
+                        mode=None if mode is None else mode.value,
+                        ai_enabled=int(ai.enabled),
+                        llm=_ref_text(ai.llm),
+                        judge=_ref_text(ai.judge),
+                        reranker=_ref_text(ai.reranker),
+                        rerank_top_n=ai.rerank_top_n,
+                        rerank_with=None if ai.rerank_with is None else ai.rerank_with.value,
+                        repo_guidance=ai.repo_guidance.value,
+                        **_budget_columns(ai),
+                    )
+                )
+
+    async def llm_overrides(self) -> frozenset[str]:
+        """Name every ``llm`` model a library overrides the instance's with.
+
+        Returns:
+            Each ``<profile>:<model>`` once.
+        """
+        statement = (
+            select(library_settings.c.llm).where(library_settings.c.llm.is_not(None)).distinct()
+        )
+        async with self.engine.connect() as connection:
+            texts = (await connection.execute(statement)).scalars().all()
+        return frozenset(str(ref) for text in texts if (ref := _stored_ref(text)) is not None)
+
+
+def _stored_guidance(text: str | None) -> RepoGuidance:
+    """Read a library's repo guidance; a value this build does not know counts as off.
+
+    Args:
+        text: The stored ``RepoGuidance`` value.
+
+    Returns:
+        The setting.
+    """
+    return RepoGuidance(text) if text in RepoGuidance else RepoGuidance.OFF
+
+
+def _stored_budgets(row: Row[Any]) -> tuple[BudgetLimit, ...]:
+    """Read a library's own budgets from its row.
+
+    Args:
+        row: The ``retrieval_library_settings`` row.
+
+    Returns:
+        One limit per window that has a ceiling.
+    """
+    found: list[BudgetLimit] = []
+    for window in SpendWindow:
+        usd = getattr(row, f"{BUDGET_WINDOW_PREFIX[window.value]}_usd_micros")
+        tokens = getattr(row, f"{BUDGET_WINDOW_PREFIX[window.value]}_tokens")
+        if usd is not None or tokens is not None:
+            found.append(
+                BudgetLimit(
+                    scope_kind=SPEND_SCOPE_LIBRARY, window=window, usd_micros=usd, tokens=tokens
+                )
+            )
+    return tuple(found)
+
+
+def _budget_columns(ai: LibraryAi) -> dict[str, int | None]:
+    """Write a library's own budgets as its row's columns.
+
+    Args:
+        ai: The library's overrides.
+
+    Returns:
+        The four budget columns.
+    """
+    columns: dict[str, int | None] = {}
+    for window in SpendWindow:
+        limit = ai.budget(window)
+        columns[f"{BUDGET_WINDOW_PREFIX[window.value]}_usd_micros"] = (
+            limit.usd_micros if limit else None
+        )
+        columns[f"{BUDGET_WINDOW_PREFIX[window.value]}_tokens"] = limit.tokens if limit else None
+    return columns
+
+
+def _stored_rerank_with(text: str | None) -> RerankWith | None:
+    """Read a stored reranker choice; one this build does not know counts as unset.
+
+    Args:
+        text: The stored value.
+
+    Returns:
+        The choice, or ``None``.
+    """
+    try:
+        return None if text is None else RerankWith(text)
+    except ValueError:
+        return None
+
+
+def _stored_ref(text: str | None) -> ModelRef | None:
+    """Read a stored ``<profile>:<model>``; one that no longer parses is dropped.
+
+    Args:
+        text: The stored text.
+
+    Returns:
+        The reference, or ``None``.
+    """
+    if text is None:
+        return None
+    try:
+        return ModelRef.parse(text)
+    except InvalidModelRefError:
+        return None
+
+
+def _ref_text(ref: ModelRef | None) -> str | None:
+    """Write a reference as stored.
+
+    Args:
+        ref: The reference.
+
+    Returns:
+        Its text, or ``None``.
+    """
+    return None if ref is None else str(ref)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteProviderProfiles:
+    """Implements ``ports.driven.ProviderProfiles`` in ``retrieval_ai_providers``.
+
+    A stored profile that no longer validates (a later release tightened a rule) is skipped and
+    logged by name; fix it over the REST API.
+    """
+
+    engine: AsyncEngine
+    """The application database."""
+
+    async def all(self) -> Sequence[ProviderProfile]:
+        """List the stored profiles.
+
+        Returns:
+            Them, by name.
+        """
+        async with self.engine.connect() as connection:
+            rows = (
+                await connection.execute(select(ai_providers).order_by(ai_providers.c.name))
+            ).all()
+        return [p for row in rows if (p := _profile(row)) is not None]
+
+    async def get(self, name: str) -> ProviderProfile | None:
+        """Read one profile.
+
+        Args:
+            name: Its name.
+
+        Returns:
+            The profile, or ``None``.
+        """
+        async with self.engine.connect() as connection:
+            row = (
+                await connection.execute(select(ai_providers).where(ai_providers.c.name == name))
+            ).first()
+        return None if row is None else _profile(row)
+
+    async def save(self, profile: ProviderProfile) -> None:
+        """Create or replace a profile.
+
+        Args:
+            profile: The profile.
+        """
+        values = {
+            "kind": profile.kind.value,
+            "settings": json.dumps(
+                {
+                    **{name: getattr(profile, name) for name in STORED_PROFILE_FIELDS},
+                    "headers": [list(pair) for pair in profile.headers],
+                },
+                sort_keys=True,
+            ),
+            "sealed_key": profile.sealed_key,
+        }
+        async with self.engine.execution_options(begin_immediate=True).begin() as connection:
+            await connection.execute(
+                delete(ai_providers).where(ai_providers.c.name == profile.name)
+            )
+            await connection.execute(insert(ai_providers).values(name=profile.name, **values))
+
+    async def delete(self, name: str) -> bool:
+        """Delete a profile.
+
+        Args:
+            name: Its name.
+
+        Returns:
+            Whether there was one.
+        """
+        async with self.engine.execution_options(begin_immediate=True).begin() as connection:
+            result = await connection.execute(
+                delete(ai_providers).where(ai_providers.c.name == name)
+            )
+        return result.rowcount > 0
+
+
+def _profile(row: Row[Any]) -> ProviderProfile | None:
+    """Rebuild a stored profile.
+
+    Args:
+        row: Its row.
+
+    Returns:
+        The profile, or ``None`` (logged) when it no longer validates.
+    """
+    settings = json.loads(row.settings)
+    try:
+        return ProviderProfile(
+            name=row.name,
+            kind=ProviderKind(row.kind),
+            origin=ProfileOrigin.API,
+            key=KeySource.NONE if row.sealed_key is None else KeySource.SEALED,
+            sealed_key=row.sealed_key,
+            headers=tuple((str(k), str(v)) for k, v in settings.pop("headers", [])),
+            **{
+                name: settings[name]
+                for name in STORED_PROFILE_FIELDS
+                if name in settings and name not in {"platform", "auth"}
+            },
+            platform=AnthropicPlatform(p) if (p := settings.get("platform")) else None,
+            auth=AzureAuth(a) if (a := settings.get("auth")) else None,
+        )
+    except InvalidProviderError, ValueError, TypeError:
+        logger.warning(
+            "stored AI provider %r is no longer valid; fix it over the REST API", row.name
+        )
+        return None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteSpendLedger:
+    """Implements ``ports.driven.SpendLedger`` with an upsert per row (``retrieval_ai_spend``).
+
+    Atomic on SQLite and PostgreSQL alike, so processes sharing a database add up correctly.
+    """
+
+    engine: AsyncEngine
+    """The database."""
+
+    def _insert(self, table: Table) -> PostgresInsert | SqliteInsert:
+        """Start an ``INSERT`` of the database's dialect (both have ``ON CONFLICT``).
+
+        Args:
+            table: The table.
+
+        Returns:
+            The statement.
+        """
+        if self.engine.dialect.name == "postgresql":
+            return postgres_insert(table)
+        return sqlite_insert(table)
+
+    async def add(self, entries: Sequence[SpendEntry]) -> None:
+        """Add each entry to its row in one transaction; a missing row is created.
+
+        An entry whose replay token its row has taken is skipped: the token is claimed in the
+        same transaction as the addition, so a failed addition leaves it unclaimed.
+
+        Args:
+            entries: The usage, one entry per row.
+        """
+        if not entries:
+            return
+        upsert = self._insert(ai_spend)
+        upsert = upsert.on_conflict_do_update(
+            index_elements=[
+                ai_spend.c.scope_kind,
+                ai_spend.c.scope_id,
+                ai_spend.c.window_kind,
+                ai_spend.c.window_start,
+            ],
+            set_={name: ai_spend.c[name] + upsert.excluded[name] for name in SPEND_COUNTERS},
+        )
+        # RETURNING says whether the row was inserted on both dialects; ``rowcount`` does not
+        # (psycopg reports a row for an insert ON CONFLICT DO NOTHING skipped).
+        claim = (
+            self._insert(ai_spend_replays)
+            .on_conflict_do_nothing()
+            .returning(ai_spend_replays.c.token)
+        )
+        async with self.engine.execution_options(begin_immediate=True).begin() as connection:
+            applied: list[SpendEntry] = []
+            for entry in entries:
+                if entry.token is not None:
+                    claimed = await connection.execute(
+                        claim, {"token": entry.token, **_spend_key(entry.key)}
+                    )
+                    if claimed.first() is None:
+                        continue
+                applied.append(entry)
+            if (
+                latest := max((e.window_start for e in entries if e.token), default=None)
+            ) is not None:
+                await connection.execute(_old_replays(latest))
+            if applied:
+                await connection.execute(
+                    upsert,
+                    [
+                        {
+                            **_spend_key(e.key),
+                            **{name: getattr(e, name) for name in SPEND_COUNTERS},
+                        }
+                        for e in applied
+                    ],
+                )
+
+    async def get(self, keys: Sequence[SpendKey]) -> dict[SpendKey, SpendEntry]:
+        """Read the rows that exist.
+
+        Args:
+            keys: The rows.
+
+        Returns:
+            Each one found.
+        """
+        if not keys:
+            return {}
+        wanted = [tuple(_spend_key(key).values()) for key in keys]
+        found: dict[SpendKey, SpendEntry] = {}
+        async with self.engine.connect() as connection:
+            for part in batched(wanted, VECTOR_BATCH, strict=False):
+                rows = await connection.execute(
+                    select(ai_spend).where(
+                        tuple_(
+                            ai_spend.c.scope_kind,
+                            ai_spend.c.scope_id,
+                            ai_spend.c.window_kind,
+                            ai_spend.c.window_start,
+                        ).in_(part)
+                    )
+                )
+                for row in rows:
+                    entry = _spend_row(row)
+                    found[entry.key] = entry
+        return found
+
+    async def since(self, first: date) -> list[SpendEntry]:
+        """Read the rows of windows starting on or after a day.
+
+        Args:
+            first: The earliest window start.
+
+        Returns:
+            The rows, by scope kind, scope ID, window and start.
+        """
+        async with self.engine.connect() as connection:
+            rows = await connection.execute(
+                select(ai_spend)
+                .where(ai_spend.c.window_start >= first.isoformat())
+                .order_by(
+                    ai_spend.c.scope_kind,
+                    ai_spend.c.scope_id,
+                    ai_spend.c.window_kind,
+                    ai_spend.c.window_start,
+                )
+            )
+            return [_spend_row(row) for row in rows]
+
+
+def _spend_key(key: SpendKey) -> dict[str, str]:
+    """Write a ledger key as the columns of its row.
+
+    Args:
+        key: The key.
+
+    Returns:
+        The column values.
+    """
+    return {
+        "scope_kind": key.scope_kind,
+        "scope_id": key.scope_id,
+        "window_kind": key.window.value,
+        "window_start": key.window_start.isoformat(),
+    }
+
+
+def _spend_row(row: Row[Any]) -> SpendEntry:
+    """Read a ledger row.
+
+    Args:
+        row: The row.
+
+    Returns:
+        Its totals.
+    """
+    return SpendEntry(
+        scope_kind=row.scope_kind,
+        scope_id=row.scope_id,
+        window=SpendWindow(row.window_kind),
+        window_start=date.fromisoformat(row.window_start),
+        input_tokens=row.input_tokens,
+        output_tokens=row.output_tokens,
+        requests=row.requests,
+        usd_micros=row.usd_micros,
+        unpriced=row.unpriced,
+        local_tokens=row.local_tokens,
+    )
+
+
+def _old_replays(latest: date) -> Delete:
+    """Build the deletion of replay tokens whose window is over (``SpendWindow.kept_since``).
+
+    Args:
+        latest: The latest window start of the entries being added (no wall clock: a replay of
+            an old response never deletes the token that guards it).
+
+    Returns:
+        The statement.
+    """
+    return delete(ai_spend_replays).where(
+        or_(
+            *(
+                (ai_spend_replays.c.window_kind == window.value)
+                & (ai_spend_replays.c.window_start < window.kept_since(latest).isoformat())
+                for window in SpendWindow
+            )
+        )
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteHypothesisCache:
+    """Implements ``ports.driven.HypotheticalAnswerCache`` in ``retrieval_hyde_answers``.
+
+    The same statements run on SQLite and PostgreSQL (an upsert of each dialect).
+    """
+
+    engine: AsyncEngine
+    """The application database."""
+
+    async def get(self, key: HydeKey) -> str | None:
+        """Read a stored answer.
+
+        Args:
+            key: The query, the manifest and the model.
+
+        Returns:
+            The answer, or ``None``.
+        """
+        statement = select(hyde_answers.c.answer).where(
+            hyde_answers.c.manifest_id == key.manifest_id,
+            hyde_answers.c.model == key.model,
+            hyde_answers.c.query_hash == key.query_hash,
+        )
+        async with self.engine.connect() as connection:
+            return (await connection.execute(statement)).scalar_one_or_none()
+
+    async def put(self, key: HydeKey, answer: str, at: datetime) -> None:
+        """Store an answer, replacing one stored under the same key.
+
+        Args:
+            key: The query, the manifest and the model.
+            answer: The hypothetical answer.
+            at: When it was written.
+        """
+        values = {
+            "manifest_id": key.manifest_id,
+            "model": key.model,
+            "query_hash": key.query_hash,
+            "answer": answer,
+            "created_at": at.astimezone(UTC).isoformat(),
+        }
+        upsert = (
+            postgres_insert(hyde_answers)
+            if self.engine.dialect.name == "postgresql"
+            else sqlite_insert(hyde_answers)
+        ).values(values)
+        upsert = upsert.on_conflict_do_update(
+            index_elements=[
+                hyde_answers.c.manifest_id,
+                hyde_answers.c.model,
+                hyde_answers.c.query_hash,
+            ],
+            set_={"answer": upsert.excluded.answer, "created_at": upsert.excluded.created_at},
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(upsert)
+
+    async def forget(self, manifest_ids: Collection[str]) -> int:
+        """Delete the answers of these manifests.
+
+        Args:
+            manifest_ids: The manifests.
+
+        Returns:
+            How many answers were deleted.
+        """
+        if not manifest_ids:
+            return 0
+        deleted = 0
+        async with self.engine.begin() as connection:
+            for part in batched(sorted(set(manifest_ids)), VECTOR_BATCH, strict=False):
+                result = await connection.execute(
+                    delete(hyde_answers).where(hyde_answers.c.manifest_id.in_(part))
+                )
+                deleted += result.rowcount
+        return deleted
+
+    async def prune(self, written_before: datetime, keep_models: Collection[str]) -> int:
+        """Delete the answers written before a time, and those of models not kept.
+
+        Args:
+            written_before: The TTL's cutoff.
+            keep_models: The models still configured.
+
+        Returns:
+            How many answers were deleted.
+        """
+        cutoff = written_before.astimezone(UTC).isoformat()
+        # An empty list makes NOT IN true for every row: no model is configured, all go.
+        stale = or_(
+            hyde_answers.c.created_at < cutoff,
+            hyde_answers.c.model.not_in(sorted(set(keep_models))),
+        )
+        async with self.engine.begin() as connection:
+            return (await connection.execute(delete(hyde_answers).where(stale))).rowcount
+
+
+def _packed(vector: Sequence[float] | None) -> bytes | None:
+    """Store a question's embedding as float32, little-endian.
+
+    Args:
+        vector: The embedding, if any.
+
+    Returns:
+        The bytes, or ``None``.
+    """
+    return None if vector is None else struct.pack(f"<{len(vector)}f", *vector)
+
+
+def _unpacked(blob: bytes | None) -> tuple[float, ...] | None:
+    """Read a question's embedding back.
+
+    Args:
+        blob: What ``_packed`` stored.
+
+    Returns:
+        The embedding, or ``None``.
+    """
+    return None if blob is None else struct.unpack(f"<{len(blob) // 4}f", blob)
+
+
+def _cached_answer(row: Row[Any]) -> CachedAgentAnswer:
+    """Read a cached agentic answer from its row.
+
+    Args:
+        row: A ``retrieval_agentic_answers`` row.
+
+    Returns:
+        The answer.
+    """
+    scope = AgentCacheScope(
+        library=row.library,
+        manifest_id=row.manifest_id,
+        model=row.model,
+        fingerprint=row.fingerprint,
+        similarity=row.similarity,
+    )
+    question = CachedQuestion(
+        question_hash=row.question_hash,
+        terms=tuple(json.loads(row.terms)),
+        guards=tuple(json.loads(row.guards)),
+        vector=_unpacked(row.vector),
+    )
+    picks = tuple(
+        CachedPick(
+            chunk_id=ChunkId(p["chunk_id"]),
+            justification=p["justification"],
+            explored_path=tuple(p["explored_path"]),
+        )
+        for p in json.loads(row.picks)
+    )
+    return CachedAgentAnswer(
+        scope=scope,
+        question=question,
+        picks=picks,
+        limit=row.answer_limit,
+        candidates=row.candidates,
+        complete=bool(row.complete),
+        created_at=datetime.fromisoformat(row.created_at),
+    )
+
+
+def _in_scope(scope: AgentCacheScope) -> ColumnElement[bool]:
+    """Select a scope's rows.
+
+    Args:
+        scope: The scope.
+
+    Returns:
+        The condition.
+    """
+    return and_(
+        agentic_answers.c.manifest_id == scope.manifest_id,
+        agentic_answers.c.model == scope.model,
+        agentic_answers.c.fingerprint == scope.fingerprint,
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteAgentAnswerCache:
+    """Implements ``ports.driven.AgentAnswerCache`` in ``retrieval_agentic_answers``.
+
+    The same statements run on SQLite and PostgreSQL (an upsert of each dialect).
+    """
+
+    engine: AsyncEngine
+    """The application database."""
+    per_scope: int = AGENT_CACHE_PER_SCOPE
+    """The most answers kept per scope; the oldest go first."""
+
+    async def scoped(self, scope: AgentCacheScope) -> Sequence[CachedAgentAnswer]:
+        """Read every answer of a scope.
+
+        Args:
+            scope: The scope.
+
+        Returns:
+            Its answers, newest first.
+        """
+        statement = (
+            select(agentic_answers)
+            .where(_in_scope(scope))
+            .order_by(agentic_answers.c.created_at.desc())
+            .limit(self.per_scope)
+        )
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(statement)).all()
+        return [_cached_answer(row) for row in rows]
+
+    async def put(self, answer: CachedAgentAnswer) -> None:
+        """Store an answer, replacing one of the same scope and question; trim the scope.
+
+        Args:
+            answer: The answer.
+        """
+        scope = answer.scope
+        values = {
+            "manifest_id": scope.manifest_id,
+            "model": scope.model,
+            "fingerprint": scope.fingerprint,
+            "question_hash": answer.question.question_hash,
+            "library": scope.library,
+            "similarity": scope.similarity,
+            "terms": json.dumps(list(answer.question.terms)),
+            "guards": json.dumps(list(answer.question.guards)),
+            "vector": _packed(answer.question.vector),
+            "picks": json.dumps(
+                [
+                    {
+                        "chunk_id": p.chunk_id,
+                        "justification": p.justification,
+                        "explored_path": list(p.explored_path),
+                    }
+                    for p in answer.picks
+                ]
+            ),
+            "answer_limit": answer.limit,
+            "candidates": answer.candidates,
+            "complete": int(answer.complete),
+            "created_at": answer.created_at.astimezone(UTC).isoformat(),
+        }
+        upsert = (
+            postgres_insert(agentic_answers)
+            if self.engine.dialect.name == "postgresql"
+            else sqlite_insert(agentic_answers)
+        ).values(values)
+        keys = ("manifest_id", "model", "fingerprint", "question_hash")
+        upsert = upsert.on_conflict_do_update(
+            index_elements=[agentic_answers.c[k] for k in keys],
+            set_={k: upsert.excluded[k] for k in values if k not in keys},
+        )
+        newest = (
+            select(agentic_answers.c.question_hash)
+            .where(_in_scope(scope))
+            .order_by(agentic_answers.c.created_at.desc())
+            .limit(self.per_scope)
+        )
+        trim = delete(agentic_answers).where(
+            _in_scope(scope), agentic_answers.c.question_hash.not_in(newest.scalar_subquery())
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(upsert)
+            await connection.execute(trim)
+
+    async def forget(self, manifest_ids: Collection[str]) -> int:
+        """Delete the answers of these manifests.
+
+        Args:
+            manifest_ids: The manifests.
+
+        Returns:
+            How many answers were deleted.
+        """
+        if not manifest_ids:
+            return 0
+        deleted = 0
+        async with self.engine.begin() as connection:
+            for part in batched(sorted(set(manifest_ids)), VECTOR_BATCH, strict=False):
+                result = await connection.execute(
+                    delete(agentic_answers).where(agentic_answers.c.manifest_id.in_(part))
+                )
+                deleted += result.rowcount
+        return deleted
+
+    async def forget_library(self, library: str) -> int:
+        """Delete a library's answers.
+
+        Args:
+            library: The library, any letter case.
+
+        Returns:
+            How many answers were deleted.
+        """
+        statement = delete(agentic_answers).where(agentic_answers.c.library == library.casefold())
+        async with self.engine.begin() as connection:
+            return (await connection.execute(statement)).rowcount
+
+    async def prune(
+        self, written_before: datetime, keep_models: Collection[str], keep_similarity: str
+    ) -> int:
+        """Delete answers past the TTL, of models not kept, or of another similarity space.
+
+        Args:
+            written_before: The TTL's cutoff.
+            keep_models: The models still configured.
+            keep_similarity: The space questions are compared in now.
+
+        Returns:
+            How many answers were deleted.
+        """
+        cutoff = written_before.astimezone(UTC).isoformat()
+        # An empty list makes NOT IN true for every row: no model is configured, all go.
+        stale = or_(
+            agentic_answers.c.created_at < cutoff,
+            agentic_answers.c.model.not_in(sorted(set(keep_models))),
+            agentic_answers.c.similarity != keep_similarity,
+        )
+        async with self.engine.begin() as connection:
+            return (await connection.execute(delete(agentic_answers).where(stale))).rowcount

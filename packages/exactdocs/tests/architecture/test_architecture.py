@@ -22,10 +22,10 @@ DOMAINS = sorted(
 
 # The fixed module set of every domain. Each entry may be a module (`x.py`) or a package (`x/`).
 REQUIRED = {"__init__", "models", "dtos", "ports", "use_cases", "adapters", "module"}
-OPTIONAL = {"errors"}
+OPTIONAL = {"errors", "constants"}
 
 # Inner -> outer. A layer may import only layers that come before it in this list.
-LAYERS = ["errors", "models", "dtos", "ports", "use_cases", "module"]
+LAYERS = ["constants", "errors", "models", "dtos", "ports", "use_cases", "module"]
 # Layers are optional per domain (e.g. `errors`) and may be a module or a package.
 _ALLOW_EMPTY = CheckOptions(allow_empty_tests=True)
 DATABASE_LIBRARIES = ["sqlalchemy*", "alembic*", "aiosqlite*"]
@@ -38,6 +38,14 @@ FRAMEWORKS = [
     "dbos*",
     "argon2*",
     *DATABASE_LIBRARIES,
+    # The AI stack (the `[ai]` and `[local]` extras): adapters and bootstrap only, imported once
+    # a model is configured (docs/decisions/ai-retrieval.md, "Where the code lives").
+    "pydantic_ai*",
+    "pydantic_monty*",
+    "fastembed*",
+    "onnxruntime*",
+    "sqlite_vec*",
+    "pgvector*",
 ]
 
 
@@ -168,6 +176,34 @@ def test_database_libraries_live_only_in_driven_adapters_and_bootstrap(
         .depend_on_external_modules()
         .matching(library)
         .because("persistence belongs to driven adapters; the schema to bootstrap"),
+        _ALLOW_EMPTY,
+    )
+
+
+@pytest.mark.parametrize("domain", [domain for domain in DOMAINS if domain != "ingestion"])
+def test_dbos_lives_only_in_ingestion_adapters_and_bootstrap(domain: str) -> None:
+    # Ingestion's core is covered by `test_core_is_framework_free`; jobs are ingestion's.
+    assert_passes(
+        project_files(SRC)
+        .in_path(_path(domain))
+        .should_not()
+        .depend_on_external_modules()
+        .matching("dbos*")
+        .because("durable jobs belong to ingestion's adapters, wired in bootstrap"),
+        _ALLOW_EMPTY,
+    )
+
+
+@pytest.mark.parametrize("domain", DOMAINS)
+def test_no_domain_imports_cryptography(domain: str) -> None:
+    # One secret box serves every domain; each reaches it through its own `SecretBox` port.
+    assert_passes(
+        project_files(SRC)
+        .in_path(_path(domain))
+        .should_not()
+        .depend_on_external_modules()
+        .matching("cryptography*")
+        .because("the secret box lives in bootstrap; domains declare a SecretBox port"),
         _ALLOW_EMPTY,
     )
 

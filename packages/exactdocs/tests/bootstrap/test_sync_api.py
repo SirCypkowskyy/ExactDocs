@@ -87,6 +87,26 @@ async def test_sync_answers_200_202_and_409_and_re_chunks_only_what_changed(
     assert (await client.post(SYNC)).status_code == 200
 
 
+async def test_the_production_container_takes_unchanged_articles_from_the_catalog(
+    client: httpx.AsyncClient, container: Container, repo: Path
+) -> None:
+    """The container wires the stored-article lookup (it is optional in the importer, #164)."""
+    await add_and_import(client, container, repo, "next")
+    jobs = (await client.get("/api/v1/libraries/fixture/docs-repo/jobs")).json()["jobs"]
+    first = jobs[0]
+    assert (first["state"], first["taken"]) == ("succeeded", 0)
+    assert first["parsed"] > 1
+
+    move_next(repo)
+    moved = await client.post(SYNC)
+    assert moved.status_code == 202, moved.text
+    assert await container.ingestion.run_next_job()
+    job = (await client.get(moved.headers["location"])).json()
+
+    assert job["state"] == "succeeded", job
+    assert (job["parsed"], job["taken"]) == (1, first["parsed"] - 1)  # install.md only
+
+
 async def test_sync_of_an_unknown_library_is_a_404(client: httpx.AsyncClient) -> None:
     response = await client.post("/api/v1/libraries/no/such/sync")
     assert (response.status_code, response.json()["error"]) == (404, "not_found")
@@ -165,3 +185,69 @@ async def test_a_queued_sync_blocks_removal_and_a_refresh_never_brings_a_removed
     assert (job["kind"], job["state"]) == ("refresh", "failed")
     library = await container.catalog.get_library(GetLibraryQuery(id="/fixture/docs-repo"))
     assert library.versions == []
+
+
+REIMPORT = "/api/v1/libraries/fixture/docs-repo/versions/reimport"
+
+
+async def test_a_confirmed_moved_tag_answers_202_with_its_job_and_takes_the_new_commit(
+    client: httpx.AsyncClient, container: Container, repo: Path
+) -> None:
+    git("tag", "release/1.4", "v1.4.0", cwd=repo)  # a ref with a slash goes in the body
+    await add_and_import(client, container, repo, "release/1.4")
+    old = git("rev-parse", "release/1.4^{commit}", cwd=repo)
+    git("tag", "-f", "release/1.4", "v1.3.0", cwd=repo)
+    new = git("rev-parse", "release/1.4^{commit}", cwd=repo)
+
+    response = await client.post(REIMPORT, json={"ref": "release/1.4"})
+
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert (body["library_id"], body["ref"], body["ref_kind"]) == (
+        "/fixture/docs-repo",
+        "release/1.4",
+        "tag",
+    )
+    assert (body["previous_commit_sha"], body["commit_sha"]) == (old, new)
+    assert response.headers["location"] == f"/api/v1/jobs/{body['job_id']}"
+    busy = await client.post(REIMPORT, json={"ref": "release/1.4"})
+    assert (busy.status_code, busy.json()["error"]) == (409, "version_importing")
+    assert await container.ingestion.run_next_job()
+    job = (await client.get(response.headers["location"])).json()
+    assert (job["state"], job["kind"]) == ("succeeded", "refresh")
+    version = await client.get("/api/v1/libraries/fixture/docs-repo/versions/release/1.4")
+    assert version.json()["commit_sha"] == new
+    again = await client.post(REIMPORT, json={"ref": "release/1.4"})
+    assert (again.status_code, again.json()["error"]) == (409, "tag_not_moved")
+
+
+async def test_a_re_import_is_refused_for_what_is_not_a_moved_tag(
+    client: httpx.AsyncClient, container: Container, repo: Path
+) -> None:
+    await add_and_import(client, container, repo, "next")
+
+    branch = await client.post(REIMPORT, json={"ref": "next"})
+    unknown = await client.post(REIMPORT, json={"ref": "v9.9.9"})
+    empty = await client.post(REIMPORT, json={"ref": ""})
+
+    assert (branch.status_code, branch.json()["error"]) == (422, "not_a_tag")
+    assert (unknown.status_code, unknown.json()["error"]) == (404, "not_found")
+    assert empty.status_code == 422
+    assert (await client.post(f"{REIMPORT}/v1.4.0", json={"ref": "v1.4.0"})).status_code in {
+        404,
+        405,
+    }  # nothing follows `reimport`: the ref is in the body
+
+
+async def test_a_re_import_of_an_unknown_library_is_a_404(client: httpx.AsyncClient) -> None:
+    response = await client.post("/api/v1/libraries/no/such/versions/reimport", json={"ref": "v1"})
+    assert (response.status_code, response.json()["error"]) == (404, "not_found")
+
+
+async def test_a_re_import_needs_a_caller(container: Container) -> None:
+    anonymous = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(container)), base_url="http://localhost"
+    )
+    async with anonymous:
+        response = await anonymous.post(REIMPORT, json={"ref": "v1.4.0"})
+    assert (response.status_code, response.json()["error"]) == (401, "unauthenticated")

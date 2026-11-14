@@ -6,7 +6,9 @@ from pydantic import ValidationError
 
 from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
+    InMemoryDefaultVersions,
     InMemoryLibraries,
+    InMemoryLibraryModes,
     InMemorySearchIndex,
 )
 from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand, SearchDocsQuery
@@ -102,12 +104,16 @@ async def retrieval() -> RetrievalModule:
         {"v1.3.0": version("v1.3.0", "m13", "a"), "v1.4.0": version("v1.4.0", "m14", "b")},
         default="v1.4.0",
     )
+    index = InMemorySearchIndex(chunks=chunks)
     module = RetrievalModule.build(
+        defaults=InMemoryDefaultVersions(),
         libraries=InMemoryLibraries(),
         searchable=versions,
         manifests=versions,
         chunks=chunks,
-        search=InMemorySearchIndex(chunks),
+        search=index,
+        maintenance=index,
+        library_modes=InMemoryLibraryModes(),
     )
     for manifest, ref, articles in [("m13", "v1.3.0", OLD), ("m14", "v1.4.0", NEW)]:
         await module.index_manifest(
@@ -276,12 +282,16 @@ async def test_a_chunk_that_vanished_is_neither_a_result_nor_a_candidate() -> No
 
     chunks = Vanishing()
     versions = FakeVersions({"v1.4.0": version("v1.4.0", "m14", "b")}, default="v1.4.0")
+    index = InMemorySearchIndex(chunks=chunks)
     module = RetrievalModule.build(
+        defaults=InMemoryDefaultVersions(),
         libraries=InMemoryLibraries(),
         searchable=versions,
         manifests=versions,
         chunks=chunks,
-        search=InMemorySearchIndex(chunks),
+        search=index,
+        maintenance=index,
+        library_modes=InMemoryLibraryModes(),
     )
     done = await module.index_manifest(
         IndexManifestCommand(

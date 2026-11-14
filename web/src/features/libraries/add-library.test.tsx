@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
+import { validatePatterns, validateRule } from "@/shared/lib/path-selection";
 import { TestRouter } from "@/shared/lib/test-router";
 import { AddLibraryPage, LibrariesPage } from "./index";
 import {
@@ -10,12 +11,12 @@ import {
   explainCheckError,
   summarizeProblems,
   validateLibraryId,
-  validatePatterns,
-  validateRule,
   validateUrl,
 } from "./model/add-library";
 
 const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+/** How often the import screen polls its job (`importJobQueryOptions`). */
+const POLL_MS = 1500;
 const URL_ = "https://github.com/acme/payments";
 const err = (status: number, code: string, detail = "x") => ({
   status,
@@ -126,8 +127,11 @@ describe("add library model", () => {
     expect(validatePatterns("docs/\n/etc/passwd")).toMatch(/starts with/);
     expect(validatePatterns("docs/../x")).toMatch(/\.\./);
     expect(validatePatterns("docs/\n**/*.mdx")).toBeUndefined();
-    expect(validateRule({ key: 0, pattern: "docs/**", tag: "API" }).tag).toBeDefined();
-    expect(validateRule({ key: 0, pattern: "docs/**", tag: "api" })).toEqual({});
+    expect(validateRule({ key: 0, pattern: "docs/**", tag: "#api" }).tag).toBeDefined();
+    expect(validateRule({ key: 0, pattern: "docs/**", tag: "x".repeat(41) }).tag).toBeDefined();
+    // The server normalizes a tag, so the form takes what it would store.
+    expect(validateRule({ key: 0, pattern: "docs/**", tag: "API" })).toEqual({});
+    expect(validateRule({ key: 0, pattern: "docs/**", tag: "Getting Started" })).toEqual({});
   });
 
   it("maps every failure to words and a place", () => {
@@ -140,6 +144,24 @@ describe("add library model", () => {
     expect(explainCheckError(e(403, "setup_required")).link?.href).toBe("/setup");
     expect(explainCheckError(new TypeError("offline")).message).toMatch(/Can't reach the server/);
     expect(explainAddError(e(409, "library_id_taken"), null).field).toBe("id");
+    const taken = explainCheckError(
+      new HttpError(409, "/v1/repositories/check", {
+        error: "library_id_taken",
+        detail: "d",
+        fields: [],
+        library_id: "/acme/payments",
+      }),
+    );
+    expect(taken).toEqual({
+      field: "url",
+      message: "A library with this repository's ID, /acme/payments, already exists.",
+      library: "/acme/payments",
+    });
+    // A server that does not name the library still gets words, not "the server went wrong".
+    expect(explainCheckError(e(409, "library_id_taken"))).toEqual({
+      field: "url",
+      message: "A library with this repository's ID already exists.",
+    });
     expect(explainAddError(e(422, "unknown_ref"), "v9").message).toMatch(/v9/);
     expect(explainAddError(e(422, "ambiguous_ref"), "abc1234").field).toBe("ref");
     expect(explainAddError(e(422, "invalid_path_pattern"), null).field).toBe("paths");
@@ -252,7 +274,6 @@ describe("add library flow", () => {
     ],
     ["unreachable", err(422, "repository_unreachable", "boom"), /Couldn't reach that address/],
     ["no repository", err(422, "not_a_git_repository"), /No git repository there/],
-    ["login required", err(422, "repository_auth_required"), /asks for a login/],
   ])("explains a failed check: %s", async (_name, reply, text) => {
     serve({ check: () => reply });
     renderAdd();
@@ -273,6 +294,38 @@ describe("add library flow", () => {
     await checkRepo("not a url");
     expect(await screen.findByText(/no spaces/)).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("says the ID a checked repository proposes is taken, and links to that library", async () => {
+    serve({
+      check: () => ({
+        status: 409,
+        body: {
+          error: "library_id_taken",
+          detail: "library '/acme/payments' already exists: choose another library ID",
+          fields: [],
+          close_matches: [],
+          library_id: "/acme/payments",
+        },
+      }),
+    });
+    renderAdd();
+    await checkRepo();
+    const address = screen.getByLabelText("Repository address");
+    await waitFor(() => expect(address).toHaveAttribute("aria-invalid", "true"));
+    const message = "A library with this repository's ID, /acme/payments, already exists.";
+    // The description is the sentence alone: the link is the next Tab stop, not stray text in it.
+    expect(address).toHaveAccessibleDescription(message);
+    const link = screen.getByRole("link", { name: "Open /acme/payments" });
+    expect(link).toHaveAttribute("href", "/libraries/acme/payments");
+    expect(link.closest("p")).toHaveTextContent(message);
+    expect(screen.queryByText(/Something went wrong on the server/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Library ID")).not.toBeInTheDocument();
+
+    // Another address: the message and its link go with the old one.
+    await userEvent.type(address, "x");
+    expect(document.getElementById("url-error")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open /acme/payments" })).not.toBeInTheDocument();
   });
 
   it("sends a signed-out user to sign in", async () => {
@@ -354,10 +407,10 @@ describe("add library flow", () => {
     await userEvent.click(screen.getByText("Choose files and tags"));
     await userEvent.click(screen.getByRole("button", { name: "Add a tag rule" }));
     await userEvent.type(screen.getByLabelText("Path for tag rule 1"), "docs/**");
-    await userEvent.type(screen.getByLabelText("Tag for rule 1"), "Bad Tag");
-    expect(screen.queryByText(/lower-case letters/)).not.toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Tag for rule 1"), "#bad");
+    expect(screen.queryByText(/Start with a letter or digit/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Add library" }));
-    expect(await screen.findByText(/lower-case letters/)).toBeInTheDocument();
+    expect(await screen.findByText(/Start with a letter or digit/)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Tag for rule 1")).toHaveFocus());
   });
 
@@ -388,7 +441,8 @@ describe("add library flow", () => {
         { path: "", code: "truncated", reason: "more", is_skip: false },
       ],
     });
-    await screen.findByRole("heading", { name: /^Imported \// }, { timeout: 4000 });
+    // The finished state shows on the next poll, up to one interval away.
+    await screen.findByRole("heading", { name: /^Imported \// }, { timeout: POLL_MS + 3000 });
     expect(live).toHaveTextContent("Import finished. 4 files imported, 2+ skipped.");
     expect(screen.getByRole("heading", { name: /Skipped files \(2\+\)/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Binary files/ })).toBeInTheDocument();
@@ -396,7 +450,7 @@ describe("add library flow", () => {
     expect(screen.getByText(/Showing the first 2 skipped files/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Imported with a note/ })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Back to libraries" })).toHaveAttribute("href", "/");
-  }, 10_000);
+  });
 
   it("shows a failed import with its reason and no skipped section", async () => {
     serve({
@@ -441,26 +495,23 @@ describe("add library flow, review fixes", () => {
     const { create } = serve({ refs: () => err(500, "boom") });
     renderAdd();
     await checkRepo();
-    const typed = await screen.findByLabelText("Branch, tag or commit", {}, { timeout: 6000 });
+    const typed = await screen.findByLabelText("Branch, tag or commit");
     await userEvent.type(typed, "v1.2.0");
     await userEvent.click(screen.getByRole("button", { name: "Add library" }));
     await waitFor(() => expect(create.mock.calls[0]?.[0]).toMatchObject({ ref: "v1.2.0" }));
-  }, 10_000);
+  });
 
   it("focuses the typed ref when the server refuses it", async () => {
     serve({ refs: () => err(500, "boom"), create: () => err(422, "unknown_ref") });
     renderAdd();
     await checkRepo();
-    await userEvent.type(
-      await screen.findByLabelText("Branch, tag or commit", {}, { timeout: 6000 }),
-      "nope",
-    );
+    await userEvent.type(await screen.findByLabelText("Branch, tag or commit"), "nope");
     await userEvent.click(screen.getByRole("button", { name: "Add library" }));
     await waitFor(() => expect(screen.getByLabelText("Branch, tag or commit")).toHaveFocus());
     expect(screen.getByLabelText("Branch, tag or commit")).toHaveAccessibleDescription(
       /no branch, tag or commit/,
     );
-  }, 10_000);
+  });
 
   it("names the typed-ref input and moves focus to it", async () => {
     serve();
@@ -556,6 +607,19 @@ describe("add library flow, review fixes", () => {
     expect(screen.queryByText(/already used/)).not.toBeInTheDocument();
   });
 
+  it("does not pull focus away once the refusal is on screen", async () => {
+    serve({ create: () => err(409, "library_id_taken") });
+    renderAdd();
+    await addDefault();
+    await screen.findByText(/already used/);
+    // Focus is where the refusal points as soon as the user can see it, not a frame later.
+    expect(screen.getByLabelText("Library ID")).toHaveFocus();
+    const address = screen.getByLabelText("Repository address");
+    address.focus();
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    expect(address).toHaveFocus();
+  });
+
   it("rejects an address over 2048 characters before asking", async () => {
     const { fetchMock } = serve();
     renderAdd();
@@ -639,7 +703,7 @@ describe("add library flow, review fixes", () => {
     const seen = calls();
     await new Promise((r) => setTimeout(r, 1800));
     expect(calls()).toBe(seen);
-  }, 10_000);
+  });
 
   it("keeps polling through a network failure and says contact was lost", async () => {
     const { fetchMock } = serve();
@@ -650,10 +714,8 @@ describe("add library flow, review fixes", () => {
     });
     renderAdd();
     await addDefault();
-    expect(
-      await screen.findByText("Lost contact, retrying…", {}, { timeout: 4000 }),
-    ).toBeInTheDocument();
-  }, 10_000);
+    expect(await screen.findByText("Lost contact, retrying…")).toBeInTheDocument();
+  });
 
   it("stops polling once the import has finished", async () => {
     const { fetchMock } = serve();
@@ -665,7 +727,7 @@ describe("add library flow, review fixes", () => {
     const seen = calls();
     await new Promise((r) => setTimeout(r, 1800));
     expect(calls()).toBe(seen);
-  }, 10_000);
+  });
 
   it("shows an unknown skip code with the server's own sentence", async () => {
     serve({

@@ -1,0 +1,207 @@
+"""Search spans and metrics through the OpenTelemetry API (OPS-01); the SDK is set up elsewhere."""
+
+from collections.abc import Generator
+from contextlib import AbstractContextManager, contextmanager
+from dataclasses import dataclass, field
+from time import perf_counter
+
+from opentelemetry import metrics, trace
+
+from exactdocs.retrieval.constants import (
+    AGENT_PINNED_MANIFEST_ATTRIBUTE,
+    AGENT_PINNED_VERSION_ATTRIBUTE,
+    AGENT_READ_EVENT,
+    AGENT_SERVED_MANIFESTS_ATTRIBUTE,
+    AGENT_SERVED_VERSIONS_ATTRIBUTE,
+    AGENT_TOOL_ATTRIBUTE,
+    ATTRIBUTE_PREFIX,
+    CACHE_ATTRIBUTE,
+    CACHE_HITS_METRIC,
+    ERROR_TYPE_ATTRIBUTE,
+    FALLBACK_REASON_ATTRIBUTE,
+    FALLBACKS_METRIC,
+    MODE_ATTRIBUTE,
+    QUERY_ATTRIBUTE,
+    SEARCH_ATTRIBUTE,
+    SEARCH_DURATION_BUCKETS,
+    SEARCH_DURATION_METRIC,
+    SPAN_PREFIX,
+    STAGE_ATTRIBUTE,
+    TRACER_NAME,
+    WHOLE_SEARCH,
+)
+from exactdocs.retrieval.models import AgentRead
+from exactdocs.retrieval.ports.driven import SearchSpan
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _OpenSpan:
+    """Implements ``ports.driven.SearchSpan`` over an OpenTelemetry span and its metric labels."""
+
+    span: trace.Span
+    """The span the block runs in."""
+    labels: dict[str, str]
+    """The labels the duration is recorded with when the block ends."""
+
+    def answered_by(self, mode: str) -> None:
+        """Replace the mode on the span and on the duration measurement.
+
+        Args:
+            mode: The mode that answered.
+        """
+        self.span.set_attribute(MODE_ATTRIBUTE, mode)
+        self.labels[MODE_ATTRIBUTE] = mode
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class OpenTelemetrySearchTracer:
+    """Implements ``ports.driven.SearchTracer`` with spans, each timed in a histogram.
+
+    The spans go to the global tracer provider, the durations to the ``exactdocs.search.duration``
+    histogram of the global meter provider. The query text is left out of the span unless
+    ``record_query_text`` is set: queries can hold code, customer names or secrets, and a trace
+    backend is usually readable by more people. The metric never carries it, nor the library or ref:
+    only the search, the stage and the mode.
+    """
+
+    record_query_text: bool = False
+    """Add the query text to the search's span (``exactdocs.query``)."""
+    provider: trace.TracerProvider | None = None
+    """Where the spans go; ``None``: the global provider (what ``start_telemetry`` set up)."""
+    meter_provider: metrics.MeterProvider | None = None
+    """Where the durations go; ``None``: the global provider (what ``start_telemetry`` set up)."""
+    _duration: metrics.Histogram = field(init=False, repr=False)
+    """The histogram, created once: a proxy until ``start_telemetry`` sets the global provider."""
+    _fallbacks: metrics.Counter = field(init=False, repr=False)
+    """Searches answered by a cheaper mode, by mode and reason."""
+    _cache_hits: metrics.Counter = field(init=False, repr=False)
+    """Searches whose LLM step a cache answered, by cache and mode."""
+
+    def __post_init__(self) -> None:
+        """Create the histogram and the counters."""
+        meter = metrics.get_meter(TRACER_NAME, meter_provider=self.meter_provider)
+        duration = meter.create_histogram(
+            SEARCH_DURATION_METRIC,
+            unit="s",
+            description="How long ExactDocs searches, and each of their stages, took.",
+            explicit_bucket_boundaries_advisory=list(SEARCH_DURATION_BUCKETS),
+        )
+        fallbacks = meter.create_counter(
+            FALLBACKS_METRIC,
+            unit="{search}",
+            description="Searches answered by a cheaper retrieval mode, by mode and reason.",
+        )
+        cache_hits = meter.create_counter(
+            CACHE_HITS_METRIC,
+            unit="{search}",
+            description="Searches whose LLM step a cache answered, by cache and mode.",
+        )
+        object.__setattr__(self, "_duration", duration)  # frozen: set once, here
+        object.__setattr__(self, "_fallbacks", fallbacks)
+        object.__setattr__(self, "_cache_hits", cache_hits)
+
+    def fallback(self, *, mode: str, reason: str) -> None:
+        """Count a search a cheaper mode answered; never with the library, user or query.
+
+        Args:
+            mode: The mode that answered.
+            reason: Why it did.
+        """
+        self._fallbacks.add(1, {MODE_ATTRIBUTE: mode, FALLBACK_REASON_ATTRIBUTE: reason})
+
+    def cache_hit(self, *, cache: str, mode: str) -> None:
+        """Count a search whose LLM step a cache answered; never with the library, user or query.
+
+        Args:
+            cache: Which cache (``agentic_answer``, ``hyde_answer``).
+            mode: The mode that answered.
+        """
+        self._cache_hits.add(1, {MODE_ATTRIBUTE: mode, CACHE_ATTRIBUTE: cache})
+
+    def span(
+        self, name: str, *, mode: str, query: str | None = None, **attributes: str | None
+    ) -> AbstractContextManager[SearchSpan]:
+        """Start ``retrieval.<name>`` as the current span, and time it.
+
+        Args:
+            name: The search, or the search and its stage after a dot.
+            mode: The retrieval mode, recorded as ``exactdocs.retrieval.mode``.
+            query: The query text, recorded only with ``record_query_text``, never in metrics.
+            attributes: Further labels of the span, recorded as ``exactdocs.<name>``; ``None``
+                ones are not. The metric does not get them.
+
+        Returns:
+            The span's context manager.
+        """
+        labels = {
+            f"{ATTRIBUTE_PREFIX}{key}": value
+            for key, value in attributes.items()
+            if value is not None
+        }
+        labels[MODE_ATTRIBUTE] = mode
+        if self.record_query_text and query is not None:
+            labels[QUERY_ATTRIBUTE] = query
+        tracer = trace.get_tracer(TRACER_NAME, tracer_provider=self.provider)
+        return self._timed(
+            tracer.start_as_current_span(f"{SPAN_PREFIX}{name}", attributes=labels),
+            name=name,
+            mode=mode,
+        )
+
+    @contextmanager
+    def _timed(
+        self, span: AbstractContextManager[trace.Span], *, name: str, mode: str
+    ) -> Generator[SearchSpan]:
+        """Run the block inside ``span`` and record how long it took, failed or not.
+
+        Args:
+            span: The span's context manager.
+            name: The search, or the search and its stage after a dot.
+            mode: The retrieval mode.
+
+        Yields:
+            The span, which can still be told the mode that answered.
+        """
+        search, _, stage = name.partition(".")
+        labels = {
+            SEARCH_ATTRIBUTE: search,
+            STAGE_ATTRIBUTE: stage or WHOLE_SEARCH,
+            MODE_ATTRIBUTE: mode,
+        }
+        started = perf_counter()
+        try:
+            with span as current:
+                yield _OpenSpan(span=current, labels=labels)
+        except BaseException as error:
+            labels[ERROR_TYPE_ATTRIBUTE] = type(error).__qualname__
+            raise
+        finally:
+            self._duration.record(max(0.0, perf_counter() - started), labels)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class OpenTelemetryAgentReads:
+    """Implements ``ports.driven.AgentReads`` as events of the current span (the read tool's).
+
+    Each read of the agentic explorer becomes an ``exactdocs.agent.read`` event on the span it
+    runs in (pydantic-ai's ``execute_tool <read>``, inside ``run_code``): the tool, the version
+    and manifest it was bound to, and those of what it served. Never its arguments or the text
+    read, so the trace shows the run stayed in its version without holding any content.
+    """
+
+    def record(self, read: AgentRead) -> None:
+        """Add the read to the current span, if it records.
+
+        Args:
+            read: The read.
+        """
+        trace.get_current_span().add_event(
+            AGENT_READ_EVENT,
+            {
+                AGENT_TOOL_ATTRIBUTE: read.tool,
+                AGENT_PINNED_VERSION_ATTRIBUTE: read.pinned_version,
+                AGENT_PINNED_MANIFEST_ATTRIBUTE: read.pinned_manifest,
+                AGENT_SERVED_VERSIONS_ATTRIBUTE: list(read.served_versions),
+                AGENT_SERVED_MANIFESTS_ATTRIBUTE: list(read.served_manifests),
+            },
+        )

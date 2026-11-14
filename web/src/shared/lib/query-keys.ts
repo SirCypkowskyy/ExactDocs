@@ -5,5 +5,14 @@
  */
 export const BROWSE_KEY = ["browse"] as const;
 
+/**
+ * The root of the search across every library, under `BROWSE_KEY` so whatever invalidates that
+ * drops these hits too. `*search-all*` cannot be a GitHub owner, so it never names a library.
+ */
+export const SEARCH_ALL_KEY = [...BROWSE_KEY, "*search-all*"] as const;
+
 /** The root of the libraries list, its sync badges and import jobs. */
 export const LIBRARIES_KEY = ["libraries"] as const;
+
+/** The root of the instance's AI state: provider profiles, roles, embedding and usage. */
+export const AI_KEY = ["ai"] as const;

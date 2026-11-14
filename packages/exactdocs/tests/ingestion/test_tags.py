@@ -1,15 +1,16 @@
 import pytest
 
 from exactdocs.ingestion import models
+from exactdocs.ingestion.constants import MAX_TAG_RULES, PARSER_VERSION
 from exactdocs.ingestion.errors import InvalidPathPatternError, InvalidTagError
 from exactdocs.ingestion.models import (
-    MAX_TAG_RULES,
     MAX_TAGS,
-    PARSER_VERSION,
     ChunkingConfig,
+    ImportedTags,
     TagRule,
     article_tags,
     chunking_config_hash,
+    imported_tags,
     parse_article,
 )
 
@@ -31,6 +32,22 @@ def test_front_matter_and_path_rule_tags_combine(
     path: str, declared: tuple[str, ...], expected: tuple[str, ...]
 ) -> None:
     assert article_tags(path, declared, RULES) == expected
+
+
+def test_imported_tags_keep_where_each_comes_from_also_when_both_give_one() -> None:
+    found = imported_tags("docs/api/auth.md", ("api", "auth", "auth"), RULES)
+
+    assert found == ImportedTags(tags=("api", "auth"), front_matter=("api", "auth"), rules=("api",))
+    assert found.tags == article_tags("docs/api/auth.md", ("api", "auth"), RULES)
+
+
+def test_sources_are_kept_whole_when_the_combined_tags_are_capped() -> None:
+    declared = tuple(f"t{i}" for i in range(MAX_TAGS))
+
+    found = imported_tags("docs/api/a.md", declared, RULES)
+
+    assert found.tags == ("api", *declared[: MAX_TAGS - 1])
+    assert (found.rules, found.front_matter) == (("api",), declared)
 
 
 def test_rules_are_deduplicated_and_normalized() -> None:

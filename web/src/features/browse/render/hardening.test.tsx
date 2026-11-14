@@ -11,7 +11,7 @@ import { classifyLink, rawUrl } from "./urls";
 const where: Where = {
   path: "docs/a.md",
   title: "A",
-  imageUrl: () => undefined,
+  imageSources: () => [],
   fileUrl: () => undefined,
   docLink: (p, h, children) => <a href={`/x?path=${p}${h}`}>{children}</a>,
 };
@@ -102,7 +102,7 @@ describe("accessibility of callouts, tables and images", () => {
   });
   it("says why an image is not shown", () => {
     view("![The chart](./c.png)");
-    expect(screen.getByText("Image not shown: The chart")).toBeInTheDocument();
+    expect(screen.getByText("Image not available: The chart")).toBeInTheDocument();
   });
 });
 

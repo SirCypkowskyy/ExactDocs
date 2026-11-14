@@ -28,5 +28,10 @@ just test -k version     just bdd     just arch     just docs
 3. Turn the issue's *Expected behavior* into a behave scenario, then unit tests, then code.
 4. Open a PR into `develop` with `Closes #<issue>`. CI must be green.
 
+Diagrams in the README, `docs/` and `web/README.md` are [Mermaid](https://mermaid.js.org) code blocks,
+never ASCII art; `just docs-build` parses every one (`deploy/mermaid-check`) and builds the site in
+strict mode, as CI does. The check is a syntax gate (the site pins the same mermaid version through
+`extra_javascript`), so look at a new diagram in `just docs` too.
+
 Read [docs/architecture.md](docs/architecture.md) before adding a domain, port or adapter, and
 [docs/releasing.md](docs/releasing.md) for versions and tags.

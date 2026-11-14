@@ -1,46 +1,69 @@
-"""REST adapter for identity: the first-run setup, the browser session and "who is the caller"."""
+"""REST adapter for identity: setup, sessions, "who is the caller", tokens and the users page."""
 
 from collections.abc import Awaitable, Callable
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi.responses import RedirectResponse
 from fastapi.security import APIKeyCookie, HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import SecretStr
 
+from exactdocs.identity.constants import (
+    _THROTTLED,
+    COOKIE_ATTRS,
+    CREATE_TOKEN_DESCRIPTION,
+    LOGIN_FOR_TOKEN_DESCRIPTION,
+    SESSION_COOKIE,
+    SIGN_IN_COOKIE,
+    SIGN_IN_COOKIE_PATH,
+    SIGN_IN_PAGE,
+    USERS_DESCRIPTION,
+)
 from exactdocs.identity.dtos import (
     AccountSummary,
     AuthenticateQuery,
     CreateFirstAdminCommand,
     CreateTokenCommand,
+    CreateUserCommand,
+    FinishExternalSignInCommand,
+    LoginForTokenCommand,
+    NewPassword,
+    PasswordReset,
+    ResetPasswordCommand,
     SessionState,
+    SetUserDisabledCommand,
+    StartExternalSignInCommand,
     TokenGrant,
     TokenList,
+    UserList,
+    UserSummary,
 )
-from exactdocs.identity.errors import InvalidTokenError
+from exactdocs.identity.errors import (
+    InvalidTokenError,
+    NotAnOperatorError,
+    UnknownSignInProviderError,
+)
+from exactdocs.identity.models import Role
 from exactdocs.identity.ports.driving import (
     CreateFirstAdmin,
     CreateToken,
+    CreateUser,
+    FinishExternalSignIn,
     GetSessionState,
     IdentifyCaller,
     IdentifyToken,
     ListTokens,
+    ListUsers,
+    LoginForToken,
+    ResetPassword,
     RevokeToken,
+    SetUserDisabled,
     SignIn,
     SignOut,
+    StartExternalSignIn,
 )
-
-SESSION_COOKIE = "exactdocs_session"
-# Only `/api` needs the cookie (the UI itself is static), so the browser never sends it to `/mcp`.
-COOKIE_PATH = "/api"
-
-
-class _CookieAttrs(TypedDict):
-    path: str
-    httponly: bool
-    samesite: Literal["lax"]
-
-
-# Shared by `set_cookie` and `delete_cookie`: a deletion only works if the attributes match.
-COOKIE_ATTRS: _CookieAttrs = {"path": COOKIE_PATH, "httponly": True, "samesite": "lax"}
+from exactdocs_kernel import DomainError
 
 # `auto_error=False`: a missing cookie reaches `IdentifyCaller`, which raises the API's own 401.
 _session_cookie = APIKeyCookie(
@@ -61,12 +84,43 @@ _api_token = HTTPBearer(
 type CurrentCaller = Callable[..., Awaitable[AccountSummary]]
 
 
+def client_address(request: Request) -> str | None:
+    """Return the caller's IP address, for the sign-in throttle.
+
+    Behind a reverse proxy this is already the address the proxy reports: ``exactdocs serve``
+    runs uvicorn with its proxy headers on, which takes ``X-Forwarded-For`` from the proxies
+    in ``EXACTDOCS_FORWARDED_ALLOW_IPS`` only (anyone else cannot choose their own address).
+
+    Args:
+        request: The HTTP request.
+
+    Returns:
+        The client's IP address, or ``None`` when the transport reports none.
+    """
+    return request.client.host if request.client else None
+
+
 def build_session_caller(*, identify_caller: IdentifyCaller) -> CurrentCaller:
-    """Return the dependency that accepts the session cookie only (401 otherwise)."""
+    """Return the dependency that accepts the session cookie only (401 otherwise).
+
+    Args:
+        identify_caller: The driving port that resolves a session token.
+
+    Returns:
+        The dependency.
+    """
 
     async def session_caller(
         session_token: Annotated[str | None, Depends(_session_cookie)] = None,
     ) -> AccountSummary:
+        """Resolve the request's session cookie to its account.
+
+        Args:
+            session_token: The session cookie, if the request carried one.
+
+        Returns:
+            The signed-in account.
+        """
         return await identify_caller(session_token)
 
     return session_caller
@@ -82,6 +136,13 @@ def build_current_caller(
     place that learns how a request proves who it is: an API token in ``Authorization: Bearer``,
     or else the session cookie. A bearer token that is wrong is refused outright, never
     quietly replaced by a cookie that happens to be there.
+
+    Args:
+        identify_caller: The driving port that resolves a session token.
+        identify_token: The driving port that resolves an API token.
+
+    Returns:
+        The dependency.
     """
     session_caller = build_session_caller(identify_caller=identify_caller)
 
@@ -90,6 +151,19 @@ def build_current_caller(
         _documented: Annotated[HTTPAuthorizationCredentials | None, Depends(_api_token)] = None,
         session_token: Annotated[str | None, Depends(_session_cookie)] = None,
     ) -> AccountSummary:
+        """Resolve the request's bearer token, or else its session cookie, to its account.
+
+        Args:
+            request: The HTTP request, for its ``Authorization`` header.
+            _documented: The bearer credentials; only there to document the scheme in OpenAPI.
+            session_token: The session cookie, if the request carried one.
+
+        Returns:
+            The calling account.
+
+        Raises:
+            InvalidTokenError: The ``Authorization`` header is not a bearer token.
+        """
         authorization = request.headers.get("authorization")
         if authorization is not None:
             scheme, _, credentials = authorization.partition(" ")
@@ -111,24 +185,185 @@ def build_tokens_router(
     """Expose ``/tokens``. Managing tokens takes a signed-in session, not a token.
 
     So a leaked token cannot mint itself a successor that outlives its own revocation.
+
+    Args:
+        create_token: The driving port that mints a token.
+        list_tokens: The driving port that lists tokens.
+        revoke_token: The driving port that revokes a token.
+        session_caller: The dependency that requires a signed-in session.
+
+    Returns:
+        The router.
     """
     router = APIRouter(tags=["identity"], dependencies=[Depends(session_caller)])
     caller = Annotated[AccountSummary, Depends(session_caller)]
 
-    @router.post("/tokens", status_code=201)
+    @router.post("/tokens", status_code=201, description=CREATE_TOKEN_DESCRIPTION)
     async def create(
         command: CreateTokenCommand, account: caller, response: Response
     ) -> TokenGrant:
+        """Create an API token for the signed-in account. The secret is in this response only.
+
+        Args:
+            command: The token's name and optional expiry.
+            account: The signed-in account.
+            response: The HTTP response, to forbid caching it.
+
+        Returns:
+            The new token, with its secret.
+        """
         response.headers["Cache-Control"] = "no-store"  # the one time the secret is shown
         return await create_token(account, command)
 
     @router.get("/tokens")
     async def list_all(account: caller) -> TokenList:
+        """List the signed-in account's API tokens, newest first, without their secrets.
+
+        Args:
+            account: The signed-in account.
+
+        Returns:
+            The tokens.
+        """
         return await list_tokens(account)
 
     @router.delete("/tokens/{token_id}", status_code=204)
     async def revoke(token_id: str, account: caller) -> None:
+        """Revoke one of the signed-in account's API tokens; it stops working at once.
+
+        Args:
+            token_id: The token's id.
+            account: The signed-in account.
+        """
         await revoke_token(account, token_id)
+
+    return router
+
+
+def build_operator(*, caller: CurrentCaller, action: str) -> Callable[..., Awaitable[None]]:
+    """Return the dependency that lets only an ``admin`` through (403 for anyone else).
+
+    Args:
+        caller: Who may call at all: the session caller, or the session-or-token one.
+        action: What only an admin does, for the 403's message.
+
+    Returns:
+        The dependency.
+    """
+
+    async def operator(account: Annotated[AccountSummary, Depends(caller)]) -> None:
+        """Let only an operator through.
+
+        Args:
+            account: The calling account.
+
+        Raises:
+            NotAnOperatorError: The account is not an ``admin``.
+        """
+        if account.role != Role.ADMIN.value:
+            raise NotAnOperatorError(action)
+
+    return operator
+
+
+def build_users_router(
+    *,
+    list_users: ListUsers,
+    create_user: CreateUser,
+    set_user_disabled: SetUserDisabled,
+    reset_password: ResetPassword,
+    session_caller: CurrentCaller,
+) -> APIRouter:
+    """Expose ``/users``: the operator's users page. There is no self-signup route.
+
+    Every route needs a signed-in session (an API token is refused with 401, as for ``/tokens``:
+    a leaked token must not be able to create accounts) of an ``admin``; anyone else gets 403.
+
+    Args:
+        list_users: The driving port that lists the accounts.
+        create_user: The driving port that creates an account.
+        set_user_disabled: The driving port that disables or enables an account.
+        reset_password: The driving port that sets an account's password.
+        session_caller: The dependency that requires a signed-in session.
+
+    Returns:
+        The router.
+    """
+    operator = build_operator(caller=session_caller, action="manages user accounts")
+    router = APIRouter(tags=["identity"], dependencies=[Depends(operator)])
+
+    @router.get(
+        "/users",
+        description=f"List every local account, disabled ones included, oldest first. "
+        f"{USERS_DESCRIPTION}",
+    )
+    async def get_users() -> UserList:
+        """List every local account, disabled ones included, oldest first.
+
+        Returns:
+            The accounts.
+        """
+        return await list_users()
+
+    @router.post("/users", status_code=201)
+    async def add_user(command: CreateUserCommand) -> UserSummary:
+        """Create a local account with a password the operator passes on to its owner.
+
+        Operators only, with a session (see `GET /users`).
+
+        Args:
+            command: The new account's username, password and role.
+
+        Returns:
+            The new account.
+        """
+        return await create_user(command)
+
+    @router.post("/users/{user_id}/disable")
+    async def disable_user(user_id: str) -> UserSummary:
+        """Disable an account: its sessions end, its tokens are revoked, and it cannot sign in.
+
+        The last enabled admin cannot be disabled (409 `last_operator`). Disabling a disabled
+        account changes nothing. Operators only, with a session (see `GET /users`).
+
+        Args:
+            user_id: The account's id.
+
+        Returns:
+            The account as it is now.
+        """
+        return await set_user_disabled(SetUserDisabledCommand(id=user_id, disabled=True))
+
+    @router.post("/users/{user_id}/enable")
+    async def enable_user(user_id: str) -> UserSummary:
+        """Let a disabled account sign in again, with its password unchanged.
+
+        Its revoked API tokens stay revoked. Operators only, with a session (see `GET /users`).
+
+        Args:
+            user_id: The account's id.
+
+        Returns:
+            The account as it is now.
+        """
+        return await set_user_disabled(SetUserDisabledCommand(id=user_id, disabled=False))
+
+    @router.put("/users/{user_id}/password")
+    async def set_user_password(user_id: str, body: NewPassword) -> PasswordReset:
+        """Set a new password: every session of the account ends and its tokens are revoked.
+
+        The username's sign-in throttle count is dropped too, so its owner can sign in with the
+        new password at once (`throttle` says whether that worked). Operators only, with a
+        session (see `GET /users`).
+
+        Args:
+            user_id: The account's id.
+            body: The new password.
+
+        Returns:
+            The account, and what became of its sign-in throttle count.
+        """
+        return await reset_password(ResetPasswordCommand(id=user_id, password=body.password))
 
     return router
 
@@ -139,35 +374,109 @@ def build_router(
     sign_in: SignIn,
     sign_out: SignOut,
     get_session_state: GetSessionState,
+    login_for_token: LoginForToken,
     secure_cookies: bool,
 ) -> APIRouter:
-    """Expose the routes that need no session: ``/setup`` and ``/session`` (sign in, state, out).
+    """Expose the routes that need no session: ``/setup``, ``/session`` and ``/tokens/login``.
+
+    ``/session`` signs in, reports the state and signs out; ``/tokens/login`` trades credentials
+    for an API token (the CLI's login).
 
     ``secure_cookies`` forces the ``Secure`` attribute; without it the cookie is ``Secure``
     whenever the request came in over HTTPS. The cookie is HttpOnly (script never reads it) and
     SameSite=Lax (not sent on cross-site POST/DELETE; Origin is checked too). Its ``max_age`` is
     the 30-day absolute limit; the 7-day idle expiry is enforced on the server only, so the browser
     may keep a cookie the server already rejects.
+
+    Args:
+        create_first_admin: The driving port that creates the first admin.
+        sign_in: The driving port that starts a session.
+        sign_out: The driving port that ends a session.
+        get_session_state: The driving port that reports the session state.
+        login_for_token: The driving port that trades credentials for a token.
+        secure_cookies: Whether the session cookie is always ``Secure``.
+
+    Returns:
+        The router.
     """
     router = APIRouter(tags=["identity"])
 
     def secure(request: Request) -> bool:
+        """Whether the session cookie of this request gets the ``Secure`` attribute.
+
+        Args:
+            request: The HTTP request.
+
+        Returns:
+            ``True`` when forced, or when the request came over HTTPS.
+        """
         return secure_cookies or request.url.scheme == "https"
 
     @router.post("/setup", status_code=201)
     async def setup(command: CreateFirstAdminCommand) -> AccountSummary:
+        """Create the first admin account. Refused (409) once any account exists.
+
+        Args:
+            command: The first admin's username and password.
+
+        Returns:
+            The new account.
+        """
         return await create_first_admin(command)
 
     @router.get("/session")
     async def get_session(request: Request, response: Response) -> SessionState:
+        """Tell whether setup is due, nobody is signed in, or who is.
+
+        Args:
+            request: The HTTP request, for its session cookie.
+            response: The HTTP response, to forbid caching it.
+
+        Returns:
+            The setup and sign-in state.
+        """
         response.headers["Cache-Control"] = "no-store"
         return await get_session_state(request.cookies.get(SESSION_COOKIE))
 
-    @router.post("/session", status_code=201)
+    @router.post(
+        "/tokens/login",
+        status_code=201,
+        responses=_THROTTLED,
+        description=LOGIN_FOR_TOKEN_DESCRIPTION,
+    )
+    async def login(
+        command: LoginForTokenCommand, request: Request, response: Response
+    ) -> TokenGrant:
+        """Exchange a username and password for a new API token (what ``exactdocs login`` does).
+
+        Args:
+            command: The credentials and the new token's name and expiry.
+            request: The HTTP request, for the client address.
+            response: The HTTP response, to forbid caching it.
+
+        Returns:
+            The new token, with its secret.
+        """
+        response.headers["Cache-Control"] = "no-store"  # the one time the secret is shown
+        return await login_for_token(command, client=client_address(request))
+
+    @router.post("/session", status_code=201, responses=_THROTTLED)
     async def create_session(
         query: AuthenticateQuery, request: Request, response: Response
     ) -> SessionState:
-        grant = await sign_in(query, request.cookies.get(SESSION_COOKIE))
+        """Sign in: check the username and password and set the session cookie.
+
+        Args:
+            query: The username and password.
+            request: The HTTP request, for the current session and the client address.
+            response: The HTTP response, for the cookie.
+
+        Returns:
+            The signed-in state and account.
+        """
+        grant = await sign_in(
+            query, request.cookies.get(SESSION_COOKIE), client=client_address(request)
+        )
         response.set_cookie(
             SESSION_COOKIE,
             grant.token.get_secret_value(),
@@ -180,9 +489,196 @@ def build_router(
 
     @router.delete("/session", status_code=204)
     async def delete_session(request: Request, response: Response) -> None:
-        # Always succeeds, signed in or not: signing out twice is not an error.
+        """Sign out: end the session and clear its cookie. Signing out twice is not an error.
+
+        Args:
+            request: The HTTP request, for its session cookie.
+            response: The HTTP response, to clear the cookie.
+        """
         if token := request.cookies.get(SESSION_COOKIE):
             await sign_out(token)
         response.delete_cookie(SESSION_COOKIE, secure=secure(request), **COOKIE_ATTRS)
 
     return router
+
+
+def build_external_sign_in_router(
+    *,
+    start_external_sign_in: StartExternalSignIn,
+    finish_external_sign_in: FinishExternalSignIn,
+    secure_cookies: bool,
+) -> APIRouter:
+    """Expose ``/auth/{provider}/start`` and ``/auth/{provider}/callback``: sign-in through an IdP.
+
+    Both are browser navigations (top-level ``GET``), never API calls: they answer with
+    redirects. The start sets a short-lived HttpOnly, SameSite=Lax binding cookie on
+    ``/api/v1/auth`` and sends the browser to the provider; the callback needs that cookie, so a
+    callback another browser started (login CSRF) or one already used is refused. A refusal
+    redirects to the sign-in page with ``?error=<code>``; a success sets the session cookie
+    (exactly as a password sign-in does) and redirects to the path the sign-in was started
+    for. An unknown provider is a 404.
+
+    Args:
+        start_external_sign_in: The driving port that starts the sign-in.
+        finish_external_sign_in: The driving port that finishes it.
+        secure_cookies: Whether the cookies are always ``Secure``.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["identity"])
+
+    def secure(request: Request) -> bool:
+        """Whether this request's cookies get the ``Secure`` attribute.
+
+        Args:
+            request: The HTTP request.
+
+        Returns:
+            ``True`` when forced, or when the request came over HTTPS.
+        """
+        return secure_cookies or request.url.scheme == "https"
+
+    def refused(error: DomainError) -> RedirectResponse:
+        """Send the browser back to the sign-in page, naming the refusal by its code.
+
+        Only the code travels (never a message), so nobody can craft a link that shows the
+        sign-in page saying something else.
+
+        Args:
+            error: Why the sign-in was refused.
+
+        Returns:
+            The redirect.
+        """
+        return _no_store(
+            RedirectResponse(f"{SIGN_IN_PAGE}?{urlencode({'error': error.code})}", status_code=303)
+        )
+
+    @router.get(
+        "/auth/{provider}/start",
+        status_code=303,
+        response_class=RedirectResponse,
+        responses={303: {"description": "To the identity provider, or back to the sign-in page"}},
+    )
+    async def start(
+        provider: str,
+        request: Request,
+        return_to: Annotated[str | None, Query(max_length=2048)] = None,
+    ) -> RedirectResponse:
+        """Start signing in through an identity provider (a browser navigation).
+
+        Redirects to the provider with a binding cookie; when the provider cannot be reached,
+        back to the sign-in page with `?error=provider_unavailable`.
+
+        Args:
+            provider: The provider's name.
+            request: The HTTP request, for the scheme.
+            return_to: Where to go once signed in: a path on this server (else `/`).
+
+        Returns:
+            The redirect.
+
+        Raises:
+            UnknownSignInProviderError: No provider of this name is configured (404).
+        """
+        try:
+            begun = await start_external_sign_in(
+                StartExternalSignInCommand(provider=provider, return_to=return_to)
+            )
+        except UnknownSignInProviderError:
+            raise
+        except DomainError as error:
+            return refused(error)
+        response = _no_store(RedirectResponse(begun.redirect_url, status_code=303))
+        response.set_cookie(
+            SIGN_IN_COOKIE,
+            begun.binding.get_secret_value(),
+            max_age=begun.max_age,
+            path=SIGN_IN_COOKIE_PATH,
+            httponly=True,
+            samesite="lax",
+            secure=secure(request),
+        )
+        return response
+
+    @router.get(
+        "/auth/{provider}/callback",
+        status_code=303,
+        response_class=RedirectResponse,
+        responses={303: {"description": "Signed in, or back to the sign-in page with `?error=`"}},
+    )
+    async def callback(
+        provider: str,
+        request: Request,
+        code: Annotated[str | None, Query(max_length=4096)] = None,
+        state: Annotated[str | None, Query(max_length=512)] = None,
+        error: Annotated[str | None, Query(max_length=256)] = None,
+    ) -> RedirectResponse:
+        """Finish signing in: the identity provider sends the browser here.
+
+        The binding cookie is cleared whatever happens. Refusals go back to the sign-in page
+        with `?error=` and one of `sign_in_failed`, `sign_in_cancelled`, `not_allowed`,
+        `account_disabled`, `username_unavailable` or `provider_unavailable`; no session is
+        created then.
+
+        Args:
+            provider: The provider's name.
+            request: The HTTP request, for the cookies and the scheme.
+            code: The authorization code.
+            state: The state the sign-in was started with.
+            error: The provider's error, when it did not sign the person in.
+
+        Returns:
+            The redirect.
+
+        Raises:
+            UnknownSignInProviderError: No provider of this name is configured (404).
+        """
+        binding = request.cookies.get(SIGN_IN_COOKIE)
+        command = FinishExternalSignInCommand(
+            provider=provider,
+            binding=None if binding is None else SecretStr(binding),
+            state=state,
+            code=code,
+            error=error,
+        )
+        try:
+            result = await finish_external_sign_in(command, request.cookies.get(SESSION_COOKIE))
+        except UnknownSignInProviderError:
+            raise
+        except DomainError as refusal:
+            response = refused(refusal)
+        else:
+            response = _no_store(RedirectResponse(result.return_to, status_code=303))
+            response.set_cookie(
+                SESSION_COOKIE,
+                result.session.token.get_secret_value(),
+                max_age=result.session.max_age,
+                secure=secure(request),
+                **COOKIE_ATTRS,
+            )
+        response.delete_cookie(
+            SIGN_IN_COOKIE,
+            path=SIGN_IN_COOKIE_PATH,
+            httponly=True,
+            samesite="lax",
+            secure=secure(request),
+        )
+        return response
+
+    return router
+
+
+def _no_store(response: RedirectResponse) -> RedirectResponse:
+    """Keep a sign-in redirect out of caches and its URL out of the next page's ``Referer``.
+
+    Args:
+        response: The redirect.
+
+    Returns:
+        The same response.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response

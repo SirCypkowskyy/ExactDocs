@@ -29,7 +29,57 @@ class ValidationError(DomainError):
     code = "validation_error"
 
 
+class BusyError(DomainError):
+    """Too many of this kind of request are running: try again shortly.
+
+    ``retry_after`` is a hint in whole seconds (an HTTP adapter sends it as ``Retry-After``).
+    """
+
+    code = "busy"
+
+    def __init__(self, detail: str, *, retry_after: int = 1) -> None:
+        """Create the error.
+
+        Args:
+            detail: What is busy, for the caller.
+            retry_after: Seconds to wait before trying again; raised to at least 1.
+        """
+        super().__init__(detail)
+        self.retry_after = max(1, retry_after)
+
+
 class UnauthenticatedError(DomainError):
     """The caller is not signed in, or the credentials they gave are wrong."""
 
     code = "unauthenticated"
+
+
+class ForbiddenError(DomainError):
+    """The caller is known, but may not do this."""
+
+    code = "forbidden"
+
+
+class RateLimitedError(DomainError):
+    """The caller asked too often; it may try again after ``retry_after`` seconds."""
+
+    code = "rate_limited"
+
+    def __init__(self, message: str, retry_after: int) -> None:
+        """Create the error.
+
+        Args:
+            message: What was refused, for the caller.
+            retry_after: Seconds to wait before trying again; raised to at least 1.
+        """
+        super().__init__(message)
+        self.retry_after = max(1, retry_after)
+
+
+class SealedTextUnreadableError(Exception):
+    """A sealed text does not open: another secret key or purpose sealed it, or it was altered.
+
+    Raised by the instance's secret box, which every domain reaches through its own ``SecretBox``
+    port. It is not a ``DomainError`` and never reaches a client: the adapter that opened the text
+    translates it into its own domain's error (ingestion's vault: ``CredentialsRequiredError``).
+    """

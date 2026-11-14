@@ -1,0 +1,40 @@
+{
+  "provenance": "ctx7 0.9.0 (npm `ctx7`, packages/cli of https://github.com/upstash/context7): src/index.ts, src/commands/docs.ts, src/commands/search.ts, src/utils/api.ts; read 2026-11-04. Names, arguments, flags, requests and output shape only.",
+  "commands": {
+    "library": {
+      "arguments": [
+        {"name": "name", "required": true},
+        {"name": "query", "required": false}
+      ],
+      "options": ["--json"],
+      "request": {"path": "/api/v2/libs/search", "params": ["libraryName", "query"]},
+      "output": {
+        "text": ["Title:", "Context7-compatible library ID:", "Description:", "Versions:"],
+        "json": "the bare `results` array of the response"
+      },
+      "exactdocs": "implemented"
+    },
+    "docs": {
+      "arguments": [
+        {"name": "libraryId", "required": true},
+        {"name": "query", "required": true}
+      ],
+      "options": ["--json", "--language"],
+      "request": {"path": "/api/v2/context", "params": ["libraryId", "query", "type", "language"]},
+      "libraryIdPattern": "^/[^/]+/[^/]",
+      "output": {
+        "text": "the body of `type=txt`, printed as is",
+        "json": "the whole `type=json` response"
+      },
+      "exactdocs": "implemented"
+    },
+    "search": {
+      "arguments": [{"name": "query", "required": true}],
+      "options": ["--library", "--library-version", "--language", "--json"],
+      "request": {"path": "/api/v3/search", "params": ["query", "type", "library", "version", "language"]},
+      "exactdocs": "not implemented: no matching REST route (the MCP `search_docs`/search-all is a different shape)"
+    }
+  },
+  "exitCodes": "1 for every failure; errors are printed on stdout",
+  "global": ["--base-url <url>", "-v, --version"]
+}

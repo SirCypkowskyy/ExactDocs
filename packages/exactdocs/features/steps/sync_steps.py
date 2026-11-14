@@ -36,6 +36,8 @@ def step_commit(context: Context, path: str, branch: str) -> None:
     _git(context, "-c", "user.name=Fixture", "-c", "user.email=f@exactdocs.invalid",
          "commit", "-q", "-am", f"docs: change {path}")  # fmt: skip
     context.new_head = _git(context, "rev-parse", "HEAD")
+    context.listed_before = articles_of(context, branch)
+    context.read_before = {a["path"]: _read(context, a["path"]) for a in context.listed_before}
     context.changed = path
     _git(context, "checkout", "-q", "main")
 
@@ -46,9 +48,9 @@ def step_hold(context: Context, path: str) -> None:
         f"/api/v1/libraries{LIBRARY}/search", params={"q": "Python", "ref": REF, "limit": 50}
     )
     assert response.status_code == HTTPStatus.OK, response.text
-    context.held = next(
-        r["chunk_id"] for r in response.json()["results"] if path in r["article_path"]
-    )
+    held = next(r for r in response.json()["results"] if path in r["article_path"])
+    context.held = held["chunk_id"]
+    context.held_section = (held["article_path"], held["heading_path"])
 
 
 @given("the repository is no longer served")
@@ -94,6 +96,36 @@ def step_rechunked(context: Context, path: str) -> None:
     assert job["reused"] == len(context.served[REF]) - 1, job
 
 
+@then('only "{path}" is parsed and every other article is taken from the catalog')
+def step_parsed(context: Context, path: str) -> None:
+    assert context.response.status_code == HTTPStatus.ACCEPTED, context.response.text
+    assert context.changed == path
+    job = context.job
+    assert job["state"] == "succeeded", job
+    assert job["parsed"] == 1, job  # install.md
+    assert job["taken"] == len(context.served[REF]) - 1, job
+
+
+@then("every other article reads as it did before the sync")
+def step_same_articles(context: Context) -> None:
+    after = {a["path"]: a for a in articles_of(context, REF)}
+    before = {a["path"]: a for a in context.listed_before}
+    assert after.keys() == before.keys()
+    for path, listed in before.items():
+        if path != context.changed:
+            assert after[path] == listed, (after[path], listed)
+            assert _read(context, path) == context.read_before[path], path
+
+
+def _read(context: Context, path: str) -> dict:
+    """The article as a reader gets it, less what a new commit changes by itself."""
+    response = context.client.get(
+        f"/api/v1/libraries{LIBRARY}/article", params={"ref": REF, "path": path}
+    )
+    assert response.status_code == HTTPStatus.OK, response.text
+    return {k: v for k, v in response.json().items() if k not in {"commit_sha", "manifest_id"}}
+
+
 @then("the version keeps its ID with the new commit SHA")
 def step_same_id(context: Context) -> None:
     assert version_commit(context, REF) == context.new_head != context.commits[REF]
@@ -111,6 +143,24 @@ def step_read_held(context: Context) -> None:
 def step_error(context: Context, code: str) -> None:
     assert context.response.status_code == HTTPStatus.CONFLICT, context.response.text
     assert context.response.json()["error"] == code, context.response.text
+
+
+@then("the error names the section's new chunk ID")
+def step_new_location(context: Context) -> None:
+    detail = context.response.json()["detail"]
+    assert "not instructions" in detail, detail
+    article_path, heading_path = context.held_section
+    current = context.client.get(
+        f"/api/v1/libraries{LIBRARY}/search", params={"q": "Python", "ref": REF, "limit": 50}
+    ).json()["results"]
+    [expected] = [
+        r
+        for r in current
+        if r["article_path"] == article_path and r["heading_path"] == heading_path
+    ]
+    assert expected["chunk_id"] != context.held, expected
+    assert repr(expected["chunk_id"]) in detail, detail
+    assert f"headings [{heading_path[0]!r}" in detail, detail
 
 
 @then('"{target}" is still served at its previous commit')

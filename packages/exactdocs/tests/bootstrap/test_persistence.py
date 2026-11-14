@@ -1,8 +1,12 @@
 """The data directory and the migrated SQLite database."""
 
 import asyncio
+import fcntl
+import logging
 import os
+import re
 import shutil
+import sqlite3
 import stat
 import textwrap
 from pathlib import Path
@@ -14,16 +18,20 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncEngine
 
-from exactdocs.bootstrap.container import Container
+from exactdocs.bootstrap import database
+from exactdocs.bootstrap.constants import BUSY_TIMEOUT_MS, MIGRATION_TURN_SUFFIX, MIGRATIONS
+from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.database import (
-    BUSY_TIMEOUT_MS,
-    MIGRATIONS,
     StartupError,
     alembic_config,
     current_revision,
+    database_file,
     migrate,
+    open_database,
 )
+from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
 from exactdocs.catalog.dtos import GetLibraryQuery, ListLibrariesQuery
@@ -31,7 +39,8 @@ from exactdocs.catalog.errors import LibraryNotFoundError
 from exactdocs.catalog.models import HostKind, Library, LibraryId
 
 ORPHAN_VERSION = (
-    "INSERT INTO catalog_library_versions VALUES ('/no/such', 'v1', 'tag', 'abc', '2026-11-04')"
+    "INSERT INTO catalog_library_versions (library_id, ref, kind, commit_sha, imported_at) "
+    "VALUES ('/no/such', 'v1', 'tag', 'abc', '2026-11-04')"
 )
 
 
@@ -62,7 +71,7 @@ async def test_empty_data_dir_gets_a_database_at_the_alembic_head(
 async def test_a_stored_library_is_listed_after_a_restart() -> None:
     first = Container.build(Settings())
     async with first.running():
-        await SqliteLibraryRepository(first.engine).save(library("/acme/payments"))
+        await SqliteLibraryRepository(engine=first.engine).save(library("/acme/payments"))
 
     second = Container.build(Settings())
     async with second.running():
@@ -73,10 +82,46 @@ async def test_a_stored_library_is_listed_after_a_restart() -> None:
     assert found.title == "Payments"
 
 
+async def test_a_container_runs_once_at_a_time() -> None:
+    """A second run would share the engine, and the first to stop would dispose it under the other.
+
+    A connection the other run had checked out (a job worker's poll) would then go back to a dead
+    pool and never be closed (#203).
+    """
+    container = Container.build(Settings())
+    app = create_app(container)
+
+    async with container.running():
+        with pytest.raises(RuntimeError, match="already running"):
+            async with container.running(jobs=False):
+                pass
+        with pytest.raises(RuntimeError, match="already running"):
+            async with app.router.lifespan_context(app):  # the app's lifespan runs it too
+                pass
+        assert await current_revision(container.engine) == head()  # the first run is untouched
+
+    async with app.router.lifespan_context(app):  # stopped, it may run again
+        assert await current_revision(container.engine) == head()
+
+
+async def test_a_read_only_container_runs_once_at_a_time() -> None:
+    async with Container.build(Settings()).running():
+        pass  # a database to open read-only
+    reader = ReadOnlyContainer.build(Settings())
+
+    async with reader.running():
+        with pytest.raises(RuntimeError, match="already running"):
+            async with reader.running():
+                pass
+
+    async with reader.running():  # stopped, it may run again
+        assert await current_revision(reader.engine) == head()
+
+
 async def test_nothing_survives_in_another_data_dir(tmp_path: Path) -> None:
     first = Container.build(Settings())
     async with first.running():
-        await SqliteLibraryRepository(first.engine).save(library("/a/b"))
+        await SqliteLibraryRepository(engine=first.engine).save(library("/a/b"))
 
     other = Container.build(Settings(data_dir=tmp_path / "other"))
     async with other.running():
@@ -132,9 +177,29 @@ async def test_database_url_overrides_the_file_in_the_data_dir(
     assert not (isolated_data_dir / "exactdocs.db").exists()
 
 
-def test_only_sqlite_is_supported() -> None:
-    with pytest.raises(StartupError, match="only SQLite"):
-        Container.build(Settings(database_url="postgresql://user:secret@host/db"))
+def test_only_sqlite_and_postgresql_are_supported() -> None:
+    with pytest.raises(StartupError, match="use SQLite or PostgreSQL"):
+        Container.build(Settings(database_url="mysql://user:secret@host/db"))
+
+
+def test_postgresql_runs_on_psycopg_only() -> None:
+    with pytest.raises(StartupError, match="psycopg 3"):
+        Container.build(Settings(database_url="postgresql+asyncpg://user:secret@host/db"))
+
+
+@pytest.mark.parametrize("url", ["postgresql://u:p@db/x", "postgresql+psycopg://u:p@db/x"])
+def test_both_postgresql_spellings_mean_psycopg(url: str) -> None:
+    settings = Settings(database_url=url)
+
+    assert settings.effective_database_url == "postgresql+psycopg://u:p@db/x"
+    assert settings.uses_postgres
+    assert not Settings().uses_postgres
+
+
+def test_postgresql_needs_one_secret_key_for_every_process() -> None:
+    # Checked before any connection: the host does not have to exist.
+    with pytest.raises(StartupError, match="EXACTDOCS_SECRET_KEY"):
+        Container.build(Settings(database_url="postgresql://user:secret@nowhere.invalid/db"))
 
 
 async def test_connections_use_wal_foreign_keys_and_a_busy_timeout() -> None:
@@ -208,7 +273,7 @@ async def test_a_batch_alteration_keeps_the_rows_that_reference_the_table(tmp_pa
         """,
     )
     async with container.running():
-        repository = SqliteLibraryRepository(container.engine)
+        repository = SqliteLibraryRepository(engine=container.engine)
         stored = library("/acme/payments")
         await repository.save(stored)
 
@@ -237,13 +302,181 @@ async def test_a_migration_that_breaks_a_foreign_key_is_rolled_back(tmp_path: Pa
 async def test_processes_starting_together_all_migrate_an_empty_database(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # "Processes" are containers on one event loop: a real race all the same, since the
+    # migration turn is an flock, per open file description (fcntl.lockf would not be).
     # The race is in the first moments of a fresh database file, so every round gets its own.
     for round_ in range(5):
         monkeypatch.setenv("EXACTDOCS_DATA_DIR", str(tmp_path / f"round-{round_}"))
         containers = [Container.build(Settings()) for _ in range(8)]
 
         async def start(container: Container) -> str | None:
-            async with container.running():
+            async with container.running(jobs=False):  # one job worker per process
                 return await current_revision(container.engine)
 
         assert await asyncio.gather(*(start(c) for c in containers)) == [head()] * 8
+
+
+SLOW_REVISION = """
+import asyncio
+from sqlalchemy.util import await_
+await_(asyncio.sleep(0.6))  # holds the write lock without blocking the event loop
+"""
+
+
+async def test_a_process_waits_for_another_migration_longer_than_sqlite_waits_for_a_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A busy machine: the other process's migration outlasts SQLite's own wait (#320).
+    monkeypatch.setattr(database, "BUSY_TIMEOUT_MS", 50)
+    location = add_revision(tmp_path, SLOW_REVISION)
+    engines = [open_database(Settings()) for _ in range(3)]
+    try:
+        await asyncio.gather(*(migrate(engine, location=location) for engine in engines))
+
+        assert [await current_revision(engine) for engine in engines] == ["extra"] * 3
+    finally:
+        for engine in engines:
+            await engine.dispose()
+
+
+def migration_turn(engine: AsyncEngine) -> Path:
+    path = database_file(engine)
+    assert path is not None
+    return path.with_name(path.name + MIGRATION_TURN_SUFFIX)
+
+
+def turn_taken(monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
+    """An event set as soon as a migration takes the turn (it then names itself in the file)."""
+    taken = asyncio.Event()
+    # Written the moment the flock is held.
+    write = database._write_turn_holder  # ruff: ignore[private-member-access]
+
+    def noting(descriptor: int, holder: str) -> None:
+        write(descriptor, holder)
+        if holder:
+            taken.set()
+
+    monkeypatch.setattr(database, "_write_turn_holder", noting)
+    return taken
+
+
+async def test_a_start_cancelled_while_it_waits_for_another_migration_stops_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    location = add_revision(tmp_path, SLOW_REVISION)
+    taken = turn_taken(monkeypatch)
+    first, second = open_database(Settings()), open_database(Settings())
+    try:
+        migrating = asyncio.create_task(migrate(first, location=location))
+        await taken.wait()  # the first holds the migration turn
+        waiting = asyncio.create_task(migrate(second, location=location))
+        await asyncio.sleep(0.1)
+        waiting.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(waiting, timeout=0.2)  # did not wait for the first to finish
+        await migrating
+        await migrate(second, location=location)  # the turn was given back
+
+        assert await current_revision(second) == "extra"
+    finally:
+        await first.dispose()
+        await second.dispose()
+
+
+class _TurnWarnings(logging.Handler):
+    """Collects the waiters' warnings, and says when a second one has come."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.WARNING)
+        self.messages: list[str] = []
+        self.repeated = asyncio.Event()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if "to migrate" in record.getMessage():
+            self.messages.append(record.getMessage())
+            if len(self.messages) >= 2:  # the first notice and one repeat
+                self.repeated.set()
+
+
+async def test_a_long_wait_for_another_migration_is_logged_again_naming_the_lock_and_holder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(database, "MIGRATION_TURN_NOTICE_SECONDS", 0.05)
+    monkeypatch.setattr(database, "MIGRATION_TURN_REPEAT_SECONDS", 0.1)
+    warnings = _TurnWarnings()
+    database.logger.addHandler(warnings)
+    engine = open_database(Settings())
+    turn = migration_turn(engine)
+    holder = os.open(turn, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(holder, fcntl.LOCK_EX)  # another process holds the turn ...
+        os.write(holder, b"pid 4242 on elsewhere")  # ... and says who it is
+        waiting = asyncio.create_task(migrate(engine))
+        await asyncio.wait_for(warnings.repeated.wait(), timeout=10)
+        os.close(holder)  # the holder lets go
+        holder = -1
+        await waiting
+
+        assert await current_revision(engine) == head()
+        assert all(str(turn) in m and "pid 4242 on elsewhere" in m for m in warnings.messages)
+        assert not turn.read_text()  # a finished migration names no holder
+    finally:
+        database.logger.removeHandler(warnings)
+        if holder >= 0:
+            os.close(holder)
+        await engine.dispose()
+
+
+async def test_a_host_name_that_is_not_utf8_never_fails_the_migration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(database.socket, "gethostname", lambda: "host\udcff")
+    engine = open_database(Settings())
+    try:
+        await migrate(engine)
+
+        assert await current_revision(engine) == head()
+        assert not migration_turn(engine).read_text()  # cleared again after the migration
+    finally:
+        await engine.dispose()
+
+
+async def test_a_migration_lock_in_a_missing_directory_stops_startup_naming_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("EXACTDOCS_DATA_DIR", str(tmp_path / "data"))
+    engine = open_database(Settings())
+    try:
+        shutil.rmtree(tmp_path / "data")  # gone before the first connection
+        with pytest.raises(StartupError, match=re.escape(str(migration_turn(engine)))):
+            await migrate(engine)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.skipif(
+    getattr(os, "geteuid", lambda: 1)() == 0, reason="root ignores file permissions"
+)
+async def test_a_migration_lock_of_another_user_stops_startup_naming_it() -> None:
+    engine = open_database(Settings())
+    turn = migration_turn(engine)
+    turn.touch(mode=0o000)  # as left by a command run as another user (mode 0600, not ours)
+    try:
+        with pytest.raises(StartupError, match="same user") as raised:
+            await migrate(engine)
+
+        assert str(turn) in str(raised.value)
+    finally:
+        turn.chmod(0o600)
+        await engine.dispose()
+
+
+def test_an_sqlite_older_than_the_floor_stops_startup_with_a_clear_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sqlite3, "sqlite_version_info", (3, 34, 1))
+    monkeypatch.setattr(sqlite3, "sqlite_version", "3.34.1")
+
+    with pytest.raises(StartupError, match=r"SQLite 3\.34\.1 is too old.*3\.35"):
+        open_database(Settings())

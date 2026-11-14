@@ -13,15 +13,25 @@ from exactdocs.ingestion.adapters.driven.git_cli import (
     sparse_patterns,
     sweep_stale_fetches,
 )
+from exactdocs.ingestion.constants import MAX_FETCHES
 from exactdocs.ingestion.errors import (
     CommitUnavailableError,
     GitNotInstalledError,
     InvalidRepositoryUrlError,
     NotAGitRepositoryError,
+    PreviewBusyError,
     RepositoryTooLargeError,
     RepositoryUnreachableError,
+    TreeTooLargeError,
 )
-from exactdocs.ingestion.models import PathSelection, ProposedId, RepositoryHost, RepositoryUrl
+from exactdocs.ingestion.models import (
+    FetchedFile,
+    PathSelection,
+    ProblemCode,
+    ProposedId,
+    RepositoryHost,
+    RepositoryUrl,
+)
 from fixture_repo import DocsRepo, git
 
 
@@ -253,12 +263,14 @@ def test_sparse_patterns_follow_the_selection() -> None:
 
     assert sparse_patterns(selection) == [
         "/docs/", "/guide/*.md", "/a/x", "/b/x", "/\\[z]",
-        "/README.md", "/README.mdx", "!/docs/archive/",
+        "/README.md", "/README.mdx", "!/docs/archive/", "/context7.json",
     ]  # fmt: skip
 
 
 def test_no_include_means_every_file() -> None:
-    assert sparse_patterns(PathSelection.of()) == ["/*", "/README.md", "/README.mdx"]
+    assert sparse_patterns(PathSelection.of()) == [
+        "/*", "/README.md", "/README.mdx", "/context7.json",
+    ]  # fmt: skip
 
 
 async def test_fetches_run_side_by_side(gateway: GitCli, docs_repo: DocsRepo) -> None:
@@ -442,16 +454,26 @@ def test_brace_overflow_drops_an_exclusion_but_widens_an_include() -> None:
     many = "{a,b,c,d,e,f,g,h,i}{a,b,c,d,e,f,g,h,i}/x.md"
 
     assert sparse_patterns(PathSelection.of(["docs/"], [many])) == [
-        "/docs/", "/README.md", "/README.mdx",
+        "/docs/", "/README.md", "/README.mdx", "/context7.json",
     ]  # fmt: skip
-    assert sparse_patterns(PathSelection.of([many])) == ["/*", "/README.md", "/README.mdx"]
+    assert sparse_patterns(PathSelection.of([many])) == [
+        "/*", "/README.md", "/README.mdx", "/context7.json",
+    ]  # fmt: skip
 
 
-def test_an_include_that_matches_nothing_fetches_only_the_readme() -> None:
-    assert sparse_patterns(PathSelection.of(["{}"])) == ["/README.md", "/README.mdx"]
+def test_an_include_that_matches_nothing_fetches_only_the_readme_and_context7_json() -> None:
+    assert sparse_patterns(PathSelection.of(["{}"])) == [
+        "/README.md", "/README.mdx", "/context7.json",
+    ]  # fmt: skip
     assert sparse_patterns(PathSelection.of(["{}", "docs/"])) == [
-        "/docs/", "/README.md", "/README.mdx",
+        "/docs/", "/README.md", "/README.mdx", "/context7.json",
     ]  # fmt: skip
+
+
+def test_no_exclusion_can_drop_context7_json() -> None:
+    assert sparse_patterns(PathSelection.of([], ["**/*.json", "context7.json"]))[-1] == (
+        "/context7.json"
+    )
 
 
 def test_special_characters_are_neutralised() -> None:
@@ -467,12 +489,13 @@ TREE = [
     "docs/guide/install.md", "docs/guide/deep/x.md", "docs/archive/old.md", "docs/API.MD",
     "guide/g.md", "a/x.md", "b/x.md", "ab/x.md", "src/lib/readme.md", "src/lib/code.py",
     "!bang/b.md", "#hash.md", "br[ack]et.md", "bracket.md", "sp ace/s.md", "notes.txt",
+    "app/[locale]/x.md", "app/l/x.md",
 ]  # fmt: skip
 PIECES = [
     "docs", "docs/", "docs/**", "docs/*.md", "docs/**/*.md", "**/x.md", "*/x.md", "{a,b}/x.md",
     "{docs,guide}/", "docs/archive/", "**/readme.md", "*.md", "README.md", "src/", "!bang/",
     "#hash.md", "br[ack]et.md", "sp ace/", "{}", "docs/{guide,archive}/**", "docs/guide/**/x.md",
-    "?/x.md", "a?/x.md", "docs/*.mdx",
+    "?/x.md", "a?/x.md", "docs/*.mdx", "app/[locale]", "app/[locale]/",
 ]  # fmt: skip
 
 
@@ -504,3 +527,252 @@ async def test_sparse_patterns_never_hide_a_file_the_selection_picks(
         fetched = {p for p in files(folder) if selection.selects(p)}
 
     assert fetched == {p for p in TREE if selection.selects(p)}
+
+
+async def test_fetch_files_checks_out_exactly_the_named_paths(
+    gateway: GitCli, docs_repo: DocsRepo
+) -> None:
+    pinned = sha(docs_repo, "v1.3.0")
+
+    async with gateway.fetch_files(
+        repository(docs_repo.file_url),
+        pinned,
+        ["docs/assets/logo.png", "docs/*", "docs/guide/[a]uth.md", "docs/nope.png"],
+        max_bytes=1024,
+    ) as dir_:
+        assert files(dir_) == {"docs/assets/logo.png"}  # no README, no glob widening
+    assert not dir_.exists()
+
+
+async def test_fetch_files_with_nothing_to_fetch_checks_out_nothing(
+    gateway: GitCli, docs_repo: DocsRepo
+) -> None:
+    async with gateway.fetch_files(
+        repository(docs_repo.file_url), sha(docs_repo, "v1.3.0"), ["bad\nname"], max_bytes=1024
+    ) as dir_:
+        assert files(dir_) == set()
+
+
+async def test_fetch_files_is_bounded_by_its_own_byte_limit(
+    work: Path, docs_repo: DocsRepo
+) -> None:
+    tight = GitCli.locate(work_root=work)
+    big = "docs/guide/configuration.md"
+
+    with pytest.raises(RepositoryTooLargeError):
+        async with tight.fetch_files(
+            repository(docs_repo.file_url), sha(docs_repo, "v1.3.0"), [big], max_bytes=-4 * 2**20
+        ):
+            pass
+    assert leftovers(work) == []
+
+
+async def test_lists_the_tree_without_a_checkout_or_blobs(
+    gateway: GitCli, docs_repo: DocsRepo, work: Path
+) -> None:
+    pinned = sha(docs_repo, "v1.4.0")
+
+    listed = await gateway.list_files(repository(docs_repo.file_url), pinned)
+
+    assert "docs/guide/install.md" in listed
+    assert "docs/assets/logo.png" in listed  # everything in the tree; the use case filters
+    assert set(listed) == set(
+        git("ls-tree", "-r", "--name-only", pinned, cwd=docs_repo.path).split("\n")
+    )
+    assert leftovers(work) == []
+
+
+async def test_a_listing_of_a_missing_commit_is_reported(
+    gateway: GitCli, docs_repo: DocsRepo
+) -> None:
+    with pytest.raises(CommitUnavailableError):
+        await gateway.list_files(repository(docs_repo.file_url), "0" * 40)
+
+
+async def test_a_listing_shares_the_process_deadline(gateway: GitCli, docs_repo: DocsRepo) -> None:
+    slow = GitCli(git=gateway.git, work_root=gateway.work_root, fetch_timeout=0.0)
+
+    with pytest.raises(RepositoryUnreachableError):
+        await slow.list_files(repository(docs_repo.file_url), sha(docs_repo, "v1.4.0"))
+
+
+async def test_a_tree_over_the_output_cap_is_too_large_to_preview(
+    docs_repo: DocsRepo, work: Path
+) -> None:
+    small = GitCli(git=GitCli.locate().git, work_root=work, max_output=64)
+
+    with pytest.raises(TreeTooLargeError) as raised:
+        await small.list_files(repository(docs_repo.file_url), sha(docs_repo, "v1.4.0"))
+
+    assert raised.value.code == "repository_too_large"
+    assert "refs" not in str(raised.value)
+    assert not isinstance(raised.value, RepositoryTooLargeError)  # no MiB limit to report
+    assert leftovers(work) == []
+
+
+async def test_a_preview_waits_a_bounded_time_for_a_slot(docs_repo: DocsRepo, work: Path) -> None:
+    busy = GitCli(git=GitCli.locate().git, work_root=work, preview_wait=0.05)
+    for _ in range(2):
+        await busy.preview_slots.acquire()
+
+    with pytest.raises(PreviewBusyError) as raised:
+        await busy.list_files(repository(docs_repo.file_url), sha(docs_repo, "v1.4.0"))
+    assert raised.value.retry_after == 1  # whole seconds, at least one
+
+    busy.preview_slots.release()  # a slot is free again: the preview runs
+    assert await busy.list_files(repository(docs_repo.file_url), sha(docs_repo, "v1.4.0"))
+    assert leftovers(work) == []
+
+
+async def test_a_listing_leaves_symlinks_out(tmp_path: Path, gateway: GitCli) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    git("init", "-q", "-b", "main", cwd=source)
+    (source / "a.md").write_text("a")
+    (source / "link.md").symlink_to("a.md")
+    git("add", ".", cwd=source)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x", cwd=source)
+
+    listed = await gateway.list_files(
+        repository(source.as_uri()), git("rev-parse", "HEAD", cwd=source)
+    )
+
+    assert listed == ["a.md"]
+
+
+@pytest.mark.parametrize("transport", ["file_url", "http_url"])
+async def test_one_root_file_is_read_from_the_tree_without_a_checkout(
+    gateway: GitCli, docs_repo: DocsRepo, work: Path, transport: str
+) -> None:
+    url = getattr(docs_repo, transport)
+
+    found = await gateway.read_file(
+        repository(url), sha(docs_repo, "next"), "context7.json", max_bytes=2**16
+    )
+    absent = await gateway.read_file(
+        repository(url), sha(docs_repo, "v1.4.0"), "context7.json", max_bytes=2**16
+    )
+
+    expected = git("show", "next:context7.json", cwd=docs_repo.path)
+    assert found == FetchedFile(data=(expected + "\n").encode())
+    assert absent == FetchedFile()
+    assert leftovers(work) == []
+
+
+async def test_a_root_file_over_the_limit_is_not_downloaded(
+    gateway: GitCli, docs_repo: DocsRepo
+) -> None:
+    found = await gateway.read_file(
+        repository(docs_repo.file_url), sha(docs_repo, "next"), "context7.json", max_bytes=10
+    )
+
+    assert found == FetchedFile(problem="larger than 10 bytes")
+
+
+async def test_a_root_file_that_is_a_link_or_a_folder_is_not_read(
+    tmp_path: Path, gateway: GitCli
+) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    git("init", "-q", "-b", "main", cwd=source)
+    (source / "target.json").write_text("{}")
+    (source / "context7.json").symlink_to("target.json")
+    (source / "docs").mkdir()
+    (source / "docs" / "a.md").write_text("a")
+    git("add", ".", cwd=source)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x", cwd=source)
+    head = git("rev-parse", "HEAD", cwd=source)
+
+    link = await gateway.read_file(repository(source.as_uri()), head, "context7.json", max_bytes=99)
+    folder = await gateway.read_file(repository(source.as_uri()), head, "docs", max_bytes=99)
+
+    assert link == folder == FetchedFile(problem="not a regular file")
+
+
+async def test_reading_a_root_file_never_waits_for_an_import_slot(
+    docs_repo: DocsRepo, work: Path
+) -> None:
+    busy = GitCli(git=GitCli.locate().git, work_root=work, preview_wait=0.05)
+    for _ in range(MAX_FETCHES):
+        await busy.fetch_slots.acquire()  # every import slot is taken by a long import
+
+    async with asyncio.timeout(30):
+        found = await busy.read_file(
+            repository(docs_repo.file_url), sha(docs_repo, "next"), "context7.json", max_bytes=2**16
+        )
+
+    assert found.data
+
+
+async def test_reading_a_root_file_waits_a_bounded_time_for_a_preview_slot(
+    docs_repo: DocsRepo, work: Path
+) -> None:
+    busy = GitCli(git=GitCli.locate().git, work_root=work, preview_wait=0.05)
+    for _ in range(2):
+        await busy.preview_slots.acquire()
+
+    with pytest.raises(PreviewBusyError):
+        await busy.read_file(
+            repository(docs_repo.file_url), sha(docs_repo, "next"), "context7.json", max_bytes=99
+        )
+
+
+@pytest.mark.parametrize("path", ["docs/a.md", "*.json", "", "-x", ":(glob)*"])
+async def test_only_a_plain_root_name_can_be_read(
+    gateway: GitCli, docs_repo: DocsRepo, path: str
+) -> None:
+    with pytest.raises(ValueError, match="root file name"):
+        await gateway.read_file(
+            repository(docs_repo.file_url), sha(docs_repo, "next"), path, max_bytes=99
+        )
+
+
+# --- instruction files (RET-08): read one by one, links followed one hop inside the repo ---
+
+
+def _linked_repo(tmp_path: Path) -> tuple[Path, str]:
+    source = tmp_path / "links"
+    source.mkdir()
+    git("init", "-q", "-b", "main", cwd=source)
+    (source / "CLAUDE.md").write_text("Root notes.\n")
+    (source / "AGENTS.md").symlink_to("CLAUDE.md")  # a common layout
+    (source / "docs" / "guide").mkdir(parents=True)
+    (source / "docs" / "guide" / "AGENTS.md").symlink_to("../../CLAUDE.md")
+    (source / "docs" / "CLAUDE.md").symlink_to("../../outside/CLAUDE.md")
+    (source / "docs" / "AGENTS.md").symlink_to("/etc/passwd")
+    (source / "big").mkdir()
+    (source / "big" / "AGENTS.md").write_text("x" * 5000)
+    (source / "big" / "CLAUDE.md").write_text("Small one.\n")
+    (source / "loop").mkdir()
+    (source / "loop" / "AGENTS.md").symlink_to("CLAUDE.md")
+    (source / "loop" / "CLAUDE.md").symlink_to("AGENTS.md")
+    git("add", ".", cwd=source)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x", cwd=source)
+    return source, git("rev-parse", "HEAD", cwd=source)
+
+
+async def test_instruction_files_are_read_one_by_one_and_links_resolve_inside_the_repo(
+    tmp_path: Path, gateway: GitCli, work: Path
+) -> None:
+    source, head = _linked_repo(tmp_path)
+    wanted = [
+        "AGENTS.md", "CLAUDE.md", "docs/AGENTS.md", "docs/CLAUDE.md", "docs/guide/AGENTS.md",
+        "big/AGENTS.md", "big/CLAUDE.md", "loop/AGENTS.md", "nope/AGENTS.md",
+    ]  # fmt: skip
+
+    found = await gateway.read_files(repository(source.as_uri()), head, wanted, max_bytes=1000)
+
+    root = FetchedFile(data=b"Root notes.\n")
+    assert found["AGENTS.md"] == root  # the target's text, never the link's ("CLAUDE.md")
+    assert found["CLAUDE.md"] == root
+    assert found["docs/guide/AGENTS.md"] == root
+    refused = FetchedFile(problem="a link that leads nowhere usable", code=ProblemCode.NOT_A_FILE)
+    assert found["docs/CLAUDE.md"] == refused  # out of the repository
+    assert found["docs/AGENTS.md"] == refused  # absolute
+    assert found["loop/AGENTS.md"] == refused  # a link to a link: one hop only
+    assert found["big/AGENTS.md"] == FetchedFile(
+        problem="larger than 1000 bytes", code=ProblemCode.TOO_LARGE
+    )
+    assert found["big/CLAUDE.md"] == FetchedFile(data=b"Small one.\n")  # the others are kept
+    assert "nope/AGENTS.md" not in found
+    assert leftovers(work) == []

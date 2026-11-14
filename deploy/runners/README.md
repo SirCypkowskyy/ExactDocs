@@ -9,7 +9,20 @@ runs other production containers and a job with Docker access on the host could 
 | VMs | `exactdocs-runner-1`, `exactdocs-runner-2` (LXD profile `exactdocs-runner`: 4 vCPU, 8 GiB, 50 GiB sparse disk) |
 | Labels | `self-hosted`, `linux`, `ARM64`, `exactdocs`; workflows use `runs-on: [self-hosted, linux, ARM64, exactdocs]` |
 | Scope | this repository only |
-| Tooling | Docker + buildx + QEMU (amd64 images are emulated), git, gh, jq; uv, Node and pnpm come from setup actions |
+| Tooling | Docker + buildx + compose + QEMU (amd64 images are emulated), git, gh, jq; uv, Node and pnpm come from setup actions |
+
+## Existing VMs
+
+`create-vms.sh` only provisions new VMs. When it gains a package, install it once on the running
+ones, e.g. for the compose plugin the PostgreSQL smoke step needs (#103). Until then that step
+warns and uses a pinned standalone compose binary in the job's temp directory (it never changes
+the host):
+
+```bash
+for vm in exactdocs-runner-1 exactdocs-runner-2; do
+  sudo lxc exec "$vm" -- sh -c 'apt-get update -q && apt-get install -y -q docker-compose-v2'
+done
+```
 
 ## Setup
 

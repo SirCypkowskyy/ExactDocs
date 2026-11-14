@@ -1,0 +1,16 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "Acme Payments SDK",
+  "description": "Guides and API reference for the Acme Payments SDK, as context7 describes it.",
+  "folders": ["docs"],
+  "excludeFolders": ["archive"],
+  "excludeFiles": ["CHANGELOG.md"],
+  "rules": [
+    "Use v2 client",
+    "Pass an idempotency key to every payments.create call"
+  ],
+  "previousVersions": [
+    { "tag": "v1.4.0", "title": "version 1.4.0" },
+    { "tag": "v1.3.0", "title": "version 1.3.0" }
+  ]
+}

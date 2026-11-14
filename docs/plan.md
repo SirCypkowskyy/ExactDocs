@@ -6,15 +6,22 @@ grouped into **epics** and **milestones**. It is **filed on GitHub** (2026-11-04
 #1-#12) with the features as sub-issues (#13-#115), and "blocked by" links for the *Depends on*
 lines. GitHub is now the source of truth for status; this page keeps the rationale.
 
-It holds **103 feature issues** plus **12 epic tracking issues**:
+It holds **110 feature issues** plus **12 epic tracking issues**: 103 filed on 2026-11-04
+(#13-#115) and 7 added for *Next: AI retrieval* in 2026-11 (#241-#246, #248):
 
 | Milestone | Feature issues |
 |---|---|
 | MVP-1 | 46 |
 | MVP-2 | 27 |
-| Next: AI retrieval | 14 |
-| Next: Teams & integrations | 13 |
+| Next: AI retrieval | 23 (14 planned, 7 added and 2 moved from Teams in 2026-11, see below) |
+| Next: Teams & integrations | 11 |
 | Next: Operations | 4 |
+
+!!! info "Status: MVP-1 is built (v0.2.0)"
+    The 46 MVP-1 issues are merged and released. The acceptance checklists below are the *plans*
+    the issues were written from (the checkboxes are not ticked retroactively: GitHub is the source of truth); where the build deviated, the merged PR says why, and the
+    [as-built deviations](#deviations-from-the-plan) table collects the ones that matter. For how
+    the system works now read [Architecture](architecture.md) and [Flows](flows.md).
 
 !!! abstract "How to read this plan"
     - **Milestones** say *when* (what must be demonstrably true to close them).
@@ -181,6 +188,25 @@ implicitly includes "`just check` passes" and "architecture tests green".
     mocked API responses. One Playwright end-to-end test (setup → add fixture → browse → search)
     runs in CI with E10-03b.
 
+## Deviations from the plan
+
+What MVP-1 turned out differently from the issues as first written (source: the merged PRs).
+
+| Plan | As built | Why |
+|---|---|---|
+| Chunker: Chonkie's Markdown recipe | `markdown-it-py` behind the `Chunker` port (#27) | Chonkie's recipe downloads rules from the Hugging Face Hub (network), and its `MarkdownChef` mis-detects fences in block quotes |
+| Image budget 300 MB | 375 MB, measured 339 MB (#55); 400 MB since DBOS (#65), measured 374.5 MB | The floor is the Python base image, git and ssh, and 57 MB of `.pyc` that keeps read-only containers from recompiling; see [Size and model-free budgets](releasing.md#size-and-model-free-budgets) |
+| MCP tools take `version` | `list_articles`, `read_article` and `search_docs` take `ref` (#38) | Matches `search_docs` and the REST `?ref=`; the context7 tools keep their own names |
+| `LibrarySummary.versions` (ref strings) | `refs` (kind, commit SHA, default flag; at most 50) plus `version_count` (#38) | Agents need the kind and commit SHA per version |
+| No tags endpoint | `GET /libraries/{owner}/{repo}/tags` lists a version's tags with counts (#50) | The UI's tag filter needs them |
+| A missing article is a plain 404 | the 404 lists up to five `close_matches` of the same version (#39) | Lets an agent correct a path in one step |
+| Job list per library | also `GET /jobs/latest` (newest job per version, #48) and `GET /libraries/{owner}/{repo}/access` (is the repository private, #51) | The library list and the article page would otherwise need a request per library |
+| Re-sync reuses the import job | re-syncs and re-imports of an existing version are `refresh` jobs; removal frees content with a `collect` job (#44, #45) | A late sync must never resurrect a removed version |
+| Private repositories: a token field | token or SSH deploy key, encrypted with `EXACTDOCS_SECRET_KEY`, offered only to the library's own host, sent only with a signed-in session (#35) | Threat model in the PR (#163) |
+| stdio MCP reuses the app container | a separate `ReadOnlyContainer` (catalog and retrieval only) over a database opened `mode=ro` (#43) | Safe next to a running server, works before any account exists, creates no files |
+| `exactdocs login` / `add` in MVP-1 | the CLI has `serve`, `admin create` and `admin reset-password`; the REST client commands are MVP-2 | The UI and the REST API cover every action (CLI-01) |
+| Setup page, tokens and library management in the UI | built (#46 to #53) | as planned |
+
 ## Milestones
 
 | Milestone | Goal | Exit criteria (demonstrably true) | Epics |
@@ -189,11 +215,13 @@ implicitly includes "`just check` passes" and "architecture tests green".
 | **MVP-2** | Convenience and polish on top of the loop. | Every MVP-2 issue is closed and its scenarios pass: the CLI client with `login`, tokens, `add`, `libraries`, `version add`, `sync` and `remove` (E6-02, E6-03), distinct sync error codes and moved-tag detection (E9-02), settings edits that re-process every version (E9-04, E8-10a), import preview (E3-08, E8-11), `context7.json` (E3-09), imported images and relative links (E3-10, E8-12), resumable DBOS imports (E3-11), renames (E3-12, E8-13), custom chunking (E4-05), manual tags (E4-06, E8-14), cross-library search (E5-06, E8-15), ctx7-style CLI and REST (E6-04, E6-05), MCP resources (E7-08), stale chunks with their new location (E7-09), `exactdocs config --client` (E7-10), auto-import of tags (E9-05), moved-tag re-import (E9-06), pinned default version (E9-07), upgrades without re-import (E10-04). | E3-E10 |
 | **Next: AI retrieval** | Optional embedding, reranker and LLM endpoints upgrade retrieval, measured by an eval suite. | With an embedding endpoint search is hybrid; with an LLM, HyDE and agentic mode work within budgets and fall back to BM25 with a reason; the eval suite reports recall@k, wrong-version rate, cost and latency per mode in CI; LLM and embedding modes are tested in CI with pydantic-ai `TestModel`/`FunctionModel` or recorded fixtures (no live endpoints); a BM25-only install still imports nothing from `exactdocs[ai]`. | E11 |
 | **Next: Teams & integrations** | One shared instance for a team: PostgreSQL, OIDC, roles, declarative sources, webhooks, MCP Apps. | Ranking suite passes on ParadeDB; two server processes share one database; OIDC users see only libraries shared with them in UI, REST and MCP; `sources plan/apply` is idempotent; a signed webhook syncs within 30 s; MCP Apps render in a supporting host, verified with a manual checklist there. | E12 |
-| **Next: Operations** | The instance can be monitored and backed up like any other service. | `/healthz`, `/readyz`, backup/restore round-trip, OTLP traces and Prometheus metrics demonstrated, with query text excluded by default and nothing sent to Logfire's cloud. | E10 |
+| **Next: Operations** | The instance can be monitored and backed up like any other service. | `/healthz`, `/readyz`, backup/restore round-trip, OTLP traces and Prometheus metrics demonstrated, with query text excluded by default and nothing sent anywhere but the operator's collector. | E10 |
 | **Later** | Other sources and extras. | Not planned yet; see [Later](#later). | - |
 
-Next milestones are independent and may run in parallel; RET-07's metrics need E10-08,
-MCP-08 needs ACL-01, and E12-02's pgvector part needs E11-03 (all called out in the issues).
+Next milestones are independent and may run in parallel; RET-07's metrics need E10-08 and
+MCP-08 needs ACL-01 (both called out in the issues). Since 2026-11, E12-01 and E12-02
+(PostgreSQL, ParadeDB) belong to *Next: AI retrieval*, and the pgvector work is its own issue
+(E11-17), so E12-02 no longer waits for E11-03.
 
 ## Epics
 
@@ -527,7 +555,7 @@ Scenario: A session cookie never authenticates MCP
 - [ ] behave `login.feature`; unit tests for expiry with the kernel clock
 
 **Notes.** Decisions *Web UI auth*, *Host and origin checks*. Login rate limiting is out of scope
-(follow-up if needed).
+(done in #182: a shared sign-in throttle per address and username).
 
 ### E2-03 · feat: API tokens give agents, the CLI and REST clients access
 
@@ -834,17 +862,18 @@ Scenario: A second version uses the library's settings
 **Milestone** MVP-2 · **Labels** `type: feature` `status: triage` `area: backend` · **Area** backend / ingestion · **Stories** LIB-03 · **Depends on** E3-03 · **Size** M
 
 **Context.** A wrong glob is only noticed after a long import. A dry run shows count, size and the
-file tree first, without storing anything.
+file tree first, without storing anything. No sizes: `git ls-tree -l` lazily downloads every blob it
+lists (measured on a `--filter=blob:none --depth=1` clone), which defeats a dry run.
 
 ```gherkin
 Scenario: A dry run lists files without storing anything
   When a user previews the fixture repository at "v1.4.0" with paths "docs/**"
-  Then the matching files are listed with their count and total size
+  Then the matching files are listed with their count
   And no library, version or job exists afterwards
 ```
 
-- [ ] `POST /api/v1/repositories/preview` (URL, ref, patterns, optional credentials) fetches the tree only (no blobs beyond sizes) and returns paths, sizes, totals
-- [ ] `exactdocs add --dry-run` prints the same list
+- [ ] `POST /api/v1/repositories/preview` (URL, ref, patterns, optional credentials) fetches the tree only (no blobs) and returns paths, the total count and a truncated flag (no sizes: `ls-tree -l` downloads the blobs)
+- [ ] `exactdocs add --dry-run` prints the same list (moved to a follow-up issue, which depends on E6-02 and E3-08)
 - [ ] behave scenario; test that the database is unchanged
 
 ### E3-09 · feat: a repository's `context7.json` pre-fills the library
@@ -1033,7 +1062,7 @@ Scenario: Changing the split level re-chunks without fetching
   And the previous chunks are served until the swap
 ```
 
-- [ ] settings: split level (`h1`…`h6`), min/max size with merging of tiny sections, chunker choice among supported Chonkie chunkers; validated
+- [ ] settings: split level (`h1`…`h6`), min/max size with merging of tiny sections, chunker choice among the supported chunkers (Chonkie was dropped in #27); validated
 - [ ] new config hash → new chunk sets from stored blobs; manifests re-indexed and swapped (E1-04)
 - [ ] guarantee tests (E4-02) pass for every supported setting
 
@@ -1392,7 +1421,7 @@ Scenario: Reading a neighbor chunk
 - [ ] `ReadChunk` use case (retrieval): verbatim content, location fields as in search results
 - [ ] IDs in a superseded manifest of the same version but not in the active one → `stale_chunk` (domain error); unknown IDs → `not_found` (pytest with a superseded manifest stored through the ports; the behave scenario over a real re-sync is in E9-01)
 - [ ] REST `GET /api/v1/chunks/{chunk_id}` and the article route of E1-03 (`?ref=&path=`)
-- [ ] MCP `read_article(library, version?, path)` and `read_chunk(chunk_id)`: text block + structured content (metadata, commit SHA, link, version, notice)
+- [ ] MCP `read_article(library, ref?, path)` and `read_chunk(chunk_id)`: text block + structured content (metadata, commit SHA, link, version, notice)
 - [ ] `stale_chunk` and `not_found` surface as tool errors with messages
 - [ ] close matches (edit distance / same basename), at most 5
 - [ ] unit, integration and behave tests
@@ -1421,7 +1450,7 @@ Scenario: Asking for a mode that is not configured
 
 **Criteria of success**
 
-- [ ] `search_docs(library, version?, query, tags?, mode?)` returns the E5-03 shape + notice (retrieval DTO field, E7-02)
+- [ ] `search_docs(library, query, ref?, tags?, mode?)` returns the E5-03 shape + notice (retrieval DTO field, E7-02)
 - [ ] `mode` validated against available modes (only `bm25` in MVP-1)
 - [ ] behave `mcp_search.feature` incl. wrong-version case
 
@@ -1567,9 +1596,9 @@ Scenario: A working snippet for Claude Code
   And an MCP client configured with it can list libraries
 ```
 
-- [ ] clients `claude`, `cursor`, `vscode`; token created via REST (AUTH-02)
-- [ ] a short "how to use ExactDocs" skill offered over MCP for clients that load skills
-- [ ] snippet validity test per client
+- [x] clients `claude`, `cursor`, `vscode` (also `claude-desktop`, `codex`); the token is a placeholder, `--show-token` uses the login token; `--new-token` creates a dedicated token via REST (AUTH-02, asks for the password)
+- [x] a short "how to use ExactDocs" skill offered over MCP for clients that load skills
+- [x] snippet validity test per client
 
 ---
 
@@ -1853,7 +1882,7 @@ Scenario: Saving new paths warns about re-processing
 ```gherkin
 Scenario: Preview before import
   When the user enters URL, ref and paths and clicks "Preview"
-  Then the matching tree is shown with file count and total size
+  Then the matching tree is shown with its file count
 ```
 
 - [ ] preview tree with counts; `context7.json` pre-fill and `previousVersions` checkboxes shown
@@ -1982,7 +2011,7 @@ Scenario: A removed version is gone everywhere
 
 - [ ] `RemoveVersion` / `RemoveLibrary` use cases; `DELETE` REST routes (the CLI command is MVP-2, E6-03)
 - [ ] use cases live in ingestion and call catalog and retrieval through bridges
-- [ ] GC job run by ingestion, calling each domain's `CollectGarbage` through bridges: superseded manifests past their grace period, blobs, chunk sets and FTS rows not referenced by any manifest are deleted; chunk IDs kept as tombstones (E7-03); credentials of a removed library deleted
+- [ ] GC job run by ingestion, calling each domain's `CollectGarbage` through bridges: superseded manifests past their grace period, blobs, chunk sets and FTS rows not referenced by any manifest are deleted; chunk IDs kept as tombstones (E7-03) together with their version, article path, heading path, occurrence and content hash, so a stale ID can still be pointed to its section (E7-09); credentials of a removed library deleted
 - [ ] default version recomputed after removal
 - [ ] behave scenario over REST and MCP; GC unit tests on shared content
 
@@ -2239,7 +2268,7 @@ Scenario: Re-indexing while serving
 
 **Context.** The ASCII diagrams in README, `docs/architecture.md` and `web/README.md` are hard to maintain and cannot show flows; the docs must describe the system as built.
 
-- [ ] Mermaid enabled in `zensical.toml` (superfences custom fence) and validated in CI (mermaid-cli parse/render)
+- [ ] Mermaid enabled in `zensical.toml` (superfences custom fence) and validated in CI (`deploy/mermaid-check`: every diagram is parsed with the `mermaid` package, and ASCII art fails the build)
 - [ ] every ASCII diagram replaced by Mermaid (README *How it works*, architecture domains and bridges, web slices)
 - [ ] new diagrams: data model (ER), import flow, query flow, retrieval modes, auth, branching and releases (`gitGraph`), CI/CD and runners
 - [ ] README, architecture, releasing, index and CONTRIBUTING reflect MVP-1 as built; planned features labelled as planned; strict docs build passes
@@ -2289,9 +2318,9 @@ Scenario: Traces go only to the configured collector, without query text
   And no span contains "retry_policy"
 ```
 
-- [ ] `logfire.configure(send_to_logfire=False, console=False)` only when `EXACTDOCS_TELEMETRY=otlp`; FastAPI built-in OpenTelemetry; health checks excluded
+- [ ] the OpenTelemetry SDK set up only when `EXACTDOCS_TELEMETRY=otlp`, no console output (was `logfire.configure(send_to_logfire=False, console=False)`; Logfire dropped in #87); FastAPI built-in OpenTelemetry; health checks excluded
 - [ ] spans for import, sync, search (per mode and stage); query text only with an explicit opt-in
-- [ ] pydantic-ai instrumentation with `include_content=False`; one span per tool call (nested in `run_code` once E11-10 exists)
+- [ ] one span per MCP tool call (FastMCP); pydantic-ai instrumentation with `include_content=False`, nested in `run_code`, moved to E11-10
 - [ ] RUN-03 test extended: only the collector is contacted
 
 ### E10-08 · feat: operators scrape ExactDocs metrics with Prometheus
@@ -2310,6 +2339,29 @@ Scenario: Metrics are exposed when enabled
 ---
 
 ## E11 AI retrieval
+
+!!! info "Decisions (2026-11)"
+    The [AI retrieval decisions](decisions/ai-retrieval.md) (#240) settle providers, vector
+    storage, local models, image variants, configuration, budgets, telemetry, evals and the order
+    of work, and supersede the hints below where they differ (vector storage, the
+    `OpenAICompatibleProvider` hint, the FastMCP rate-limit middleware). Seven issues were added,
+    and E12-01 (#103) and E12-02 (#104) moved into this milestone; they stay sub-issues of epic
+    E12 (#12), whose stories they deliver:
+
+    | Plan ID | Issue | Title | Depends on |
+    |---|---|---|---|
+    | E11-15 | #241 | operators configure AI providers once per instance, with per-library overrides and sealed keys | E11-01 |
+    | E11-16 | #242 | vectors are stored per embedding space behind one port, in SQLite with sqlite-vec | E11-01 |
+    | E11-17 | #243 | vectors are stored in pgvector on PostgreSQL | E11-16, E12-01 |
+    | E11-18 | #244 | ExactDocs runs on Supabase, with BM25 that works without pg_search | E12-02, E11-17 |
+    | E11-19 | #245 | a local embedding model and reranker run fully offline | E11-03, E11-05 |
+    | E11-20 | #246 | the image ships in three variants (base, -ai, -local), each with its own size budget | E11-15, E11-19 |
+    | E11-21 | #248 | the secret box moves to bootstrap so every domain can seal secrets through its own port | - |
+
+    Changed dependencies: E11-03 now depends on E11-15 and E11-16; E11-05 on E11-15; E11-08
+    (budgets) on E11-15 and E11-03 instead of E11-06, and E11-06 (HyDE) on E11-04 and E11-08, so
+    no LLM call ships unmetered; E11-14 also on E11-15; E11-15 and E12-03 also on E11-21; E12-02 no longer on E11-03. GitHub holds
+    the current bodies.
 
 All E11 issues: milestone **Next: AI retrieval**, labels `type: feature` `status: triage`
 `area: backend`, Area *backend / retrieval* (E11-14: `area: web`, Area *web UI*). Code lives in retrieval adapters
@@ -2548,6 +2600,7 @@ Scenario: Two processes share one PostgreSQL database
 
 - [ ] PostgreSQL adapters for every repository, run by the existing adapter contract tests in CI (ParadeDB image)
 - [ ] job claiming safe across processes (`FOR UPDATE SKIP LOCKED`, or DBOS from E3-11)
+- [ ] manual tags ordered across processes: a lock shared by the processes (e.g. a PostgreSQL advisory lock per library) around `TagArticle` and an import's activation, or the retrieval re-tag re-reads the catalog's tags inside its write; until then `serve` pins one worker (`TagLocks`, E4-06)
 - [ ] migrations for both databases; docker-compose example in README verified in CI
 
 ### E12-02 · feat: the ranking suite passes on ParadeDB as on SQLite
@@ -2800,9 +2853,9 @@ Every story ID → the issues that deliver it. *(MVP-2)* parts are listed separa
 | RUN-03 | E10-01, E7-02 | E10-07 (collector only) |
 | RUN-04 | - | E10-04 |
 | RUN-05 | E1-06, E5-04 | E11-02 |
-| RET-01 | - | E11-03, E11-04, E12-02 (pgvector) |
-| RET-02 | - | E11-05, E11-07 |
-| RET-03 | - | E11-06 (incl. extra headers) |
+| RET-01 | - | E11-03, E11-04, E11-15, E11-16, E11-17 (pgvector), E11-18, E11-19 |
+| RET-02 | - | E11-05, E11-07, E11-19 (local) |
+| RET-03 | - | E11-06 (incl. extra headers), E11-15 (providers), E11-20 (image) |
 | RET-04 | - | E11-09, E11-10, E11-11 (and E10-07 for spans) |
 | RET-05 | - | E11-12 |
 | RET-06 | - | E11-01, E11-14 |
@@ -2815,7 +2868,7 @@ Every story ID → the issues that deliver it. *(MVP-2)* parts are listed separa
 | ACL-04 | - | E12-08 |
 | ACL-05 | - | E12-09 |
 | ACL-06 | - | E12-13 |
-| TEAM-01 | - | E12-01, E12-02 |
+| TEAM-01 | - | E12-01, E12-02, E11-17, E11-18 (Supabase) |
 | TEAM-02 | - | E12-10 |
 | TEAM-03 | - | E12-11 |
 | OPS-01 | - | E10-07, E10-08 |
@@ -2835,5 +2888,6 @@ Every story ID → the issues that deliver it. *(MVP-2)* parts are listed separa
       E4-04 dissolved into E4-03 (listing) and E5-03 (search); E3-05 → E3-05a, E3-05b;
       E8-10 → E8-10a, E8-10b; E10-03 → E10-03a, E10-03b.
     - **Cross-milestone dependencies:** RET-07 metrics need E10-08; RUN-03's test grows with
-      E10-07 (collector) and E11 (model endpoints); E12-02's pgvector part needs E11-03; E12-10
+      E10-07 (collector) and E11 (model endpoints); E12-01 and E12-02 moved to *Next: AI
+      retrieval* (2026-11) and pgvector is E11-17; E12-10
       needs MVP-2's E9-05, E4-05 and E6-02.

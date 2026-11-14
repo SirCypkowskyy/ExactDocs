@@ -48,7 +48,7 @@ async def test_chunks_stored_before_the_revision_are_searchable_after_it(tmp_pat
             )
         await connection.run_sync(_alembic, "upgrade", AFTER)
 
-    hits = await SqliteSearchIndex(engine).search("m1", "retry_policy", TagFilter(), 5)
+    hits = await SqliteSearchIndex(engine=engine).search("m1", "retry_policy", TagFilter(), 5)
 
     assert [h.chunk_id for h in hits] == ["chunk0"]
     async with engine.begin() as connection:
@@ -103,7 +103,7 @@ async def test_search_still_finds_the_right_chunk_after_vacuum(tmp_path: Path) -
         await connection.execution_options(isolation_level="AUTOCOMMIT")
         await connection.exec_driver_sql("VACUUM")
 
-    hits = await SqliteSearchIndex(engine).search("m1", "wordb2", TagFilter(), 5)
+    hits = await SqliteSearchIndex(engine=engine).search("m1", "wordb2", TagFilter(), 5)
 
     assert [h.chunk_id for h in hits] == ["chunk-b2"]
     await engine.dispose()
@@ -144,7 +144,7 @@ async def test_the_path_revision_reindexes_nested_headings_and_round_trips(tmp_p
         await connection.run_sync(_alembic, "upgrade", AFTER)
 
     async def first(query: str) -> str:
-        hits = await SqliteSearchIndex(engine).search("m1", query, TagFilter(), 5)
+        hits = await SqliteSearchIndex(engine=engine).search("m1", query, TagFilter(), 5)
         return hits[0].chunk_id
 
     assert await first("docker") == "chunk0"  # the own heading beats the child under it
@@ -164,4 +164,38 @@ async def test_the_path_revision_reindexes_nested_headings_and_round_trips(tmp_p
     async with engine.begin() as connection:  # downgrade and upgrade again
         await connection.run_sync(_alembic, "downgrade", MIDDLE)
         await connection.run_sync(_alembic, "upgrade", AFTER)
+    await engine.dispose()
+
+
+FORMAT_REVISION = "d4f8b2c6e9a3"
+
+
+async def test_the_format_revision_records_the_format_the_index_was_built_in(
+    tmp_path: Path,
+) -> None:
+    engine = await _engine(tmp_path)
+    async with engine.begin() as connection:
+        await connection.run_sync(_alembic, "upgrade", FORMAT_REVISION)
+
+    state = await SqliteSearchIndex(engine=engine).state()
+
+    assert (state.stored_format, state.needs_rebuild) == (2, False)
+    async with engine.begin() as connection:
+        await connection.run_sync(_alembic, "downgrade", AFTER)
+        await connection.run_sync(_alembic, "upgrade", FORMAT_REVISION)
+    await engine.dispose()
+
+
+async def test_an_index_without_a_recorded_format_needs_a_rebuild(tmp_path: Path) -> None:
+    engine = await _engine(tmp_path)
+    async with engine.begin() as connection:
+        await connection.run_sync(_alembic, "upgrade", FORMAT_REVISION)
+        await connection.execute(text("DELETE FROM retrieval_search_format"))
+    index = SqliteSearchIndex(engine=engine)
+
+    state = await index.state()
+
+    assert (state.stored_format, state.needs_rebuild) == (None, True)
+    rebuilt = await index.rebuild()
+    assert (await index.state()).stored_format == rebuilt.format
     await engine.dispose()

@@ -77,13 +77,40 @@ describe("the session guard", () => {
     expect(await screen.findByRole("heading", { name: "Page not found" })).toBeInTheDocument();
   });
 
+  it("shows the users page to an operator and nothing to anyone else", async () => {
+    const api = (state: unknown) => (url: string) =>
+      json(url.endsWith("/users") ? { users: [] } : url.endsWith("/libraries") ? libraries : state);
+    mount("/users", api(signedIn));
+    expect(await screen.findByRole("heading", { name: "Users" })).toBeInTheDocument();
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    expect(within(nav).getByRole("link", { name: "Users" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    cleanup();
+    const member = { state: "signed_in", account: { id: "2", username: "bob", role: "user" } };
+    mount("/users", api(member));
+    expect(await screen.findByRole("heading", { name: "Page not found" })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("navigation", { name: "Main" })).queryByRole("link", {
+        name: "Users",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers no way to sign up", async () => {
+    mount("/sign-in", () => json(signedOut));
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.queryByText(/sign up|register|create (an )?account/i)).not.toBeInTheDocument();
+  });
+
   it("returns to sign-in when the session ends while a page is open", async () => {
     const { client, router } = mount("/account", (url) =>
       json(url.endsWith("/tokens") ? { tokens: [] } : signedIn),
     );
     expect(await screen.findByRole("heading", { name: "Account" })).toBeInTheDocument();
     await act(async () => client.setQueryData(["session"], signedOut));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"), { timeout: 4000 });
+    await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"));
     expect(router.state.location.search).toEqual({ next: "/account" });
   });
 
@@ -95,11 +122,11 @@ describe("the session guard", () => {
     );
     await screen.findByRole("heading", { name: "Account" });
     const { default: userEvent } = await import("@testing-library/user-event");
-    // the header (hidden on phones by CSS) and the page both carry one
+    // jsdom ignores CSS, so both the header button (sm and up) and the page one (phones) are present
     await userEvent.click(
       screen.getAllByRole("button", { name: "Sign out" }).at(-1) as HTMLElement,
     );
-    await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"), { timeout: 4000 });
+    await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"));
     expect(router.state.location.search).toEqual({});
   });
 });
@@ -122,6 +149,6 @@ describe("route errors", () => {
         ? json({ error: "not_authenticated", detail: "no session", fields: [] }, 401)
         : json(signedIn),
     );
-    await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"), { timeout: 4000 });
+    await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"));
   });
 });

@@ -1,9 +1,10 @@
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+from databases import SECRET_KEY, PostgresDatabase, postgres_database
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
@@ -19,9 +20,11 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteAccountRepository,
     SqliteSessionRepository,
 )
-from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
+from exactdocs.identity.constants import SESSION_COOKIE
 from exactdocs.identity.models import Account, AccountId, Role, Session, Username, hash_token
 from fixture_repo import DocsRepo, served
+from psycopg_guard import no_psycopg_connection_left_open
+from sqlite_guard import no_connection_left_open
 
 IMPORTED = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 
@@ -77,11 +80,65 @@ PLACEHOLDER_ADMIN = Account(
 DEMO_COOKIE = "demo-session-token"
 
 
+@pytest.fixture
+def on_postgres(monkeypatch: pytest.MonkeyPatch) -> Iterator[PostgresDatabase]:
+    """Point ``Settings()`` at a new, empty PostgreSQL database for this test.
+
+    Yields:
+        The database; it is dropped afterwards.
+    """
+    with postgres_database() as database:
+        monkeypatch.setenv("EXACTDOCS_DATABASE_URL", database.url)
+        monkeypatch.setenv("EXACTDOCS_SECRET_KEY", SECRET_KEY)
+        yield database
+
+
+@pytest.fixture
+def on_postgres_c(monkeypatch: pytest.MonkeyPatch) -> Iterator[PostgresDatabase]:
+    """As ``on_postgres``, on a database created with ``LC_CTYPE`` and ``LC_COLLATE`` ``C``.
+
+    Yields:
+        The database; it is dropped afterwards.
+    """
+    with postgres_database(c_locale=True) as database:
+        monkeypatch.setenv("EXACTDOCS_DATABASE_URL", database.url)
+        monkeypatch.setenv("EXACTDOCS_SECRET_KEY", SECRET_KEY)
+        yield database
+
+
+@pytest.fixture
+def on_pg_search(monkeypatch: pytest.MonkeyPatch) -> Iterator[PostgresDatabase]:
+    """As ``on_postgres``, on a database with ParadeDB's ``pg_search`` installed.
+
+    Yields:
+        The database; it is dropped afterwards.
+    """
+    with postgres_database(pg_search=True) as database:
+        monkeypatch.setenv("EXACTDOCS_DATABASE_URL", database.url)
+        monkeypatch.setenv("EXACTDOCS_SECRET_KEY", SECRET_KEY)
+        yield database
+
+
+@pytest.fixture(autouse=True)
+def closes_its_sqlite_connections() -> Iterator[None]:
+    """Fail the test that leaves a SQLite connection open, not a later one (#300)."""
+    with no_connection_left_open():
+        yield
+
+
+@pytest.fixture(autouse=True)
+def closes_its_psycopg_connections() -> Iterator[None]:
+    """Fail the test that leaves a PostgreSQL connection open, not a later one (#333)."""
+    with no_psycopg_connection_left_open():
+        yield
+
+
 @pytest.fixture(autouse=True)
 def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Never touch the real data directory: every test starts on an empty one."""
     data_dir = tmp_path / "data"
     monkeypatch.setenv("EXACTDOCS_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("EXACTDOCS_JOB_POLL_SECONDS", "0.02")  # jobs start at once in tests
     monkeypatch.delenv("EXACTDOCS_DATABASE_URL", raising=False)
     return data_dir
 
@@ -95,9 +152,9 @@ async def demo_catalog() -> dict[str, str]:
     """
     container = Container.build(Settings())
     async with container.running():
-        await SqliteAccountRepository(container.engine).add_first(PLACEHOLDER_ADMIN)
+        await SqliteAccountRepository(engine=container.engine).add_first(PLACEHOLDER_ADMIN)
         now = datetime.now(UTC)
-        await SqliteSessionRepository(container.engine).add(
+        await SqliteSessionRepository(engine=container.engine).add(
             Session(
                 token_hash=hash_token(DEMO_COOKIE),
                 account_id=PLACEHOLDER_ADMIN.id,
@@ -105,7 +162,7 @@ async def demo_catalog() -> dict[str, str]:
                 last_used_at=now,
             )
         )
-        repository = SqliteLibraryRepository(container.engine)
+        repository = SqliteLibraryRepository(engine=container.engine)
         for library in DEMO_LIBRARIES:
             await repository.save(library)
     return {SESSION_COOKIE: DEMO_COOKIE}

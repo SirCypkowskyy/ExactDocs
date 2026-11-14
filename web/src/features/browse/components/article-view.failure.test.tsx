@@ -38,6 +38,9 @@ const article = {
   path: "a.md",
   title: "Title",
   tags: [],
+  tag_origins: [],
+  manual_tags: [],
+  front_matter: {},
   source_url: null,
   content,
 } as unknown as Article;

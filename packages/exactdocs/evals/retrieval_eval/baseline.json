@@ -1,0 +1,13 @@
+{
+  "note": "Written by `just eval --write-baseline`; the release gates on it (docs/evals.md).",
+  "dataset": "sha256:03514e2b8196f7e0",
+  "modes": {
+    "bm25": {
+      "recall_at_1": 0.8,
+      "recall_at_5": 0.92,
+      "recall_at_10": 0.94,
+      "mrr": 0.854,
+      "wrong_version_rate": 0.0
+    }
+  }
+}

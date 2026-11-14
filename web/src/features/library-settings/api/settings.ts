@@ -1,14 +1,23 @@
-import type { QueryClient } from "@tanstack/react-query";
-import { sendJson } from "@/shared/lib/http";
+import { type QueryClient, queryOptions } from "@tanstack/react-query";
+import type { Credential } from "@/shared/lib/credentials";
+import { getJson, sendJson } from "@/shared/lib/http";
 import { BROWSE_KEY, LIBRARIES_KEY } from "@/shared/lib/query-keys";
 import type {
   AddedVersion,
+  JobList,
+  LibraryAccess,
+  ReimportedVersion,
   RemovalResult,
+  SavedSettings,
+  SelectionDraft,
   SettingsLibrary,
   SyncedLibrary,
 } from "../model/settings";
+import { settingsOf } from "../model/settings";
 
 const seg = encodeURIComponent;
+/** Jobs that re-process every version of a library after its settings were edited. */
+const LIBRARY_JOBS = new Set(["reprocess", "rechunk", "retag"]);
 const lib = (owner: string, repo: string) => `/v1/libraries/${seg(owner)}/${seg(repo)}` as const;
 /** A ref may hold slashes (`release/2`): the route takes the rest of the path, so keep them. */
 const refPath = (ref: string) => ref.split("/").map(seg).join("/");
@@ -19,8 +28,48 @@ export const saveDetails = (
   patch: { title?: string; description?: string },
 ) => sendJson<SettingsLibrary>("PATCH", lib(owner, repo), patch);
 
-export const addVersion = (owner: string, repo: string, ref: string) =>
-  sendJson<AddedVersion>("POST", `${lib(owner, repo)}/versions`, { ref });
+/** How many of the library's newest jobs are read to find its re-processings. */
+const RECENT_JOBS = 50;
+
+/**
+ * The library's newest `reprocess`, `rechunk` and `retag` jobs, newest first: one that failed and
+ * was not redone since is offered again, and decides what an edit queues (`unhealedJob`).
+ * Under the browse key, so every library refresh (and a finished job line) reloads it.
+ */
+export const reprocessJobsQueryOptions = (owner: string, repo: string) =>
+  queryOptions({
+    queryKey: [...BROWSE_KEY, owner, repo, "reprocess"] as const,
+    queryFn: async ({ signal }) => {
+      const { jobs } = await getJson<JobList>(`${lib(owner, repo)}/jobs`, {
+        signal,
+        query: { limit: RECENT_JOBS },
+      });
+      return jobs.filter((j) => LIBRARY_JOBS.has(j.kind));
+    },
+  });
+
+/** Whether the library has a stored credential (a preview cannot use it yet; an add-version can). */
+export const accessQueryOptions = (owner: string, repo: string) =>
+  queryOptions({
+    queryKey: [...BROWSE_KEY, owner, repo, "access"] as const,
+    queryFn: ({ signal }) => getJson<LibraryAccess>(`${lib(owner, repo)}/access`, { signal }),
+    staleTime: 60_000,
+  });
+
+/** Replace the paths and tag rules as a whole; a 202 carries the job re-processing every version. */
+export const saveSelection = (owner: string, repo: string, draft: SelectionDraft) =>
+  sendJson<SavedSettings>("PUT", `${lib(owner, repo)}/settings`, settingsOf(draft));
+
+/** A `credential` replaces the library's stored one; it rides in the body and nothing keeps it. */
+export const addVersion = (owner: string, repo: string, ref: string, credential?: Credential) =>
+  sendJson<AddedVersion>("POST", `${lib(owner, repo)}/versions`, {
+    ref,
+    ...(credential && { credential }),
+  });
+
+/** The ref goes in the body: a ref may hold slashes, so nothing could follow it in the path. */
+export const reimportVersion = (owner: string, repo: string, ref: string) =>
+  sendJson<ReimportedVersion>("POST", `${lib(owner, repo)}/versions/reimport`, { ref });
 
 export const syncLibrary = (owner: string, repo: string) =>
   sendJson<SyncedLibrary>("POST", `${lib(owner, repo)}/sync`);

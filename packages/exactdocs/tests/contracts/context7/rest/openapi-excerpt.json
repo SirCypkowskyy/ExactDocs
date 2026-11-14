@@ -1,0 +1,100 @@
+{
+  "provenance": "excerpt of https://context7.com/openapi.json (Context7 Public API 2.0.0), fetched 2026-11-04; types and required-ness only",
+  "search": {
+    "path": "/v2/libs/search",
+    "parameters": {
+      "libraryName": {
+        "required": true,
+        "type": "string",
+        "default": null
+      },
+      "query": {
+        "required": true,
+        "type": "string",
+        "default": null
+      },
+      "fast": {
+        "required": false,
+        "type": "string",
+        "enum": [
+          "true",
+          "false"
+        ],
+        "default": "false"
+      }
+    },
+    "required": [
+      "results",
+      "searchFilterApplied"
+    ],
+    "libraryProperties": {
+      "id": "string",
+      "title": "string",
+      "description": "string",
+      "branch": "string",
+      "lastUpdateDate": "string",
+      "state": "string",
+      "totalTokens": "integer",
+      "totalSnippets": "integer",
+      "stars": "integer",
+      "trustScore": "integer",
+      "benchmarkScore": "number",
+      "versions": "array"
+    }
+  },
+  "context": {
+    "path": "/v2/context",
+    "parameters": {
+      "libraryId": {
+        "required": true,
+        "type": "string",
+        "default": null
+      },
+      "query": {
+        "required": true,
+        "type": "string",
+        "default": null
+      },
+      "type": {
+        "required": false,
+        "type": "string",
+        "enum": [
+          "json",
+          "txt"
+        ],
+        "default": "txt"
+      },
+      "fast": {
+        "required": false,
+        "type": "string",
+        "enum": [
+          "true",
+          "false"
+        ],
+        "default": "false"
+      },
+      "language": {
+        "required": false,
+        "type": "string",
+        "default": null
+      }
+    },
+    "properties": {
+      "codeSnippets": "array",
+      "infoSnippets": "array",
+      "rules": "object",
+      "version": "object"
+    },
+    "infoSnippetProperties": {
+      "pageId": "string",
+      "breadcrumb": "string",
+      "content": "string",
+      "contentTokens": "integer",
+      "rank": "integer"
+    }
+  },
+  "errorProperties": [
+    "error",
+    "message"
+  ]
+}

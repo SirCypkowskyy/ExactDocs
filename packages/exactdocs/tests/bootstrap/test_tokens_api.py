@@ -1,5 +1,6 @@
 """API tokens over HTTP: REST routes, bearer auth, MCP auth, and the list of open routes."""
 
+import itertools
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -14,9 +15,11 @@ from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import SecretStr
 from sqlalchemy import text
 
+from app_lifespan import serving
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.identity.constants import MAX_TOKENS_PER_ACCOUNT
 from exactdocs.identity.dtos import CreateFirstAdminCommand
 
 HORSE = "correct horse battery staple"
@@ -28,18 +31,24 @@ def bearer(token: str) -> dict[str, str]:
 
 
 @pytest.fixture
-async def container() -> AsyncIterator[Container]:
-    container = Container.build(Settings())
-    async with container.running():
-        await container.identity.create_first_admin(
-            CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
-        )
-        yield container
+def container() -> Container:
+    return Container.build(Settings())
 
 
 @pytest.fixture
-def app(container: Container) -> FastAPI:
-    return create_app(container)
+async def app(container: Container) -> AsyncIterator[FastAPI]:
+    """The app, running: its lifespan runs the container and the MCP session manager.
+
+    The container is not also run on its own: one run at a time (#203).
+
+    Yields:
+        The running app, with its first admin.
+    """
+    async with serving(create_app(container)) as app:
+        await container.identity.create_first_admin(
+            CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
+        )
+        yield app
 
 
 @pytest.fixture
@@ -146,7 +155,10 @@ async def test_another_accounts_token_is_a_404_like_a_missing_one(
 ) -> None:
     async with container.engine.begin() as connection:
         await connection.execute(
-            text("INSERT INTO identity_accounts VALUES ('bob', 'bob', 'x', 'admin', '2026-01-01');")
+            text(
+                "INSERT INTO identity_accounts (id, username, password_hash, role, created_at) "
+                "VALUES ('bob', 'bob', 'x', 'admin', '2026-01-01');"
+            )
         )
         await connection.execute(
             text(
@@ -203,7 +215,12 @@ OPEN_ROUTES = {
     ("GET", "/api/v1/session"),
     ("POST", "/api/v1/session"),
     ("DELETE", "/api/v1/session"),
+    ("POST", "/api/v1/tokens/login"),
+    ("GET", "/api/v1/auth/{provider}/start"),
+    ("GET", "/api/v1/auth/{provider}/callback"),
     ("GET", "/api/v1/openapi.json"),
+    # A forge's push: no caller, only the library's webhook secret (answers 401 without it).
+    ("POST", "/api/v1/webhooks/{owner}/{repo}"),
 }
 
 
@@ -256,28 +273,115 @@ async def test_an_mcp_client_with_the_token_lists_the_libraries_until_it_is_revo
     app: FastAPI, admin: httpx.AsyncClient
 ) -> None:
     created = await create(admin)
-    async with app.router.lifespan_context(app):
-        async with mcp_client(app, created["token"]) as mcp:
-            result = await mcp.call_tool("list_libraries", {})
-            assert result.structured_content is not None
+    async with mcp_client(app, created["token"]) as mcp:
+        result = await mcp.call_tool("list_libraries", {})
+        assert result.structured_content is not None
+        assert await mcp.list_resource_templates()  # resources sit behind the same token
 
-        assert (await admin.delete(f"/api/v1/tokens/{created['id']}")).status_code == 204
-        with pytest.raises(Exception, match="error response"):
-            async with mcp_client(app, created["token"]) as mcp:
-                await mcp.call_tool("list_libraries", {})
+    assert (await admin.delete(f"/api/v1/tokens/{created['id']}")).status_code == 204
+    with pytest.raises(Exception, match="error response"):
+        async with mcp_client(app, created["token"]) as mcp:
+            await mcp.call_tool("list_libraries", {})
 
 
 async def test_mcp_refuses_callers_without_a_valid_token_even_with_a_session_cookie(
-    app: FastAPI, anonymous: httpx.AsyncClient, admin: httpx.AsyncClient
+    anonymous: httpx.AsyncClient, admin: httpx.AsyncClient
 ) -> None:
     # Sent by hand: the jar would not send a cookie scoped to `/api` to `/mcp` anyway.
     cookie = {"cookie": f"exactdocs_session={admin.cookies['exactdocs_session']}"}
-    async with app.router.lifespan_context(app):
-        for extra in ({}, cookie):
-            for auth in ({}, bearer("exd_wrong"), bearer(""), {"authorization": "Basic abc"}):
-                response = await anonymous.post(
-                    "/mcp",
-                    json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
-                    headers={"accept": "application/json, text/event-stream", **extra, **auth},
-                )
-                assert response.status_code == 401, (extra.keys(), auth)
+    for extra, (method, params) in itertools.product(
+        ({}, cookie),
+        [
+            ("ping", {}),
+            ("resources/list", {}),
+            ("resources/templates/list", {}),
+            ("resources/read", {"uri": "exactdocs://acme/payments/guide/a.md"}),
+        ],
+    ):
+        for auth in ({}, bearer("exd_wrong"), bearer(""), {"authorization": "Basic abc"}):
+            response = await anonymous.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+                headers={"accept": "application/json, text/event-stream", **extra, **auth},
+            )
+            assert response.status_code == 401, (extra.keys(), method, auth)
+
+
+async def test_logging_in_for_a_token_needs_no_session_and_starts_none(
+    anonymous: httpx.AsyncClient,
+) -> None:
+    response = await anonymous.post("/api/v1/tokens/login", json={**LOGIN, "name": "laptop"})
+
+    assert response.status_code == 201
+    assert response.headers["cache-control"] == "no-store"
+    assert "set-cookie" not in response.headers
+    grant = response.json()
+    assert (grant["name"], grant["token"].startswith("exd_")) == ("laptop", True)
+    listed = await anonymous.get("/api/v1/libraries", headers=bearer(grant["token"]))
+    assert listed.status_code == 200
+
+
+async def test_logging_in_for_a_token_refuses_bad_credentials_alike(
+    anonymous: httpx.AsyncClient,
+) -> None:
+    for login in [
+        {**LOGIN, "password": "wrong horse battery staple"},
+        {**LOGIN, "username": "bob"},
+    ]:
+        response = await anonymous.post("/api/v1/tokens/login", json={**login, "name": "laptop"})
+
+        assert (response.status_code, response.json()["error"]) == (401, "invalid_credentials")
+    response = await anonymous.post("/api/v1/tokens/login", json={**LOGIN, "name": " "})
+    assert (response.status_code, response.json()["error"]) == (422, "invalid_token_name")
+
+
+FOREIGN_ORIGIN = {"origin": "https://evil.example"}
+
+
+async def test_a_login_token_can_expire(anonymous: httpx.AsyncClient) -> None:
+    soon = (datetime.now(UTC) + timedelta(days=90)).isoformat()
+    past = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+
+    ok = await anonymous.post(
+        "/api/v1/tokens/login", json={**LOGIN, "name": "a", "expires_at": soon}
+    )
+    refused = await anonymous.post(
+        "/api/v1/tokens/login", json={**LOGIN, "name": "b", "expires_at": past}
+    )
+
+    assert ok.json()["expires_at"] is not None
+    assert (refused.status_code, refused.json()["error"]) == (422, "invalid_token_expiry")
+
+
+async def test_the_login_route_counts_against_the_token_cap(
+    anonymous: httpx.AsyncClient,
+) -> None:
+    for i in range(MAX_TOKENS_PER_ACCOUNT):
+        made = await anonymous.post("/api/v1/tokens/login", json={**LOGIN, "name": f"t{i}"})
+        assert made.status_code == 201
+    over = await anonymous.post("/api/v1/tokens/login", json={**LOGIN, "name": "one-more"})
+
+    assert (over.status_code, over.json()["error"]) == (409, "too_many_tokens")
+
+
+async def test_the_password_never_comes_back_or_reaches_the_log(
+    anonymous: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("DEBUG")
+    wrong = {"username": "ada", "password": "wrong horse battery staple", "name": "x"}
+    invalid = {"username": "ada", "password": "wrong horse battery staple", "name": "x" * 400}
+
+    for body in (wrong, invalid, {**wrong, "extra": 1}):
+        response = await anonymous.post("/api/v1/tokens/login", json=body)
+        assert response.status_code in {401, 422}
+        assert "horse battery" not in response.text
+    assert "horse battery" not in caplog.text
+
+
+async def test_a_foreign_origin_cannot_use_the_login_route(anonymous: httpx.AsyncClient) -> None:
+    response = await anonymous.post(
+        "/api/v1/tokens/login", json={**LOGIN, "name": "x"}, headers=FOREIGN_ORIGIN
+    )
+
+    assert response.status_code == 403
+    assert "exd_" not in response.text

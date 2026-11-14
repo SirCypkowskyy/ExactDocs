@@ -4,7 +4,9 @@ import pytest
 
 from exactdocs.retrieval.adapters.driven.memory import (
     InMemoryChunkRepository,
+    InMemoryDefaultVersions,
     InMemoryLibraries,
+    InMemoryLibraryModes,
     InMemorySearchIndex,
 )
 from exactdocs.retrieval.adapters.driving.mcp import format_library
@@ -160,12 +162,16 @@ async def world(
 ) -> RetrievalModule:
     chunks = InMemoryChunkRepository()
     versions = OneVersionEach(docs)
+    index = InMemorySearchIndex(chunks=chunks)
     module = RetrievalModule.build(
         searchable=versions,
-        libraries=InMemoryLibraries(libraries),
+        defaults=InMemoryDefaultVersions(),
+        libraries=InMemoryLibraries(libraries=libraries),
         manifests=versions,
         chunks=chunks,
-        search=InMemorySearchIndex(chunks),
+        search=index,
+        maintenance=index,
+        library_modes=InMemoryLibraryModes(),
     )
     for library, articles in docs.items():
         await module.index_manifest(

@@ -81,6 +81,8 @@ async def test_a_ref_with_a_slash_goes_in_the_query_string(client: httpx.AsyncCl
         "path": "guide/install.md",
         "title": "guide/install.md",
         "tags": [],
+        "tag_origins": [],
+        "manual_tags": [],
         "size": 33,
         "front_matter": {},
         "content": "# guide/install.md at release/1.4",

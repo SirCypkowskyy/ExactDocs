@@ -2,20 +2,36 @@
 
 import asyncio
 import codecs
+import errno
 import os
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Self
 
 import pytest
 
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.memory import (
+    InMemoryCheckpoints,
     InMemoryCredentialVault,
     InMemoryJobRepository,
     InMemoryLibrarySources,
+    NoCopier,
+    NoStoredTags,
+)
+from exactdocs.ingestion.constants import (
+    IMPORT_JOB,
+    MAX_INSTRUCTION_DIRS,
+    MAX_INSTRUCTION_FILE_BYTES,
+    MAX_JOB_NOTES,
+    MAX_JOB_PROBLEMS,
+    MAX_WANTED_IMAGES,
+    PARSER_VERSION,
+    REFRESH_JOB,
+    JobKind,
 )
 from exactdocs.ingestion.errors import (
     CheckoutUnreadableError,
@@ -23,22 +39,23 @@ from exactdocs.ingestion.errors import (
     ImportNotPinnedError,
     ImportTooLargeError,
     NoArticlesError,
+    NotAGitRepositoryError,
+    RepositoryAuthRequiredError,
     RepositoryUnreachableError,
 )
 from exactdocs.ingestion.models import (
-    IMPORT_JOB,
-    MAX_JOB_NOTES,
-    MAX_JOB_PROBLEMS,
-    REFRESH_JOB,
     AccessToken,
     ArticleChunk,
+    ChunkingConfig,
     Credential,
+    FetchedFile,
+    GitRename,
     ImportedRef,
     ImportedVersion,
     ImportSource,
+    InstructionPolicy,
     Job,
     JobId,
-    JobKind,
     JobState,
     ParsedArticle,
     PathSelection,
@@ -47,16 +64,20 @@ from exactdocs.ingestion.models import (
     RefKind,
     RepositoryHost,
     RepositoryUrl,
+    StoredArticle,
     TagRule,
     git_blob_sha,
+    instruction_candidates,
     parse_article,
 )
-from exactdocs.ingestion.module import import_job
+from exactdocs.ingestion.module import TagLocks, import_job
+from exactdocs.ingestion.ports import GuidancePolicy, RenameSource, RepositoryFiles
 from exactdocs.ingestion.use_cases import (
     ImportVersionUseCase,
     RunNextJobUseCase,
     Skip,
     _decode,
+    _ImageBudget,
     _Progress,
 )
 from exactdocs_kernel import SystemClock
@@ -75,11 +96,15 @@ class Checkout:
 
     files: Mapping[str, bytes]
     links: Mapping[str, str] = field(default_factory=dict)
+    elsewhere: Mapping[str, bytes] = field(default_factory=dict)
+    """Files only ``fetch_files`` can bring: they are outside the selected paths."""
+    extra: list[tuple[list[str], int]] = field(default_factory=list)
     error: Exception | None = None
     fetched: list[tuple[str, str, list[str]]] = field(default_factory=list)
     credentials: list[Credential | None] = field(default_factory=list)
     tmp: Path | None = None
     after_write: Callable[[Path], None] = lambda _: None
+    open: bool = False  # inside ``fetch``
 
     @asynccontextmanager
     async def fetch(
@@ -103,12 +128,50 @@ class Checkout:
         for name, target in self.links.items():
             (self.tmp / name).symlink_to(target)
         self.after_write(self.tmp)
-        yield self.tmp
+        self.open = True
+        try:
+            yield self.tmp
+        finally:
+            self.open = False
+
+    @asynccontextmanager
+    async def fetch_files(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        paths: Sequence[str],
+        *,
+        max_bytes: int,
+        refs=(),
+        credential: Credential | None = None,
+    ) -> AsyncGenerator[Path]:
+        del repository, commit_sha, refs, credential
+        self.extra.append((list(paths), max_bytes))
+        assert self.tmp is not None
+        folder = self.tmp / "second"
+        folder.mkdir()
+        for name in paths:
+            if name in self.elsewhere:
+                (folder / name).parent.mkdir(parents=True, exist_ok=True)
+                (folder / name).write_bytes(self.elsewhere[name])
+        yield folder
 
 
 class Sources:
-    def __init__(self, selection: PathSelection, rules: tuple[TagRule, ...] = ()) -> None:
+    def __init__(
+        self,
+        selection: PathSelection,
+        rules: tuple[TagRule, ...] = (),
+        imported: Sequence[ImportedRef] = (),
+        earlier: Sequence[GitRename] = (),
+    ) -> None:
         self.source = ImportSource(url=URL, selection=selection, tag_rules=rules)
+        self.imported = list(imported)
+        self.earlier = list(earlier)
+
+    async def renames_of(self, library: str, ref: str) -> list[GitRename]:
+        del library, ref
+        return self.earlier
 
     async def get(self, library: str) -> ImportSource:
         del library
@@ -116,7 +179,7 @@ class Sources:
 
     async def imported_versions(self, library: str) -> list[ImportedRef]:
         del library
-        return []
+        return self.imported
 
 
 @dataclass(slots=True)
@@ -127,12 +190,16 @@ class Side:
     log: list[str]
     stored: list[ImportedVersion] = field(default_factory=list)
     described: list[tuple[str, str, str | None, str | None]] = field(default_factory=list)
+    rules: list[tuple[str, ...]] = field(default_factory=list)
     known_sets: dict[str, tuple[ArticleChunk, ...]] = field(default_factory=dict)
     known_calls: list[int] = field(default_factory=list)
     fail_at: str | None = None
     hang_at: str | None = None
     broken_discard: bool = False
+    manual_tags: dict[str, tuple[str, ...]] = field(default_factory=dict)
     reached: asyncio.Event = field(default_factory=asyncio.Event)
+    replaced: list[tuple[str, str, tuple[GitRename, ...]]] = field(default_factory=list)
+    serving: bool = True
 
     async def _step(self, step: str) -> None:
         self.log.append(f"{self.name} {step}")
@@ -150,11 +217,40 @@ class Side:
     async def activate(self, manifest_id: str) -> None:
         await self._step(f"activate {manifest_id}")
 
+    async def apply_manual_tags(self, manifest_id: str) -> dict[str, tuple[str, ...]]:
+        await self._step(f"apply_manual_tags {manifest_id}")
+        return dict(self.manual_tags)
+
+    async def replace_renames(
+        self, library: str, ref: str, *, from_ref: str, renames: Sequence[GitRename]
+    ) -> dict[str, dict[str, tuple[str, ...]]]:
+        del library
+        await self._step(f"replace_renames {ref}")
+        self.replaced.append((ref, from_ref, tuple(renames)))
+        if not self.serving:
+            return {}
+        # The renewed version and a later one that follows its map; one without manual tags.
+        return {
+            f"active {ref}": dict(self.manual_tags),
+            "later": dict(self.manual_tags),
+            "none": {},
+        }
+
+    async def retag(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> None:
+        await self._step(f"retag {manifest_id} {sorted(tags)}")
+
     async def describe(
-        self, *, library: str, ref: str, title: str | None, description: str | None
+        self,
+        *,
+        library: str,
+        ref: str,
+        title: str | None,
+        description: str | None,
+        rules: Sequence[str],
     ) -> None:
         await self._step("describe")
         self.described.append((library, ref, title, description))
+        self.rules.append(tuple(rules))
 
     async def known(
         self, config_hash: str, blob_shas: Sequence[str]
@@ -182,9 +278,41 @@ class CountingChunker:
         self.chunked: list[str] = []
         self.config_hash = self.inner.config_hash
 
+    def configured(self, config: ChunkingConfig) -> Self:
+        self.inner = self.inner.configured(config)
+        self.config_hash = self.inner.config_hash
+        return self
+
     def chunk(self, article: ParsedArticle) -> Sequence[ArticleChunk]:
         self.chunked.append(article.path)
         return self.inner.chunk(article)
+
+
+@dataclass(slots=True)
+class Stored:
+    """A fake ``StoredArticleSource``: what earlier imports stored, by path, blob and parser."""
+
+    articles: dict[tuple[str, str, int], StoredArticle] = field(default_factory=dict)
+    asked: list[int] = field(default_factory=list)
+
+    def keep(self, version: ImportedVersion, parser_version: int = PARSER_VERSION) -> Self:
+        for a in version.articles:
+            self.articles[a.path, a.blob_sha, parser_version] = StoredArticle(
+                path=a.path,
+                blob_sha=a.blob_sha,
+                title=a.title,
+                front_matter=a.front_matter,
+                content=a.content,
+            )
+        return self
+
+    async def find(
+        self, library: str, ref: str, parser_version: int, files: Sequence[tuple[str, str]]
+    ) -> list[StoredArticle]:
+        assert (library, ref) == ("/a/b", "v1")
+        self.asked.append(len(files))
+        keys = [(path, sha, parser_version) for path, sha in files]
+        return [self.articles[key] for key in keys if key in self.articles]
 
 
 @dataclass(slots=True)
@@ -192,9 +320,13 @@ class Progress:
     reports: list[tuple[int, int]] = field(default_factory=list)
     problems: list[tuple[str, str, str]] = field(default_factory=list)
     counts: list[tuple[int, int]] = field(default_factory=list)
+    parses: list[tuple[int, int]] = field(default_factory=list)
 
     async def chunking(self, *, chunked: int, reused: int) -> None:
         self.counts.append((chunked, reused))
+
+    async def parsing(self, *, parsed: int, taken: int) -> None:
+        self.parses.append((parsed, taken))
 
     async def report(self, *, done: int, total: int) -> None:
         self.reports.append((done, total))
@@ -246,25 +378,43 @@ def build_world(
     rules: tuple[TagRule, ...] = (),
     max_bytes: int = 2**20,
     max_import_bytes: int = 2**30,
+    max_image_bytes: int = 2**20,
+    max_images_bytes: int = 2**30,
+    elsewhere: Mapping[str, bytes] | None = None,
     links: Mapping[str, str] | None = None,
     after_write: Callable[[Path], None] = lambda _: None,
     vault: InMemoryCredentialVault | None = None,
     kind: JobKind = IMPORT_JOB,
+    renames: RenameSource | None = None,
+    imported: Sequence[ImportedRef] = (),
+    earlier: Sequence[GitRename] = (),
+    stored: Stored | None = None,
+    guidance: GuidancePolicy | None = None,
+    reader: RepositoryFiles | None = None,
 ) -> World:
     checkout = tmp_path / "checkout"
     checkout.mkdir()
-    gateway = Checkout(files, links or {}, tmp=checkout, after_write=after_write)
+    gateway = Checkout(files, links or {}, elsewhere or {}, tmp=checkout, after_write=after_write)
     log: list[str] = []
     catalog, chunks, chunker = Side("catalog", log), Side("chunks", log), CountingChunker()
     handlers, _ = import_job(
         gateway=gateway,
         chunker=chunker,
-        sources=Sources(selection or PathSelection.of(["docs/"]), rules),
+        sources=Sources(selection or PathSelection.of(["docs/"]), rules, imported, earlier),
         versions=catalog,
         index=chunks,
         vault=vault,
         max_article_bytes=max_bytes,
         max_import_bytes=max_import_bytes,
+        renames=renames,
+        stored=stored,
+        max_image_bytes=max_image_bytes,
+        max_images_bytes=max_images_bytes,
+        tag_locks=TagLocks(),
+        imported_tags=NoStoredTags(),
+        copier=NoCopier(),
+        guidance=guidance,
+        files=reader,
     )
     run = handlers[kind]
     return World(run, gateway, catalog, chunks, chunker, Progress())  # ty: ignore[invalid-argument-type]
@@ -278,6 +428,7 @@ async def test_a_version_is_stored_indexed_then_activated_and_progress_counts_fi
     assert world.log == [
         "catalog store",
         "chunks index m1",
+        "catalog apply_manual_tags m1",
         "catalog activate m1",
         "catalog describe",
     ]
@@ -305,7 +456,9 @@ async def test_an_import_and_a_refresh_fetch_with_the_librarys_stored_credential
     tmp_path: Path, kind: JobKind
 ) -> None:
     token = AccessToken(token="ghp_s3cretvalue")
-    vault = InMemoryCredentialVault({"/a/b": token, "/other/lib": AccessToken(token="nope")})
+    vault = InMemoryCredentialVault(
+        credentials={"/a/b": token, "/other/lib": AccessToken(token="nope")}
+    )
     world = build_world(tmp_path, {"docs/auth.md": AUTH.encode()}, vault=vault, kind=kind)
 
     await world.run(make_job(), world.progress)
@@ -378,6 +531,111 @@ async def test_an_unusable_readme_is_offered_as_empty(tmp_path: Path, readme: by
     assert world.catalog.described == [("/a/b", "v1", None, None)]
 
 
+CONTEXT7 = (
+    b'{"projectTitle": "Acme SDK", "description": "From context7.", "rules": ["Use v2 client"]}'
+)
+
+
+async def test_context7_json_wins_over_the_readme_and_brings_its_rules(tmp_path: Path) -> None:
+    files = {"docs/a.md": INSTALL.encode(), "README.md": README, "context7.json": CONTEXT7}
+    world = build_world(tmp_path, files)
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.described == [("/a/b", "v1", "Acme SDK", "From context7.")]
+    assert world.catalog.rules == [("Use v2 client",)]
+    assert world.progress.problems == []
+    assert [a.path for a in world.catalog.stored[0].articles] == ["docs/a.md"]
+
+
+async def test_the_readme_fills_what_context7_json_leaves_out(tmp_path: Path) -> None:
+    files = {"docs/a.md": INSTALL.encode(), "README.md": README, "context7.json": b"{}"}
+    world = build_world(tmp_path, files)
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.described == [("/a/b", "v1", "Acme", "A payments SDK.")]
+    assert world.catalog.rules == [()]
+
+
+@pytest.mark.parametrize(
+    "context7", [b"{not json", b'{"rules": "Use v2 client"}', b"\xff\xfe", b"[]"]
+)
+async def test_an_invalid_context7_json_is_a_warning_and_ignored(
+    tmp_path: Path, context7: bytes
+) -> None:
+    files = {"docs/a.md": INSTALL.encode(), "README.md": README, "context7.json": context7}
+    world = build_world(tmp_path, files)
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.described == [("/a/b", "v1", "Acme", "A payments SDK.")]
+    assert world.catalog.rules == [()]
+    ((path, code, reason),) = world.progress.problems
+    assert (path, code) == ("context7.json", ProblemCode.CONTEXT7)
+    assert reason.startswith("context7.json is ignored: ")
+    assert not ProblemCode.CONTEXT7.is_skip
+
+
+async def test_dropped_previous_versions_are_listed_and_the_file_still_applies(
+    tmp_path: Path,
+) -> None:
+    context7 = b'{"rules": ["Use v2 client"], "previousVersions": [{"tag": "--x"}, {"tag": "v1"}]}'
+    files = {"docs/a.md": INSTALL.encode(), "context7.json": context7}
+    world = build_world(tmp_path, files)
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.rules == [("Use v2 client",)]
+    ((path, code, reason),) = world.progress.problems
+    assert (path, code) == ("context7.json", ProblemCode.CONTEXT7)
+    assert reason.startswith("previousVersions: an entry is left out")
+
+
+async def test_a_context7_json_that_is_a_link_is_ignored(tmp_path: Path) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/a.md": INSTALL.encode(), "secret.json": CONTEXT7},
+        links={"context7.json": "secret.json"},
+    )
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.rules == [()]
+    assert [(p, c) for p, c, _ in world.progress.problems] == [
+        ("context7.json", ProblemCode.CONTEXT7)
+    ]
+
+
+async def test_manual_tags_reach_the_chunks_before_the_version_is_activated(
+    world: World,
+) -> None:
+    world.catalog.manual_tags = {"docs/install.md": ("install", "onboarding")}
+
+    await world.run(make_job(), world.progress)
+
+    assert world.log[1:5] == [
+        "chunks index m1",
+        "catalog apply_manual_tags m1",
+        "chunks retag m1 ['docs/install.md']",
+        "catalog activate m1",
+    ]
+
+
+async def test_a_failing_retag_discards_the_version(world: World) -> None:
+    world.catalog.manual_tags = {"docs/install.md": ("onboarding",)}
+    world.chunks.fail_at = "retag m1 ['docs/install.md']"
+
+    with pytest.raises(RuntimeError):
+        await world.run(make_job(), world.progress)
+
+    assert "catalog activate m1" not in world.log
+    assert [e for e in world.log if " discard " in e] == [
+        "chunks discard m1 /a/b",
+        "catalog discard m1 /a/b",
+    ]
+
+
 async def test_a_catalog_that_refuses_the_readme_does_not_fail_the_import(tmp_path: Path) -> None:
     world = build_world(tmp_path, {"docs/a.md": INSTALL.encode(), "README.md": README})
     world.catalog.fail_at = "describe"
@@ -387,6 +645,7 @@ async def test_a_catalog_that_refuses_the_readme_does_not_fail_the_import(tmp_pa
     assert world.log == [
         "catalog store",
         "chunks index m1",
+        "catalog apply_manual_tags m1",
         "catalog activate m1",
         "catalog describe",
     ]
@@ -427,6 +686,7 @@ async def test_a_blob_that_was_chunked_before_is_not_chunked_again(tmp_path: Pat
 async def test_known_chunk_sets_are_asked_for_in_batches_not_per_file(tmp_path: Path) -> None:
     files = {f"docs/{i}.md": f"# Doc {i}\n\ntext {i}\n".encode() for i in range(1100)}
     world = build_world(tmp_path, files)
+    world.run = replace(world.run, batch_files=len(files))  # one step for every file
 
     await world.run(make_job(), world.progress)
 
@@ -455,7 +715,30 @@ async def test_a_fetch_that_fails_stores_nothing(world: World) -> None:
     assert world.log == []
 
 
-@pytest.mark.parametrize("failing", ["store", "index m1", "activate m1"])
+@pytest.mark.parametrize("kind", [IMPORT_JOB, REFRESH_JOB])
+async def test_an_auth_demand_without_a_credential_means_the_repository_is_gone_or_private(
+    tmp_path: Path, kind: JobKind
+) -> None:
+    # GitHub answers a deleted repository with 401, not 404, so it does not reveal private ones.
+    world = build_world(tmp_path, {"docs/auth.md": AUTH.encode()}, kind=kind)
+    world.gateway.error = RepositoryAuthRequiredError()
+
+    with pytest.raises(NotAGitRepositoryError):
+        await world.run(make_job(), world.progress)
+
+
+async def test_an_auth_demand_with_a_stored_credential_stays_an_auth_failure(
+    tmp_path: Path,
+) -> None:
+    vault = InMemoryCredentialVault(credentials={"/a/b": AccessToken(token="ghp_revoked")})
+    world = build_world(tmp_path, {"docs/auth.md": AUTH.encode()}, vault=vault)
+    world.gateway.error = RepositoryAuthRequiredError()
+
+    with pytest.raises(RepositoryAuthRequiredError):
+        await world.run(make_job(), world.progress)
+
+
+@pytest.mark.parametrize("failing", ["store", "index m1", "apply_manual_tags m1", "activate m1"])
 async def test_a_failure_before_activation_discards_chunks_then_manifest(
     world: World, failing: str
 ) -> None:
@@ -594,6 +877,20 @@ async def test_a_folder_that_cannot_be_listed_fails_the_import_before_anything_i
     assert world.log == []
 
 
+async def test_a_fetch_that_fails_on_the_disk_is_not_an_unreadable_checkout(
+    tmp_path: Path,
+) -> None:
+    """A full disk while fetching is the machine's state, not the commit's: not permanent."""
+    world = build_world(tmp_path, {"docs/ok.md": INSTALL.encode()})
+    world.gateway.error = OSError(errno.ENOSPC, "No space left on device")
+
+    with pytest.raises(OSError, match="No space left") as raised:
+        await world.run(make_job(), world.progress)
+
+    assert not isinstance(raised.value, CheckoutUnreadableError)
+    assert world.log == []
+
+
 async def test_a_file_over_the_cap_is_not_opened(tmp_path: Path, monkeypatch) -> None:
     world = build_world(
         tmp_path, {"docs/ok.md": INSTALL.encode(), "docs/big.md": b"x" * 100}, max_bytes=50
@@ -661,7 +958,7 @@ class CountingJobs:
 
 async def test_progress_is_stored_now_and_then_not_for_every_file() -> None:
     jobs = CountingJobs()
-    progress = _Progress(jobs, make_job())  # ty: ignore[invalid-argument-type]
+    progress = _Progress(jobs=jobs, job=make_job())  # ty: ignore[invalid-argument-type]
 
     await progress.report(done=0, total=1000)
     for done in range(1, 1001):
@@ -781,7 +1078,7 @@ async def test_a_library_removed_before_the_import_runs_fails_the_job_cleanly(
 ) -> None:
     jobs = InMemoryJobRepository.of([make_job()])
     importer = replace(world.run, sources=InMemoryLibrarySources())
-    run_next = RunNextJobUseCase(jobs, SystemClock(), {IMPORT_JOB: importer})
+    run_next = RunNextJobUseCase(jobs=jobs, clock=SystemClock(), handlers={IMPORT_JOB: importer})
 
     assert await run_next()
 
@@ -800,3 +1097,853 @@ async def test_two_new_files_with_the_same_content_are_one_chunk_set(tmp_path: P
     await world.run(make_job(), world.progress)
 
     assert world.progress.counts == [(1, 0)]  # one chunk set cut, none reused
+
+
+OLD = "b" * 40
+V13 = ImportedRef(ref="v1.3.0", kind=RefKind.TAG, commit_sha=OLD)
+
+
+@dataclass(slots=True)
+class FakeRenames:
+    """A ``RenameSource`` that answers with ``found`` (or raises ``error``) and notes the asks."""
+
+    found: Sequence[GitRename] = ()
+    error: BaseException | None = None
+    asked: list[tuple[str, str, list[str]]] = field(default_factory=list)
+
+    async def renames(
+        self,
+        repository: RepositoryUrl,
+        old_sha: str,
+        new_sha: str,
+        *,
+        refs: Sequence[str] = (),
+        credential: Credential | None = None,
+    ) -> Sequence[GitRename]:
+        del repository, credential
+        self.asked.append((old_sha, new_sha, list(refs)))
+        if self.error:
+            raise self.error
+        return self.found
+
+
+def moved(old: str, new: str, similarity: int = 100) -> GitRename:
+    return GitRename(old_path=old, new_path=new, similarity=similarity)
+
+
+async def test_renames_since_the_previous_version_are_stored_with_the_new_one(
+    tmp_path: Path,
+) -> None:
+    source = FakeRenames([moved("docs/setup.md", "docs/install.md", 84)])
+    world = build_world(
+        tmp_path, {"docs/install.md": INSTALL.encode()}, renames=source, imported=[V13]
+    )
+
+    await world.run(make_job("v1.4.0"), world.progress)
+
+    (version,) = world.catalog.stored
+    assert version.renamed_from == "v1.3.0"
+    assert version.renames == (moved("docs/setup.md", "docs/install.md", 84),)
+    assert source.asked == [(OLD, SHA, ["refs/tags/v1.4.0", "refs/tags/v1.3.0"])]
+
+
+async def test_a_version_where_nothing_moved_still_names_the_version_it_follows(
+    tmp_path: Path,
+) -> None:
+    world = build_world(
+        tmp_path, {"docs/install.md": INSTALL.encode()}, renames=FakeRenames(), imported=[V13]
+    )
+
+    await world.run(make_job("v1.4.0"), world.progress)
+
+    (version,) = world.catalog.stored
+    # The link lets a path be followed across this version to newer ones (#201).
+    assert (version.renamed_from, version.renames) == ("v1.3.0", ())
+
+
+async def test_only_renames_into_imported_articles_from_selected_paths_are_kept(
+    tmp_path: Path,
+) -> None:
+    source = FakeRenames(
+        [
+            moved("docs/a.md", "docs/install.md"),
+            moved("docs/a.md", "docs/gone.md"),  # not an article of the new version
+            moved("other/b.md", "docs/install.md"),  # came from outside the library's paths
+            moved("docs/same.md", "docs/same.md"),
+            moved("docs/bad\udcff.md", "docs/install.md"),  # a stray byte in git's path
+        ]
+    )
+    world = build_world(
+        tmp_path, {"docs/install.md": INSTALL.encode()}, renames=source, imported=[V13]
+    )
+
+    await world.run(make_job("v1.4.0"), world.progress)
+
+    assert world.catalog.stored[0].renames == (moved("docs/a.md", "docs/install.md"),)
+
+
+async def test_a_resync_of_a_branch_chains_its_earlier_renames_with_the_new_ones(
+    tmp_path: Path,
+) -> None:
+    source = FakeRenames([moved("docs/b.md", "docs/install.md", 90)])
+    before = ImportedRef(ref="main", kind=RefKind.BRANCH, commit_sha=OLD)
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=source,
+        imported=[V13, before],
+        earlier=[moved("docs/a.md", "docs/b.md", 70), moved("docs/x.md", "docs/gone.md")],
+        kind=REFRESH_JOB,
+    )
+
+    await world.run(make_job("main", kind=RefKind.BRANCH), world.progress)
+
+    (version,) = world.catalog.stored
+    assert version.renamed_from == "main"
+    assert version.renames == (
+        moved("docs/a.md", "docs/install.md", 70),  # chained, the lower similarity
+        moved("docs/b.md", "docs/install.md", 90),
+    )  # x.md -> gone.md is dropped: its target is not an article any more
+    assert source.asked[0][:2] == (OLD, SHA)
+
+
+async def test_a_branch_synced_to_the_same_commit_keeps_its_map(tmp_path: Path) -> None:
+    source = FakeRenames()
+    same = ImportedRef(ref="main", kind=RefKind.BRANCH, commit_sha=SHA)
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=source,
+        imported=[same],
+        earlier=[moved("docs/a.md", "docs/install.md")],
+        kind=REFRESH_JOB,
+    )
+
+    await world.run(make_job("main", kind=RefKind.BRANCH), world.progress)
+
+    assert world.catalog.stored[0].renames == (moved("docs/a.md", "docs/install.md"),)
+    assert source.asked == []
+
+
+async def test_a_failing_branch_sync_keeps_the_earlier_map(tmp_path: Path) -> None:
+    before = ImportedRef(ref="main", kind=RefKind.BRANCH, commit_sha=OLD)
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=FakeRenames(error=RepositoryUnreachableError("it took too long")),
+        imported=[before],
+        earlier=[moved("docs/a.md", "docs/install.md")],
+        kind=REFRESH_JOB,
+    )
+
+    await world.run(make_job("main", kind=RefKind.BRANCH), world.progress)
+
+    assert world.catalog.stored[0].renames == (moved("docs/a.md", "docs/install.md"),)
+
+
+async def test_a_resync_of_a_tag_gives_the_same_map_as_its_first_import(tmp_path: Path) -> None:
+    source = FakeRenames([moved("docs/setup.md", "docs/install.md", 84)])
+    again = ImportedRef(ref="v1.4.0", kind=RefKind.TAG, commit_sha=OLD)
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=source,
+        imported=[V13, again],
+        kind=REFRESH_JOB,
+    )
+
+    await world.run(make_job("v1.4.0"), world.progress)
+
+    (version,) = world.catalog.stored
+    assert (version.renamed_from, version.renames) == (
+        "v1.3.0",
+        (moved("docs/setup.md", "docs/install.md", 84),),
+    )
+    assert source.asked[0][0] == V13.commit_sha  # never compared with itself
+
+
+@pytest.mark.parametrize(
+    ("version", "imported", "kind"),
+    [
+        ("v1.4.0", [], RefKind.TAG),  # the first version has nothing to compare with
+        ("main", [V13], RefKind.BRANCH),  # a branch has no place in a version order
+        ("v1.4.0", [ImportedRef(ref="v1.4.0", kind=RefKind.TAG, commit_sha=SHA)], RefKind.TAG),
+        ("main", [], RefKind.BRANCH),  # a branch never imported has no earlier commit
+        # A tag without an order, re-imported after it moved, is never its own past (#82).
+        ("stable", [ImportedRef(ref="stable", kind=RefKind.TAG, commit_sha=OLD)], RefKind.TAG),
+    ],
+)
+async def test_without_a_previous_version_git_is_not_asked(
+    tmp_path: Path, version: str, imported: list[ImportedRef], kind: RefKind
+) -> None:
+    source = FakeRenames([moved("docs/a.md", "docs/install.md")])
+    world = build_world(
+        tmp_path, {"docs/install.md": INSTALL.encode()}, renames=source, imported=imported
+    )
+
+    await world.run(make_job(version, kind=kind), world.progress)
+
+    assert source.asked == []
+    assert (world.catalog.stored[0].renamed_from, world.catalog.stored[0].renames) == (None, ())
+
+
+@pytest.mark.parametrize(
+    "error",
+    [RepositoryUnreachableError("it took too long"), RuntimeError("git exploded"), OSError("disk")],
+)
+async def test_a_failing_rename_detection_never_fails_the_import(
+    tmp_path: Path, error: Exception
+) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=FakeRenames(error=error),
+        imported=[V13],
+    )
+
+    await world.run(make_job("v1.4.0"), world.progress)
+
+    assert world.log[-2:] == ["catalog activate m1", "catalog describe"]
+    assert (world.catalog.stored[0].renamed_from, world.catalog.stored[0].renames) == (None, ())
+
+
+async def test_cancelling_the_import_is_not_swallowed_by_rename_detection(tmp_path: Path) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=FakeRenames(error=asyncio.CancelledError()),
+        imported=[V13],
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await world.run(make_job("v1.4.0"), world.progress)
+
+    assert world.catalog.stored == []
+
+
+NEW = "c" * 40
+V14 = ImportedRef(ref="v1.4.0", kind=RefKind.TAG, commit_sha=NEW)
+
+
+async def test_an_older_version_imported_later_renews_the_map_of_the_next_newer_one(
+    tmp_path: Path,
+) -> None:
+    source = FakeRenames(
+        [
+            moved("docs/setup.md", "docs/install.md", 84),
+            moved("docs/same.md", "docs/same.md"),
+            moved("other/b.md", "docs/b.md"),  # came from outside the library's paths
+        ]
+    )
+    world = build_world(
+        tmp_path, {"docs/setup.md": INSTALL.encode()}, renames=source, imported=[V14]
+    )
+    world.catalog.manual_tags = {"docs/install.md": ("legacy",)}
+
+    await world.run(make_job("v1.3.0"), world.progress)
+
+    (version,) = world.catalog.stored
+    assert (version.renamed_from, version.renames) == (None, ())  # v1.3.0 is the oldest
+    assert source.asked == [(SHA, NEW, ["refs/tags/v1.4.0", "refs/tags/v1.3.0"])]
+    assert world.catalog.replaced == [
+        ("v1.4.0", "v1.3.0", (moved("docs/setup.md", "docs/install.md", 84),))
+    ]
+    assert world.log[-4:] == [
+        "catalog replace_renames v1.4.0",
+        "chunks retag active v1.4.0 ['docs/install.md']",
+        "chunks retag later ['docs/install.md']",
+        "catalog describe",
+    ]
+
+
+async def test_a_resume_after_publishing_renews_the_newer_map_without_publishing_again(
+    tmp_path: Path,
+) -> None:
+    """The renewal is no durable step: a run killed in it does it again, and only it."""
+    source = FakeRenames([moved("docs/setup.md", "docs/install.md", 84)])
+    world = build_world(
+        tmp_path, {"docs/setup.md": INSTALL.encode()}, renames=source, imported=[V14]
+    )
+    checkpoints = InMemoryCheckpoints()
+    world.run = replace(world.run, checkpoints=checkpoints)
+    world.catalog.fail_at = "replace_renames v1.4.0"  # caught; the import goes on
+    await world.run(make_job("v1.3.0"), world.progress)
+    world.catalog.fail_at = None
+
+    resumed = checkpoints.resumed()
+    world.run = replace(world.run, checkpoints=resumed)
+    await world.run(make_job("v1.3.0"), world.progress)
+
+    assert resumed.ran == []  # every step replayed: nothing fetched, stored or activated again
+    assert len(world.catalog.stored) == 1
+    assert world.catalog.replaced == [
+        ("v1.4.0", "v1.3.0", (moved("docs/setup.md", "docs/install.md", 84),))
+    ]
+
+
+async def test_only_the_version_whose_previous_one_this_is_now_is_renewed(
+    tmp_path: Path,
+) -> None:
+    source = FakeRenames([moved("docs/a.md", "docs/install.md")])
+    v12 = ImportedRef(ref="v1.2.0", kind=RefKind.TAG, commit_sha=OLD)
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=source,
+        imported=[v12, V14, ImportedRef(ref="main", kind=RefKind.BRANCH, commit_sha=NEW)],
+    )
+
+    await world.run(make_job("v1.3.0"), world.progress)
+
+    assert [r[:2] for r in world.catalog.replaced] == [("v1.4.0", "v1.3.0")]
+    assert [asked[:2] for asked in source.asked] == [(OLD, SHA), (SHA, NEW)]
+
+
+@pytest.mark.parametrize("kind", [RefKind.BRANCH, RefKind.COMMIT])
+async def test_a_version_out_of_the_tag_order_renews_nothing(tmp_path: Path, kind: RefKind) -> None:
+    source = FakeRenames([moved("docs/a.md", "docs/install.md")])
+    world = build_world(
+        tmp_path, {"docs/install.md": INSTALL.encode()}, renames=source, imported=[V14]
+    )
+
+    await world.run(make_job("v1.3.0", kind=kind), world.progress)
+
+    assert source.asked == []
+    assert world.catalog.replaced == []
+
+
+async def test_a_newer_map_git_cannot_give_is_left_as_it_was(tmp_path: Path) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=FakeRenames(error=RepositoryUnreachableError("it took too long")),
+        imported=[V14],
+    )
+
+    await world.run(make_job("v1.3.0"), world.progress)
+
+    assert world.catalog.replaced == []
+    assert world.log[-2:] == ["catalog activate m1", "catalog describe"]
+
+
+@pytest.mark.parametrize("failing", ["replace_renames v1.4.0", "retag active v1.4.0"])
+async def test_a_failing_renewal_never_fails_the_import_of_the_older_version(
+    tmp_path: Path, failing: str
+) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=FakeRenames([moved("docs/a.md", "docs/install.md")]),
+        imported=[V14],
+    )
+    world.catalog.manual_tags = {"docs/install.md": ("legacy",)}
+    side = world.catalog if failing.startswith("replace") else world.chunks
+    side.fail_at = failing if side is world.catalog else f"{failing} ['docs/install.md']"
+
+    await world.run(make_job("v1.3.0"), world.progress)
+
+    assert world.log[-1] == "catalog describe"
+    assert "catalog discard m1 /a/b" not in world.log
+
+
+async def test_a_newer_version_removed_meanwhile_is_not_retagged(tmp_path: Path) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/install.md": INSTALL.encode()},
+        renames=FakeRenames([moved("docs/a.md", "docs/install.md")]),
+        imported=[V14],
+    )
+    world.catalog.serving = False
+
+    await world.run(make_job("v1.3.0"), world.progress)
+
+    assert world.log[-2:] == ["catalog replace_renames v1.4.0", "catalog describe"]
+
+
+async def test_renames_are_not_asked_for_while_a_fetch_slot_is_held(tmp_path: Path) -> None:
+    held: list[bool] = []
+
+    class Probe(FakeRenames):
+        async def renames(self, *args: object, **kwargs: object) -> Sequence[GitRename]:
+            del args, kwargs
+            held.append(world.gateway.open)
+            return []
+
+    world = build_world(
+        tmp_path, {"docs/install.md": INSTALL.encode()}, renames=Probe(), imported=[V13]
+    )
+
+    await world.run(make_job("v1.4.0"), world.progress)
+
+    assert held == [False]  # two imports each holding a slot and waiting for a second could stall
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 16
+SVG = b'<svg xmlns="http://www.w3.org/2000/svg"><circle r="1"/></svg>'
+PAGE = b"# Flow\n\n![flow](../img/flow.png) ![again](../img/flow.png) ![logo](logo.svg)\n"
+
+
+async def test_referenced_images_are_imported_from_both_checkouts(tmp_path: Path) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/guide/flow.md": PAGE, "docs/guide/logo.svg": SVG},
+        elsewhere={"docs/img/flow.png": PNG},
+    )
+
+    await world.run(make_job(), world.progress)
+
+    (version,) = world.catalog.stored
+    assert [(i.path, i.content_type, i.blob_sha, i.data) for i in version.images] == [
+        ("docs/guide/logo.svg", "image/svg+xml", git_blob_sha(SVG), SVG),
+        ("docs/img/flow.png", "image/png", git_blob_sha(PNG), PNG),
+    ]
+    assert world.gateway.extra == [(["docs/img/flow.png"], 2**30)]
+    assert world.progress.problems == []
+
+
+async def test_each_image_is_kept_by_the_one_step_that_read_it(tmp_path: Path) -> None:
+    """A step's result is stored: an image in two of them would be stored twice."""
+    world = build_world(
+        tmp_path,
+        {"docs/guide/flow.md": PAGE, "docs/guide/logo.svg": SVG},
+        elsewhere={"docs/img/flow.png": PNG},
+    )
+    checkpoints = InMemoryCheckpoints()
+    world.run = replace(world.run, checkpoints=checkpoints)
+
+    await world.run(make_job(), world.progress)
+
+    results = dict(checkpoints.completed)
+    assets = results["read the README, context7.json and the images"]
+    outside = results["fetch the images outside the selection"]
+    assert isinstance(assets, tuple)
+    inside = assets[2]
+    assert isinstance(inside, _ImageBudget)
+    assert isinstance(outside, _ImageBudget)
+    assert [i.path for i in inside.images] == ["docs/guide/logo.svg"]
+    assert [i.path for i in outside.images] == ["docs/img/flow.png"]
+    assert [i.path for i in world.catalog.stored[0].images] == [
+        "docs/guide/logo.svg",
+        "docs/img/flow.png",
+    ]
+
+
+async def test_no_second_fetch_when_the_first_checkout_has_every_image(tmp_path: Path) -> None:
+    world = build_world(tmp_path, {"docs/a.md": b"![](x.png)", "docs/x.png": PNG})
+
+    await world.run(make_job(), world.progress)
+
+    assert world.gateway.extra == []
+    assert [i.path for i in world.catalog.stored[0].images] == ["docs/x.png"]
+
+
+async def test_unsafe_and_unusable_images_are_skipped_and_listed(tmp_path: Path) -> None:
+    page = (
+        b"![a](fake.png) ![b](big.png) ![c](missing.png) ![d](https://x.test/e.png)"
+        b" ![e](../../../../etc/passwd.png) ![f](text.svg) ![g](xxe.svg) ![h](ok.png)"
+    )
+    world = build_world(
+        tmp_path,
+        {
+            "docs/a.md": page,
+            "docs/fake.png": b"<html><script>alert(1)</script></html>",
+            "docs/big.png": PNG + b"x" * 100,
+            "docs/text.svg": b"just text",
+            "docs/xxe.svg": b'<!DOCTYPE svg [<!ENTITY a "b">]><svg xmlns="x"/>',
+            "docs/ok.png": PNG,
+        },
+        max_image_bytes=64,
+    )
+
+    await world.run(make_job(), world.progress)
+
+    assert [i.path for i in world.catalog.stored[0].images] == ["docs/ok.png"]
+    assert sorted((p, c) for p, c, _ in world.progress.problems) == [
+        ("docs/big.png", "too_large"),
+        ("docs/fake.png", "not_an_image"),
+        ("docs/missing.png", "missing_image"),
+        ("docs/text.svg", "not_an_image"),
+        ("docs/xxe.svg", "not_an_image"),
+    ]
+
+
+async def test_the_version_keeps_images_up_to_its_budget_and_skips_the_rest(
+    tmp_path: Path,
+) -> None:
+    files = {"docs/a.md": b"![](a.png) ![](b.png) ![](c.png)"} | {
+        f"docs/{n}.png": PNG + n.encode() for n in "abc"
+    }
+    world = build_world(tmp_path, files, max_images_bytes=2 * (len(PNG) + 1))
+
+    await world.run(make_job(), world.progress)
+
+    assert [i.path for i in world.catalog.stored[0].images] == ["docs/a.png", "docs/b.png"]
+    assert [(p, c) for p, c, _ in world.progress.problems] == [("docs/c.png", "image_budget")]
+
+
+async def test_a_symlinked_image_is_not_followed(tmp_path: Path) -> None:
+    outside = tmp_path / "secret.png"
+    outside.write_bytes(PNG)
+    world = build_world(tmp_path, {"docs/a.md": b"![](l.png)"}, links={"docs/l.png": str(outside)})
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.stored[0].images == ()
+    assert [(p, c) for p, c, _ in world.progress.problems] == [("docs/l.png", "not_a_file")]
+
+
+async def test_an_image_behind_a_symlinked_directory_is_not_read(tmp_path: Path) -> None:
+    host = tmp_path / "host"
+    host.mkdir()
+    (host / "secret.png").write_bytes(PNG)
+    world = build_world(
+        tmp_path,
+        {"docs/a.md": b"![](link/secret.png)"},
+        links={"docs/link": str(host)},
+    )
+
+    await world.run(make_job(), world.progress)
+
+    assert world.catalog.stored[0].images == ()
+    assert [(p, c) for p, c, _ in world.progress.problems] == [
+        ("docs/link/secret.png", "not_a_file")
+    ]
+
+
+async def test_an_article_behind_a_symlinked_directory_is_not_imported(tmp_path: Path) -> None:
+    host = tmp_path / "host"
+    host.mkdir()
+    (host / "leak.md").write_text("# Leak")
+    world = build_world(tmp_path, {"docs/a.md": b"# A"}, links={"docs/link": str(host)})
+
+    await world.run(make_job(), world.progress)
+
+    assert [a.path for a in world.catalog.stored[0].articles] == ["docs/a.md"]
+
+
+async def test_images_looked_for_are_capped_per_version(tmp_path: Path) -> None:
+    cap = MAX_WANTED_IMAGES
+    files = {  # the parser caps one article at 100 images, so spread them over articles
+        f"docs/p{k}.md": " ".join(f"![](i{k}_{n}.png)" for n in range(100)).encode()
+        for k in range(cap // 100 + 2)
+    }
+    world = build_world(tmp_path, files)
+
+    await world.run(make_job(), world.progress)
+
+    (extra, _) = world.gateway.extra[0]
+    assert len(extra) == cap
+    assert [c for _, c, _ in world.progress.problems].count("truncated") == 1
+
+
+INSTALL_V2 = INSTALL + "\n## Upgrade\n\nRun it again.\n"
+
+
+def _counting_parses(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    parsed: list[str] = []
+
+    def counting(path: str, source: str) -> ParsedArticle:
+        parsed.append(path)
+        return parse_article(path, source)
+
+    monkeypatch.setattr("exactdocs.ingestion.use_cases.parse_article", counting)
+    return parsed
+
+
+async def _imported(tmp_path: Path, files: Mapping[str, bytes]) -> ImportedVersion:
+    first = build_world(tmp_path / "first", files)
+    await first.run(make_job(), first.progress)
+    return first.catalog.stored[0]
+
+
+@pytest.fixture
+def first(tmp_path: Path) -> Path:
+    (tmp_path / "first").mkdir()
+    (tmp_path / "second").mkdir()
+    return tmp_path
+
+
+async def test_a_resync_parses_only_the_files_that_changed(
+    first: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    before = await _imported(
+        first, {"docs/auth.md": AUTH.encode(), "docs/install.md": INSTALL.encode()}
+    )
+    world = build_world(
+        first / "second",
+        {"docs/auth.md": AUTH.encode(), "docs/install.md": INSTALL_V2.encode()},
+        stored=Stored().keep(before),
+    )
+    parsed = _counting_parses(monkeypatch)
+
+    await world.run(make_job(), world.progress)
+
+    assert parsed == ["docs/install.md"]
+    assert world.progress.parses == [(1, 1)]
+    [auth, install] = world.catalog.stored[0].articles
+    assert auth == before.articles[0]  # title, tags, front matter, text and chunks
+    assert install.content == INSTALL_V2
+
+
+async def test_an_article_taken_from_the_catalog_gets_the_tags_the_rules_give_now(
+    first: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    before = await _imported(first, {"docs/auth.md": AUTH.encode()})
+    world = build_world(
+        first / "second",
+        {"docs/auth.md": AUTH.encode()},
+        rules=(TagRule.of("docs/**", "Api"),),
+        stored=Stored().keep(before),
+    )
+    parsed = _counting_parses(monkeypatch)
+
+    await world.run(make_job(), world.progress)
+
+    assert parsed == []
+    assert before.articles[0].tags == ("auth",)
+    assert world.catalog.stored[0].articles[0].tags == ("api", "auth")
+
+
+async def test_a_parser_change_parses_every_file_again(
+    first: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = {"docs/auth.md": AUTH.encode(), "docs/install.md": INSTALL.encode()}
+    before = await _imported(first, files)
+    world = build_world(
+        first / "second", files, stored=Stored().keep(before, parser_version=PARSER_VERSION - 1)
+    )
+    parsed = _counting_parses(monkeypatch)
+
+    await world.run(make_job(), world.progress)
+
+    assert parsed == ["docs/auth.md", "docs/install.md"]
+    assert world.progress.parses == [(2, 0)]
+
+
+async def test_the_same_file_at_another_path_is_parsed(
+    first: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The title (from the file name) and the image links depend on the path."""
+    before = await _imported(first, {"docs/install.md": b"Run it.\n\n![](img/a.png)\n"})
+    world = build_world(
+        first / "second",
+        {"docs/setup/install.md": b"Run it.\n\n![](img/a.png)\n"},
+        stored=Stored().keep(before),
+    )
+    parsed = _counting_parses(monkeypatch)
+
+    await world.run(make_job(), world.progress)
+
+    assert parsed == ["docs/setup/install.md"]
+
+
+async def test_a_taken_article_brings_its_images_and_notes_as_a_parse_would(
+    first: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = "---\ntitle: [1]\ntags: 7\n---\nRun it.\n\n![](../img/a.png)\n"
+    files = {"docs/install.md": text.encode(), "img/a.png": PNG}
+    before = await _imported(first, files)
+    plain = build_world(first / "second", files)
+    await plain.run(make_job(), plain.progress)
+    (first / "third").mkdir()
+    world = build_world(first / "third", files, stored=Stored().keep(before))
+    parsed = _counting_parses(monkeypatch)
+
+    await world.run(make_job(), world.progress)
+
+    assert parsed == []
+    assert world.catalog.stored[0] == plain.catalog.stored[0]
+    assert world.progress.problems == plain.progress.problems != []
+
+
+async def test_a_file_with_malformed_front_matter_is_taken_with_its_note(
+    first: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Malformed front matter stays in the text; the blob SHA says the file was that text."""
+    text = b"---\ntitle: [unclosed\n---\n# Install\n"
+    before = await _imported(first, {"docs/install.md": text})
+    world = build_world(first / "second", {"docs/install.md": text}, stored=Stored().keep(before))
+    parsed = _counting_parses(monkeypatch)
+
+    await world.run(make_job(), world.progress)
+
+    assert parsed == []
+    assert world.catalog.stored[0] == before
+    assert [code for _, code, _ in world.progress.problems] == [ProblemCode.FRONT_MATTER]
+
+
+async def test_a_file_only_a_parse_can_tell_from_malformed_front_matter_is_parsed(
+    first: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A front matter that loaded to nothing, then a block YAML refuses: that block is Markdown."""
+    text = b"---\n# a comment\n---\n---\ntitle: [unclosed\n---\n# Install\n"
+    before = await _imported(first, {"docs/install.md": text})
+    world = build_world(first / "second", {"docs/install.md": text}, stored=Stored().keep(before))
+    parsed = _counting_parses(monkeypatch)
+
+    await world.run(make_job(), world.progress)
+
+    assert parsed == ["docs/install.md"]
+    assert world.progress.problems == []
+
+
+async def test_stored_articles_are_asked_for_in_batches_not_per_file(tmp_path: Path) -> None:
+    files = {f"docs/{i}.md": f"# Doc {i}\n\ntext {i}\n".encode() for i in range(1100)}
+    stored = Stored()
+    world = build_world(tmp_path, files, stored=stored)
+    world.run = replace(world.run, batch_files=len(files))  # one step for every file
+
+    await world.run(make_job(), world.progress)
+
+    assert stored.asked == [500, 500, 100]
+    assert world.progress.parses == [(1100, 0)]
+
+
+# ---------------------------------------------------------------- instruction files (RET-08)
+
+ROOT_NOTES = b"# Agent notes\n\nGuides live in docs/guide/.\n"
+GUIDE_NOTES = b"Each guide has one H1.\n"
+
+
+@dataclass(slots=True)
+class Policy:
+    """A ``GuidancePolicy`` double: the library's repo guidance, and who asked."""
+
+    keep: bool
+    asked: list[str] = field(default_factory=list)
+
+    async def instruction_policy(self, library: str) -> InstructionPolicy:
+        self.asked.append(library)
+        return InstructionPolicy.KEEP if self.keep else InstructionPolicy.DROP
+
+
+@dataclass(slots=True)
+class Files:
+    """A ``RepositoryFiles`` double: what the commit holds by path, and what was asked."""
+
+    held: Mapping[str, FetchedFile]
+    asked: list[tuple[list[str], int]] = field(default_factory=list)
+    error: Exception | None = None
+
+    async def read_files(
+        self,
+        repository: RepositoryUrl,
+        commit_sha: str,
+        paths: Sequence[str],
+        *,
+        max_bytes: int,
+        refs=(),
+        credential: Credential | None = None,
+    ) -> dict[str, FetchedFile]:
+        del repository, commit_sha, refs, credential
+        self.asked.append((list(paths), max_bytes))
+        if self.error is not None:
+            raise self.error
+        return {p: self.held[p] for p in paths if p in self.held}
+
+
+def _held(**extra: FetchedFile) -> dict[str, FetchedFile]:
+    return {
+        "AGENTS.md": FetchedFile(data=ROOT_NOTES),
+        "docs/guide/CLAUDE.md": FetchedFile(data=GUIDE_NOTES),
+        "src/AGENTS.md": FetchedFile(data=b"not a folder of a selected file"),
+        **extra,
+    }
+
+
+def _guided_world(tmp_path: Path, policy: Policy | None, files: Files | None = None) -> World:
+    return build_world(
+        tmp_path,
+        {"docs/guide/auth.md": AUTH.encode(), "docs/install.md": INSTALL.encode()},
+        guidance=policy,
+        reader=files or Files(held=_held()),
+    )
+
+
+async def test_the_instruction_files_are_kept_with_the_version_even_outside_the_selection(
+    tmp_path: Path,
+) -> None:
+    files = Files(held=_held())
+    world = _guided_world(tmp_path, Policy(keep=True), files)
+
+    await world.run(make_job(), world.progress)
+
+    (version,) = world.catalog.stored
+    assert [(i.path, i.content) for i in version.instructions] == [
+        ("AGENTS.md", ROOT_NOTES.decode()),
+        ("docs/guide/CLAUDE.md", GUIDE_NOTES.decode()),
+    ]
+    # Each candidate read on its own, bounded per file: the root and the selected files' folders.
+    ((asked, most),) = files.asked
+    assert asked == [
+        "AGENTS.md", "CLAUDE.md", "docs/AGENTS.md", "docs/CLAUDE.md",
+        "docs/guide/AGENTS.md", "docs/guide/CLAUDE.md",
+    ]  # fmt: skip
+    assert most == MAX_INSTRUCTION_FILE_BYTES
+    assert [a.path for a in version.articles] == ["docs/guide/auth.md", "docs/install.md"]
+
+
+@pytest.mark.parametrize("policy", [None, Policy(keep=False)], ids=["no policy", "guidance off"])
+async def test_no_instruction_file_is_kept_or_fetched_with_repo_guidance_off(
+    tmp_path: Path, policy: Policy | None
+) -> None:
+    files = Files(held=_held())
+    world = _guided_world(tmp_path, policy, files)
+
+    await world.run(make_job(), world.progress)
+
+    (version,) = world.catalog.stored
+    assert version.instructions == ()
+    assert files.asked == []
+
+
+async def test_an_oversized_binary_or_linked_out_file_is_left_out_alone_with_a_problem(
+    tmp_path: Path,
+) -> None:
+    held = _held(
+        **{
+            "CLAUDE.md": FetchedFile(problem="larger than 32768 bytes", code=ProblemCode.TOO_LARGE),
+            "docs/AGENTS.md": FetchedFile(data=b"\0"),
+            "docs/CLAUDE.md": FetchedFile(
+                problem="a link that leads nowhere usable", code=ProblemCode.NOT_A_FILE
+            ),
+        }
+    )
+    world = _guided_world(tmp_path, Policy(keep=True), Files(held=held))
+
+    await world.run(make_job(), world.progress)
+
+    (version,) = world.catalog.stored
+    assert [i.path for i in version.instructions] == ["AGENTS.md", "docs/guide/CLAUDE.md"]
+    problems = {(path, code) for path, code, _ in world.progress.problems}
+    assert {
+        ("CLAUDE.md", ProblemCode.TOO_LARGE),
+        ("docs/AGENTS.md", ProblemCode.BINARY),
+        ("docs/CLAUDE.md", ProblemCode.NOT_A_FILE),
+    } <= problems
+
+
+async def test_instruction_files_that_cannot_be_read_are_a_job_problem_not_a_failure(
+    tmp_path: Path,
+) -> None:
+    files = Files(held=_held(), error=RepositoryUnreachableError("down"))
+    world = _guided_world(tmp_path, Policy(keep=True), files)
+
+    await world.run(make_job(), world.progress)
+
+    (version,) = world.catalog.stored
+    assert version.instructions == ()
+    assert ("", ProblemCode.INSTRUCTION_FILES) in {
+        (path, code) for path, code, _ in world.progress.problems
+    }
+    assert not ProblemCode.INSTRUCTION_FILES.is_skip
+
+
+def test_candidates_are_the_root_and_the_selected_folders_shallowest_first_and_bounded() -> None:
+    paths = [f"docs/f{i:02}/x.md" for i in range(MAX_INSTRUCTION_DIRS + 5)] + [".git/x.md"]
+
+    found = instruction_candidates(paths)
+
+    assert found[:4] == ["AGENTS.md", "CLAUDE.md", "docs/AGENTS.md", "docs/CLAUDE.md"]
+    assert len(found) == 2 * MAX_INSTRUCTION_DIRS
+    assert not [p for p in found if ".git" in p]

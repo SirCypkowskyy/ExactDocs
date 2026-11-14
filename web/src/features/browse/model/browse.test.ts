@@ -6,6 +6,9 @@ import {
   commitUrl,
   type LibraryDetail,
   orderVersions,
+  pathInVersion,
+  pinChoices,
+  type RenameLookup,
   repoWebUrl,
   resolveVersion,
   safeHref,
@@ -26,6 +29,7 @@ const v = (ref: string, kind: Version["kind"] = "tag", is_default = false): Vers
   commit_sha: "a".repeat(40),
   imported_at: "2026-11-01T10:00:00Z",
   is_default,
+  origin: "manual",
 });
 const lib = (versions: Version[], default_version: string | null): LibraryDetail =>
   ({ id: "/a/b", versions, default_version }) as unknown as LibraryDetail;
@@ -199,5 +203,92 @@ describe("showFileName", () => {
     expect(showFileName("Webhook retries", "webhook-retries.md")).toBe(false);
     expect(showFileName("Acme Payments", "README.md")).toBe(true);
     expect(showFileName("SDK quickstart", "getting-started.md")).toBe(true);
+  });
+});
+
+describe("pathInVersion", () => {
+  // Imported in order v1.2.0, v1.3.0, v1.4.0; v1.4.0 renamed `guide/setup.md` of v1.3.0 to
+  // `guide/install.md`. The server walks the versions between `from` and `to`.
+  const moves: Record<string, [string, string]> = {
+    "v1.2.0>v1.4.0": ["guide/setup.md", "guide/install.md"],
+    "v1.3.0>v1.4.0": ["guide/setup.md", "guide/install.md"],
+    "v1.4.0>v1.2.0": ["guide/install.md", "guide/setup.md"],
+    "v1.4.0>v1.3.0": ["guide/install.md", "guide/setup.md"],
+  };
+  const asked: string[] = [];
+  const server: RenameLookup = async (from, to, path) => {
+    asked.push(`${from}>${to}`);
+    const [old, moved] = moves[`${from}>${to}`] ?? [];
+    if (old !== path || !moved) return null;
+    return {
+      library: "/a/b",
+      ref: to,
+      from_ref: from,
+      old_path: path,
+      new_path: moved,
+      similarity: 92,
+    };
+  };
+
+  it("follows a rename to the next version and back", async () => {
+    expect(await pathInVersion(server, "v1.3.0", "v1.4.0", "guide/setup.md")).toBe(
+      "guide/install.md",
+    );
+    expect(await pathInVersion(server, "v1.4.0", "v1.3.0", "guide/install.md")).toBe(
+      "guide/setup.md",
+    );
+  });
+
+  it("follows a rename made in a version the switch skips, with one lookup (#201)", async () => {
+    asked.length = 0;
+    expect(await pathInVersion(server, "v1.2.0", "v1.4.0", "guide/setup.md")).toBe(
+      "guide/install.md",
+    );
+    expect(asked).toEqual(["v1.2.0>v1.4.0"]);
+    expect(await pathInVersion(server, "v1.4.0", "v1.2.0", "guide/install.md")).toBe(
+      "guide/setup.md",
+    );
+  });
+
+  it("keeps a path that did not move", async () => {
+    expect(await pathInVersion(server, "v1.2.0", "v1.4.0", "guide/auth.md")).toBe("guide/auth.md");
+  });
+
+  it("ignores an answer about other versions", async () => {
+    const stray: RenameLookup = async () => ({
+      library: "/a/b",
+      ref: "v1.4.0",
+      from_ref: "v1.3.0",
+      old_path: "guide/setup.md",
+      new_path: "guide/install.md",
+      similarity: 92,
+    });
+    expect(await pathInVersion(stray, "v1.2.0", "v1.4.0", "guide/setup.md")).toBe("guide/setup.md");
+  });
+
+  it("keeps the path when the server cannot be asked", async () => {
+    const down: RenameLookup = () => Promise.reject(new Error("offline"));
+    expect(await pathInVersion(down, "v1.3.0", "v1.4.0", "guide/setup.md")).toBe("guide/setup.md");
+  });
+
+  it("asks nothing for the same version", async () => {
+    let count = 0;
+    const counting: RenameLookup = async () => {
+      count++;
+      return null;
+    };
+    expect(await pathInVersion(counting, "v1.4.0", "v1.4.0", "guide/setup.md")).toBe(
+      "guide/setup.md",
+    );
+    expect(count).toBe(0);
+  });
+});
+
+describe("pinChoices", () => {
+  it("offers to pin any version unless it already is the pinned default", () => {
+    expect(pinChoices(v("v1.3.0"), false)).toEqual({ pin: true, unpin: false });
+    expect(pinChoices(v("v1.5.0", "tag", true), false)).toEqual({ pin: true, unpin: false });
+    expect(pinChoices(v("v1.3.0", "tag", true), true)).toEqual({ pin: false, unpin: true });
+    expect(pinChoices(v("v1.5.0"), true)).toEqual({ pin: true, unpin: true });
   });
 });

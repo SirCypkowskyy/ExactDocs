@@ -5,6 +5,7 @@ import io
 import pytest
 
 from exactdocs.bootstrap import cli
+from exactdocs.identity.adapters.driven.memory import InMemoryFailedSignInLog
 
 GOOD = "correct horse battery staple"
 
@@ -60,10 +61,43 @@ def test_reset_password_changes_the_password_and_never_prints_it(
 
     reset(monkeypatch, new + "\n", "--username", "Ada", "--password-stdin")
 
-    out = capsys.readouterr().out
-    assert "'Ada'" in out
-    assert new not in out
-    assert GOOD not in out
+    out, err = capsys.readouterr()
+    assert "Password of 'ada' changed" in out  # the stored name, as `admin create` prints it
+    assert new not in out + err
+    assert GOOD not in out + err
+    assert "warning" not in err  # the throttle was cleared: nothing to add
+
+
+async def _busy(_log: InMemoryFailedSignInLog, _key: str) -> bool:
+    return False
+
+
+async def _broken(_log: InMemoryFailedSignInLog, _key: str) -> bool:
+    message = "connection lost"
+    raise OSError(message)
+
+
+@pytest.mark.parametrize("method", ["forget", "forget_remembered"])
+@pytest.mark.parametrize(("forget", "cause"), [(_busy, "was busy"), (_broken, "failed")])
+def test_reset_password_warns_when_the_throttle_was_not_cleared(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    method: str,
+    forget: object,
+    cause: str,
+) -> None:
+    run(monkeypatch, GOOD + "\n", "--username", "ada", "--password-stdin")
+    monkeypatch.setattr(InMemoryFailedSignInLog, method, forget)
+
+    reset(monkeypatch, "a brand new passphrase\n", "--username", "ada", "--password-stdin")
+
+    out, err = capsys.readouterr()
+    assert "Password of 'ada' changed; all its sessions ended." in out
+    assert f"the password was changed, but the sign-in throttle {cause}" in err
+    assert "count or the addresses it remembers for this username" in err
+    assert "Run the command again to retry (that is safe)" in err
+    assert "Retry-After" in err
+    assert "Traceback" not in err
 
 
 def test_reset_password_of_an_unknown_account_names_the_problem(
@@ -98,3 +132,96 @@ def test_serve_without_git_fails_fast_with_a_clear_message(
         cli.app(["serve"], exit_on_error=False, result_action="return_value")
 
     assert "git is not installed" in str(raised.value.code)
+
+
+def test_serve_runs_one_process_even_when_web_concurrency_asks_for_more(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Jobs, their recovery and the tag lock assume one process (docs/architecture.md)."""
+    started: dict[str, object] = {}
+    monkeypatch.setenv("WEB_CONCURRENCY", "4")
+    monkeypatch.setattr(cli, "_check_startup", lambda _settings: None)
+    monkeypatch.setattr(cli.uvicorn, "run", lambda *_args, **kwargs: started.update(kwargs))
+
+    cli.app(["serve"], exit_on_error=False, result_action="return_value")
+
+    assert started["workers"] == 1
+    assert started["timeout_graceful_shutdown"] is None
+
+
+def test_serve_on_postgresql_lets_web_concurrency_decide_and_bounds_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On PostgreSQL each worker is a process of its own (#103); a stop must not hang."""
+    started: dict[str, object] = {}
+    monkeypatch.setenv("EXACTDOCS_DATABASE_URL", "postgresql://u:p@db/x")
+    monkeypatch.setattr(cli, "_check_startup", lambda _settings: None)
+    monkeypatch.setattr(cli.uvicorn, "run", lambda *_args, **kwargs: started.update(kwargs))
+
+    cli.app(["serve"], exit_on_error=False, result_action="return_value")
+
+    assert started["workers"] is None  # uvicorn reads WEB_CONCURRENCY
+    assert started["timeout_graceful_shutdown"] == 30
+
+
+def user(monkeypatch: pytest.MonkeyPatch, stdin: str, *args: str) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO(stdin))
+    cli.app(["user", *args], exit_on_error=False, result_action="return_value")
+
+
+def test_user_create_needs_the_setup_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(SystemExit) as raised:
+        user(monkeypatch, GOOD + "\n", "create", "bob", "--password-stdin")
+
+    assert "create the first admin first" in str(raised.value.code)
+
+
+def test_user_create_disable_enable_and_reset(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(monkeypatch, GOOD + "\n", "--username", "ada", "--password-stdin")
+    new = "bob's brand new passphrase"
+
+    user(monkeypatch, GOOD + "\n", "create", "Bob", "--password-stdin")
+    user(monkeypatch, GOOD + "\n", "create", "carol", "--password-stdin", "--operator")
+    user(monkeypatch, "", "disable", "bob")
+    user(monkeypatch, "", "enable", "BOB")
+    user(monkeypatch, new + "\n", "reset-password", "bob", "--password-stdin")
+
+    out, err = capsys.readouterr()
+    assert "Created user 'bob'." in out
+    assert "Created admin 'carol'." in out
+    assert "Disabled 'bob'; its sessions ended and its API tokens were revoked." in out
+    assert "Enabled 'bob'." in out
+    assert "Password of 'bob' changed; all its sessions ended." in out
+    assert GOOD not in out + err
+    assert new not in out + err
+
+
+def test_user_create_refuses_a_taken_name_and_a_short_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run(monkeypatch, GOOD + "\n", "--username", "ada", "--password-stdin")
+
+    with pytest.raises(SystemExit) as taken:
+        user(monkeypatch, GOOD + "\n", "create", "ADA", "--password-stdin")
+    with pytest.raises(SystemExit) as short:
+        user(monkeypatch, "short\n", "create", "bob", "--password-stdin")
+
+    assert "another account already has this username" in str(taken.value.code)
+    assert "12 to 1024 characters" in str(short.value.code)
+    assert "short\n" not in str(short.value.code)
+
+
+def test_user_disable_refuses_the_last_admin_and_an_unknown_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run(monkeypatch, GOOD + "\n", "--username", "ada", "--password-stdin")
+
+    with pytest.raises(SystemExit) as last:
+        user(monkeypatch, "", "disable", "ada")
+    with pytest.raises(SystemExit) as unknown:
+        user(monkeypatch, "", "disable", "nobody")
+
+    assert "last enabled admin" in str(last.value.code)
+    assert "no account" in str(unknown.value.code)

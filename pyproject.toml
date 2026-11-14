@@ -9,7 +9,16 @@ dependencies = ["exactdocs", "exactdocs-kernel"]
 dev = [
     "archunitpython>=1.8.1",
     "behave>=1.3",
+    # The AI extra is installed for development and CI, so the tests prove it stays unimported
+    # while no model is configured (RUN-02), and later AI tests can use pydantic-ai's test models.
+    "exactdocs[ai]",
+    # The local-models extra too (#245): its tests run tiny ONNX models through fastembed, and the
+    # model-free tests prove it stays unimported until a `local` profile's role is configured.
+    "exactdocs[local]",
     "httpx>=0.28",
+    # The retrieval eval suite (packages/exactdocs/evals, docs/decisions/ai-retrieval.md):
+    # exact pin, it moves with pydantic-ai-slim in the `ai` extra.
+    "pydantic-evals==2.60.0",
     "pytest>=9",
     "pytest-asyncio>=1.2",
     "pytest-cov>=7",
@@ -21,6 +30,11 @@ docs = ["zensical>=0.0.74"]
 [tool.uv]
 package = false
 default-groups = ["dev"]
+# A new dependency must be at least 14 days old. The `[local]` extra (#245) pulls these two
+# transitively, and their newest releases were younger than that when it was locked: hold them
+# at what was out by then. #280 drops both entries (after 2026-11-23): until then no bump moves
+# them.
+exclude-newer-package = { filelock = "2026-10-28T00:00:00Z", hf-xet = "2026-10-28T00:00:00Z" }
 
 [tool.uv.workspace]
 members = ["packages/*"]
@@ -33,12 +47,20 @@ exactdocs-kernel = { workspace = true }
 [tool.ruff]
 target-version = "py314"
 line-length = 100
-src = ["packages/*/src", "packages/*/tests", "packages/*/tests/fixtures", "packages/*/features"]
+src = [
+    "packages/*/src",
+    "packages/*/tests",
+    "packages/*/tests/fixtures",
+    "packages/*/features",
+    "packages/*/evals",
+]
 # The fixture docs repository is content under test (byte-exact, incl. invalid UTF-8), not code.
 extend-exclude = [
     "web",
     "packages/exactdocs/src/exactdocs/_web",
     "packages/exactdocs/tests/fixtures/docs-repo",
+    # Code that breaks the Python conventions on purpose, read (never imported) by test_conventions.py.
+    "packages/exactdocs/tests/architecture/fixtures",
 ]
 
 [tool.ruff.lint]
@@ -64,9 +86,6 @@ ignore = [
     "typing-only-first-party-import",
     "typing-only-third-party-import",
     "typing-only-standard-library-import",
-    # pydoclint: no mandatory Returns / Raises sections
-    "docstring-missing-returns",
-    "docstring-missing-exception",
     # keyword-only wiring of modules legitimately takes many arguments
     "too-many-arguments",
     "too-many-positional-arguments",
@@ -83,6 +102,7 @@ ignore = [
 "**/tests/**" = [
     "assert",
     "D",
+    "DOC",
     "ANN",
     "magic-value-comparison",
     "FBT",
@@ -92,7 +112,14 @@ ignore = [
     "implicit-namespace-package",
 ]
 "e2e/**" = ["D", "implicit-namespace-package", "suspicious-subprocess-import"]
-"**/features/**" = ["assert", "D", "ANN", "FBT", "implicit-namespace-package"]
+# The eval runner script sits beside its package, outside any package, like e2e/run.py.
+"packages/exactdocs/evals/run_retrieval_eval.py" = ["implicit-namespace-package"]
+"packages/exactdocs/evals/run_golden.py" = ["implicit-namespace-package"]
+"packages/exactdocs/evals/run_ingestion_bench.py" = ["implicit-namespace-package"]
+"packages/exactdocs/evals/run_retrieval_bench.py" = ["implicit-namespace-package"]
+"packages/exactdocs/evals/run_agent_bench.py" = ["implicit-namespace-package"]
+"packages/exactdocs/evals/run_bench_pages.py" = ["implicit-namespace-package"]
+"**/features/**" = ["assert", "D", "DOC", "ANN", "FBT", "implicit-namespace-package"]
 # Alembic revisions are generated from migrations/script.py.mako: no per-function docstrings.
 "**/migrations/versions/**" = ["D"]
 # Every test must start in its own empty data directory (see packages/exactdocs/tests/conftest.py).
@@ -101,8 +128,25 @@ ignore = [
 "**/tests/fixtures/fixture_repo.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
 # The CI artifact guard is a standalone stdlib script that runs docker and reports on stdout.
 "deploy/check_artifacts.py" = ["implicit-namespace-package", "suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path", "unspecified-encoding", "builtin-open", "regex-flag-alias", "manual-list-comprehension"]
+# The vector benchmark wants reproducible Gaussian data, not secrets.
+"**/tests/retrieval/bench_vector_index.py" = ["suspicious-non-cryptographic-random-usage"]
+# Runs inside the built image (python - < file) to prove sqlite-vec loads there.
+"deploy/check_sqlite_vec.py" = ["implicit-namespace-package"]
+# Runs inside the `-local` image (python - < file) to prove it searches with no network (#246).
+"deploy/smoke_local.py" = ["implicit-namespace-package"]
+# The CI upgrade test is a standalone stdlib script that runs two releases and reports on stdout.
+"deploy/upgrade_check.py" = ["implicit-namespace-package", "suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path", "print", "undocumented-public-function", "undocumented-public-method"]
 # Runs the app in a fresh interpreter to see which modules it imports.
 "**/tests/bootstrap/test_model_free.py" = ["suspicious-subprocess-import", "subprocess-run-without-check", "subprocess-without-shell-equals-true"]
+# Runs its span test in a fresh interpreter: a process's tracer provider is set once.
+"**/tests/retrieval/test_agentic_search.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
+# Runs the app behind a socket guard in a fresh interpreter, with the SDKs' variables set.
+"**/tests/fixtures/socket_guard.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
+
+[tool.ruff.lint.pydocstyle]
+# Google style: `Args:`, `Returns:`, `Raises:`. ruff skips private functions and has no rules for
+# constants, attribute docstrings or dataclass flags: tests/architecture/test_conventions.py does.
+convention = "google"
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
@@ -120,11 +164,11 @@ docstring-code-format = true
 # ---------------------------------------------------------------- ty
 [tool.ty.environment]
 python-version = "3.14"
-extra-paths = ["packages/exactdocs/tests/fixtures"]
+extra-paths = ["packages/exactdocs/tests/fixtures", "packages/exactdocs/evals"]
 
 [tool.ty.src]
 include = ["packages"]
-exclude = ["packages/exactdocs/src/exactdocs/_web"]
+exclude = ["packages/exactdocs/src/exactdocs/_web", "packages/exactdocs/tests/architecture/fixtures"]
 
 [tool.ty.rules]
 possibly-unresolved-reference = "error"
@@ -138,12 +182,26 @@ rules = { call-non-callable = "ignore" }
 [tool.pytest]
 minversion = "9.0"
 testpaths = ["packages/exactdocs-kernel/tests", "packages/exactdocs/tests"]
-pythonpath = ["packages/exactdocs/tests/fixtures"]  # fixture_repo.py
-addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+pythonpath = [
+    "packages/exactdocs/tests/fixtures",  # fixture_repo.py
+    "packages/exactdocs/evals",  # retrieval_eval, the retrieval eval suite
+]
+addopts = [
+    "-ra", "--strict-markers", "--strict-config", "--import-mode=importlib",
+    "-m", "not eval",  # docs/evals.md: the release runs them; `uv run pytest -m eval` locally
+]
+markers = [
+    "eval: runs the retrieval eval suite end to end on the imported fixture (slow); skipped by default",
+]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 xfail_strict = true
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # google-genai 2.33 (the [ai] extra) touches typing's private _UnionGenericAlias on import,
+    # deprecated in Python 3.14; third-party, harmless until 3.17.
+    "ignore:'_UnionGenericAlias' is deprecated:DeprecationWarning:google.genai.types",
+]
 
 # ---------------------------------------------------------------- behave (BDD acceptance)
 [tool.behave]

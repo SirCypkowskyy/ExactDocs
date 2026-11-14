@@ -1,9 +1,17 @@
 import json
+import time
 from pathlib import Path
 
 import pytest
 
-from exactdocs.ingestion.models import PARSER_VERSION, parse_article, strip_invisible
+from exactdocs.ingestion.constants import PARSER_VERSION
+from exactdocs.ingestion.models import (
+    StoredArticle,
+    git_blob_sha,
+    parse_article,
+    sniff_image,
+    strip_invisible,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -233,3 +241,122 @@ def test_hidden_characters_cannot_hide_the_front_matter() -> None:
 
 def test_parser_version_is_an_integer_that_feeds_the_chunking_hash() -> None:
     assert isinstance(PARSER_VERSION, int)
+
+
+@pytest.mark.parametrize(
+    ("article", "body", "expected"),
+    [
+        ("docs/a/b.md", "![x](../img/f.png)", ["docs/img/f.png"]),
+        ("docs/a/b.md", "![x](./f.png?raw=1#top) ![y](f.png)", ["docs/a/f.png"]),
+        ("docs/a/b.md", "![x](/static/f.png)", ["static/f.png"]),
+        ("a.md", "![x](a%20b.png) ![x](%2e%2e/x.png)", ["a b.png"]),
+        ("docs/a.md", "![x](../../../etc/p.png)", []),
+        (
+            "docs/a.md",
+            "![x](https://e.test/a.png) ![x](data:image/png;base64,AA) ![x](//e/a.png)",
+            [],
+        ),
+        ("docs/a.md", "![x](a\\b.png) ![x](.git/config) ![x](x/.GIT/y.png) ![x]()", []),
+        ("docs/a.md", "[link](f.png) `![x](f.png)`", []),
+        ("docs/a.md", "![x](f.png) ![y](f.png)", ["docs/f.png"]),
+    ],
+)
+def test_images_are_collected_as_repository_paths(
+    article: str, body: str, expected: list[str]
+) -> None:
+    assert list(parse_article(article, body).images) == expected
+
+
+def test_an_article_references_a_bounded_number_of_images() -> None:
+    body = " ".join(f"![x](i{n}.png)" for n in range(500))
+
+    assert len(parse_article("a.md", body).images) == 100
+
+
+@pytest.mark.parametrize(
+    ("data", "kind"),
+    [
+        (b"\x89PNG\r\n\x1a\n....", "image/png"),
+        (b"\xff\xd8\xff\xe0....", "image/jpeg"),
+        (b"GIF89a....", "image/gif"),
+        (b"RIFF\x00\x00\x00\x00WEBPVP8 ", "image/webp"),
+        (b'<svg xmlns="http://www.w3.org/2000/svg"/>', "image/svg+xml"),
+        (
+            b'<?xml version="1.0"?>\n<!-- c -->\n<!DOCTYPE svg PUBLIC "a" "b">\n<svg/>',
+            "image/svg+xml",
+        ),
+        (b"\xef\xbb\xbf  <SVG viewBox='0 0 1 1'></SVG>", "image/svg+xml"),
+        (b"<html><svg/></html>", None),
+        (b"<!DOCTYPE svg [<!ENTITY a 'b'>]><svg/>", None),
+        (b"GIF", None),
+        (b"%PDF-1.7", None),
+        (b"", None),
+    ],
+)
+def test_images_are_recognized_by_content_only(data: bytes, kind: str | None) -> None:
+    assert sniff_image(data) == kind
+
+
+def test_a_hostile_svg_prologue_cannot_stall_the_sniffer() -> None:
+    started = time.perf_counter()
+    for data in (b"<!---->" * 600 + b"x", b"<!--" * 1000, b"<?xml ?>" * 500 + b"x"):
+        assert sniff_image(data) is None
+    assert time.perf_counter() - started < 0.1
+
+
+@pytest.mark.parametrize(
+    ("path", "text"),
+    [
+        ("guide/install.md", "---\ntitle: Install\ntags: [a, B]\ndescription: How\n---\n# H\n"),
+        ("guide/auth.md", "# Authentication\n\n![logo](../img/a.png) ![x][ref]\n\n[ref]: b.svg\n"),
+        ("notes.md", "No heading, no front matter.\n"),
+        ("odd.md", "---\ntitle: [1]\ntags: 7\nextra: {n: [1, null, x]}\n---\nBody\n"),
+        ("many.md", "---\ntags: a, b, a, -bad tag-\n---\n\u200bInvisible\n"),
+        ("empty.md", "---\n---\n# After empty front matter\n"),
+        ("broken.md", "---\ntitle: [unclosed\n---\n# Malformed\n"),  # the blob SHA tells
+        ("list.md", "---\n- a list\n---\nNot a mapping: body text\n"),
+        ("two.md", "---\ntitle: T\n---\n---\nsecond: block\n---\nBody\n"),
+        ("two-bad.md", "---\ntitle: T\n---\n---\nsecond: [\n---\nBody\n"),
+        ("blank-then-map.md", "---\n\n---\n---\nsecond: block\n---\nBody\n"),
+    ],
+)
+def test_a_stored_article_rebuilds_what_the_parser_gives(path: str, text: str) -> None:
+    """What the importer takes from the catalog instead of parsing the file again (#164)."""
+    parsed = parse_article(path, text)
+    stored = StoredArticle(
+        path=path,
+        blob_sha=git_blob_sha(text.encode()),
+        title=parsed.title,
+        front_matter=json.loads(json.dumps(parsed.front_matter)),  # as the catalog keeps it
+        content=parsed.body,
+    )
+
+    assert stored.parsed() == parsed
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A front matter that loads to nothing, then a block YAML refuses: Markdown (#228).
+        "---\n# only a comment\n---\n---\ntitle: [unclosed\n# Inside\n---\n# Real\n",
+        "---\n\n---\n---\ntitle: [\n---\nBody\n",
+        "\u200b---\ntitle: [\n---\nBody\n",  # malformed, but the parser stripped a character
+    ],
+)
+def test_a_stored_text_only_a_parse_can_tell_from_malformed_front_matter_needs_one(
+    text: str,
+) -> None:
+    parsed = parse_article("a.md", text)
+    stored = StoredArticle(
+        path="a.md",
+        blob_sha=git_blob_sha(text.encode()),
+        title=parsed.title,
+        front_matter=parsed.front_matter,
+        content=parsed.body,
+    )
+
+    assert stored.parsed() is None
+
+
+def test_an_article_without_an_image_marker_has_no_images() -> None:
+    assert parse_article("a.md", "# A\n\n[link](b.png) <img src='c.png'>\n").images == ()

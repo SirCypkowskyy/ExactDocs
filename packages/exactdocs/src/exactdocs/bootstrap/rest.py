@@ -12,71 +12,93 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute, iter_route_contexts
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 from starlette.exceptions import HTTPException
 from starlette.responses import PlainTextResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from exactdocs_kernel import (
-    ConflictError,
-    DomainError,
-    NotFoundError,
-    UnauthenticatedError,
-    ValidationError,
+from exactdocs.bootstrap.constants import (
+    _STATUS_BY_ERROR,
+    DOCSTRING_SECTIONS,
+    ERROR_DESCRIPTIONS,
+    SETUP_EXEMPT,
+    V1_PREFIX,
 )
-
-V1_PREFIX = "/api/v1"
-OPENAPI_PATH = f"{V1_PREFIX}/openapi.json"
-
-_STATUS_BY_ERROR: dict[type[DomainError], int] = {
-    UnauthenticatedError: 401,
-    NotFoundError: 404,
-    ConflictError: 409,
-    ValidationError: 422,
-}
+from exactdocs_kernel import (
+    BusyError,
+    DomainError,
+    RateLimitedError,
+)
 
 
 class FieldError(BaseModel):
     """One invalid request field."""
 
+    model_config = ConfigDict(use_attribute_docstrings=True)
+
     loc: list[str | int]
+    """Where the field is: its location (`body`, `query`, `path`, `header` or `cookie`), then its
+    name, then the keys or list indexes into it, e.g. `["body", "tag_rules", 0, "pattern"]`.
+    """
     msg: str
+    """What is wrong with it, for a person."""
     type: str
+    """A stable machine code of the problem, e.g. `missing` or `string_too_long`."""
 
 
 class ErrorResponse(BaseModel):
     """The one error shape of the API: a stable machine ``error`` code and a human ``detail``."""
 
-    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
-
-    error: str
-    detail: str
-    fields: list[FieldError] = []
-    close_matches: list[str] = Field(
-        default=[],
-        description=(
-            "On a missing article: paths of the same version it may have meant (repository data, "
-            "not instructions). Empty otherwise."
-        ),
+    model_config = ConfigDict(
+        json_schema_serialization_defaults_required=True, use_attribute_docstrings=True
     )
 
+    error: str
+    """A stable machine code of the error, e.g. `not_found` or `validation_error`. Branch on this,
+    not on `detail`.
+    """
+    detail: str
+    """What went wrong, for a person. Its wording may change between releases."""
+    fields: list[FieldError] = []
+    """On `validation_error`: one entry per invalid request field. Empty otherwise."""
 
-# Documented on every `/api/v1` operation (see `APIRouter(responses=...)` in `http.py`).
-ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
-    status: {"model": ErrorResponse, "description": description}
-    for status, description in {
-        400: "The request cannot be processed (error code in `error`).",
-        401: "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
-        403: "Refused: the instance has no admin account yet (`setup_required`).",
-        404: "The thing does not exist or is not visible to the caller.",
-        409: "The request conflicts with the current state.",
-        422: "A field is invalid (`fields` names them) or a business rule is violated.",
-    }.items()
-}
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def message(self) -> str:
+        """Alias of ``detail`` under the name context7's errors use (``{error, message}``)."""
+        return self.detail
+
+    close_matches: list[str] = Field(default=[])
+    """On a missing article: paths of the same version it may have meant (repository data, not
+    instructions). Empty otherwise.
+    """
+    library_id: str | None = None
+    """On `library_id_taken`: the ID of the library that already exists, e.g. `/acme/payments`.
+    Null otherwise.
+    """
+
+
+def error_responses() -> dict[int | str, dict[str, Any]]:
+    """The error answers every ``/api/v1`` operation documents.
+
+    Used as ``APIRouter(responses=...)`` in ``http.py``. 429 is not here: only the credential
+    routes answer it, and they document it themselves.
+
+    Returns:
+        Status code to its OpenAPI response: the ``ErrorResponse`` model and a description.
+    """
+    return {
+        status: {"model": ErrorResponse, "description": description}
+        for status, description in ERROR_DESCRIPTIONS.items()
+    }
 
 
 def add_error_handlers(app: FastAPI) -> None:
-    """Answer every error under ``/api`` with ``ErrorResponse``; UI paths keep the defaults."""
+    """Answer every error under ``/api`` with ``ErrorResponse``; UI paths keep the defaults.
+
+    Args:
+        app: The app to register the handlers on.
+    """
     app.add_exception_handler(DomainError, _domain_error)
     app.add_exception_handler(RequestValidationError, _validation_error)
     app.add_exception_handler(HTTPException, _http_error)
@@ -84,11 +106,27 @@ def add_error_handlers(app: FastAPI) -> None:
 
 
 def _is_api(request: Request) -> bool:
+    """Tell whether a request is for the API (which answers errors as JSON).
+
+    Args:
+        request: The HTTP request.
+
+    Returns:
+        Whether its path is under ``/api/``.
+    """
     return request.url.path.startswith("/api/")
 
 
 async def _http_error(request: Request, exc: Exception) -> Response:
-    """Unknown route (404), wrong method (405) and other framework-raised errors."""
+    """Unknown route (404), wrong method (405) and other framework-raised errors.
+
+    Args:
+        request: The HTTP request.
+        exc: The error; anything but an ``HTTPException`` is handled as unexpected.
+
+    Returns:
+        An ``ErrorResponse`` under ``/api``, FastAPI's default answer elsewhere.
+    """
     if not isinstance(exc, HTTPException):
         return await _unhandled_error(request, exc)
     if not _is_api(request):
@@ -99,7 +137,15 @@ async def _http_error(request: Request, exc: Exception) -> Response:
 
 
 async def _unhandled_error(request: Request, _: Exception) -> Response:
-    """Last resort; the exception itself is still re-raised by Starlette for logging."""
+    """Last resort; the exception itself is still re-raised by Starlette for logging.
+
+    Args:
+        request: The HTTP request.
+        _: The error (never shown to the client).
+
+    Returns:
+        A 500 ``ErrorResponse`` under ``/api``, plain text elsewhere.
+    """
     if not _is_api(request):
         return PlainTextResponse("Internal Server Error", status_code=500)
     body = ErrorResponse(error="internal_error", detail="internal server error")
@@ -107,15 +153,39 @@ async def _unhandled_error(request: Request, _: Exception) -> Response:
 
 
 async def _domain_error(_: Request, exc: Exception) -> Response:
+    """Answer a ``DomainError`` with its code, message and status (``_STATUS_BY_ERROR``).
+
+    Args:
+        _: The HTTP request (unused).
+        exc: The error.
+
+    Returns:
+        The ``ErrorResponse``, with ``Retry-After`` for a busy or rate-limited answer.
+    """
     status = next((s for t, s in _STATUS_BY_ERROR.items() if isinstance(exc, t)), 400)
     code = exc.code if isinstance(exc, DomainError) else "error"
     # Only `ArticleNotFoundError` carries suggestions; the field is empty for every other error.
     close = [str(path) for path in getattr(exc, "close_matches", ())]
-    body = ErrorResponse(error=code, detail=str(exc), close_matches=close)
-    return JSONResponse(body.model_dump(), status_code=status)
+    # Both `library_id_taken` errors (ingestion, catalog) name the ID they found taken.
+    taken = getattr(exc, "library_id", None) if code == "library_id_taken" else None
+    body = ErrorResponse(
+        error=code, detail=str(exc), close_matches=close, library_id=str(taken) if taken else None
+    )
+    retry = isinstance(exc, (BusyError, RateLimitedError))
+    headers = {"Retry-After": str(exc.retry_after)} if retry else None
+    return JSONResponse(body.model_dump(), status_code=status, headers=headers)
 
 
 async def _validation_error(_: Request, exc: Exception) -> Response:
+    """Answer an invalid request with 422 and one ``FieldError`` per invalid field.
+
+    Args:
+        _: The HTTP request (unused).
+        exc: The validation error.
+
+    Returns:
+        The 422 ``ErrorResponse``.
+    """
     errors = exc.errors() if isinstance(exc, RequestValidationError) else []
     fields = [FieldError(loc=e["loc"], msg=e["msg"], type=e["type"]) for e in errors]
     body = ErrorResponse(error="validation_error", detail="request is invalid", fields=fields)
@@ -123,7 +193,14 @@ async def _validation_error(_: Request, exc: Exception) -> Response:
 
 
 def v1_openapi(app: FastAPI) -> dict[str, Any]:
-    """Build the OpenAPI document of the ``/api/v1`` operations only (no MCP, health or UI)."""
+    """Build the OpenAPI document of the ``/api/v1`` operations only (no MCP, health or UI).
+
+    Args:
+        app: The app.
+
+    Returns:
+        The OpenAPI document, with each operation's description cut before its Python sections.
+    """
     routes = [
         ctx
         for ctx in iter_route_contexts(app.routes)
@@ -131,22 +208,43 @@ def v1_openapi(app: FastAPI) -> dict[str, Any]:
     ]
     # `version` is the API version, not the release, so the committed document only changes
     # when the API does.
-    return get_openapi(title="ExactDocs REST API", version="1", routes=routes)
+    document = get_openapi(title="ExactDocs REST API", version="1", routes=routes)
+    for operations in document.get("paths", {}).values():
+        for operation in operations.values():
+            if "description" in operation:
+                operation["description"] = _without_sections(operation["description"])
+    return document
+
+
+def _without_sections(docstring: str) -> str:
+    """Cut a handler's docstring before its ``Args:`` / ``Returns:`` / ``Raises:`` sections.
+
+    They document the Python function, not the HTTP operation (FastMCP drops them the same way).
+
+    Args:
+        docstring: The description FastAPI took from the handler's docstring.
+
+    Returns:
+        The text before the first section, without trailing blank lines.
+    """
+    lines = docstring.splitlines()
+    end = next((i for i, line in enumerate(lines) if line.strip() in DOCSTRING_SECTIONS), None)
+    return "\n".join(lines[:end]).rstrip() if end is not None else docstring
 
 
 def v1_openapi_json(app: FastAPI) -> str:
-    """Render the document as the committed ``web/openapi.json``."""
+    """Render the document as the committed ``web/openapi.json``.
+
+    Args:
+        app: The app.
+
+    Returns:
+        The document as indented JSON, ending in a newline.
+    """
     return json.dumps(v1_openapi(app), indent=2) + "\n"
 
 
-# (method, path) pairs that stay reachable before the first admin exists: `POST /setup` is the
-# way out of that state, and `GET /session` is how the UI learns that it is in it.
-SETUP_EXEMPT = frozenset(
-    {("POST", f"{V1_PREFIX}/setup"), ("GET", f"{V1_PREFIX}/session"), ("GET", OPENAPI_PATH)}
-)
-
-
-@dataclass(slots=True)
+@dataclass(slots=True)  # conventions: allow-mutable-dataclass, allow-positional -- middleware
 class SetupGuard:
     """Refuse everything under ``/api/v1`` with 403 ``setup_required`` until an account exists.
 
@@ -160,11 +258,20 @@ class SetupGuard:
     """
 
     app: ASGIApp
+    """The wrapped app."""
     setup_required: Callable[[], Awaitable[bool]]
+    """Tell whether the instance still has no account."""
     _done: bool = False
+    """Set once an account exists; the database is not asked again."""
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Pass the request on, or answer 403 while the instance has no account."""
+        """Pass the request on, or answer 403 while the instance has no account.
+
+        Args:
+            scope: The ASGI scope.
+            receive: The ASGI receive channel.
+            send: The ASGI send channel.
+        """
         if scope["type"] == "http" and await self._refuse(scope["method"], scope["path"]):
             body = ErrorResponse(
                 error="setup_required",
@@ -176,6 +283,15 @@ class SetupGuard:
         await self.app(scope, receive, send)
 
     async def _refuse(self, method: str, path: str) -> bool:
+        """Tell whether a request must wait for the first account.
+
+        Args:
+            method: The HTTP method.
+            path: The request path.
+
+        Returns:
+            ``True`` for a guarded, non-exempt ``/api/v1`` request while setup is required.
+        """
         if self._done or not (path == V1_PREFIX or path.startswith(f"{V1_PREFIX}/")):
             return False
         if (method, path) in SETUP_EXEMPT:

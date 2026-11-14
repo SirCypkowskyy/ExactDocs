@@ -1,25 +1,33 @@
 """IDs, refs, the default-version rule and short-SHA lookup: pure model tests."""
 
 import time
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 
+from exactdocs.catalog.constants import MAX_CLOSE_MATCHES
 from exactdocs.catalog.errors import (
     AmbiguousCommitError,
+    DuplicateRenameError,
     DuplicateVersionRefError,
+    InvalidArticlePathError,
     InvalidCommitShaError,
     InvalidImportTimeError,
     InvalidLibraryIdError,
     InvalidSettingsError,
+    InvalidSimilarityError,
     InvalidVersionRefError,
 )
 from exactdocs.catalog.models import (
-    MAX_CLOSE_MATCHES,
     ChunkingConfig,
     HostKind,
     Library,
     LibraryId,
+    Manifest,
+    ManifestId,
+    ManifestRename,
     ParsedId,
     RefKind,
     Version,
@@ -218,9 +226,15 @@ def test_an_ambiguous_short_sha_is_a_validation_error() -> None:
 
 @pytest.mark.parametrize(
     "kwargs",
-    [{"split_level": 0}, {"split_level": 7}, {"min_chars": -1}, {"min_chars": 9, "max_chars": 8}],
+    [
+        {"split_level": 0},
+        {"split_level": 7},
+        {"min_chars": -1},
+        {"min_chars": 9, "max_chars": 8},
+        {"chunker": ""},
+    ],
 )
-def test_chunking_settings_must_be_in_range(kwargs: dict[str, int]) -> None:
+def test_chunking_settings_must_be_in_range(kwargs: dict[str, Any]) -> None:
     with pytest.raises(InvalidSettingsError):
         ChunkingConfig(**kwargs)
 
@@ -291,3 +305,57 @@ def test_close_paths_on_a_large_tree_stay_fast_and_bounded() -> None:
 
     assert len(found) <= MAX_CLOSE_MATCHES
     assert time.perf_counter() - started < 1.0  # ~0.3 s for 50k unfiltered; a miss must stay cheap
+
+
+def move(old: str = "a.md", new: str = "b.md", similarity: int = 100) -> ManifestRename:
+    return ManifestRename(
+        from_ref=VersionRef("v1"), old_path=old, new_path=new, similarity=similarity
+    )
+
+
+@pytest.mark.parametrize("similarity", [0, 101, -5])
+def test_a_rename_keeps_a_percentage_of_the_content(similarity: int) -> None:
+    with pytest.raises(InvalidSimilarityError):
+        move(similarity=similarity)
+
+
+@pytest.mark.parametrize("path", ["", "../a.md", "a//b.md", "./a.md"])
+def test_a_rename_needs_two_article_paths(path: str) -> None:
+    with pytest.raises(InvalidArticlePathError):
+        move(old=path)
+    with pytest.raises(InvalidArticlePathError):
+        move(new=path)
+
+
+def test_a_manifest_renames_a_path_once() -> None:
+    with pytest.raises(DuplicateRenameError):
+        Manifest(
+            id=ManifestId("m"),
+            library=LibraryId("/acme/payments"),
+            ref=VersionRef("v2"),
+            kind=RefKind.TAG,
+            commit_sha="a" * 40,
+            created_at=NOW,
+            renames=(move(), move(new="c.md")),
+        )
+
+
+def test_a_pinned_version_is_the_default_even_with_a_higher_stable_tag() -> None:
+    found = replace(
+        library(version("v1.3.0"), version("v1.5.0"), version("main", RefKind.BRANCH)),
+        pinned_version=VersionRef("v1.3.0"),
+    )
+
+    assert found.default_version() == version("v1.3.0")
+    assert found.default_is_pinned()
+
+
+@pytest.mark.parametrize("pinned", [None, "v1.4.0"])  # unpinned, or a pin no version answers to
+def test_without_a_usable_pin_the_default_follows_the_rule(pinned: str | None) -> None:
+    found = replace(
+        library(version("v1.3.0"), version("v1.5.0")),
+        pinned_version=None if pinned is None else VersionRef(pinned),
+    )
+
+    assert found.default_version() == version("v1.5.0")
+    assert not found.default_is_pinned()

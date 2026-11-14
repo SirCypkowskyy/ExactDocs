@@ -6,7 +6,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 set windows-shell := ["C:/Program Files/Git/bin/bash.exe", "-euo", "pipefail", "-c"]
 set dotenv-load := true
 
-image := "exactdocs:local"
+image := "exactdocs:build"
 web := "web"
 
 # List recipes
@@ -57,7 +57,7 @@ lint:
     uv run ty check
     cd {{ web }} && pnpm lint
 
-# Python tests: unit, integration, architecture (pass extra pytest args)
+# Python tests: unit, integration, architecture (pass extra pytest args; `just test -m eval`: the slow eval tests)
 test *args:
     uv run pytest {{ args }}
 
@@ -69,6 +69,34 @@ arch:
 bdd *args:
     uv run behave {{ args }}
 
+# Retrieval eval suite (runs on releases, not in CI): modes compared on the fixture docs repository (docs/evals.md); `just eval --help`
+eval *args:
+    uv run python packages/exactdocs/evals/run_retrieval_eval.py {{ args }}
+
+# Golden set: fetch the pinned corpus and check every case's sections exist (docs/evals.md)
+golden-validate *args:
+    uv run python packages/exactdocs/evals/run_golden.py validate {{ args }}
+
+# Golden set: fetch and import every pinned version with the real importer; records the commits
+golden-import *args:
+    uv run python packages/exactdocs/evals/run_golden.py import {{ args }}
+
+# Ingestion benchmark: chunking configurations measured on the golden corpus, with BM25 recall (docs/evals.md)
+ingestion-bench *args:
+    uv run python packages/exactdocs/evals/run_ingestion_bench.py {{ args }}
+
+# Retrieval benchmark: modes, models, rerankers and chunking measured on the golden set (docs/evals.md)
+retrieval-bench *args:
+    uv run python packages/exactdocs/evals/run_retrieval_bench.py {{ args }}
+
+# Agent benchmark (never in CI): an agent with only the ExactDocs MCP tools answers the golden set (docs/evals.md); `just agent-bench run --offline`
+agent-bench *args:
+    uv run python packages/exactdocs/evals/run_agent_bench.py {{ args }}
+
+# Benchmark pages (docs/benchmark/): refill their tables from evals/results/*.json and the golden set; `--check` fails when one is out of date
+bench-pages *args:
+    uv run python packages/exactdocs/evals/run_bench_pages.py {{ args }}
+
 # Web unit tests (vitest)
 web-test:
     cd {{ web }} && pnpm test
@@ -77,6 +105,10 @@ web-test:
 api:
     uv run python -c "import tempfile; from pathlib import Path; from exactdocs.bootstrap.container import Container; from exactdocs.bootstrap.http import create_app; from exactdocs.bootstrap.rest import v1_openapi_json; from exactdocs.bootstrap.settings import Settings; print(v1_openapi_json(create_app(Container.build(Settings(data_dir=Path(tempfile.mkdtemp()))))), end='')" > {{ web }}/openapi.json
     cd {{ web }} && pnpm gen:api
+
+# Regenerate docs/schemas/exactdocs.sources.schema.json from the sources file's model (commit it)
+sources-schema:
+    uv run python -c "import json; from exactdocs.ingestion.dtos import sources_json_schema; print(json.dumps(sources_json_schema(), indent=2))" > docs/schemas/exactdocs.sources.schema.json
 
 # Everything CI runs, in CI order
 check: lint test bdd web-test web-build docs-build
@@ -93,9 +125,14 @@ build version="": web-build
     cp -r {{ web }}/dist packages/exactdocs/src/exactdocs/_web
     if [ -n "{{ version }}" ]; then export UV_DYNAMIC_VERSIONING_BYPASS="{{ version }}"; fi;       uv build --all-packages --out-dir dist
 
-# Build the Docker image for the local platform
-docker-build version="0.0.0.dev0":
-    docker build -f deploy/Dockerfile --build-arg VERSION={{ version }} -t {{ image }} .
+# Build the Docker image for the local platform: variant base, ai or local (tag exactdocs:build, -ai, -local)
+docker-build version="0.0.0.dev0" variant="base":
+    docker build -f deploy/Dockerfile --target {{ variant }} --build-arg VERSION={{ version }} \
+      -t {{ image }}{{ if variant == "base" { "" } else { "-" + variant } }} .
+
+# Check a built variant's size budget, packages and models, as CI does (docs/releasing.md)
+docker-check variant="base":
+    python3 deploy/check_artifacts.py image {{ image }}{{ if variant == "base" { "" } else { "-" + variant } }} {{ variant }}
 
 # Run the local image on :3000 with a named data volume, hardened like CI and the Team compose example
 docker-run: docker-build
@@ -109,6 +146,8 @@ docs:
 
 # Build the documentation site into site/ (strict, like CI)
 docs-build:
+    pnpm --dir deploy/mermaid-check install --frozen-lockfile
+    pnpm --dir deploy/mermaid-check check
     uv run --only-group docs zensical build --clean --strict
 
 # ---------------------------------------------------------------- repo

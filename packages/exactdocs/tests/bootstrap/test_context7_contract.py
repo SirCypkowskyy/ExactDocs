@@ -10,7 +10,7 @@ from fastmcp import Client
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.retrieval.dtos import MAX_QUERY
+from exactdocs.retrieval.constants import MAX_QUERY
 from exactdocs_kernel import MAX_NAME
 
 CONTRACT_DIR = Path(__file__).parents[1] / "contracts" / "context7"

@@ -2,10 +2,7 @@
 
 import unicodedata
 
-MAX_TAG_LENGTH = 40
-MAX_TAGS = 20  # tags on an article, and values in a tag filter
-
-_EXTRA = frozenset("._+-")
+from exactdocs_kernel.constants import _EXTRA, MAX_TAG_LENGTH
 
 
 def normalize_tag(raw: str) -> str | None:
@@ -16,6 +13,12 @@ def normalize_tag(raw: str) -> str | None:
     marks (Devanagari, Arabic harakat...) and ``._+-``; at most ``MAX_TAG_LENGTH`` characters.
     Commas, invisible characters and symbols never survive, so a tag fits a comma-separated
     filter. Confusables (a Cyrillic and a Latin "a") stay distinct. Idempotent.
+
+    Args:
+        raw: The tag as written.
+
+    Returns:
+        The normalized tag, or ``None`` when ``raw`` cannot be a tag.
     """
     folded = unicodedata.normalize("NFKC", unicodedata.normalize("NFKC", raw).casefold())
     tag = "-".join(folded.split())

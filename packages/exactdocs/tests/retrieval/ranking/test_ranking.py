@@ -11,9 +11,9 @@ from typing import Any
 import pytest
 import yaml
 
-from exactdocs.retrieval.dtos import SearchDocsQuery
+from exactdocs.retrieval.dtos import SearchAllQuery, SearchDocsQuery
 from exactdocs.retrieval.models import TagMatch
-from exactdocs.retrieval.ports.driving import SearchDocs
+from exactdocs.retrieval.ports.driving import SearchAllLibraries, SearchDocs
 from fixture_repo import DocsRepo, git
 
 LIBRARY = "/fixture/docs-repo"  # as imported by conftest.py
@@ -41,6 +41,7 @@ def _id(entry: dict[str, Any], version: str) -> str:
 @pytest.mark.parametrize(("entry", "version", "expected"), load_cases())
 async def test_expected_section_ranks_first(
     search_docs: SearchDocs,
+    vector_half: bool,
     docs_repo: DocsRepo,
     entry: dict[str, Any],
     version: str,
@@ -62,11 +63,46 @@ async def test_expected_section_ranks_first(
     context = f"\n{entry['query']!r} in {version}; top {TOP}:\n  " + "\n  ".join(top or ["(none)"])
 
     assert result.version == version
+    assert result.fallback_reason is None, "the engine's own mode answered"
     commit = git("rev-parse", f"{version}^{{commit}}", cwd=docs_repo.path)
     assert {h.commit_sha for h in result.results} <= {commit}, "answered from another version"
     if expected is None:
-        assert not result.results, context
+        # No answer in this version. Lexical engines say so with no hit; an engine with a vector
+        # half returns the nearest chunks, which only have to be of this version (checked above).
+        if not vector_half:
+            assert not result.results, context
         return
     wanted = (expected["article"], expected["heading_path"])
     ranked = [(h.article_path, h.heading_path) for h in result.results]
     assert wanted in ranked[: entry.get("top_n", 1)], f"expected {wanted} first{context}"
+
+
+DEFAULT_VERSION = "v1.4.0"  # the fixture library's default: what a search across libraries sees
+
+
+@pytest.mark.parametrize(
+    ("entry", "version", "expected"),
+    [c for c in load_cases() if c.values[1] == DEFAULT_VERSION],
+)
+async def test_searching_all_libraries_ranks_the_default_version_the_same_way(
+    search_all: SearchAllLibraries,
+    entry: dict[str, Any],
+    version: str,
+    expected: dict[str, Any] | None,
+) -> None:
+    result = await search_all(
+        SearchAllQuery(
+            query=entry["query"],
+            tags=entry.get("tags", []),
+            tags_match=TagMatch(entry.get("tags_match", "any")),
+            limit=TOP,
+        )
+    )
+
+    assert {(h.library, h.version) for h in result.results} <= {(LIBRARY, version)}
+    if expected is None:
+        assert not result.results
+        return
+    wanted = (expected["article"], expected["heading_path"])
+    ranked = [(h.article_path, h.heading_path) for h in result.results]
+    assert wanted in ranked[: entry.get("top_n", 1)], f"expected {wanted} first, got {ranked}"

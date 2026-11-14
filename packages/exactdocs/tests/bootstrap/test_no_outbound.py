@@ -21,9 +21,18 @@ What is *observed* and what is only *pinned*:
 - git follows an HTTP redirect on its first request (``http.followRedirects=initial``) and honours
   proxy variables when they are set; the test clears the latter. See ``git_cli.py``.
 - ``localhost`` and ``::ffff:127.0.0.1`` are refused on purpose (fail closed): use 127.0.0.1.
-- Dependency audit: fastmcp and mcp only emit OpenTelemetry spans through ``opentelemetry-api``
-  (no SDK, so nothing is exported); neither they nor uvicorn or pydantic call an analytics or
-  error-reporting endpoint; the one PyPI call, FastMCP's update check, is forced off.
+- Dependency audit: fastmcp, mcp, FastAPI and DBOS only emit OpenTelemetry spans through
+  ``opentelemetry-api``, which exports nothing until an SDK is set up; neither they nor uvicorn or
+  pydantic call an analytics or error-reporting endpoint; the one PyPI call, FastMCP's update
+  check, is forced off. The OpenTelemetry SDK (behind ``EXACTDOCS_TELEMETRY=otlp``) is installed
+  but not even imported unless telemetry is on: ``test_a_fresh_process_...`` starts the app with
+  the defaults, in a hostile environment, and finds neither the SDK nor a provider.
+- Telemetry on (OPS-01): ``test_with_telemetry_on_...`` runs the loop again, in its own process
+  (the providers are global) and in a network namespace where available, with a loopback
+  collector and Prometheus metrics on: the spans reach it, and nothing else is contacted.
+- Metrics alone (``EXACTDOCS_METRICS``) are pulled, never pushed: ``test_with_metrics_on_...``
+  starts the app in a hostile ``OTEL_*`` environment and finds no exporting thread and no
+  connection; ``prometheus_client`` is not even imported while metrics are off.
 """
 
 import asyncio
@@ -45,10 +54,12 @@ from typing import Any
 import httpx
 import httpx2
 import pytest
+from fastapi import FastAPI
 from fastmcp import Client, settings
 from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import SecretStr
 
+from app_lifespan import serving
 from exactdocs.bootstrap.bridges import (
     CatalogLibrarySources,
     CatalogVersionPublisher,
@@ -59,14 +70,16 @@ from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.dtos import CreateLibraryCommand, HostKind
 from exactdocs.identity.dtos import CreateFirstAdminCommand
-from exactdocs.ingestion.adapters.driven.git_cli import ALLOWED_PROTOCOLS, GitCli
+from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.memory import InMemoryCredentialVault
+from exactdocs.ingestion.constants import ALLOWED_PROTOCOLS
 from exactdocs.ingestion.errors import RepositoryUnreachableError
 from exactdocs.ingestion.models import Job, JobId, RefKind, RepositoryUrl
 from exactdocs.ingestion.use_cases import ImportVersionUseCase
 from exactdocs_kernel import SystemClock
 from fixture_repo import DocsRepo, git
+from otlp_collector import Collector, collecting, shut_telemetry_down
 
 LIBRARY = "/fixture/docs-repo"
 REF = "v1.3.0"
@@ -75,6 +88,7 @@ LOOPBACK = {"127.0.0.1", "::1"}
 PROXY_VARIABLES = {"http_proxy", "https_proxy", "all_proxy", "no_proxy"}
 IN_NETNS = "EXACTDOCS_IN_NETNS"  # set for the re-run inside the network namespace
 NOWHERE = "203.0.113.9"  # TEST-NET-3 (RFC 5737): documentation addresses, never routed
+TELEMETRY_RUN = "EXACTDOCS_TELEMETRY_RUN"  # set for the re-run with telemetry on
 IN_NAMESPACE_TESTS = (
     "test_the_whole_loop_touches_nothing_but_loopback_and_the_fixture_git_server",
     "test_a_redirect_to_another_host_leads_nowhere",
@@ -228,13 +242,22 @@ def spawned(commit: str, monkeypatch: pytest.MonkeyPatch) -> list[Spawn]:
 
 
 @pytest.fixture
-async def container() -> AsyncIterator[Container]:
-    container = Container.build(Settings())
-    async with container.running(jobs=False):
+def container() -> Container:
+    return Container.build(Settings())
+
+
+@pytest.fixture
+async def app(container: Container) -> AsyncIterator[FastAPI]:
+    """The app, running: its lifespan is the container's one run (#203).
+
+    Yields:
+        The running app, with its first admin.
+    """
+    async with serving(create_app(container)) as app:
         await container.identity.create_first_admin(
             CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
         )
-        yield container
+        yield app
 
 
 def mcp_client(app: Any, token: str) -> Client[StreamableHttpTransport]:
@@ -339,22 +362,96 @@ def test_nothing_that_phones_home_is_on_by_default() -> None:
 
 @pytest.mark.parametrize("inherited", [None, "stable"])
 def test_a_fresh_process_has_no_update_check_and_no_telemetry_sdk(inherited: str | None) -> None:
-    """In its own process, so other tests (or OPS-01's) importing logfire cannot change the answer.
+    """In its own process, so other tests (or OPS-01's) configuring telemetry cannot change it.
 
-    The update check stays off even when the environment asks for it.
+    The app is started with the defaults in a hostile environment (a collector, exporters and
+    FastAPI's auto-configuration asked for; Logfire variables, should Logfire ever come back): the
+    SDK is not even imported. The update check stays off even when the environment asks for it.
     """
     code = (
         "import sys\n"
         "import exactdocs.bootstrap.cli, exactdocs.bootstrap.http, exactdocs.bootstrap.mcp\n"
+        "from fastapi.testclient import TestClient\n"
         "from fastmcp import settings\n"
-        "from opentelemetry import trace\n"
+        "from opentelemetry import _logs, metrics, trace\n"
+        "from exactdocs.bootstrap.container import Container\n"
+        "from exactdocs.bootstrap.http import create_app\n"
+        "from exactdocs.bootstrap.settings import Settings\n"
+        "app = create_app(Container.build(Settings()))\n"
+        "with TestClient(app, base_url='http://localhost') as client:\n"
+        "    assert client.get('/api/health').status_code == 200\n"
         "assert settings.check_for_updates == 'off', settings.check_for_updates\n"
-        "assert 'logfire' not in sys.modules\n"
+        "assert 'exactdocs.bootstrap.otel_sdk' not in sys.modules\n"
+        "loaded = [m for m in sys.modules\n"
+        "          if m.startswith(('logfire', 'opentelemetry.sdk', 'prometheus_client'))]\n"
+        "assert not loaded, loaded\n"
         "assert type(trace.get_tracer_provider()).__name__ == 'ProxyTracerProvider'\n"
+        "assert type(metrics.get_meter_provider()).__name__ == '_ProxyMeterProvider'\n"
+        "assert type(_logs.get_logger_provider()).__name__ == 'ProxyLoggerProvider'\n"
     )
-    env = {k: v for k, v in os.environ.items() if k != "FASTMCP_CHECK_FOR_UPDATES"}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in {"FASTMCP_CHECK_FOR_UPDATES", "EXACTDOCS_TELEMETRY", "EXACTDOCS_METRICS"}
+    }
+    # A collector in the environment is not enough: EXACTDOCS_TELEMETRY=otlp turns tracing on.
+    env |= {
+        "OTEL_EXPORTER_OTLP_ENDPOINT": f"http://{NOWHERE}:4318",
+        "OTEL_TRACES_EXPORTER": "otlp",
+        "OTEL_METRICS_EXPORTER": "otlp",
+        "OTEL_LOGS_EXPORTER": "otlp",
+        "FASTAPI_OTEL_AUTO_CONFIGURE": "true",
+        "LOGFIRE_TOKEN": "hostile",
+        "LOGFIRE_SEND_TO_LOGFIRE": "true",
+        "LOGFIRE_PYDANTIC_PLUGIN_RECORD": "all",
+        "LOGFIRE_CONSOLE": "true",
+        "LOGFIRE_BASE_URL": f"http://{NOWHERE}",
+    }
     if inherited:
         env["FASTMCP_CHECK_FOR_UPDATES"] = inherited
+    run = subprocess.run(
+        [sys.executable, "-I", "-c", code], env=env, capture_output=True, text=True, check=False
+    )
+    assert run.returncode == 0, run.stderr
+
+
+def test_with_metrics_on_a_fresh_process_only_answers_scrapes() -> None:
+    """``EXACTDOCS_METRICS`` alone adds a pull endpoint and nothing that sends: no trace provider,
+    no exporting thread, even with a collector and exporters asked for in the environment, and
+    no connection or lookup (the scrape runs in-process). In its own process: the providers are
+    global.
+    """
+    code = (
+        "import socket, threading\n"
+        "def refuse(*args, **kwargs):\n"
+        "    raise OSError('outbound refused')\n"
+        "socket.socket.connect = socket.socket.connect_ex = refuse\n"
+        "socket.socket.sendto = socket.socket.sendmsg = refuse\n"
+        "socket.getaddrinfo = refuse\n"
+        "from fastapi.testclient import TestClient\n"
+        "from opentelemetry import metrics, trace\n"
+        "from exactdocs.bootstrap.container import Container\n"
+        "from exactdocs.bootstrap.http import create_app\n"
+        "from exactdocs.bootstrap.settings import Settings\n"
+        "app = create_app(Container.build(Settings()))\n"
+        "with TestClient(app, base_url='http://localhost') as client:\n"
+        "    assert client.get('/api/health').status_code == 200\n"
+        "    scraped = client.get('/metrics')\n"
+        "    assert scraped.status_code == 200, scraped.text\n"
+        "assert type(trace.get_tracer_provider()).__name__ == 'ProxyTracerProvider'\n"
+        "assert type(metrics.get_meter_provider()).__name__ == 'MeterProvider'\n"
+        "# No exporting thread: neither a periodic metric reader nor a batch span processor.\n"
+        "exporting = [t.name for t in threading.enumerate() if t.name.startswith('Otel')]\n"
+        "assert not exporting, exporting\n"
+    )
+    env = {k: v for k, v in os.environ.items() if k != "EXACTDOCS_TELEMETRY"}
+    env |= {
+        "EXACTDOCS_METRICS": "true",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": f"http://{NOWHERE}:4318",
+        "OTEL_TRACES_EXPORTER": "otlp",
+        "OTEL_METRICS_EXPORTER": "otlp",
+        "FASTAPI_OTEL_AUTO_CONFIGURE": "true",
+    }
     run = subprocess.run(
         [sys.executable, "-I", "-c", code], env=env, capture_output=True, text=True, check=False
     )
@@ -370,7 +467,54 @@ async def test_the_whole_loop_touches_nothing_but_loopback_and_the_fixture_git_s
     commit: str,
     attempts: list[str],
     spawned: list[Spawn],
+    app: FastAPI,  # after the watches: the app starts under them
 ) -> None:
+    await run_the_loop(container, docs_repo, commit, app)
+
+    assert attempts == []  # no Python connection, datagram or lookup beyond loopback was tried
+    assert_git_was_only_told_about(docs_repo.http_url, spawned)
+
+
+@pytest.fixture
+def telemetry_on(monkeypatch: pytest.MonkeyPatch) -> Iterator[Collector]:
+    """Turn telemetry on, exporting to a collector on loopback; before the container is built.
+
+    Yields:
+        The collector.
+    """
+    with collecting() as collector:
+        monkeypatch.setenv("EXACTDOCS_TELEMETRY", "otlp")
+        monkeypatch.setenv("EXACTDOCS_METRICS", "true")  # the Prometheus reader sends nothing
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.url)
+        monkeypatch.setenv("OTEL_BSP_SCHEDULE_DELAY", "50")  # export within the test
+        yield collector
+        shut_telemetry_down()
+
+
+@pytest.mark.skipif(not os.environ.get(TELEMETRY_RUN), reason="runs in its own process")
+async def test_with_telemetry_on_nothing_but_the_collector_is_contacted(
+    telemetry_on: Collector,  # first: the container is built with telemetry on
+    container: Container,
+    docs_repo: DocsRepo,
+    commit: str,
+    attempts: list[str],
+    spawned: list[Spawn],
+    app: FastAPI,
+) -> None:
+    await run_the_loop(container, docs_repo, commit, app)
+
+    names = {"retrieval.search_docs", "retrieval.query_docs", "tools/call search_docs"}
+    spans = telemetry_on.wait_for(lambda found: names <= {s.name for s in found})
+    assert any(s.attributes.get("http.route") == "/api/v1/libraries/{owner}/{repo}/search"
+               for s in spans)  # fmt: skip
+    assert attempts == []  # the collector is on loopback; nothing else was tried
+    assert_git_was_only_told_about(docs_repo.http_url, spawned)
+
+
+async def run_the_loop(
+    container: Container, docs_repo: DocsRepo, commit: str, app: FastAPI
+) -> None:
+    """Import over git, then search over REST and MCP (``search_docs`` and ``query-docs``)."""
     assert docs_repo.http_url.startswith("http://127.0.0.1:")
     await container.catalog.create_library(
         CreateLibraryCommand(
@@ -396,18 +540,23 @@ async def test_the_whole_loop_touches_nothing_but_loopback_and_the_fixture_git_s
     importer = ImportVersionUseCase(
         gateway=GitCli.locate(),
         chunker=MarkdownChunker(),
-        sources=CatalogLibrarySources(c.catalog.get_library),
+        sources=CatalogLibrarySources(
+            get_library=c.catalog.get_library, list_renames=c.catalog.list_renames
+        ),
         versions=CatalogVersionPublisher(
-            c.catalog.store_manifest,
-            c.catalog.activate_manifest,
-            c.catalog.discard_pending_manifests,
-            c.catalog.apply_readme,
+            store_manifest=c.catalog.store_manifest,
+            activate_manifest=c.catalog.activate_manifest,
+            discard_pending_manifests=c.catalog.discard_pending_manifests,
+            apply_readme=c.catalog.apply_readme,
+            apply_manual_tags_to=c.catalog.apply_manual_tags,
+            replace_renames_of=c.catalog.replace_renames,
         ),
         index=RetrievalChunkIndex(
-            c.retrieval.index_manifest,
-            c.retrieval.get_chunk_sets,
-            c.retrieval.discard_pending_chunks,
-            c.retrieval.remove_chunks,
+            index_manifest=c.retrieval.index_manifest,
+            get_chunk_sets=c.retrieval.get_chunk_sets,
+            discard_pending_chunks=c.retrieval.discard_pending_chunks,
+            remove_chunks=c.retrieval.remove_chunks,
+            retag_articles=c.retrieval.retag_articles,
         ),
         refresh=False,
         vault=InMemoryCredentialVault(),
@@ -418,28 +567,26 @@ async def test_the_whole_loop_touches_nothing_but_loopback_and_the_fixture_git_s
         async def problem(self, *_: Any) -> None: ...
         async def chunking(self, **_: Any) -> None: ...
 
+        async def parsing(self, **_: Any) -> None: ...
+
     await importer(job, Quiet())  # ty: ignore[invalid-argument-type]
 
-    app = create_app(container)
-    async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
-        ) as client:
-            login = await client.post(
-                "/api/v1/session", json={"username": "ada", "password": HORSE}
-            )
-            assert login.status_code == 201
-            token = (await client.post("/api/v1/tokens", json={"name": "agent"})).json()["token"]
-            rest = await client.get(
-                "/api/v1/libraries/fixture/docs-repo/search", params={"q": "token", "ref": REF}
-            )
-        async with mcp_client(app, token) as mcp:
-            search = await mcp.call_tool(
-                "search_docs", {"library": LIBRARY, "ref": REF, "query": "token"}
-            )
-            docs = await mcp.call_tool(
-                "query-docs", {"libraryId": f"{LIBRARY}/{REF}", "query": "token"}
-            )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+    ) as client:
+        login = await client.post("/api/v1/session", json={"username": "ada", "password": HORSE})
+        assert login.status_code == 201
+        token = (await client.post("/api/v1/tokens", json={"name": "agent"})).json()["token"]
+        rest = await client.get(
+            "/api/v1/libraries/fixture/docs-repo/search", params={"q": "token", "ref": REF}
+        )
+    async with mcp_client(app, token) as mcp:
+        search = await mcp.call_tool(
+            "search_docs", {"library": LIBRARY, "ref": REF, "query": "token"}
+        )
+        docs = await mcp.call_tool(
+            "query-docs", {"libraryId": f"{LIBRARY}/{REF}", "query": "token"}
+        )
 
     assert rest.status_code == 200
     assert rest.json()["results"]
@@ -447,9 +594,6 @@ async def test_the_whole_loop_touches_nothing_but_loopback_and_the_fixture_git_s
     assert search.structured_content["results"]
     assert not docs.is_error
     assert sum(len(block.text) for block in docs.content) > 0
-
-    assert attempts == []  # no Python connection, datagram or lookup beyond loopback was tried
-    assert_git_was_only_told_about(docs_repo.http_url, spawned)
 
 
 def assert_git_was_only_told_about(url: str, spawned: list[Spawn]) -> None:
@@ -535,3 +679,27 @@ def test_in_a_network_namespace_git_has_no_way_out() -> None:
     )  # fmt: skip
     assert run.returncode == 0, run.stdout[-3000:] + run.stderr[-1000:]
     assert "2 passed" in run.stdout, run.stdout[-1000:]
+
+
+@pytest.mark.skipif(
+    bool(os.environ.get(TELEMETRY_RUN) or os.environ.get(IN_NETNS)), reason="re-run"
+)
+def test_with_telemetry_on_only_the_collector_is_reached_in_its_own_process() -> None:
+    """Telemetry sets up process-wide providers, so the loop with it on runs in a process of its
+    own; inside a network namespace (loopback only) where available, so the kernel checks too.
+    """
+    test = f"{__file__}::test_with_telemetry_on_nothing_but_the_collector_is_contacted"
+    netns = _can_unshare_a_network()
+    run = subprocess.run(
+        [
+            *(["unshare", "-rn"] if netns else []), sys.executable, "-m", "pytest", "-q",
+            "-p", "no:cacheprovider", "--no-header", test,
+        ],
+        env={**os.environ, TELEMETRY_RUN: "1", **({IN_NETNS: "1"} if netns else {})},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=300,
+    )  # fmt: skip
+    assert run.returncode == 0, run.stdout[-3000:] + run.stderr[-1000:]
+    assert "1 passed" in run.stdout, run.stdout[-1000:]

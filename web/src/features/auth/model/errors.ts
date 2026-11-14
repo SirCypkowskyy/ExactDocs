@@ -9,6 +9,29 @@ export interface FormProblem {
   link?: { href: "/sign-in" | "/setup"; label: string };
 }
 
+/**
+ * Why an external sign-in came back refused (`/sign-in?error=<code>`), in words a person can act
+ * on. Only known codes are shown: the query string is not trusted to say anything else.
+ */
+export function explainSignInRefusal(code: unknown): string | undefined {
+  switch (code) {
+    case "not_allowed":
+      return "Your identity provider signed you in, but you are not in a group allowed to use this server. Ask an admin to add you.";
+    case "account_disabled":
+      return "Your account is disabled. Ask an admin to enable it.";
+    case "username_unavailable":
+      return "No account could be created for you: your username is taken. Ask an admin for help.";
+    case "provider_unavailable":
+      return "Your identity provider can't be reached right now. Try again in a moment, or sign in with a password.";
+    case "sign_in_cancelled":
+      return "Your identity provider did not sign you in. Try again.";
+    case "sign_in_failed":
+      return "The sign-in could not be completed. Start it again from this page.";
+    default:
+      return undefined;
+  }
+}
+
 /** Setup succeeded but the sign-in that follows it did not: the admin exists, a retry would 409. */
 export class AdminCreated extends Error {
   constructor() {
@@ -30,6 +53,14 @@ export function explainError(error: unknown): FormProblem {
   }
   if (error.code === "invalid_credentials") {
     return { message: "That username and password don't match." };
+  }
+  if (error.code === "rate_limited") {
+    const wait = error.retryAfter;
+    const when =
+      wait === undefined
+        ? "Wait a little, then try again."
+        : `Try again in ${wait} ${wait === 1 ? "second" : "seconds"}.`;
+    return { message: `Too many failed sign-ins. ${when}` };
   }
   if (error.code === "already_set_up") {
     return {

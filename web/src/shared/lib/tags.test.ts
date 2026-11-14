@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseTags, toggleTag, visibleTags } from "./tags";
+import { isTagShaped, parseTags, toggleTag, visibleTags } from "./tags";
 
 describe("tags", () => {
   it("parses and toggles without caring about case", () => {
@@ -23,5 +23,31 @@ describe("visibleTags", () => {
     expect(shown[0]).toBe("t25");
     expect(shown.filter((t) => t === "t25")).toHaveLength(1);
     expect(visibleTags(["Gone"], ["a"], 5)).toEqual(["Gone", "a"]);
+  });
+});
+
+describe("isTagShaped", () => {
+  it("tells whether a value has a tag's shape, without making the tag", () => {
+    expect(isTagShaped("  Getting   Started ")).toBe(true);
+    expect(isTagShaped("ｖ２")).toBe(true);
+    expect(isTagShaped("c++")).toBe(true);
+    expect(isTagShaped("हिन्दी")).toBe(true);
+    expect(isTagShaped("Straße")).toBe(true);
+    expect(isTagShaped("-lead")).toBe(false);
+    expect(isTagShaped("a,b")).toBe(false);
+    expect(isTagShaped("🙂")).toBe(false);
+    expect(isTagShaped("x".repeat(40))).toBe(true);
+    expect(isTagShaped("x".repeat(41))).toBe(false);
+    expect(isTagShaped("")).toBe(false);
+  });
+
+  it("splits on whitespace as the server's str.split() does", () => {
+    for (const sep of ["\x1c", "\x1d", "\x1e", "\x1f", "\x85", "\u2028", "\u3000", "\t"]) {
+      expect(isTagShaped(`a${sep}b`)).toBe(true);
+      expect(isTagShaped(`${sep}ab${sep}`)).toBe(true);
+    }
+    // U+FEFF is whitespace to JavaScript but not to Python: the server refuses it.
+    expect(isTagShaped("\ufeffab")).toBe(false);
+    expect(isTagShaped("a\ufeffb")).toBe(false);
   });
 });

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
 import { setUp, signIn } from "./api/session-query";
-import { SetupPage, SignInPage, SignOutButton, safeNext } from "./index";
+import { AccountPanel, SetupPage, SignInPage, SignOutButton, safeNext } from "./index";
 import { AdminCreated, explainError } from "./model/errors";
 import { resolveGuard, validateSetup } from "./model/session";
 
@@ -59,7 +59,8 @@ function renderWithClient(ui: React.ReactNode) {
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
-const json = (body: unknown, status = 200) => Response.json(body, { status });
+const json = (body: unknown, status = 200, headers: HeadersInit = {}) =>
+  Response.json(body, { status, headers });
 const account = { id: "1", username: "ada", role: "admin" };
 
 describe("sign-in form", () => {
@@ -94,6 +95,30 @@ describe("sign-in form", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("don't match");
     expect(screen.getByLabelText("Password")).toHaveFocus();
     expect(onSignedIn).not.toHaveBeenCalled();
+  });
+
+  it("asks the visitor to wait after too many failed sign-ins", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        json(
+          {
+            error: "rate_limited",
+            detail: "too many failed sign-ins; try again in 5 seconds",
+            fields: [],
+          },
+          429,
+          { "Retry-After": "5" },
+        ),
+      ),
+    );
+    renderWithClient(<SignInPage onSignedIn={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText("Username"), "ada");
+    await userEvent.type(screen.getByLabelText("Password"), "correct horse");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Too many failed sign-ins. Try again in 5 seconds.",
+    );
   });
 
   it("signs in and returns to the requested page", async () => {
@@ -269,5 +294,98 @@ describe("session calls", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't sign out");
     expect(onSignedOut).not.toHaveBeenCalled();
     expect(client.getQueryData(["session"])).toMatchObject({ state: "signed_in" });
+  });
+});
+
+describe("account panel", () => {
+  it("offers sign-out only on phones, above the page's sections", () => {
+    const client = new QueryClient();
+    client.setQueryData(["session"], { state: "signed_in", account });
+    render(
+      <QueryClientProvider client={client}>
+        <AccountPanel onSignedOut={() => {}}>
+          <section aria-label="Tokens" />
+        </AccountPanel>
+      </QueryClientProvider>,
+    );
+    // jsdom ignores CSS: assert the breakpoint class the header's `hidden sm:flex` mirrors
+    const [button, ...others] = screen.getAllByRole("button", { name: "Sign out" });
+    expect(others).toHaveLength(0);
+    expect(button?.closest(".sm\\:hidden")).not.toBeNull();
+    const tokens = screen.getByRole("region", { name: "Tokens" });
+    const position = button?.compareDocumentPosition(tokens) ?? 0;
+    expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+describe("sign-out error placement", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("opens under the button: rightwards on phones, leftwards from sm up", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("offline")));
+    const client = new QueryClient();
+    client.setQueryData(["session"], { state: "signed_in", account });
+    render(
+      <QueryClientProvider client={client}>
+        <SignOutButton onSignedOut={() => {}} />
+      </QueryClientProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    // jsdom has no layout: assert the anchor classes (phone-only Account button, sm+ header button)
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveClass("left-0", "sm:right-0", "sm:left-auto");
+    expect(alert).not.toHaveClass("right-0");
+  });
+});
+
+describe("sign-in through an identity provider", () => {
+  const providers = [{ name: "corp", display_name: "Corp SSO" }];
+
+  it("offers a button per provider that starts the sign-in for where the visitor was going", () => {
+    renderWithClient(
+      <SignInPage next="/libraries/a?v=1" providers={providers} onSignedIn={vi.fn()} />,
+    );
+    const link = screen.getByRole("link", { name: "Sign in with Corp SSO" });
+    expect(link).toHaveAttribute(
+      "href",
+      "/api/v1/auth/corp/start?return_to=%2Flibraries%2Fa%3Fv%3D1",
+    );
+    // The password form stays: local accounts and the break-glass admin sign in there.
+    expect(screen.getByLabelText("Password")).toBeInTheDocument();
+  });
+
+  it("never sends the visitor anywhere but this server after signing in", () => {
+    renderWithClient(
+      <SignInPage next="https://evil.example/" providers={providers} onSignedIn={vi.fn()} />,
+    );
+    expect(screen.getByRole("link", { name: "Sign in with Corp SSO" })).toHaveAttribute(
+      "href",
+      "/api/v1/auth/corp/start?return_to=%2F",
+    );
+  });
+
+  it("shows no provider section when none is configured", () => {
+    renderWithClient(<SignInPage onSignedIn={vi.fn()} />);
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toHaveTextContent("");
+  });
+
+  it.each([
+    ["not_allowed", /not in a group allowed/],
+    ["account_disabled", /account is disabled/],
+    ["username_unavailable", /username is taken/],
+    ["provider_unavailable", /can't be reached/],
+    ["sign_in_cancelled", /did not sign you in/],
+    ["sign_in_failed", /could not be completed/],
+  ])("explains a refused sign-in (%s)", (code, message) => {
+    renderWithClient(<SignInPage error={code} providers={providers} onSignedIn={vi.fn()} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(message);
+  });
+
+  it("shows nothing for a code it does not know (the query string is not trusted)", () => {
+    renderWithClient(
+      <SignInPage error="you have won a prize" providers={providers} onSignedIn={vi.fn()} />,
+    );
+    expect(screen.queryByText(/prize/)).not.toBeInTheDocument();
   });
 });

@@ -2,12 +2,8 @@
 
 import pytest
 
-from exactdocs.ingestion.models import (
-    README_DESCRIPTION_MAX,
-    README_TITLE_MAX,
-    ReadmeSummary,
-    readme_summary,
-)
+from exactdocs.ingestion.constants import README_DESCRIPTION_MAX, README_TITLE_MAX
+from exactdocs.ingestion.models import ReadmeSummary, readme_summary
 
 
 @pytest.mark.parametrize(

@@ -11,6 +11,7 @@ from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import SecretStr
 
+from app_lifespan import serving
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
@@ -23,18 +24,24 @@ ASKING = {"q": "hook"}
 
 
 @pytest.fixture
-async def container() -> AsyncIterator[Container]:
-    container = Container.build(Settings())
-    async with container.running():
-        await container.identity.create_first_admin(
-            CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
-        )
-        yield container
+def container() -> Container:
+    return Container.build(Settings())
 
 
 @pytest.fixture
-def app(container: Container) -> FastAPI:
-    return create_app(container)
+async def app(container: Container) -> AsyncIterator[FastAPI]:
+    """The app, running: its lifespan runs the container and the MCP session manager.
+
+    The container is not also run on its own: one run at a time (#203).
+
+    Yields:
+        The running app, with its first admin.
+    """
+    async with serving(create_app(container)) as app:
+        await container.identity.create_first_admin(
+            CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
+        )
+        yield app
 
 
 @pytest.fixture
@@ -110,33 +117,31 @@ CALL = {"library": "/acme/payments", "query": "hook"}
 
 @pytest.mark.parametrize("credentials", ["none", "bearer"])
 async def test_mcp_search_needs_a_bearer(app: FastAPI, token: str, credentials: str) -> None:
-    async with app.router.lifespan_context(app):
-        if credentials == "none":
-            with pytest.raises(Exception, match="error response"):
-                async with mcp_client(app, None) as mcp:
-                    await mcp.call_tool("search_docs", CALL)
-            return
-        async with mcp_client(app, token) as mcp:
-            result = await mcp.call_tool("search_docs", CALL, raise_on_error=False)
+    if credentials == "none":
+        with pytest.raises(Exception, match="error response"):
+            async with mcp_client(app, None) as mcp:
+                await mcp.call_tool("search_docs", CALL)
+        return
+    async with mcp_client(app, token) as mcp:
+        result = await mcp.call_tool("search_docs", CALL, raise_on_error=False)
     assert result.is_error
     assert "not_found" in str(result.content)  # past authentication, into the use case
 
 
 async def test_a_session_cookie_sent_to_mcp_is_refused(
-    app: FastAPI, anonymous: httpx.AsyncClient, signed_in: httpx.AsyncClient
+    anonymous: httpx.AsyncClient, signed_in: httpx.AsyncClient
 ) -> None:
     cookie = {"cookie": f"exactdocs_session={signed_in.cookies['exactdocs_session']}"}
-    async with app.router.lifespan_context(app):
-        response = await anonymous.post(
-            "/mcp",
-            json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {"name": "search_docs", "arguments": CALL},
-            },
-            headers={"accept": "application/json, text/event-stream", **cookie},
-        )
+    response = await anonymous.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "search_docs", "arguments": CALL},
+        },
+        headers={"accept": "application/json, text/event-stream", **cookie},
+    )
 
     assert response.status_code == 401
 
@@ -172,12 +177,11 @@ async def test_rest_chunk_read_needs_a_cookie_or_a_bearer(
 async def test_mcp_reads_need_a_bearer(
     app: FastAPI, token: str, tool: str, arguments: dict[str, str]
 ) -> None:
-    async with app.router.lifespan_context(app):
-        with pytest.raises(Exception, match="error response"):
-            async with mcp_client(app, None) as mcp:
-                await mcp.call_tool(tool, arguments)
-        async with mcp_client(app, token) as mcp:
-            result = await mcp.call_tool(tool, arguments, raise_on_error=False)
+    with pytest.raises(Exception, match="error response"):
+        async with mcp_client(app, None) as mcp:
+            await mcp.call_tool(tool, arguments)
+    async with mcp_client(app, token) as mcp:
+        result = await mcp.call_tool(tool, arguments, raise_on_error=False)
     assert result.is_error
     assert "not_found" in str(result.content)
 
@@ -203,3 +207,22 @@ async def test_rest_article_read_needs_a_cookie_or_a_bearer(
     )
 
     assert response.status_code == status
+
+
+async def test_rest_search_all_needs_a_cookie_or_a_bearer_and_checks_its_input(
+    anonymous: httpx.AsyncClient, signed_in: httpx.AsyncClient, token: str
+) -> None:
+    url = "/api/v1/search"
+    assert (await anonymous.get(url, params=ASKING)).status_code == 401
+
+    found = await signed_in.get(url, params=ASKING)
+    assert found.status_code == 200
+    assert found.json()["results"] == []
+    assert found.json()["libraries"] == []
+    bearer = {"authorization": f"Bearer {token}"}
+    assert (await anonymous.get(url, params=ASKING, headers=bearer)).status_code == 200
+
+    assert (await signed_in.get(url, params={"q": ""})).status_code == 422
+    assert (await signed_in.get(url, params={"q": "x", "limit": 51})).status_code == 422
+    assert (await signed_in.get(url, params={"q": "x", "library": "react"})).status_code == 422
+    assert (await signed_in.get(url, params={"q": "x", "library": "/no/body"})).status_code == 404

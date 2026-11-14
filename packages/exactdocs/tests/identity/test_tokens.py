@@ -8,9 +8,11 @@ from pydantic import SecretStr
 
 from exactdocs.identity.adapters.driven.memory import (
     InMemoryAccountRepository,
+    InMemoryFailedSignInLog,
     InMemorySessionRepository,
     InMemoryTokenRepository,
 )
+from exactdocs.identity.constants import MAX_TOKENS_PER_ACCOUNT, TOUCH_INTERVAL, VALUE_PREFIX
 from exactdocs.identity.dtos import (
     AccountSummary,
     CreateFirstAdminCommand,
@@ -24,9 +26,9 @@ from exactdocs.identity.errors import (
     TooManyTokensError,
     UnknownTokenError,
 )
-from exactdocs.identity.models import VALUE_PREFIX, hash_token
+from exactdocs.identity.models import hash_token
 from exactdocs.identity.module import IdentityModule
-from exactdocs.identity.use_cases import MAX_TOKENS_PER_ACCOUNT, TOUCH_INTERVAL
+from identity_stand_ins import no_external_sign_in
 
 START = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 
@@ -64,7 +66,9 @@ async def world() -> World:
         sessions=InMemorySessionRepository(),
         tokens=tokens,
         hasher=FakeHasher(),
+        failures=InMemoryFailedSignInLog(),
         clock=clock,
+        **no_external_sign_in(),
     )
     ada = await identity.create_first_admin(
         CreateFirstAdminCommand(username="ada", password=SecretStr("correct horse battery staple"))
@@ -210,7 +214,9 @@ async def test_a_failing_last_used_write_does_not_fail_the_authentication(
         sessions=InMemorySessionRepository(),
         tokens=LockedTokens(),
         hasher=FakeHasher(),
+        failures=InMemoryFailedSignInLog(),
         clock=MovableClock(),
+        **no_external_sign_in(),
     )
     ada = await identity.create_first_admin(
         CreateFirstAdminCommand(username="ada", password=SecretStr("correct horse battery staple"))

@@ -7,12 +7,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from fixture_repo import FIXTURE, DocsRepo, build, git, git_bytes
+from fixture_repo import FIXTURE, DocsRepo, build, git, git_bytes, headings
 
 # Changing a file under docs-repo/ or history.toml changes these: see docs-repo/README.md.
 GOLDEN_SHAS = {
     "refs/heads/main": "3fb0656f8c6ae525d96bedadb0f826bbd9201fa2",
-    "refs/heads/next": "ea859b3dc4dfd4167845d41e8b71686b6cc868ae",
+    "refs/heads/next": "cefb01d4e80471e0ddde5184fe938ac05bf54051",
     "refs/tags/v1.3.0": "db8b674a770b689af277ae77afc0aa846fc43035",
     "refs/tags/v1.4.0": "3fb0656f8c6ae525d96bedadb0f826bbd9201fa2",
 }
@@ -84,7 +84,14 @@ def test_next_is_one_commit_ahead_of_v1_4_0(docs_repo: DocsRepo) -> None:
     ahead = git("rev-list", "--count", "v1.4.0..next", cwd=docs_repo.path)
     assert ahead == "1"
     changed = git("diff", "--name-status", "v1.4.0", "next", cwd=docs_repo.path)
-    assert changed.splitlines() == ["M\tdocs/guide/install.md", "A\tdocs/guide/migration.md"]
+    assert changed.splitlines() == [
+        "A\tcontext7.json",
+        "A\tdocs/assets/flow.svg",
+        "A\tdocs/guide/diagrams.md",
+        "M\tdocs/guide/install.md",
+        "A\tdocs/guide/migration.md",
+        "A\timg/flow.png",
+    ]
 
 
 def test_retry_policy_occurs_only_in_v1_4_0(docs_repo: DocsRepo) -> None:
@@ -163,22 +170,6 @@ def test_oversized_file_is_above_the_default_cap(docs_repo: DocsRepo) -> None:
     sizes = git("ls-tree", "-r", "-l", "v1.3.0", cwd=docs_repo.path).splitlines()
     big = [line.split("\t")[1] for line in sizes if int(line.split()[3]) > MAX_ARTICLE_BYTES]
     assert big == ["docs/reference/oversized.md"]
-
-
-def headings(markdown: str) -> set[tuple[str, ...]]:
-    """Every heading path (H1 first) of ``markdown``, ignoring front matter and fenced code."""
-    markdown = re.sub(r"\A---\n.*?\n---\n", "", markdown, flags=re.DOTALL)
-    stack: list[str] = []
-    paths: set[tuple[str, ...]] = set()
-    fenced = False
-    for line in markdown.splitlines():
-        if line.startswith("```"):
-            fenced = not fenced
-        elif not fenced and (match := re.match(r"(#{1,6}) (.+)", line)):
-            del stack[len(match[1]) - 1 :]
-            stack.append(match[2].strip())
-            paths.add(tuple(stack))
-    return paths
 
 
 def expected_queries() -> list[tuple[str, str, dict[str, str] | None]]:

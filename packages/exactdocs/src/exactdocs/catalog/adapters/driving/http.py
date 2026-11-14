@@ -2,12 +2,15 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 
+from exactdocs.catalog.constants import _ASSET_HEADERS, _SVG
 from exactdocs.catalog.dtos import (
     Article,
     ArticleList,
+    DefaultVersionPin,
     GetArticleQuery,
+    GetAssetQuery,
     GetLibraryQuery,
     LibraryDetail,
     LibraryList,
@@ -16,7 +19,11 @@ from exactdocs.catalog.dtos import (
     ListArticlesQuery,
     ListLibrariesQuery,
     ListTagsQuery,
+    PinDefaultVersionCommand,
+    RenameAnswer,
+    RenameDirection,
     ResolvedVersion,
+    ResolveRenamedPathQuery,
     ResolveVersionQuery,
     TagFilter,
     TagList,
@@ -25,10 +32,13 @@ from exactdocs.catalog.dtos import (
 from exactdocs.catalog.models import TagMatch
 from exactdocs.catalog.ports.driving import (
     GetArticle,
+    GetAsset,
     GetLibrary,
     ListArticles,
     ListLibraries,
     ListTags,
+    PinDefaultVersion,
+    ResolveRenamedPath,
     ResolveVersion,
     UpdateLibrary,
 )
@@ -43,30 +53,90 @@ def build_router(
     list_articles: ListArticles,
     list_tags: ListTags,
     get_article: GetArticle,
+    resolve_renamed_path: ResolveRenamedPath,
+    get_asset: GetAsset,
     update_library: UpdateLibrary,
+    pin_default_version: PinDefaultVersion,
 ) -> APIRouter:
-    """Expose the catalog's driving ports under ``/libraries``."""
+    """Expose the catalog's driving ports under ``/libraries``.
+
+    Args:
+        list_libraries: Lists the libraries, a page at a time.
+        get_library: Reads one library.
+        resolve_version: Resolves a library ID with a ref.
+        list_articles: Lists a version's articles.
+        list_tags: Lists a version's tags.
+        get_article: Reads one article.
+        resolve_renamed_path: Follows a path across a version's renames.
+        get_asset: Reads one image.
+        update_library: Sets a library's title or description.
+        pin_default_version: Pins or unpins a library's default version.
+
+    Returns:
+        The router.
+    """
     router = APIRouter(prefix="/libraries", tags=["catalog"])
+    router.include_router(_asset_router(get_asset))
+    router.include_router(_default_router(pin_default_version))
 
     @router.get("")
     async def list_all(query: Annotated[ListLibrariesQuery, Query()]) -> LibraryList:
+        """List the libraries, sorted by ID, a page at a time.
+
+        Args:
+            query: The page size and the cursor of the previous page.
+
+        Returns:
+            The page, with its next cursor.
+        """
         return await list_libraries(query)
 
     # Library IDs are `/owner/repo`; the ref comes last because it may contain slashes
     # (`release/1.4`) and the server decodes `%2F` before routing.
     @router.get("/{owner}/{repo}")
     async def get_one(owner: str, repo: str) -> LibraryDetail:
+        """Read a library: its settings, every imported version and its default version.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository.
+
+        Returns:
+            The library.
+        """
         return await get_library(GetLibraryQuery(id=f"/{owner}/{repo}"))
 
     @router.patch("/{owner}/{repo}")
     async def update_one(owner: str, repo: str, patch: LibraryPatch) -> LibraryDetail:
-        """Set the title and/or description; an edited field is no longer taken from the README."""
+        """Set the title and/or description; an edited field is no longer taken from the README.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository.
+            patch: The fields to change.
+
+        Returns:
+            The library as it is now.
+        """
         return await update_library(
             UpdateLibraryCommand(id=f"/{owner}/{repo}", **patch.model_dump(exclude_unset=True))
         )
 
     @router.get("/{owner}/{repo}/versions/{ref:path}")
     async def get_version(owner: str, repo: str, ref: str) -> ResolvedVersion:
+        """Resolve an exact ref (or a unique short commit SHA) of a library to its version.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository.
+            ref: The ref; it may contain `/`.
+
+        Returns:
+            The version.
+
+        Raises:
+            HTTPException: A 404 for a ref ending in `/`.
+        """
         if ref.endswith("/"):  # `/versions/v1.4.0/` is another URL, not a malformed ref
             raise HTTPException(status_code=404)
         return await resolve_version(ResolveVersionQuery(id=f"/{owner}/{repo}/{ref}"))
@@ -103,6 +173,21 @@ def build_router(
         limit: Limit = DEFAULT_LIMIT,
         cursor: str | None = None,
     ) -> ArticleList:
+        """List a version's articles (no ref: the default version), sorted by path.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository.
+            ref: Exact imported ref; none: the default version.
+            path_prefix: Only paths inside this directory.
+            tags: Only articles with these tags.
+            tags_match: `any` or `all` of the tags.
+            limit: How many articles per page.
+            cursor: The previous page's `next_cursor`.
+
+        Returns:
+            The page, with its next cursor.
+        """
         query = ListArticlesQuery(
             library=f"/{owner}/{repo}",
             ref=ref,
@@ -118,6 +203,16 @@ def build_router(
 
     @router.get("/{owner}/{repo}/tags")
     async def list_version_tags(owner: str, repo: str, ref: str | None = None) -> TagList:
+        """List the most used tags of a version's articles (no ref: the default version).
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository.
+            ref: Exact imported ref; none: the default version.
+
+        Returns:
+            The tags with their counts.
+        """
         return await list_tags(ListTagsQuery(library=f"/{owner}/{repo}", ref=ref))
 
     @router.get("/{owner}/{repo}/article")
@@ -127,6 +222,202 @@ def build_router(
         path: Annotated[str, Query(min_length=1, max_length=MAX_PATH)],
         ref: str | None = None,
     ) -> Article:
+        """Read one article of a version (no ref: the default version), verbatim as imported.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository.
+            path: The article's path in the repository.
+            ref: Exact imported ref; none: the default version.
+
+        Returns:
+            The article with its metadata.
+        """
         return await get_article(GetArticleQuery(library=f"/{owner}/{repo}", ref=ref, path=path))
+
+    @router.get("/{owner}/{repo}/renamed-path")
+    async def get_renamed_path(
+        owner: str,
+        repo: str,
+        path: Annotated[
+            str,
+            Query(
+                min_length=1,
+                max_length=MAX_PATH,
+                description=(
+                    "With `from`: the article's path in `from`. Otherwise `forward`: its path in "
+                    "the version imported before `ref`; `back`: its path in `ref`."
+                ),
+            ),
+        ],
+        ref: str | None = None,
+        direction: Annotated[
+            RenameDirection,
+            Query(
+                description=(
+                    "`forward` (default): old to new path; `back`: new to old. Ignored with `from`."
+                )
+            ),
+        ] = RenameDirection.FORWARD,
+        from_ref: Annotated[
+            str | None,
+            Query(
+                alias="from",
+                description=(
+                    "The exact imported ref `path` is from: the renames of every version between "
+                    "it and `ref` are followed, either way. None: one hop by `direction`."
+                ),
+            ),
+        ] = None,
+    ) -> RenameAnswer:
+        """Follow `path` across the renames git saw when versions were imported.
+
+        With `from`, `path` is from that version, and the rename maps between it and `ref` are
+        followed hop by hop (older to newer or back): `new_path` is its path in `ref`. Versions
+        with no import link between them (another branch, a version removed in between) give
+        `null`. Without `from`, one hop across the renames git saw when `ref` was imported.
+
+        `renamed` is `null` when it was not moved (or no renames are known). An unknown library
+        or version, or a version without an active manifest, is a 404 instead.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository.
+            path: The path to follow.
+            ref: Exact imported ref; none: the default version.
+            direction: `forward` or `back`.
+            from_ref: The version `path` is from; none: one hop by `direction`.
+
+        Returns:
+            The move, or `null` in `renamed`.
+        """
+        found = await resolve_renamed_path(
+            ResolveRenamedPathQuery(
+                library=f"/{owner}/{repo}",
+                ref=ref,
+                path=path,
+                direction=direction,
+                from_ref=from_ref,
+            )
+        )
+        return RenameAnswer(renamed=found)
+
+    return router
+
+
+def _default_router(pin_default_version: PinDefaultVersion) -> APIRouter:
+    """Build the routes that pin and unpin a library's default version (LIB-10).
+
+    Args:
+        pin_default_version: Pins or unpins the default version.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["catalog"])
+
+    @router.put("/{owner}/{repo}/default-version")
+    async def pin_default(owner: str, repo: str, pin: DefaultVersionPin) -> LibraryDetail:
+        """Pin the default version: `/owner/repo` keeps meaning `ref` when higher tags arrive.
+
+        `ref` must be an imported version (404 otherwise). Removing that version unpins.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository.
+            pin: The version to pin.
+
+        Returns:
+            The library as it is now.
+        """
+        return await pin_default_version(
+            PinDefaultVersionCommand(library=f"/{owner}/{repo}", ref=pin.ref)
+        )
+
+    @router.delete("/{owner}/{repo}/default-version")
+    async def unpin_default(owner: str, repo: str) -> LibraryDetail:
+        """Unpin the default version: it follows the default-version rule again.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository.
+
+        Returns:
+            The library as it is now.
+        """
+        return await pin_default_version(PinDefaultVersionCommand(library=f"/{owner}/{repo}"))
+
+    return router
+
+
+def _asset_router(get_asset: GetAsset) -> APIRouter:
+    """Build the route that serves the images of a version (see ``_ASSET_HEADERS``).
+
+    Args:
+        get_asset: Reads one image.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["catalog"])
+
+    @router.get(
+        "/{owner}/{repo}/asset",
+        response_class=Response,
+        responses={
+            200: {
+                "description": "The image's bytes, with the type sniffed when it was imported.",
+                "content": {
+                    "image/png": {},
+                    "image/jpeg": {},
+                    "image/gif": {},
+                    "image/webp": {},
+                    _SVG: {},
+                },
+            },
+            304: {"description": "The caller's copy (`If-None-Match`) is current."},
+        },
+    )
+    async def get_version_asset(
+        request: Request,
+        owner: str,
+        repo: str,
+        path: Annotated[
+            str,
+            Query(
+                min_length=1,
+                max_length=MAX_PATH,
+                description="Repository path of the image, as the article resolves it.",
+            ),
+        ],
+        ref: str | None = None,
+    ) -> Response:
+        """Serve an image an article of the version references (no ref: the default version).
+
+        Content-addressed: the `ETag` is the git blob SHA. An SVG is served as an attachment (an
+        `<img>` still shows it) under a CSP that forbids scripts and any request.
+
+        Args:
+            request: The request, for its `If-None-Match` header.
+            owner: The library ID's owner.
+            repo: The library ID's repository.
+            path: The image's path in the repository.
+            ref: Exact imported ref; none: the default version.
+
+        Returns:
+            The image's bytes, or a 304 when the caller's copy is current.
+        """
+        sent = request.headers.get("if-none-match", "")
+        known = [t.strip().removeprefix("W/").strip('"') for t in sent.split(",") if t.strip()]
+        asset = await get_asset(
+            GetAssetQuery(library=f"/{owner}/{repo}", ref=ref, path=path, known_blob_shas=known)
+        )
+        etag = f'"{asset.blob_sha}"'
+        headers = {**_ASSET_HEADERS, "ETag": etag}
+        if asset.content_type == _SVG:
+            headers["Content-Disposition"] = 'attachment; filename="image.svg"'
+        if asset.unchanged:
+            return Response(status_code=304, headers=headers)
+        return Response(asset.data, media_type=asset.content_type, headers=headers)
 
     return router

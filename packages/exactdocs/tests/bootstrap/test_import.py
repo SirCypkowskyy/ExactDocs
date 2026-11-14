@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import ClassVar
+from typing import ClassVar, Self
 
 import pytest
 from sqlalchemy import func, select, text, update
@@ -25,19 +25,21 @@ from exactdocs.catalog.dtos import (
     GetLibraryQuery,
     HostKind,
     ListArticlesQuery,
+    SetLibrarySettingsCommand,
     StoreManifestCommand,
 )
+from exactdocs.catalog.dtos import ChunkingIn as CatalogChunkingIn
 from exactdocs.catalog.dtos import RefKind as CatalogRefKind
 from exactdocs.catalog.errors import VersionNotFoundError
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.memory import InMemoryCredentialVault
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
+from exactdocs.ingestion.constants import IMPORT_JOB, PARSER_VERSION
 from exactdocs.ingestion.dtos import RemoveLibraryCommand, RemoveVersionCommand
 from exactdocs.ingestion.models import (
-    IMPORT_JOB,
-    PARSER_VERSION,
     ArticleChunk,
+    ChunkingConfig,
     ImportedVersion,
     Job,
     JobId,
@@ -50,7 +52,13 @@ from exactdocs.retrieval.adapters.driven.sqlite import (
     chunk_set_rows,
     indexed_manifests,
 )
-from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand, SearchDocsQuery
+from exactdocs.retrieval.dtos import (
+    ArticleChunksIn,
+    ArticleOutlineQuery,
+    ChunkIn,
+    IndexManifestCommand,
+    SearchDocsQuery,
+)
 from exactdocs_kernel import SystemClock
 from fixture_repo import DocsRepo, git
 
@@ -65,6 +73,11 @@ class CountingChunker:
         self.config_hash = self.inner.config_hash
         self.chunked: list[str] = []
 
+    def configured(self, config: ChunkingConfig) -> Self:
+        self.inner = self.inner.configured(config)
+        self.config_hash = self.inner.config_hash
+        return self
+
     def chunk(self, article: ParsedArticle) -> Sequence[ArticleChunk]:
         self.chunked.append(article.path)
         return self.inner.chunk(article)
@@ -76,6 +89,8 @@ class Progress:
     async def problem(self, path: str, code: ProblemCode, reason: str) -> None: ...
 
     async def chunking(self, *, chunked: int, reused: int) -> None: ...
+
+    async def parsing(self, *, parsed: int, taken: int) -> None: ...
 
 
 class CrashError(Exception):
@@ -116,21 +131,26 @@ class World:
         c = self.container
         git_cli = GitCli.locate()
         publisher = (FailingActivation if activation_fails else CatalogVersionPublisher)(
-            c.catalog.store_manifest,
-            c.catalog.activate_manifest,
-            c.catalog.discard_pending_manifests,
-            c.catalog.apply_readme,
+            store_manifest=c.catalog.store_manifest,
+            activate_manifest=c.catalog.activate_manifest,
+            discard_pending_manifests=c.catalog.discard_pending_manifests,
+            apply_readme=c.catalog.apply_readme,
+            apply_manual_tags_to=c.catalog.apply_manual_tags,
+            replace_renames_of=c.catalog.replace_renames,
         )
         return ImportVersionUseCase(
             gateway=git_cli,
             chunker=self.chunker,
-            sources=CatalogLibrarySources(c.catalog.get_library),
+            sources=CatalogLibrarySources(
+                get_library=c.catalog.get_library, list_renames=c.catalog.list_renames
+            ),
             versions=publisher,
             index=(HangingIndex if hang_after_index else RetrievalChunkIndex)(
-                c.retrieval.index_manifest,
-                c.retrieval.get_chunk_sets,
-                c.retrieval.discard_pending_chunks,
-                c.retrieval.remove_chunks,
+                index_manifest=c.retrieval.index_manifest,
+                get_chunk_sets=c.retrieval.get_chunk_sets,
+                discard_pending_chunks=c.retrieval.discard_pending_chunks,
+                remove_chunks=c.retrieval.remove_chunks,
+                retag_articles=c.retrieval.retag_articles,
             ),
             refresh=refresh,
             vault=InMemoryCredentialVault(),
@@ -364,7 +384,7 @@ async def test_a_restart_discards_what_an_interrupted_import_left_and_runs_it_ag
             commit_sha=git("rev-parse", "v1.3.0^{commit}", cwd=docs_repo.path),
             now=now,
         ).started(now)
-        await SqliteJobRepository(first.engine).add(running)
+        await SqliteJobRepository(engine=first.engine).add(running)
         assert await _count(first, manifest_rows) == 1
         assert await _count(first, chunk_set_rows) == 1
 
@@ -374,7 +394,7 @@ async def test_a_restart_discards_what_an_interrupted_import_left_and_runs_it_ag
         assert await _count(restarted, manifest_rows) == 0
         assert await _count(restarted, chunk_set_rows) == 0
         assert await _count(restarted, indexed_manifests) == 0
-        job = await SqliteJobRepository(restarted.engine).get(JobId("j"))
+        job = await SqliteJobRepository(engine=restarted.engine).get(JobId("j"))
         assert job is not None
         assert job.state.value == "queued"  # runs again from the beginning
 
@@ -501,3 +521,39 @@ async def test_a_refresh_of_a_removed_version_fails_and_does_not_bring_it_back(
     assert library.versions == []
     assert await world.count(manifest_rows) == 0
     assert await world.count(indexed_manifests) == 0
+
+
+async def test_headings_merged_by_the_chunking_are_outlined_in_every_version_that_reuses_them(
+    world: World,
+) -> None:
+    await world.container.catalog.set_library_settings(
+        SetLibrarySettingsCommand(
+            id=LIBRARY, include_paths=["docs/"], chunking=CatalogChunkingIn(min_chars=400)
+        )
+    )
+    await world.import_ref("v1.3.0")
+    world.chunker.chunked = []
+    await world.import_ref("v1.4.0")  # configuration.md did not change: its chunk set is reused
+
+    assert "docs/guide/configuration.md" not in world.chunker.chunked
+    expected = [
+        ("Configuration", "configuration", True),
+        ("Options", "options", False),
+        ("Connection pool", "connection-pool", False),
+        ("Command line", "command-line", False),
+    ]
+    for ref in ("v1.3.0", "v1.4.0"):
+        found = await world.container.retrieval.article_outline(
+            ArticleOutlineQuery(library=LIBRARY, ref=ref, path="docs/guide/configuration.md")
+        )
+        (top,) = found.sections
+        nodes = [top, *top.children]
+        assert [(n.heading, n.anchor, n.starts_chunk) for n in nodes] == expected, ref
+        assert {n.chunk_id for n in nodes} == {top.chunk_id}
+        assert found.chunks == 1
+    index = world.importer().index
+    blob = git("rev-parse", "v1.3.0:docs/guide/configuration.md", cwd=world.docs_repo.path)
+    (chunk,) = (await index.known(world.chunker.config_hash, [blob]))[blob]
+    assert [(h.heading_path[-1], h.anchor, h.starts_chunk) for h in chunk.headings or ()] == (
+        expected
+    )

@@ -6,18 +6,29 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import func, select, text
+from sqlalchemy import Select, func, select, text
 from sqlalchemy.exc import IntegrityError
 
+from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.memory import (
+    InMemoryImportedTags,
+    InMemoryInstructionFiles,
     InMemoryLibraryRepository,
+    InMemoryManifestCopier,
     InMemoryManifestRepository,
+    InMemoryStoredArticles,
 )
 from exactdocs.catalog.adapters.driven.sqlite import (
+    SqliteImportedTags,
+    SqliteInstructionFiles,
     SqliteLibraryRepository,
+    SqliteManifestCopier,
     SqliteManifestRepository,
+    SqliteStoredArticles,
+    _in_library,
+    _in_manifest,
     article_contents,
 )
 from exactdocs.catalog.errors import (
@@ -25,23 +36,42 @@ from exactdocs.catalog.errors import (
     ManifestNotFoundError,
     ManifestNotPendingError,
     ManifestOutdatedError,
+    StoredContentOutdatedError,
     VersionNotFoundError,
 )
 from exactdocs.catalog.models import (
     ContentKey,
     HostKind,
+    ImportedTags,
     Library,
     LibraryId,
     Manifest,
     ManifestEntry,
     ManifestId,
+    ManifestImage,
+    ManifestInstruction,
+    ManifestRename,
     ManifestState,
+    ManualTag,
+    ManualTags,
     RefKind,
+    RenameDirection,
+    StoredImage,
     TagMatch,
+    TagOrigin,
     TagSelection,
+    TagSources,
+    VersionOrigin,
     VersionRef,
 )
-from exactdocs.catalog.ports import LibraryRepository, ManifestRepository
+from exactdocs.catalog.ports import (
+    ImportedTagWriter,
+    InstructionFileReader,
+    LibraryRepository,
+    ManifestCopier,
+    ManifestRepository,
+    StoredArticleFinder,
+)
 
 PAYMENTS = Library(
     id=LibraryId("/acme/payments"),
@@ -104,21 +134,35 @@ class Stores:
     libraries: LibraryRepository
     manifests: ManifestRepository
     count_contents: Callable[[], Awaitable[int]]
+    imported_tags: ImportedTagWriter
+    copier: ManifestCopier
+    stored_articles: StoredArticleFinder
+    instructions: InstructionFileReader
 
 
-@pytest.fixture(params=["memory", "sqlite"])
+@pytest.fixture(params=["memory", *SQL_BACKENDS])
 async def stores(request: pytest.FixtureRequest) -> AsyncIterator[Stores]:
     if request.param == "memory":
         libraries = InMemoryLibraryRepository()
-        manifests = InMemoryManifestRepository(libraries)
+        manifests = InMemoryManifestRepository(libraries=libraries)
 
         async def count() -> int:
             return len(manifests.contents)
 
-        found = Stores(libraries, manifests, count)
+        found = Stores(
+            libraries,
+            manifests,
+            count,
+            InMemoryImportedTags(repository=manifests),
+            InMemoryManifestCopier(repository=manifests),
+            InMemoryStoredArticles(repository=manifests),
+            InMemoryInstructionFiles(repository=manifests),
+        )
     else:
+        if request.param == "postgres":
+            request.getfixturevalue("on_postgres")
         container = Container.build(Settings())
-        async with container.running():
+        async with container.running(jobs=False):
 
             async def count() -> int:
                 async with container.engine.connect() as connection:
@@ -126,9 +170,13 @@ async def stores(request: pytest.FixtureRequest) -> AsyncIterator[Stores]:
                     return (await connection.execute(query)).scalar_one()
 
             found = Stores(
-                SqliteLibraryRepository(container.engine),
-                SqliteManifestRepository(container.engine),
+                SqliteLibraryRepository(engine=container.engine),
+                SqliteManifestRepository(engine=container.engine),
                 count,
+                SqliteImportedTags(engine=container.engine),
+                SqliteManifestCopier(engine=container.engine),
+                SqliteStoredArticles(engine=container.engine),
+                SqliteInstructionFiles(engine=container.engine),
             )
             await found.libraries.save(PAYMENTS)
             yield found
@@ -226,6 +274,25 @@ async def test_get_many_copes_with_more_ids_than_a_query_can_bind(stores: Stores
     assert set(await stores.manifests.get_many(ids)) == {ManifestId("m1")}
 
 
+async def test_get_active_many_returns_active_manifests_only_and_copes_with_many_versions(
+    stores: Stores,
+) -> None:
+    await store(stores, manifest("m1", "main", "aaa111", entry(INSTALL, "b1")))
+    await store(stores, manifest("m2", "dev", "bbb222", entry(INSTALL, "b2")))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)  # "dev" stays pending
+    asked = [
+        (PAYMENTS.id, VersionRef("main")),
+        (PAYMENTS.id, VersionRef("dev")),
+        *((PAYMENTS.id, VersionRef(f"ghost{i}")) for i in range(900)),
+    ]
+
+    found = await stores.manifests.get_active_many(asked)
+
+    assert {k: m.id for k, m in found.items()} == {(PAYMENTS.id, VersionRef("main")): "m1"}
+    assert all(m.entries == () for m in found.values())
+    assert await stores.manifests.get_active_many([]) == {}
+
+
 async def test_a_pending_manifest_is_invisible_until_it_is_activated(stores: Stores) -> None:
     await store(stores, manifest("m1", "main", "aaa111", entry(INSTALL, "b1")))
     await store(stores, manifest("m2", "main", "bbb222", entry(INSTALL, "b2")))
@@ -271,6 +338,25 @@ async def test_activation_creates_a_version_that_did_not_exist(stores: Stores) -
         RefKind.TAG,
         sha("ccc333"),
     )
+
+
+async def test_a_version_keeps_the_origin_of_the_manifest_that_created_it(
+    stores: Stores,
+) -> None:
+    first = replace(manifest("m1", "v1.4.0", "ccc333", kind=RefKind.TAG), origin=VersionOrigin.AUTO)
+    await store(stores, first)
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    # A later import of the version (a confirmed re-import) was queued by hand.
+    later = manifest("m2", "v1.4.0", "ddd444", kind=RefKind.TAG, created_at=T0 + timedelta(1))
+    await store(stores, later)
+
+    activated = await stores.manifests.activate(ManifestId("m2"), at=T0 + timedelta(1))
+
+    library = await stores.libraries.get(PAYMENTS.id)
+    assert library is not None
+    assert [v.origin for v in library.versions] == [VersionOrigin.AUTO]
+    assert (activated.commit_sha, activated.origin) == (sha("ddd444"), VersionOrigin.AUTO)
+    assert (await fetch(stores.manifests, "m1")).origin is VersionOrigin.AUTO
 
 
 async def test_each_version_keeps_its_own_active_manifest(stores: Stores) -> None:
@@ -338,6 +424,58 @@ async def test_a_new_content_version_stores_a_fresh_text_next_to_the_old_one(
     )
     assert (old.entry.content_version, new.entry.content_version) == (1, 2)
     assert await stores.count_contents() == 2
+
+
+async def test_stored_articles_are_found_by_path_blob_and_content_version_in_any_manifest(
+    stores: Stores,
+) -> None:
+    other = replace(PAYMENTS, id=LibraryId("/acme/other"))
+    await stores.libraries.save(other)
+    install = entry(INSTALL, "b1", title="Install")
+    old = entry("old.md", "b2", title="Old", version=1)
+    await store(stores, manifest("m1", "v1.3.0", "aaa111", install, old, kind=RefKind.TAG))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    await store(stores, manifest("m2", "main", "bbb222", install))  # pending: counts too
+    await store(
+        stores, replace(manifest("m3", "main", "ccc333", entry("x.md", "b3")), library=other.id)
+    )
+
+    found = await stores.stored_articles.find_articles(
+        PAYMENTS.id,
+        VersionRef("v1.3.0"),
+        1,
+        [
+            (INSTALL, sha("b1")),  # in two manifests: one answer
+            ("old.md", sha("b2")),
+            ("moved.md", sha("b1")),  # another path
+            (INSTALL, sha("b9")),  # another blob
+            ("x.md", sha("b3")),  # another library's
+        ],
+    )
+
+    by_path = {a.entry.path: a for a in found}
+    assert sorted(by_path) == [INSTALL, "old.md"]
+    assert len(found) == 2
+    assert by_path[INSTALL].content == body(install)
+    assert by_path[INSTALL].entry.title == "Install"
+    assert by_path[INSTALL].entry.front_matter == install.front_matter
+    assert (
+        await stores.stored_articles.find_articles(PAYMENTS.id, None, 2, [(INSTALL, sha("b1"))])
+        == []
+    )
+
+
+async def test_stored_articles_are_found_for_more_files_than_a_query_can_bind(
+    stores: Stores,
+) -> None:
+    many = [entry(f"d/{i}.md", f"b{i}") for i in range(1200)]
+    await store(stores, manifest("m1", "main", "aaa111", *many))
+
+    found = await stores.stored_articles.find_articles(
+        PAYMENTS.id, VersionRef("main"), 1, [(e.path, e.blob_sha) for e in many]
+    )
+
+    assert sorted(a.entry.path for a in found) == sorted(e.path for e in many)
 
 
 async def test_an_article_that_is_not_in_the_active_manifest_is_none(stores: Stores) -> None:
@@ -550,9 +688,19 @@ async def test_saving_a_stale_library_does_not_undo_an_activation(stores: Stores
 
 
 async def test_a_failure_while_the_memory_adapter_swaps_leaves_the_old_manifest_active() -> None:
-    libraries = InMemoryLibraryRepository()
+    class FailingOnWrite(UserDict[LibraryId, Library]):
+        failing = False
+
+        def __setitem__(self, key: LibraryId, item: Library) -> None:
+            if self.failing:
+                message = "injected failure"
+                raise RuntimeError(message)
+            super().__setitem__(key, item)
+
+    stored = FailingOnWrite()
+    libraries = InMemoryLibraryRepository(libraries=stored)
     await libraries.save(PAYMENTS)
-    manifests = InMemoryManifestRepository(libraries)
+    manifests = InMemoryManifestRepository(libraries=libraries)
     await manifests.add(
         manifest("m1", "main", "aaa111", entry(INSTALL, "b1")), {(sha("b1"), 1): "x"}
     )
@@ -561,14 +709,7 @@ async def test_a_failure_while_the_memory_adapter_swaps_leaves_the_old_manifest_
     )
     await manifests.activate(ManifestId("m1"), at=T0)
 
-    class FailingOnWrite(UserDict[LibraryId, Library]):
-        def __setitem__(self, key: LibraryId, item: Library) -> None:
-            message = "injected failure"
-            raise RuntimeError(message)
-
-    failing = FailingOnWrite()
-    failing.data.update(libraries.libraries)
-    libraries.libraries = failing  # the last step of the swap fails
+    stored.failing = True  # the last step of the swap fails
 
     with pytest.raises(RuntimeError, match="injected failure"):
         await manifests.activate(ManifestId("m2"), at=T0)
@@ -588,15 +729,15 @@ async def test_a_failure_while_the_memory_adapter_swaps_leaves_the_old_manifest_
 @pytest.fixture
 async def sqlite() -> AsyncIterator[Container]:
     container = Container.build(Settings())
-    async with container.running():
-        await SqliteLibraryRepository(container.engine).save(PAYMENTS)
+    async with container.running(jobs=False):
+        await SqliteLibraryRepository(engine=container.engine).save(PAYMENTS)
         yield container
 
 
 async def test_sqlite_a_failure_during_activation_leaves_the_previous_manifest_active(
     sqlite: Container,
 ) -> None:
-    manifests = SqliteManifestRepository(sqlite.engine)
+    manifests = SqliteManifestRepository(engine=sqlite.engine)
     await manifests.add(
         manifest("m1", "main", "aaa111", entry(INSTALL, "b1")), {(sha("b1"), 1): "old"}
     )
@@ -622,13 +763,13 @@ async def test_sqlite_a_failure_during_activation_leaves_the_previous_manifest_a
     article = await manifests.get_article(PAYMENTS.id, VersionRef("main"), INSTALL)
     assert article is not None
     assert (article.commit_sha, article.content) == (sha("aaa111"), "old")
-    library = await SqliteLibraryRepository(sqlite.engine).get(PAYMENTS.id)
+    library = await SqliteLibraryRepository(engine=sqlite.engine).get(PAYMENTS.id)
     assert library is not None
     assert {v.commit_sha for v in library.versions} == {sha("aaa111")}
 
 
 async def test_sqlite_refuses_a_second_active_manifest_for_one_version(sqlite: Container) -> None:
-    manifests = SqliteManifestRepository(sqlite.engine)
+    manifests = SqliteManifestRepository(engine=sqlite.engine)
     await manifests.add(manifest("m1", "main", "aaa111"), {})
     await manifests.add(manifest("m2", "main", "bbb222"), {})
     await manifests.activate(ManifestId("m1"), at=T0)
@@ -654,8 +795,8 @@ async def test_listing_filters_by_tags_before_it_pages(stores: Stores) -> None:
             entry("e.md", "b5", tags=("api",)),
         ),
     )
-    any_of = TagSelection(frozenset({"api", "adr"}))
-    all_of = TagSelection(frozenset({"api", "auth"}), TagMatch.ALL)
+    any_of = TagSelection(tags=frozenset({"api", "adr"}))
+    all_of = TagSelection(tags=frozenset({"api", "auth"}), match=TagMatch.ALL)
 
     assert await paths(stores.manifests, "m1", tags=any_of) == ["b.md", "c.md", "d.md", "e.md"]
     assert await paths(stores.manifests, "m1", tags=any_of, limit=2, after="b.md") == [
@@ -663,7 +804,7 @@ async def test_listing_filters_by_tags_before_it_pages(stores: Stores) -> None:
         "d.md",
     ]
     assert await paths(stores.manifests, "m1", tags=all_of) == ["b.md"]
-    assert await paths(stores.manifests, "m1", tags=TagSelection(frozenset({"nope"}))) == []
+    assert await paths(stores.manifests, "m1", tags=TagSelection(tags=frozenset({"nope"}))) == []
     assert await paths(stores.manifests, "m1", prefix="a.md", tags=any_of) == []
 
 
@@ -674,6 +815,24 @@ async def test_only_paths_are_listed_sorted_and_capped_for_suggestions(stores: S
     assert list(await stores.manifests.list_paths(ManifestId("m1"), limit=100)) == sorted(names)
     assert list(await stores.manifests.list_paths(ManifestId("m1"), limit=2)) == sorted(names)[:2]
     assert not await stores.manifests.list_paths(ManifestId("none"), limit=100)
+
+
+async def test_removing_the_pinned_version_clears_the_pin(stores: Stores) -> None:
+    await store(stores, manifest("m1", "main", "aaa111", entry(INSTALL, "b1")))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    await store(stores, manifest("m2", "next", "bbb222", entry(INSTALL, "b1"), kind=RefKind.TAG))
+    await stores.manifests.activate(ManifestId("m2"), at=T0)
+    assert await stores.libraries.pin_default(PAYMENTS.id, VersionRef("next"))
+
+    await stores.manifests.remove_version(PAYMENTS.id, VersionRef("main"))  # not the pinned one
+    kept = await stores.libraries.get(PAYMENTS.id)
+    assert kept is not None
+    assert kept.pinned_version == VersionRef("next")
+
+    await stores.manifests.remove_version(PAYMENTS.id, VersionRef("next"))
+    library = await stores.libraries.get(PAYMENTS.id)
+    assert library is not None
+    assert library.pinned_version is None  # an import of the ref again does not re-pin it
 
 
 async def test_removing_a_version_deletes_its_manifests_in_every_state_and_keeps_others(
@@ -790,3 +949,551 @@ async def test_tags_are_counted_per_manifest_most_used_first_and_capped(stores: 
         ("auth", 1),
     ]
     assert not await stores.manifests.count_tags(ManifestId("none"), limit=10)
+
+
+def rename(old: str, new: str, *, similarity: int = 84, from_ref: str = "v1.3.0") -> ManifestRename:
+    return ManifestRename(
+        from_ref=VersionRef(from_ref), old_path=old, new_path=new, similarity=similarity
+    )
+
+
+async def test_renames_are_stored_with_their_manifest_and_found_by_old_path(stores: Stores) -> None:
+    moved = replace(
+        manifest("m1", "v1.4.0", "aaa111", entry("guide/install.md", "b1"), kind=RefKind.TAG),
+        renames=(rename("guide/setup.md", INSTALL), rename("old.md", "new.md", similarity=100)),
+    )
+    await store(stores, moved)
+
+    found = await stores.manifests.find_rename(ManifestId("m1"), "guide/setup.md")
+
+    assert found == rename("guide/setup.md", INSTALL)
+    assert await stores.manifests.find_rename(ManifestId("m1"), INSTALL) is None  # not an old path
+    assert (
+        await stores.manifests.find_rename(ManifestId("m1"), INSTALL, RenameDirection.BACK) == found
+    )
+    assert (
+        await stores.manifests.find_rename(ManifestId("m1"), "guide/setup.md", RenameDirection.BACK)
+        is None
+    )
+    assert await stores.manifests.list_renames(ManifestId("m1"), limit=9) == (
+        rename("guide/setup.md", INSTALL),
+        rename("old.md", "new.md", similarity=100),
+    )
+    assert len(await stores.manifests.list_renames(ManifestId("m1"), limit=1)) == 1
+    assert await stores.manifests.find_rename(ManifestId("nope"), "guide/setup.md") is None
+    assert await fetch(stores.manifests, "m1") == replace(moved, entries=(), renames=())
+
+
+async def test_the_version_a_manifest_follows_is_kept_without_renames_and_in_a_copy(
+    stores: Stores,
+) -> None:
+    linked = replace(
+        manifest("m1", "v1.4.0", "aaa111", entry("a.md", "b1"), kind=RefKind.TAG),
+        renamed_from=VersionRef("v1.3.0"),
+    )
+    await store(stores, linked)
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+
+    copied = await stores.copier.copy_active(
+        PAYMENTS.id, VersionRef("v1.4.0"), ManifestId("m2"), at=T0, content_version=1
+    )
+
+    assert (await fetch(stores.manifests, "m1")).renamed_from == VersionRef("v1.3.0")
+    assert copied is not None
+    assert copied[0].renamed_from == VersionRef("v1.3.0")
+    assert {m.id: m.renamed_from for m in await stores.manifests.list_live(PAYMENTS.id)} == {
+        ManifestId("m1"): VersionRef("v1.3.0"),
+        ManifestId("m2"): VersionRef("v1.3.0"),
+    }
+
+
+async def test_renames_go_with_their_manifest(stores: Stores) -> None:
+    pending = replace(
+        manifest("m1", "v1.4.0", "aaa111", entry("a.md", "b1"), kind=RefKind.TAG),
+        renames=(rename("b.md", "a.md"),),
+    )
+    await store(stores, pending)
+    await discard(stores, manifest_id="m1")
+
+    assert await stores.manifests.find_rename(ManifestId("m1"), "b.md") is None
+
+    await store(stores, replace(pending, id=ManifestId("m2")))
+    await stores.manifests.activate(ManifestId("m2"), at=T0)
+    await stores.manifests.remove_version(PAYMENTS.id, VersionRef("v1.4.0"))
+
+    assert await stores.manifests.find_rename(ManifestId("m2"), "b.md") is None
+
+
+async def test_replacing_renames_keeps_only_renames_into_entries_once_per_old_path(
+    stores: Stores,
+) -> None:
+    stored = replace(
+        manifest("m1", "v1.4.0", "aaa111", entry(INSTALL, "b1"), kind=RefKind.TAG),
+        renames=(rename("old.md", INSTALL, from_ref="v1.2.0"),),
+    )
+    await store(stores, stored)
+
+    await stores.manifests.replace_renames(
+        ManifestId("m1"),
+        [
+            rename("guide/setup.md", INSTALL, similarity=90),
+            rename("guide/setup.md", INSTALL, similarity=50),  # a second one of the old path
+            rename("gone.md", "not/an/article.md"),
+        ],
+        renamed_from=VersionRef("v1.3.0"),
+    )
+
+    assert await stores.manifests.list_renames(ManifestId("m1"), limit=9) == (
+        rename("guide/setup.md", INSTALL, similarity=90),
+    )
+    assert (await fetch(stores.manifests, "m1")).renamed_from == VersionRef("v1.3.0")
+    await stores.manifests.replace_renames(ManifestId("m1"), [], renamed_from=VersionRef("v1.3.1"))
+    assert await stores.manifests.list_renames(ManifestId("m1"), limit=9) == ()
+    # Nothing moved since v1.3.1: the link stays, so a path is still followed across it.
+    assert (await fetch(stores.manifests, "m1")).renamed_from == VersionRef("v1.3.1")
+    await stores.manifests.replace_renames(
+        ManifestId("nope"), [rename("a.md", INSTALL)], renamed_from=None
+    )
+    assert (
+        await stores.manifests.find_rename(ManifestId("nope"), INSTALL, RenameDirection.BACK)
+        is None
+    )
+
+
+PNG = StoredImage(blob_sha=sha("1a"), content_type="image/png", data=b"\x89PNG\r\n\x1a\n-one")
+GIF = StoredImage(blob_sha=sha("2b"), content_type="image/gif", data=b"GIF89a-two")
+
+
+def with_images(
+    stored: Manifest, paths: dict[str, StoredImage]
+) -> tuple[Manifest, dict[str, StoredImage]]:
+    """The manifest listing the images at ``paths`` and the blobs to store for it."""
+    listed = tuple(
+        ManifestImage(
+            path=path,
+            blob_sha=image.blob_sha,
+            content_type=image.content_type,
+            size=len(image.data),
+        )
+        for path, image in paths.items()
+    )
+    return replace(stored, images=listed), {i.blob_sha: i for i in paths.values()}
+
+
+async def test_only_the_active_manifest_serves_its_images(stores: Stores) -> None:
+    stored, blobs = with_images(
+        manifest("m1", "main", "aaa111", entry(INSTALL, "b1")), {"img/a.png": PNG}
+    )
+    await stores.manifests.add(stored, contents(*stored.entries), images=blobs)
+    main = VersionRef("main")
+
+    assert await stores.manifests.get_image(PAYMENTS.id, main, "img/a.png") is None  # pending
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    assert await stores.manifests.get_image(PAYMENTS.id, main, "img/a.png") == PNG
+    assert await stores.manifests.get_image(PAYMENTS.id, main, "img/b.png") is None
+    assert await stores.manifests.get_image(PAYMENTS.id, VersionRef("v9"), "img/a.png") is None
+    meta = await stores.manifests.get_image(PAYMENTS.id, main, "img/a.png", with_data=False)
+    assert meta is not None
+    assert (meta.blob_sha, meta.data) == (PNG.blob_sha, b"")  # the bytes are not read
+    listing = await fetch(stores.manifests, "m1")
+    assert listing.images == ()  # like entries, images are not part of a plain read
+
+
+async def test_a_new_manifest_replaces_the_images_and_the_old_ones_are_collected(
+    stores: Stores,
+) -> None:
+    first, blobs = with_images(
+        manifest("m1", "main", "aaa111", entry(INSTALL, "b1")), {"img/a.png": PNG, "img/b.gif": GIF}
+    )
+    await stores.manifests.add(first, contents(*first.entries), images=blobs)
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    second, blobs = with_images(
+        manifest("m2", "main", "bbb222", entry(INSTALL, "b1"), created_at=T0 + timedelta(hours=1)),
+        {"img/a.png": PNG},  # unchanged: stays shared
+    )
+    await stores.manifests.add(second, contents(*second.entries), images=blobs)
+    await stores.manifests.activate(ManifestId("m2"), at=T0 + timedelta(hours=1))
+    main = VersionRef("main")
+
+    assert await stores.manifests.get_image(PAYMENTS.id, main, "img/b.gif") is None
+    early = await stores.manifests.collect_garbage(superseded_before=T0 - timedelta(hours=1))
+    assert early.images == 0  # within the grace period
+    done = await stores.manifests.collect_garbage(superseded_before=T0 + timedelta(hours=2))
+    assert (done.manifests, done.images) == (1, 1)  # m1 and GIF; PNG is still used by m2
+    assert await stores.manifests.get_image(PAYMENTS.id, main, "img/a.png") == PNG
+
+
+async def test_removing_a_version_and_a_library_frees_their_images(stores: Stores) -> None:
+    other = replace(PAYMENTS, id=LibraryId("/acme/ledger"), title="Ledger")
+    await stores.libraries.save(other)
+    a, blobs_a = with_images(manifest("m1", "main", "aaa111", entry(INSTALL, "b1")), {"x.png": PNG})
+    await stores.manifests.add(a, contents(*a.entries), images=blobs_a)
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    b, blobs_b = with_images(
+        replace(manifest("m2", "main", "bbb222", entry(INSTALL, "b1")), library=other.id),
+        {"x.png": PNG, "y.gif": GIF},
+    )
+    await stores.manifests.add(b, contents(*b.entries), images=blobs_b)
+    await stores.manifests.activate(ManifestId("m2"), at=T0)
+
+    await stores.manifests.remove_library(PAYMENTS.id)
+    freed = await stores.manifests.collect_garbage(superseded_before=T0)
+
+    assert freed.images == 0  # the ledger still uses both
+    assert await stores.manifests.get_image(other.id, VersionRef("main"), "x.png") == PNG
+    await stores.manifests.remove_version(other.id, VersionRef("main"))
+    freed = await stores.manifests.collect_garbage(superseded_before=T0)
+    assert freed.images == 2
+
+
+async def test_a_discarded_pending_manifest_leaves_no_listed_images(stores: Stores) -> None:
+    stored, blobs = with_images(
+        manifest("m1", "main", "aaa111", entry(INSTALL, "b1")), {"x.png": PNG}
+    )
+    await stores.manifests.add(stored, contents(*stored.entries), images=blobs)
+
+    await stores.manifests.discard_pending(
+        manifest_id=ManifestId("m1"), library_id=None, created_before=None
+    )
+
+    assert (await stores.manifests.collect_garbage(superseded_before=T0)).images == 1
+
+
+async def test_manual_tags_are_kept_per_library_and_path_until_cleared(stores: Stores) -> None:
+    libraries = stores.libraries
+    await libraries.set_manual_tags(PAYMENTS.id, ManualTags.of("a.md", ["x", "y"]))
+    await libraries.set_manual_tags(PAYMENTS.id, ManualTags.of("b.md", ["z"]))
+    await libraries.set_manual_tags(PAYMENTS.id, ManualTags.of("a.md", ["w"]))
+    await libraries.set_manual_tags(PAYMENTS.id, ManualTags.of("b.md", []))
+    await libraries.set_manual_tags(LibraryId("/acme/unknown"), ManualTags.of("a.md", ["x"]))
+
+    assert await libraries.get_manual_tags(PAYMENTS.id) == {"a.md": ("w",)}
+    assert await libraries.get_manual_tags(LibraryId("/acme/unknown")) == {}
+
+
+async def test_manual_tags_go_with_their_library(stores: Stores) -> None:
+    await stores.libraries.set_manual_tags(PAYMENTS.id, ManualTags.of("a.md", ["x"]))
+
+    await stores.manifests.remove_library(PAYMENTS.id)
+    await stores.libraries.save(PAYMENTS)
+
+    assert await stores.libraries.get_manual_tags(PAYMENTS.id) == {}
+
+
+async def test_live_manifests_are_the_pending_and_active_ones(stores: Stores) -> None:
+    await store(stores, manifest("m1", "main", "a1"))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    await store(stores, manifest("m2", "main", "a2", created_at=T0 + timedelta(seconds=1)))
+    await stores.manifests.activate(ManifestId("m2"), at=T0)  # m1 is superseded
+    await store(stores, manifest("m3", "v1", "a3"))
+
+    live = await stores.manifests.list_live(PAYMENTS.id)
+
+    assert sorted((m.id, m.state, m.entries) for m in live) == [
+        ("m2", ManifestState.ACTIVE, ()),
+        ("m3", ManifestState.PENDING, ()),
+    ]
+
+
+async def test_imported_tags_are_replaced_and_manual_ones_kept(stores: Stores) -> None:
+    await store(
+        stores,
+        manifest("m1", "main", "a1", entry("a.md", "a", tags=("old",)), entry("b.md", "b")),
+    )
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    await stores.manifests.set_manual_tags(
+        ManifestId("m1"), {"a.md": (ManualTag(tag="x", path="a.md"),)}
+    )
+    many = {f"n{i}.md": ("n",) for i in range(1200)}  # more than one batch of paths
+
+    touched = await stores.imported_tags.set_imported_tags(
+        ManifestId("m1"),
+        {k: ImportedTags(tags=v) for k, v in {"a.md": ("api", "new"), "b.md": (), **many}.items()},
+    )
+    other = await stores.imported_tags.set_imported_tags(
+        ManifestId("nope"), {"a.md": ImportedTags(tags=("z",))}
+    )
+    listed = await stores.manifests.list_entries(
+        ManifestId("m1"), prefix="", tags=TagSelection.of(["api"]), after=None, limit=10
+    )
+    counted = await stores.manifests.count_tags(ManifestId("m1"), limit=10)
+
+    assert touched == {"a.md": ("api", "new", "x"), "b.md": ()}  # every given entry it has
+    assert other == {}
+    assert [(e.path, e.tags, e.all_tags) for e in listed] == [
+        ("a.md", ("api", "new"), ("api", "new", "x"))
+    ]
+    assert dict(counted) == {"api": 1, "new": 1, "x": 1}
+
+
+async def test_imported_tags_of_more_entries_than_one_query_takes_are_all_written(
+    stores: Stores,
+) -> None:
+    paths = [f"d/{i:04}.md" for i in range(1201)]  # three batches of paths in SQLite
+    entries = (entry(p, f"{i:04x}") for i, p in enumerate(paths))
+    await store(stores, manifest("m1", "main", "a1", *entries))
+    wanted = {p: ("t", str(i % 2)) for i, p in enumerate(paths)}
+
+    imported = {p: ImportedTags(tags=t) for p, t in wanted.items()}
+    touched = await stores.imported_tags.set_imported_tags(ManifestId("m1"), imported)
+    again = await stores.imported_tags.set_imported_tags(ManifestId("m1"), imported)
+    counted = await stores.manifests.count_tags(ManifestId("m1"), limit=10)
+
+    assert touched == again == wanted  # unchanged entries are reported too
+    assert dict(counted) == {"t": 1201, "0": 601, "1": 600}
+
+
+async def test_imported_tags_keep_their_sources_and_overlapping_origins_are_all_listed(
+    stores: Stores,
+) -> None:
+    sources = TagSources(front_matter=("guide", "install"), rules=("guides", "guide"))
+    tagged = replace(entry("a.md", "a", tags=("guides", "guide", "install")), sources=sources)
+    await store(stores, manifest("m1", "main", "a1", tagged))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    await stores.manifests.set_manual_tags(
+        ManifestId("m1"),
+        {"a.md": (ManualTag(tag="guides", path="a.md"), ManualTag(tag="mine", path="a.md"))},
+    )
+
+    found = await stores.manifests.get_article(PAYMENTS.id, VersionRef("main"), "a.md")
+
+    assert found is not None
+    assert found.entry.sources == sources
+    assert found.entry.tag_origins == (
+        ("guides", (TagOrigin.PATH_RULE, TagOrigin.MANUAL)),
+        ("guide", (TagOrigin.FRONT_MATTER, TagOrigin.PATH_RULE)),
+        ("install", (TagOrigin.FRONT_MATTER,)),
+        ("mine", (TagOrigin.MANUAL,)),
+    )
+
+
+async def test_an_entry_stored_without_sources_reads_as_imported_until_it_is_retagged(
+    stores: Stores,
+) -> None:
+    await store(stores, manifest("m1", "main", "a1", entry("a.md", "a", tags=("api", "x"))))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+
+    before = await stores.manifests.get_article(PAYMENTS.id, VersionRef("main"), "a.md")
+    await stores.imported_tags.set_imported_tags(
+        ManifestId("m1"),
+        {"a.md": ImportedTags(tags=("api", "x"), sources=TagSources(front_matter=("x",)))},
+    )
+    after = await stores.manifests.get_article(PAYMENTS.id, VersionRef("main"), "a.md")
+
+    assert before is not None
+    assert before.entry.sources is None
+    assert before.entry.tag_origins == (
+        ("api", (TagOrigin.IMPORTED,)),
+        ("x", (TagOrigin.IMPORTED,)),
+    )
+    assert after is not None  # same tags: the sources are written all the same
+    assert after.entry.tag_origins == (
+        ("api", (TagOrigin.IMPORTED,)),  # no source gives it: still not known
+        ("x", (TagOrigin.FRONT_MATTER,)),
+    )
+
+
+async def test_manual_tags_of_entries_combine_with_imported_ones_and_can_be_undone(
+    stores: Stores,
+) -> None:
+    api = entry("a.md", "a", tags=("api",))
+    plain = entry("b.md", "b")
+    await store(stores, manifest("m1", "main", "a1", api, plain))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    manifests = stores.manifests
+
+    manual = (ManualTag(tag="api", path="a.md"), ManualTag(tag="onboarding", path="old.md"))
+    touched = await manifests.set_manual_tags(
+        ManifestId("m1"), {"a.md": manual, "gone.md": (ManualTag(tag="x", path="gone.md"),)}
+    )
+    listed = await manifests.list_entries(
+        ManifestId("m1"),
+        prefix="",
+        tags=TagSelection.of(["onboarding"]),
+        after=None,
+        limit=10,
+    )
+    article = await manifests.get_article(PAYMENTS.id, VersionRef("main"), "a.md")
+    counted = await manifests.count_tags(ManifestId("m1"), limit=10)
+
+    assert touched == {"a.md": ("api", "onboarding")}
+    assert [(e.path, e.tags, e.manual_tags, e.all_tags) for e in listed] == [
+        ("a.md", ("api",), manual, ("api", "onboarding"))
+    ]
+    assert article is not None
+    assert article.entry.manual_tags == manual
+    assert list(counted) == [("api", 1), ("onboarding", 1)]
+
+    undone = await manifests.set_manual_tags(ManifestId("m1"), {})
+
+    assert undone == {"a.md": ("api",)}
+    entries = await manifests.list_entries(
+        ManifestId("m1"), prefix="", tags=TagSelection(), after=None, limit=10
+    )
+    assert entries == (api, plain)
+    assert (
+        await manifests.set_manual_tags(
+            ManifestId("none"), {"a.md": (ManualTag(tag="x", path="a.md"),)}
+        )
+        == {}
+    )
+
+
+async def test_a_copy_of_the_active_manifest_is_pending_with_everything_it_has(
+    stores: Stores,
+) -> None:
+    first, blobs = with_images(
+        replace(
+            manifest(
+                "m1",
+                "v1.4.0",
+                "aaa111",
+                entry("a.md", "a", tags=("api",)),
+                entry("b.md", "b", title="B"),
+                kind=RefKind.TAG,
+            ),
+            renames=(rename("old.md", "a.md"),),
+            origin=VersionOrigin.AUTO,
+        ),
+        {"img/a.png": PNG},
+    )
+    await stores.manifests.add(first, contents(*first.entries), images=blobs)
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    await stores.manifests.set_manual_tags(
+        ManifestId("m1"), {"a.md": (ManualTag(tag="x", path="a.md"),)}
+    )
+    later = T0 + timedelta(hours=1)
+
+    copied = await stores.copier.copy_active(
+        PAYMENTS.id, VersionRef("v1.4.0"), ManifestId("m2"), at=later, content_version=1
+    )
+
+    assert copied is not None
+    header, articles = copied
+    assert (header.id, header.state, header.created_at) == ("m2", ManifestState.PENDING, later)
+    assert (header.commit_sha, header.kind, header.origin) == (
+        first.commit_sha,
+        RefKind.TAG,
+        VersionOrigin.AUTO,
+    )
+    assert (await fetch(stores.manifests, "m2")).origin is VersionOrigin.AUTO
+    assert [(a.entry.path, a.entry.tags, a.entry.all_tags, a.content) for a in articles] == [
+        ("a.md", ("api",), ("api", "x"), body(first.entries[0])),
+        ("b.md", (), (), body(first.entries[1])),
+    ]
+    assert articles[1].entry == first.entries[1]
+    assert await stores.manifests.list_renames(ManifestId("m2"), limit=9) == (
+        rename("old.md", "a.md"),
+    )
+    assert (await fetch(stores.manifests, "m1")).state is ManifestState.ACTIVE  # still served
+    await stores.manifests.activate(ManifestId("m2"), at=later)
+    image = await stores.manifests.get_image(PAYMENTS.id, VersionRef("v1.4.0"), "img/a.png")
+    assert image == PNG
+    assert (await fetch(stores.manifests, "m1")).state is ManifestState.SUPERSEDED
+
+
+async def test_nothing_is_copied_from_text_another_parser_stored(stores: Stores) -> None:
+    await store(stores, manifest("m1", "main", "a1", entry("a.md", "a", version=1)))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+
+    with pytest.raises(StoredContentOutdatedError):
+        await stores.copier.copy_active(
+            PAYMENTS.id, VersionRef("main"), ManifestId("m2"), at=T0, content_version=2
+        )
+
+    assert await stores.manifests.get(ManifestId("m2")) is None
+    assert (
+        await stores.copier.copy_active(
+            PAYMENTS.id, VersionRef("v9"), ManifestId("m3"), at=T0, content_version=1
+        )
+        is None
+    )
+
+
+async def _plan(sqlite: Container, query: Select) -> list[str]:
+    compiled = query.compile(sqlite.engine.sync_engine, compile_kwargs={"literal_binds": True})
+    async with sqlite.engine.connect() as connection:
+        rows = await connection.execute(text(f"EXPLAIN QUERY PLAN {compiled}"))
+        return [row[-1] for row in rows.all()]
+
+
+async def test_sqlite_stored_articles_are_looked_up_by_index_never_by_a_scan(
+    sqlite: Container,
+) -> None:
+    """The lookup must not grow with the catalog: no full scan of the entries (#164 review)."""
+    files = [(INSTALL, sha("b1")), ("new.md", sha("b2"))]
+
+    plans = [
+        await _plan(sqlite, _in_manifest("m1", 1)(files)),
+        await _plan(sqlite, _in_library(PAYMENTS.id, 1)(files)),
+    ]
+
+    for plan in plans:
+        entries = [step for step in plan if "catalog_manifest_entries" in step]
+        assert entries, plan
+        assert all(step.startswith("SEARCH") for step in entries), plan
+    assert any("ix_catalog_manifest_entries_content" in step for step in plans[1]), plans[1]
+
+
+async def test_sqlite_a_file_many_manifests_hold_is_read_once(sqlite: Container) -> None:
+    manifests = SqliteManifestRepository(engine=sqlite.engine)
+    install = entry(INSTALL, "b1")
+    for i in range(30):
+        await manifests.add(
+            manifest(f"m{i}", f"v{i}", "aaa111", install, kind=RefKind.TAG), contents(install)
+        )
+    query = _in_library(PAYMENTS.id, 1)([(INSTALL, sha("b1"))])
+
+    async with sqlite.engine.connect() as connection:
+        rows = (await connection.execute(query)).all()
+
+    assert len(rows) == 1  # deduplicated in SQL, not 30 rows dropped in Python
+    found = await SqliteStoredArticles(engine=sqlite.engine).find_articles(
+        PAYMENTS.id, VersionRef("v3"), 1, [(INSTALL, sha("b1"))]
+    )
+    assert [a.entry.path for a in found] == [INSTALL]
+
+
+# ---------------------------------------------------------------- instruction files (RET-08)
+
+ROOT_FILE = ManifestInstruction(path="AGENTS.md", content="Docs live in guide/.")
+GUIDE_FILE = ManifestInstruction(path="guide/CLAUDE.md", content="One H1 per page.")
+
+
+async def _instructions(stores: Stores, id_: str) -> list[ManifestInstruction]:
+    return list(await stores.instructions.list_instructions(ManifestId(id_)))
+
+
+async def test_instruction_files_are_kept_per_manifest_and_not_loaded_with_it(
+    stores: Stores,
+) -> None:
+    first = replace(
+        manifest("m1", "v1", "a1", entry(INSTALL, "a")), instructions=(GUIDE_FILE, ROOT_FILE)
+    )
+    other = ManifestInstruction(path="AGENTS.md", content="Another commit's notes.")
+    second = replace(manifest("m2", "v2", "b1", entry(INSTALL, "b")), instructions=(other,))
+    await store(stores, first)
+    await store(stores, second)
+
+    assert await _instructions(stores, "m1") == [ROOT_FILE, GUIDE_FILE]
+    assert await _instructions(stores, "m2") == [other]
+    assert await _instructions(stores, "nope") == []
+    assert (await fetch(stores.manifests, "m1")).instructions == ()
+
+
+async def test_a_copy_keeps_the_instruction_files_and_a_removal_takes_them(
+    stores: Stores,
+) -> None:
+    stored = replace(manifest("m1", "main", "a1", entry("a.md", "a")), instructions=(ROOT_FILE,))
+    await store(stores, stored)
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+
+    copied = await stores.copier.copy_active(
+        PAYMENTS.id, VersionRef("main"), ManifestId("m2"), at=T0, content_version=1
+    )
+
+    assert copied is not None
+    assert await _instructions(stores, "m2") == [ROOT_FILE]
+    await stores.manifests.remove_version(PAYMENTS.id, VersionRef("main"))
+    assert await _instructions(stores, "m1") == []
+    assert await _instructions(stores, "m2") == []

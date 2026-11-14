@@ -14,7 +14,7 @@ from pydantic import SecretStr
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
+from exactdocs.identity.constants import SESSION_COOKIE
 from steps.http_steps import DEMO_COOKIE, store_demo_catalog
 from steps.import_steps import LIBRARY, wait_for_job
 
@@ -137,3 +137,47 @@ def step_reported_private(context: Context) -> None:
     response = context.client.get(f"/api/v1/libraries{LIBRARY}/access")
     assert response.json() == {"private": True}, response.text
     assert context.token not in response.text
+
+
+def _list_refs(context: Context, *, token: bool, headers: dict[str, str] | None = None) -> None:
+    body: dict[str, object] = {"url": context.private_url}
+    if token:
+        body["credential"] = {"kind": "token", "token": context.token}
+    context.response = context.client.post("/api/v1/repositories/refs", json=body, headers=headers)
+    context.transcript = [context.response.text]
+
+
+@when("a user lists its branches and tags with that token")
+def step_list_refs(context: Context) -> None:
+    _list_refs(context, token=True)
+    assert context.response.status_code == HTTPStatus.OK, context.response.text
+
+
+@when("a user lists its branches and tags without a token")
+def step_list_refs_without(context: Context) -> None:
+    _list_refs(context, token=False)
+
+
+@when("an API token client lists its branches and tags with that token")
+def step_list_refs_by_api_token(context: Context) -> None:
+    created = context.client.post("/api/v1/tokens", json={"name": "mcp client"})
+    assert created.status_code == HTTPStatus.CREATED, created.text
+    cookies = dict(context.client.cookies)
+    context.client.cookies.clear()  # the API token is the only proof the request carries
+    try:
+        _list_refs(
+            context, token=True, headers={"Authorization": f"Bearer {created.json()['token']}"}
+        )
+    finally:
+        context.client.cookies.update(cookies)
+
+
+@then('the tag "{tag}" is listed')
+def step_tag_listed(context: Context, tag: str) -> None:
+    assert tag in [t["name"] for t in context.response.json()["tags"]], context.response.text
+
+
+@then("the request is refused as not signed in")
+def step_not_signed_in(context: Context) -> None:
+    assert context.response.status_code == HTTPStatus.UNAUTHORIZED, context.response.text
+    assert context.token not in context.response.text

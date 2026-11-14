@@ -57,6 +57,7 @@ async def test_a_taken_id_is_a_conflict(client: httpx.AsyncClient) -> None:
 
     assert response.status_code == 409
     assert response.json()["error"] == "library_id_taken"
+    assert response.json()["library_id"] == "/acme/payments"
 
 
 async def test_a_directory_without_a_repository(
@@ -81,6 +82,7 @@ async def test_dangerous_urls_are_refused_as_invalid(client: httpx.AsyncClient, 
 
     assert response.status_code == 422
     assert response.json()["error"] == "invalid_repository_url"
+    assert response.json()["library_id"] is None
 
 
 async def test_credentials_in_a_url_are_never_echoed(client: httpx.AsyncClient) -> None:

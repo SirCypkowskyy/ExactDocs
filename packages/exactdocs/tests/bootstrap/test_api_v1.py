@@ -1,5 +1,6 @@
 """The `/api/v1` conventions: OpenAPI description, error envelope, pagination, route rules."""
 
+import json
 import re
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -12,6 +13,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.rest import v1_openapi_json
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.identity.constants import MAX_TOKENS_PER_ACCOUNT
 
 pytestmark = pytest.mark.usefixtures("demo_catalog")
 
@@ -20,8 +22,12 @@ HTTP_METHODS = {"get", "put", "post", "delete", "patch"}
 
 
 @pytest.fixture
-def container() -> Container:
-    return Container.build(Settings())
+async def container() -> AsyncIterator[Container]:
+    container = Container.build(Settings())
+    yield container
+    # A test that calls the app without the client fixture never runs the container, which is
+    # what releases the engine's pooled connections (#300).
+    await container.engine.dispose()
 
 
 @pytest.fixture
@@ -82,6 +88,35 @@ async def test_only_v1_operations_are_published(spec: dict[str, Any]) -> None:
     assert not any(path.startswith(("/mcp", "/api/health")) for path in spec["paths"])
 
 
+async def test_the_preview_documents_its_429_and_retry_after(spec: dict[str, Any]) -> None:
+    busy = spec["paths"]["/api/v1/repositories/preview"]["post"]["responses"]["429"]
+
+    assert busy["content"]["application/json"]["schema"]["$ref"].endswith("/ErrorResponse")
+    assert "preview_busy" in busy["description"]
+    assert "Retry-After" in busy["headers"]
+
+
+def test_operation_descriptions_leave_out_the_python_docstring_sections(app) -> None:
+    document = json.loads(v1_openapi_json(app))
+    descriptions = [
+        op["description"]
+        for ops in document["paths"].values()
+        for op in ops.values()
+        if "description" in op
+    ]
+    assert descriptions
+    assert not [
+        d for d in descriptions if re.search(r"^\s*(Args|Returns|Raises):", d, re.MULTILINE)
+    ]
+
+
+def test_the_token_routes_name_the_token_cap(app) -> None:
+    paths = json.loads(v1_openapi_json(app))["paths"]
+
+    for path in ["/api/v1/tokens", "/api/v1/tokens/login"]:
+        assert f"at most {MAX_TOKENS_PER_ACCOUNT} tokens" in paths[path]["post"]["description"]
+
+
 def test_committed_openapi_file_is_up_to_date(app) -> None:
     """If this fails the API changed: run `just api` and commit `web/openapi.json` + types."""
     assert COMMITTED_SPEC.read_text() == v1_openapi_json(app)
@@ -94,8 +129,10 @@ async def test_domain_errors_use_the_envelope(client: httpx.AsyncClient) -> None
     assert response.json() == {
         "error": "not_found",
         "detail": "library '/vuejs/docs' is not in the catalog",
+        "message": "library '/vuejs/docs' is not in the catalog",
         "fields": [],
         "close_matches": [],
+        "library_id": None,
     }
 
 
@@ -174,8 +211,10 @@ async def test_unhandled_errors_under_api_are_500_envelopes(app) -> None:
     assert response.json() == {
         "error": "internal_error",
         "detail": "internal server error",
+        "message": "internal server error",
         "fields": [],
         "close_matches": [],
+        "library_id": None,
     }
 
 

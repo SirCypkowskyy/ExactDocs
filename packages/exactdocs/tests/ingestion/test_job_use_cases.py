@@ -1,15 +1,26 @@
 """Jobs end to end through the driving ports, with the in-memory repository."""
 
 import asyncio
+from datetime import UTC, datetime
 
 import pytest
 
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
+from exactdocs.ingestion.constants import JobKind
 from exactdocs.ingestion.dtos import EnqueueJobCommand, GetJobQuery, ListLibraryJobsQuery
-from exactdocs.ingestion.errors import JobNotFoundError, UnknownJobKindError
-from exactdocs.ingestion.models import Job, JobId, JobKind, JobState, ProblemCode
+from exactdocs.ingestion.errors import (
+    CredentialsRequiredError,
+    JobNotFoundError,
+    NoArticlesError,
+    NotAGitRepositoryError,
+    RepositoryAuthRequiredError,
+    RepositoryUnreachableError,
+    UnknownJobKindError,
+)
+from exactdocs.ingestion.models import Job, JobId, JobState, ProblemCode
 from exactdocs.ingestion.ports import JobProgress
-from exactdocs_kernel import ValidationError
+from exactdocs.ingestion.use_cases import ListLibraryJobsUseCase
+from exactdocs_kernel import InvalidCursorError, ValidationError
 
 IMPORT = JobKind("import")
 
@@ -81,7 +92,33 @@ async def test_a_domain_error_fails_the_job_with_its_message(build_module) -> No
 
     failed = await module.get_job(GetJobQuery(job_id=waiting.id))
     assert (failed.state, failed.error) == (JobState.FAILED, "the repository has no docs folder")
+    assert failed.error_code == "validation_error"
     assert failed.finished_at is not None
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (NotAGitRepositoryError(), "repo_unreachable"),
+        (RepositoryUnreachableError("connection refused"), "repo_unreachable"),
+        (RepositoryAuthRequiredError(), "auth_failed"),
+        (CredentialsRequiredError(), "auth_failed"),
+        (NoArticlesError(), "no_articles"),
+    ],
+)
+async def test_an_import_that_meets_an_upstream_problem_records_its_code(
+    build_module, error: Exception, code: str
+) -> None:
+    async def refuse(_job: Job, _progress: JobProgress) -> None:
+        raise error
+
+    module = build_module({IMPORT: refuse})
+    waiting = await module.enqueue_job(enqueue())
+
+    await module.run_next_job()
+
+    failed = await module.get_job(GetJobQuery(job_id=waiting.id))
+    assert (failed.state, failed.error_code, failed.error) == (JobState.FAILED, code, str(error))
 
 
 async def test_an_unexpected_error_fails_the_job_without_leaking_internals(
@@ -104,6 +141,7 @@ async def test_an_unexpected_error_fails_the_job_without_leaking_internals(
         "unexpected RuntimeError",
         2,
     )
+    assert failed.error_code == "unexpected"
     assert "token.txt" in caplog.text  # the details go to the log
 
 
@@ -265,3 +303,148 @@ async def test_a_failing_hook_fails_its_job_and_the_others_are_still_recovered(
     assert jobs.jobs[JobId("a")].state is JobState.FAILED
     assert jobs.jobs[JobId("a")].error == "recovery failed: unexpected OSError"
     assert jobs.jobs[JobId("b")].state is JobState.QUEUED
+
+
+class Runner:
+    """A ``JobRunner`` that records what it is handed."""
+
+    def __init__(self) -> None:
+        self.submitted: list[str] = []
+
+    async def submit(self, job: Job) -> None:
+        assert job.state is JobState.QUEUED
+        self.submitted.append(job.id)
+
+
+async def test_a_queued_job_is_handed_to_the_runner(build_module) -> None:
+    runner = Runner()
+
+    job = await build_module({IMPORT: succeed}, runner=runner).enqueue_job(enqueue())
+
+    assert runner.submitted == [job.id]
+
+
+async def test_recovery_leaves_the_jobs_the_runner_resumes_and_submits_the_queued_ones(
+    clock, jobs: InMemoryJobRepository, build_module
+) -> None:
+    hooked: list[str] = []
+
+    async def hook(job: Job) -> None:
+        hooked.append(job.id)
+
+    runner = Runner()
+    resumed = queued(clock, "resumed", library="/a/x").started(clock.now())
+    for each in (queued(clock, "older"), resumed, queued(clock, "lost", library="/b/x")):
+        await jobs.add(each)
+    await jobs.save(jobs.jobs[JobId("lost")].started(clock.now()))
+
+    await build_module({IMPORT: succeed}, {IMPORT: hook}, runner=runner).recover_jobs(
+        resuming={"resumed"}
+    )
+
+    assert hooked == ["lost"]
+    assert jobs.jobs[JobId("resumed")] == resumed
+    assert runner.submitted == ["older", "lost"]  # oldest first
+
+
+async def test_run_job_runs_a_queued_job_to_its_end(clock, jobs, build_module) -> None:
+    await jobs.add(queued(clock, "j1"))
+
+    await build_module({IMPORT: succeed}).run_job("j1")
+
+    job = jobs.jobs[JobId("j1")]
+    assert job.state is JobState.SUCCEEDED
+    assert job.started_at is not None
+
+
+async def test_run_job_resumes_a_running_job_after_its_hook_with_its_progress_reset(
+    clock, jobs: InMemoryJobRepository, build_module
+) -> None:
+    calls: list[str] = []
+
+    async def hook(job: Job) -> None:
+        calls.append(f"hook at {job.done}")
+
+    async def resume(job: Job, progress: JobProgress) -> None:
+        calls.append(f"run from {job.done} with {len(job.problems)} problems")
+        await progress.report(done=10, total=10)
+
+    interrupted = queued(clock, "j1").started(clock.now()).progressed(done=4, total=10)
+    await jobs.add(interrupted.with_problem("x", ProblemCode.BINARY, "y"))
+
+    await build_module({IMPORT: resume}, {IMPORT: hook}).run_job("j1")
+
+    assert calls == ["hook at 4", "run from 0 with 0 problems"]
+    assert jobs.jobs[JobId("j1")].state is JobState.SUCCEEDED
+
+
+async def test_run_job_fails_a_resumed_job_whose_hook_fails(clock, jobs, build_module) -> None:
+    async def broken(_job: Job) -> None:
+        message = "disk on fire"
+        raise OSError(message)
+
+    await jobs.add(queued(clock, "j1").started(clock.now()))
+
+    await build_module({IMPORT: succeed}, {IMPORT: broken}).run_job("j1")
+
+    assert jobs.jobs[JobId("j1")].error == "recovery failed: unexpected OSError"
+
+
+@pytest.mark.parametrize("job_id", ["finished", "unknown"])
+async def test_run_job_leaves_a_finished_or_unknown_job_alone(
+    clock, jobs: InMemoryJobRepository, build_module, job_id: str
+) -> None:
+    finished = queued(clock, "finished").started(clock.now()).succeeded(clock.now())
+    await jobs.add(finished)
+
+    await build_module({IMPORT: succeed}).run_job(job_id)
+
+    assert jobs.jobs == {JobId("finished"): finished}
+
+
+class _PagesOnly(InMemoryJobRepository):
+    """A repository that refuses to hand over a library's jobs except one page at a time."""
+
+    async def list_for_library(self, library: str) -> list[Job]:
+        loaded_everything = f"every job of {library} was loaded to serve one page"
+        raise AssertionError(loaded_everything)
+
+
+async def test_a_page_of_jobs_is_read_from_the_repository_one_page_at_a_time() -> None:
+    jobs = _PagesOnly()
+    for number in range(5):
+        await jobs.add(
+            Job.queued(
+                job_id=JobId(f"job-{number}"),
+                kind=IMPORT,
+                library="/acme/payments",
+                version=f"v{number}",
+                now=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+        )
+    listing = ListLibraryJobsUseCase(jobs=jobs)
+
+    first = await listing(ListLibraryJobsQuery(library="/acme/payments", limit=2))
+    second = await listing(
+        ListLibraryJobsQuery(library="/acme/payments", limit=2, cursor=first.next_cursor)
+    )
+    last = await listing(
+        ListLibraryJobsQuery(library="/acme/payments", limit=2, cursor=second.next_cursor)
+    )
+
+    assert [[job.id for job in page.jobs] for page in (first, second, last)] == [
+        ["job-4", "job-3"],
+        ["job-2", "job-1"],
+        ["job-0"],
+    ]
+    assert last.next_cursor is None
+
+
+@pytest.mark.parametrize(
+    "cursor", [pytest.param("!", id="not base64"), pytest.param("AA", id="decodes to NUL")]
+)
+async def test_a_malformed_cursor_of_the_job_list_is_refused(cursor: str) -> None:
+    listing = ListLibraryJobsUseCase(jobs=InMemoryJobRepository())
+
+    with pytest.raises(InvalidCursorError):
+        await listing(ListLibraryJobsQuery(library="/acme/payments", cursor=cursor))

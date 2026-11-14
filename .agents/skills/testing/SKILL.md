@@ -15,6 +15,9 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
 | Adapter contract | pytest, parametrized over adapters | `packages/exactdocs/tests/<domain>/` | every driven adapter (memory, sqlite, postgres) behaves the same | slower for DBs |
 | Architecture | pytest + **ArchUnitPython** | `packages/exactdocs/tests/architecture/` | boundaries in `docs/architecture.md` | fast |
 | Web | vitest + Testing Library | `web/src/**/*.test.tsx` | components and query logic of a feature | fast |
+| Retrieval eval | Pydantic Evals, `just eval` | `packages/exactdocs/evals/` (tests in `tests/evals/`; the end-to-end ones are marked `eval`) | recall, wrong-version rate, latency and cost per retrieval mode; gates in docs/evals.md; runs on releases, not in CI | minutes |
+| Ingestion benchmark | `just ingestion-bench` (needs the golden corpus cache) | `packages/exactdocs/evals/retrieval_eval/ingestion*.py` (tests in `tests/evals/test_ingestion.py`) | coverage, cut blocks, chunk sizes and heading paths per chunking configuration, with BM25 recall; `--check` against `evals/results/ingestion.json`; runs on releases, not in CI | about a minute per configuration |
+| Retrieval benchmark | `just retrieval-bench` (golden corpus cache; local models from `exactdocs models pull`) | `packages/exactdocs/evals/retrieval_eval/retrieval_bench*.py` (tests in `tests/evals/test_retrieval_bench.py`, `retrieval_bench.feature`) | recall, MRR, nDCG@10, wrong version, unanswerable handling, latency and cost of every mode, model and reranker at every chunking configuration, with the default per budget; BM25 at `default` is checked on releases; hosted models only through the manual real-providers workflow | a minute model-free; hours with every local model |
 
 ## Rules of thumb
 
@@ -25,6 +28,11 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   for ports and no inheritance (see `FakeVersions` in `tests/retrieval/`).
 - **Assert outcomes, not calls.** Check returned DTOs and raised errors, not which methods were called.
 - **Version is a hard filter**: anything touching retrieval gets a "wrong version gets nothing" test.
+- **Retrieval ranking or a new mode**: run `just eval` and `uv run pytest -m eval` before the PR.
+  CI does not run them; the release does, and a failing gate stops it. The wrong-version rate must
+  stay 0 and BM25's recall@5 within 2 points of `evals/retrieval_eval/baseline.json` (refresh it
+  with `--write-baseline` when ranking improves). A query added to `expected-queries.yaml` is added to
+  the eval dataset too.
 - **Import and search tests use the fixture docs repository** (`packages/exactdocs/tests/fixtures/docs-repo/`):
   pytest fixture `docs_repo`, behave `context.fixture_repo`; read its README before changing content.
 - **A bug fix starts with a failing test** that reproduces the issue.
@@ -32,7 +40,33 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   the same cases as the in-memory one.
 - **New domain**: the architecture tests discover it automatically; make sure they pass and that
   `test_domain_has_the_standard_module_set` is green.
+- **One run per container.** `Container.running()` refuses a second concurrent run, and the app's
+  lifespan is such a run. A test that needs the MCP session manager runs the container through the
+  app only: `app.router.lifespan_context(app)` in the test body, or `serving(app)` from
+  `tests/fixtures/app_lifespan.py` in an async fixture. Don't also wrap it in `container.running()`.
+- **No unbounded waits in tests.** A behave scenario that hangs (cleanups included) fails after
+  `BEHAVE_SCENARIO_TIMEOUT` seconds (default 300) with every thread's stack (`environment.py`);
+  still give a step's own waits a timeout, and end a `SlowDatabase` stall (`release()`) before the
+  app stops.
+- A test that imports the fixture and runs the retrieval eval suite end to end gets
+  `@pytest.mark.eval` (deselected by default, run at release; docs/evals.md).
 - Async tests need no decorator (`asyncio_mode = "auto"`). Warnings are errors (`filterwarnings = error`).
+- **Close every SQLite connection a test opens**, or the garbage collector finalizes it during a
+  later test, which then fails with "unclosed database". An autouse guard
+  (`tests/fixtures/sqlite_guard.py`) fails the test itself when a connection it opened is still open
+  at teardown. `with sqlite3.connect()` does not close: use `contextlib.closing`. A container built
+  but never run must have its engine disposed (`await container.engine.dispose()`). The guard only
+  tracks connections opened during the test, and waits up to 2 s for them to close (DBOS closes an
+  executor thread's connection a moment after `DBOS.destroy`). An engine owned by a session- or
+  module-scoped fixture but used lazily by a test is flagged at the end of the first test that
+  uses it: open (warm) its connection in the fixture itself, or dispose it after each test.
+- **The same goes for PostgreSQL** (psycopg, sync or async): `tests/fixtures/psycopg_guard.py`
+  fails the test that leaves one open ("was deleted while still open" otherwise lands in a later
+  test), naming the database and where the connection was opened, and closes the leaked ones so
+  the warning does not follow into the next test. A pooled connection returned after its engine
+  was disposed stays open in a plain `QueuePool`; DBOS's system database uses `ClosingQueuePool`
+  for that reason. It does not cover a checkout that *starts* after the dispose (see its
+  docstring).
 
 ## MCP tool snapshot
 
@@ -44,7 +78,8 @@ A dependency bump can also change it; check that the diff is only generated nois
 ## Commands
 
 ```bash
-uv run pytest                                    # everything
+uv run pytest                                    # everything but the slow eval tests
+uv run pytest -m eval                            # the retrieval eval suite end to end
 uv run pytest packages/exactdocs/tests/catalog   # one domain
 uv run pytest -k version                         # by name
 uv run pytest --cov=exactdocs --cov-report=term-missing

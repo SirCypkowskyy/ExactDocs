@@ -1,0 +1,1009 @@
+"""The job worker: DBOS runs every job as a durable workflow, started in the app's lifespan.
+
+A workflow's completed steps are stored in DBOS's system database (its own SQLite file, or a
+schema of the app's PostgreSQL database), so a job that was running when the process died (a
+crash, a deploy, ``kill -9``) resumes at its first unfinished step on the next start instead of
+starting over. The queue runs at most ``concurrency`` jobs at once per process and one per
+library across every process (the library is the queue's partition key).
+
+On PostgreSQL several processes share the queue. Each runs DBOS under an executor ID of its own
+(``executors``), and a process adopts the pending workflows of executors no live process holds,
+at start and then every ``resubmit_interval``.
+
+A DBOS schedule (``schedule``, a cron expression with seconds) also runs ``RunScheduledChecks``
+on every tick: the scheduled check of the libraries that are due (SYNC-02).
+"""
+
+import asyncio
+import contextvars
+import logging
+import sqlite3
+import threading
+import time
+from collections.abc import AsyncGenerator, Callable, Collection, Coroutine, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import (
+    AbstractAsyncContextManager,
+    AsyncExitStack,
+    asynccontextmanager,
+    closing,
+)
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from enum import StrEnum
+from pathlib import Path
+from typing import Protocol
+
+from croniter import croniter
+from dbos import DBOS, DBOSClient, DBOSConfig, WorkflowStatus
+
+from exactdocs.ingestion.constants import EVERY_MINUTE, SCHEDULE_WORKFLOW
+from exactdocs.ingestion.constants._jobs import (
+    _DONE,
+    _FORGET_POLL,
+    _FORGET_TRIES,
+    _HALT_JOBS_SHARE,
+    _LIVE,
+    _MIN_TICK_RETENTION,
+    _THREADS,
+    _VACUUM_ABOVE,
+    _WAIT_FOR_OTHER,
+)
+from exactdocs.ingestion.ports.driving import (
+    RecoverJobs,
+    RunJob,
+    RunScheduledChecks,
+    SubmitQueuedJobs,
+    SwitchSchedule,
+)
+
+log = logging.getLogger(__name__)
+
+# DBOS keeps one instance per process (its registry and its threads are module state), so one
+# worker runs at a time per process; a second would take over the first one's workflows.
+_one_per_process = threading.Lock()
+
+
+class SlotState(StrEnum):
+    """What ``ExecutorSlots.keep`` found."""
+
+    HELD = "held"
+    """This process still holds its slot."""
+    RETAKEN = "retaken"
+    """The slot was lost (its connection died) and this process holds it again."""
+    LOST = "lost"
+    """Another process holds the slot now."""
+    UNKNOWN = "unknown"
+    """The database cannot be reached to tell (an outage, a failover in progress)."""
+
+
+class ExecutorSlots(Protocol):
+    """Gives each process sharing DBOS's database an executor ID no live process has."""
+
+    @property
+    def claim_grace(self) -> float:
+        """How long ``claim`` waits before it returns a slot whose executor left pending work."""
+        ...
+
+    def claim(self) -> AbstractAsyncContextManager[str]:
+        """Return this process's executor ID, held until the context ends.
+
+        Returns:
+            A context manager that yields the ID; the lowest one free, so a restarted process
+            usually gets the ID its predecessor had and DBOS resumes that one's workflows.
+        """
+        ...
+
+    async def keep(self) -> SlotState:
+        """Check that this process still holds its slot, taking it again if it was freed.
+
+        Returns:
+            Whether the slot is held, was taken again, or is lost.
+        """
+        ...
+
+    def orphaned(
+        self, executor_ids: Collection[str]
+    ) -> AbstractAsyncContextManager[Collection[str]]:
+        """Return those of the IDs no live process holds, held by this one while the context runs.
+
+        Args:
+            executor_ids: Executors that have pending workflows.
+
+        Returns:
+            A context manager that yields the IDs of dead executors.
+        """
+        ...
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DbosJobWorker:
+    """Runs queued jobs through DBOS; ``RunJob`` is the workflow, so a job resumes after a crash.
+
+    ``queue``, ``workflow`` and ``version`` must be the ones the driven adapter enqueues with
+    (``adapters.driven.dbos``); the composition root passes them.
+    """
+
+    run_job: RunJob
+    """Runs one job to its end: the body of the workflow."""
+    recover_jobs: RecoverJobs
+    """Recovers the unfinished jobs no workflow will resume, on start."""
+    submit_queued_jobs: SubmitQueuedJobs
+    """Hands the queued jobs to DBOS again, every ``resubmit_interval``."""
+    database: Path | None = None
+    """DBOS's SQLite file (its workflows and their steps), unless ``system_database_url`` is set."""
+    system_database_url: str | None = None
+    """A PostgreSQL database for DBOS's tables instead of the file: the app's own database."""
+    system_schema: str = "dbos"
+    """With ``system_database_url``: the schema DBOS keeps its tables in."""
+    executors: ExecutorSlots | None = None
+    """With ``system_database_url``: the executor IDs of the processes sharing the queue. Without,
+    the process is DBOS's one ``local`` executor."""
+    queue: str
+    """The DBOS queue jobs are enqueued on."""
+    workflow: str
+    """The name the job workflow is registered under."""
+    version: str
+    """DBOS's application version: a workflow another version started is not resumed."""
+    engine_options: Mapping[str, object] = field(default_factory=dict)
+    """SQLAlchemy engine options for that file: the composition root picks ``NullPool``, so that
+    a connection one of DBOS's threads still holds when it stops is closed, not left behind."""
+    concurrency: int = 2
+    """How many jobs this process runs at once (of different libraries)."""
+    stop_grace: float = 1.0
+    """How long a stopping worker lets a running job finish before cancelling it."""
+    poll_interval: float = 1.0
+    """How often DBOS looks for a queued job to start: an idle server only polls this often."""
+    resubmit_interval: float = 30.0
+    """How often queued jobs are handed to DBOS again, in case one was not taken when queued."""
+    run_scheduled_checks: RunScheduledChecks | None = None
+    """One tick of the libraries' scheduled checks; without it no schedule is kept."""
+    switch_schedule: SwitchSchedule | None = None
+    """Pauses the schedule while no library has one (an idle server then writes nothing)."""
+    schedule_name: str = "exactdocs-scheduled-checks"
+    """The DBOS schedule; the one ``adapters.driven.dbos.DbosScheduleSwitch`` pauses."""
+    schedule: str = EVERY_MINUTE
+    """When it ticks: a DBOS cron expression with seconds. Libraries are due by their interval."""
+    slot_check_interval: float = 2.0
+    """With ``executors``: how often the worker checks that it still holds its slot, and looks
+    for the jobs of stopped executors."""
+    slot_check_timeout: float = 1.5
+    """Bound on one whole slot check (``keep``, and the job check after a retake, share it): a
+    ``keep`` that hangs counts as ``unknown``, a job check that runs out of it as ``lost``."""
+    slot_give_up: float = 15.0
+    """How long after its last confirmed hold the slot counts as lost while the database cannot
+    be reached: a shorter outage is waited out, a longer one stops the process."""
+    halt_timeout: float = 5.0
+    """Hard bound on stopping the jobs and DBOS once the slot is lost (``_halt``): the running
+    jobs get a share of it to end once cancelled, then DBOS is stopped whether they did or not."""
+    adopt_grace: float = 30.0
+    """With ``executors``: how long a slot must stay free before its jobs are adopted. More than
+    ``slot_give_up + slot_check_interval + slot_check_timeout + halt_timeout``: a process that
+    lost its connection has stopped its jobs before anyone adopts them (checked at build)."""
+    on_slot_lost: Callable[[], None] | None = None
+    """Called when another process took this one's slot: the composition root stops the
+    process (its jobs are then another executor's, and must not run here as well)."""
+    _running: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
+    """The tasks of the jobs and ticks running now."""
+    job_ids: set[str] = field(default_factory=set, init=False, repr=False)
+    """The jobs this process is running now."""
+    monotonic: Callable[[], float] = time.monotonic
+    """The clock ``adopt_grace`` is measured with (tests pass their own)."""
+    _suspects: dict[str, float] = field(default_factory=dict, init=False, repr=False)
+    """Executors whose slots were seen free, and since when (``monotonic``)."""
+    _confirmed: dict[str, float] = field(default_factory=dict, init=False, repr=False)
+    """When (``monotonic``) the slot was last confirmed held (key ``"at"``)."""
+    _lost: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
+    """Set once the slot is lost: no job starts here any more."""
+    _refused: set[str] = field(default_factory=set, init=False, repr=False)
+    """Jobs DBOS handed over after the slot was lost: queued again for another process."""
+    _destroyed: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
+    """Set once DBOS was stopped in this run: teardown does not stop it twice."""
+    _forgetting: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
+    """The tasks deleting finished workflows."""
+
+    def __post_init__(self) -> None:
+        """Refuse slot timings that would let two processes run one job.
+
+        Raises:
+            ValueError: A process could still be running its jobs when another one adopts them,
+                or a starting process could resume a slot's jobs before the slot's last holder
+                has stopped them.
+        """
+        stop_by = self.slot_give_up + self.slot_check_interval + self.slot_check_timeout
+        stop_by += self.halt_timeout
+        if stop_by >= self.adopt_grace:
+            message = (
+                f"adopt_grace ({self.adopt_grace} s) must exceed slot_give_up + "
+                f"slot_check_interval + slot_check_timeout + halt_timeout ({stop_by} s)"
+            )
+            raise ValueError(message)
+        if self.executors is not None:
+            needed = self.slot_check_interval + self.slot_check_timeout + self.halt_timeout
+            if self.executors.claim_grace <= needed:
+                message = (
+                    f"the executors' claim_grace ({self.executors.claim_grace} s) must exceed "
+                    f"slot_check_interval + slot_check_timeout + halt_timeout ({needed} s)"
+                )
+                raise ValueError(message)
+
+    @asynccontextmanager
+    async def running(self) -> AsyncGenerator[None]:
+        """Start DBOS, resume or re-queue the unfinished jobs, run them, then stop.
+
+        On start, DBOS resumes the workflows it has (jobs that were queued or running); every
+        other unfinished job is recovered (``RecoverJobs``: its hook runs, then it is queued
+        again from the beginning) and submitted. Workflows that ended, or that another
+        ``version`` started, are deleted first. Stopping lets running jobs finish for
+        ``stop_grace`` seconds, then cancels them: a cancelled job stays ``running`` and its
+        workflow pending, so the next start resumes it.
+
+        Yields:
+            Nothing; the jobs run until the block ends.
+
+        Raises:
+            RuntimeError: Another worker of this process did not stop in time.
+        """
+        # A worker that is still stopping (a server in another thread) is waited for.
+        if not await asyncio.to_thread(_one_per_process.acquire, timeout=_WAIT_FOR_OTHER):
+            message = "a DBOS job worker is already running in this process"
+            raise RuntimeError(message)
+        try:
+            async with AsyncExitStack() as stack:
+                executor_id = None
+                self._confirmed.clear()
+                if self.executors is not None:
+                    # Read before the claim, so never later than the moment the slot was taken:
+                    # the give-up clock counts from there, however long DBOS then takes to start.
+                    claiming = self.monotonic()
+                    executor_id = await stack.enter_async_context(self.executors.claim())
+                    self._confirmed["at"] = claiming
+                    await self._confirm_claim(executor_id, self.executors)
+                async with self._dbos(executor_id):
+                    yield
+        finally:
+            _one_per_process.release()
+
+    async def _confirm_claim(self, executor_id: str, executors: ExecutorSlots) -> None:
+        """Check the slot once just before DBOS starts, and count from there if it is still held.
+
+        ``claim`` may have waited ``claim_grace`` for a slot that left pending jobs, as long as
+        ``slot_give_up``: without this check a restarted process would start with its give-up
+        time already spent, and an outage at its first watchdog check would stop it again. The
+        clock is read before the check, so never later than the hold it confirms. A slot another
+        process holds already fails the start before DBOS launches: DBOS would resume and dequeue
+        this executor's jobs at once, though they are that process's now. Any other answer
+        leaves the claim's reading: the watchdog decides (no DBOS to halt yet here).
+
+        Args:
+            executor_id: This process's executor ID.
+            executors: The slots.
+
+        Raises:
+            RuntimeError: Another process holds the slot now (``keep`` already let go of the
+                slot's connection, so the claim releases nothing).
+        """
+        checking = self.monotonic()
+        try:
+            state = await asyncio.wait_for(executors.keep(), self.slot_check_timeout)
+        except TimeoutError:
+            return
+        except Exception:  # the watchdog's first check tries again
+            log.exception("could not check executor slot %s before starting", executor_id)
+            return
+        if state is SlotState.LOST:
+            message = (
+                f"executor slot {executor_id} was taken by another process before the job"
+                " worker started"
+            )
+            raise RuntimeError(message)
+        if state is SlotState.HELD:
+            self._confirmed["at"] = checking
+
+    @asynccontextmanager
+    async def _dbos(self, executor_id: str | None) -> AsyncGenerator[None]:
+        """Configure and launch DBOS, recover, run, then stop and destroy it.
+
+        Args:
+            executor_id: This process's executor ID; ``None`` keeps DBOS's ``local``.
+
+        Yields:
+            Nothing, while jobs run.
+        """
+        self._destroyed.clear()
+        self._lost.clear()
+        self._refused.clear()
+        self._suspects.clear()  # a slot counts as free only from what this run saw
+        DBOS(config=self._config(executor_id))
+        try:
+
+            async def run(job_id: str) -> None:
+                """Run one job: the workflow (DBOS wraps functions, not bound methods).
+
+                Args:
+                    job_id: The job's ID, also the workflow's.
+                """
+                await self.run_workflow(job_id)
+
+            async def tick(scheduled_at: datetime, context: object) -> None:
+                """Run one tick of the scheduled checks: the schedule's workflow.
+
+                Args:
+                    scheduled_at: When the tick was due (unused: the clock decides).
+                    context: DBOS's schedule context (unused).
+                """
+                del scheduled_at, context
+                await self._tick()
+
+            DBOS.workflow(name=self.workflow)(run)
+            DBOS.workflow(name=SCHEDULE_WORKFLOW)(tick)
+            DBOS.launch()  # here, on the running loop: DBOS then runs workflows on it
+            background: set[asyncio.Task[None]] = set()
+            try:
+                # DBOS resumes this executor's workflows from launch on: the watchdog runs from
+                # here, through the rest of the startup, not only once it is over.
+                watch = None
+                if executor_id is not None and self.executors is not None:
+                    watch = asyncio.create_task(
+                        self._watch(executor_id, self.executors), context=contextvars.Context()
+                    )
+                    watch.add_done_callback(_ignore_error)
+                    background.add(watch)
+                await self._start(executor_id, tick, watch)
+                resubmit = asyncio.create_task(self._resubmit(), context=contextvars.Context())
+                resubmit.add_done_callback(_ignore_error)
+                background.add(resubmit)
+                yield
+            finally:
+                await self._cancel(background)
+        finally:
+            try:
+                await self._stop()
+                await self._cancel(self._forgetting)  # the next start deletes what they had left
+            finally:
+                # Also when the stop is cancelled (a second stop, during ``stop_grace``): no task
+                # may outlive DBOS uncancelled. Only the wait below may be skipped then.
+                _request_cancel(self._running | self._forgetting)
+                await self._destroy_dbos()
+            await self._cancel(self._running | self._forgetting)
+
+    async def _start(
+        self,
+        executor_id: str | None,
+        tick: Callable[[datetime, object], Coroutine[object, object, None]],
+        watch: asyncio.Task[None] | None,
+    ) -> None:
+        """Register the queue, recover the unfinished jobs and apply the schedule, watched.
+
+        Args:
+            executor_id: This process's executor ID, or ``None``.
+            tick: The schedule's workflow.
+            watch: The watchdog, already running; ``None`` without ``executors``.
+
+        Raises:
+            RuntimeError: The slot was lost while the worker started: the watchdog stopped the
+                jobs and DBOS (and asked for the process to stop), and the startup was cancelled.
+        """
+        startup = asyncio.create_task(self._startup(executor_id, tick))
+        startup.add_done_callback(_ignore_error)
+        if watch is None:
+            await startup
+            return
+        try:
+            await asyncio.wait({startup, watch}, return_when=asyncio.FIRST_COMPLETED)
+            if startup.done() and not self._lost.is_set():
+                startup.result()  # its error, if it failed
+                return
+            # Lost while starting: let the watchdog finish stopping (bounded by halt_timeout),
+            # then stop the startup, which may still be waiting on DBOS or on a recovery hook.
+            await asyncio.wait({watch})
+        finally:
+            # Also when the caller is cancelled: the startup must not outlive the worker.
+            await self._cancel({startup})
+            if self._lost.is_set():
+                _log_failed(startup, "the job worker's startup failed too")
+        message = f"executor slot {executor_id} was lost while the job worker started"
+        raise RuntimeError(message)
+
+    async def _startup(
+        self,
+        executor_id: str | None,
+        tick: Callable[[datetime, object], Coroutine[object, object, None]],
+    ) -> None:
+        """Register the queue, recover the unfinished jobs, then apply the schedule.
+
+        Args:
+            executor_id: This process's executor ID, or ``None``.
+            tick: The schedule's workflow.
+        """
+        await DBOS.register_queue_async(
+            self.queue,
+            worker_concurrency=self.concurrency,
+            partition_concurrency=1,
+            polling_interval_sec=self.poll_interval,
+            on_conflict="always_update",
+        )
+        await self._recover(executor_id)
+        await self._apply_schedule(tick)
+
+    def _config(self, executor_id: str | None) -> DBOSConfig:
+        """Return DBOS's configuration: its system database, executor and limits.
+
+        Args:
+            executor_id: This process's executor ID, or ``None``.
+
+        Returns:
+            The configuration.
+        """
+        config = DBOSConfig(
+            name="exactdocs",
+            system_database_url=self.system_database_url or f"sqlite:///{self.database}",
+            application_version=self.version,
+            db_engine_kwargs=dict(self.engine_options),
+            log_level="WARNING",
+            notification_listener_polling_interval_sec=self.poll_interval,
+            # DBOS makes its pool the loop's default executor (`asyncio.to_thread`); a
+            # workflow holds one of its threads while it runs.
+            max_executor_threads=_THREADS + self.concurrency,
+        )
+        if self.system_database_url is not None:
+            config["dbos_system_schema"] = self.system_schema
+        if executor_id is not None:
+            config["executor_id"] = executor_id
+        return config
+
+    async def _watch(self, executor_id: str, executors: ExecutorSlots) -> None:
+        """At once, then every ``slot_check_interval``: keep the slot, then adopt stopped jobs.
+
+        A slot lost and taken again is fine only while no other process adopted this one's jobs
+        meanwhile; otherwise, as when another process holds the slot, this process stops its
+        jobs and asks to be stopped (``on_slot_lost``), so no job runs twice for long.
+
+        The watcher starts as soon as DBOS has launched (DBOS resumes this executor's workflows
+        from then on), while the queue is registered, the jobs recovered and the schedule
+        applied. The slot was last confirmed at the claim, or by one check just before DBOS
+        launched (``running``), so a slot lost during a slow startup is given up
+        ``slot_give_up`` after that, and the startup fails.
+
+        Args:
+            executor_id: This process's executor ID.
+            executors: The slots.
+        """
+        while True:
+            try:
+                state = await self.check_slot(executor_id, executors)
+                if state is SlotState.LOST:
+                    return
+                if state is SlotState.HELD:
+                    await self.adopt_orphans(executor_id, executors)
+            except Exception:  # the next round tries again
+                log.exception("could not check executor slot %s", executor_id)
+            if self._lost.is_set():  # stopped, though not every part of it went through
+                return
+            await asyncio.sleep(self.slot_check_interval)
+
+    async def check_slot(self, executor_id: str, executors: ExecutorSlots) -> SlotState:
+        """Keep the slot; when it is lost, stop taking and running jobs and report it.
+
+        A database that cannot be reached is not a lost slot: the worker waits, adopting
+        nothing, and gives up ``slot_give_up`` after the slot was last confirmed, so it has
+        stopped (``halt_timeout`` at most) before another process can adopt its jobs
+        (``adopt_grace``). A slot another process holds is lost at once.
+
+        The whole check, ``keep`` and the job check after a retake, shares one
+        ``slot_check_timeout`` deadline: the halt starts at most that long after the check did,
+        the bound the timing invariants count. A job check left without time counts as lost.
+
+        Args:
+            executor_id: This process's executor ID.
+            executors: The slots.
+
+        Returns:
+            ``held`` (go on), ``unknown`` (go on, adopt nothing) or ``lost`` (stopped).
+        """
+        deadline = asyncio.get_running_loop().time() + self.slot_check_timeout
+        try:
+            async with asyncio.timeout_at(deadline):
+                state = await executors.keep()
+        except TimeoutError:
+            state = SlotState.UNKNOWN
+        if state is SlotState.RETAKEN:
+            try:
+                async with asyncio.timeout_at(deadline):
+                    ours = await self._still_ours(executor_id)
+            except TimeoutError:
+                log.warning(
+                    "executor slot %s was retaken but its jobs could not be checked within"
+                    " %.1f s: counting it as lost",
+                    executor_id,
+                    self.slot_check_timeout,
+                )
+                ours = False
+            state = SlotState.HELD if ours else SlotState.LOST
+        if state is SlotState.UNKNOWN:
+            last = self._confirmed.setdefault("at", self.monotonic())
+            if self.monotonic() - last < self.slot_give_up:
+                return SlotState.UNKNOWN
+            state = SlotState.LOST
+        if state is SlotState.HELD:
+            self._confirmed["at"] = self.monotonic()
+            return SlotState.HELD
+        log.error("executor slot %s is lost: no more jobs run in this process", executor_id)
+        try:
+            await asyncio.wait_for(self._halt(), self.halt_timeout)
+        except TimeoutError:
+            log.exception(
+                "stopping the jobs took over %.0f s; stopping the process", self.halt_timeout
+            )
+        except Exception:  # the process must stop all the same: _watch does not check again
+            log.exception("stopping the jobs failed; stopping the process")
+        finally:
+            if self.on_slot_lost is not None:
+                self.on_slot_lost()
+        return SlotState.LOST
+
+    async def _halt(self) -> None:
+        """Stop taking jobs, cancel the running ones, stop DBOS, then queue the refused jobs again.
+
+        From the moment the flag is set, a job DBOS still hands over is refused (its workflow
+        stays pending, under this executor ID, which another process now holds). Once DBOS's
+        threads are stopped nothing more can be handed over, so the refused jobs are queued
+        again then, through a ``DBOSClient``: the process that now holds the ID would otherwise
+        only find them when it restarts.
+
+        It ends within ``halt_timeout`` (``check_slot`` cancels it then): the running jobs get
+        ``_HALT_JOBS_SHARE`` of it to end once cancelled, then DBOS is stopped whether they did or
+        not, so a job that delays its cancellation cannot keep DBOS dequeuing jobs here. Such a
+        job may still be unwinding when the process is asked to stop; its next step finds DBOS
+        gone. The normal teardown that follows waits for it (``stop_grace``, then until it ends):
+        a job that ignores its cancellation holds the graceful shutdown up to ``serve``'s
+        ``timeout_graceful_shutdown``, or until the restart policy kills the process.
+
+        Narrow windows remain. A job DBOS dequeued but whose workflow had not started when DBOS
+        stopped is neither run nor refused: it stays pending under this ID until the process
+        holding the ID restarts. And a job that was running when the slot was lost may have run
+        a step here while its adopter ran it too (DBOS's ``owner_xid`` fencing stops this copy at
+        its next step).
+        """
+        self._lost.set()
+        try:
+            await self._end_jobs()
+            await self._destroy_dbos()
+        except Exception:  # DBOS may still hand jobs over: queue those refused so far anyway
+            log.exception("could not stop DBOS after the executor slot was lost")
+        refused = sorted(self._refused)
+        if refused and self.system_database_url is not None:
+            try:
+                await asyncio.to_thread(self._requeue, refused)
+            except Exception:
+                log.exception("could not queue jobs %s again", ", ".join(refused))
+
+    async def _end_jobs(self) -> None:
+        """Cancel the running jobs and wait ``_HALT_JOBS_SHARE`` of ``halt_timeout`` at most."""
+        try:
+            async with asyncio.timeout(self.halt_timeout * _HALT_JOBS_SHARE):
+                await self._cancel(set(self._running))
+        except TimeoutError:
+            log.warning("stopping DBOS while %d job(s) still end", len(self._running))
+
+    async def _destroy_dbos(self) -> None:
+        """Stop DBOS (once: ``_halt`` may have done it already) and give the loop a new pool.
+
+        DBOS made its own pool the loop's default executor and shuts it down: without a new
+        one ``asyncio.to_thread`` would fail for the rest of the process.
+        """
+        if self._destroyed.is_set():
+            return
+        self._destroyed.set()
+        try:
+            await asyncio.to_thread(DBOS.destroy, destroy_registry=True)
+        finally:
+            asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(_THREADS))
+
+    def _requeue(self, workflow_ids: list[str]) -> None:
+        """Queue workflows again from outside DBOS, which this process no longer runs.
+
+        Args:
+            workflow_ids: Pending workflows nobody runs.
+        """
+        client = DBOSClient(
+            system_database_url=self.system_database_url,
+            dbos_system_schema=self.system_schema,
+        )
+        try:
+            client.resume_workflows(workflow_ids, queue_name=self.queue)
+        finally:
+            client.destroy()
+
+    async def _still_ours(self, executor_id: str) -> bool:
+        """Tell whether every job running here is still this executor's pending workflow.
+
+        Args:
+            executor_id: This process's executor ID.
+
+        Returns:
+            ``False`` when another process adopted one while the slot was free.
+        """
+        for job_id in list(self.job_ids):
+            status = await DBOS.get_workflow_status_async(job_id)
+            if status is None or status.status != "PENDING" or status.executor_id != executor_id:
+                return False
+        return True
+
+    async def adopt_orphans(self, executor_id: str, executors: ExecutorSlots) -> None:
+        """Re-queue the pending workflows of executors no live process has held for a while.
+
+        A process that died with running jobs leaves their workflows pending under its executor
+        ID. DBOS resumes them when a process starts under that ID; this covers the IDs no process
+        takes again (fewer processes than before). A slot must be seen free for ``adopt_grace``
+        first, so a live process whose connection dropped takes it back before anyone adopts.
+
+        Args:
+            executor_id: This process's executor ID.
+            executors: The slots.
+        """
+        pending = await self._pending()
+        others = {w.executor_id for w in pending if w.executor_id and w.executor_id != executor_id}
+        async with executors.orphaned(others) as dead:
+            now = self.monotonic()
+            for gone in set(self._suspects) - set(dead):
+                del self._suspects[gone]
+            ripe = sorted(
+                d for d in dead if now - self._suspects.setdefault(d, now) >= self.adopt_grace
+            )
+            if not ripe:
+                return
+            # Listed again under the dead executors' locks: no other process can adopt these now,
+            # so none of them has started anywhere else since.
+            stranded = [w.workflow_id for w in await self._pending(executor_ids=ripe)]
+            if stranded:
+                log.warning("resuming %d job(s) of stopped executors", len(stranded))
+                await DBOS.resume_workflows_async(stranded, queue_name=self.queue)
+            for adopted in ripe:
+                del self._suspects[adopted]
+
+    async def _pending(self, *, executor_ids: list[str] | None = None) -> list[WorkflowStatus]:
+        """Return the pending job workflows of this version, of some executors or of all.
+
+        Args:
+            executor_ids: Only these executors' workflows; ``None`` for every executor's.
+
+        Returns:
+            Their statuses.
+        """
+        return await DBOS.list_workflows_async(
+            status="PENDING",
+            name=self.workflow,
+            app_version=self.version,
+            executor_id=executor_ids,
+            load_input=False,
+            load_output=False,
+        )
+
+    async def run_workflow(self, job_id: str) -> None:
+        """Run the job (the workflow); a resumed workflow skips the steps it completed.
+
+        Once the slot is lost no job starts: the workflow ends cancelled, stays pending, and
+        ``_halt`` queues it again for another process.
+
+        Args:
+            job_id: The job's ID, also the workflow's.
+
+        Raises:
+            CancelledError: The slot is lost: the job must run in another process.
+        """
+        if self._lost.is_set():
+            self._refused.add(job_id)
+            raise asyncio.CancelledError
+        task = asyncio.current_task()
+        if task is not None:
+            self._running.add(task)
+            task.add_done_callback(_ignore_error)
+        self.job_ids.add(job_id)
+        try:
+            await self.run_job(job_id)
+        finally:
+            self.job_ids.discard(job_id)
+            if task is not None:
+                self._running.discard(task)
+        # Outside the workflow's context: DBOS would take its calls for steps of the job.
+        forget = asyncio.get_running_loop().create_task(
+            self._forget(job_id), context=contextvars.Context()
+        )
+        self._forgetting.add(forget)
+        forget.add_done_callback(self._forgetting.discard)
+        forget.add_done_callback(_ignore_error)
+
+    async def _apply_schedule(
+        self, tick: Callable[[datetime, object], Coroutine[object, object, None]]
+    ) -> None:
+        """Keep the DBOS schedule in line with ``run_scheduled_checks`` and ``schedule``.
+
+        Args:
+            tick: The registered tick workflow.
+        """
+        if self.run_scheduled_checks is None:
+            await DBOS.delete_schedule_async(self.schedule_name)
+            return
+        await DBOS.apply_schedules_async(
+            [{"schedule_name": self.schedule_name, "workflow_fn": tick, "schedule": self.schedule}]
+        )
+        if self.switch_schedule is not None:
+            await self.switch_schedule()  # paused again at once while no library has one
+
+    async def _tick(self) -> None:
+        """Run one tick (the scheduled workflow), then delete its workflow.
+
+        The checks run outside the workflow's context: the jobs they queue are workflows of
+        their own, not steps of this one, and a tick needs no durability (the next one checks
+        whatever this one did not).
+        """
+        if self.run_scheduled_checks is None:
+            return
+        task = asyncio.current_task()
+        if task is not None:
+            self._running.add(task)
+            task.add_done_callback(_ignore_error)
+        workflow_id = DBOS.workflow_id
+        try:
+            await asyncio.get_running_loop().create_task(
+                self._check(self.run_scheduled_checks), context=contextvars.Context()
+            )
+        finally:
+            if task is not None:
+                self._running.discard(task)
+        # With several processes the tick's workflow stays (``prune_ticks``): DBOS starts a tick
+        # only if its workflow ID is new, and another process's scheduler may come late.
+        if workflow_id is not None and self.executors is None:
+            forget = asyncio.get_running_loop().create_task(
+                self._forget(workflow_id), context=contextvars.Context()
+            )
+            self._forgetting.add(forget)
+            forget.add_done_callback(self._forgetting.discard)
+            forget.add_done_callback(_ignore_error)
+
+    @staticmethod
+    async def _check(run_scheduled_checks: RunScheduledChecks) -> None:
+        """Run one tick's checks; a failure is logged, and the next tick tries again.
+
+        Args:
+            run_scheduled_checks: One tick of the scheduled checks.
+        """
+        try:
+            await run_scheduled_checks()
+        except Exception:  # the next tick tries again
+            log.exception("the scheduled checks failed")
+
+    async def _forget(self, job_id: str) -> None:
+        """Delete a finished workflow (its steps hold the whole text of an import).
+
+        Once no workflow is left, the file is compacted: deleted steps only free pages.
+
+        Args:
+            job_id: The workflow's ID: a job's, or a tick's.
+        """
+        try:
+            ended = await self._ended(job_id)
+            if ended:
+                await DBOS.delete_workflow_async(job_id)
+        except Exception:  # the next start deletes it
+            log.exception("could not delete the finished workflow of job %s", job_id)
+        else:
+            if ended:
+                await self._reclaim()
+
+    @staticmethod
+    async def _ended(job_id: str) -> bool:
+        """Wait until DBOS has recorded the end of the workflow; ``False`` if it never does.
+
+        Args:
+            job_id: The workflow's ID.
+
+        Returns:
+            True once DBOS records it ended; False when it is unknown or does not end in time.
+        """
+        for _ in range(_FORGET_TRIES):
+            status = await DBOS.get_workflow_status_async(job_id)
+            if status is None:
+                return False
+            if status.status in _DONE:
+                return True
+            await asyncio.sleep(_FORGET_POLL)
+        return False
+
+    async def _recover(self, executor_id: str | None) -> None:
+        """Delete ended and outdated workflows, then recover the jobs no workflow will resume.
+
+        With several processes (``executors``), only this executor's workflows and those of
+        executors no live process holds are deleted or recovered: a live process's workflows,
+        of any version, are its own business (a rolling upgrade). See ``sort_workflows``.
+
+        Args:
+            executor_id: This process's executor ID, or ``None`` for the one ``local``.
+        """
+        workflows = await DBOS.list_workflows_async(load_input=False, load_output=False)
+        if self.executors is None or executor_id is None:
+            await self._recover_these(workflows, None)
+            return
+        others = {
+            w.executor_id for w in workflows if w.executor_id and w.executor_id != executor_id
+        }
+        async with self.executors.orphaned(others) as dead:
+            await self._recover_these(workflows, {executor_id, *dead})
+
+    async def _recover_these(
+        self, workflows: Sequence[WorkflowStatus], ours: Collection[str] | None
+    ) -> None:
+        """Delete the stale ones among ``workflows``, then recover the jobs of the others.
+
+        Args:
+            workflows: Every workflow DBOS has.
+            ours: The executors whose workflows this process may delete; ``None`` for all.
+        """
+        stale, live = sort_workflows(workflows, self.version, ours, _LIVE)
+        if stale:
+            await DBOS.delete_workflows_async(sorted(stale))
+        await self._reclaim()
+        await self.recover_jobs(resuming=live)
+
+    async def _resubmit(self) -> None:
+        """Hand the queued jobs to DBOS again now and then (queuing an ID twice is a no-op).
+
+        On PostgreSQL it also deletes the tick workflows that are old enough (``prune_ticks``).
+        """
+        while True:
+            await asyncio.sleep(self.resubmit_interval)
+            try:
+                if self.executors is not None:
+                    await self.prune_ticks()
+                await self.submit_queued_jobs()
+            except Exception:
+                log.exception("could not hand the queued jobs to DBOS again")
+
+    async def prune_ticks(self) -> None:
+        """Delete the ended tick workflows older than ``tick_retention`` of the schedule."""
+        before = datetime.now(UTC) - tick_retention(self.schedule)
+        ended = await DBOS.list_workflows_async(
+            name=SCHEDULE_WORKFLOW,
+            status=sorted(_DONE),
+            end_time=before.isoformat(),
+            load_input=False,
+            load_output=False,
+        )
+        if ended:
+            await DBOS.delete_workflows_async([w.workflow_id for w in ended])
+
+    async def _reclaim(self) -> None:
+        """Give the free pages of DBOS's file back (``VACUUM``) when no workflow is left in it.
+
+        PostgreSQL reclaims space itself (autovacuum): nothing to do there.
+        """
+        if self.database is None or self.system_database_url is not None:
+            return
+        try:
+            if await DBOS.list_workflows_async(load_input=False, load_output=False, limit=1):
+                return
+            await asyncio.to_thread(_vacuum, self.database)
+        except Exception:  # only space: tried again after the next job
+            log.exception("could not compact %s", self.database)
+
+    async def _stop(self) -> None:
+        """Let the running jobs finish for ``stop_grace`` seconds, then cancel the rest."""
+        if self._running:
+            _, busy = await asyncio.wait(self._running, timeout=self.stop_grace)
+            await self._cancel(busy)
+
+    @staticmethod
+    async def _cancel(tasks: set[asyncio.Task[None]]) -> None:
+        """Cancel the tasks and wait until they end; ignore their errors.
+
+        Only the tasks' own errors are ignored. A cancellation of the caller (a deadline such as
+        ``halt_timeout``, a second stop) ends the wait at once: ``asyncio.wait`` does not wait
+        for the tasks then, as ``gather`` does, so a task that delays its cancellation cannot
+        hold its caller.
+
+        Their errors are retrieved by the ``_ignore_error`` callback each task gets when it is
+        created (or, for a job, when it starts running).
+
+        Args:
+            tasks: The tasks.
+        """
+        _request_cancel(tasks)
+        if tasks:
+            await asyncio.wait(tasks)
+
+
+def _request_cancel(tasks: set[asyncio.Task[None]]) -> None:
+    """Ask the tasks to cancel, without waiting: this cannot be interrupted half done.
+
+    Args:
+        tasks: The tasks.
+    """
+    for task in tasks:
+        task.cancel()
+
+
+def _ignore_error(task: asyncio.Task[None]) -> None:
+    """Retrieve the error a task ended with, so asyncio does not log it as never retrieved.
+
+    The worker's tasks log their own errors, and a task it cancels may end with one while
+    nobody waits for it any more (its caller's wait was cut short).
+
+    Args:
+        task: The task, done.
+    """
+    if not task.cancelled():
+        task.exception()
+
+
+def _log_failed(task: asyncio.Task[None], what: str) -> None:
+    """Log the error a finished task ended with, if any (its caller raises another one).
+
+    Args:
+        task: The task.
+        what: What failed, for the log.
+    """
+    if task.done() and not task.cancelled() and (error := task.exception()) is not None:
+        log.error(what, exc_info=error)
+
+
+def _vacuum(database: Path) -> None:
+    """``VACUUM`` the file when at least half of it (and 1 MiB) is free pages.
+
+    Args:
+        database: DBOS's SQLite file.
+    """
+    with closing(sqlite3.connect(database, timeout=30, isolation_level=None)) as connection:
+        free = connection.execute("PRAGMA freelist_count").fetchone()[0]
+        pages = connection.execute("PRAGMA page_count").fetchone()[0]
+        size = connection.execute("PRAGMA page_size").fetchone()[0]
+        if free * 2 >= pages and free * size >= _VACUUM_ABOVE:
+            connection.execute("VACUUM")
+
+
+def sort_workflows(
+    workflows: Sequence[WorkflowStatus],
+    version: str,
+    ours: Collection[str] | None,
+    live_states: Collection[str],
+) -> tuple[set[str], set[str]]:
+    """Split the workflows a starting worker finds into the stale and the live.
+
+    A workflow of an executor not in ``ours`` (another live process) is never stale, whatever
+    its version, and is live while it is queued or running. One of ours (``None``: every
+    executor is ours) is stale when it ended or another ``version`` started it.
+
+    Args:
+        workflows: Every workflow DBOS has.
+        version: This build's ``STEPS_VERSION``.
+        ours: The executors this process answers for, or ``None`` for all.
+        live_states: The statuses of a queued or running workflow.
+
+    Returns:
+        The IDs to delete, and the IDs a workflow will resume (their jobs are left alone).
+    """
+    stale, live = set(), set()
+    for workflow in workflows:
+        mine = ours is None or workflow.executor_id in ours
+        if workflow.status in live_states and (not mine or workflow.app_version == version):
+            live.add(workflow.workflow_id)
+        elif mine:
+            stale.add(workflow.workflow_id)
+    return stale, live
+
+
+def tick_retention(schedule: str) -> timedelta:
+    """Return how long an ended tick workflow is kept when several processes share the schedule.
+
+    Two of the schedule's intervals (DBOS's scheduler may come up to a tenth of one late), and
+    at least 10 minutes.
+
+    Args:
+        schedule: The DBOS cron expression, seconds first.
+
+    Returns:
+        The retention.
+    """
+    times = croniter(schedule, datetime.now(UTC), second_at_beginning=True)
+    first, second = times.get_next(datetime), times.get_next(datetime)
+    return max(2 * (second - first), _MIN_TICK_RETENTION)

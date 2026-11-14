@@ -1,13 +1,23 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check } from "lucide-react";
 import { type FormEvent, type ReactNode, useCallback, useRef, useState } from "react";
+import {
+  type Credential,
+  type CredentialDraft,
+  credentialKindFor,
+  credentialOf,
+  EMPTY_CREDENTIAL,
+  validateCredential,
+} from "@/shared/lib/credentials";
 import { type RefChoice, refToSend } from "@/shared/lib/refs";
 import { absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
+import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
+import { CredentialField } from "@/shared/ui/credential-field";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { RefPicker } from "@/shared/ui/ref-picker";
-import { addVersion, refreshLibraries, removeVersion } from "../api/settings";
+import { accessQueryOptions, addVersion, refreshLibraries, removeVersion } from "../api/settings";
 import { useNow } from "../hooks/use-now";
 import {
   type Activity,
@@ -88,6 +98,13 @@ function fieldMessage(p: Problem): ReactNode {
   );
 }
 
+/** The field a ref error belongs to: the typed ref when it is shown, else the picker. */
+const refField = () => document.getElementById("ref-typed") ?? document.getElementById("ref");
+
+/** Where a refusal goes: the credential box, else the typed ref when shown, else the picker. */
+const fieldOf = (p: Problem) =>
+  p.field === "credential" ? () => document.getElementById("version-credential") : refField;
+
 function AddVersionForm({
   owner,
   repo,
@@ -97,53 +114,102 @@ function AddVersionForm({
   onStart,
 }: Props & { onClose: () => void }) {
   const queryClient = useQueryClient();
+  const focusAfterRender = useFocusAfterRender();
+  // Known before the picker asks anything: a private repository's refs need a credential.
+  const { data: access, isPending: accessPending } = useQuery(accessQueryOptions(owner, repo));
   // No version is preselected: adding one is a decision, not a default.
   const [choice, setChoice] = useState<RefChoice>({ kind: "none" });
   const [typed, setTyped] = useState("");
   const [fieldError, setFieldError] = useState<ReactNode>();
+  const [credentialError, setCredentialError] = useState<string>();
   const [problem, setProblem] = useState<Problem>();
   const [added, setAdded] = useState<AddedVersion>();
+  const [pending, setPending] = useState(false);
+  // A replacement token or key: component state only (no mutation, query key or cache holds it).
+  const [askCredential, setAskCredential] = useState(false);
+  const [draft, setDraft] = useState<CredentialDraft>(EMPTY_CREDENTIAL);
+  // What the ref list was asked with: set when focus leaves the box, not on every keystroke.
+  const [listedWith, setListedWith] = useState<Credential>();
+  const busy = useRef(false);
 
   const ref = refToSend(choice, typed);
+  const kind = credentialKindFor(library.source_url);
+  const showCredential = Boolean(kind && (access?.private || askCredential));
 
-  const add = useMutation({
-    mutationFn: (target: string) => addVersion(owner, repo, target),
-    onSuccess: (result) => {
-      setAdded(result);
-      refreshLibraries(queryClient);
-    },
-    onError: (error, target) => {
-      const p = explainAddVersion(error, target);
-      if (p.field) {
-        setFieldError(fieldMessage(p));
-        setProblem(undefined);
-        requestAnimationFrame(() =>
-          (document.getElementById("ref-typed") ?? document.getElementById("ref"))?.focus(),
-        );
-      } else {
-        setProblem(p);
-      }
-      // A 409 means the library changed under us: reload what the page shows.
-      refreshLibraries(queryClient);
-    },
-  });
+  function typedCredential(): { credential?: Credential; error?: string } {
+    if (!kind || !showCredential || !draft.secret.trim()) return {};
+    const error = validateCredential(kind, draft);
+    if (error) return { error };
+    const credential = credentialOf(kind, draft);
+    return credential ? { credential } : {};
+  }
+
+  function commit() {
+    const next = typedCredential();
+    if (next.error) return;
+    // Same secret, same object: the list is not asked for again.
+    setListedWith((was) =>
+      JSON.stringify(was) === JSON.stringify(next.credential) ? was : next.credential,
+    );
+  }
+
+  function refuse(p: Problem) {
+    if (p.field === "credential") {
+      setAskCredential(true);
+      setCredentialError(p.message);
+      setFieldError(undefined);
+      setProblem(undefined);
+    } else if (p.field) {
+      setFieldError(fieldMessage(p));
+      setProblem(undefined);
+    } else {
+      setProblem(p);
+      return;
+    }
+    // In the commit that shows the error, never a frame later.
+    focusAfterRender(fieldOf(p));
+  }
 
   const unavailable = useCallback(() => setChoice({ kind: "other" }), []);
+  // A replacement that does not even list the refs would not import either: say so now.
+  const listRefused = (error: unknown) => {
+    const p = explainAddVersion(error, "", kind);
+    return p.field === "credential" ? p.message : undefined;
+  };
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
-    if (add.isPending) return;
+    if (busy.current) return;
     setProblem(undefined);
     if (!ref) {
       setFieldError("Choose a branch or tag from the list, or pick “Another ref or commit…”.");
-      requestAnimationFrame(() =>
-        (document.getElementById("ref-typed") ?? document.getElementById("ref"))?.focus(),
-      );
+      focusAfterRender(refField);
       return;
     }
     setFieldError(undefined);
+    const sent = typedCredential();
+    if (sent.error) {
+      refuse({ field: "credential", message: sent.error });
+      return;
+    }
+    setCredentialError(undefined);
     onStart();
-    add.mutate(ref);
+    busy.current = true;
+    setPending(true);
+    try {
+      const result = await addVersion(owner, repo, ref, sent.credential);
+      // Stored encrypted on the server now: the form lets go of its copy.
+      setDraft(EMPTY_CREDENTIAL);
+      setListedWith(undefined);
+      setAdded(result);
+    } catch (error) {
+      refuse(explainAddVersion(error, ref, sent.credential?.kind));
+    } finally {
+      busy.current = false;
+      setPending(false);
+      // A 409 means the library changed under us: reload what the page shows either way.
+      refreshLibraries(queryClient);
+    }
   }
 
   if (added) {
@@ -166,26 +232,55 @@ function AddVersionForm({
         <FormAlert id="add-version-alert" message={problem?.message} link={problem?.link} />
       </div>
       <div className="flex flex-col gap-5">
-        <RefPicker
-          url={library.source_url}
-          choice={choice}
-          typed={typed}
-          error={fieldError}
-          explicit
-          exclude={library.versions.map((v) => v.ref)}
-          onChoice={(c) => {
-            setChoice(c);
-            setFieldError(undefined);
-            if (c.kind === "other") {
-              requestAnimationFrame(() => document.getElementById("ref-typed")?.focus());
+        {showCredential && kind && (
+          <div className="fade-in">
+            <CredentialField
+              id="version-credential"
+              kind={kind}
+              draft={draft}
+              error={credentialError}
+              hint={
+                access?.private
+                  ? `Optional. Leave it empty to use the ${kind === "token" ? "token" : "key"} stored for this library; a new one replaces it.`
+                  : "A new one is stored encrypted for this library, replacing any stored one."
+              }
+              onChange={(d) => {
+                setDraft(d);
+                setCredentialError(undefined);
+              }}
+              onCommit={commit}
+            />
+          </div>
+        )}
+        {!accessPending && (
+          <RefPicker
+            url={library.source_url}
+            credential={listedWith}
+            explainRefusal={listRefused}
+            unlisted={
+              access?.private
+                ? "Branches and tags of a private repository are listed with its token or key: enter it above to see them, or type a version below."
+                : undefined
             }
-          }}
-          onUnavailable={unavailable}
-          onTyped={(v) => {
-            setTyped(v);
-            setFieldError(undefined);
-          }}
-        />
+            choice={choice}
+            typed={typed}
+            error={fieldError}
+            explicit
+            exclude={library.versions.map((v) => v.ref)}
+            onChoice={(c) => {
+              setChoice(c);
+              setFieldError(undefined);
+              if (c.kind === "other") {
+                focusAfterRender(() => document.getElementById("ref-typed"));
+              }
+            }}
+            onUnavailable={unavailable}
+            onTyped={(v) => {
+              setTyped(v);
+              setFieldError(undefined);
+            }}
+          />
+        )}
         <p className="text-sm text-muted-foreground">
           It is imported with the same paths and tag rules as the other versions.
         </p>
@@ -193,13 +288,8 @@ function AddVersionForm({
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button
-            type="submit"
-            aria-disabled={add.isPending}
-            aria-busy={add.isPending}
-            className="min-w-32"
-          >
-            {add.isPending ? "Adding" : "Add version"}
+          <Button type="submit" aria-disabled={pending} aria-busy={pending} className="min-w-32">
+            {pending ? "Adding" : "Add version"}
           </Button>
         </div>
       </div>
@@ -227,6 +317,7 @@ export function VersionsSection(props: Props) {
   const trigger = useRef<HTMLElement | null>(null);
   const removedOk = useRef(false);
   const now = useNow();
+  const focusAfterRender = useFocusAfterRender();
 
   const remove = useMutation({
     mutationFn: (version: SettingsVersion) =>
@@ -260,7 +351,8 @@ export function VersionsSection(props: Props) {
     setAdding(false);
     // `transitionend` unmounts the card; without a transition (reduced motion) nothing fires it.
     setTimeout(() => setMounted(false), 300);
-    requestAnimationFrame(() => addButton.current?.focus());
+    // The button sits outside the card, so it is on screen in the commit that closes it.
+    focusAfterRender(() => addButton.current);
   }
 
   return (

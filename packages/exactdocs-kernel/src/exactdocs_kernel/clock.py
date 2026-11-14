@@ -7,14 +7,22 @@ class Clock(Protocol):
     """Driven port for the current time, so time-dependent logic stays testable."""
 
     def now(self) -> datetime:
-        """Return the current, timezone-aware time."""
+        """Return the current time.
+
+        Returns:
+            The current, timezone-aware time.
+        """
         ...
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SystemClock:
     """Real wall clock (UTC)."""
 
     def now(self) -> datetime:
-        """Return the current UTC time."""
+        """Return the current UTC time.
+
+        Returns:
+            The current time, in UTC.
+        """
         return datetime.now(UTC)

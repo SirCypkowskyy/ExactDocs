@@ -1,11 +1,23 @@
 import { queryOptions } from "@tanstack/react-query";
+import type { Credential } from "@/shared/lib/credentials";
 import { getJson, HttpError, sendJson } from "@/shared/lib/http";
-import type { AddedLibrary, AddLibraryCommand, CheckedRepository } from "../model/add-library";
+import type {
+  AddedLibrary,
+  AddedVersion,
+  AddLibraryCommand,
+  CheckedRepository,
+  PreviewCommand,
+  RepositoryPreview,
+} from "../model/add-library";
 import type { Job } from "../model/library";
 import { librariesKeys } from "./libraries-query";
 
-export const checkRepository = (url: string) =>
-  sendJson<CheckedRepository>("POST", "/v1/repositories/check", { url });
+/** A private repository's credential rides in the body; nothing here keeps it. */
+export const checkRepository = (url: string, credential?: Credential) =>
+  sendJson<CheckedRepository>("POST", "/v1/repositories/check", {
+    url,
+    ...(credential && { credential }),
+  });
 
 export const addLibrary = (command: AddLibraryCommand) =>
   sendJson<AddedLibrary>("POST", "/v1/libraries", command);
@@ -24,3 +36,20 @@ export const importJobQueryOptions = (id: string) =>
       return data && !live(data.state) ? false : 1500;
     },
   });
+
+export const previewRepository = (command: PreviewCommand) =>
+  sendJson<RepositoryPreview>("POST", "/v1/repositories/preview", command);
+
+const seg = encodeURIComponent;
+
+/**
+ * Queue an older version of a library that was just added (a `previousVersions` tag).
+ * `library-settings` has the same call: slices never import each other, and this one call is
+ * smaller than a shared module for one endpoint.
+ */
+export const addVersion = (libraryId: string, ref: string) => {
+  const [, owner = "", repo = ""] = libraryId.split("/");
+  return sendJson<AddedVersion>("POST", `/v1/libraries/${seg(owner)}/${seg(repo)}/versions`, {
+    ref,
+  });
+};

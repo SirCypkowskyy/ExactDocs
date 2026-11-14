@@ -2,25 +2,39 @@
 name: Docs
 
 on:
+  # Deploys: a push to main that changes the published site, every stable release tag (a release
+  # merges develop into main and tags it there, so the site always matches the latest release), and
+  # a manual run (Actions -> Docs -> Run workflow) to retry a deploy that Pages did not finish.
+  # Tag pushes ignore `paths`. Dev tags (v1.2.3.dev1) do not match the pattern, so develop's docs
+  # are never published. A tag push (not `release: published`) is used because the release workflow
+  # creates the GitHub Release with GITHUB_TOKEN, and such events start no other workflow.
   push:
     branches: [main]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
     paths:
       - "docs/**"
       - "zensical.toml"
       - ".github/workflows/docs.yml"
+  # Pull requests also run for any Markdown file, so the Mermaid check covers README and the rest;
+  # they only build, never deploy.
   pull_request:
     paths:
       - "docs/**"
       - "zensical.toml"
+      - "**/*.md"
+      - "deploy/mermaid-check/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A newer commit on a PR cancels the PR's older build. Deploys share one group and never cancel each
+# other: cancelling deploy-pages mid-flight can leave a Pages deployment stuck in `updating_pages`.
+# A deploy that arrives while one runs waits for it (GitHub keeps the newest one waiting).
 concurrency:
-  group: docs-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'pull_request' && format('docs-pr-{0}', github.ref) || 'docs-pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -29,6 +43,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: deploy/mermaid-check/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: web/.nvmrc
+          cache: pnpm
+          cache-dependency-path: deploy/mermaid-check/pnpm-lock.yaml
+      - name: Every Mermaid diagram parses and no ASCII art is left (README, docs/, web/README.md, ...)
+        run: |
+          pnpm --dir deploy/mermaid-check install --frozen-lockfile
+          pnpm --dir deploy/mermaid-check check
       - name: Build (strict mode, warnings and broken links fail)
         run: uv run --only-group docs zensical build --clean --strict
       - uses: actions/upload-pages-artifact@v5
@@ -50,3 +76,10 @@ jobs:
       - uses: actions/configure-pages@v6
       - id: deployment
         uses: actions/deploy-pages@v5
+        with:
+          # The v0.2.0 deploy (run 41889841633) built fine, then Pages stayed in `updating_pages`
+          # past the default 10-minute timeout. Wait up to 30 minutes and tolerate a few failed
+          # status polls before giving up; a timed-out deploy can be retried with workflow_dispatch.
+          timeout: 1800000
+          error_count: 10
+          reporting_interval: 10000

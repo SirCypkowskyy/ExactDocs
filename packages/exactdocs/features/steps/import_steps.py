@@ -2,23 +2,27 @@
 
 import asyncio
 import tempfile
+import threading
 import time
-from contextlib import ExitStack
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager
 from http import HTTPStatus
 from pathlib import Path
 
 from behave import given, then, when
 from behave.runner import Context
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
+from exactdocs.identity.constants import SESSION_COOKIE
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
+from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.dtos import EnqueueJobCommand
 from exactdocs.ingestion.errors import RepositoryUnreachableError
-from exactdocs.ingestion.models import RefKind
+from exactdocs.ingestion.models import ArticleChunk, ChunkingConfig, ParsedArticle, RefKind
 from steps.http_steps import DEMO_COOKIE, OfflineGit, store_demo_catalog
 
 LIBRARY = "/fixture/docs-repo"
@@ -32,17 +36,95 @@ JOB_SECONDS = 60
 
 
 class SwitchableGit:
-    """The real git, until a scenario makes fetching fail (a server that went away)."""
+    """The real git, until a scenario makes fetching fail (a server that went away).
+
+    ``held`` makes a fetch wait until it is cleared, so a scenario can look at what is served
+    while a job is under way.
+    """
 
     def __init__(self, git: GitCli) -> None:
         self.git = git
         self.failing = False
+        self.released = threading.Event()
+        self.released.set()
+
+    @property
+    def held(self) -> bool:
+        return not self.released.is_set()
+
+    @held.setter
+    def held(self, value: bool) -> None:
+        if value:
+            self.released.clear()
+        else:
+            self.released.set()
 
     def fetch(self, *args: object, **kwargs: object):
         if self.failing:
             reason = "connection refused"
             raise RepositoryUnreachableError(reason)
-        return self.git.fetch(*args, **kwargs)  # ty: ignore[invalid-argument-type]
+        return self._after_hold(self.git.fetch(*args, **kwargs))  # ty: ignore[invalid-argument-type]
+
+    @asynccontextmanager
+    async def _after_hold(self, fetch: AbstractAsyncContextManager[Path]) -> AsyncGenerator[Path]:
+        await asyncio.to_thread(self.released.wait, JOB_SECONDS)
+        async with fetch as folder:
+            yield folder
+
+    def fetch_files(self, *args: object, **kwargs: object):
+        if self.failing:
+            reason = "connection refused"
+            raise RepositoryUnreachableError(reason)
+        return self.git.fetch_files(*args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+
+class HeldChunker:
+    """The real chunker; ``held`` makes cutting wait until it is cleared (it runs in a thread).
+
+    Every chunker it hands out (one per chunking config) waits on the same switch.
+    """
+
+    def __init__(self, inner: MarkdownChunker, released: threading.Event | None = None) -> None:
+        self.inner = inner
+        self.released = released or threading.Event()
+        if released is None:
+            self.released.set()
+
+    @property
+    def held(self) -> bool:
+        return not self.released.is_set()
+
+    @held.setter
+    def held(self, value: bool) -> None:
+        if value:
+            self.released.clear()
+        else:
+            self.released.set()
+
+    @property
+    def config_hash(self) -> str:
+        return self.inner.config_hash
+
+    def configured(self, config: ChunkingConfig) -> HeldChunker:
+        return HeldChunker(self.inner.configured(config), self.released)
+
+    def chunk(self, article: ParsedArticle) -> Sequence[ArticleChunk]:
+        self.released.wait(JOB_SECONDS)
+        return self.inner.chunk(article)
+
+
+class SwitchableRenames:
+    """The real rename detection, until a scenario makes git unable to compare two commits."""
+
+    def __init__(self, git: GitCli) -> None:
+        self.git = git
+        self.failing = False
+
+    async def renames(self, *args: object, **kwargs: object):
+        if self.failing:
+            reason = "it took too long"
+            raise RepositoryUnreachableError(reason)
+        return await self.git.renames(*args, **kwargs)  # ty: ignore[invalid-argument-type]
 
 
 def _commit(context: Context, ref: str) -> str:
@@ -102,15 +184,43 @@ def import_version(context: Context, ref: str, **settings: object) -> None:
 
 @given("ExactDocs imports the fixture docs repository")
 def step_running(context: Context) -> None:
+    start(context)
+
+
+def start(
+    context: Context,
+    max_image_bytes: int | None = None,
+    secret_key: str | None = None,
+    auto_sync_schedule: str | None = None,
+) -> None:
+    # A scenario that starts over with other settings stops the instance it had first: a
+    # process runs one job worker.
+    if (earlier := getattr(context, "instance", None)) is not None:
+        earlier.close()
     stack = ExitStack()
     context.add_cleanup(stack.close)
+    context.instance = stack
     data_dir = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="exactdocs-")))
     settings = Settings(data_dir=data_dir)
+    if secret_key is not None:
+        settings.secret_key = SecretStr(secret_key)
+    if max_image_bytes is not None:
+        settings.max_image_bytes = max_image_bytes
+    if auto_sync_schedule is not None:
+        settings.auto_sync_schedule = auto_sync_schedule
     context.settings = settings
     asyncio.run(store_demo_catalog(settings))
     git = GitCli.locate()
     context.git = SwitchableGit(git)
-    context.container = Container.build(settings, remote=OfflineGit(git), gateway=context.git)
+    context.renames = SwitchableRenames(git)
+    context.chunker = HeldChunker(MarkdownChunker())
+    context.container = Container.build(
+        settings,
+        remote=OfflineGit(git),
+        gateway=context.git,
+        renames=context.renames,
+        chunker=context.chunker,
+    )
     context.library_added = False
     context.client = stack.enter_context(
         TestClient(

@@ -1,24 +1,33 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
+import { buttonVariants } from "@/shared/ui/button";
 import { Field } from "@/shared/ui/field";
 import { FormAlert } from "@/shared/ui/form-alert";
-import { signIn } from "../api/session-query";
-import { explainError, type FormProblem } from "../model/errors";
-import { safeNext, validateSignIn } from "../model/session";
+import { externalSignInHref, signIn } from "../api/session-query";
+import { explainError, explainSignInRefusal, type FormProblem } from "../model/errors";
+import { type SignInProvider, safeNext, validateSignIn } from "../model/session";
 import { AuthLayout } from "./auth-layout";
 import { focusField } from "./focus-field";
 import { FORM_ALERT_ID, SubmitButton } from "./form-parts";
 
 export function SignInPage({
   next,
+  error,
+  providers = [],
   onSignedIn,
 }: {
   next?: string | undefined;
+  /** The code an identity provider's refused sign-in came back with (`?error=`). */
+  error?: string | undefined;
+  providers?: readonly SignInProvider[] | undefined;
   onSignedIn: (to: string) => void;
 }) {
   const queryClient = useQueryClient();
   const [pending, setPending] = useState(false);
-  const [problem, setProblem] = useState<FormProblem>({});
+  const [problem, setProblem] = useState<FormProblem>(() => {
+    const message = explainSignInRefusal(error);
+    return message ? { message } : {};
+  });
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -71,6 +80,28 @@ export function SignInPage({
           <SubmitButton pending={pending} idle="Sign in" busy="Signing in" />
         </div>
       </form>
+      {providers.length > 0 && (
+        <section aria-labelledby="providers-heading" className="mt-8">
+          <h2
+            id="providers-heading"
+            className="flex items-center gap-3 text-sm text-muted-foreground before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border"
+          >
+            or
+          </h2>
+          <ul className="mt-5 flex flex-col gap-3">
+            {providers.map((provider) => (
+              <li key={provider.name}>
+                <a
+                  href={externalSignInHref(provider.name, safeNext(next))}
+                  className={buttonVariants({ variant: "outline", className: "w-full" })}
+                >
+                  Sign in with {provider.display_name}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </AuthLayout>
   );
 }

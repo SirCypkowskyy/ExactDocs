@@ -1,19 +1,18 @@
 """The admin's browser session over HTTP: cookie attributes, expiry on the server, CSRF, MCP."""
 
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from http.cookies import SimpleCookie
 from typing import Any
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import text
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
-from exactdocs.identity.adapters.driving.http import SESSION_COOKIE
+from exactdocs.identity.constants import SESSION_COOKIE
 from exactdocs.identity.dtos import CreateFirstAdminCommand
 
 HORSE = "correct horse battery staple"
@@ -81,15 +80,19 @@ async def test_signing_in_sets_an_httponly_lax_cookie_scoped_to_the_api(
 
 async def test_the_cookie_is_secure_over_https_and_when_forced(container: Container) -> None:
     await create_admin(container)
+    forced = Container.build(Settings(secure_cookies=True))
     secure_app = create_app(container)
-    forced_app = create_app(Container.build(Settings(secure_cookies=True)))
-    for app, url in ((secure_app, "https://localhost"), (forced_app, "http://localhost")):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url=url) as client:
-            response = await client.post("/api/v1/session", json=LOGIN)
+    forced_app = create_app(forced)
+    try:
+        for app, url in ((secure_app, "https://localhost"), (forced_app, "http://localhost")):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url=url) as client:
+                response = await client.post("/api/v1/session", json=LOGIN)
 
-            assert response.status_code == 201
-            assert set_cookie(response)["secure"] is True
+                assert response.status_code == 201
+                assert set_cookie(response)["secure"] is True
+    finally:
+        await forced.engine.dispose()  # never run, so nothing else releases its connections (#300)
 
 
 async def test_the_server_stores_only_a_hash_of_the_token(
@@ -132,8 +135,8 @@ async def test_session_state_before_setup_and_when_signed_out(container: Contain
         await create_admin(container)
         signed_out = await client.get("/api/v1/session")
 
-    assert fresh == {"state": "setup_required", "account": None}
-    assert signed_out.json() == {"state": "signed_out", "account": None}
+    assert fresh == {"state": "setup_required", "account": None, "providers": []}
+    assert signed_out.json() == {"state": "signed_out", "account": None, "providers": []}
     assert signed_out.headers["cache-control"] == "no-store"
 
 
@@ -222,7 +225,9 @@ async def test_the_apps_own_origin_may_sign_in_and_out(client: httpx.AsyncClient
     assert (await client.delete("/api/v1/session", headers=own)).status_code == 204
 
 
-async def test_only_setup_and_the_session_routes_are_open(client: httpx.AsyncClient) -> None:
+async def test_only_setup_the_session_routes_and_the_push_webhook_are_open(
+    client: httpx.AsyncClient,
+) -> None:
     spec = (await client.get("/api/v1/openapi.json")).json()
     methods = {"get", "put", "post", "delete", "patch"}
 
@@ -238,6 +243,10 @@ async def test_only_setup_and_the_session_routes_are_open(client: httpx.AsyncCli
         ("GET", "/api/v1/session"),
         ("POST", "/api/v1/session"),
         ("DELETE", "/api/v1/session"),
+        ("POST", "/api/v1/tokens/login"),
+        ("GET", "/api/v1/auth/{provider}/start"),
+        ("GET", "/api/v1/auth/{provider}/callback"),
+        ("POST", "/api/v1/webhooks/{owner}/{repo}"),  # the library's webhook secret instead
     }
     assert spec["components"]["securitySchemes"]["SessionCookie"]["in"] == "cookie"
 
@@ -255,20 +264,25 @@ INITIALIZE = {
 }
 
 
-@pytest.fixture
-def browser(container: Container) -> Iterator[TestClient]:
-    # TestClient runs the app (and the MCP session manager's lifespan) in one event loop.
-    with TestClient(create_app(container), base_url="http://localhost") as client:
-        yield client
+async def test_mcp_ignores_the_session_cookie() -> None:
+    # The app's lifespan runs the container and the MCP session manager: the `container` fixture
+    # would be a second run of it (#203).
+    container = Container.build(Settings())
+    app = create_app(container)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+        ) as client,
+    ):
+        await create_admin(container)
+        token = await sign_in(client)
 
-
-async def test_mcp_ignores_the_session_cookie(
-    client: httpx.AsyncClient, browser: TestClient
-) -> None:
-    token = await sign_in(client)
-
-    with_cookie = browser.post("/mcp", json=INITIALIZE, headers={**MCP_HEADERS, **cookie_of(token)})
-    without = browser.post("/mcp", json=INITIALIZE, headers=MCP_HEADERS)
+        # The jar keeps the cookie to `/api`: sent by hand, so only the header differs.
+        with_cookie = await client.post(
+            "/mcp", json=INITIALIZE, headers={**MCP_HEADERS, **cookie_of(token)}
+        )
+        without = await client.post("/mcp", json=INITIALIZE, headers=MCP_HEADERS)
 
     # MCP wants an API token: the cookie is not a credential there, so it changes nothing.
     assert with_cookie.status_code == without.status_code == 401

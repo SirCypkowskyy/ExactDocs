@@ -20,8 +20,12 @@ export class HttpError extends Error {
   readonly fields: ErrorBody["fields"];
   /** On a missing article: paths of the same version it may have meant (repository data). */
   readonly closeMatches: readonly string[];
+  /** Seconds to wait before trying again (`Retry-After`), when the server said. */
+  readonly retryAfter: number | undefined;
+  /** On `library_id_taken`: the library that already has the ID, when the server named it. */
+  readonly libraryId: string | undefined;
 
-  constructor(status: number, path: string, body?: Partial<ErrorBody>) {
+  constructor(status: number, path: string, body?: Partial<ErrorBody>, retryAfter?: number) {
     super(body?.detail ?? `Request to ${path} failed with status ${status}`);
     this.name = "HttpError";
     this.status = status;
@@ -29,6 +33,8 @@ export class HttpError extends Error {
     this.code = body?.error;
     this.fields = body?.fields ?? [];
     this.closeMatches = body?.close_matches ?? [];
+    this.retryAfter = retryAfter;
+    this.libraryId = body?.library_id ?? undefined;
   }
 }
 
@@ -55,13 +61,21 @@ function queryString(query: Query | undefined): string {
   return text ? `?${text}` : "";
 }
 
+/** `Retry-After` as whole seconds; the API only sends that form, so an HTTP date is ignored. */
+function retryAfterSeconds(headers: Headers): number | undefined {
+  const value = headers.get("Retry-After");
+  if (value === null || !/^\d+$/.test(value.trim())) return undefined;
+  return Number(value);
+}
+
 async function request<T>(path: ApiPath, init: RequestInit, query?: Query): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}${queryString(query)}`, {
     ...init,
     headers: { Accept: "application/json", ...init.headers },
   });
   if (!response.ok) {
-    throw new HttpError(response.status, path, await response.json().catch(() => undefined));
+    const body = await response.json().catch(() => undefined);
+    throw new HttpError(response.status, path, body, retryAfterSeconds(response.headers));
   }
   return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
 }

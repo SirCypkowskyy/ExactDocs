@@ -4,25 +4,31 @@ Keep it small, stable and framework-free. It must never import ``exactdocs``.
 """
 
 from exactdocs_kernel.clock import Clock, SystemClock
-from exactdocs_kernel.errors import (
-    ConflictError,
-    DomainError,
-    NotFoundError,
-    UnauthenticatedError,
-    ValidationError,
-)
-from exactdocs_kernel.limits import (
+from exactdocs_kernel.constants import (
+    DEFAULT_LIMIT,
     LIBRARY_ID_PATTERN,
     MAX_CURSOR,
+    MAX_LIMIT,
     MAX_NAME,
     MAX_PATH,
     MAX_TAG_INPUT,
+    MAX_TAG_LENGTH,
+    MAX_TAGS,
+    NOTICE,
     TOOL_HINTS,
 )
-from exactdocs_kernel.notice import NOTICE
+from exactdocs_kernel.errors import (
+    BusyError,
+    ConflictError,
+    DomainError,
+    ForbiddenError,
+    NotFoundError,
+    RateLimitedError,
+    SealedTextUnreadableError,
+    UnauthenticatedError,
+    ValidationError,
+)
 from exactdocs_kernel.pagination import (
-    DEFAULT_LIMIT,
-    MAX_LIMIT,
     InvalidCursorError,
     Page,
     decode_cursor,
@@ -30,7 +36,7 @@ from exactdocs_kernel.pagination import (
     paginate,
 )
 from exactdocs_kernel.source_link import section_link
-from exactdocs_kernel.tags import MAX_TAG_LENGTH, MAX_TAGS, normalize_tag
+from exactdocs_kernel.tags import normalize_tag
 
 __all__ = [
     "DEFAULT_LIMIT",
@@ -44,12 +50,16 @@ __all__ = [
     "MAX_TAG_LENGTH",
     "NOTICE",
     "TOOL_HINTS",
+    "BusyError",
     "Clock",
     "ConflictError",
     "DomainError",
+    "ForbiddenError",
     "InvalidCursorError",
     "NotFoundError",
     "Page",
+    "RateLimitedError",
+    "SealedTextUnreadableError",
     "SystemClock",
     "UnauthenticatedError",
     "ValidationError",
