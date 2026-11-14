@@ -8,13 +8,18 @@ from exactdocs.identity.dtos import (
     CreateFirstAdminCommand,
     CreateTokenCommand,
     CreateUserCommand,
+    ExternalSignInResult,
+    ExternalSignInStart,
+    FinishExternalSignInCommand,
     LoginForTokenCommand,
     PasswordReset,
     ResetPasswordCommand,
+    RevalidationReport,
     SessionGrant,
     SessionState,
     SetupState,
     SetUserDisabledCommand,
+    StartExternalSignInCommand,
     TokenGrant,
     TokenList,
     UserList,
@@ -275,5 +280,59 @@ class IdentifyToken(Protocol):
 
         Returns:
             The account the token acts as.
+        """
+        ...
+
+
+class StartExternalSignIn(Protocol):
+    """Start a sign-in through a configured identity provider.
+
+    Raises ``UnknownSignInProviderError`` for a name that is not configured and
+    ``ProviderUnavailableError`` when the provider cannot be reached.
+    """
+
+    async def __call__(self, command: StartExternalSignInCommand) -> ExternalSignInStart:
+        """Run the use case.
+
+        Args:
+            command: The provider and where to go once signed in.
+
+        Returns:
+            Where to send the browser, and the binding to hand it.
+        """
+        ...
+
+
+class FinishExternalSignIn(Protocol):
+    """Finish an external sign-in and start a session.
+
+    Refuses with ``ExternalSignInFailedError`` (forged, replayed, expired or invalid),
+    ``SignInCancelledError``, ``NotAllowedError``, ``AccountDisabledError``,
+    ``UsernameUnavailableError`` or ``ProviderUnavailableError``; no session is created then.
+    """
+
+    async def __call__(
+        self, command: FinishExternalSignInCommand, previous_token: str | None = None
+    ) -> ExternalSignInResult:
+        """Run the use case; ``previous_token`` (the caller's current session) is ended.
+
+        Args:
+            command: The callback and the browser's binding.
+            previous_token: The caller's current session token, if any.
+
+        Returns:
+            The new session, and where to send the browser.
+        """
+        ...
+
+
+class RevalidateExternalAccounts(Protocol):
+    """Check again the memberships of the external identities that are due."""
+
+    async def __call__(self) -> RevalidationReport:
+        """Run the use case.
+
+        Returns:
+            How many were extended, revoked and left as they were.
         """
         ...

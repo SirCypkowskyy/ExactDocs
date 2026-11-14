@@ -2,9 +2,12 @@
 
 from collections.abc import Awaitable, Callable
 from typing import Annotated
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi.responses import RedirectResponse
 from fastapi.security import APIKeyCookie, HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import SecretStr
 
 from exactdocs.identity.constants import (
     _THROTTLED,
@@ -12,6 +15,9 @@ from exactdocs.identity.constants import (
     CREATE_TOKEN_DESCRIPTION,
     LOGIN_FOR_TOKEN_DESCRIPTION,
     SESSION_COOKIE,
+    SIGN_IN_COOKIE,
+    SIGN_IN_COOKIE_PATH,
+    SIGN_IN_PAGE,
     USERS_DESCRIPTION,
 )
 from exactdocs.identity.dtos import (
@@ -20,23 +26,30 @@ from exactdocs.identity.dtos import (
     CreateFirstAdminCommand,
     CreateTokenCommand,
     CreateUserCommand,
+    FinishExternalSignInCommand,
     LoginForTokenCommand,
     NewPassword,
     PasswordReset,
     ResetPasswordCommand,
     SessionState,
     SetUserDisabledCommand,
+    StartExternalSignInCommand,
     TokenGrant,
     TokenList,
     UserList,
     UserSummary,
 )
-from exactdocs.identity.errors import InvalidTokenError, NotAnOperatorError
+from exactdocs.identity.errors import (
+    InvalidTokenError,
+    NotAnOperatorError,
+    UnknownSignInProviderError,
+)
 from exactdocs.identity.models import Role
 from exactdocs.identity.ports.driving import (
     CreateFirstAdmin,
     CreateToken,
     CreateUser,
+    FinishExternalSignIn,
     GetSessionState,
     IdentifyCaller,
     IdentifyToken,
@@ -48,7 +61,9 @@ from exactdocs.identity.ports.driving import (
     SetUserDisabled,
     SignIn,
     SignOut,
+    StartExternalSignIn,
 )
+from exactdocs_kernel import DomainError
 
 # `auto_error=False`: a missing cookie reaches `IdentifyCaller`, which raises the API's own 401.
 _session_cookie = APIKeyCookie(
@@ -485,3 +500,185 @@ def build_router(
         response.delete_cookie(SESSION_COOKIE, secure=secure(request), **COOKIE_ATTRS)
 
     return router
+
+
+def build_external_sign_in_router(
+    *,
+    start_external_sign_in: StartExternalSignIn,
+    finish_external_sign_in: FinishExternalSignIn,
+    secure_cookies: bool,
+) -> APIRouter:
+    """Expose ``/auth/{provider}/start`` and ``/auth/{provider}/callback``: sign-in through an IdP.
+
+    Both are browser navigations (top-level ``GET``), never API calls: they answer with
+    redirects. The start sets a short-lived HttpOnly, SameSite=Lax binding cookie on
+    ``/api/v1/auth`` and sends the browser to the provider; the callback needs that cookie, so a
+    callback another browser started (login CSRF) or one already used is refused. A refusal
+    redirects to the sign-in page with ``?error=<code>``; a success sets the session cookie
+    (exactly as a password sign-in does) and redirects to the path the sign-in was started
+    for. An unknown provider is a 404.
+
+    Args:
+        start_external_sign_in: The driving port that starts the sign-in.
+        finish_external_sign_in: The driving port that finishes it.
+        secure_cookies: Whether the cookies are always ``Secure``.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["identity"])
+
+    def secure(request: Request) -> bool:
+        """Whether this request's cookies get the ``Secure`` attribute.
+
+        Args:
+            request: The HTTP request.
+
+        Returns:
+            ``True`` when forced, or when the request came over HTTPS.
+        """
+        return secure_cookies or request.url.scheme == "https"
+
+    def refused(error: DomainError) -> RedirectResponse:
+        """Send the browser back to the sign-in page, naming the refusal by its code.
+
+        Only the code travels (never a message), so nobody can craft a link that shows the
+        sign-in page saying something else.
+
+        Args:
+            error: Why the sign-in was refused.
+
+        Returns:
+            The redirect.
+        """
+        return _no_store(
+            RedirectResponse(f"{SIGN_IN_PAGE}?{urlencode({'error': error.code})}", status_code=303)
+        )
+
+    @router.get(
+        "/auth/{provider}/start",
+        status_code=303,
+        response_class=RedirectResponse,
+        responses={303: {"description": "To the identity provider, or back to the sign-in page"}},
+    )
+    async def start(
+        provider: str,
+        request: Request,
+        return_to: Annotated[str | None, Query(max_length=2048)] = None,
+    ) -> RedirectResponse:
+        """Start signing in through an identity provider (a browser navigation).
+
+        Redirects to the provider with a binding cookie; when the provider cannot be reached,
+        back to the sign-in page with `?error=provider_unavailable`.
+
+        Args:
+            provider: The provider's name.
+            request: The HTTP request, for the scheme.
+            return_to: Where to go once signed in: a path on this server (else `/`).
+
+        Returns:
+            The redirect.
+
+        Raises:
+            UnknownSignInProviderError: No provider of this name is configured (404).
+        """
+        try:
+            begun = await start_external_sign_in(
+                StartExternalSignInCommand(provider=provider, return_to=return_to)
+            )
+        except UnknownSignInProviderError:
+            raise
+        except DomainError as error:
+            return refused(error)
+        response = _no_store(RedirectResponse(begun.redirect_url, status_code=303))
+        response.set_cookie(
+            SIGN_IN_COOKIE,
+            begun.binding.get_secret_value(),
+            max_age=begun.max_age,
+            path=SIGN_IN_COOKIE_PATH,
+            httponly=True,
+            samesite="lax",
+            secure=secure(request),
+        )
+        return response
+
+    @router.get(
+        "/auth/{provider}/callback",
+        status_code=303,
+        response_class=RedirectResponse,
+        responses={303: {"description": "Signed in, or back to the sign-in page with `?error=`"}},
+    )
+    async def callback(
+        provider: str,
+        request: Request,
+        code: Annotated[str | None, Query(max_length=4096)] = None,
+        state: Annotated[str | None, Query(max_length=512)] = None,
+        error: Annotated[str | None, Query(max_length=256)] = None,
+    ) -> RedirectResponse:
+        """Finish signing in: the identity provider sends the browser here.
+
+        The binding cookie is cleared whatever happens. Refusals go back to the sign-in page
+        with `?error=` and one of `sign_in_failed`, `sign_in_cancelled`, `not_allowed`,
+        `account_disabled`, `username_unavailable` or `provider_unavailable`; no session is
+        created then.
+
+        Args:
+            provider: The provider's name.
+            request: The HTTP request, for the cookies and the scheme.
+            code: The authorization code.
+            state: The state the sign-in was started with.
+            error: The provider's error, when it did not sign the person in.
+
+        Returns:
+            The redirect.
+
+        Raises:
+            UnknownSignInProviderError: No provider of this name is configured (404).
+        """
+        binding = request.cookies.get(SIGN_IN_COOKIE)
+        command = FinishExternalSignInCommand(
+            provider=provider,
+            binding=None if binding is None else SecretStr(binding),
+            state=state,
+            code=code,
+            error=error,
+        )
+        try:
+            result = await finish_external_sign_in(command, request.cookies.get(SESSION_COOKIE))
+        except UnknownSignInProviderError:
+            raise
+        except DomainError as refusal:
+            response = refused(refusal)
+        else:
+            response = _no_store(RedirectResponse(result.return_to, status_code=303))
+            response.set_cookie(
+                SESSION_COOKIE,
+                result.session.token.get_secret_value(),
+                max_age=result.session.max_age,
+                secure=secure(request),
+                **COOKIE_ATTRS,
+            )
+        response.delete_cookie(
+            SIGN_IN_COOKIE,
+            path=SIGN_IN_COOKIE_PATH,
+            httponly=True,
+            samesite="lax",
+            secure=secure(request),
+        )
+        return response
+
+    return router
+
+
+def _no_store(response: RedirectResponse) -> RedirectResponse:
+    """Keep a sign-in redirect out of caches and its URL out of the next page's ``Referer``.
+
+    Args:
+        response: The redirect.
+
+    Returns:
+        The same response.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response

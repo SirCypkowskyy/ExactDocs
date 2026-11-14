@@ -72,6 +72,54 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/auth/{provider}/start": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Start
+         * @description Start signing in through an identity provider (a browser navigation).
+         *
+         *     Redirects to the provider with a binding cookie; when the provider cannot be reached,
+         *     back to the sign-in page with `?error=provider_unavailable`.
+         */
+        readonly get: operations["identity-start"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/auth/{provider}/callback": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Callback
+         * @description Finish signing in: the identity provider sends the browser here.
+         *
+         *     The binding cookie is cleared whatever happens. Refusals go back to the sign-in page
+         *     with `?error=` and one of `sign_in_failed`, `sign_in_cancelled`, `not_allowed`,
+         *     `account_disabled`, `username_unavailable` or `provider_unavailable`; no session is
+         *     created then.
+         */
+        readonly get: operations["identity-callback"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/tokens": {
         readonly parameters: {
             readonly query?: never;
@@ -4538,6 +4586,12 @@ export interface components {
             readonly state: "setup_required" | "signed_out" | "signed_in";
             /** @description The signed-in account; `null` unless `state` is `signed_in`. */
             readonly account?: components["schemas"]["AccountSummary"] | null;
+            /**
+             * Providers
+             * @description The identity providers one may sign in with besides a password; empty when none is
+             *     configured (and while setup is due: the first admin is always local).
+             */
+            readonly providers?: readonly components["schemas"]["SignInProviderSummary"][];
         };
         /**
          * SettingsChange
@@ -4547,6 +4601,22 @@ export interface components {
          * @enum {string}
          */
         readonly SettingsChange: "paths" | "chunking" | "tags";
+        /**
+         * SignInProviderSummary
+         * @description A configured identity provider, as the sign-in page offers it.
+         */
+        readonly SignInProviderSummary: {
+            /**
+             * Name
+             * @description The provider's name: sign in at `GET /api/v1/auth/{name}/start`.
+             */
+            readonly name: string;
+            /**
+             * Display Name
+             * @description What its sign-in button says.
+             */
+            readonly display_name: string;
+        };
         /**
          * SourceErrorOut
          * @description A declared library that cannot be reconciled; apply leaves it alone.
@@ -5167,6 +5237,17 @@ export interface components {
              *     refused.
              */
             readonly disabled: boolean;
+            /**
+             * Provider
+             * @description The sign-in provider the account signs in through; `null` for a local account (password).
+             */
+            readonly provider?: string | null;
+            /**
+             * Groups
+             * @description The account's groups at its identity provider, as of its latest sign-in or revalidation
+             *     (with the provider's `group_prefix`); empty for a local account.
+             */
+            readonly groups?: readonly string[];
         };
         /**
          * VersionOut
@@ -5722,6 +5803,160 @@ export interface operations {
                 headers: {
                     /** @description Seconds to wait before the next attempt. */
                     readonly "Retry-After"?: number;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-start": {
+        readonly parameters: {
+            readonly query?: {
+                readonly return_to?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly provider: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description To the identity provider, or back to the sign-in page */
+            readonly 303: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-callback": {
+        readonly parameters: {
+            readonly query?: {
+                readonly code?: string | null;
+                readonly state?: string | null;
+                readonly error?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly provider: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Signed in, or back to the sign-in page with `?error=` */
+            readonly 303: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {

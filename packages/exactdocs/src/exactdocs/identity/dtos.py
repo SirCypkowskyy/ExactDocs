@@ -7,6 +7,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr, mod
 
 from exactdocs.identity.constants import (
     MAX_PASSWORD_LENGTH,
+    MAX_RETURN_TO_LENGTH,
     MAX_TOKEN_NAME_INPUT,
     MAX_USERNAME_LENGTH,
     MIN_PASSWORD_LENGTH,
@@ -15,7 +16,7 @@ from exactdocs.identity.constants import (
     TOKEN_NAME_DESCRIPTION,
     USERNAME_DESCRIPTION,
 )
-from exactdocs.identity.models import Account, ApiToken
+from exactdocs.identity.models import Account, ApiToken, SignInPolicy
 
 
 class _Dto(BaseModel):
@@ -163,16 +164,26 @@ class UserSummary(AccountSummary):
     disabled: bool
     """`true` while the account is disabled: it cannot sign in, and its sessions and tokens are
     refused."""
+    provider: str | None = None
+    """The sign-in provider the account signs in through; `null` for a local account (password)."""
+    groups: list[str] = Field(default_factory=list)
+    """The account's groups at its identity provider, as of its latest sign-in or revalidation
+    (with the provider's `group_prefix`); empty for a local account."""
 
     @classmethod
-    def from_model(cls, account: Account) -> Self:
+    def from_model(
+        cls, account: Account, *, provider: str | None = None, groups: list[str] | None = None
+    ) -> Self:
         """Map a domain entity to its boundary representation.
 
         Args:
             account: The account.
+            provider: The provider of an external account.
+            groups: The groups of an external account.
 
         Returns:
-            Its summary, with when it was created and whether it is disabled.
+            Its summary, with when it was created, whether it is disabled, and where it signs
+            in.
         """
         return cls(
             id=account.id,
@@ -180,6 +191,8 @@ class UserSummary(AccountSummary):
             role=account.role.value,
             created_at=account.created_at,
             disabled=account.is_disabled,
+            provider=provider,
+            groups=groups or [],
         )
 
 
@@ -220,6 +233,27 @@ class SessionGrant(_Dto):
     """Seconds until the session cannot be used any more, even if never idle."""
 
 
+class SignInProviderSummary(_Dto):
+    """A configured identity provider, as the sign-in page offers it."""
+
+    name: str
+    """The provider's name: sign in at `GET /api/v1/auth/{name}/start`."""
+    display_name: str
+    """What its sign-in button says."""
+
+    @classmethod
+    def from_model(cls, policy: SignInPolicy) -> Self:
+        """Map a provider's policy to what the sign-in page shows.
+
+        Args:
+            policy: The provider's policy.
+
+        Returns:
+            Its name and display name.
+        """
+        return cls(name=policy.name, display_name=policy.display_name)
+
+
 class SessionState(_Dto):
     """What the UI needs to know first: is setup due, is anyone signed in, and who."""
 
@@ -227,6 +261,67 @@ class SessionState(_Dto):
     """`setup_required` while no account exists, else whether the caller is signed in."""
     account: AccountSummary | None = None
     """The signed-in account; `null` unless `state` is `signed_in`."""
+    providers: list[SignInProviderSummary] = Field(default_factory=list)
+    """The identity providers one may sign in with besides a password; empty when none is
+    configured (and while setup is due: the first admin is always local)."""
+
+
+class StartExternalSignInCommand(_Dto):
+    """Start signing in through an identity provider."""
+
+    provider: str
+    """The provider's name."""
+    return_to: str | None = Field(default=None, max_length=4 * MAX_RETURN_TO_LENGTH)
+    """Where to go once signed in: a path on this server; anything else means `/`."""
+
+
+class ExternalSignInStart(_Dto):
+    """A started external sign-in: send the browser to ``redirect_url`` with the binding cookie."""
+
+    redirect_url: str
+    """The identity provider's authorization URL."""
+    binding: SecretStr
+    """The secret that binds the attempt to this browser, handed to it as a cookie."""
+    max_age: int
+    """Seconds the attempt may take."""
+
+
+class FinishExternalSignInCommand(_Dto):
+    """The identity provider's callback, with the browser's binding cookie."""
+
+    provider: str
+    """The provider's name, from the callback's path."""
+    binding: SecretStr | None = None
+    """The browser's binding cookie, if it sent one."""
+    state: str | None = Field(default=None, max_length=512)
+    """`state`, as the provider sent it back."""
+    code: str | None = Field(default=None, max_length=4096)
+    """The authorization code."""
+    error: str | None = Field(default=None, max_length=256)
+    """The provider's error, when it did not sign the person in."""
+
+
+class ExternalSignInResult(_Dto):
+    """A finished external sign-in: the new session, and where the browser goes now."""
+
+    session: SessionGrant
+    """The new session."""
+    return_to: str
+    """The same-origin path the sign-in was started for."""
+
+
+class RevalidationReport(_Dto):
+    """What one revalidation pass did with the external identities that were due."""
+
+    extended: int = 0
+    """Still allowed: access moved forward, groups and role refreshed."""
+    revoked: int = 0
+    """Membership lost or token refused: access ended, sessions deleted."""
+    unreachable: int = 0
+    """The provider could not be reached: access left as it was (it ends after the grace)."""
+    superseded: int = 0
+    """The link changed while the provider answered (a disable, a revocation or a sign-in):
+    the answer was dropped and the newer state kept."""
 
 
 class CreateTokenCommand(_Dto):

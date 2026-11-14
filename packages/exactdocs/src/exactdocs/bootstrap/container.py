@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Self
 
+import httpx2
 from sqlalchemy import NullPool
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -57,6 +58,7 @@ from exactdocs.bootstrap.constants import (
     KNOWN_HOSTS_FILE,
     LOCAL_PROFILE,
     LOCAL_PROFILE_HINT,
+    SIGN_IN_TOKENS_PURPOSE,
     UPKEEP_RECANCEL_SECONDS,
     UPKEEP_STOP_SECONDS,
     WEBHOOK_SECRETS_PURPOSE,
@@ -79,6 +81,12 @@ from exactdocs.bootstrap.repo_guidance import SetRetrievalThenReprocess
 from exactdocs.bootstrap.search_engine import PostgresSearchChoice
 from exactdocs.bootstrap.secret_box import FernetSecretBox, derived_key, read_key_file
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.bootstrap.sign_in import (
+    SignInStandIns,
+    revalidating,
+    sign_in_client,
+    sign_in_providers,
+)
 from exactdocs.bootstrap.telemetry import agent_reads as telemetry_agent_reads
 from exactdocs.bootstrap.telemetry import search_tracer, traced_job, traced_jobs
 from exactdocs.bootstrap.workdirs import held, new_work_root, sweep_abandoned_work
@@ -97,8 +105,10 @@ from exactdocs.identity.adapters.driven.argon2id import Argon2idPasswordHasher
 from exactdocs.identity.adapters.driven.memory import InMemoryFailedSignInLog
 from exactdocs.identity.adapters.driven.sqlite import (
     SqliteAccountRepository,
+    SqliteExternalIdentityRepository,
     SqliteFailedSignInLog,
     SqliteSessionRepository,
+    SqliteSignInAttemptRepository,
     SqliteTokenRepository,
 )
 from exactdocs.ingestion import IngestionModule, TagLocks, collect_job, import_job
@@ -364,6 +374,49 @@ def _secret_box(settings: Settings, purpose: bytes) -> FernetSecretBox:
         return FernetSecretBox.from_file(settings.data_dir / KEY_FILE, purpose=purpose)
     except ValueError as error:  # fixed texts: they never repeat a key
         raise StartupError(str(error)) from None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Identity:
+    """The identity domain, wired, with the HTTP client its identity providers use."""
+
+    module: IdentityModule
+    """The domain."""
+    client: httpx2.AsyncClient | None
+    """Calls the identity providers; ``None`` when none is configured."""
+
+
+def _identity(settings: Settings, engine: AsyncEngine, stand_ins: SignInStandIns) -> _Identity:
+    """Wire the identity domain, with the configured identity providers.
+
+    Args:
+        settings: The runtime configuration.
+        engine: The database.
+        stand_ins: Replace the domain's time and the providers' network (tests).
+
+    Returns:
+        The module, and the providers' HTTP client.
+    """
+    clock = stand_ins.clock or SystemClock()
+    client = sign_in_client(stand_ins.transport) if settings.auth.providers else None
+    providers, policies = sign_in_providers(settings, client, clock) if client else ({}, {})
+    identity = IdentityModule.build(
+        repository=SqliteAccountRepository(engine=engine),
+        sessions=SqliteSessionRepository(engine=engine),
+        tokens=SqliteTokenRepository(engine=engine),
+        hasher=Argon2idPasswordHasher(),
+        # Shared by every process on PostgreSQL; one process serves on SQLite.
+        failures=SqliteFailedSignInLog(engine=engine)
+        if is_postgres(engine)
+        else InMemoryFailedSignInLog(),
+        externals=SqliteExternalIdentityRepository(engine=engine),
+        attempts=SqliteSignInAttemptRepository(engine=engine),
+        box=_secret_box(settings, SIGN_IN_TOKENS_PURPOSE),
+        clock=clock,
+        providers=providers,
+        policies=policies,
+    )
+    return _Identity(module=identity, client=client)
 
 
 def _hyde_cache_key(settings: Settings, *, create: bool) -> bytes | None:
@@ -655,6 +708,43 @@ def _system_git(settings: Settings, engine: AsyncEngine) -> tuple[GitCli | Missi
     return git, owner
 
 
+def _with_system_git(
+    settings: Settings,
+    engine: AsyncEngine,
+    remote: GitRemote | None,
+    gateway: GitGateway | None,
+    renames: RenameSource | None,
+    tree: RepositoryTree | None,
+    files: RepositoryFiles | None,
+) -> tuple[
+    GitRemote, GitGateway, RenameSource | None, RepositoryTree, RepositoryFiles, Path | None
+]:
+    """Fill in the git adapters a caller did not hand in with the system ``git``.
+
+    Args:
+        settings: The instance's settings.
+        engine: The app's database.
+        remote: Lists refs, if given.
+        gateway: Fetches repositories, if given (then renames are only detected when
+            ``renames`` is given too).
+        renames: Detects renamed articles, if given.
+        tree: Reads one commit's tree, if given.
+        files: Reads instruction files, if given.
+
+    Returns:
+        The adapters, then the work folder ``running()`` holds on PostgreSQL (else ``None``).
+    """
+    git, work_owner = _system_git(settings, engine)
+    return (
+        remote or git,
+        gateway or git,
+        renames or (git if gateway is None else None),
+        tree or git,
+        files or git,
+        work_owner,
+    )
+
+
 def _require_shared_key(settings: Settings, engine: AsyncEngine) -> None:
     """Refuse PostgreSQL without ``EXACTDOCS_SECRET_KEY``.
 
@@ -854,6 +944,8 @@ class Container:
     """Runs the ``local`` profiles' models."""
     local_roles: LocalRoles = field(default=(), repr=False)
     """The instance roles on local profiles, loaded at start."""
+    sign_in_client: httpx2.AsyncClient | None = field(default=None, repr=False)
+    """Calls the identity providers; ``None`` when none is configured. Closed by ``running()``."""
     _run: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     """Held for the duration of ``running()``: a lock, so a run in another thread (a
     TestClient's event loop) is refused as well.
@@ -877,6 +969,7 @@ class Container:
         embedding_models: EmbeddingModels | None = None,
         clock: Clock | None = None,
         agent_reads: AgentReads | None = None,
+        sign_in: SignInStandIns | None = None,
     ) -> Self:
         """Choose driven adapters and connect domains through bridges.
 
@@ -905,6 +998,7 @@ class Container:
                 in-process one).
             clock: Decides retrieval's spend windows.
             agent_reads: Records the agentic explorer's reads (the eval suite's trace check).
+            sign_in: Replace the identity domain's time and the identity providers' network.
 
         Returns:
             The container, not running yet.
@@ -913,12 +1007,10 @@ class Container:
         _require_shared_key(settings, engine)
         work_owner = None
         if remote is None or gateway is None or tree is None:
-            git, work_owner = _system_git(settings, engine)
-            remote = remote or git
-            renames = renames or (git if gateway is None else None)
-            gateway = gateway or git
-            tree = tree or git
-            files = files or git
+            # The system `git` stands in for every git adapter a test did not hand in.
+            remote, gateway, renames, tree, files, work_owner = _with_system_git(
+                settings, engine, remote, gateway, renames, tree, files
+            )
         vault = SqliteCredentialVault(
             engine=engine, box=_secret_box(settings, CREDENTIALS_KEY_PURPOSE)
         )
@@ -1034,25 +1126,17 @@ class Container:
             webhook_deliveries=SqliteWebhookDeliveries(engine=engine),
             wrap_handler=traced_job(settings),  # the `push` handler, built inside the module
         )
+        identity = _identity(settings, engine, sign_in or SignInStandIns())
         return cls(
             settings=settings,
             engine=engine,
             work_owner=work_owner,
+            sign_in_client=identity.client,
             search_choice=read.search_choice,
             local=read.local,
             local_roles=read.local_roles,
             catalog=read.catalog,
-            identity=IdentityModule.build(
-                repository=SqliteAccountRepository(engine=engine),
-                sessions=SqliteSessionRepository(engine=engine),
-                tokens=SqliteTokenRepository(engine=engine),
-                hasher=Argon2idPasswordHasher(),
-                # Shared by every process on PostgreSQL; one process serves on SQLite.
-                failures=SqliteFailedSignInLog(engine=engine)
-                if is_postgres(engine)
-                else InMemoryFailedSignInLog(),
-                clock=SystemClock(),
-            ),
+            identity=identity.module,
             ingestion=ingestion,
             retrieval=read.retrieval,
             save_provider=SaveProviderThenEmbed(
@@ -1204,13 +1288,22 @@ class Container:
                     # one job runner; on PostgreSQL only the folders of processes that are gone.
                     sweep = sweep_abandoned_work if self.work_owner else sweep_stale_fetches
                     await asyncio.to_thread(sweep, self.settings.data_dir / WORK_DIR)
-                    async with self.job_worker.running(), self._embedding_queued():
+                    async with (
+                        self.job_worker.running(),
+                        self._embedding_queued(),
+                        revalidating(
+                            self.identity.revalidate_external_accounts,
+                            every=self.settings.auth.revalidate_poll_seconds,
+                        ),
+                    ):
                         yield
                 else:
                     yield
         finally:
             try:
                 self.local.close()  # queued local model calls are dropped, not waited for
+                if self.sign_in_client is not None:
+                    await self.sign_in_client.aclose()
                 await self.engine.dispose()
             finally:
                 self._run.release()

@@ -637,7 +637,8 @@ stateDiagram-v2
 
 ## Identity: accounts and the setup guard
 
-`identity` owns accounts (`identity_accounts`: username, password hash, `role`, created time).
+`identity` owns accounts (`identity_accounts`: username, password hash (NULL for an account of an
+identity provider, see [External sign-in](#external-sign-in-oidc)), `role`, created time).
 Passwords are hashed by the `PasswordHasher` driven port; its adapter is **argon2id**
 (`argon2-cffi`, RFC 9106 low-memory profile: 64 MiB, 3 passes), run in a thread, with `verify`
 constant-time, and at most 4 at a time (more calls queue; a dropped request keeps its slot
@@ -714,6 +715,75 @@ are `exd_` plus 256 random bits, stored as SHA-256, with an optional expiry; std
 authenticated: it runs on `ReadOnlyContainer` (database opened `mode=ro` + `query_only`, no identity,
 worker or migration), plus a second engine that may write the AI spend ledger alone (#274). Read-side wiring lives in `_build_read_side` in `bootstrap/container.py`;
 anything new on the read path goes there so stdio inherits it.
+
+### External sign-in (OIDC)
+
+Identity providers are configured in settings only (`[auth.providers.<name>]`,
+`bootstrap/settings.py:SignInProviderSettings`); nothing about them is stored. `bootstrap/sign_in.py`
+turns each into the domain's `SignInPolicy` (`models.py`: who is admitted, `admin_groups`,
+`group_prefix`, the revalidation times) and a `SignInProvider` driven adapter
+(`identity/adapters/driven/oidc.py:OidcProvider`: discovery, PKCE through Authlib, the ID token
+through joserfc, HTTP through `httpx2`). The redirect URI is built from `EXACTDOCS_PUBLIC_URL`.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant X as ExactDocs
+    participant P as Identity provider
+    B->>X: GET /api/v1/auth/corp/start?return_to=/x
+    X->>X: store attempt (state, nonce, PKCE verifier) under SHA-256(binding)
+    X-->>B: 303 to P, Set-Cookie exactdocs_sign_in=binding
+    B->>P: authorize (code_challenge S256, state, nonce)
+    P-->>B: 303 to /api/v1/auth/corp/callback?code&state
+    B->>X: callback + binding cookie
+    X->>X: DELETE ... RETURNING the attempt, check state, provider and age
+    X->>P: token (code, code_verifier, client auth)
+    X->>X: validate ID token (JWKS, iss, aud/azp, exp/iat, nonce)
+    X-->>B: 303 to /x, Set-Cookie exactdocs_session
+```
+
+- **Attempts** (`identity_sign_in_attempts`) hold `state`, `nonce`, the PKCE verifier, the
+  provider and `return_to` for 10 minutes, keyed by the SHA-256 of a random browser binding whose
+  value only the browser holds (an HttpOnly, SameSite=Lax cookie on `/api/v1/auth`). The
+  callback takes the row with `DELETE ... RETURNING` before anything else, so it works once on
+  any process, and needs the cookie, the row's provider and its `state` (compared in constant
+  time): login CSRF and replays are refused (`sign_in_failed`), and so is any ID token check.
+  Expired rows are pruned when the next attempt is stored. SameSite=Lax suffices because the
+  provider comes back with a top-level `GET` (`response_mode=query`).
+- **Links** (`identity_external_identities`, primary key (issuer, subject), one per account)
+  connect an identity to its account; email and username never do. A first allowed sign-in
+  creates the account (`password_hash` NULL) with its link and groups in one transaction
+  (`create_linked_account`): the unique username refuses a taken name (then `<name>@<provider>`
+  is tried) and the primary key a second link of the identity (two concurrent first sign-ins:
+  the loser uses the winner's account). `identity_account_groups` holds each account's groups
+  (with `group_prefix`), replaced at every sign-in and revalidation, for library roles (E12-05).
+  An account without a password costs one dummy hash at password sign-in, like an unknown user.
+- **Role**: `admin_groups` decides an external account's role at every sign-in and revalidation;
+  demotion is not held back by the last-enabled-admin guard (that guards the operator's disable
+  only), and a local account's role never changes through a provider.
+- **Access** ends at the link's `access_until`: `IdentifyCaller` and `IdentifyToken` refuse an
+  external account past it (the session row is deleted), so access fails closed even when no
+  revalidation runs. A sign-in or a successful check sets it to
+  `now + revalidate_minutes + revalidate_grace_minutes`; without a refresh token, to
+  `now + revalidate_grace_minutes`.
+- **Revalidation** (`RevalidateExternalAccounts`, run every `auth.revalidate_poll_seconds` by
+  `Container.running()` in the server only, never in the read-only stdio container): links whose
+  `next_check_at` passed and that hold a refresh token are claimed in batches with a lease
+  (`REVALIDATION_LEASE`; on PostgreSQL `FOR UPDATE SKIP LOCKED`, so processes share the work and
+  never check one link twice), then refreshed with the provider. Still allowed: groups, role,
+  `access_until` and the (possibly rotated) refresh token are stored, but only while the link is
+  still as it was claimed (`record_revalidation` compares its token and its sign-in, check and
+  access times, and that the account is not disabled, in the `UPDATE` itself): a disable,
+  revocation or sign-in that happened while the provider answered wins, and the answer is
+  dropped (`superseded`). A lost group, a refused
+  refresh token, claims of another subject, a token that no longer opens or a provider no longer
+  configured: `access_until` becomes now, the sealed token and groups are dropped and the
+  account's sessions deleted, until its next allowed sign-in. Unreachable: nothing changes; the
+  link is tried again after the lease, and access ends with the grace.
+- **Refresh tokens** are sealed by the bootstrap secret box under `SIGN_IN_TOKENS_PURPOSE`
+  through identity's own `SecretBox` port; disabling an account drops its sealed token.
+- **The local break-glass admin**: the setup still creates the first admin locally, external
+  sign-in sits behind `SetupGuard`, and password sign-in never depends on a provider.
 
 ## Background jobs
 

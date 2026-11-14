@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import weakref
-from collections.abc import AsyncGenerator, Iterable, Sequence
+from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -40,12 +40,15 @@ from exactdocs.identity.models import (
     Account,
     AccountId,
     ApiToken,
+    ExternalIdentity,
     FailedSignIns,
     Role,
     Session,
+    SignInAttempt,
     Username,
     known_sign_ins_prefix,
 )
+from exactdocs.identity.ports.driven import LinkOutcome
 
 # The identity tables, prefixed `identity_`. The schema itself is created by an Alembic revision
 # in `exactdocs.bootstrap`; this is only the adapter's query-side description of it.
@@ -55,7 +58,7 @@ accounts = Table(
     metadata,
     Column("id", Text, primary_key=True),
     Column("username", Text, nullable=False, unique=True),
-    Column("password_hash", Text, nullable=False),
+    Column("password_hash", Text),  # NULL for an account of an identity provider
     Column("role", Text, nullable=False),
     Column("created_at", Text, nullable=False),  # ISO 8601 with offset
     Column("disabled_at", Text),  # see `_stamp`; NULL while the account may sign in
@@ -92,6 +95,47 @@ failed_sign_ins = Table(
     Column("failures", Integer, nullable=False),
     Column("last_at", Text, nullable=False),  # see `_stamp`
     Column("previous_at", Text),
+)
+external_identities = Table(
+    "identity_external_identities",
+    metadata,
+    Column("issuer", Text, primary_key=True),
+    Column("subject", Text, primary_key=True),
+    Column(
+        "account_id",
+        Text,
+        ForeignKey("identity_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    ),
+    Column("provider", Text, nullable=False),
+    Column("sealed_tokens", Text),  # the refresh token, sealed; NULL when there is none
+    Column("signed_in_at", Text, nullable=False),  # see `_stamp`
+    Column("checked_at", Text, nullable=False),
+    Column("next_check_at", Text, nullable=False),
+    Column("access_until", Text, nullable=False),
+)
+account_groups = Table(
+    "identity_account_groups",
+    metadata,
+    Column(
+        "account_id",
+        Text,
+        ForeignKey("identity_accounts.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("name", Text, primary_key=True),
+)
+sign_in_attempts = Table(
+    "identity_sign_in_attempts",
+    metadata,
+    Column("binding_hash", Text, primary_key=True),
+    Column("provider", Text, nullable=False),
+    Column("state", Text, nullable=False),
+    Column("nonce", Text, nullable=False),
+    Column("code_verifier", Text, nullable=False),
+    Column("return_to", Text, nullable=False),
+    Column("created_at", Text, nullable=False),  # see `_stamp`
 )
 known_sign_ins = Table(
     "identity_known_sign_ins",
@@ -169,17 +213,9 @@ class SqliteAccountRepository:
         Returns:
             ``True`` when it was stored, ``False`` when another account has the username.
         """
-        values = {
-            "id": account.id,
-            "username": account.username.value,
-            "password_hash": account.password_hash,
-            "role": account.role.value,
-            "created_at": account.created_at.isoformat(),
-            "disabled_at": None if account.disabled_at is None else _stamp(account.disabled_at),
-        }
         try:
             async with self.engine.begin() as connection:
-                await connection.execute(insert(accounts).values(values))
+                await connection.execute(insert(accounts).values(_account_values(account)))
         except IntegrityError:
             return False
         return True
@@ -272,6 +308,25 @@ class SqliteAccountRepository:
         """
         async with self.engine.connect() as connection:
             return bool((await connection.execute(select(exists(select(accounts.c.id))))).scalar())
+
+
+def _account_values(account: Account) -> dict[str, Any]:
+    """Return the ``accounts`` row of a further account.
+
+    Args:
+        account: The account.
+
+    Returns:
+        Its column values.
+    """
+    return {
+        "id": account.id,
+        "username": account.username.value,
+        "password_hash": account.password_hash,
+        "role": account.role.value,
+        "created_at": account.created_at.isoformat(),
+        "disabled_at": None if account.disabled_at is None else _stamp(account.disabled_at),
+    }
 
 
 def _account(row: Row[Any]) -> Account:
@@ -915,3 +970,373 @@ async def _prune(connection: AsyncConnection, moment: Column[str], before: datet
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteSignInAttemptRepository:
+    """Implements ``ports.driven.SignInAttemptRepository`` (SQLite and PostgreSQL).
+
+    In the database, not in a process's memory: the callback may reach another process.
+    """
+
+    engine: AsyncEngine
+    """The database engine."""
+
+    async def add(self, attempt: SignInAttempt, *, expired_before: datetime) -> None:
+        """Store a new attempt, pruning the expired ones in the same transaction.
+
+        Args:
+            attempt: The attempt.
+            expired_before: Attempts started before this are deleted.
+        """
+        values = {
+            "binding_hash": attempt.binding_hash,
+            "provider": attempt.provider,
+            "state": attempt.state,
+            "nonce": attempt.nonce,
+            "code_verifier": attempt.code_verifier,
+            "return_to": attempt.return_to,
+            "created_at": _stamp(attempt.created_at),
+        }
+        stale = delete(sign_in_attempts).where(
+            sign_in_attempts.c.created_at < _stamp(expired_before)
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(stale)
+            await connection.execute(insert(sign_in_attempts).values(values))
+
+    async def take(self, binding_hash: str) -> SignInAttempt | None:
+        """Delete the attempt and return it, in one statement (``DELETE ... RETURNING``).
+
+        Args:
+            binding_hash: The hash of the browser's binding value.
+
+        Returns:
+            The attempt, or ``None`` when no row was deleted.
+        """
+        statement = (
+            delete(sign_in_attempts)
+            .where(sign_in_attempts.c.binding_hash == binding_hash)
+            .returning(*sign_in_attempts.c)
+        )
+        async with self.engine.begin() as connection:
+            row = (await connection.execute(statement)).first()
+        if row is None:
+            return None
+        return SignInAttempt(
+            binding_hash=row.binding_hash,
+            provider=row.provider,
+            state=row.state,
+            nonce=row.nonce,
+            code_verifier=row.code_verifier,
+            return_to=row.return_to,
+            created_at=datetime.fromisoformat(row.created_at),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteExternalIdentityRepository:
+    """Implements ``ports.driven.ExternalIdentityRepository`` (SQLite and PostgreSQL)."""
+
+    engine: AsyncEngine
+    """The database engine."""
+
+    async def get(self, issuer: str, subject: str) -> ExternalIdentity | None:
+        """Return the link of this identity, or ``None``.
+
+        Args:
+            issuer: The provider's issuer.
+            subject: The person's identifier at the issuer.
+
+        Returns:
+            The link, or ``None``.
+        """
+        query = select(external_identities).where(
+            external_identities.c.issuer == issuer, external_identities.c.subject == subject
+        )
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(query)).first()
+        return None if row is None else _identity(row)
+
+    async def get_for_account(self, account_id: AccountId) -> ExternalIdentity | None:
+        """Return the link of this account, or ``None``.
+
+        Args:
+            account_id: The account's id.
+
+        Returns:
+            The link, or ``None``.
+        """
+        query = select(external_identities).where(external_identities.c.account_id == account_id)
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(query)).first()
+        return None if row is None else _identity(row)
+
+    async def create_linked_account(
+        self, account: Account, identity: ExternalIdentity, groups: frozenset[str]
+    ) -> LinkOutcome:
+        """Store the account, its link and its groups in one transaction.
+
+        The unique username refuses a taken name, the primary key (issuer, subject) a second
+        link of the identity; either rolls everything back. Which one it was is read again
+        afterwards, so the answer holds whatever the dialect's error says.
+
+        Args:
+            account: The new account.
+            identity: Its link.
+            groups: Its groups.
+
+        Returns:
+            ``created``, ``username_taken`` or ``already_linked``.
+        """
+        try:
+            async with self.engine.begin() as connection:
+                await connection.execute(insert(accounts).values(_account_values(account)))
+                await connection.execute(
+                    insert(external_identities).values(_identity_values(identity))
+                )
+                await _replace_groups(connection, account.id, groups)
+        except IntegrityError:
+            if await self.get(identity.issuer, identity.subject) is not None:
+                return "already_linked"
+            return "username_taken"
+        return "created"
+
+    async def record_check(
+        self, identity: ExternalIdentity, *, role: Role, groups: frozenset[str]
+    ) -> None:
+        """Store the link's new state, the account's role and its groups in one transaction.
+
+        Args:
+            identity: The link as it is now.
+            role: The account's role now.
+            groups: The account's groups now.
+        """
+        values = _identity_values(identity)
+        del values["issuer"], values["subject"], values["account_id"]
+        link = update(external_identities).where(
+            external_identities.c.issuer == identity.issuer,
+            external_identities.c.subject == identity.subject,
+            external_identities.c.account_id == identity.account_id,
+        )
+        account = update(accounts).where(accounts.c.id == identity.account_id)
+        async with self.engine.begin() as connection:
+            await connection.execute(link.values(values))
+            await connection.execute(account.values(role=role.value))
+            await _replace_groups(connection, identity.account_id, groups)
+
+    async def record_revalidation(
+        self,
+        claimed: ExternalIdentity,
+        checked: ExternalIdentity,
+        *,
+        role: Role,
+        groups: frozenset[str],
+    ) -> bool:
+        """Store a successful revalidation, unless the link changed since it was claimed.
+
+        The link's ``UPDATE`` only matches while the row still holds the claimed tokens and
+        sign-in, check and access times and the account is not disabled (a compare-and-set, so
+        it holds on PostgreSQL under concurrent writers too: the row lock makes a concurrent
+        sign-in or revocation either finish first, and the compare then fails, or wait). The
+        role and the groups are written only when it matched, in the same transaction.
+
+        Args:
+            claimed: The link as ``claim_due`` returned it.
+            checked: The link after the check.
+            role: The account's role now.
+            groups: The account's groups now.
+
+        Returns:
+            ``True`` when stored; ``False`` when the link had changed (nothing is stored).
+        """
+        values = _identity_values(checked)
+        del values["issuer"], values["subject"], values["account_id"]
+        enabled = (
+            select(accounts.c.id)
+            .where(accounts.c.id == claimed.account_id, accounts.c.disabled_at.is_(None))
+            .exists()
+        )
+        link = update(external_identities).where(
+            external_identities.c.issuer == claimed.issuer,
+            external_identities.c.subject == claimed.subject,
+            external_identities.c.account_id == claimed.account_id,
+            # `==` against None renders `IS NULL`; claimed links hold a token anyway.
+            external_identities.c.sealed_tokens == claimed.sealed_tokens,
+            external_identities.c.signed_in_at == _stamp(claimed.signed_in_at),
+            external_identities.c.checked_at == _stamp(claimed.checked_at),
+            external_identities.c.access_until == _stamp(claimed.access_until),
+            enabled,
+        )
+        account = update(accounts).where(accounts.c.id == claimed.account_id)
+        async with self.engine.begin() as connection:
+            if (await connection.execute(link.values(values))).rowcount != 1:
+                return False
+            await connection.execute(account.values(role=role.value))
+            await _replace_groups(connection, claimed.account_id, groups)
+        return True
+
+    async def revoke(self, account_id: AccountId, now: datetime) -> None:
+        """End the account's access now, dropping its sealed tokens and its groups.
+
+        Args:
+            account_id: The account.
+            now: The current time.
+        """
+        statement = (
+            update(external_identities)
+            .where(external_identities.c.account_id == account_id)
+            .values(access_until=_stamp(now), sealed_tokens=None)
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(statement)
+            await _replace_groups(connection, account_id, frozenset())
+
+    async def forget_tokens(self, account_id: AccountId) -> None:
+        """Drop the account's sealed tokens.
+
+        Args:
+            account_id: The account.
+        """
+        statement = (
+            update(external_identities)
+            .where(external_identities.c.account_id == account_id)
+            .values(sealed_tokens=None)
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(statement)
+
+    async def claim_due(
+        self, now: datetime, *, lease_until: datetime, limit: int
+    ) -> list[ExternalIdentity]:
+        """Claim due links that hold a token, leasing them until ``lease_until``.
+
+        On PostgreSQL the rows are locked with ``FOR UPDATE SKIP LOCKED`` and leased in the same
+        transaction, so concurrent processes claim disjoint links; SQLite has one writer at a
+        time (``begin_immediate``).
+
+        Args:
+            now: The current time.
+            lease_until: Until when the claimed links are not due again.
+            limit: The most links to claim.
+
+        Returns:
+            The claimed links, as they were before the lease.
+        """
+        query = (
+            select(external_identities)
+            .where(
+                external_identities.c.sealed_tokens.is_not(None),
+                external_identities.c.next_check_at <= _stamp(now),
+            )
+            .order_by(external_identities.c.next_check_at)
+            .limit(limit)
+        )
+        engine = self.engine
+        if engine.dialect.name == "postgresql":
+            query = query.with_for_update(skip_locked=True)
+        else:
+            engine = engine.execution_options(begin_immediate=True)
+        async with engine.begin() as connection:
+            rows = (await connection.execute(query)).all()
+            for row in rows:
+                await connection.execute(
+                    update(external_identities)
+                    .where(
+                        external_identities.c.issuer == row.issuer,
+                        external_identities.c.subject == row.subject,
+                    )
+                    .values(next_check_at=_stamp(lease_until))
+                )
+        return [_identity(row) for row in rows]
+
+    async def groups_by_account(self) -> Mapping[AccountId, tuple[str, list[str]]]:
+        """Return the provider and the groups of every linked account.
+
+        Returns:
+            For each linked account: its provider's name and its groups, sorted.
+        """
+        async with self.engine.connect() as connection:
+            links = (
+                await connection.execute(
+                    select(external_identities.c.account_id, external_identities.c.provider)
+                )
+            ).all()
+            groups = (
+                await connection.execute(
+                    select(account_groups.c.account_id, account_groups.c.name).order_by(
+                        account_groups.c.account_id, account_groups.c.name
+                    )
+                )
+            ).all()
+        found: dict[AccountId, tuple[str, list[str]]] = {
+            AccountId(row.account_id): (row.provider, []) for row in links
+        }
+        for row in groups:
+            if (entry := found.get(AccountId(row.account_id))) is not None:
+                entry[1].append(row.name)
+        return found
+
+
+def _identity_values(identity: ExternalIdentity) -> dict[str, Any]:
+    """Return the ``external_identities`` row of a link.
+
+    Args:
+        identity: The link.
+
+    Returns:
+        Its column values.
+    """
+    return {
+        "issuer": identity.issuer,
+        "subject": identity.subject,
+        "account_id": identity.account_id,
+        "provider": identity.provider,
+        "sealed_tokens": identity.sealed_tokens,
+        "signed_in_at": _stamp(identity.signed_in_at),
+        "checked_at": _stamp(identity.checked_at),
+        "next_check_at": _stamp(identity.next_check_at),
+        "access_until": _stamp(identity.access_until),
+    }
+
+
+def _identity(row: Row[Any]) -> ExternalIdentity:
+    """Map an ``external_identities`` row to its entity.
+
+    Args:
+        row: The row.
+
+    Returns:
+        The link.
+    """
+    return ExternalIdentity(
+        issuer=row.issuer,
+        subject=row.subject,
+        account_id=AccountId(row.account_id),
+        provider=row.provider,
+        sealed_tokens=row.sealed_tokens,
+        signed_in_at=datetime.fromisoformat(row.signed_in_at),
+        checked_at=datetime.fromisoformat(row.checked_at),
+        next_check_at=datetime.fromisoformat(row.next_check_at),
+        access_until=datetime.fromisoformat(row.access_until),
+    )
+
+
+async def _replace_groups(
+    connection: AsyncConnection, account_id: str, groups: frozenset[str]
+) -> None:
+    """Replace the account's groups, in the caller's transaction.
+
+    Args:
+        connection: The connection, in a transaction.
+        account_id: The account.
+        groups: Its groups now.
+    """
+    await connection.execute(
+        delete(account_groups).where(account_groups.c.account_id == account_id)
+    )
+    if groups:
+        await connection.execute(
+            insert(account_groups),
+            [{"account_id": account_id, "name": name} for name in sorted(groups)],
+        )

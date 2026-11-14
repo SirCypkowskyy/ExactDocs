@@ -1,8 +1,12 @@
 from exactdocs.identity.ports.driven import (
     AccountRepository,
+    ExternalIdentityRepository,
     FailedSignInLog,
     PasswordHasher,
+    SecretBox,
     SessionRepository,
+    SignInAttemptRepository,
+    SignInProvider,
     TokenRepository,
 )
 from exactdocs.identity.ports.driving import (
@@ -10,6 +14,7 @@ from exactdocs.identity.ports.driving import (
     CreateFirstAdmin,
     CreateToken,
     CreateUser,
+    FinishExternalSignIn,
     GetSessionState,
     GetSetupState,
     IdentifyCaller,
@@ -17,10 +22,12 @@ from exactdocs.identity.ports.driving import (
     ListTokens,
     ListUsers,
     ResetPassword,
+    RevalidateExternalAccounts,
     RevokeToken,
     SetUserDisabled,
     SignIn,
     SignOut,
+    StartExternalSignIn,
 )
 
 __all__ = [
@@ -29,7 +36,9 @@ __all__ = [
     "CreateFirstAdmin",
     "CreateToken",
     "CreateUser",
+    "ExternalIdentityRepository",
     "FailedSignInLog",
+    "FinishExternalSignIn",
     "GetSessionState",
     "GetSetupState",
     "IdentifyCaller",
@@ -38,10 +47,15 @@ __all__ = [
     "ListUsers",
     "PasswordHasher",
     "ResetPassword",
+    "RevalidateExternalAccounts",
     "RevokeToken",
+    "SecretBox",
     "SessionRepository",
     "SetUserDisabled",
     "SignIn",
+    "SignInAttemptRepository",
+    "SignInProvider",
     "SignOut",
+    "StartExternalSignIn",
     "TokenRepository",
 ]

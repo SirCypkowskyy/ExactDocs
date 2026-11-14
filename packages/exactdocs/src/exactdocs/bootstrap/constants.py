@@ -353,6 +353,15 @@ AI_KEYS_PURPOSE: Final[bytes] = b"exactdocs ai provider keys v1"
 Its own context: a provider key never opens with the credentials' key, nor the reverse. Never
 change it: every stored provider key is sealed with the key derived from it.
 """
+SIGN_IN_TOKENS_PURPOSE: Final[bytes] = b"exactdocs sign-in tokens v1"
+"""HKDF context (``purpose``) of the key that seals the refresh tokens of external identities.
+
+Its own context: a refresh token never opens with another use's key, nor the reverse. Never change
+it: every stored refresh token is sealed with the key derived from it (changing it ends the access
+of every external account at its next revalidation, until it signs in again).
+"""
+SIGN_IN_STOP_SECONDS: Final[float] = 5.0
+"""How long stopping the server waits for a revalidation pass to stop once cancelled."""
 WEBHOOK_SECRETS_PURPOSE: Final[bytes] = b"exactdocs webhook secrets v1"
 """HKDF context (``purpose``) of the key that seals the libraries' push webhook secrets.
 

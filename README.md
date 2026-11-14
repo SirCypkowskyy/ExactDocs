@@ -472,9 +472,11 @@ of it.
 | `EXACTDOCS_SECRET_KEY_PREVIOUS` | – | Rotation: set the new key in `EXACTDOCS_SECRET_KEY` and the old one here. Credentials sealed with the old key still open and are sealed with the new one whenever they are sent again; remove this once they all were. HyDE's and the agentic cache's answers are keyed with the current key only, so after a rotation every cached answer is a miss (the LLM is asked again) until the TTL prunes the old rows |
 | `EXACTDOCS_ALLOWED_HOSTS` | – | Host names besides localhost the server answers to, comma-separated (e.g. `docs.example.com,*.corp.example`); needed behind a reverse proxy or on a LAN address |
 | `EXACTDOCS_ALLOWED_ORIGINS` | – | Browser origins allowed to make state-changing requests, comma-separated |
-| `EXACTDOCS_SECURE_COOKIES` | `false` | The session cookie is always `Secure` over HTTPS; set `true` when TLS ends at a proxy that does not forward `X-Forwarded-Proto` from a trusted address |
+| `EXACTDOCS_SECURE_COOKIES` | `false` | The session cookie is always `Secure` over HTTPS, and whenever `EXACTDOCS_PUBLIC_URL` is `https://`; set `true` when TLS ends at a proxy that does not forward `X-Forwarded-Proto` from a trusted address and no public URL is set |
 | `EXACTDOCS_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-*` headers are trusted (scheme, and the client address the sign-in throttle counts) |
-| `EXACTDOCS_CONFIG_FILE` | unset | A TOML file with the same settings (the `[ai]` section above); the environment wins over it. It may not hold keys or `secret_key`: those come from the environment or `api_key_file` |
+| `EXACTDOCS_CONFIG_FILE` | unset | A TOML file with the same settings (the `[ai]` and `[auth]` sections); the environment wins over it. It may not hold keys, client secrets or `secret_key`: those come from the environment, `api_key_file` or `client_secret_file` |
+| `EXACTDOCS_PUBLIC_URL` | unset | The URL people reach the server at, without a path (`https://docs.example.com`). Required once a sign-in provider is configured: the redirect URI to register at the provider is `<public_url>/api/v1/auth/<name>/callback`, never built from a request's `Host` |
+| `EXACTDOCS_AUTH__PROVIDERS__<NAME>__<FIELD>` | unset | Identity providers to sign in with, see [Sign-in through an identity provider](#sign-in-through-an-identity-provider-oidc) |
 | `EXACTDOCS_AI__PROVIDERS__<NAME>__<FIELD>`, `EXACTDOCS_AI__<ROLE>__MODEL` | unset | AI provider profiles and model roles, see [AI providers and model roles](#ai-providers-and-model-roles) |
 | `EXACTDOCS_AI__MODE` | unset (`auto`) | The retrieval mode of searches that name none, for libraries without their own: `bm25`, `hybrid`, `hybrid_hyde` or `agentic`; unset or `auto`: the best default mode the configured models allow, which is BM25 until the eval suite makes another mode a default. An unknown name stops the server at start; a mode whose model is not configured falls back with `fallback_reason: mode_unavailable` (see [Retrieval](#retrieval)) |
 | `EXACTDOCS_AI__HYDE__CACHE_TTL` | `P30D` (30 days) | How long a HyDE hypothetical answer stays cached (seconds or an ISO 8601 duration). Once a day (just after UTC midnight, and at start; one process on PostgreSQL), and after every collection, the server deletes older answers and those of an `llm` model no longer configured; answers are also deleted when their version's manifest is collected |
@@ -1106,6 +1108,11 @@ services:
       EXACTDOCS_DATABASE_URL: postgresql://exactdocs:${POSTGRES_PASSWORD}@db:5432/exactdocs
       EXACTDOCS_SECRET_KEY: ${EXACTDOCS_SECRET_KEY:?set EXACTDOCS_SECRET_KEY}
       WEB_CONCURRENCY: "2" # server processes; on PostgreSQL every one serves and runs jobs
+      # Sign-in through an OIDC provider (README, "Sign-in through an identity provider"): the
+      # provider itself in the TOML file ([auth.providers.corp]), its secret from the environment.
+      # EXACTDOCS_PUBLIC_URL: https://docs.example.com
+      # EXACTDOCS_CONFIG_FILE: /run/exactdocs.toml
+      # EXACTDOCS_AUTH__PROVIDERS__CORP__CLIENT_SECRET: ${CORP_CLIENT_SECRET}
     ports: ["127.0.0.1:3000:3000"]
     read_only: true
     tmpfs: [/tmp]
@@ -1299,11 +1306,92 @@ admin. A reset also clears the username's sign-in throttle, as `admin reset-pass
 library roles arrive, every signed-in account may read and change every library and the AI
 settings; only managing accounts is reserved to admins.
 
+### Sign-in through an identity provider (OIDC)
+
+People can sign in with the identity they already have, through any OpenID Connect provider
+(Keycloak, Entra ID, Okta, Google, ADFS 2016+), and access follows the provider: whoever leaves an
+allowed group loses access without anyone touching ExactDocs. Configure a provider in the
+`EXACTDOCS_CONFIG_FILE` TOML file (or `EXACTDOCS_AUTH__PROVIDERS__<NAME>__<FIELD>`; lists are JSON
+there, `'["docs"]'`) and set `EXACTDOCS_PUBLIC_URL`:
+
+```toml
+# exactdocs.toml (EXACTDOCS_CONFIG_FILE); the client secret is never in this file
+public_url = "https://docs.example.com"
+
+[auth.providers.corp]            # the name: lower-case letters, digits, hyphens
+kind = "oidc"
+display_name = "Corp SSO"        # the sign-in button: "Sign in with Corp SSO"
+issuer = "https://idp.example.com/realms/corp"   # exactly as discovery's `issuer`
+client_id = "exactdocs"
+# client_secret: EXACTDOCS_AUTH__PROVIDERS__CORP__CLIENT_SECRET, or client_secret_file = "/run/secrets/corp"
+allowed_groups = ["docs-readers"]   # or allow_any_user = true; one of the two is required
+admin_groups = ["exactdocs-admins"] # role admin while in one of them, else user
+# groups_claim = "groups"           # a dotted path: Keycloak "realm_access.roles", ADFS "group"
+# username_claim = "preferred_username"   # ADFS: "upn" or "unique_name"
+# group_prefix = ""                 # put before each stored group name, e.g. "corp:"
+# scopes = ["openid", "profile", "email", "offline_access"]
+# revalidate_minutes = 60
+# revalidate_grace_minutes = 1440
+```
+
+Register `https://docs.example.com/api/v1/auth/corp/callback` as the client's redirect URI at the
+provider (a confidential client with a secret, or a public one without). The sign-in page then
+shows a **Sign in with Corp SSO** button next to the password form; password sign-in stays, and
+the first admin is always created locally by the setup, so it keeps working as a break-glass
+account even while every provider is down. Several providers can be configured at once. An invalid
+provider stops the start with a message naming the field.
+
+- **The flow** is the authorization code flow with PKCE (`S256`), `state` and `nonce`, with
+  discovery from the issuer's `/.well-known/openid-configuration` (fetched on the first sign-in,
+  cached for an hour; its `issuer` must equal the configured one exactly). The ID token must be
+  signed by a key of the issuer's JWKS with an asymmetric algorithm the issuer advertises (never
+  `none` or `HS*`), carry the configured issuer, the client ID in `aud` (`azp` when there are
+  several audiences), the attempt's `nonce`, and be within its times (60 s leeway). A new signing
+  key (rotation) is fetched on the first token that names it, at most once a minute. The issuer
+  must be HTTPS (plain HTTP only to a loopback host, for development).
+- **Accounts** are linked to the identity by (issuer, subject) only, never by email or username.
+  The first allowed sign-in creates the account (role `user`, or `admin` through `admin_groups`),
+  named after the provider's username (else the email's local part); when another account has
+  that name, local or of another provider, it is named `<username>@<provider>` instead, so an
+  existing account is never taken over; when that is taken too, the sign-in is refused
+  (`username_unavailable`) and the operator can free a name. The name is set once: a rename at the
+  provider does not rename the account. External accounts have no password: password sign-in and
+  `exactdocs login` treat them as unknown, a password reset is refused (`external_account`); they
+  create API tokens on the **Account** page.
+- **Groups and role** are read from `groups_claim` (from userinfo when the ID token lacks it) at
+  every sign-in and revalidation, stored for the account (the Users page shows them, with the
+  provider), and decide the role: losing the admin group demotes at once, even the last admin.
+  Only `allowed_groups` admit someone (`allow_any_user = true` admits everyone the provider
+  vouches for); the comparison uses the names the provider sends, `group_prefix` only changes the
+  stored name.
+- **Revalidation**: the server asks for `offline_access` and keeps the refresh token, encrypted
+  with the instance's secret key (its own HKDF purpose). Every `revalidate_minutes` it refreshes
+  each identity's claims (on PostgreSQL the processes share the work): still allowed moves access
+  forward and refreshes groups and role; a lost group or a revoked refresh token ends the
+  account's sessions and refuses its API tokens until its next allowed sign-in. A provider that
+  cannot be reached keeps access for at most `revalidate_grace_minutes`, then access fails closed.
+  A provider that issues no refresh token limits each session to `revalidate_grace_minutes` after
+  sign-in. Disabling an account deletes its stored refresh token; a disabled account stays
+  disabled whatever the provider says.
+- **Signing out** ends the ExactDocs session only; the session at the provider is left alone, so
+  **Sign in with ...** may sign you straight back in.
+- **ADFS** (2016+) is an `oidc` provider: issuer `https://<adfs host>/adfs`, an application group
+  with a server application (client ID and secret) and the redirect URI above, and refresh tokens
+  enabled. The username comes from `username_claim = "upn"` (or `unique_name`); for the groups,
+  set `groups_claim = "group"` and add an issuance transform rule on the web API that sends them,
+  e.g. *Send LDAP Attributes as Claims*, attribute store Active Directory, `Token-Groups -
+  Unqualified Names` to outgoing claim type `group`.
+- **Entra ID** sends at most 200 groups in a token (group overage); beyond that, filter the
+  groups sent to the app or use app roles (`groups_claim = "roles"`) on the Entra side.
+
+OAuth2-only providers and GitHub / GitHub Enterprise with organization and team checks follow in
+#383.
+
 ### Planned
 
-An instance can already run on [PostgreSQL](#postgresql) with several
-server processes; for teams, the plan is to sign in through OIDC/OAuth, and share libraries with users or
-identity-provider groups:
+An instance can already run on [PostgreSQL](#postgresql) with several server processes and sign
+people in through OIDC; for teams, the plan is to share libraries with users or identity-provider
+groups:
 
 | Role | Can |
 |---|---|

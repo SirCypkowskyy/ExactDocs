@@ -41,6 +41,7 @@ from exactdocs.identity.models import (
     hash_token,
 )
 from exactdocs.identity.module import IdentityModule
+from identity_stand_ins import no_external_sign_in
 
 HORSE = "correct horse battery staple"
 BOB = "bob's long passphrase"
@@ -88,6 +89,7 @@ def build() -> World:
         hasher=FakeHasher(),
         failures=failures,
         clock=clock,
+        **no_external_sign_in(),
     )
     return World(identity, accounts, sessions, tokens, failures, clock)
 
@@ -211,6 +213,7 @@ async def test_a_lost_race_for_a_username_is_refused_too(world: World) -> None:
         hasher=FakeHasher(),
         failures=world.failures,
         clock=world.clock,
+        **no_external_sign_in(),
     )
 
     with pytest.raises(UsernameTakenError):
