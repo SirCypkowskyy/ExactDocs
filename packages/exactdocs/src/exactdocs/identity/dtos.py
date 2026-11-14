@@ -319,6 +319,9 @@ class RevalidationReport(_Dto):
     """Membership lost or token refused: access ended, sessions deleted."""
     unreachable: int = 0
     """The provider could not be reached: access left as it was (it ends after the grace)."""
+    superseded: int = 0
+    """The link changed while the provider answered (a disable, a revocation or a sign-in):
+    the answer was dropped and the newer state kept."""
 
 
 class CreateTokenCommand(_Dto):

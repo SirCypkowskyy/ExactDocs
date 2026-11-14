@@ -526,6 +526,34 @@ class InMemoryExternalIdentityRepository:
         if account is not None:
             self.accounts.accounts[account.username] = replace(account, role=role)
 
+    async def record_revalidation(
+        self,
+        claimed: ExternalIdentity,
+        checked: ExternalIdentity,
+        *,
+        role: Role,
+        groups: frozenset[str],
+    ) -> bool:
+        """Store a successful revalidation, unless the link changed since it was claimed.
+
+        Args:
+            claimed: The link as ``claim_due`` returned it.
+            checked: The link after the check.
+            role: The account's role now.
+            groups: The account's groups now.
+
+        Returns:
+            ``True`` when stored; ``False`` when the link had changed.
+        """
+        current = self.links.get((claimed.issuer, claimed.subject))
+        account = await self.accounts.get_by_id(claimed.account_id)
+        if current is None or account is None or account.is_disabled:
+            return False
+        if _revision(current) != _revision(claimed):
+            return False
+        await self.record_check(checked, role=role, groups=groups)
+        return True
+
     async def revoke(self, account_id: AccountId, now: datetime) -> None:
         """End the account's access now, dropping its tokens and groups.
 
@@ -581,3 +609,23 @@ class InMemoryExternalIdentityRepository:
             ln.account_id: (ln.provider, sorted(self.groups.get(ln.account_id, ())))
             for ln in self.links.values()
         }
+
+
+def _revision(link: ExternalIdentity) -> tuple[object, ...]:
+    """Return what a sign-in, a revalidation, a revocation or a disable changes in a link.
+
+    The lease (``next_check_at``) is left out: claiming a link changes it.
+
+    Args:
+        link: The link.
+
+    Returns:
+        The fields compared before a revalidation is stored.
+    """
+    return (
+        link.account_id,
+        link.sealed_tokens,
+        link.signed_in_at,
+        link.checked_at,
+        link.access_until,
+    )

@@ -47,7 +47,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   "signed_in", "account": ..., "providers": [{"name", "display_name"}]}` and never fails
   (`providers` lists the configured identity providers, empty while setup is due); `DELETE /session` ends the session on the server
   and is always 204. The cookie is an opaque random token (stored hashed), HttpOnly,
-  SameSite=Lax, `Secure` over HTTPS (or with `EXACTDOCS_SECURE_COOKIES`), `Path=/api`, ends after
+  SameSite=Lax, `Secure` over HTTPS (or with `EXACTDOCS_SECURE_COOKIES`, or an `https://` `EXACTDOCS_PUBLIC_URL`), `Path=/api`, ends after
   7 days idle or 30 days in all. Unsafe requests with a foreign `Origin` are refused with 403
   (also sign-in and sign-out). `/mcp` never looks at the cookie; it takes API tokens only. Signing in again with a live
   cookie ends that old session. The cookie's `Max-Age` is the 30-day limit; idle expiry is

@@ -78,7 +78,8 @@ async def instance() -> AsyncIterator[Instance]:
             CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
         )
         transport = httpx.ASGITransport(app=create_app(container))
-        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        # HTTPS, as the public URL says: the cookies are `Secure`, and the jar sends them back.
+        async with httpx.AsyncClient(transport=transport, base_url="https://localhost") as client:
             yield Instance(container=container, client=client, issuer=issuer, clock=clock)
 
 
@@ -131,6 +132,43 @@ async def test_the_start_binds_the_attempt_to_the_browser(instance: Instance) ->
     assert f"{location.scheme}://{location.netloc}{location.path}" == f"{ISSUER}/authorize"
     assert query["redirect_uri"] == [f"{PUBLIC}/api/v1/auth/corp/callback"]
     assert binding.value not in response.headers["location"]
+
+
+@pytest.mark.parametrize(
+    ("public_url", "secure"), [(PUBLIC, True), ("http://localhost:3000", False)]
+)
+async def test_an_https_public_url_makes_the_cookies_secure(public_url: str, secure: bool) -> None:
+    """The request arrives over plain HTTP (a proxy that does not forward the scheme)."""
+    issuer = FakeIssuer()
+    issuer.add_user("u-1", "alice", groups=["docs"])
+    container = Container.build(
+        settings(public_url=public_url), sign_in=SignInStandIns(transport=issuer.transport())
+    )
+    async with container.running():
+        await container.identity.create_first_admin(
+            CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
+        )
+        transport = httpx.ASGITransport(app=create_app(container))
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+            begun = await client.get("/api/v1/auth/corp/start")
+            binding = cookie(begun, SIGN_IN_COOKIE)
+            callback = issuer.authorize(begun.headers["location"], "u-1")
+            finished = await client.get(
+                callback, headers={"cookie": f"{SIGN_IN_COOKIE}={binding.value}"}
+            )
+            client.cookies.clear()
+            password = await client.post(
+                "/api/v1/session", json={"username": "ada", "password": HORSE}
+            )
+
+    assert finished.headers["location"] == "/"
+    for response, name in [
+        (begun, SIGN_IN_COOKIE),
+        (finished, SIGN_IN_COOKIE),
+        (finished, SESSION_COOKIE),
+        (password, SESSION_COOKIE),
+    ]:
+        assert bool(cookie(response, name)["secure"]) is secure, name
 
 
 async def test_the_redirect_uri_never_follows_the_host_header(instance: Instance) -> None:
@@ -289,7 +327,7 @@ def test_the_cli_refuses_to_reset_an_external_accounts_password(tmp_path: Path) 
             )
             transport = httpx.ASGITransport(app=create_app(container))
             async with httpx.AsyncClient(
-                transport=transport, base_url="http://localhost"
+                transport=transport, base_url="https://localhost"
             ) as client:
                 inst = Instance(container=container, client=client, issuer=issuer, clock=clock)
                 assert (await sign_in(inst)).headers["location"] == "/"
@@ -310,7 +348,7 @@ async def test_before_the_setup_no_external_sign_in_starts() -> None:
     container = Container.build(settings(), sign_in=SignInStandIns(transport=issuer.transport()))
     async with container.running():
         transport = httpx.ASGITransport(app=create_app(container))
-        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        async with httpx.AsyncClient(transport=transport, base_url="https://localhost") as client:
             response = await client.get("/api/v1/auth/corp/start")
 
     assert response.status_code == 403

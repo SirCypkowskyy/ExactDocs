@@ -4,7 +4,9 @@ Each is ``Final`` and documented; see *Python conventions* in docs/architecture.
 """
 
 import ipaddress
+from collections.abc import Mapping
 from datetime import timedelta
+from types import MappingProxyType
 from typing import Final, Literal, TypedDict
 
 # ---------------------------------------------------------------- models
@@ -135,10 +137,19 @@ ASYMMETRIC_ALGORITHMS: Final[frozenset[str]] = frozenset(
 )
 """The ID token signatures accepted, when the issuer advertises them: never ``none``, never an
 ``HS*`` MAC (whose key would be the client secret, or worse, the issuer's public key)."""
+SIGNING_KEY_TYPES: Final[Mapping[str, str]] = MappingProxyType(
+    {"RS": "RSA", "PS": "RSA", "ES": "EC", "Ed": "OKP"}
+)
+"""The JWK key type each family of ``ASYMMETRIC_ALGORITHMS`` signs with, by the algorithm name's
+first two letters (a token without a ``kid`` is tried with the keys of that type)."""
+NUMERIC_DATE_CLAIMS: Final[tuple[str, ...]] = ("exp", "iat", "nbf")
+"""The ID token's times: when present, each must be an integer (JSON booleans, fractions,
+``NaN`` and infinities are refused)."""
 OIDC_TIMEOUT: Final[float] = 10.0
 """Seconds one call to an identity provider may take (discovery, JWKS, token, userinfo)."""
 MAX_PROVIDER_RESPONSE_BYTES: Final[int] = 1 * 2**20
-"""An identity provider's answer above this size is refused unread to the end."""
+"""An identity provider's answer above this size is refused unread to the end (checked while it
+streams in, decoded)."""
 _BAD_REQUEST: Final[int] = 400
 """The token endpoint's status for a refused grant (RFC 6749 section 5.2)."""
 _UNAUTHORIZED: Final[int] = 401

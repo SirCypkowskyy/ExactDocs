@@ -169,6 +169,112 @@ async def test_a_check_replaces_the_link_the_role_and_the_groups(stores: Stores)
     assert await stores.externals.groups_by_account() == {alice.id: ("corp", ["c"])}
 
 
+def revalidated(claimed: ExternalIdentity) -> ExternalIdentity:
+    later = NOW + timedelta(hours=2)
+    return replace(
+        claimed,
+        sealed_tokens="refreshed",
+        checked_at=later,
+        next_check_at=later + timedelta(hours=1),
+        access_until=later + timedelta(hours=25),
+    )
+
+
+async def claimed_link(stores: Stores, groups: frozenset[str] = frozenset({"a"})) -> Account:
+    alice = account("alice")
+    due = link("u-1", alice.id, next_check_at=NOW - timedelta(minutes=1))
+    await stores.externals.create_linked_account(alice, due, groups)
+    return alice
+
+
+async def claim(stores: Stores) -> ExternalIdentity:
+    (claimed,) = await stores.externals.claim_due(
+        NOW, lease_until=NOW + timedelta(minutes=10), limit=1
+    )
+    return claimed
+
+
+async def test_a_revalidation_of_an_unchanged_link_is_stored(stores: Stores) -> None:
+    alice = await claimed_link(stores)
+    claimed = await claim(stores)
+    checked = revalidated(claimed)
+
+    stored = await stores.externals.record_revalidation(
+        claimed, checked, role=Role.ADMIN, groups=frozenset({"c"})
+    )
+
+    assert stored
+    assert await stores.externals.get(ISSUER, "u-1") == checked
+    found = await stores.accounts.get_by_id(alice.id)
+    assert found is not None
+    assert found.role is Role.ADMIN
+    assert await stores.externals.groups_by_account() == {alice.id: ("corp", ["c"])}
+
+
+async def change_disable(stores: Stores, alice: Account) -> None:
+    await stores.accounts.set_disabled_at(alice.id, NOW)
+    await stores.externals.forget_tokens(alice.id)
+
+
+async def change_disable_flag_only(stores: Stores, alice: Account) -> None:
+    """The disable's first write landed, its ``forget_tokens`` has not run yet."""
+    await stores.accounts.set_disabled_at(alice.id, NOW)
+
+
+async def change_revoke(stores: Stores, alice: Account) -> None:
+    await stores.externals.revoke(alice.id, NOW)
+
+
+async def change_sign_in(stores: Stores, alice: Account) -> None:
+    signed_in = NOW + timedelta(minutes=1)
+    fresh = link(
+        "u-1",
+        alice.id,
+        sealed_tokens="from the sign-in",
+        signed_in_at=signed_in,
+        checked_at=signed_in,
+        next_check_at=signed_in + timedelta(hours=1),
+        access_until=signed_in + timedelta(hours=25),
+    )
+    await stores.externals.record_check(fresh, role=Role.USER, groups=frozenset({"new"}))
+
+
+async def change_other_pass(stores: Stores, alice: Account) -> None:
+    """Another pass claimed the link after the lease and stored its own answer first."""
+    del alice
+    claimed = await stores.externals.get(ISSUER, "u-1")
+    assert claimed is not None
+    first = replace(revalidated(claimed), sealed_tokens="the other pass's")
+    assert await stores.externals.record_revalidation(
+        claimed, first, role=Role.USER, groups=frozenset({"other"})
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [change_disable, change_disable_flag_only, change_revoke, change_sign_in, change_other_pass],
+)
+async def test_a_revalidation_of_a_link_changed_meanwhile_stores_nothing(
+    stores: Stores, change: Any
+) -> None:
+    alice = await claimed_link(stores)
+    claimed = await claim(stores)
+    await change(stores, alice)
+    before = await stores.externals.get(ISSUER, "u-1")
+    groups_before = await stores.externals.groups_by_account()
+
+    stored = await stores.externals.record_revalidation(
+        claimed, revalidated(claimed), role=Role.ADMIN, groups=frozenset({"stale"})
+    )
+
+    assert not stored
+    assert await stores.externals.get(ISSUER, "u-1") == before
+    assert await stores.externals.groups_by_account() == groups_before
+    found = await stores.accounts.get_by_id(alice.id)
+    assert found is not None
+    assert found.role is Role.USER
+
+
 async def test_revoking_ends_access_and_drops_tokens_and_groups(stores: Stores) -> None:
     alice = account("alice")
     await stores.externals.create_linked_account(alice, link("u-1", alice.id), frozenset({"a"}))

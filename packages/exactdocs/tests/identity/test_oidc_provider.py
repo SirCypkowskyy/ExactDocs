@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -10,8 +11,11 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx2
 import pytest
+from joserfc import jwt
+from joserfc.jwk import RSAKey
 
 from exactdocs.identity.adapters.driven.oidc import OidcClaimNames, OidcProvider, secure_url
+from exactdocs.identity.constants import MAX_PROVIDER_RESPONSE_BYTES
 from exactdocs.identity.errors import (
     ExternalSignInFailedError,
     ProviderAccessRevokedError,
@@ -24,6 +28,7 @@ from fake_oidc import (
     FakeIssuer,
     hs256_with_public_key,
     signed_by_stranger,
+    signed_payload,
     unsigned,
 )
 
@@ -172,6 +177,56 @@ async def test_an_id_token_that_fails_a_check_is_refused(
         await sign_in(setup)
 
 
+def with_raw(name: str, raw: str) -> Callable[[dict[str, Any]], str]:
+    """Render the claims as JSON with ``name``'s value written as ``raw``, unparsed."""
+
+    def render(claims: dict[str, Any]) -> str:
+        return json.dumps({**claims, name: "@RAW@"}).replace('"@RAW@"', raw)
+
+    return render
+
+
+IN_AN_HOUR = int(NOW.timestamp()) + 3600
+
+
+@pytest.mark.parametrize(
+    "render",
+    [
+        pytest.param(with_raw("exp", "1e999"), id="exp infinite"),
+        pytest.param(with_raw("exp", "Infinity"), id="exp Infinity"),
+        pytest.param(with_raw("exp", "NaN"), id="exp NaN"),
+        pytest.param(with_raw("exp", f"{IN_AN_HOUR}.5"), id="exp a float"),
+        pytest.param(with_raw("exp", "true"), id="exp a boolean"),
+        pytest.param(with_raw("exp", f'"{IN_AN_HOUR}"'), id="exp a string"),
+        pytest.param(with_raw("iat", "true"), id="iat a boolean"),
+        pytest.param(with_raw("iat", "-Infinity"), id="iat -Infinity"),
+        pytest.param(with_raw("iat", "NaN"), id="iat NaN"),
+        pytest.param(with_raw("nbf", "false"), id="nbf a boolean"),
+        pytest.param(with_raw("nbf", "-1e999"), id="nbf minus infinite"),
+        pytest.param(with_raw("nbf", "NaN"), id="nbf NaN"),
+        pytest.param(lambda claims: json.dumps(list(claims.items())), id="payload pairs"),
+        pytest.param(lambda claims: json.dumps([claims]), id="payload a list"),
+        pytest.param(lambda _: '"a string"', id="payload a string"),
+        pytest.param(lambda _: "null", id="payload null"),
+    ],
+)
+async def test_a_signed_id_token_with_malformed_claims_is_refused(
+    setup: Setup, render: Callable[[dict[str, Any]], str]
+) -> None:
+    """NumericDates must be integers and the payload an object, whatever joserfc accepts."""
+    setup.issuer.tamper = signed_payload(setup.issuer, render)
+
+    with pytest.raises(ExternalSignInFailedError):
+        await sign_in(setup)
+
+
+async def test_a_signed_payload_rendered_as_is_passes_when_well_formed(setup: Setup) -> None:
+    """The raw signer above is not what makes those tokens fail."""
+    setup.issuer.tamper = signed_payload(setup.issuer, json.dumps)
+
+    assert (await sign_in(setup)).claims.subject == "u-1"
+
+
 async def test_hs256_with_the_public_key_as_secret_is_refused(setup: Setup) -> None:
     setup.issuer.tamper = hs256_with_public_key(setup.issuer)
 
@@ -239,6 +294,41 @@ async def test_unknown_keys_fetch_the_jwks_at_most_once_a_minute(setup: Setup) -
     setup.clock.at += timedelta(minutes=1)
     assert (await sign_in(setup)).claims.subject == "u-1"
     assert setup.issuer.jwks_fetches == 3
+
+
+def no_kid(header: dict[str, Any], _: dict[str, Any]) -> None:
+    del header["kid"]
+
+
+async def test_a_token_without_a_kid_is_checked_with_each_fitting_key(setup: Setup) -> None:
+    """Several keys in the JWKS (a rollover): the one that verifies the token is used."""
+    setup.issuer.rotate_key(keep_old=True)
+    setup.issuer.tamper = no_kid
+
+    assert (await sign_in(setup)).claims.subject == "u-1"
+    assert setup.issuer.jwks_fetches == 1  # found among the cached keys, no refetch
+
+
+async def test_a_token_without_a_kid_signed_by_the_older_key_is_accepted(setup: Setup) -> None:
+    old = setup.issuer.key
+    setup.issuer.rotate_key(keep_old=True)
+    setup.issuer.tamper = lambda header, claims: jwt.encode(
+        {k: v for k, v in header.items() if k != "kid"}, claims, old
+    )
+
+    assert (await sign_in(setup)).claims.subject == "u-1"
+
+
+async def test_a_token_without_a_kid_that_no_key_verifies_is_refused(setup: Setup) -> None:
+    setup.issuer.rotate_key(keep_old=True)
+    await sign_in(setup)
+    setup.clock.at += timedelta(minutes=1)
+    stranger = RSAKey.generate_key(2048)
+    setup.issuer.tamper = lambda _, claims: jwt.encode({"alg": "RS256"}, claims, stranger)
+
+    with pytest.raises(ExternalSignInFailedError):
+        await sign_in(setup)
+    assert setup.issuer.jwks_fetches == 2  # one refetch, as for an unknown kid
 
 
 def made_up_kid(header: dict[str, Any], _: dict[str, Any]) -> None:
@@ -358,3 +448,58 @@ async def test_a_refresh_while_the_issuer_is_down_is_unavailable(setup: Setup) -
 )
 def test_only_https_or_loopback_http_is_used(url: str, secure: bool) -> None:
     assert secure_url(url) is secure
+
+
+@dataclass(slots=True)
+class EndlessBody(httpx2.AsyncByteStream):
+    """A body that never ends (no Content-Length), counting what was read and whether closed."""
+
+    sent: int = 0
+    closed: bool = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        chunk = b" " * 65536
+        while True:
+            self.sent += len(chunk)
+            yield chunk
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+@dataclass(slots=True)
+class EndlessTransport(httpx2.AsyncBaseTransport):
+    body: EndlessBody
+    length: str | None = None
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        headers = {"content-type": "application/json"}
+        if self.length is not None:
+            headers["content-length"] = self.length
+        return httpx2.Response(200, headers=headers, stream=self.body, request=request)
+
+
+@pytest.mark.parametrize("length", [None, str(MAX_PROVIDER_RESPONSE_BYTES + 1)])
+async def test_an_answer_over_the_size_limit_is_refused_while_it_streams(
+    length: str | None,
+) -> None:
+    body = EndlessBody()
+    async with httpx2.AsyncClient(transport=EndlessTransport(body, length)) as client:
+        provider = OidcProvider(
+            issuer=ISSUER,
+            client_id=CLIENT_ID,
+            client_secret=lambda: CLIENT_SECRET,
+            redirect_uri=REDIRECT,
+            scopes=("openid",),
+            client=client,
+            clock=Clock(),
+        )
+        with pytest.raises(ProviderUnavailableError):
+            await provider.authorization_url(state="s", nonce="n", code_verifier="v" * 64)
+
+    # Never buffered whole: the read stops one chunk past the limit (or before any, when the
+    # declared length is already over it), and the connection is closed.
+    assert body.sent <= MAX_PROVIDER_RESPONSE_BYTES + 65536
+    if length is not None:
+        assert body.sent == 0
+    assert body.closed

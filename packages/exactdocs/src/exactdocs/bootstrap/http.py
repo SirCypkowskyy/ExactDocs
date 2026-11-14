@@ -160,7 +160,7 @@ def create_app(container: Container) -> FastAPI:
             sign_out=container.identity.sign_out,
             get_session_state=container.identity.get_session_state,
             login_for_token=container.identity.login_for_token,
-            secure_cookies=settings.secure_cookies,
+            secure_cookies=settings.cookies_always_secure,
         )
     )
     # Browser navigations to and back from an identity provider (behind the setup guard too).
@@ -168,7 +168,7 @@ def create_app(container: Container) -> FastAPI:
         identity_http.build_external_sign_in_router(
             start_external_sign_in=container.identity.start_external_sign_in,
             finish_external_sign_in=container.identity.finish_external_sign_in,
-            secure_cookies=settings.secure_cookies,
+            secure_cookies=settings.cookies_always_secure,
         )
     )
     session_caller = _include_session_routers(v1, container)

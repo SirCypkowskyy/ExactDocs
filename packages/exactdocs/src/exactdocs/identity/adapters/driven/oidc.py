@@ -12,12 +12,14 @@ What an ID token must satisfy before its claims are believed:
 - ``iss`` equal to the configured issuer (discovery's ``issuer`` must equal it too);
 - ``aud`` holding the client ID, and ``azp`` equal to it when present or when ``aud`` names
   several audiences;
-- ``exp`` not passed, ``iat`` not in the future and ``nbf`` reached, with ``ID_TOKEN_LEEWAY``;
+- ``exp`` not passed, ``iat`` not in the future and ``nbf`` reached, with ``ID_TOKEN_LEEWAY``,
+  each an integer (no boolean, fraction, ``NaN`` or infinity), in a payload that is an object;
 - ``nonce`` equal to the attempt's (at sign-in), and ``sub`` present.
 
 The discovery document is cached per process for ``DISCOVERY_TTL``; the JWKS is fetched on the
 first sign-in and again when a token names a key it does not hold (rotation), at most once per
-``JWKS_REFETCH_INTERVAL``.
+``JWKS_REFETCH_INTERVAL``. A token naming no key (no ``kid``) is checked with each key of the
+JWKS that fits its algorithm.
 """
 
 import asyncio
@@ -33,8 +35,8 @@ from urllib.parse import quote, urlencode, urlsplit
 
 import httpx2
 from authlib.oauth2.rfc7636 import create_s256_code_challenge
-from joserfc import jwt
-from joserfc.errors import InvalidKeyIdError, JoseError
+from joserfc import jws, jwt
+from joserfc.errors import BadSignatureError, InvalidKeyIdError, JoseError
 from joserfc.jwk import KeySet
 
 from exactdocs.identity.constants import (
@@ -46,6 +48,8 @@ from exactdocs.identity.constants import (
     ID_TOKEN_LEEWAY,
     JWKS_REFETCH_INTERVAL,
     MAX_PROVIDER_RESPONSE_BYTES,
+    NUMERIC_DATE_CLAIMS,
+    SIGNING_KEY_TYPES,
 )
 from exactdocs.identity.errors import (
     ExternalSignInFailedError,
@@ -318,6 +322,12 @@ class OidcProvider:
             ExternalSignInFailedError: Any check fails.
         """
         claims = await self._decode(token, sorted(discovery.algorithms))
+        for name in NUMERIC_DATE_CLAIMS:
+            # An integer only: joserfc 1.7.7 takes ``true`` as 1 and an ``exp`` of ``1e999``
+            # (infinite) as a token that never expires; NaN compares false with everything.
+            if name in claims and type(claims[name]) is not int:
+                logger.info("OIDC %s: ID token refused (%s is not an integer)", self.issuer, name)
+                raise ExternalSignInFailedError
         options: dict[str, Any] = {
             "iss": {"essential": True, "value": self.issuer},
             "sub": {"essential": True},
@@ -349,7 +359,9 @@ class OidcProvider:
         """Check the ID token's signature against the issuer's keys and return its claims.
 
         A token naming a key the cached JWKS does not hold fetches the JWKS again once (the
-        issuer may have rotated its keys), within ``JWKS_REFETCH_INTERVAL``.
+        issuer may have rotated its keys), within ``JWKS_REFETCH_INTERVAL``. A token naming no
+        key is tried against each key that fits its algorithm (``_verify``); when none verifies
+        it, the JWKS is fetched again the same way.
 
         Args:
             token: The compact JWT.
@@ -365,14 +377,20 @@ class OidcProvider:
         keys = await self._keyset(refetch=False)
         try:
             try:
-                decoded = jwt.decode(token, keys, algorithms=algorithms)
+                decoded = _verify(token, keys, algorithms)
             except InvalidKeyIdError:
                 keys = await self._keyset(refetch=True)
-                decoded = jwt.decode(token, keys, algorithms=algorithms)
-            return dict(decoded.claims)
+                decoded = _verify(token, keys, algorithms)
         except (JoseError, ValueError, TypeError) as error:
             logger.info("OIDC %s: ID token refused (%s)", self.issuer, type(error).__name__)
             raise ExternalSignInFailedError from None
+        # JSON that is not an object is no claims set (``dict`` would even turn a list of pairs
+        # into one); joserfc 1.7.7 does not refuse it.
+        claims: object = decoded.claims
+        if not isinstance(claims, dict):
+            logger.info("OIDC %s: ID token refused (the payload is not an object)", self.issuer)
+            raise ExternalSignInFailedError
+        return claims
 
     async def _keyset(self, *, refetch: bool) -> KeySet:
         """Return the issuer's keys, fetching them first when there are none yet.
@@ -519,25 +537,53 @@ class OidcProvider:
                 answers a success that is not a JSON object.
         """
         try:
-            response = await self.client.request(method, url, follow_redirects=False, **kwargs)
+            async with self.client.stream(
+                method, url, follow_redirects=False, **kwargs
+            ) as response:
+                status = response.status_code
+                content = await self._read_capped(response)
         except httpx2.HTTPError as error:
             logger.warning("OIDC %s cannot be reached (%s)", self.issuer, type(error).__name__)
             raise ProviderUnavailableError from None
-        if len(response.content) > MAX_PROVIDER_RESPONSE_BYTES:
-            logger.warning(
-                "OIDC %s answered more than %d bytes", self.issuer, MAX_PROVIDER_RESPONSE_BYTES
-            )
-            raise ProviderUnavailableError
         try:
-            body = json.loads(response.content)
+            body = json.loads(content)
         except ValueError:
             body = None
         if not isinstance(body, dict):
-            if response.status_code in _SUCCESS:
+            if status in _SUCCESS:
                 logger.warning("OIDC %s answered something that is not JSON", self.issuer)
                 raise ProviderUnavailableError
             body = {}
-        return response.status_code, body
+        return status, body
+
+    async def _read_capped(self, response: httpx2.Response) -> bytes:
+        """Read the body while it stays within ``MAX_PROVIDER_RESPONSE_BYTES``.
+
+        The limit is checked as the body arrives (decoded, so a compressed bomb counts at its
+        real size), never after it was buffered whole: the rest is not read.
+
+        Args:
+            response: The streamed response.
+
+        Returns:
+            The body.
+
+        Raises:
+            ProviderUnavailableError: The body (or its declared length) exceeds the limit.
+        """
+        declared = response.headers.get("content-length", "")
+        content = bytearray()
+        if not (declared.isdigit() and int(declared) > MAX_PROVIDER_RESPONSE_BYTES):
+            async for chunk in response.aiter_bytes():
+                content += chunk
+                if len(content) > MAX_PROVIDER_RESPONSE_BYTES:
+                    break
+            else:
+                return bytes(content)
+        logger.warning(
+            "OIDC %s answered more than %d bytes", self.issuer, MAX_PROVIDER_RESPONSE_BYTES
+        )
+        raise ProviderUnavailableError
 
 
 def secure_url(url: str) -> bool:
@@ -563,6 +609,41 @@ def secure_url(url: str) -> bool:
         return ipaddress.ip_address(parts.hostname).is_loopback
     except ValueError:
         return False
+
+
+def _verify(token: str, keys: KeySet, algorithms: list[str]) -> jwt.Token:
+    """Check the token's signature with the key it names, or with each key that fits.
+
+    joserfc picks the key by ``kid``, and with several keys refuses a token without one. Such a
+    token is tried against every key of the type its (accepted) algorithm signs with, whose own
+    ``alg``, if it has one, is that algorithm; the first that verifies it wins.
+
+    Args:
+        token: The compact JWT.
+        keys: The issuer's keys.
+        algorithms: The algorithms accepted.
+
+    Returns:
+        The decoded token, its claims not checked yet.
+
+    Raises:
+        InvalidKeyIdError: The token names an unknown key, or names none and no key verifies it.
+
+    joserfc's own errors (a malformed token, a wrong signature) pass through to the caller.
+    """
+    header = jws.extract_compact(token.encode()).protected
+    alg = header.get("alg")
+    if "kid" in header or len(keys.keys) <= 1 or alg not in algorithms:
+        return jwt.decode(token, keys, algorithms=algorithms)
+    kty = SIGNING_KEY_TYPES.get(str(alg)[:2])
+    for key in keys.keys:
+        if key.key_type != kty or key.get("alg", alg) != alg:
+            continue
+        try:
+            return jwt.decode(token, key, algorithms=[str(alg)])
+        except BadSignatureError:
+            continue
+    raise InvalidKeyIdError
 
 
 def _signing_keys(body: Mapping[str, Any], issuer: str) -> KeySet:

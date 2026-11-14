@@ -1125,6 +1125,57 @@ class SqliteExternalIdentityRepository:
             await connection.execute(account.values(role=role.value))
             await _replace_groups(connection, identity.account_id, groups)
 
+    async def record_revalidation(
+        self,
+        claimed: ExternalIdentity,
+        checked: ExternalIdentity,
+        *,
+        role: Role,
+        groups: frozenset[str],
+    ) -> bool:
+        """Store a successful revalidation, unless the link changed since it was claimed.
+
+        The link's ``UPDATE`` only matches while the row still holds the claimed tokens and
+        sign-in, check and access times and the account is not disabled (a compare-and-set, so
+        it holds on PostgreSQL under concurrent writers too: the row lock makes a concurrent
+        sign-in or revocation either finish first, and the compare then fails, or wait). The
+        role and the groups are written only when it matched, in the same transaction.
+
+        Args:
+            claimed: The link as ``claim_due`` returned it.
+            checked: The link after the check.
+            role: The account's role now.
+            groups: The account's groups now.
+
+        Returns:
+            ``True`` when stored; ``False`` when the link had changed (nothing is stored).
+        """
+        values = _identity_values(checked)
+        del values["issuer"], values["subject"], values["account_id"]
+        enabled = (
+            select(accounts.c.id)
+            .where(accounts.c.id == claimed.account_id, accounts.c.disabled_at.is_(None))
+            .exists()
+        )
+        link = update(external_identities).where(
+            external_identities.c.issuer == claimed.issuer,
+            external_identities.c.subject == claimed.subject,
+            external_identities.c.account_id == claimed.account_id,
+            # `==` against None renders `IS NULL`; claimed links hold a token anyway.
+            external_identities.c.sealed_tokens == claimed.sealed_tokens,
+            external_identities.c.signed_in_at == _stamp(claimed.signed_in_at),
+            external_identities.c.checked_at == _stamp(claimed.checked_at),
+            external_identities.c.access_until == _stamp(claimed.access_until),
+            enabled,
+        )
+        account = update(accounts).where(accounts.c.id == claimed.account_id)
+        async with self.engine.begin() as connection:
+            if (await connection.execute(link.values(values))).rowcount != 1:
+                return False
+            await connection.execute(account.values(role=role.value))
+            await _replace_groups(connection, claimed.account_id, groups)
+        return True
+
     async def revoke(self, account_id: AccountId, now: datetime) -> None:
         """End the account's access now, dropping its sealed tokens and its groups.
 

@@ -20,7 +20,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx2
-from joserfc import jwt
+from joserfc import jws, jwt
 from joserfc.jwk import KeySet, RSAKey
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -304,3 +304,21 @@ def unsigned(header: dict[str, Any], claims: dict[str, Any]) -> str:
 def signed_by_stranger(header: dict[str, Any], claims: dict[str, Any]) -> str:
     """A tamper that signs with a key the issuer never published, under its own ``kid``."""
     return jwt.encode(header, claims, _rsa_key(str(header["kid"])))
+
+
+def signed_payload(
+    issuer: FakeIssuer, render: Callable[[dict[str, Any]], str]
+) -> Callable[[dict[str, Any], dict[str, Any]], str]:
+    """A tamper that signs ``render(claims)`` as the payload, verbatim, with the issuer's key.
+
+    For payloads ``jwt.encode`` would not make: JSON that is not an object, or numbers such as
+    ``1e999`` (infinite once parsed) and ``NaN``. The signature is good, so only the claim checks
+    can refuse it.
+    """
+
+    def tamper(header: dict[str, Any], claims: dict[str, Any]) -> str:
+        return jws.serialize_compact(
+            header, render(claims).encode(), issuer.key, algorithms=["RS256"]
+        )
+
+    return tamper

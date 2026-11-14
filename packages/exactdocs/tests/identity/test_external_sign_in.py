@@ -4,14 +4,17 @@ The provider is a scripted fake that trusts any code (the OIDC adapter's own che
 ``test_oidc_provider.py``), so each check of the flow is proved on its own here.
 """
 
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 import pytest
 from pydantic import SecretStr
 
+from databases import SQL_BACKENDS
+from exactdocs.bootstrap.container import Container
+from exactdocs.bootstrap.settings import Settings
 from exactdocs.identity.adapters.driven.memory import (
     InMemoryAccountRepository,
     InMemoryExternalIdentityRepository,
@@ -19,6 +22,13 @@ from exactdocs.identity.adapters.driven.memory import (
     InMemorySessionRepository,
     InMemorySignInAttemptRepository,
     InMemoryTokenRepository,
+)
+from exactdocs.identity.adapters.driven.sqlite import (
+    SqliteAccountRepository,
+    SqliteExternalIdentityRepository,
+    SqliteSessionRepository,
+    SqliteSignInAttemptRepository,
+    SqliteTokenRepository,
 )
 from exactdocs.identity.constants import SIGN_IN_ATTEMPT_LIFETIME
 from exactdocs.identity.dtos import (
@@ -57,6 +67,7 @@ from exactdocs.identity.models import (
     username_candidates,
 )
 from exactdocs.identity.module import IdentityModule
+from exactdocs.identity.ports import AccountRepository, ExternalIdentityRepository
 from exactdocs.identity.ports.driven import LinkOutcome
 from exactdocs_kernel import SealedTextUnreadableError
 
@@ -104,6 +115,8 @@ class FakeProvider:
     next_subject: str | None = None
     refresh_token: str | None = "refresh-1"
     refresh_error: Exception | None = None
+    during_refresh: Callable[[], Awaitable[None]] | None = None
+    """Runs once inside the next refresh, before it answers (what happens meanwhile)."""
     started: list[dict[str, str]] = field(default_factory=list)
     exchanged: list[dict[str, str]] = field(default_factory=list)
 
@@ -129,9 +142,18 @@ class FakeProvider:
         )
 
     async def refresh(self, refresh_token: str, *, subject: str) -> ExternalGrant:
+        if (meanwhile := self.during_refresh) is not None:
+            self.during_refresh = None
+            await meanwhile()
         if self.refresh_error is not None:
             raise self.refresh_error
         return ExternalGrant(claims=self.people[subject], refresh_token=f"{refresh_token}+")
+
+
+class SignsIn(Protocol):
+    provider: FakeProvider
+    identity: IdentityModule
+    last_session: str
 
 
 @dataclass(slots=True)
@@ -194,14 +216,14 @@ def world() -> World:
     return build()
 
 
-async def start(world: World, return_to: str | None = "/libraries") -> tuple[str, str]:
+async def start(world: SignsIn, return_to: str | None = "/libraries") -> tuple[str, str]:
     begun = await world.identity.start_external_sign_in(
         StartExternalSignInCommand(provider="corp", return_to=return_to)
     )
     return begun.binding.get_secret_value(), world.provider.started[-1]["state"]
 
 
-async def sign_in(world: World, subject: str, **command: Any) -> AccountSummary:
+async def sign_in(world: SignsIn, subject: str, **command: Any) -> AccountSummary:
     world.provider.next_subject = subject
     binding, state = await start(world)
     result = await world.identity.finish_external_sign_in(
@@ -816,3 +838,109 @@ async def test_a_local_accounts_sessions_never_depend_on_a_provider(world: World
     world.clock.at += timedelta(days=6)
 
     assert (await world.identity.identify_caller(grant.token.get_secret_value())).id == "ada"
+
+
+# ---------------------------------------------------------------- revalidation races, every store
+
+
+@dataclass(slots=True)
+class StoredWorld:
+    clock: Clock
+    accounts: AccountRepository
+    externals: ExternalIdentityRepository
+    provider: FakeProvider
+    identity: IdentityModule
+    last_session: str = ""
+
+
+@pytest.fixture(params=["memory", *SQL_BACKENDS])
+async def stored(request: pytest.FixtureRequest) -> AsyncIterator[StoredWorld]:
+    """The use cases over memory, SQLite or PostgreSQL stores, with the scripted provider."""
+
+    def assemble(**stores: Any) -> StoredWorld:
+        clock, provider, configured = Clock(), FakeProvider(), policy()
+        identity = IdentityModule.build(
+            hasher=FakeHasher(),
+            failures=InMemoryFailedSignInLog(),
+            box=FakeBox(),
+            clock=clock,
+            providers={"corp": provider},
+            policies={"corp": configured},
+            **stores,
+        )
+        return StoredWorld(clock, stores["repository"], stores["externals"], provider, identity)
+
+    if request.param == "memory":
+        accounts = InMemoryAccountRepository()
+        yield assemble(
+            repository=accounts,
+            sessions=InMemorySessionRepository(),
+            tokens=InMemoryTokenRepository(),
+            externals=InMemoryExternalIdentityRepository(accounts=accounts),
+            attempts=InMemorySignInAttemptRepository(),
+        )
+        return
+    if request.param == "postgres":
+        request.getfixturevalue("on_postgres")
+    container = Container.build(Settings())
+    async with container.running(jobs=False):
+        engine = container.engine
+        yield assemble(
+            repository=SqliteAccountRepository(engine=engine),
+            sessions=SqliteSessionRepository(engine=engine),
+            tokens=SqliteTokenRepository(engine=engine),
+            externals=SqliteExternalIdentityRepository(engine=engine),
+            attempts=SqliteSignInAttemptRepository(engine=engine),
+        )
+
+
+async def test_a_disable_during_a_refresh_is_not_undone(stored: StoredWorld) -> None:
+    """The disable drops the tokens while the provider answers; the answer must not restore them."""
+    stored.provider.add("u-1", "alice", "payments")
+    account = await sign_in(stored, "u-1")
+    stored.clock.at += timedelta(minutes=61)
+    signed_in = await stored.externals.get(ISSUER, "u-1")
+
+    async def disable() -> None:
+        await stored.identity.set_user_disabled(
+            SetUserDisabledCommand(id=account.id, disabled=True)
+        )
+
+    stored.provider.during_refresh = disable
+    report = await stored.identity.revalidate_external_accounts()
+
+    assert (report.extended, report.superseded) == (0, 1)
+    link = await stored.externals.get(ISSUER, "u-1")
+    assert link is not None
+    assert signed_in is not None
+    assert link.sealed_tokens is None  # "disabling deletes the sealed provider tokens" holds
+    assert link.access_until == signed_in.access_until  # not moved forward
+    disabled = await stored.accounts.get_by_id(AccountId(account.id))
+    assert disabled is not None
+    assert disabled.is_disabled
+    with pytest.raises(NotSignedInError):
+        await stored.identity.identify_caller(stored.last_session)
+
+
+async def test_a_sign_in_during_a_refresh_is_not_overwritten(stored: StoredWorld) -> None:
+    """The sign-in's newer token, groups and access stand; the older refresh answer is dropped."""
+    stored.provider.add("u-1", "alice", "payments")
+    account = await sign_in(stored, "u-1")
+    stored.clock.at += timedelta(minutes=61)
+
+    async def sign_in_again() -> None:
+        stored.provider.refresh_token = "from-the-sign-in"
+        stored.provider.add("u-1", "alice", "ops")
+        await sign_in(stored, "u-1")
+        stored.provider.add("u-1", "alice", "stale-group")
+
+    stored.provider.during_refresh = sign_in_again
+    report = await stored.identity.revalidate_external_accounts()
+
+    assert (report.extended, report.superseded) == (0, 1)
+    link = await stored.externals.get(ISSUER, "u-1")
+    assert link is not None
+    assert FakeBox().open(link.sealed_tokens or "") == "from-the-sign-in"
+    assert link.signed_in_at == stored.clock.at
+    groups = await stored.externals.groups_by_account()
+    assert groups[AccountId(account.id)] == ("corp", ["ops"])

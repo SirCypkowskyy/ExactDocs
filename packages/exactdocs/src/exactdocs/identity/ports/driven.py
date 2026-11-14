@@ -534,6 +534,34 @@ class ExternalIdentityRepository(Protocol):
         """
         ...
 
+    async def record_revalidation(
+        self,
+        claimed: ExternalIdentity,
+        checked: ExternalIdentity,
+        *,
+        role: Role,
+        groups: frozenset[str],
+    ) -> bool:
+        """Store a successful revalidation, unless the link changed since it was claimed.
+
+        A revalidation waits on the provider between ``claim_due`` and this write. Meanwhile a
+        disable may have dropped the tokens, a refused sign-in or a revocation may have ended
+        access, and a sign-in (or another pass, after the lease) may have stored newer tokens.
+        The write happens, in one transaction, only when the link still holds the tokens and
+        the sign-in, check and access times it was claimed with and its account is not
+        disabled; otherwise nothing is stored and the newer state stands.
+
+        Args:
+            claimed: The link as ``claim_due`` returned it.
+            checked: The link after the check.
+            role: The account's role now.
+            groups: The account's groups now, as ExactDocs stores them.
+
+        Returns:
+            ``True`` when stored; ``False`` when the link had changed (nothing is stored).
+        """
+        ...
+
     async def revoke(self, account_id: AccountId, now: datetime) -> None:
         """End the account's access at ``now`` and drop its sealed tokens and groups.
 

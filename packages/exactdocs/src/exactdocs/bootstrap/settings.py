@@ -641,8 +641,9 @@ class Settings(BaseSettings):
     """
     secure_cookies: bool = False
     """Always mark the session cookie `Secure`. It already is whenever a request arrives over
-    HTTPS (uvicorn reads X-Forwarded-Proto from `forwarded_allow_ips`); set this when TLS ends at
-    a proxy that does not forward the scheme.
+    HTTPS (uvicorn reads X-Forwarded-Proto from `forwarded_allow_ips`), and whenever
+    `public_url` is `https://`; set this when TLS ends at a proxy that does not forward the
+    scheme and no public URL is set.
     """
     forwarded_allow_ips: str = "127.0.0.1,::1"
     """Proxies whose X-Forwarded-* headers uvicorn trusts (comma-separated IPs or `*`)."""
@@ -737,6 +738,18 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return value.strip() or None
         return value
+
+    @property
+    def cookies_always_secure(self) -> bool:
+        """Whether every cookie ExactDocs sets is ``Secure``, whatever the request's scheme.
+
+        Forced by ``secure_cookies``, or implied by an ``https://`` ``public_url``: browsers
+        reach the server over HTTPS then, even when the proxy in front does not say so.
+
+        Returns:
+            ``True`` when the cookies are always ``Secure``.
+        """
+        return self.secure_cookies or (self.public_url or "").startswith("https://")
 
     @field_validator("public_url", mode="before")
     @classmethod

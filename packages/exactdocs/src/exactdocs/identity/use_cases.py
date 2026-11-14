@@ -364,7 +364,12 @@ class SignOutUseCase:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class IdentifyCallerUseCase:
-    """Implements ``ports.driving.IdentifyCaller``."""
+    """Implements ``ports.driving.IdentifyCaller``.
+
+    For an external account (no password) it reads the account's link too: one more query per
+    request, on purpose. It is what makes access end at ``access_until`` even when no
+    revalidation runs (fail closed); do not cache it or skip it to save the query.
+    """
 
     sessions: SessionRepository
     """Where browser sessions are stored."""
@@ -829,7 +834,12 @@ class RevokeTokenUseCase:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class IdentifyTokenUseCase:
-    """Implements ``ports.driving.IdentifyToken``."""
+    """Implements ``ports.driving.IdentifyToken``.
+
+    For an external account (no password) it reads the account's link too: one more query per
+    request, on purpose. It is what makes access end at ``access_until`` even when no
+    revalidation runs (fail closed); do not cache it or skip it to save the query.
+    """
 
     tokens: TokenRepository
     """Where API tokens are stored."""
@@ -1158,6 +1168,12 @@ class RevalidateExternalAccountsUseCase:
     membership ends the account's access and its sessions; an unreachable provider leaves
     ``access_until`` as it is (access ends once it passes, failing closed) and the link is
     tried again after the lease.
+
+    An extension is stored only if the link is still as it was claimed (see
+    ``ExternalIdentityRepository.record_revalidation``): a disable, revocation or sign-in that
+    happened while the provider answered wins, and the answer is counted as ``superseded``.
+    Ending access is not conditional: at worst it ends a session a concurrent sign-in just
+    started, which fails closed.
     """
 
     providers: Mapping[str, SignInProvider]
@@ -1181,7 +1197,7 @@ class RevalidateExternalAccountsUseCase:
         Returns:
             How many were extended, revoked and left as they were.
         """
-        counts = {"extended": 0, "revoked": 0, "unreachable": 0}
+        counts = {"extended": 0, "revoked": 0, "unreachable": 0, "superseded": 0}
         while True:
             now = self.clock.now()
             due = await self.externals.claim_due(
@@ -1202,7 +1218,7 @@ class RevalidateExternalAccountsUseCase:
             link: The claimed link.
 
         Returns:
-            ``extended``, ``revoked`` or ``unreachable``.
+            ``extended``, ``revoked``, ``unreachable`` or ``superseded``.
         """
         found = await self._refresh(link)
         if found == "unreachable":
@@ -1217,7 +1233,8 @@ class RevalidateExternalAccountsUseCase:
             logger.info("an account left the allowed groups of %s: access ended", policy.name)
             return await self._revoke(link)
         now = self.clock.now()
-        await self.externals.record_check(
+        stored = await self.externals.record_revalidation(
+            link,
             replace(
                 link,
                 sealed_tokens=self.box.seal(grant.refresh_token or refresh_token),
@@ -1228,6 +1245,11 @@ class RevalidateExternalAccountsUseCase:
             role=policy.role_for(claims.groups),
             groups=policy.stored_groups(claims.groups),
         )
+        if not stored:
+            # A disable, a revocation or a sign-in changed the link while the provider
+            # answered: its state is newer than this answer, so the answer is dropped.
+            logger.info("an external identity changed during its revalidation: answer dropped")
+            return "superseded"
         return "extended"
 
     async def _refresh(

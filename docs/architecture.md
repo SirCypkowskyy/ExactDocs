@@ -771,7 +771,11 @@ sequenceDiagram
   `next_check_at` passed and that hold a refresh token are claimed in batches with a lease
   (`REVALIDATION_LEASE`; on PostgreSQL `FOR UPDATE SKIP LOCKED`, so processes share the work and
   never check one link twice), then refreshed with the provider. Still allowed: groups, role,
-  `access_until` and the (possibly rotated) refresh token are stored. A lost group, a refused
+  `access_until` and the (possibly rotated) refresh token are stored, but only while the link is
+  still as it was claimed (`record_revalidation` compares its token and its sign-in, check and
+  access times, and that the account is not disabled, in the `UPDATE` itself): a disable,
+  revocation or sign-in that happened while the provider answered wins, and the answer is
+  dropped (`superseded`). A lost group, a refused
   refresh token, claims of another subject, a token that no longer opens or a provider no longer
   configured: `access_until` becomes now, the sealed token and groups are dropped and the
   account's sessions deleted, until its next allowed sign-in. Unreachable: nothing changes; the
