@@ -1,12 +1,13 @@
 """Driven (secondary) ports of ingestion: what it needs from git, storage and other domains."""
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
 from exactdocs.ingestion.models import (
+    Access,
     ArticleChunk,
     ArticleTags,
     AutoSync,
@@ -1275,5 +1276,32 @@ class WebhookDeliveries(Protocol):
 
         Args:
             library: The library ID.
+        """
+        ...
+
+
+class AccessPolicy(Protocol):
+    """Library roles: what the caller may do with a library (a bridge to identity)."""
+
+    async def allows(self, library: str, access: Access) -> bool:
+        """Tell whether the caller may do what ``access`` stands for with the library.
+
+        Args:
+            library: The library ID (``/owner/repo``), any case.
+            access: The role the action needs.
+
+        Returns:
+            ``True`` when the caller's effective role on the library is that or higher.
+        """
+        ...
+
+    async def readable(self, libraries: Collection[str]) -> frozenset[str]:
+        """Return the libraries the caller may read.
+
+        Args:
+            libraries: Library IDs.
+
+        Returns:
+            The lower-case IDs among them the caller may read.
         """
         ...

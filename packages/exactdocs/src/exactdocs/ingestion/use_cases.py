@@ -126,6 +126,7 @@ from exactdocs.ingestion.errors import (
     InvalidSourcesError,
     InvalidWebhookSignatureError,
     JobNotFoundError,
+    LibraryAccessDeniedError,
     LibraryIdTakenError,
     NoArticlesError,
     NotAGitRepositoryError,
@@ -147,6 +148,7 @@ from exactdocs.ingestion.errors import (
     WebhookSecretUnreadableError,
 )
 from exactdocs.ingestion.models import (
+    Access,
     ArticleChunk,
     AutoSync,
     ChunkingConfig,
@@ -214,6 +216,7 @@ from exactdocs.ingestion.models import (
     webhook_provider,
 )
 from exactdocs.ingestion.ports.driven import (
+    AccessPolicy,
     AutoSyncStore,
     Checkpoints,
     Chunker,
@@ -293,6 +296,21 @@ def _credential(sent: CredentialIn | None, repository: RepositoryUrl) -> Credent
 """Branches and tags listed each; a repository with more is cut and flagged ``truncated``."""
 
 
+async def _require(access: AccessPolicy, library: str, needed: Access) -> None:
+    """Refuse unless the caller holds the role ``needed`` on the library.
+
+    Args:
+        access: Library roles.
+        library: The library ID, any case.
+        needed: The role the action needs.
+
+    Raises:
+        LibraryAccessDeniedError: The caller's role on the library is lower.
+    """
+    if not await access.allows(library, needed):
+        raise LibraryAccessDeniedError(library, needed.value)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class EnqueueJobUseCase:
     """Implements ``ports.driving.EnqueueJob``."""
@@ -351,6 +369,8 @@ class GetJobUseCase:
 
     jobs: JobRepository
     """Where jobs are stored."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: GetJobQuery) -> JobSummary:
         """Fetch one job by its ID.
@@ -367,6 +387,7 @@ class GetJobUseCase:
         job = await self.jobs.get(JobId(query.job_id))
         if job is None:
             raise JobNotFoundError(query.job_id)
+        await _require(self.access, job.library, Access.READ)
         return JobSummary.from_model(job)
 
 
@@ -378,6 +399,8 @@ class GetLibraryAccessUseCase:
     """Where credentials are kept."""
     library_ids: LibraryIds
     """Tells which libraries exist."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: GetLibraryAccessQuery) -> LibraryAccess:
         """Report a library with a stored credential as private; ``UnknownLibraryError`` if none.
@@ -394,6 +417,7 @@ class GetLibraryAccessUseCase:
         Raises:
             UnknownLibraryError: No library has that ID.
         """
+        await _require(self.access, query.library, Access.READ)
         library = query.library.lower()
         if not await self.library_ids.is_taken(ProposedId(library)):
             raise UnknownLibraryError(query.library)
@@ -406,6 +430,8 @@ class ListLibraryJobsUseCase:
 
     jobs: JobRepository
     """Where jobs are stored."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: ListLibraryJobsQuery) -> JobList:
         """List a page of the library's jobs, newest first; only that page is read.
@@ -416,6 +442,7 @@ class ListLibraryJobsUseCase:
         Returns:
             The page, and the cursor of the next one when there is one.
         """
+        await _require(self.access, query.library, Access.READ)
         before = decode_cursor(query.cursor) if query.cursor is not None else None
         jobs = await self.jobs.list_page_for_library(
             query.library,
@@ -435,6 +462,8 @@ class ListLatestJobsUseCase:
 
     jobs: JobRepository
     """Where jobs are stored."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self) -> LatestJobs:
         """List the newest job of every (library, version), without their skipped files.
@@ -444,9 +473,10 @@ class ListLatestJobsUseCase:
         """
         # ponytail: not paged; one row per imported version, fine until thousands exist.
         # Only imports are syncs; a collection job has no version and is no state of a library.
-        latest = await self.jobs.list_latest()
+        latest = [job for job in await self.jobs.list_latest() if job.kind in IMPORT_KINDS]
+        readable = await self.access.readable([job.library for job in latest])
         return LatestJobs(
-            jobs=[LatestJob.from_model(job) for job in latest if job.kind in IMPORT_KINDS]
+            jobs=[LatestJob.from_model(job) for job in latest if job.library.casefold() in readable]
         )
 
 
@@ -1069,6 +1099,8 @@ class AddVersionUseCase:
     """Queues the import."""
     vault: CredentialVault
     """Where the credential is kept."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: AddVersionCommand) -> AddedVersion:
         """Pin the ref like ``AddLibrary`` does and queue the import with the library's settings.
@@ -1092,6 +1124,7 @@ class AddVersionUseCase:
             CommitImportedError: The commit is already a version under another ref.
             VersionImportingError: An import of the ref is queued or running.
         """
+        await _require(self.access, command.library, Access.CONTRIBUTE)
         library = command.library
         source = await self.sources.get(library)
         existing = {v.ref: v for v in await self.sources.imported_versions(library)}
@@ -1147,6 +1180,8 @@ class SyncLibraryUseCase:
     """Queues the imports."""
     vault: CredentialVault
     """Where the library's credential is kept."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(
         self, command: SyncLibraryCommand, *, refs: RemoteRefs | None = None
@@ -1181,6 +1216,7 @@ class SyncLibraryUseCase:
             SyncFailedError: The remote could not be read; the failed jobs record it.
             VersionImportingError: A branch's import is running and nothing could be queued.
         """
+        await _require(self.access, command.library, Access.CONTRIBUTE)
         library = command.library
         source = await self.sources.get(library)
         versions = await self.sources.imported_versions(library)
@@ -1443,6 +1479,8 @@ class ReimportVersionUseCase:
     """Queues the import."""
     vault: CredentialVault
     """Where the library's credential is kept."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: ReimportVersionCommand) -> ReimportedVersion:
         """Ask the remote where the tag is now and queue its import there, as a sync would a branch.
@@ -1469,6 +1507,7 @@ class ReimportVersionUseCase:
             RefDeletedError: The tag is gone upstream.
             TagNotMovedError: The tag still names the commit the version serves.
         """
+        await _require(self.access, command.library, Access.CONTRIBUTE)
         library = command.library
         source = await self.sources.get(library)  # an unknown library is not found
         versions = {v.ref: v for v in await self.sources.imported_versions(library)}
@@ -1630,6 +1669,8 @@ class UpdateLibrarySettingsUseCase:
     """Queues the re-processing job."""
     locks: LibraryLocks = field(default_factory=TagLocks)
     """Its own per-library locks (not the tag locks): edits of one library take turns."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: UpdateLibrarySettingsCommand) -> UpdatedLibrarySettings:
         """Validate, store, then queue the one job that re-processes every version.
@@ -1652,6 +1693,7 @@ class UpdateLibrarySettingsUseCase:
         Returns:
             The settings as stored, the change, the job and the versions it re-processes.
         """
+        await _require(self.access, command.library, Access.ADMINISTER)
         library = command.library.lower()
         selection = PathSelection.of(command.include_paths, command.exclude_paths)
         tag_rules = TagRule.many([(r.pattern, r.tag) for r in command.tag_rules])
@@ -3790,6 +3832,8 @@ class TagArticleUseCase:
     """Where the chunks' tags are refreshed."""
     locks: LibraryLocks
     """The library's tag lock, shared with the importer."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: TagArticleCommand) -> TaggedArticle:
         """Store the tags, then copy every touched article's tags onto its chunks.
@@ -3800,6 +3844,7 @@ class TagArticleUseCase:
         Returns:
             The path with its manual tags now.
         """
+        await _require(self.access, command.library, Access.CONTRIBUTE)
         async with self.locks.of(command.library):
             tagged = await self.tags.set_tags(command.library, command.path, command.tags)
             for manifest_id, articles in tagged.retagged.items():
@@ -3819,6 +3864,8 @@ class RemoveVersionUseCase:
     """Where the version's chunks are removed."""
     enqueue_job: EnqueueJob
     """Queues the collection."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: RemoveVersionCommand) -> RemovalResult:
         """Refuse during an import of the version, remove it from the catalog, then clean up.
@@ -3829,6 +3876,7 @@ class RemoveVersionUseCase:
         Returns:
             What was removed, the default version now and the collection job.
         """
+        await _require(self.access, command.library, Access.ADMINISTER)
         library = command.library.lower()  # library IDs are stored lower-case
         await _refuse_while_importing(self.jobs, library, command.ref)
         removed = await self.removals.remove_version(library, command.ref)
@@ -3864,6 +3912,8 @@ class RemoveLibraryUseCase:
     """Where the library's webhook secret is forgotten."""
     deliveries: WebhookDeliveries
     """Where the library's webhook deliveries are forgotten."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: RemoveLibraryCommand) -> RemovalResult:
         """Refuse during any import of the library, remove it from the catalog, then clean up.
@@ -3874,6 +3924,7 @@ class RemoveLibraryUseCase:
         Returns:
             What was removed and the collection job.
         """
+        await _require(self.access, command.library, Access.OWN)
         library = command.library.lower()
         await _refuse_while_importing(self.jobs, library, None)
         removed = await self.removals.remove_library(library)
@@ -3935,6 +3986,8 @@ class GetAutoSyncUseCase:
     """Tells which libraries exist."""
     schedules: AutoSyncStore
     """Where schedules are kept."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: GetAutoSyncQuery) -> AutoSyncOut:
         """Return the library's schedule; ``enabled`` false when it has none.
@@ -3945,6 +3998,7 @@ class GetAutoSyncUseCase:
         Returns:
             The schedule.
         """
+        await _require(self.access, query.library, Access.READ)
         library = query.library.lower()
         await self.sources.get(library)  # an unknown library is not found
         found = await self.schedules.get(library)
@@ -3961,6 +4015,8 @@ class SetAutoSyncUseCase:
     """Where schedules are kept."""
     switch: ScheduleSwitch
     """Turns the tick on."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: SetAutoSyncCommand) -> AutoSyncOut:
         """Store the schedule; the library is due at once, so the next tick checks it.
@@ -3971,6 +4027,7 @@ class SetAutoSyncUseCase:
         Returns:
             The schedule as stored.
         """
+        await _require(self.access, command.library, Access.ADMINISTER)
         library = command.library.lower()
         await self.sources.get(library)
         auto_sync = AutoSync(
@@ -3996,6 +4053,8 @@ class DisableAutoSyncUseCase:
     """Where schedules are kept."""
     switch: ScheduleSwitch
     """Turns the tick off once no library has a schedule."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: DisableAutoSyncCommand) -> AutoSyncOut:
         """Forget the schedule; every version stays. The last one off stops the tick.
@@ -4006,6 +4065,7 @@ class DisableAutoSyncUseCase:
         Returns:
             The schedule, now off.
         """
+        await _require(self.access, command.library, Access.ADMINISTER)
         library = command.library.lower()
         await self.sources.get(library)
         await self.schedules.delete(library)

@@ -4,7 +4,7 @@ import hmac
 import logging
 import math
 import secrets
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Literal
@@ -30,16 +30,25 @@ from exactdocs.identity.constants import (
 from exactdocs.identity.dtos import (
     AccountSummary,
     AuthenticateQuery,
+    ClaimLibraryCommand,
     CreateFirstAdminCommand,
     CreateTokenCommand,
     CreateUserCommand,
+    DropLibraryGrantsCommand,
     ExternalSignInResult,
     ExternalSignInStart,
     FinishExternalSignInCommand,
+    GrantLibraryRoleCommand,
+    LibraryGrants,
+    LibraryGrantSummary,
+    LibraryRoles,
+    LibraryRolesQuery,
+    ListLibraryGrantsQuery,
     LoginForTokenCommand,
     PasswordReset,
     ResetPasswordCommand,
     RevalidationReport,
+    RevokeLibraryRoleCommand,
     SessionGrant,
     SessionState,
     SetupState,
@@ -59,10 +68,12 @@ from exactdocs.identity.errors import (
     ExternalAccountError,
     ExternalSignInFailedError,
     InvalidCredentialsError,
+    InvalidGrantError,
     InvalidTokenError,
     InvalidTokenExpiryError,
     InvalidUsernameError,
     LastOperatorError,
+    LibraryRoleRequiredError,
     NotAllowedError,
     NotSetUpError,
     NotSignedInError,
@@ -73,6 +84,7 @@ from exactdocs.identity.errors import (
     SignInThrottledError,
     TooManyTokensError,
     UnknownAccountError,
+    UnknownGrantError,
     UnknownSignInProviderError,
     UnknownTokenError,
     UsernameTakenError,
@@ -84,12 +96,16 @@ from exactdocs.identity.models import (
     ApiToken,
     ExternalGrant,
     ExternalIdentity,
+    LibraryGrant,
+    LibraryRole,
     Role,
     Session,
     SignInAttempt,
     SignInPolicy,
+    SubjectKind,
     Username,
     address_key,
+    effective_role,
     hash_token,
     known_sign_in_key,
     safe_return_to,
@@ -99,6 +115,7 @@ from exactdocs.identity.ports.driven import (
     AccountRepository,
     ExternalIdentityRepository,
     FailedSignInLog,
+    LibraryGrantRepository,
     PasswordHasher,
     SecretBox,
     SessionRepository,
@@ -1355,3 +1372,277 @@ class RevalidateExternalAccountsUseCase:
         await self.externals.revoke(link.account_id, self.clock.now())
         await self.sessions.delete_for_account(link.account_id)
         return "revoked"
+
+
+async def _library_roles(
+    *,
+    accounts: AccountRepository,
+    externals: ExternalIdentityRepository,
+    grants: LibraryGrantRepository,
+    account_id: str,
+    libraries: Collection[str],
+) -> dict[str, LibraryRole]:
+    """Work out an account's effective role on each library: the highest one it holds.
+
+    An operator (account role ``admin``) is ``creator`` of every library, so a library whose
+    creator is gone, or that no grant was ever made on, can still be managed. A disabled or
+    unknown account holds none.
+
+    Args:
+        accounts: Where accounts are stored.
+        externals: The links of external accounts, for their groups.
+        grants: Who holds which role on which library.
+        account_id: The account.
+        libraries: Library IDs; compared lower-case.
+
+    Returns:
+        The role on each library the account has one on, by lower-case library ID.
+    """
+    wanted = {library.casefold() for library in libraries}
+    account = await accounts.get_by_id(AccountId(account_id))
+    if account is None or account.is_disabled:
+        return {}
+    if account.is_operator:
+        return dict.fromkeys(wanted, LibraryRole.CREATOR)
+    groups = await externals.groups_of(account.id)
+    held: dict[str, list[LibraryGrant]] = {}
+    for grant in await grants.matching(wanted, account_id=account.id, groups=groups):
+        held.setdefault(grant.library, []).append(grant)
+    return {library: role for library, found in held.items() if (role := effective_role(found))}
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ResolveLibraryRolesUseCase:
+    """Implements ``ports.driving.ResolveLibraryRoles``."""
+
+    accounts: AccountRepository
+    """Where accounts are stored."""
+    externals: ExternalIdentityRepository
+    """The links of external accounts, for their groups."""
+    grants: LibraryGrantRepository
+    """Who holds which role on which library."""
+
+    async def __call__(self, query: LibraryRolesQuery) -> LibraryRoles:
+        """Return the account's effective role on each library it has one on.
+
+        Args:
+            query: The account and the libraries.
+
+        Returns:
+            Library ID to role.
+        """
+        roles = await _library_roles(
+            accounts=self.accounts,
+            externals=self.externals,
+            grants=self.grants,
+            account_id=query.account_id,
+            libraries=query.libraries,
+        )
+        return LibraryRoles(roles={library: role.value for library, role in roles.items()})
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ClaimLibraryUseCase:
+    """Implements ``ports.driving.ClaimLibrary``."""
+
+    grants: LibraryGrantRepository
+    """Who holds which role on which library."""
+
+    async def __call__(self, command: ClaimLibraryCommand) -> None:
+        """Make the account the library's creator; grants left on the same ID are dropped.
+
+        Args:
+            command: The account and the library.
+        """
+        await self.grants.claim(command.library.casefold(), AccountId(command.account_id))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DropLibraryGrantsUseCase:
+    """Implements ``ports.driving.DropLibraryGrants``."""
+
+    grants: LibraryGrantRepository
+    """Who holds which role on which library."""
+
+    async def __call__(self, command: DropLibraryGrantsCommand) -> None:
+        """Drop every grant on the library.
+
+        Args:
+            command: The library.
+        """
+        await self.grants.clear(command.library.casefold())
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Sharing:
+    """What the three sharing use cases have in common: who may share, and how grants read."""
+
+    accounts: AccountRepository
+    """Where accounts are stored."""
+    externals: ExternalIdentityRepository
+    """The links of external accounts, for their groups."""
+    grants: LibraryGrantRepository
+    """Who holds which role on which library."""
+
+    async def caller_role(self, caller_id: str, library: str) -> LibraryRole:
+        """Return the caller's role on the library, if it may share it at all.
+
+        Args:
+            caller_id: The account that shares.
+            library: The library ID, lower-case.
+
+        Returns:
+            The role (``admin`` or ``creator``).
+
+        Raises:
+            LibraryRoleRequiredError: The caller is not an ``admin`` of the library.
+        """
+        roles = await _library_roles(
+            accounts=self.accounts,
+            externals=self.externals,
+            grants=self.grants,
+            account_id=caller_id,
+            libraries=[library],
+        )
+        role = roles.get(library)
+        if role is None or not role.allows(LibraryRole.ADMIN):
+            raise LibraryRoleRequiredError(LibraryRole.ADMIN.value)
+        return role
+
+    async def subject_id(self, kind: SubjectKind, subject: str) -> str:
+        """Return what a grant stores for a username or a group name.
+
+        Args:
+            kind: Whether ``subject`` is a username or a group name.
+            subject: The username or group name as the caller gave it.
+
+        Returns:
+            The account's ID, or the group name.
+
+        Raises:
+            UnknownAccountError: No account has the username.
+        """
+        if kind is SubjectKind.GROUP:
+            return subject
+        account = await self.accounts.get(Username(subject))
+        if account is None:
+            raise UnknownAccountError
+        return account.id
+
+    async def listing(self, library: str) -> LibraryGrants:
+        """List the library's grants, users by their names.
+
+        Args:
+            library: The library ID, lower-case.
+
+        Returns:
+            The grants.
+        """
+        shown = []
+        for grant in await self.grants.for_library(library):
+            subject = grant.subject
+            if grant.kind is SubjectKind.USER:
+                account = await self.accounts.get_by_id(AccountId(subject))
+                subject = account.username.value if account else subject
+            shown.append(LibraryGrantSummary.from_model(grant, subject=subject))
+        return LibraryGrants(grants=shown)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GrantLibraryRoleUseCase:
+    """Implements ``ports.driving.GrantLibraryRole``."""
+
+    sharing: Sharing
+    """Who may share, and how grants read."""
+
+    async def __call__(self, command: GrantLibraryRoleCommand) -> LibraryGrants:
+        """Give the user or group the role, if the caller may.
+
+        Args:
+            command: The caller, the library, whom to give a role and which.
+
+        Returns:
+            The library's grants now.
+
+        Raises:
+            LibraryRoleRequiredError: The caller is no ``admin`` of the library, or not its
+                ``creator`` while the grant gives or changes an ``admin``'s role.
+            InvalidGrantError: The subject is the library's creator.
+        """
+        library = command.library.casefold()
+        caller = await self.sharing.caller_role(command.caller_id, library)
+        kind = SubjectKind(command.kind)
+        subject = await self.sharing.subject_id(kind, command.subject)
+        held = await self.sharing.grants.get(library, kind, subject)
+        if held is not None and held.role is LibraryRole.CREATOR:
+            msg = "the creator's role is not changed here"
+            raise InvalidGrantError(msg)
+        wanted = LibraryRole(command.role)
+        touches_admin = wanted is LibraryRole.ADMIN or (
+            held is not None and held.role is LibraryRole.ADMIN
+        )
+        if touches_admin and not caller.allows(LibraryRole.CREATOR):
+            raise LibraryRoleRequiredError(LibraryRole.CREATOR.value)
+        await self.sharing.grants.put(
+            LibraryGrant(library=library, kind=kind, subject=subject, role=wanted)
+        )
+        return await self.sharing.listing(library)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RevokeLibraryRoleUseCase:
+    """Implements ``ports.driving.RevokeLibraryRole``."""
+
+    sharing: Sharing
+    """Who may share, and how grants read."""
+
+    async def __call__(self, command: RevokeLibraryRoleCommand) -> LibraryGrants:
+        """Take the role away, if the caller may.
+
+        Args:
+            command: The caller, the library and whose role goes.
+
+        Returns:
+            The library's grants now.
+
+        Raises:
+            LibraryRoleRequiredError: The caller is no ``admin`` of the library, or not its
+                ``creator`` while the role is an ``admin``'s.
+            UnknownGrantError: There is no such grant.
+            InvalidGrantError: The grant is the creator's.
+        """
+        library = command.library.casefold()
+        caller = await self.sharing.caller_role(command.caller_id, library)
+        kind = SubjectKind(command.kind)
+        subject = await self.sharing.subject_id(kind, command.subject)
+        held = await self.sharing.grants.get(library, kind, subject)
+        if held is None:
+            raise UnknownGrantError
+        if held.role is LibraryRole.CREATOR:
+            msg = "the creator's role is not taken away here"
+            raise InvalidGrantError(msg)
+        if held.role is LibraryRole.ADMIN and not caller.allows(LibraryRole.CREATOR):
+            raise LibraryRoleRequiredError(LibraryRole.CREATOR.value)
+        await self.sharing.grants.remove(library, kind, subject)
+        return await self.sharing.listing(library)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ListLibraryGrantsUseCase:
+    """Implements ``ports.driving.ListLibraryGrants``."""
+
+    sharing: Sharing
+    """Who may share, and how grants read."""
+
+    async def __call__(self, query: ListLibraryGrantsQuery) -> LibraryGrants:
+        """List the library's grants, if the caller is an admin of it.
+
+        Args:
+            query: The caller and the library.
+
+        Returns:
+            The grants.
+        """
+        library = query.library.casefold()
+        await self.sharing.caller_role(query.caller_id, library)
+        return await self.sharing.listing(library)

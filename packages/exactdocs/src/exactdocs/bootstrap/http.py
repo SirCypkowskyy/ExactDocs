@@ -12,6 +12,7 @@ from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from exactdocs import __version__
+from exactdocs.bootstrap.caller import bind_caller
 from exactdocs.bootstrap.constants import (
     _UNSAFE_METHODS,
     MCP_PATH,
@@ -67,6 +68,42 @@ def _include_session_routers(v1: APIRouter, container: Container) -> identity_ht
         )
     )
     return session_caller
+
+
+def _protected_router(
+    container: Container, current_caller: identity_http.CurrentCaller
+) -> APIRouter:
+    """Build the router of everything that needs a caller, with the library grants routes.
+
+    Every route of it names the caller to the library roles (``bind_caller``), so each use case
+    it reaches checks the role of whoever is calling.
+
+    Args:
+        container: The wired domains.
+        current_caller: The dependency that names the calling account (session or API token).
+
+    Returns:
+        The router; domain routers are added to it.
+    """
+
+    async def bind_account(account: Annotated[AccountSummary, Depends(current_caller)]) -> None:
+        """Tell the library roles whose request this is.
+
+        Args:
+            account: The caller (FastAPI runs ``current_caller`` once per request).
+        """
+        bind_caller(account.id)
+
+    router = APIRouter(dependencies=[Depends(current_caller), Depends(bind_account)])
+    router.include_router(
+        identity_http.build_grants_router(
+            list_grants=container.identity.list_library_grants,
+            grant_role=container.identity.grant_library_role,
+            revoke_role=container.identity.revoke_library_role,
+            caller=current_caller,
+        )
+    )
+    return router
 
 
 def create_app(container: Container) -> FastAPI:
@@ -177,7 +214,8 @@ def create_app(container: Container) -> FastAPI:
         identify_caller=container.identity.identify_caller,
         identify_token=container.identity.identify_token,
     )
-    protected = APIRouter(dependencies=[Depends(current_caller)])
+
+    protected = _protected_router(container, current_caller)
 
     async def caller_id(account: Annotated[AccountSummary, Depends(current_caller)]) -> str:
         """Name the account of the request (FastAPI runs ``current_caller`` once per request).
@@ -229,7 +267,8 @@ def create_app(container: Container) -> FastAPI:
             set_library_retrieval=container.set_library_retrieval,
         )
     )
-    # Every signed-in account, operator or not, may do this until library roles exist (E12-05).
+    # Instance-wide settings and spend (provider keys and URLs, every library's budgets): for a
+    # signed-in operator only, as ``/users`` is. A library role is no reason to reach them.
     protected.include_router(
         retrieval_http.build_ai_router(
             list_providers=container.retrieval.list_providers,
@@ -241,7 +280,14 @@ def create_app(container: Container) -> FastAPI:
             estimate_embedding=container.retrieval.estimate_embedding,
             get_embedding_progress=container.retrieval.get_embedding_progress,
             get_ai_usage=container.retrieval.get_ai_usage,
-        )
+        ),
+        dependencies=[
+            Depends(
+                identity_http.build_operator(
+                    caller=session_caller, action="manages the instance's AI settings"
+                )
+            )
+        ],
     )
     protected.include_router(
         ingestion_http.build_router(

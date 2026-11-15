@@ -67,6 +67,7 @@ from exactdocs.ingestion.use_cases import (
     UpdateLibrarySettingsUseCase,
 )
 from exactdocs_kernel import NotFoundError
+from library_access import FakeAccess
 from unfinished_jobs import HistoryWithoutUnfinished
 
 LIBRARY = "/acme/docs"
@@ -402,7 +403,11 @@ async def test_settings_are_put_back_when_the_job_cannot_be_queued(sources, jobs
         raise RuntimeError(command.kind)
 
     update = UpdateLibrarySettingsUseCase(
-        sources=sources, settings=settings, jobs=jobs, enqueue_job=cannot_queue
+        sources=sources,
+        settings=settings,
+        jobs=jobs,
+        enqueue_job=cannot_queue,
+        access=FakeAccess(role="creator"),
     )
 
     with pytest.raises(RuntimeError, match="reprocess"):

@@ -13,6 +13,7 @@ from exactdocs.identity.ports.driven import (
     AccountRepository,
     ExternalIdentityRepository,
     FailedSignInLog,
+    LibraryGrantRepository,
     PasswordHasher,
     SecretBox,
     SessionRepository,
@@ -22,20 +23,26 @@ from exactdocs.identity.ports.driven import (
 )
 from exactdocs.identity.ports.driving import (
     Authenticate,
+    ClaimLibrary,
     CreateFirstAdmin,
     CreateToken,
     CreateUser,
+    DropLibraryGrants,
     FinishExternalSignIn,
     GetSessionState,
     GetSetupState,
+    GrantLibraryRole,
     IdentifyCaller,
     IdentifyExternalToken,
     IdentifyToken,
+    ListLibraryGrants,
     ListTokens,
     ListUsers,
     LoginForToken,
     ResetPassword,
+    ResolveLibraryRoles,
     RevalidateExternalAccounts,
+    RevokeLibraryRole,
     RevokeToken,
     SetUserDisabled,
     SignIn,
@@ -44,22 +51,29 @@ from exactdocs.identity.ports.driving import (
 )
 from exactdocs.identity.use_cases import (
     AuthenticateUseCase,
+    ClaimLibraryUseCase,
     CreateFirstAdminUseCase,
     CreateTokenUseCase,
     CreateUserUseCase,
+    DropLibraryGrantsUseCase,
     FinishExternalSignInUseCase,
     GetSessionStateUseCase,
     GetSetupStateUseCase,
+    GrantLibraryRoleUseCase,
     IdentifyCallerUseCase,
     IdentifyExternalTokenUseCase,
     IdentifyTokenUseCase,
+    ListLibraryGrantsUseCase,
     ListTokensUseCase,
     ListUsersUseCase,
     LoginForTokenUseCase,
     ResetPasswordUseCase,
+    ResolveLibraryRolesUseCase,
     RevalidateExternalAccountsUseCase,
+    RevokeLibraryRoleUseCase,
     RevokeTokenUseCase,
     SetUserDisabledUseCase,
+    Sharing,
     SignInUseCase,
     SignOutUseCase,
     StartExternalSignInUseCase,
@@ -111,6 +125,18 @@ class IdentityModule:
     """Finish an external sign-in (the provider's callback) and start a session."""
     revalidate_external_accounts: RevalidateExternalAccounts
     """Check again the memberships of the external identities that are due."""
+    resolve_library_roles: ResolveLibraryRoles
+    """Tell what an account may do with libraries (the highest role it or its groups hold)."""
+    claim_library: ClaimLibrary
+    """Make an account the creator of a new library."""
+    drop_library_grants: DropLibraryGrants
+    """Drop every grant on a removed library."""
+    grant_library_role: GrantLibraryRole
+    """Give a user or a group a role on a library (library admins; creators for admins)."""
+    revoke_library_role: RevokeLibraryRole
+    """Take a role away from a user or a group."""
+    list_library_grants: ListLibraryGrants
+    """List who holds a role on a library (library admins)."""
 
     @classmethod
     def build(
@@ -122,6 +148,7 @@ class IdentityModule:
         hasher: PasswordHasher,
         failures: FailedSignInLog,
         externals: ExternalIdentityRepository,
+        library_grants: LibraryGrantRepository,
         attempts: SignInAttemptRepository,
         box: SecretBox,
         clock: Clock,
@@ -138,6 +165,7 @@ class IdentityModule:
             failures: The log of failed sign-ins, for the throttle.
             externals: The links of external identities to accounts (kept even when no
                 provider is configured: their accounts must still lose access).
+            library_grants: Who holds which role on which library.
             attempts: Where started external sign-ins wait for their callback.
             box: Seals the refresh tokens of external identities.
             clock: The current time.
@@ -160,6 +188,7 @@ class IdentityModule:
             sessions=sessions, accounts=repository, externals=externals, clock=clock
         )
         create_token = CreateTokenUseCase(tokens=tokens, clock=clock)
+        sharing = Sharing(accounts=repository, externals=externals, grants=library_grants)
         return cls(
             get_setup_state=GetSetupStateUseCase(repository=repository),
             create_first_admin=CreateFirstAdminUseCase(
@@ -224,4 +253,12 @@ class IdentityModule:
                 box=box,
                 clock=clock,
             ),
+            resolve_library_roles=ResolveLibraryRolesUseCase(
+                accounts=repository, externals=externals, grants=library_grants
+            ),
+            claim_library=ClaimLibraryUseCase(grants=library_grants),
+            drop_library_grants=DropLibraryGrantsUseCase(grants=library_grants),
+            grant_library_role=GrantLibraryRoleUseCase(sharing=sharing),
+            revoke_library_role=RevokeLibraryRoleUseCase(sharing=sharing),
+            list_library_grants=ListLibraryGrantsUseCase(sharing=sharing),
         )

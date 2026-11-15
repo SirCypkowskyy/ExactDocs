@@ -537,9 +537,13 @@ provider may sign you straight back in.
 OAuth2-only providers, and GitHub or GitHub Enterprise with organization and team checks, are
 planned ([#383](https://github.com/SirCypkowskyy/ExactDocs/issues/383)).
 
-!!! note "No per-library permissions yet"
-    Until library roles arrive, every signed-in account may read and change every library and the
-    AI settings. Only managing accounts is reserved to admins.
+!!! note "Library roles"
+    Each library has roles (`viewer`, `contributor`, `admin`, `creator`), granted to users and
+    groups. A library you add makes you its creator; share it with `PUT
+    /api/v1/libraries/{owner}/{repo}/grants`. Operators (admins) hold every library, and manage
+    the accounts. Libraries that existed before roles have no creator, so other accounts see them
+    only once an operator shares them. The AI providers and instance settings stay open to every
+    signed-in account.
 
 ### Planned: teams
 

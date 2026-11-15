@@ -886,3 +886,16 @@ def close_paths(wanted: str, paths: Sequence[str], limit: int = MAX_CLOSE_MATCHE
     near = [p for p in paths if abs(len(p) - len(wanted)) <= max(3, len(wanted) * 3 // 10)]
     typos = get_close_matches(wanted, near, n=limit, cutoff=0.7)
     return list(dict.fromkeys([*same_name, *typos]))[:limit]
+
+
+class Access(StrEnum):
+    """The library role a caller needs for an action; the values are the role names."""
+
+    READ = "viewer"
+    """Search and read."""
+    CONTRIBUTE = "contributor"
+    """Import content: add versions, sync, tag articles."""
+    ADMINISTER = "admin"
+    """Configure the library and remove versions."""
+    OWN = "creator"
+    """Remove the library."""

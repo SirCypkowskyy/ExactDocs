@@ -6,6 +6,7 @@ from datetime import date, datetime
 from typing import Protocol
 
 from exactdocs.retrieval.models import (
+    Access,
     AgentCacheScope,
     AgentPick,
     AgentRead,
@@ -1574,5 +1575,32 @@ class InstructionFiles(Protocol):
 
         Returns:
             Its files, sorted by path; none when it keeps none.
+        """
+        ...
+
+
+class AccessPolicy(Protocol):
+    """Library roles: what the caller may do with a library (a bridge to identity)."""
+
+    async def allows(self, library: str, access: Access) -> bool:
+        """Tell whether the caller may do what ``access`` stands for with the library.
+
+        Args:
+            library: The library ID (``/owner/repo``), any case.
+            access: The role the action needs.
+
+        Returns:
+            ``True`` when the caller's effective role on the library is that or higher.
+        """
+        ...
+
+    async def readable(self, libraries: Collection[str]) -> frozenset[str]:
+        """Return the libraries the caller may read.
+
+        Args:
+            libraries: Library IDs.
+
+        Returns:
+            The lower-case IDs among them the caller may read.
         """
         ...

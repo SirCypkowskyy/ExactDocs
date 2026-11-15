@@ -7,6 +7,7 @@ from exactdocs_kernel import (
     BusyError,
     ConflictError,
     DomainError,
+    ForbiddenError,
     NotFoundError,
     UnauthenticatedError,
     ValidationError,
@@ -749,3 +750,17 @@ class AutoImportFailedError(DomainError):
             errors: One text per tag that was not queued or version that was not removed.
         """
         super().__init__("; ".join(errors))
+
+
+class LibraryAccessDeniedError(ForbiddenError):
+    """The caller's role on the library is too low for what they asked."""
+
+    def __init__(self, library_id: str, needed: str) -> None:
+        """Name the library and the role it takes.
+
+        Args:
+            library_id: The library asked about.
+            needed: The lowest library role that may do it.
+        """
+        super().__init__(f"library {library_id!r}: this needs the {needed} role")
+        self.library_id = library_id

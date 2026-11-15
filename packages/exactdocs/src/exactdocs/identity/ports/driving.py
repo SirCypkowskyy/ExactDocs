@@ -5,16 +5,24 @@ from typing import Protocol
 from exactdocs.identity.dtos import (
     AccountSummary,
     AuthenticateQuery,
+    ClaimLibraryCommand,
     CreateFirstAdminCommand,
     CreateTokenCommand,
     CreateUserCommand,
+    DropLibraryGrantsCommand,
     ExternalSignInResult,
     ExternalSignInStart,
     FinishExternalSignInCommand,
+    GrantLibraryRoleCommand,
+    LibraryGrants,
+    LibraryRoles,
+    LibraryRolesQuery,
+    ListLibraryGrantsQuery,
     LoginForTokenCommand,
     PasswordReset,
     ResetPasswordCommand,
     RevalidationReport,
+    RevokeLibraryRoleCommand,
     SessionGrant,
     SessionState,
     SetupState,
@@ -356,5 +364,102 @@ class RevalidateExternalAccounts(Protocol):
 
         Returns:
             How many were extended, revoked and left as they were.
+        """
+        ...
+
+
+class ResolveLibraryRoles(Protocol):
+    """Tell what an account may do with libraries: the highest role granted to it or its groups.
+
+    An instance operator (role ``admin``) is ``creator`` of every library; a disabled or unknown
+    account has no role.
+    """
+
+    async def __call__(self, query: LibraryRolesQuery) -> LibraryRoles:
+        """Run the use case.
+
+        Args:
+            query: The account and the libraries.
+
+        Returns:
+            Its role on each library it has one on.
+        """
+        ...
+
+
+class ClaimLibrary(Protocol):
+    """Make an account the creator of a new library, dropping any grant left on its ID."""
+
+    async def __call__(self, command: ClaimLibraryCommand) -> None:
+        """Run the use case.
+
+        Args:
+            command: The account and the library.
+        """
+        ...
+
+
+class DropLibraryGrants(Protocol):
+    """Drop every grant on a library that was removed."""
+
+    async def __call__(self, command: DropLibraryGrantsCommand) -> None:
+        """Run the use case.
+
+        Args:
+            command: The library.
+        """
+        ...
+
+
+class GrantLibraryRole(Protocol):
+    """Give a user or a group a role on a library.
+
+    Needs the ``admin`` role on it, and the ``creator`` role to give ``admin`` or to change an
+    ``admin``'s role (``LibraryRoleRequiredError``). ``UnknownAccountError`` for a username
+    nobody has.
+    """
+
+    async def __call__(self, command: GrantLibraryRoleCommand) -> LibraryGrants:
+        """Run the use case.
+
+        Args:
+            command: The caller, the library, whom to give a role and which.
+
+        Returns:
+            The library's grants now.
+        """
+        ...
+
+
+class RevokeLibraryRole(Protocol):
+    """Take a role away from a user or a group; the creator's role stays.
+
+    Needs the ``admin`` role, and the ``creator`` role to take an ``admin``'s. Raises
+    ``UnknownGrantError`` when there is no such grant.
+    """
+
+    async def __call__(self, command: RevokeLibraryRoleCommand) -> LibraryGrants:
+        """Run the use case.
+
+        Args:
+            command: The caller, the library and whose role goes.
+
+        Returns:
+            The library's grants now.
+        """
+        ...
+
+
+class ListLibraryGrants(Protocol):
+    """List who holds a role on a library; needs the ``admin`` role on it."""
+
+    async def __call__(self, query: ListLibraryGrantsQuery) -> LibraryGrants:
+        """Run the use case.
+
+        Args:
+            query: The caller and the library.
+
+        Returns:
+            The grants.
         """
         ...

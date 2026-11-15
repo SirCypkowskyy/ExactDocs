@@ -3,7 +3,13 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from exactdocs.retrieval.constants import MAX_DATA_CHARS, MAX_HEADING_CHARS, MAX_HEADINGS
-from exactdocs_kernel import ConflictError, DomainError, NotFoundError, ValidationError
+from exactdocs_kernel import (
+    ConflictError,
+    DomainError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 
 
 def _data(text: str, limit: int = MAX_DATA_CHARS) -> str:
@@ -696,3 +702,17 @@ class InvalidJudgmentError(DomainError):
         """
         super().__init__(f"the judge's ratings were refused: {fault}")
         self.fault = fault
+
+
+class LibraryAccessDeniedError(ForbiddenError):
+    """The caller's role on the library is too low for what they asked."""
+
+    def __init__(self, library_id: str, needed: str) -> None:
+        """Name the library and the role it takes.
+
+        Args:
+            library_id: The library asked about.
+            needed: The lowest library role that may do it.
+        """
+        super().__init__(f"library {library_id!r}: this needs the {needed} role")
+        self.library_id = library_id

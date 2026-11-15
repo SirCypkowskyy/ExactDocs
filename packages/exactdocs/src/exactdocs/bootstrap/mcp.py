@@ -229,6 +229,7 @@ def _build(
         list_libraries=catalog.list_libraries,
         list_articles=catalog.list_articles,
         get_article=catalog.get_article,
+        caller=_token_account,
     )
     retrieval_mcp.register_tools(
         mcp,
