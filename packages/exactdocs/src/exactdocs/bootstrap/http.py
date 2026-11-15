@@ -267,7 +267,8 @@ def create_app(container: Container) -> FastAPI:
             set_library_retrieval=container.set_library_retrieval,
         )
     )
-    # Every signed-in account, operator or not, may do this until library roles exist (E12-05).
+    # Instance-wide settings and spend (provider keys and URLs, every library's budgets): for a
+    # signed-in operator only, as ``/users`` is. A library role is no reason to reach them.
     protected.include_router(
         retrieval_http.build_ai_router(
             list_providers=container.retrieval.list_providers,
@@ -279,7 +280,14 @@ def create_app(container: Container) -> FastAPI:
             estimate_embedding=container.retrieval.estimate_embedding,
             get_embedding_progress=container.retrieval.get_embedding_progress,
             get_ai_usage=container.retrieval.get_ai_usage,
-        )
+        ),
+        dependencies=[
+            Depends(
+                identity_http.build_operator(
+                    caller=session_caller, action="manages the instance's AI settings"
+                )
+            )
+        ],
     )
     protected.include_router(
         ingestion_http.build_router(

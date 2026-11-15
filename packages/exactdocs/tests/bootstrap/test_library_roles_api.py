@@ -4,10 +4,12 @@ Every account here is an ordinary user (`ada` is the instance's operator, who is
 every library); a role is granted, or claimed as a creator, on `/acme/payments`.
 """
 
+import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any, Literal
 
 import httpx
@@ -26,7 +28,14 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
-from exactdocs.catalog.dtos import CreateLibraryCommand, RemoveLibraryCommand
+from exactdocs.catalog.constants import RESOURCE_LIST_TTL
+from exactdocs.catalog.dtos import (
+    ActivateManifestCommand,
+    ArticleIn,
+    CreateLibraryCommand,
+    RemoveLibraryCommand,
+    StoreManifestCommand,
+)
 from exactdocs.catalog.models import HostKind, Library, LibraryId, RefKind, Version, VersionRef
 from exactdocs.identity.dtos import (
     AccountSummary,
@@ -392,3 +401,81 @@ async def test_a_viewer_reads_over_mcp_and_a_caller_without_a_role_is_refused(
                 await nobody.call_tool(tool, arguments)
         listed = await nobody.call_tool("list_libraries", {})
         assert LIBRARY not in str(listed.content)
+
+
+async def _publish_plan(container: Container, library: str) -> None:
+    """Store and activate ``v1.3.0``, the default version, of ``library``: one article."""
+    stored = await container.catalog.store_manifest(
+        StoreManifestCommand(
+            library=library,
+            ref="v1.3.0",
+            kind="tag",
+            commit_sha="a" * 40,
+            articles=[
+                ArticleIn(
+                    path="plan.md",
+                    blob_sha="b" * 40,
+                    content_version=1,
+                    title="Secret plan",
+                    tags=[],
+                    content="# Secret plan",
+                )
+            ],
+        )
+    )
+    await container.catalog.activate_manifest(
+        ActivateManifestCommand(manifest_id=stored.manifest_id)
+    )
+
+
+async def test_the_resource_list_is_kept_per_caller_not_shared_through_its_cache(
+    instance: Instance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _publish_plan(instance.container, LIBRARY)
+    # The list the server built while starting is stale now: let it expire, so that the first
+    # caller below builds a list that the 30 s cache then holds for the next ones.
+    expired = SimpleNamespace(monotonic=lambda: time.monotonic() + RESOURCE_LIST_TTL + 1)
+    monkeypatch.setattr("exactdocs.catalog.adapters.driving.mcp.time", expired)
+    wanted = "exactdocs://acme/payments/plan.md?ref=v1.3.0"
+    # The cache lives 30 s: the operator lists first, so a shared one would hand it to carol.
+    async with mcp_client(instance.app, await instance.token("ada")) as operator:
+        assert wanted in {str(r.uri) for r in await operator.list_resources()}
+
+    async with mcp_client(instance.app, await instance.token("carol")) as nobody:
+        listed = await nobody.list_resources()
+        assert wanted not in {str(r.uri) for r in listed}
+
+    await instance.give("bob", "viewer")
+    async with mcp_client(instance.app, await instance.token("bob")) as viewer:
+        assert wanted in {str(r.uri) for r in await viewer.list_resources()}
+
+
+AI_ROUTES = [
+    ("GET", "/api/v1/ai/providers", {}),
+    ("GET", "/api/v1/ai/providers/corp", {}),
+    (
+        "PUT",
+        "/api/v1/ai/providers/corp",
+        {"json": {"kind": "openai-compatible", "base_url": "https://llm.example.com/v1"}},
+    ),
+    ("DELETE", "/api/v1/ai/providers/corp", {}),
+    ("GET", "/api/v1/ai/roles", {}),
+    ("GET", "/api/v1/ai/embedding", {}),
+    ("GET", "/api/v1/ai/usage", {}),
+]
+
+
+@pytest.mark.parametrize(("method", "path", "options"), AI_ROUTES)
+async def test_the_ai_routes_are_for_the_operator_whatever_the_library_roles(
+    instance: Instance, method: str, path: str, options: dict[str, Any]
+) -> None:
+    await instance.give("bob", "creator")  # a role on a library is no reach into the instance
+    for name in ("bob", "carol"):
+        async with instance.signed_in(name) as client:
+            refused = await client.request(method, path, **options)
+            assert refused.status_code == 403, (name, refused.text)
+            assert refused.json()["error"] == "forbidden"
+
+    async with instance.signed_in("ada") as operator:
+        allowed = await operator.request(method, path, **options)
+        assert allowed.status_code not in {401, 403}, allowed.text

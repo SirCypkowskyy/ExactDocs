@@ -185,9 +185,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   "role": "viewer"|"contributor"|"admin"}`) gives or replaces a role and answers the grants;
   `DELETE /libraries/{owner}/{repo}/grants/{user|group}/{subject}` takes one away. All three
   need `admin` on the library, and `creator` to give, change or remove an `admin`; the
-  creator's own role is never changed there (422 `invalid_grant`). A username nobody has is 404
-  `unknown_account`, a missing grant 404 `unknown_grant`. Libraries that existed before roles
-  have no creator: operators manage them and share them.
+  creator's own role is never changed there (422 `invalid_grant`). Group names are matched
+  exactly (letter case included) against the groups the identity provider reports. A username
+  nobody has is 404 `unknown_account`, a missing grant 404 `unknown_grant`. Libraries that existed
+  before roles have no creator: operators manage them and share them.
 - **Editing a library**: `PATCH /libraries/{owner}/{repo}` (`{"title"?, "description"?}`). An edited
   field is kept across re-imports instead of following the default version's `context7.json` or
   root README (LIB-07).
@@ -520,8 +521,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 
 ### AI providers
 
-Open to every signed-in account for now (instance permissions are planned). See [AI retrieval
-decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
+Every route under `/ai` is for a signed-in operator (role `admin`, like `/users`); any other
+account, whatever library roles it holds, gets 403 `forbidden`, and an API token 401. They show
+and change instance-wide settings (provider URLs and keys, spend and budgets of every library).
+See [AI retrieval decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
 
 - `GET /ai/providers`: every profile, the environment's and the TOML file's first
   (`origin: configuration`, `read_only: true`), then those stored here (`origin: api`). Never a
