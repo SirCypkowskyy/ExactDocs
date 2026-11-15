@@ -8,6 +8,7 @@ from exactdocs.identity.models import (
     Account,
     AccountId,
     ApiToken,
+    ExternalClaims,
     ExternalGrant,
     ExternalIdentity,
     FailedSignIns,
@@ -397,6 +398,20 @@ class SignInProvider(Protocol):
 
         Returns:
             Who signed in, their groups and the refresh token (if any).
+        """
+        ...
+
+    async def verify_id_token(self, id_token: str) -> ExternalClaims:
+        """Validate an ID token this provider issued to ExactDocs and return its claims.
+
+        The checks are those of ``exchange`` except the ``nonce`` (the token comes from the MCP
+        OAuth proxy's own sign-in, long after the browser's attempt).
+
+        Args:
+            id_token: The ID token, as the provider issued it.
+
+        Returns:
+            Who the token is about, and their groups.
         """
         ...
 

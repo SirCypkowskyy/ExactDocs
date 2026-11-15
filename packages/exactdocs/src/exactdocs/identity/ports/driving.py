@@ -284,6 +284,28 @@ class IdentifyToken(Protocol):
         ...
 
 
+class IdentifyExternalToken(Protocol):
+    """Who an ID token of a sign-in provider acts as (MCP's OAuth); nothing is stored.
+
+    Raises ``UnknownSignInProviderError`` for a name that is not configured,
+    ``ExternalSignInFailedError`` for a token the provider does not vouch for,
+    ``NotAllowedError`` for a person in no allowed group and ``AccountDisabledError``.
+    """
+
+    async def __call__(self, provider: str, token: str) -> AccountSummary:
+        """Run the use case.
+
+        Args:
+            provider: The provider's name.
+            token: The ID token.
+
+        Returns:
+            The linked account, or, for a person who never signed in to the web UI, a caller
+            named ``<provider>:<subject>`` that no account backs.
+        """
+        ...
+
+
 class StartExternalSignIn(Protocol):
     """Start a sign-in through a configured identity provider.
 

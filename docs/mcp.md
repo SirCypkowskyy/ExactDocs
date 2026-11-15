@@ -45,7 +45,7 @@ The command prints its id on stderr, for `exactdocs token revoke <id>`.
 }
 ```
 
-MCP over HTTP needs an API token, and the token acts as the account that created it. Tokens start
+MCP over HTTP needs an API token (or [OAuth](#oauth-for-web-hosts), for hosts that cannot paste one), and the token acts as the account that created it. Tokens start
 with `exd_`. They are shown once when created, stored only as a hash, may expire, and stop working
 the moment they are revoked. Create, list and revoke them on the **Account** page of the web UI,
 with `exactdocs token`, or over the REST API with a signed-in session. The token routes do not
@@ -62,6 +62,38 @@ curl -b jar.txt -X DELETE http://localhost:3000/api/v1/tokens/<id>   # revoke
 
 REST clients and scripts send the same token as `Authorization: Bearer exd_...` to any `/api/v1`
 route except the token routes themselves.
+
+### OAuth for web hosts
+
+Web hosts such as Claude and ChatGPT cannot paste an API token; they connect with OAuth. Choose
+one of your [sign-in providers](getting-started.md#sign-in-through-an-identity-provider) for them
+(an MCP client discovers a single authorization server):
+
+```bash
+EXACTDOCS_MCP_OAUTH_PROVIDER=corp
+```
+
+The host then finds the OAuth metadata at `/.well-known/oauth-authorization-server` and
+`/.well-known/oauth-protected-resource/mcp` on the server's root, registers itself, shows the
+person a consent page on your server, and sends them to the provider. API tokens keep working next
+to it, so the CLI and coding agents are unaffected.
+
+- **Register a second redirect URI.** At the provider, add `<EXACTDOCS_PUBLIC_URL>/auth/callback`
+  to the client's redirect URIs, next to the one for the web sign-in. The provider needs a client
+  secret (the proxy derives its token signing key from it).
+- **Same membership checks.** The provider's `allowed_groups`, `allow_any_user` and `admin_groups`
+  apply, and a disabled account is refused. The check runs at every call, not only at sign-in: a
+  person who leaves the group gets a `401` at the next call, even though the host still holds a
+  token. A person who also signed in to the web UI acts as that account; anyone else acts as
+  `<provider>:<subject>`, and no account is created.
+- **The groups must be in the ID token.** The check reads the provider's ID token (always a JWT),
+  not userinfo. Make sure the `groups_claim` is in it (ADFS: an issuance transform rule for
+  `group`; Entra ID: the groups optional claim).
+- **Only `oidc` providers (ADFS included) can be chosen for now.** `oauth2` and `github` kinds
+  follow with their sign-in.
+- The `Host` and `Origin` allowlist (`EXACTDOCS_ALLOWED_HOSTS`, `EXACTDOCS_ALLOWED_ORIGINS`)
+  applies to the OAuth routes too. The proxy keeps its registrations and tokens, encrypted, in
+  `<data dir>/mcp-oauth`; changing the client secret makes hosts sign in again.
 
 ### Without a network port: stdio
 

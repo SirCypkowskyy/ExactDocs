@@ -909,6 +909,57 @@ def _configured(
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class IdentifyExternalTokenUseCase:
+    """Implements ``ports.driving.IdentifyExternalToken``.
+
+    The provider's adapter validates the ID token; the provider's policy then decides, as at a
+    web sign-in, whether the person is admitted and with which role. A person linked to an
+    account acts as it (a disabled one is refused); anyone else acts as ``<provider>:<subject>``.
+    Nothing is created or changed: the MCP host's token is checked at every request, so a lost
+    membership ends access at the next call.
+    """
+
+    providers: Mapping[str, SignInProvider]
+    """The configured identity providers, by name."""
+    policies: Mapping[str, SignInPolicy]
+    """Their policies, by name."""
+    accounts: AccountRepository
+    """Where accounts are stored."""
+    externals: ExternalIdentityRepository
+    """The links of external identities to accounts."""
+
+    async def __call__(self, provider: str, token: str) -> AccountSummary:
+        """Validate the token and return who it acts as.
+
+        Args:
+            provider: The provider's name.
+            token: The ID token.
+
+        Returns:
+            The caller, with the role the policy gives their groups now.
+
+        Raises:
+            AccountDisabledError: The linked account is disabled.
+            NotAllowedError: The provider puts the person in no allowed group.
+        """
+        adapter, policy = _configured(self.providers, self.policies, provider)
+        claims = await adapter.verify_id_token(token)
+        link = await self.externals.get(claims.issuer, claims.subject)
+        account = None if link is None else await self.accounts.get_by_id(link.account_id)
+        if account is not None and account.is_disabled:
+            raise AccountDisabledError
+        if not policy.admits(claims.groups):
+            logger.info("MCP OAuth through %s refused: not in an allowed group", policy.name)
+            raise NotAllowedError
+        role = policy.role_for(claims.groups).value
+        if account is not None:
+            return AccountSummary(id=account.id, username=account.username.value, role=role)
+        candidates = username_candidates(claims, policy.name)
+        username = candidates[0].value if candidates else claims.subject
+        return AccountSummary(id=f"{policy.name}:{claims.subject}", username=username, role=role)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class StartExternalSignInUseCase:
     """Implements ``ports.driving.StartExternalSignIn``."""
 

@@ -4,6 +4,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ResourceError, ToolError
+from fastmcp.server.auth import AuthProvider
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from mcp.server.context import ServerRequestContext
@@ -13,10 +14,10 @@ from mcp.types import INVALID_PARAMS, ListResourcesResult, PaginatedRequestParam
 from exactdocs import __version__
 from exactdocs.bootstrap.constants import RESOURCE_NOT_FOUND, SKILL_PATH
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
+from exactdocs.bootstrap.mcp_oauth import build_mcp_auth
 from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driving import mcp as catalog_mcp
 from exactdocs.catalog.constants import MAX_LISTED_RESOURCES, RESOURCE_PAGE_SIZE
-from exactdocs.identity.adapters.driving.mcp import ApiTokenVerifier
 from exactdocs.retrieval import RetrievalModule
 from exactdocs.retrieval.adapters.driving import mcp as retrieval_mcp
 from exactdocs_kernel import DomainError, NotFoundError
@@ -140,7 +141,9 @@ class ExactDocsMCP(FastMCP):
 
 
 def build_mcp(container: Container) -> FastMCP:
-    """One MCP server exposing every domain's read-only tools; over HTTP it wants an API token.
+    """One MCP server exposing every domain's read-only tools; over HTTP it wants a credential.
+
+    An API token, or an OAuth sign-in as well when ``EXACTDOCS_MCP_OAUTH_PROVIDER`` is set.
 
     Args:
         container: The wired application.
@@ -148,7 +151,7 @@ def build_mcp(container: Container) -> FastMCP:
     Returns:
         The MCP server.
     """
-    auth = ApiTokenVerifier(identify_token=container.identity.identify_token)
+    auth = build_mcp_auth(container.settings, container.identity)
     return _build(container.catalog, container.retrieval, auth)
 
 
@@ -165,14 +168,14 @@ def build_stdio_mcp(container: ReadOnlyContainer) -> FastMCP:
 
 
 def _build(
-    catalog: CatalogModule, retrieval: RetrievalModule, auth: ApiTokenVerifier | None
+    catalog: CatalogModule, retrieval: RetrievalModule, auth: AuthProvider | None
 ) -> FastMCP:
     """Build the MCP server: its instructions, the usage skill, every tool and the resources.
 
     Args:
         catalog: The catalog module, for the browsing tools and the article resources.
         retrieval: The retrieval module, for the search and reading tools.
-        auth: The API token verifier, or ``None`` for no authentication.
+        auth: What authenticates HTTP callers (API tokens, maybe OAuth), or ``None`` for none.
 
     Returns:
         The MCP server.

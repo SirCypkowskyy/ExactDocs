@@ -80,7 +80,7 @@ def sign_in_providers(
         providers[name] = OidcProvider(
             issuer=config.issuer,
             client_id=config.client_id,
-            client_secret=_client_secret(name, config),
+            client_secret=client_secret_reader(name, config),
             redirect_uri=f"{settings.public_url}{V1_PREFIX}/auth/{name}/callback",
             scopes=tuple(config.scopes),
             claims=OidcClaimNames(
@@ -94,7 +94,7 @@ def sign_in_providers(
     return providers, policies
 
 
-def _client_secret(name: str, config: SignInProviderSettings) -> Callable[[], str | None]:
+def client_secret_reader(name: str, config: SignInProviderSettings) -> Callable[[], str | None]:
     """Return what reads a provider's client secret at each use.
 
     Args:

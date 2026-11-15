@@ -725,6 +725,13 @@ turns each into the domain's `SignInPolicy` (`models.py`: who is admitted, `admi
 (`identity/adapters/driven/oidc.py:OidcProvider`: discovery, PKCE through Authlib, the ID token
 through joserfc, HTTP through `httpx2`). The redirect URI is built from `EXACTDOCS_PUBLIC_URL`.
 
+MCP over OAuth (`EXACTDOCS_MCP_OAUTH_PROVIDER`): `bootstrap/mcp_oauth.py` runs FastMCP's `OIDCProxy`
+for the chosen provider and combines it with the API-token verifier through `MultiAuth`.
+The proxy's token verifier (`identity/adapters/driving/mcp.py:ExternalTokenVerifier`) calls the
+`IdentifyExternalToken` use case at every request: the provider adapter validates the ID token
+(`SignInProvider.verify_id_token`) and the provider's `SignInPolicy` admits the person. Nothing is
+stored by the domain.
+
 ```mermaid
 sequenceDiagram
     participant B as Browser

@@ -71,11 +71,12 @@ not valid stops the server at start, with a message naming the field.
 | `revalidate_minutes` | `60` | How often the groups are checked again with the stored refresh token |
 | `revalidate_grace_minutes` | `1440` | How long access lasts without a successful check (the provider is unreachable, or it gave no refresh token). After that, access ends until the next sign-in |
 
-One setting applies to all providers:
+Two settings apply to all providers:
 
 | Variable | Default | What it does |
 |---|---|---|
 | `EXACTDOCS_AUTH__REVALIDATE_POLL_SECONDS` | `300` | How often the server looks for accounts whose groups are due a check |
+| `EXACTDOCS_MCP_OAUTH_PROVIDER` | unset | The name of one provider that web MCP hosts (Claude, ChatGPT) sign in through with OAuth. It needs a client secret. See [MCP](mcp.md#oauth-for-web-hosts) |
 
 ### Server and imports
 
