@@ -1,4 +1,4 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Self
@@ -12,6 +12,7 @@ from exactdocs.retrieval.constants import (
     QUERY_EMBEDDING_TIMEOUT,
 )
 from exactdocs.retrieval.models import (
+    Access,
     AgentBounds,
     Budgets,
     InstanceRoles,
@@ -22,6 +23,7 @@ from exactdocs.retrieval.models import (
     RetrievalMode,
 )
 from exactdocs.retrieval.ports.driven import (
+    AccessPolicy,
     ActiveManifests,
     AgentAnswerCache,
     AgentReads,
@@ -145,6 +147,37 @@ from exactdocs.retrieval.use_cases import (
     UntracedSearches,
 )
 from exactdocs_kernel import Clock, SystemClock
+
+
+class _EveryoneMayDoAnything:
+    """The default ``access`` of ``build``: no roles, as in a local process the owner runs."""
+
+    async def allows(self, library: str, access: Access) -> bool:
+        """Allow everything.
+
+        Args:
+            library: The library.
+            access: The role the action needs.
+
+        Returns:
+            Always ``True``.
+        """
+        del library, access
+        return True
+
+    async def readable(self, libraries: Collection[str]) -> frozenset[str]:
+        """Allow reading every library.
+
+        Args:
+            libraries: Library IDs.
+
+        Returns:
+            All of them, lower-case.
+        """
+        return frozenset(library.casefold() for library in libraries)
+
+
+_open_access = _EveryoneMayDoAnything()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -275,6 +308,7 @@ class RetrievalModule:
         agent_cache_scope: str = "library",
         agent_cache_ttl: timedelta = timedelta(days=DEFAULT_AGENT_CACHE_TTL_DAYS),
         instruction_files: InstructionFiles | None = None,
+        access: AccessPolicy = _open_access,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -345,6 +379,7 @@ class RetrievalModule:
                 older ones, and every answer while the cache is off.
             instruction_files: Reads a manifest's ``AGENTS.md`` / ``CLAUDE.md`` files for a
                 library with repo guidance on (RET-08).
+            access: Library roles: what the caller may do with a library; everything by default.
 
         Returns:
             The module, its driving ports wired.
@@ -461,18 +496,27 @@ class RetrievalModule:
         )
         return cls(
             search_docs=SearchDocsUseCase(
-                versions=searchable, modes=modes, chunks=chunks, tracer=tracer
+                versions=searchable, modes=modes, chunks=chunks, tracer=tracer, access=access
             ),
             search_all_libraries=SearchAllLibrariesUseCase(
-                defaults=defaults, versions=searchable, search=search, chunks=chunks, tracer=tracer
+                defaults=defaults,
+                versions=searchable,
+                search=search,
+                chunks=chunks,
+                tracer=tracer,
+                access=access,
             ),
             index_manifest=IndexManifestUseCase(chunks=chunks, search=search, clock=clock),
             get_chunk_sets=GetChunkSetsUseCase(chunks=chunks),
             read_chunk=ReadChunkUseCase(
-                versions=searchable, manifests=manifests, chunks=chunks, renames=renames
+                versions=searchable,
+                manifests=manifests,
+                chunks=chunks,
+                renames=renames,
+                access=access,
             ),
             article_outline=ArticleOutlineUseCase(
-                versions=searchable, chunks=chunks, suggestions=suggestions
+                versions=searchable, chunks=chunks, suggestions=suggestions, access=access
             ),
             resolve_library_id=ResolveLibraryIdUseCase(
                 libraries=libraries,
@@ -480,6 +524,7 @@ class RetrievalModule:
                 search=search,
                 chunks=chunks,
                 tracer=tracer,
+                access=access,
             ),
             query_docs=QueryDocsUseCase(
                 versions=searchable,
@@ -487,6 +532,7 @@ class RetrievalModule:
                 chunks=chunks,
                 token_budget=query_docs_token_budget,
                 tracer=tracer,
+                access=access,
             ),
             discard_pending_chunks=DiscardPendingChunksUseCase(
                 manifests=manifests,
@@ -511,9 +557,15 @@ class RetrievalModule:
             get_search_index_state=GetSearchIndexStateUseCase(maintenance=maintenance),
             get_vector_store_state=GetVectorStoreStateUseCase(modes=modes),
             rebuild_search_index=RebuildSearchIndexUseCase(maintenance=maintenance),
-            get_library_retrieval=GetLibraryRetrievalUseCase(libraries=libraries, modes=modes),
+            get_library_retrieval=GetLibraryRetrievalUseCase(
+                libraries=libraries, modes=modes, access=access
+            ),
             set_library_retrieval=SetLibraryRetrievalUseCase(
-                libraries=libraries, modes=modes, providers=providers, answers=answers
+                libraries=libraries,
+                modes=modes,
+                providers=providers,
+                answers=answers,
+                access=access,
             ),
             forget_library=ForgetLibraryUseCase(library_modes=library_modes, answers=answers),
             list_providers=ListProvidersUseCase(providers=providers),

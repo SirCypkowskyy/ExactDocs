@@ -42,11 +42,13 @@ from exactdocs.bootstrap.bridges import (
     CatalogVersionArticles,
     CatalogVersionCopier,
     CatalogVersionPublisher,
+    IdentityAccessPolicy,
     RetrievalChunkIndex,
     RetrievalCollector,
     RetrievalGuidancePolicy,
     RetrievalVersionEmbedder,
 )
+from exactdocs.bootstrap.caller import current_account_id
 from exactdocs.bootstrap.cancellation import being_cancelled
 from exactdocs.bootstrap.constants import (
     AGENT_CACHE_PURPOSE,
@@ -77,6 +79,7 @@ from exactdocs.bootstrap.database import (
 from exactdocs.bootstrap.embedding import SaveProviderThenEmbed, requeue_daily
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
 from exactdocs.bootstrap.local_models import LocalModels
+from exactdocs.bootstrap.open_access import OpenAccess
 from exactdocs.bootstrap.repo_guidance import SetRetrievalThenReprocess
 from exactdocs.bootstrap.search_engine import PostgresSearchChoice
 from exactdocs.bootstrap.secret_box import FernetSecretBox, derived_key, read_key_file
@@ -107,6 +110,7 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteAccountRepository,
     SqliteExternalIdentityRepository,
     SqliteFailedSignInLog,
+    SqliteLibraryGrantRepository,
     SqliteSessionRepository,
     SqliteSignInAttemptRepository,
     SqliteTokenRepository,
@@ -410,6 +414,7 @@ def _identity(settings: Settings, engine: AsyncEngine, stand_ins: SignInStandIns
         if is_postgres(engine)
         else InMemoryFailedSignInLog(),
         externals=SqliteExternalIdentityRepository(engine=engine),
+        library_grants=SqliteLibraryGrantRepository(engine=engine),
         attempts=SqliteSignInAttemptRepository(engine=engine),
         box=_secret_box(settings, SIGN_IN_TOKENS_PURPOSE),
         clock=clock,
@@ -417,6 +422,23 @@ def _identity(settings: Settings, engine: AsyncEngine, stand_ins: SignInStandIns
         policies=policies,
     )
     return _Identity(module=identity, client=client)
+
+
+def _access_policy(identity: IdentityModule) -> IdentityAccessPolicy:
+    """Build the library roles the catalog, ingestion and retrieval ask identity for.
+
+    Args:
+        identity: The identity domain.
+
+    Returns:
+        The policy; its caller is the account of the current request.
+    """
+    return IdentityAccessPolicy(
+        resolve_library_roles=identity.resolve_library_roles,
+        claim_library=identity.claim_library,
+        drop_library_grants=identity.drop_library_grants,
+        caller=current_account_id,
+    )
 
 
 def _hyde_cache_key(settings: Settings, *, create: bool) -> bytes | None:
@@ -552,6 +574,7 @@ def _build_read_side(
     spend_engine: AsyncEngine | None = None,
     clock: Clock | None = None,
     agent_reads: AgentReads | None = None,
+    access: IdentityAccessPolicy | OpenAccess | None = None,
 ) -> _ReadSide:
     """Build the catalog and retrieval modules: everything the read-only MCP tools use.
 
@@ -575,6 +598,8 @@ def _build_read_side(
         clock: Decides the spend windows (tests); the system clock by default.
         agent_reads: Records the agentic explorer's reads (the eval suite's trace check); by
             default span events when telemetry is on, else nothing.
+        access: The library roles of catalog and retrieval (``IdentityAccessPolicy``); none:
+            everyone may do everything (a process the owner runs).
 
     Returns:
         The two modules (``StartupError`` when the AI configuration is invalid), and on
@@ -582,6 +607,7 @@ def _build_read_side(
     """
     local = LocalModels(models_dir=settings.effective_models_dir)
     ai = _ai_configuration(settings, local, model_factory)
+    access = access or OpenAccess()
     catalog = CatalogModule.build(
         repository=SqliteLibraryRepository(engine=engine),
         manifests=SqliteManifestRepository(engine=engine),
@@ -590,6 +616,7 @@ def _build_read_side(
         copier=SqliteManifestCopier(engine=engine),
         article_titles=SqliteArticleTitles(engine=engine),
         instruction_files=SqliteInstructionFiles(engine=engine),
+        access=access,
     )
     choice = None
     search: SqliteSearchIndex | PostgresSearchChoice = SqliteSearchIndex(engine=engine)
@@ -671,6 +698,7 @@ def _build_read_side(
         instruction_files=CatalogInstructionFiles(
             get_instruction_files=catalog.get_instruction_files
         ),
+        access=access,
     )
     return _ReadSide(
         catalog=catalog,
@@ -1014,9 +1042,11 @@ class Container:
         vault = SqliteCredentialVault(
             engine=engine, box=_secret_box(settings, CREDENTIALS_KEY_PURPOSE)
         )
+        identity = _identity(settings, engine, sign_in or SignInStandIns())
         read = _build_read_side(
             engine,
             settings,
+            access=_access_policy(identity.module),
             ai_box=_secret_box(settings, AI_KEYS_PURPOSE),
             hyde_key=_hyde_cache_key(settings, create=True),
             agent_cache_key=_agent_cache_key(settings, create=True),
@@ -1125,8 +1155,8 @@ class Container:
             ),
             webhook_deliveries=SqliteWebhookDeliveries(engine=engine),
             wrap_handler=traced_job(settings),  # the `push` handler, built inside the module
+            access=_access_policy(identity.module),
         )
-        identity = _identity(settings, engine, sign_in or SignInStandIns())
         return cls(
             settings=settings,
             engine=engine,

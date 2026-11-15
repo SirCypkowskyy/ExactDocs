@@ -1,7 +1,7 @@
 """REST adapter for identity: setup, sessions, "who is the caller", tokens and the users page."""
 
 from collections.abc import Awaitable, Callable
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -27,10 +27,15 @@ from exactdocs.identity.dtos import (
     CreateTokenCommand,
     CreateUserCommand,
     FinishExternalSignInCommand,
+    GrantLibraryRoleCommand,
+    LibraryGrantRequest,
+    LibraryGrants,
+    ListLibraryGrantsQuery,
     LoginForTokenCommand,
     NewPassword,
     PasswordReset,
     ResetPasswordCommand,
+    RevokeLibraryRoleCommand,
     SessionState,
     SetUserDisabledCommand,
     StartExternalSignInCommand,
@@ -51,12 +56,15 @@ from exactdocs.identity.ports.driving import (
     CreateUser,
     FinishExternalSignIn,
     GetSessionState,
+    GrantLibraryRole,
     IdentifyCaller,
     IdentifyToken,
+    ListLibraryGrants,
     ListTokens,
     ListUsers,
     LoginForToken,
     ResetPassword,
+    RevokeLibraryRole,
     RevokeToken,
     SetUserDisabled,
     SignIn,
@@ -682,3 +690,96 @@ def _no_store(response: RedirectResponse) -> RedirectResponse:
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
     return response
+
+
+def build_grants_router(
+    *,
+    list_grants: ListLibraryGrants,
+    grant_role: GrantLibraryRole,
+    revoke_role: RevokeLibraryRole,
+    caller: CurrentCaller,
+) -> APIRouter:
+    """Expose ``/libraries/{owner}/{repo}/grants``: who holds which role on a library.
+
+    Every route needs the ``admin`` role on the library (an instance operator holds it on all of
+    them). Giving or taking the ``admin`` role needs the ``creator`` role. A session or an API
+    token may call them: a token acts as its account.
+
+    Args:
+        list_grants: The driving port that lists the grants.
+        grant_role: The driving port that gives a role.
+        revoke_role: The driving port that takes a role away.
+        caller: The dependency that names the calling account.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["identity"], dependencies=[Depends(caller)])
+    account = Annotated[AccountSummary, Depends(caller)]
+
+    @router.get("/libraries/{owner}/{repo}/grants", name="list_library_grants")
+    async def get_grants(owner: str, repo: str, who: account) -> LibraryGrants:
+        """List who holds a role on the library: users first, then groups. Library admins only.
+
+        Args:
+            owner: The library's owner segment.
+            repo: The library's repository segment.
+            who: The caller.
+
+        Returns:
+            The grants.
+        """
+        return await list_grants(
+            ListLibraryGrantsQuery(caller_id=who.id, library=f"/{owner}/{repo}")
+        )
+
+    @router.put("/libraries/{owner}/{repo}/grants", name="grant_library_role")
+    async def put_grant(
+        owner: str, repo: str, request: LibraryGrantRequest, who: account
+    ) -> LibraryGrants:
+        """Give a user or a group a role on the library, replacing the role they had.
+
+        Needs the `admin` role on the library, and `creator` to give or change `admin`. A
+        group is named as stored (with the provider's prefix). The creator's role is never
+        changed here.
+
+        Args:
+            owner: The library's owner segment.
+            repo: The library's repository segment.
+            request: Whom to give a role, and which.
+            who: The caller.
+
+        Returns:
+            The library's grants now.
+        """
+        return await grant_role(
+            GrantLibraryRoleCommand(
+                caller_id=who.id, library=f"/{owner}/{repo}", **request.model_dump()
+            )
+        )
+
+    @router.delete(
+        "/libraries/{owner}/{repo}/grants/{kind}/{subject:path}", name="revoke_library_role"
+    )
+    async def delete_grant(
+        owner: str, repo: str, kind: Literal["user", "group"], subject: str, who: account
+    ) -> LibraryGrants:
+        """Take a role away from a user or a group. Needs `admin`, and `creator` for an admin's.
+
+        Args:
+            owner: The library's owner segment.
+            repo: The library's repository segment.
+            kind: `user` or `group`.
+            subject: The username or the group's name.
+            who: The caller.
+
+        Returns:
+            The library's grants now.
+        """
+        return await revoke_role(
+            RevokeLibraryRoleCommand(
+                caller_id=who.id, library=f"/{owner}/{repo}", kind=kind, subject=subject
+            )
+        )
+
+    return router

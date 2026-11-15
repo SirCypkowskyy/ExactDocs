@@ -16,7 +16,7 @@ from exactdocs.identity.constants import (
     TOKEN_NAME_DESCRIPTION,
     USERNAME_DESCRIPTION,
 )
-from exactdocs.identity.models import Account, ApiToken, SignInPolicy
+from exactdocs.identity.models import Account, ApiToken, LibraryGrant, LibraryRole, SignInPolicy
 
 
 class _Dto(BaseModel):
@@ -381,3 +381,123 @@ class TokenGrant(TokenSummary):
 
     token: str = Field(repr=False)
     """The token's secret, shown only this once: send it as `Authorization: Bearer <token>`."""
+
+
+class LibraryRolesQuery(_Dto):
+    """Ask what one account may do with libraries."""
+
+    account_id: str
+    """The account."""
+    libraries: list[str]
+    """Library IDs (``/owner/repo``)."""
+
+
+class LibraryRoles(_Dto):
+    """An account's effective role on each library asked about."""
+
+    roles: dict[str, str]
+    """Library ID (lower-case) to the role: `viewer`, `contributor`, `admin` or `creator`. A
+    library the account has no role on is left out."""
+
+    def allows(self, library: str, needed: str) -> bool:
+        """Tell whether the account's role on a library is ``needed`` or higher.
+
+        Args:
+            library: The library ID, any case.
+            needed: The lowest role that may do it: `viewer`, `contributor`, `admin` or
+                `creator`.
+
+        Returns:
+            ``False`` when the account has no role on the library.
+        """
+        role = self.roles.get(library.casefold())
+        return role is not None and LibraryRole(role).allows(LibraryRole(needed))
+
+
+class ClaimLibraryCommand(_Dto):
+    """Make an account the creator of a new library, dropping every earlier grant on its ID."""
+
+    account_id: str
+    """The account that created the library."""
+    library: str
+    """The library ID."""
+
+
+class DropLibraryGrantsCommand(_Dto):
+    """Drop every grant on a library that no longer exists."""
+
+    library: str
+    """The library ID."""
+
+
+class LibraryGrantRequest(_Dto):
+    """Give a user or a group a role on a library (replacing the role they had)."""
+
+    kind: Literal["user", "group"]
+    """Whether `subject` is a username or a group name."""
+    subject: str = Field(min_length=1, max_length=256)
+    """The username, or the group's name as ExactDocs stores it (with the provider's prefix)."""
+    role: Literal["viewer", "contributor", "admin"]
+    """The role to give. `creator` is not given: the library's creator holds it."""
+
+
+class GrantLibraryRoleCommand(LibraryGrantRequest):
+    """A grant, made by a caller."""
+
+    caller_id: str
+    """The account that shares the library."""
+    library: str
+    """The library ID."""
+
+
+class RevokeLibraryRoleCommand(_Dto):
+    """Take a role away from a user or a group, made by a caller."""
+
+    caller_id: str
+    """The account that stops sharing."""
+    library: str
+    """The library ID."""
+    kind: Literal["user", "group"]
+    """Whether `subject` is a username or a group name."""
+    subject: str
+    """The username or the group's name."""
+
+
+class ListLibraryGrantsQuery(_Dto):
+    """List who may do what with a library, asked by a caller."""
+
+    caller_id: str
+    """The account that asks."""
+    library: str
+    """The library ID."""
+
+
+class LibraryGrantSummary(_Dto):
+    """One grant as the outside world sees it."""
+
+    kind: Literal["user", "group"]
+    """Whether `subject` is a username or a group name."""
+    subject: str
+    """The username, or the group's name."""
+    role: str
+    """The role: `viewer`, `contributor`, `admin` or `creator`."""
+
+    @classmethod
+    def from_model(cls, grant: LibraryGrant, *, subject: str) -> Self:
+        """Map a grant to its boundary representation.
+
+        Args:
+            grant: The grant.
+            subject: What to show as its subject (a user's name, not its ID).
+
+        Returns:
+            Its summary.
+        """
+        return cls(kind=grant.kind.value, subject=subject, role=grant.role.value)
+
+
+class LibraryGrants(_Dto):
+    """Everyone who holds a role on a library."""
+
+    grants: list[LibraryGrantSummary]
+    """The grants: users first, then groups, by name."""

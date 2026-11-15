@@ -1,4 +1,5 @@
 from exactdocs.ingestion.ports.driven import (
+    AccessPolicy,
     AutoSyncStore,
     Checkpoints,
     Chunker,
@@ -52,6 +53,7 @@ from exactdocs.ingestion.ports.driving import (
 )
 
 __all__ = [
+    "AccessPolicy",
     "AddLibrary",
     "AddVersion",
     "AutoSyncStore",

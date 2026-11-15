@@ -17,6 +17,10 @@ ALLOWED = {
     ("retrieval", "catalog"),
     ("ingestion", "catalog"),
     ("ingestion", "retrieval"),
+    # Library roles (E12-05): identity provides, and has no dependency of its own.
+    ("catalog", "identity"),
+    ("retrieval", "identity"),
+    ("ingestion", "identity"),
 }
 CONSUMER_MODULES = {"models", "ports.driven"}
 PROVIDER_MODULES = {"ports.driving", "dtos"}
