@@ -45,11 +45,12 @@ The command prints its id on stderr, for `exactdocs token revoke <id>`.
 }
 ```
 
-MCP over HTTP needs an API token (or [OAuth](#oauth-for-web-hosts), for hosts that cannot paste one), and the token acts as the account that created it. Tokens start
-with `exd_`. They are shown once when created, stored only as a hash, may expire, and stop working
-the moment they are revoked. Create, list and revoke them on the **Account** page of the web UI,
-with `exactdocs token`, or over the REST API with a signed-in session. The token routes do not
-accept a token, so a leaked token cannot mint successors.
+MCP over HTTP needs an API token (or [OAuth](#oauth-for-web-hosts), for hosts that cannot paste
+one), and the token acts as the account that created it. Tokens start with `exd_`. They are shown
+once when created, stored only as a hash, may expire, and stop working the moment they are
+revoked. Create, list and revoke them on the **Account** page of the web UI, with
+`exactdocs token`, or over the REST API with a signed-in session. The token routes do not accept a
+token, so a leaked token cannot mint successors.
 
 ```bash
 curl -c jar.txt -H 'content-type: application/json' http://localhost:3000/api/v1/session \
@@ -82,10 +83,19 @@ to it, so the CLI and coding agents are unaffected.
   to the client's redirect URIs, next to the one for the web sign-in. The provider needs a client
   secret (the proxy derives its token signing key from it).
 - **Same membership checks.** The provider's `allowed_groups`, `allow_any_user` and `admin_groups`
-  apply, and a disabled account is refused. The check runs at every call, not only at sign-in: a
-  person who leaves the group gets a `401` at the next call, even though the host still holds a
-  token. A person who also signed in to the web UI acts as that account; anyone else acts as
-  `<provider>:<subject>`, and no account is created.
+  apply, and a disabled account is refused. The check runs at every call, not only at sign-in, but
+  it reads the ID token the server holds for the host, so what it sees depends on the change:
+    - A person who signs in to the web UI as well acts as that account; **disabling the account
+      gives a `401` at the next call**, with the same token.
+    - A person who **leaves a group at the provider** keeps access until the ID token expires
+      (usually about an hour), because the token itself does not change. Then the host gets a
+      `401`, renews with its refresh token, and the provider's current groups apply: a person
+      outside the allowed groups gets no working token.
+  Anyone who never signed in to the web UI acts as `<provider>:<subject>`, and no account is
+  created.
+- **What the host sees when the ID token expires.** A `401` with the usual `WWW-Authenticate`
+  header. A host that keeps its refresh token trades it for a new token and carries on; one that
+  does not sends the person through the sign-in again.
 - **The groups must be in the ID token.** The check reads the provider's ID token (always a JWT),
   not userinfo. Make sure the `groups_claim` is in it (ADFS: an issuance transform rule for
   `group`; Entra ID: the groups optional claim).
@@ -93,7 +103,8 @@ to it, so the CLI and coding agents are unaffected.
   follow with their sign-in.
 - The `Host` and `Origin` allowlist (`EXACTDOCS_ALLOWED_HOSTS`, `EXACTDOCS_ALLOWED_ORIGINS`)
   applies to the OAuth routes too. The proxy keeps its registrations and tokens, encrypted, in
-  `<data dir>/mcp-oauth`; changing the client secret makes hosts sign in again.
+  `<data dir>/mcp-oauth`; changing the client secret makes hosts sign in again, and the state kept
+  under the old secret is deleted at the next start.
 
 ### Without a network port: stdio
 

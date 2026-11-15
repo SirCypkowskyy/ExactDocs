@@ -12,10 +12,11 @@ through ``OAuthProxy`` with the provider's endpoints.
 """
 
 import hashlib
+import shutil
 from pathlib import Path
 
 from cryptography.fernet import Fernet
-from fastmcp.server.auth import MultiAuth, OIDCProxy
+from fastmcp.server.auth import AuthProvider, MultiAuth, OIDCProxy
 from fastmcp.server.auth.jwt_issuer import derive_jwt_key
 from key_value.aio.protocols import AsyncKeyValue
 from key_value.aio.stores.filetree import (
@@ -32,7 +33,7 @@ from exactdocs.identity import IdentityModule
 from exactdocs.identity.adapters.driving.mcp import ApiTokenVerifier, ExternalTokenVerifier
 
 
-def build_mcp_auth(settings: Settings, identity: IdentityModule) -> ApiTokenVerifier | MultiAuth:
+def build_mcp_auth(settings: Settings, identity: IdentityModule) -> AuthProvider:
     """Return what guards ``/mcp``: API tokens, plus OAuth when a provider is chosen.
 
     Args:
@@ -43,7 +44,7 @@ def build_mcp_auth(settings: Settings, identity: IdentityModule) -> ApiTokenVeri
         The API-token verifier alone, or the OAuth proxy combined with it.
 
     Raises:
-        ValueError: The chosen provider's client secret cannot be read, or there is no public URL.
+        ValueError: The chosen provider's client secret cannot be read.
     """
     api_tokens = ApiTokenVerifier(identify_token=identity.identify_token)
     name = settings.mcp_oauth_provider
@@ -55,15 +56,12 @@ def build_mcp_auth(settings: Settings, identity: IdentityModule) -> ApiTokenVeri
         message = f"sign-in provider {name!r}: its client secret cannot be read"
         raise ValueError(message)
     config_url = f"{provider.issuer.rstrip('/')}/.well-known/openid-configuration"
-    if settings.public_url is None:  # ruled out by Settings: a provider needs a public URL
-        message = "EXACTDOCS_PUBLIC_URL is required for MCP OAuth"
-        raise ValueError(message)
     proxy = OIDCProxy(
         config_url=config_url,
         strict=False,  # the web sign-in does not insist on every optional metadata field either
         client_id=provider.client_id,
         client_secret=secret,
-        base_url=settings.public_url,
+        base_url=f"{settings.public_url}",  # set: Settings requires it once a provider exists
         # The provider's ID token is what is checked (always a JWT, unlike many access tokens);
         # the scopes are those of the web sign-in, `openid` and `offline_access` among them.
         verify_id_token=True,
@@ -84,7 +82,7 @@ def _storage(directory: Path, secret: str) -> AsyncKeyValue:
 
     FastMCP's own default would put them in the user's data folder, which a container does not
     keep. A rotated client secret changes the key: stored state then reads as missing and hosts
-    register and sign in again.
+    register and sign in again, and the directories of earlier keys are removed.
 
     Args:
         directory: Where the files go.
@@ -94,7 +92,12 @@ def _storage(directory: Path, secret: str) -> AsyncKeyValue:
         The store.
     """
     key = derive_jwt_key(high_entropy_material=secret, salt="exactdocs-mcp-oauth-storage")
-    directory /= hashlib.sha256(key).hexdigest()[:12]
+    current = directory / hashlib.sha256(key).hexdigest()[:12]
+    if directory.is_dir():
+        for stale in directory.iterdir():
+            if stale.is_dir() and stale != current:
+                shutil.rmtree(stale, ignore_errors=True)
+    directory = current
     directory.mkdir(parents=True, exist_ok=True)
     return FernetEncryptionWrapper(
         key_value=FileTreeStore(

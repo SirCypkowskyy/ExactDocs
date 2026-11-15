@@ -730,7 +730,8 @@ for the chosen provider and combines it with the API-token verifier through `Mul
 The proxy's token verifier (`identity/adapters/driving/mcp.py:ExternalTokenVerifier`) calls the
 `IdentifyExternalToken` use case at every request: the provider adapter validates the ID token
 (`SignInProvider.verify_id_token`) and the provider's `SignInPolicy` admits the person. Nothing is
-stored by the domain.
+stored by the domain. A disabled account is refused at the next call; the groups are those of the
+ID token the proxy holds, so a group change shows when it expires and the host renews it.
 
 ```mermaid
 sequenceDiagram

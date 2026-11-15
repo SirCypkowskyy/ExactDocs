@@ -54,7 +54,8 @@ class ExternalTokenVerifier(TokenVerifier):
     The proxy (FastMCP's ``OIDCProxy``) runs the OAuth flow with the host and the provider, and
     asks this verifier to vouch for the provider's ID token before each call. The provider's
     adapter validates the token and its policy admits the person (the same allowed groups as at
-    the web sign-in), so a person who lost their group is refused at the next call.
+    the web sign-in), so a disabled account is refused at the next call and a person who lost their
+    group once the ID token expires and is renewed.
     """
 
     def __init__(self, *, provider: str, identify_external_token: IdentifyExternalToken) -> None:

@@ -915,8 +915,9 @@ class IdentifyExternalTokenUseCase:
     The provider's adapter validates the ID token; the provider's policy then decides, as at a
     web sign-in, whether the person is admitted and with which role. A person linked to an
     account acts as it (a disabled one is refused); anyone else acts as ``<provider>:<subject>``.
-    Nothing is created or changed: the MCP host's token is checked at every request, so a lost
-    membership ends access at the next call.
+    Nothing is created or changed: the MCP host's token is checked at every request, so a
+    disabled account loses access at the next call; the groups come from the ID token, so a group
+    change shows once the token expires and the host renews it.
     """
 
     providers: Mapping[str, SignInProvider]

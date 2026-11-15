@@ -6,17 +6,22 @@ web host drives it (``mcp_oauth_host``).
 
 import tempfile
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs
 
+import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
+from exactdocs.bootstrap.mcp_oauth import _storage
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.sign_in import SignInStandIns
+from exactdocs.identity.dtos import SetUserDisabledCommand
 from fake_oidc import CLIENT_ID, CLIENT_SECRET, ISSUER, FakeIssuer
 from mcp_oauth_host import call_tool, connect, fake_issuer, tool_result
 
@@ -34,15 +39,25 @@ def provider(**overrides: Any) -> dict[str, Any]:
     }
 
 
+@dataclass(slots=True)
+class Clock:
+    at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def now(self) -> datetime:
+        return self.at
+
+
 @dataclass(frozen=True, slots=True)
 class Instance:
     client: TestClient
     issuer: FakeIssuer
     container: Container
+    clock: Clock
 
 
 def running(**settings: Any) -> Iterator[Instance]:
-    issuer = FakeIssuer()
+    clock = Clock()
+    issuer = FakeIssuer(now=clock.now)
     issuer.add_user("u-1", "alice", groups=["docs"])
     issuer.add_user("u-2", "bob", groups=["other"])
     with tempfile.TemporaryDirectory(prefix="exactdocs-") as data_dir, fake_issuer(issuer):
@@ -53,10 +68,10 @@ def running(**settings: Any) -> Iterator[Instance]:
                 auth={"providers": {"corp": provider()}},
                 **settings,
             ),
-            sign_in=SignInStandIns(transport=issuer.transport()),
+            sign_in=SignInStandIns(clock=clock, transport=issuer.transport()),
         )
         with TestClient(create_app(container), base_url=PUBLIC) as client:
-            yield Instance(client=client, issuer=issuer, container=container)
+            yield Instance(client=client, issuer=issuer, container=container, clock=clock)
 
 
 @pytest.fixture
@@ -93,6 +108,81 @@ def test_a_person_outside_the_allowed_groups_gets_no_working_token(oauth: Instan
     # The host is handed a token (the provider signed bob in), but no call works with it.
     token = granted.json()["access_token"]
     assert call_tool(oauth.client, token, "list_libraries").status_code == 401
+
+
+def sign_alice_in_to_the_web_ui(oauth: Instance) -> None:
+    """The web sign-in creates alice's account and links her identity to it."""
+    setup = oauth.client.post(
+        "/api/v1/setup", json={"username": "ada", "password": "correct horse battery staple"}
+    )
+    assert setup.status_code == 201, setup.text
+    begun = oauth.client.get("/api/v1/auth/corp/start", follow_redirects=False)
+    assert begun.status_code == 303, begun.text
+    callback = oauth.issuer.authorize(begun.headers["location"], "u-1")
+    assert oauth.client.get(callback, follow_redirects=False).status_code == 303
+    oauth.client.cookies.clear()
+
+
+def refresh(oauth: Instance, granted: httpx2.Response) -> str:
+    """Trade the host's refresh token for a new access token, as the host does when told 401."""
+    client_id = parse_qs(granted.request.content.decode())["client_id"][0]
+    renewed = oauth.client.post(
+        "/token",
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": granted.json()["refresh_token"],
+            "client_id": client_id,
+        },
+    )
+    assert renewed.status_code == 200, renewed.text
+    return renewed.json()["access_token"]
+
+
+def test_a_disabled_account_gets_a_401_at_the_next_call_with_the_same_token(
+    oauth: Instance,
+) -> None:
+    sign_alice_in_to_the_web_ui(oauth)
+    token = connect(oauth.client, oauth.issuer, "u-1").json()["access_token"]
+    assert call_tool(oauth.client, token, "list_libraries").status_code == 200
+
+    assert oauth.client.portal is not None
+    oauth.client.portal.call(
+        oauth.container.identity.set_user_disabled,
+        SetUserDisabledCommand(username="alice", disabled=True),
+    )
+
+    assert call_tool(oauth.client, token, "list_libraries").status_code == 401
+
+
+def test_a_group_change_at_the_provider_is_seen_only_when_the_id_token_is_renewed(
+    oauth: Instance,
+) -> None:
+    granted = connect(oauth.client, oauth.issuer, "u-1")
+    token = granted.json()["access_token"]
+    oauth.issuer.add_user("u-1", "alice", groups=["other"])  # alice leaves the group
+
+    # The ID token the proxy holds still says "docs": nothing changes until it is renewed.
+    assert call_tool(oauth.client, token, "list_libraries").status_code == 200
+
+    oauth.clock.at += timedelta(minutes=10)  # the ID token (5 minutes in the fake) has expired
+    assert call_tool(oauth.client, token, "list_libraries").status_code == 401
+
+    # The host renews with its refresh token; the provider now says "other": no working token.
+    renewed = refresh(oauth, granted)
+    assert call_tool(oauth.client, renewed, "list_libraries").status_code == 401
+
+
+def test_a_host_recovers_from_an_expired_id_token_with_its_refresh_token(oauth: Instance) -> None:
+    granted = connect(oauth.client, oauth.issuer, "u-1")
+    oauth.clock.at += timedelta(minutes=10)
+    assert (
+        call_tool(oauth.client, granted.json()["access_token"], "list_libraries").status_code == 401
+    )
+
+    renewed = refresh(oauth, granted)
+
+    answer = call_tool(oauth.client, renewed, "list_libraries")
+    assert answer.status_code == 200, answer.text
 
 
 def test_api_tokens_keep_working_next_to_oauth(oauth: Instance) -> None:
@@ -157,3 +247,14 @@ def test_the_chosen_provider_needs_a_client_secret() -> None:
             auth={"providers": {"corp": provider(client_secret=None)}},
             mcp_oauth_provider="corp",
         )
+
+
+def test_a_rotated_client_secret_removes_the_state_kept_under_the_old_one() -> None:
+    with tempfile.TemporaryDirectory(prefix="exactdocs-") as data_dir:
+        root = Path(data_dir) / "mcp-oauth"
+        first = _storage(root, "first-secret-first-secret")
+        second = _storage(root, "second-secret-second-secret")
+
+        assert first is not None
+        assert second is not None
+        assert len(list(root.iterdir())) == 1
