@@ -4211,3 +4211,16 @@ def caller_audience(caller: str | None, *, key: bytes) -> str:
         An HMAC-SHA256 (hex) of the account, never its name.
     """
     return hmac.new(key, f"caller:{caller or ''}".encode(), hashlib.sha256).hexdigest()
+
+
+class Access(StrEnum):
+    """The library role a caller needs for an action; the values are the role names."""
+
+    READ = "viewer"
+    """Search and read."""
+    CONTRIBUTE = "contributor"
+    """Import content: add versions, sync, tag articles."""
+    ADMINISTER = "admin"
+    """Configure the library and remove versions."""
+    OWN = "creator"
+    """Remove the library."""

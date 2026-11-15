@@ -169,7 +169,26 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   An unknown id is 404 `unknown_account`. Every `/users` route needs the **session cookie** of an
   operator: an API token is 401 (a stolen token cannot create accounts), and a signed-in account
   that is not an `admin` gets 403 `forbidden`. Library roles (who may read or change a library)
-  are separate and not enforced yet (E12-05): every signed-in account may use every library.
+  are separate: see the *Library roles* bullet below.
+- **Library roles** (ACL-02): `viewer < contributor < admin < creator` on each library, granted
+  to users and to groups; an account's role is the highest it holds, and an operator (role
+  `admin`) is `creator` of every library. Every library route asks for one: `viewer` reads and
+  searches (`GET`s, search, outline, jobs, the schedule), `contributor` also imports (`POST
+  .../versions`, `.../versions/reimport`, `.../sync`, `PUT .../tags`), `admin` also configures
+  (`PATCH` and `PUT .../settings`, `.../default-version`, `.../retrieval`, `.../auto-sync`) and
+  removes versions, `creator` also deletes the library. Below it the answer is 403 `forbidden`,
+  the same over MCP (a tool error `forbidden: ...`). `GET /libraries`, the searches across
+  libraries and `resolve-library-id` list only libraries the caller holds a role on. The one
+  who adds a library is its creator.
+  `GET /libraries/{owner}/{repo}/grants` lists who holds a role (`{"grants": [{"kind", "subject",
+  "role"}]}`: users by username, then groups); `PUT` (`{"kind": "user"|"group", "subject",
+  "role": "viewer"|"contributor"|"admin"}`) gives or replaces a role and answers the grants;
+  `DELETE /libraries/{owner}/{repo}/grants/{user|group}/{subject}` takes one away. All three
+  need `admin` on the library, and `creator` to give, change or remove an `admin`; the
+  creator's own role is never changed there (422 `invalid_grant`). Group names are matched
+  exactly (letter case included) against the groups the identity provider reports. A username
+  nobody has is 404 `unknown_account`, a missing grant 404 `unknown_grant`. Libraries that existed
+  before roles have no creator: operators manage them and share them.
 - **Editing a library**: `PATCH /libraries/{owner}/{repo}` (`{"title"?, "description"?}`). An edited
   field is kept across re-imports instead of following the default version's `context7.json` or
   root README (LIB-07).
@@ -502,8 +521,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 
 ### AI providers
 
-Admins only (every account is one until library roles exist). See [AI retrieval
-decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
+Every route under `/ai` is for a signed-in operator (role `admin`, like `/users`); any other
+account, whatever library roles it holds, gets 403 `forbidden`, and an API token 401. They show
+and change instance-wide settings (provider URLs and keys, spend and budgets of every library).
+See [AI retrieval decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
 
 - `GET /ai/providers`: every profile, the environment's and the TOML file's first
   (`origin: configuration`, `read_only: true`), then those stored here (`origin: api`). Never a

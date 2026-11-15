@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import weakref
-from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Collection, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy import (
     Column,
+    Delete,
     ForeignKey,
     Integer,
     MetaData,
@@ -42,9 +43,12 @@ from exactdocs.identity.models import (
     ApiToken,
     ExternalIdentity,
     FailedSignIns,
+    LibraryGrant,
+    LibraryRole,
     Role,
     Session,
     SignInAttempt,
+    SubjectKind,
     Username,
     known_sign_ins_prefix,
 )
@@ -125,6 +129,14 @@ account_groups = Table(
         primary_key=True,
     ),
     Column("name", Text, primary_key=True),
+)
+library_grants = Table(
+    "identity_library_grants",
+    metadata,
+    Column("library", Text, primary_key=True),  # `/owner/repo`, lower-case
+    Column("kind", Text, primary_key=True),  # `user` or `group`
+    Column("subject", Text, primary_key=True),  # an account ID, or a group name
+    Column("role", Text, nullable=False),
 )
 sign_in_attempts = Table(
     "identity_sign_in_attempts",
@@ -1276,6 +1288,198 @@ class SqliteExternalIdentityRepository:
             if (entry := found.get(AccountId(row.account_id))) is not None:
                 entry[1].append(row.name)
         return found
+
+    async def groups_of(self, account_id: AccountId) -> frozenset[str]:
+        """Return the groups of one account (empty for a local account).
+
+        Args:
+            account_id: The account.
+
+        Returns:
+            Its groups.
+        """
+        query = select(account_groups.c.name).where(account_groups.c.account_id == account_id)
+        async with self.engine.connect() as connection:
+            return frozenset((await connection.execute(query)).scalars())
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteLibraryGrantRepository:
+    """Implements ``ports.driven.LibraryGrantRepository`` (SQLite and PostgreSQL)."""
+
+    engine: AsyncEngine
+    """The database engine."""
+
+    async def matching(
+        self, libraries: Collection[str], *, account_id: AccountId, groups: frozenset[str]
+    ) -> list[LibraryGrant]:
+        """Return the grants on these libraries that apply to an account or one of its groups.
+
+        Args:
+            libraries: Library IDs, lower-case.
+            account_id: The account.
+            groups: The account's groups.
+
+        Returns:
+            The grants to the account itself and to each of its groups.
+        """
+        if not libraries:
+            return []
+        who = (library_grants.c.kind == SubjectKind.USER.value) & (
+            library_grants.c.subject == account_id
+        )
+        if groups:
+            who = or_(
+                who,
+                (library_grants.c.kind == SubjectKind.GROUP.value)
+                & library_grants.c.subject.in_(sorted(groups)),
+            )
+        query = select(library_grants).where(library_grants.c.library.in_(sorted(libraries)), who)
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(query)).all()
+        return [_grant(row) for row in rows]
+
+    async def for_library(self, library: str) -> list[LibraryGrant]:
+        """Return every grant on a library.
+
+        Args:
+            library: The library ID, lower-case.
+
+        Returns:
+            The grants, users first, each kind by subject.
+        """
+        query = (
+            select(library_grants)
+            .where(library_grants.c.library == library)
+            .order_by(library_grants.c.kind.desc(), library_grants.c.subject)
+        )
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(query)).all()
+        return [_grant(row) for row in rows]
+
+    async def get(self, library: str, kind: SubjectKind, subject: str) -> LibraryGrant | None:
+        """Return the grant of one user or group on a library, or ``None``.
+
+        Args:
+            library: The library ID, lower-case.
+            kind: Whether ``subject`` is an account ID or a group name.
+            subject: The account ID or the group name.
+
+        Returns:
+            The grant, or ``None``.
+        """
+        query = select(library_grants).where(
+            library_grants.c.library == library,
+            library_grants.c.kind == kind.value,
+            library_grants.c.subject == subject,
+        )
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(query)).first()
+        return None if row is None else _grant(row)
+
+    async def put(self, grant: LibraryGrant) -> None:
+        """Store a grant, replacing the role the subject had on the library.
+
+        Args:
+            grant: The grant.
+        """
+        async with self.engine.begin() as connection:
+            await connection.execute(_delete_grant(grant.library, grant.kind, grant.subject))
+            await connection.execute(insert(library_grants).values(_grant_values(grant)))
+
+    async def remove(self, library: str, kind: SubjectKind, subject: str) -> bool:
+        """Delete one grant.
+
+        Args:
+            library: The library ID, lower-case.
+            kind: Whether ``subject`` is an account ID or a group name.
+            subject: The account ID or the group name.
+
+        Returns:
+            ``False`` when there was no such grant.
+        """
+        async with self.engine.begin() as connection:
+            result = await connection.execute(_delete_grant(library, kind, subject))
+        return result.rowcount > 0
+
+    async def claim(self, library: str, account_id: AccountId) -> None:
+        """Replace every grant on a library by the creator's, in one transaction.
+
+        Args:
+            library: The library ID, lower-case.
+            account_id: The creator.
+        """
+        creator = LibraryGrant(
+            library=library, kind=SubjectKind.USER, subject=account_id, role=LibraryRole.CREATOR
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                delete(library_grants).where(library_grants.c.library == library)
+            )
+            await connection.execute(insert(library_grants).values(_grant_values(creator)))
+
+    async def clear(self, library: str) -> None:
+        """Delete every grant on a library.
+
+        Args:
+            library: The library ID, lower-case.
+        """
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                delete(library_grants).where(library_grants.c.library == library)
+            )
+
+
+def _delete_grant(library: str, kind: SubjectKind, subject: str) -> Delete:
+    """Return the ``DELETE`` of one grant's row.
+
+    Args:
+        library: The library ID.
+        kind: Whether ``subject`` is an account ID or a group name.
+        subject: The account ID or the group name.
+
+    Returns:
+        The statement for that row.
+    """
+    return delete(library_grants).where(
+        library_grants.c.library == library,
+        library_grants.c.kind == kind.value,
+        library_grants.c.subject == subject,
+    )
+
+
+def _grant_values(grant: LibraryGrant) -> dict[str, str]:
+    """Return the ``library_grants`` row of a grant.
+
+    Args:
+        grant: The grant.
+
+    Returns:
+        Its column values.
+    """
+    return {
+        "library": grant.library,
+        "kind": grant.kind.value,
+        "subject": grant.subject,
+        "role": grant.role.value,
+    }
+
+
+def _grant(row: Row[Any]) -> LibraryGrant:
+    """Map a ``library_grants`` row to its entity.
+
+    Args:
+        row: The row.
+
+    Returns:
+        The grant.
+    """
+    return LibraryGrant(
+        library=row.library,
+        kind=SubjectKind(row.kind),
+        subject=row.subject,
+        role=LibraryRole(row.role),
+    )
 
 
 def _identity_values(identity: ExternalIdentity) -> dict[str, Any]:

@@ -128,6 +128,7 @@ from exactdocs.retrieval.errors import (
     InvalidJudgmentError,
     InvalidProviderError,
     InvalidVectorError,
+    LibraryAccessDeniedError,
     LlmBudgetReachedError,
     LlmFailedError,
     MovedSection,
@@ -148,6 +149,7 @@ from exactdocs.retrieval.errors import (
     VersionNotIndexedError,
 )
 from exactdocs.retrieval.models import (
+    Access,
     AgentBounds,
     AgentCacheLookup,
     AgentCacheScope,
@@ -242,6 +244,7 @@ from exactdocs.retrieval.models import (
     spend_entries,
 )
 from exactdocs.retrieval.ports.driven import (
+    AccessPolicy,
     ActiveManifests,
     AgentAnswerCache,
     AgentReads,
@@ -317,6 +320,21 @@ async def _confirmed_removals(
         if not survivors:
             break
     return [m.manifest_id for m in survivors]
+
+
+async def _require(access: AccessPolicy, library: str, needed: Access) -> None:
+    """Refuse unless the caller holds the role ``needed`` on the library.
+
+    Args:
+        access: Library roles.
+        library: The library ID, any case.
+        needed: The role the action needs.
+
+    Raises:
+        LibraryAccessDeniedError: The caller's role on the library is lower.
+    """
+    if not await access.allows(library, needed):
+        raise LibraryAccessDeniedError(library, needed.value)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1783,6 +1801,8 @@ class SearchDocsUseCase:
     """Reads the hits' chunks."""
     tracer: SearchTracer = field(default_factory=UntracedSearches)
     """Observes the search and its stages (traces); records nothing by default."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(
         self, query: SearchDocsQuery, *, caller: str | None = None
@@ -1796,6 +1816,7 @@ class SearchDocsUseCase:
         Returns:
             The results of the one version searched.
         """
+        await _require(self.access, query.library, Access.READ)
         # Built only to refuse a whitespace-only query (EmptySearchTextError).
         text = SearchText(value=query.query)
         choice = await self.modes.choose(asked=query.mode, library=query.library)
@@ -1902,6 +1923,8 @@ class SearchAllLibrariesUseCase:
     """Reads the hits' chunks."""
     tracer: SearchTracer = field(default_factory=UntracedSearches)
     """Observes the search and its stages (traces); records nothing by default."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: SearchAllQuery) -> SearchAllResult:
         """Rank the chunks of all default versions together; count the matches per library.
@@ -1938,7 +1961,8 @@ class SearchAllLibrariesUseCase:
         """
         tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
         with self.tracer.span("search_all_libraries.versions", mode=mode):
-            every = await self.defaults.all()
+            allowed = await self.access.readable([v.library for v in await self.defaults.all()])
+            every = [v for v in await self.defaults.all() if v.library.casefold() in allowed]
         searched = {v.manifest_id: v for v in every[:MAX_SEARCHED_LIBRARIES]}
         omitted = len(every) - len(searched)
         scope = searched
@@ -2110,6 +2134,8 @@ class ReadChunkUseCase:
     """Reads the chunk and the manifests that hold it."""
     renames: RenamedPaths | None = None
     """Where a stale chunk's article went; without it only the old path is tried."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: ReadChunkQuery) -> ChunkOut:
         """Serve the chunk from its version's active manifest, or say why it cannot be served.
@@ -2131,6 +2157,7 @@ class ReadChunkUseCase:
         if len({m.version_id for m in holders}) != 1:
             raise ChunkNotFoundError(query.chunk_id)
         first = holders[0]
+        await _require(self.access, first.library, Access.READ)
         ref = first.version_id.removeprefix(f"{first.library}/")
         version = await self.versions.find(first.library, ref)
         ids = {m.manifest_id for m in holders}
@@ -2206,6 +2233,8 @@ class ArticleOutlineUseCase:
     """The article's chunk rows in that version's active manifest."""
     suggestions: ArticleSuggestions | None = None
     """Close paths for a miss, as ``read_article`` lists them; none without it."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: ArticleOutlineQuery) -> ArticleOutlineOut:
         """Build the outline from the article's chunk rows in the version's active manifest.
@@ -2220,6 +2249,7 @@ class ArticleOutlineUseCase:
             VersionNotIndexedError: The version is not imported or has no active manifest.
             ArticleNotFoundError: The version has no article at this path.
         """
+        await _require(self.access, query.library, Access.READ)
         version = await self.versions.find(query.library, query.ref)
         if version is None:
             raise VersionNotIndexedError(query.library, query.ref or "(default version)")
@@ -2612,6 +2642,8 @@ class ResolveLibraryIdUseCase:
     """Counts each default version's articles and chunks."""
     tracer: SearchTracer = field(default_factory=UntracedSearches)
     """Observes the search and its stages (traces); records nothing by default."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: ResolveLibraryIdQuery) -> ResolveLibraryIdResult:
         """Match the name, then let the default versions' hits for ``query`` re-rank the matches.
@@ -2649,6 +2681,8 @@ class ResolveLibraryIdUseCase:
             ]
             # Pre-order by name only, so the cut keeps the best names; hits re-rank within it.
             named.sort(key=lambda m: (m[1], m[0].id))
+            allowed = await self.access.readable([lib.id for lib, _ in named])
+            named = [(lib, found) for lib, found in named if lib.id.casefold() in allowed]
             readable = await self._readable(named)
         with self.tracer.span("resolve_library_id.rank", mode=mode):
             hits = await asyncio.gather(
@@ -2780,6 +2814,8 @@ class QueryDocsUseCase:
     """Size budget of an answer, in estimated tokens."""
     tracer: SearchTracer = field(default_factory=UntracedSearches)
     """Observes the search and its stages (traces); records nothing by default."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(
         self, query: QueryDocsQuery, *, caller: str | None = None
@@ -2804,6 +2840,7 @@ class QueryDocsUseCase:
         _, owner, repo, *rest = query.library_id.split("/", 3)
         ref = rest[0] if rest else None
         library = f"/{owner}/{repo}"
+        await _require(self.access, library, Access.READ)
         # context7's tool has no mode argument: the library's mode, else the instance's (C7-02).
         choice = await self.modes.choose(asked=None, library=library)
         with self.tracer.span(
@@ -2949,6 +2986,8 @@ class GetLibraryRetrievalUseCase:
     """Spells the library ID as the catalog does."""
     modes: RetrievalModes
     """The instance's modes and the libraries' settings."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: GetLibraryRetrievalQuery) -> LibraryRetrievalOut:
         """Read the library's mode and the one its searches use now.
@@ -2962,6 +3001,7 @@ class GetLibraryRetrievalUseCase:
         Raises:
             UnknownLibraryError: There is no such library.
         """
+        await _require(self.access, query.library, Access.READ)
         library = await self.libraries.canonical_id(query.library)
         if library is None:
             raise UnknownLibraryError(query.library)
@@ -2982,6 +3022,8 @@ class SetLibraryRetrievalUseCase:
     """The profiles an override may name."""
     answers: AgentAnswerCache = field(default_factory=NoAgentAnswerCache)
     """The agentic answer cache: a library's answers go when its settings are saved."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: SetLibraryRetrievalCommand) -> LibraryRetrievalOut:
         """Validate the settings against what can run with them, then store them.
@@ -2997,6 +3039,7 @@ class SetLibraryRetrievalUseCase:
             UnknownProviderError: An override names a profile that does not exist.
             ProviderUnsupportedError: An override names a profile this installation cannot call.
         """
+        await _require(self.access, command.library, Access.ADMINISTER)
         library = await self.libraries.canonical_id(command.library)
         if library is None:
             raise UnknownLibraryError(command.library)

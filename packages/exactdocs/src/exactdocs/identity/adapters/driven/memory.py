@@ -1,4 +1,4 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 
@@ -13,9 +13,12 @@ from exactdocs.identity.models import (
     ApiToken,
     ExternalIdentity,
     FailedSignIns,
+    LibraryGrant,
+    LibraryRole,
     Role,
     Session,
     SignInAttempt,
+    SubjectKind,
     Username,
     known_sign_ins_prefix,
 )
@@ -609,6 +612,123 @@ class InMemoryExternalIdentityRepository:
             ln.account_id: (ln.provider, sorted(self.groups.get(ln.account_id, ())))
             for ln in self.links.values()
         }
+
+    async def groups_of(self, account_id: AccountId) -> frozenset[str]:
+        """Return the groups of one account (empty for a local account).
+
+        Args:
+            account_id: The account.
+
+        Returns:
+            Its groups.
+        """
+        return self.groups.get(account_id, frozenset())
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryLibraryGrantRepository:
+    """Implements ``ports.driven.LibraryGrantRepository``. For tests."""
+
+    grants: dict[tuple[str, SubjectKind, str], LibraryGrant] = field(default_factory=dict)
+    """The grants, by (library, kind, subject)."""
+
+    async def matching(
+        self, libraries: Collection[str], *, account_id: AccountId, groups: frozenset[str]
+    ) -> list[LibraryGrant]:
+        """Return the grants on these libraries that apply to an account or one of its groups.
+
+        Args:
+            libraries: Library IDs, lower-case.
+            account_id: The account.
+            groups: The account's groups.
+
+        Returns:
+            The grants to the account itself and to each of its groups.
+        """
+        wanted = set(libraries)
+        return [
+            grant
+            for grant in self.grants.values()
+            if grant.library in wanted
+            and (
+                (grant.kind is SubjectKind.USER and grant.subject == account_id)
+                or (grant.kind is SubjectKind.GROUP and grant.subject in groups)
+            )
+        ]
+
+    async def for_library(self, library: str) -> list[LibraryGrant]:
+        """Return every grant on a library.
+
+        Args:
+            library: The library ID, lower-case.
+
+        Returns:
+            The grants, users first, each kind by subject.
+        """
+        return sorted(
+            (g for g in self.grants.values() if g.library == library),
+            key=lambda g: (g.kind is not SubjectKind.USER, g.subject),
+        )
+
+    async def get(self, library: str, kind: SubjectKind, subject: str) -> LibraryGrant | None:
+        """Return the grant of one user or group on a library, or ``None``.
+
+        Args:
+            library: The library ID, lower-case.
+            kind: Whether ``subject`` is an account ID or a group name.
+            subject: The account ID or the group name.
+
+        Returns:
+            The grant, or ``None``.
+        """
+        return self.grants.get((library, kind, subject))
+
+    async def put(self, grant: LibraryGrant) -> None:
+        """Store a grant, replacing the role the subject had on the library.
+
+        Args:
+            grant: The grant.
+        """
+        self.grants[grant.library, grant.kind, grant.subject] = grant
+
+    async def remove(self, library: str, kind: SubjectKind, subject: str) -> bool:
+        """Delete one grant.
+
+        Args:
+            library: The library ID, lower-case.
+            kind: Whether ``subject`` is an account ID or a group name.
+            subject: The account ID or the group name.
+
+        Returns:
+            ``False`` when there was no such grant.
+        """
+        return self.grants.pop((library, kind, subject), None) is not None
+
+    async def claim(self, library: str, account_id: AccountId) -> None:
+        """Replace every grant on a library by the creator's.
+
+        Args:
+            library: The library ID, lower-case.
+            account_id: The creator.
+        """
+        await self.clear(library)
+        await self.put(
+            LibraryGrant(
+                library=library,
+                kind=SubjectKind.USER,
+                subject=account_id,
+                role=LibraryRole.CREATOR,
+            )
+        )
+
+    async def clear(self, library: str) -> None:
+        """Delete every grant on a library.
+
+        Args:
+            library: The library ID, lower-case.
+        """
+        for key in [k for k in self.grants if k[0] == library]:
+            del self.grants[key]
 
 
 def _revision(link: ExternalIdentity) -> tuple[object, ...]:

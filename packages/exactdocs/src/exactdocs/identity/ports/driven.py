@@ -1,6 +1,6 @@
 """Driven (secondary) ports: what identity needs from infrastructure."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import Literal, Protocol
 
@@ -11,9 +11,11 @@ from exactdocs.identity.models import (
     ExternalGrant,
     ExternalIdentity,
     FailedSignIns,
+    LibraryGrant,
     Role,
     Session,
     SignInAttempt,
+    SubjectKind,
     Username,
 )
 
@@ -602,5 +604,97 @@ class ExternalIdentityRepository(Protocol):
 
         Returns:
             For each linked account: its provider's name and its groups, sorted.
+        """
+        ...
+
+    async def groups_of(self, account_id: AccountId) -> frozenset[str]:
+        """Return the groups of one account (empty for a local account).
+
+        Args:
+            account_id: The account.
+
+        Returns:
+            Its groups, as ExactDocs stores them.
+        """
+        ...
+
+
+class LibraryGrantRepository(Protocol):
+    """Who holds which role on which library."""
+
+    async def matching(
+        self, libraries: Collection[str], *, account_id: AccountId, groups: frozenset[str]
+    ) -> list[LibraryGrant]:
+        """Return the grants on these libraries that apply to an account or one of its groups.
+
+        Args:
+            libraries: Library IDs, lower-case.
+            account_id: The account.
+            groups: The account's groups.
+
+        Returns:
+            The grants to the account itself and to each of its groups.
+        """
+        ...
+
+    async def for_library(self, library: str) -> list[LibraryGrant]:
+        """Return every grant on a library.
+
+        Args:
+            library: The library ID, lower-case.
+
+        Returns:
+            The grants, users first, each kind by subject.
+        """
+        ...
+
+    async def get(self, library: str, kind: SubjectKind, subject: str) -> LibraryGrant | None:
+        """Return the grant of one user or group on a library, or ``None``.
+
+        Args:
+            library: The library ID, lower-case.
+            kind: Whether ``subject`` is an account ID or a group name.
+            subject: The account ID or the group name.
+
+        Returns:
+            The grant, or ``None``.
+        """
+        ...
+
+    async def put(self, grant: LibraryGrant) -> None:
+        """Store a grant, replacing the role the subject had on the library.
+
+        Args:
+            grant: The grant.
+        """
+        ...
+
+    async def remove(self, library: str, kind: SubjectKind, subject: str) -> bool:
+        """Delete one grant.
+
+        Args:
+            library: The library ID, lower-case.
+            kind: Whether ``subject`` is an account ID or a group name.
+            subject: The account ID or the group name.
+
+        Returns:
+            ``False`` when there was no such grant.
+        """
+        ...
+
+    async def claim(self, library: str, account_id: AccountId) -> None:
+        """Replace every grant on a library by the creator's, in one step.
+
+        Args:
+            library: The library ID, lower-case.
+            account_id: The creator.
+        """
+        ...
+
+    async def clear(self, library: str) -> None:
+        """Delete every grant on a library.
+
+        Args:
+            library: The library ID, lower-case.
         """
         ...
