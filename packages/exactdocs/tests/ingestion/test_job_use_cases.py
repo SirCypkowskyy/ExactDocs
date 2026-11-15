@@ -21,6 +21,7 @@ from exactdocs.ingestion.models import Job, JobId, JobState, ProblemCode
 from exactdocs.ingestion.ports import JobProgress
 from exactdocs.ingestion.use_cases import ListLibraryJobsUseCase
 from exactdocs_kernel import InvalidCursorError, ValidationError
+from library_access import FakeAccess
 
 IMPORT = JobKind("import")
 
@@ -422,7 +423,7 @@ async def test_a_page_of_jobs_is_read_from_the_repository_one_page_at_a_time() -
                 now=datetime(2026, 1, 1, tzinfo=UTC),
             )
         )
-    listing = ListLibraryJobsUseCase(jobs=jobs)
+    listing = ListLibraryJobsUseCase(jobs=jobs, access=FakeAccess(role="viewer"))
 
     first = await listing(ListLibraryJobsQuery(library="/acme/payments", limit=2))
     second = await listing(
@@ -444,7 +445,7 @@ async def test_a_page_of_jobs_is_read_from_the_repository_one_page_at_a_time() -
     "cursor", [pytest.param("!", id="not base64"), pytest.param("AA", id="decodes to NUL")]
 )
 async def test_a_malformed_cursor_of_the_job_list_is_refused(cursor: str) -> None:
-    listing = ListLibraryJobsUseCase(jobs=InMemoryJobRepository())
+    listing = ListLibraryJobsUseCase(jobs=InMemoryJobRepository(), access=FakeAccess(role="viewer"))
 
     with pytest.raises(InvalidCursorError):
         await listing(ListLibraryJobsQuery(library="/acme/payments", cursor=cursor))

@@ -56,6 +56,7 @@ from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.ports import ChunkRepository
 from exactdocs.retrieval.use_cases import ReadChunkUseCase
 from exactdocs_kernel import NOTICE
+from library_access import FakeAccess
 
 T0 = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 PAYMENTS = "/acme/payments"
@@ -980,6 +981,7 @@ async def test_an_id_held_by_two_versions_is_refused_not_guessed(world: World) -
         versions=world.catalog,
         manifests=world.catalog,
         chunks=TwoVersions(),  # ty: ignore[invalid-argument-type]
+        access=FakeAccess(role="viewer"),
     )
     with pytest.raises(ChunkNotFoundError):
         await use_case(ReadChunkQuery(chunk_id=chunk_id))

@@ -5,6 +5,7 @@ from typing import Any
 from exactdocs.identity.adapters.driven.memory import (
     InMemoryAccountRepository,
     InMemoryExternalIdentityRepository,
+    InMemoryLibraryGrantRepository,
     InMemorySignInAttemptRepository,
 )
 
@@ -23,6 +24,7 @@ def no_external_sign_in() -> dict[str, Any]:
     """The ``IdentityModule.build`` arguments of an instance with no identity provider."""
     return {
         "externals": InMemoryExternalIdentityRepository(accounts=InMemoryAccountRepository()),
+        "library_grants": InMemoryLibraryGrantRepository(),
         "attempts": InMemorySignInAttemptRepository(),
         "box": _NoBox(),
     }

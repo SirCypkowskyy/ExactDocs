@@ -577,8 +577,8 @@ Switching between `notes` and `trusted`, or back to `off`, takes effect at the n
 `off`, nothing is sent; the kept files go with the next import).
 
 !!! warning
-    Until library roles exist (E12-05, which will make it admin-only), anyone who can edit a
-    library's AI settings can mark it `trusted`.
+    Only an `admin` of the library (or an operator) can edit its AI settings, so only they can
+    mark it `trusted`.
 
 ## Local models
 

@@ -33,15 +33,16 @@ export function AppShell({ children, search }: { children: ReactNode; search?: R
           >
             Libraries
           </Link>
-          {/* Every account may change AI settings until library roles exist (E12-05). */}
-          <Link to="/ai" className={navLink}>
-            AI
-          </Link>
-          {/* Managing accounts is for operators (admins); the API refuses anyone else. */}
+          {/* AI providers and accounts are for operators (admins); the API refuses anyone else. */}
           {session?.account?.role === "admin" && (
-            <Link to="/users" className={navLink}>
-              Users
-            </Link>
+            <>
+              <Link to="/ai" className={navLink}>
+                AI
+              </Link>
+              <Link to="/users" className={navLink}>
+                Users
+              </Link>
+            </>
           )}
           <Link to="/account" className={navLink}>
             Account

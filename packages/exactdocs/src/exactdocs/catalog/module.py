@@ -7,8 +7,9 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Self
 
-from exactdocs.catalog.models import ManifestId, ManifestInstruction
+from exactdocs.catalog.models import Access, ManifestId, ManifestInstruction
 from exactdocs.catalog.ports.driven import (
+    AccessPolicy,
     ArticleTitleFinder,
     ImportedTagWriter,
     InstructionFileReader,
@@ -105,6 +106,50 @@ class _NoInstructions:
         """
         del manifest_id
         return ()
+
+
+class _EveryoneMayDoAnything:
+    """The default ``access`` of ``build``: no roles, as in a local process the owner runs."""
+
+    async def allows(self, library: str, access: Access) -> bool:
+        """Allow everything.
+
+        Args:
+            library: The library.
+            access: The role the action needs.
+
+        Returns:
+            Always ``True``.
+        """
+        del library, access
+        return True
+
+    async def readable(self, libraries: Collection[str]) -> frozenset[str]:
+        """Allow reading every library.
+
+        Args:
+            libraries: Library IDs.
+
+        Returns:
+            All of them, lower-case.
+        """
+        return frozenset(library.casefold() for library in libraries)
+
+    async def claim(self, library: str) -> None:
+        """Record nobody as the creator.
+
+        Args:
+            library: The library ID.
+        """
+        del library
+
+    async def forget(self, library: str) -> None:
+        """Forget nothing: nothing was recorded.
+
+        Args:
+            library: The library ID.
+        """
+        del library
 
 
 class _NoTitles:
@@ -207,6 +252,7 @@ class CatalogModule:
         clock: Clock | None = None,
         article_titles: ArticleTitleFinder | None = None,
         instruction_files: InstructionFileReader | None = None,
+        access: AccessPolicy | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -226,33 +272,44 @@ class CatalogModule:
             clock: Tells the time; the system clock by default.
             article_titles: Looks article titles up by path; none are known without it.
             instruction_files: Reads the instruction files kept with a manifest; none without it.
+            access: Library roles: what the caller may do with a library; everything without it.
 
         Returns:
             The module, every driving port wired.
         """
         clock = clock or SystemClock()
+        access = access or _EveryoneMayDoAnything()
         titles = article_titles or _NoTitles()
         tagger = ManualTagger(repository=repository, manifests=manifests)
         return cls(
-            list_libraries=ListLibrariesUseCase(repository=repository),
-            create_library=CreateLibraryUseCase(repository=repository),
-            discard_library=DiscardLibraryUseCase(repository=repository),
-            get_library=GetLibraryUseCase(repository=repository),
-            resolve_version=ResolveVersionUseCase(repository=repository),
+            list_libraries=ListLibrariesUseCase(repository=repository, access=access),
+            create_library=CreateLibraryUseCase(repository=repository, access=access),
+            discard_library=DiscardLibraryUseCase(repository=repository, access=access),
+            get_library=GetLibraryUseCase(repository=repository, access=access),
+            resolve_version=ResolveVersionUseCase(repository=repository, access=access),
             resolve_renamed_path=ResolveRenamedPathUseCase(
-                repository=repository, manifests=manifests, titles=titles
+                repository=repository,
+                manifests=manifests,
+                titles=titles,
+                access=access,
             ),
-            list_renames=ListRenamesUseCase(repository=repository, manifests=manifests),
+            list_renames=ListRenamesUseCase(
+                repository=repository, manifests=manifests, access=access
+            ),
             store_manifest=StoreManifestUseCase(
                 repository=repository, manifests=manifests, clock=clock
             ),
             activate_manifest=ActivateManifestUseCase(
                 repository=repository, manifests=manifests, clock=clock
             ),
-            list_articles=ListArticlesUseCase(repository=repository, manifests=manifests),
-            list_tags=ListTagsUseCase(repository=repository, manifests=manifests),
-            get_article=GetArticleUseCase(repository=repository, manifests=manifests),
-            get_asset=GetAssetUseCase(repository=repository, manifests=manifests),
+            list_articles=ListArticlesUseCase(
+                repository=repository, manifests=manifests, access=access
+            ),
+            list_tags=ListTagsUseCase(repository=repository, manifests=manifests, access=access),
+            get_article=GetArticleUseCase(
+                repository=repository, manifests=manifests, access=access
+            ),
+            get_asset=GetAssetUseCase(repository=repository, manifests=manifests, access=access),
             discard_pending_manifests=DiscardPendingManifestsUseCase(
                 manifests=manifests, clock=clock
             ),
@@ -268,14 +325,18 @@ class CatalogModule:
             list_default_manifests=ListDefaultManifestsUseCase(
                 repository=repository, manifests=manifests
             ),
-            update_library=UpdateLibraryUseCase(repository=repository),
-            pin_default_version=PinDefaultVersionUseCase(repository=repository),
+            update_library=UpdateLibraryUseCase(repository=repository, access=access),
+            pin_default_version=PinDefaultVersionUseCase(repository=repository, access=access),
             apply_readme=ApplyReadmeUseCase(repository=repository),
-            remove_version=RemoveVersionUseCase(repository=repository, manifests=manifests),
-            remove_library=RemoveLibraryUseCase(repository=repository, manifests=manifests),
+            remove_version=RemoveVersionUseCase(
+                repository=repository, manifests=manifests, access=access
+            ),
+            remove_library=RemoveLibraryUseCase(
+                repository=repository, manifests=manifests, access=access
+            ),
             set_manual_tags=SetManualTagsUseCase(repository=repository, tagger=tagger),
             apply_manual_tags=ApplyManualTagsUseCase(manifests=manifests, tagger=tagger),
-            set_library_settings=SetLibrarySettingsUseCase(repository=repository),
+            set_library_settings=SetLibrarySettingsUseCase(repository=repository, access=access),
             get_version_tags=GetVersionTagsUseCase(repository=repository, manifests=manifests),
             set_imported_tags=SetImportedTagsUseCase(manifests=manifests, writer=imported_tags),
             find_stored_articles=FindStoredArticlesUseCase(finder=stored_articles),

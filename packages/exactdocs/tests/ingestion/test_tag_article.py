@@ -11,6 +11,7 @@ from exactdocs.ingestion.models import ArticleChunk, ImportedVersion, TaggedPath
 from exactdocs.ingestion.module import IngestionModule
 from exactdocs.ingestion.use_cases import TagArticleUseCase, TagLocks
 from exactdocs_kernel import NotFoundError
+from library_access import FakeAccess
 
 
 @dataclass(slots=True)
@@ -67,9 +68,9 @@ async def test_every_touched_manifest_gets_the_new_tags_in_the_chunk_index() -> 
     )
     index = FakeIndex()
 
-    tagged = await TagArticleUseCase(tags=catalog, index=index, locks=TagLocks())(
-        command("Onboarding")
-    )
+    tagged = await TagArticleUseCase(
+        tags=catalog, index=index, locks=TagLocks(), access=FakeAccess(role="contributor")
+    )(command("Onboarding"))
 
     assert (tagged.library, tagged.path, tagged.tags) == (
         "/acme/payments",
@@ -86,9 +87,12 @@ async def test_an_unknown_library_changes_nothing() -> None:
     index = FakeIndex()
 
     with pytest.raises(NotFoundError):
-        await TagArticleUseCase(tags=FakeCatalog(known=False), index=index, locks=TagLocks())(
-            command("x")
-        )
+        await TagArticleUseCase(
+            tags=FakeCatalog(known=False),
+            index=index,
+            locks=TagLocks(),
+            access=FakeAccess(role="contributor"),
+        )(command("x"))
 
     assert index.copies == []
 
@@ -97,7 +101,10 @@ async def test_tagging_waits_while_an_import_of_its_library_activates_a_version(
     locks = TagLocks()
     index = FakeIndex()
     tag = TagArticleUseCase(
-        tags=FakeCatalog(retagged={"m1": {"a.md": ("x",)}}), index=index, locks=locks
+        tags=FakeCatalog(retagged={"m1": {"a.md": ("x",)}}),
+        index=index,
+        locks=locks,
+        access=FakeAccess(role="contributor"),
     )
 
     async with locks.of("/acme/payments"):  # what the importer holds from re-tag to activation
@@ -114,7 +121,10 @@ async def test_tagging_does_not_wait_for_an_import_of_another_library() -> None:
     locks = TagLocks()
     index = FakeIndex()
     tag = TagArticleUseCase(
-        tags=FakeCatalog(retagged={"m1": {"a.md": ("x",)}}), index=index, locks=locks
+        tags=FakeCatalog(retagged={"m1": {"a.md": ("x",)}}),
+        index=index,
+        locks=locks,
+        access=FakeAccess(role="contributor"),
     )
 
     async with locks.of("/acme/other"):

@@ -5,7 +5,7 @@ port in its own language, and a bridge here translates to the provider's public 
 """
 
 import asyncio
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 
 from pydantic import ValidationError as PydanticValidationError
@@ -69,6 +69,7 @@ from exactdocs.catalog.dtos import (
 )
 from exactdocs.catalog.errors import ArticleNotFoundError as CatalogArticleNotFoundError
 from exactdocs.catalog.errors import StoredContentOutdatedError
+from exactdocs.catalog.models import Access as CatalogAccess
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
     ApplyManualTags,
@@ -99,8 +100,11 @@ from exactdocs.catalog.ports.driving import (
     SetManualTags,
     StoreManifest,
 )
+from exactdocs.identity.dtos import ClaimLibraryCommand, DropLibraryGrantsCommand, LibraryRolesQuery
+from exactdocs.identity.ports.driving import ClaimLibrary, DropLibraryGrants, ResolveLibraryRoles
 from exactdocs.ingestion.constants import PARSER_VERSION
 from exactdocs.ingestion.errors import EmbeddingUnavailableError, StoredTextOutdatedError
+from exactdocs.ingestion.models import Access as IngestionAccess
 from exactdocs.ingestion.models import (
     ArticleChunk,
     ChunkHeading,
@@ -151,6 +155,7 @@ from exactdocs.retrieval.dtos import (
 )
 from exactdocs.retrieval.dtos import RepoGuidance as RetrievalRepoGuidance
 from exactdocs.retrieval.errors import EmbeddingFailedError
+from exactdocs.retrieval.models import Access as RetrievalAccess
 from exactdocs.retrieval.models import (
     ArticleEntry,
     CatalogLibrary,
@@ -178,7 +183,7 @@ from exactdocs.retrieval.ports.driving import (
     RemoveChunks,
     RetagArticles,
 )
-from exactdocs_kernel import MAX_LIMIT, NotFoundError, ValidationError
+from exactdocs_kernel import MAX_LIMIT, ForbiddenError, NotFoundError, ValidationError
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -325,6 +330,8 @@ class CatalogLibraryIds:
             await self.get_library(GetLibraryQuery(id=library_id))
         except NotFoundError:
             return False
+        except ForbiddenError:  # there, but the caller may not read it: still taken
+            return True
         return True
 
 
@@ -1440,3 +1447,78 @@ class RetrievalGuidancePolicy:
         if found.repo_guidance is RetrievalRepoGuidance.OFF:
             return InstructionPolicy.DROP
         return InstructionPolicy.KEEP
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IdentityAccessPolicy:
+    """Implements the ``AccessPolicy`` ports of catalog, ingestion and retrieval with identity.
+
+    The caller is whoever ``caller`` names (the account of the request: its session or API token).
+    Nobody named means the work is the instance's own (the command line, a stdio MCP process, a
+    scheduled check, a job): it is not subject to library roles. Each domain's ``Access`` enum
+    takes the identity role's name as its value, so one class serves all three.
+    """
+
+    resolve_library_roles: ResolveLibraryRoles
+    """Identity's effective role of an account on libraries."""
+    claim_library: ClaimLibrary
+    """Identity's record of a library's creator."""
+    drop_library_grants: DropLibraryGrants
+    """Identity's drop of every grant on a removed library."""
+    caller: Callable[[], str | None]
+    """The account ID of the current request; ``None`` when no person made it."""
+
+    async def allows(
+        self, library: str, access: CatalogAccess | IngestionAccess | RetrievalAccess
+    ) -> bool:
+        """Tell whether the caller's effective role on the library is ``access`` or higher.
+
+        Args:
+            library: The library ID, any case.
+            access: The role the action needs (a domain's ``Access``).
+
+        Returns:
+            ``True`` for work no person started, else whether the role is high enough.
+        """
+        account = self.caller()
+        if account is None:
+            return True
+        found = await self.resolve_library_roles(
+            LibraryRolesQuery(account_id=account, libraries=[library])
+        )
+        return found.allows(library, access.value)
+
+    async def readable(self, libraries: Collection[str]) -> frozenset[str]:
+        """Return the libraries the caller holds any role on.
+
+        Args:
+            libraries: Library IDs.
+
+        Returns:
+            The lower-case IDs among them the caller may read.
+        """
+        account = self.caller()
+        if account is None:
+            return frozenset(library.casefold() for library in libraries)
+        found = await self.resolve_library_roles(
+            LibraryRolesQuery(account_id=account, libraries=list(libraries))
+        )
+        return frozenset(found.roles)
+
+    async def claim(self, library: str) -> None:
+        """Make the caller, if there is one, the creator of the library just created.
+
+        Args:
+            library: The library ID.
+        """
+        account = self.caller()
+        if account is not None:
+            await self.claim_library(ClaimLibraryCommand(account_id=account, library=library))
+
+    async def forget(self, library: str) -> None:
+        """Drop every grant on a library that was removed.
+
+        Args:
+            library: The library ID.
+        """
+        await self.drop_library_grants(DropLibraryGrantsCommand(library=library))

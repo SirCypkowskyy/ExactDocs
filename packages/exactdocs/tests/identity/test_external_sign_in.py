@@ -19,6 +19,7 @@ from exactdocs.identity.adapters.driven.memory import (
     InMemoryAccountRepository,
     InMemoryExternalIdentityRepository,
     InMemoryFailedSignInLog,
+    InMemoryLibraryGrantRepository,
     InMemorySessionRepository,
     InMemorySignInAttemptRepository,
     InMemoryTokenRepository,
@@ -26,6 +27,7 @@ from exactdocs.identity.adapters.driven.memory import (
 from exactdocs.identity.adapters.driven.sqlite import (
     SqliteAccountRepository,
     SqliteExternalIdentityRepository,
+    SqliteLibraryGrantRepository,
     SqliteSessionRepository,
     SqliteSignInAttemptRepository,
     SqliteTokenRepository,
@@ -202,6 +204,7 @@ def build(
         hasher=hasher,
         failures=InMemoryFailedSignInLog(),
         externals=externals(links) if externals else links,
+        library_grants=InMemoryLibraryGrantRepository(),
         attempts=attempts,
         box=FakeBox(),
         clock=clock,
@@ -877,6 +880,7 @@ async def stored(request: pytest.FixtureRequest) -> AsyncIterator[StoredWorld]:
             sessions=InMemorySessionRepository(),
             tokens=InMemoryTokenRepository(),
             externals=InMemoryExternalIdentityRepository(accounts=accounts),
+            library_grants=InMemoryLibraryGrantRepository(),
             attempts=InMemorySignInAttemptRepository(),
         )
         return
@@ -890,6 +894,7 @@ async def stored(request: pytest.FixtureRequest) -> AsyncIterator[StoredWorld]:
             sessions=SqliteSessionRepository(engine=engine),
             tokens=SqliteTokenRepository(engine=engine),
             externals=SqliteExternalIdentityRepository(engine=engine),
+            library_grants=SqliteLibraryGrantRepository(engine=engine),
             attempts=SqliteSignInAttemptRepository(engine=engine),
         )
 
