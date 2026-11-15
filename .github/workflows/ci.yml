@@ -185,7 +185,9 @@ jobs:
       - name: Wheel size budget, no model files, no ML dependencies
         run: |
           cid=$(docker create exactdocs:ci)
-          docker cp "$cid:/app/.venv/lib/python3.14/site-packages/exactdocs/_web" packages/exactdocs/src/exactdocs/_web
+          web_path=$(docker run --rm --entrypoint /app/.venv/bin/python exactdocs:ci \
+            -c 'import sysconfig; print(sysconfig.get_path("purelib") + "/exactdocs/_web")')
+          docker cp "$cid:$web_path" packages/exactdocs/src/exactdocs/_web
           docker rm "$cid" >/dev/null
           UV_DYNAMIC_VERSIONING_BYPASS=0.0.0.dev0 uv build --wheel --package exactdocs --out-dir "$RUNNER_TEMP/dist"
           python3 deploy/check_artifacts.py wheel "$RUNNER_TEMP"/dist/exactdocs-*.whl
