@@ -3647,3 +3647,16 @@ def route_push(
             and auto_sync.matches(ref.name)
         )
     )
+
+
+class Access(StrEnum):
+    """The library role a caller needs for an action; the values are the role names."""
+
+    READ = "viewer"
+    """Search and read."""
+    CONTRIBUTE = "contributor"
+    """Import content: add versions, sync, tag articles."""
+    ADMINISTER = "admin"
+    """Configure the library and remove versions."""
+    OWN = "creator"
+    """Remove the library."""

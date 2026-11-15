@@ -305,3 +305,39 @@ class ExternalAccountError(ConflictError):
     def __init__(self) -> None:
         """Create the error with its fixed message."""
         super().__init__("this account signs in through an identity provider and has no password")
+
+
+class LibraryRoleRequiredError(ForbiddenError):
+    """The caller's role on the library is too low for what they asked."""
+
+    def __init__(self, needed: str) -> None:
+        """Say which role is missing.
+
+        Args:
+            needed: The lowest library role that may do it.
+        """
+        super().__init__(f"this needs the {needed} role on the library")
+
+
+class InvalidGrantError(ValidationError):
+    """A library grant asks for something the sharing routes do not do."""
+
+    code = "invalid_grant"
+
+    def __init__(self, reason: str) -> None:
+        """Say what is wrong.
+
+        Args:
+            reason: What is wrong with the grant.
+        """
+        super().__init__(reason)
+
+
+class UnknownGrantError(NotFoundError):
+    """The library has no grant for this user or group."""
+
+    code = "unknown_grant"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__("the library has no such grant")

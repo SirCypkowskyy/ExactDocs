@@ -6,6 +6,7 @@ the kernel ``NOTICE`` field and the tool descriptions say the same.
 
 import time
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from functools import partial
 from typing import Annotated
 from urllib.parse import quote
@@ -22,6 +23,7 @@ from exactdocs.catalog.constants import (
     ARTICLE_TEMPLATE,
     LIST_LIBRARIES_LIMIT,
     MAX_LISTED_RESOURCES,
+    MAX_RESOURCE_SNAPSHOTS,
     RESOURCE_LIST_TTL,
 )
 from exactdocs.catalog.dtos import (
@@ -240,33 +242,58 @@ def article_uri(library: str, ref: str, path: str) -> str:
 Reader = Callable[[str, str, str, str | None], Awaitable[ResourceResult]]
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Snapshot:
+    """One caller's built resource list."""
+
+    expires: float
+    """When it goes stale (``time.monotonic``)."""
+    resources: list[Resource]
+    """The listed articles, sorted by URI."""
+    truncated: bool
+    """Whether the cap cut the list."""
+
+
 class ArticleResources(Provider):
     """Lists the default version of each library's articles as resources, up to a cap.
 
     The cap is shared fairly: each round gives every library with more articles an equal share of
     what is left, so a big library cannot hide the others. The list is sorted by URI and built at
-    most once per ``RESOURCE_LIST_TTL`` (paging does not rebuild it); ``truncated`` says whether
-    the cap cut it. The ``ARTICLE_TEMPLATE`` serves every read; a listed resource just makes an
-    article browsable.
+    most once per ``RESOURCE_LIST_TTL`` per caller (paging does not rebuild it); the libraries and
+    articles listed depend on who asks, so one caller never gets another's list. ``truncated`` says
+    whether the cap cut the current caller's list. The ``ARTICLE_TEMPLATE`` serves every read; a
+    listed resource just makes an article browsable.
     """
 
     def __init__(
-        self, *, list_libraries: ListLibraries, list_articles: ListArticles, read: Reader
+        self,
+        *,
+        list_libraries: ListLibraries,
+        list_articles: ListArticles,
+        read: Reader,
+        caller: Callable[[], str | None],
     ) -> None:
-        """Keep the ports; the list is built on the first request.
+        """Keep the ports; each caller's list is built on its first request.
 
         Args:
             list_libraries: Lists the libraries, a page at a time.
             list_articles: Lists a version's articles.
             read: Reads one article as a resource.
+            caller: Names the account of the current request (``None``: no caller, as over stdio).
         """
         super().__init__()
         self._list_libraries = list_libraries
         self._list_articles = list_articles
         self._read = read
-        self.truncated = False
-        # ponytail: one shared snapshot without a lock; two racing builds just both run.
-        self._snapshot: tuple[float, list[Resource]] | None = None
+        self._caller = caller
+        # ponytail: snapshots without a lock; two racing builds just both run.
+        self._snapshots: dict[str | None, _Snapshot] = {}
+
+    @property
+    def truncated(self) -> bool:
+        """Whether the cap cut the current caller's list (``False`` before it is built)."""
+        snapshot = self._snapshots.get(self._caller())
+        return snapshot is not None and snapshot.truncated
 
     async def _list_resources(self) -> Sequence[Resource]:
         """List the resources, rebuilding the list once ``RESOURCE_LIST_TTL`` has passed.
@@ -274,19 +301,31 @@ class ArticleResources(Provider):
         Returns:
             The listed articles, sorted by URI.
         """
+        who = self._caller()
         now = time.monotonic()
-        if self._snapshot is None or now >= self._snapshot[0]:
-            self._snapshot = (now + RESOURCE_LIST_TTL, await self._build())
-        return self._snapshot[1]
+        snapshot = self._snapshots.get(who)
+        if snapshot is None or now >= snapshot.expires:
+            resources, truncated = await self._build()
+            snapshot = _Snapshot(
+                expires=now + RESOURCE_LIST_TTL, resources=resources, truncated=truncated
+            )
+            self._snapshots.pop(who, None)
+            if len(self._snapshots) >= MAX_RESOURCE_SNAPSHOTS:
+                for key in [k for k, v in self._snapshots.items() if now >= v.expires]:
+                    del self._snapshots[key]
+            while len(self._snapshots) >= MAX_RESOURCE_SNAPSHOTS:
+                del self._snapshots[next(iter(self._snapshots))]  # the oldest built
+            self._snapshots[who] = snapshot
+        return snapshot.resources
 
-    async def _build(self) -> list[Resource]:
+    async def _build(self) -> tuple[list[Resource], bool]:
         """Share ``MAX_LISTED_RESOURCES`` fairly among the default versions of the libraries.
 
         Each round gives every library that has more articles an equal share of what is left; a
-        library whose default version has no active manifest lists nothing. Sets ``truncated``.
+        library whose default version has no active manifest lists nothing.
 
         Returns:
-            The listed articles, sorted by URI.
+            The listed articles, sorted by URI, and whether the cap cut them.
         """
         libraries: list[str] = []
         cursor = None
@@ -296,7 +335,7 @@ class ArticleResources(Provider):
             cursor = page.next_cursor
             if cursor is None or len(libraries) >= MAX_LISTED_RESOURCES:
                 break
-        self.truncated = cursor is not None or len(libraries) > MAX_LISTED_RESOURCES
+        truncated = cursor is not None or len(libraries) > MAX_LISTED_RESOURCES
         cursors: dict[str, str | None] = dict.fromkeys(libraries[:MAX_LISTED_RESOURCES])
         active = list(cursors)
         found: list[Resource] = []
@@ -330,8 +369,7 @@ class ArticleResources(Provider):
                     cursors[library] = page.next_cursor
                     more.append(library)
             active = more
-        self.truncated = self.truncated or bool(active)
-        return sorted(found, key=lambda r: str(r.uri))
+        return sorted(found, key=lambda r: str(r.uri)), truncated or bool(active)
 
     async def _get_resource(self, uri: str, version: object = None) -> None:
         """Leave every read to the ``ARTICLE_TEMPLATE``: return ``None``.
@@ -351,6 +389,7 @@ def register_resources(
     list_libraries: ListLibraries,
     list_articles: ListArticles,
     get_article: GetArticle,
+    caller: Callable[[], str | None],
 ) -> ArticleResources:
     """Register the article resource template and the capped resource list on ``mcp``.
 
@@ -370,6 +409,7 @@ def register_resources(
         list_libraries: Lists the libraries, a page at a time.
         list_articles: Lists a version's articles.
         get_article: Reads one article.
+        caller: Names the account of the current request; the resource list is kept per caller.
 
     Returns:
         The provider of the resource list, whose ``truncated`` says whether the cap cut it.
@@ -445,7 +485,7 @@ def register_resources(
         return await read(owner, repo, path, ref)
 
     provider = ArticleResources(
-        list_libraries=list_libraries, list_articles=list_articles, read=read
+        list_libraries=list_libraries, list_articles=list_articles, read=read, caller=caller
     )
     mcp.add_provider(provider)
     return provider

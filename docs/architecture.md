@@ -14,7 +14,7 @@ same idea with **vertical slices**. All of this is enforced by tests, not by con
 | `packages/exactdocs/` | the application, published as `exactdocs` (`src/exactdocs/`) |
 | `packages/exactdocs/src/exactdocs/bootstrap/` | composition root: settings, container, bridges, migrations, HTTP / MCP / CLI entry points |
 | `packages/exactdocs/src/exactdocs/catalog/` | domain: libraries, versions, manifests, article contents |
-| `packages/exactdocs/src/exactdocs/identity/` | domain: local accounts (admins and users), web sessions and API tokens |
+| `packages/exactdocs/src/exactdocs/identity/` | domain: local and external accounts (admins and users), web sessions, API tokens and library roles |
 | `packages/exactdocs/src/exactdocs/retrieval/` | domain: chunks, the BM25 index, `search_docs`, `query-docs`, `resolve-library-id` |
 | `packages/exactdocs/src/exactdocs/ingestion/` | domain: jobs, the DBOS worker, git access, parsing, chunking and the import |
 | `packages/exactdocs/src/exactdocs/_web/` | the built web UI (gitignored, added by CI / Docker) |
@@ -43,10 +43,12 @@ flowchart TD
     retrieval -. "bridges: SearchableVersions,<br/>article titles" .-> catalog
     ingestion -. "bridges: library sources,<br/>version publisher, removals" .-> catalog
     ingestion -. "bridges: chunk index,<br/>version embedder" .-> retrieval
+    catalog & retrieval & ingestion -. "bridge: AccessPolicy<br/>(library roles)" .-> identity
 ```
 
 Solid arrows are imports; dotted arrows are runtime calls through a bridge that lives in
-`bootstrap`, so the domains stay unaware of each other. `identity` needs no bridge.
+`bootstrap`, so the domains stay unaware of each other. `identity` asks for nothing, but the other
+three ask it what the caller may do with a library ([Library roles](#library-roles)).
 
 | From \ may import | own domain | other domain | `bootstrap` | `exactdocs_kernel` |
 |---|---|---|---|---|
@@ -62,8 +64,9 @@ later move to its own package or service without touching the other.
 
 ### Bridges are one-way
 
-Bridges point in one direction only: **retrieval → catalog** and **ingestion → catalog /
-retrieval**. Catalog calls no other domain, and nothing calls ingestion, so the domain graph has
+Bridges point in one direction only: **retrieval → catalog**, **ingestion → catalog /
+retrieval** and **catalog / retrieval / ingestion → identity** (library roles). Identity and
+catalog call no domain for their own needs, and nothing calls ingestion, so the domain graph has
 no cycles. An architecture test (`tests/architecture/test_bridge_direction.py`) reads the
 imports of every bridge class in `bootstrap/bridges.py`: the consumer's `models` / `ports.driven`
 on one side, the provider's `ports.driving` / `dtos` on the other, and only the edges above pass.
@@ -545,6 +548,7 @@ erDiagram
 erDiagram
     identity_accounts ||--o{ identity_sessions : "signs in with"
     identity_accounts ||--o{ identity_api_tokens : "owns"
+    identity_accounts ||..o{ identity_library_grants : "holds roles by ID"
 
     identity_accounts {
         text id PK
@@ -562,6 +566,12 @@ erDiagram
         text account_id FK
         text token_hash UK "SHA-256, exd_ prefix"
         text expires_at
+    }
+    identity_library_grants {
+        text library PK "/owner/repo, lower-case"
+        text kind PK "user or group"
+        text subject PK "account ID or group name"
+        text role "viewer, contributor, admin, creator"
     }
     identity_failed_sign_ins {
         text key PK "address:... or username:..."
@@ -676,7 +686,8 @@ the running server) can never create two admins. Further accounts (ACL-06) are c
 `CreateUser` behind `POST /api/v1/users` (session of an `admin`, else 403 `forbidden`) or
 `exactdocs user create` (local); there is no self-signup route. `AccountRepository.add` relies on
 the unique `username` column, so a race for one name stores one account. `Role` is `admin` (an
-operator: manages accounts) or `user`; library roles are E12-05. A disabled account
+operator: manages accounts, and holds the `creator` role on every library) or `user`; library
+roles are [below](#library-roles). A disabled account
 (`identity_accounts.disabled_at`) is refused at sign-in (after the password check, with the same
 `invalid_credentials`, so the answer reveals nothing), by `IdentifyCaller` and by `IdentifyToken`;
 disabling also deletes its sessions and tokens, and enabling deletes them again first (one stored
@@ -756,7 +767,7 @@ sequenceDiagram
   (`create_linked_account`): the unique username refuses a taken name (then `<name>@<provider>`
   is tried) and the primary key a second link of the identity (two concurrent first sign-ins:
   the loser uses the winner's account). `identity_account_groups` holds each account's groups
-  (with `group_prefix`), replaced at every sign-in and revalidation, for library roles (E12-05).
+  (with `group_prefix`), replaced at every sign-in and revalidation, for library roles (grants to a group).
   An account without a password costs one dummy hash at password sign-in, like an unknown user.
 - **Role**: `admin_groups` decides an external account's role at every sign-in and revalidation;
   demotion is not held back by the last-enabled-admin guard (that guards the operator's disable
@@ -784,6 +795,51 @@ sequenceDiagram
   through identity's own `SecretBox` port; disabling an account drops its sealed token.
 - **The local break-glass admin**: the setup still creates the first admin locally, external
   sign-in sits behind `SetupGuard`, and password sign-in never depends on a provider.
+
+### Library roles
+
+Docs belong to teams, not to whoever imported them (ACL-02, E12-05). `identity` owns the roles;
+`catalog`, `ingestion` and `retrieval` ask it through an `AccessPolicy` driven port each (declared
+in their own words, implemented once by `bootstrap/bridges.py:IdentityAccessPolicy` over
+identity's `ResolveLibraryRoles`, `ClaimLibrary` and `DropLibraryGrants`).
+
+- **Roles**: `viewer < contributor < admin < creator` (`identity.models.LibraryRole`). A grant
+  (`identity_library_grants`, one row per library, user-or-group and subject) gives a role to an
+  account or to every member of a group (the groups of `identity_account_groups`, so only
+  external accounts have any). An account's **effective role** is the highest it holds, directly
+  or through a group. An operator (account role `admin`) is `creator` of every library, so a
+  library nobody holds is still managed; a disabled account holds nothing.
+- **What each role may do** (`Access.READ`, `CONTRIBUTE`, `ADMINISTER`, `OWN` of each domain):
+  `viewer` searches and reads (search, read, outline, `query-docs`, articles, tags, renames,
+  jobs, the schedule and retrieval settings); `contributor` also imports (add or reimport a
+  version, sync, tag articles); `admin` also configures (paths, tag rules, chunking, title and
+  description, pinned default version, retrieval settings, schedule) and removes versions;
+  `creator` also removes the library. A refusal is a 403 `forbidden` (a tool error over MCP).
+  Listings (`list_libraries`, `resolve-library-id`, `search_all_docs`, the latest jobs) hold only
+  the libraries the caller holds a role on. Hiding a library entirely (answering like a missing
+  one) is E12-08.
+- **Every use case a caller reaches checks**, first: `catalog` (read, list, update, settings,
+  pin, remove), `ingestion` (add version, sync, reimport, settings, tag, remove, schedule, jobs)
+  and `retrieval` (search, outline, read chunk, `query-docs`, retrieval settings). Use cases that
+  only other domains call (store a manifest, index it) do not: they run for the one that did.
+  `tests/catalog/test_library_access.py` and `tests/bootstrap/test_library_roles_api.py` hold the
+  role × action matrix.
+- **Who is the caller**: the account of the request. `bootstrap/caller.py` holds it in a context
+  variable that the REST `protected` router binds (session or API token) and reads the MCP token
+  otherwise. **No caller means the instance's own work** (the command line, `serve --stdio`, a
+  scheduled check, a job, a push webhook), which no role limits, as the process owner already
+  has the data directory. An entry point that proves who calls must therefore bind them.
+- **The creator**: creating a library (`catalog.CreateLibrary`) records the caller as `creator`
+  and drops any grant left on that ID; removing or discarding a library drops its grants. A
+  library created with no caller (the command line, the sources file applied by the CLI) has no
+  creator: operators manage it and share it.
+- **Sharing** is `GET/PUT /libraries/{owner}/{repo}/grants` and `DELETE
+  .../grants/{user|group}/{subject}` (identity's `GrantLibraryRole`, `RevokeLibraryRole`,
+  `ListLibraryGrants`). They need `admin` on the library; giving, changing or removing an `admin`
+  needs `creator`; the creator's own role is neither given nor changed there (transfer is
+  E12-06).
+- **Upgrading**: libraries that exist when the migration runs get no grant. Operators keep full
+  access; other accounts hold no role until an operator or the creator shares the library.
 
 ## Background jobs
 

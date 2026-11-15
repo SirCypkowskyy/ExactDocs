@@ -602,3 +602,72 @@ def username_candidates(claims: ExternalClaims, provider: str) -> list[Username]
         if RESERVED_IN_USERNAME not in username.value and username not in candidates:
             candidates.append(username)
     return candidates
+
+
+class LibraryRole(StrEnum):
+    """What an account may do with one library (``viewer < contributor < admin < creator``).
+
+    ``viewer`` searches and reads. ``contributor`` also imports content (versions, syncs, tags).
+    ``admin`` also configures the library (paths, tag rules, chunking, retrieval, schedule) and
+    removes versions. ``creator`` also removes the library and grants the ``admin`` role. An
+    account's effective role on a library is the highest one it is granted, directly or through
+    a group.
+    """
+
+    VIEWER = "viewer"
+    CONTRIBUTOR = "contributor"
+    ADMIN = "admin"
+    CREATOR = "creator"
+
+    @property
+    def rank(self) -> int:
+        """Order the roles: a higher rank may do everything a lower one may.
+
+        Returns:
+            0 for ``viewer`` up to 3 for ``creator``.
+        """
+        return list(LibraryRole).index(self)
+
+    def allows(self, needed: LibraryRole) -> bool:
+        """Tell whether this role may do what ``needed`` allows.
+
+        Args:
+            needed: The lowest role that may do it.
+
+        Returns:
+            ``True`` when this role is ``needed`` or higher.
+        """
+        return self.rank >= needed.rank
+
+
+class SubjectKind(StrEnum):
+    """Whom a library grant is for."""
+
+    USER = "user"
+    GROUP = "group"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LibraryGrant:
+    """A role on one library, given to one account or to every member of one group."""
+
+    library: str
+    """The library ID (``/owner/repo``), lower-case."""
+    kind: SubjectKind
+    """Whether ``subject`` is an account ID or a group name."""
+    subject: str
+    """The account ID, or the group's name as ExactDocs stores it (``group_prefix`` included)."""
+    role: LibraryRole
+    """The role given."""
+
+
+def effective_role(grants: Iterable[LibraryGrant]) -> LibraryRole | None:
+    """Return the highest role of the grants.
+
+    Args:
+        grants: The grants that apply to one account on one library.
+
+    Returns:
+        The highest role, or ``None`` without a grant.
+    """
+    return max((grant.role for grant in grants), key=lambda role: role.rank, default=None)

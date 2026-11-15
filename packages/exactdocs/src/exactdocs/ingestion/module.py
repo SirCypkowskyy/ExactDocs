@@ -4,7 +4,7 @@ It does not pick adapters itself; the composition root (``exactdocs.bootstrap``)
 together with the job kinds it supports. ``import_job`` builds the import's handler and hook.
 """
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from types import MappingProxyType
@@ -31,6 +31,7 @@ from exactdocs.ingestion.constants import (
 )
 from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.ingestion.models import (
+    Access,
     AutoSync,
     ChunkingConfig,
     Credential,
@@ -44,6 +45,7 @@ from exactdocs.ingestion.models import (
     WebhookDelivery,
 )
 from exactdocs.ingestion.ports.driven import (
+    AccessPolicy,
     AutoSyncStore,
     Checkpoints,
     Chunker,
@@ -159,6 +161,37 @@ from exactdocs.ingestion.use_cases import (
     UpdateLibrarySettingsUseCase,
 )
 from exactdocs_kernel import Clock, NotFoundError
+
+
+class _EveryoneMayDoAnything:
+    """The default ``access`` of ``build``: no roles, as in a local process the owner runs."""
+
+    async def allows(self, library: str, access: Access) -> bool:
+        """Allow everything.
+
+        Args:
+            library: The library.
+            access: The role the action needs.
+
+        Returns:
+            Always ``True``.
+        """
+        del library, access
+        return True
+
+    async def readable(self, libraries: Collection[str]) -> frozenset[str]:
+        """Allow reading every library.
+
+        Args:
+            libraries: Library IDs.
+
+        Returns:
+            All of them, lower-case.
+        """
+        return frozenset(library.casefold() for library in libraries)
+
+
+_open_access = _EveryoneMayDoAnything()
 
 
 class _NoLibrarySources:
@@ -634,6 +667,7 @@ class IngestionModule:
         webhooks: WebhookSecrets | None = None,
         webhook_deliveries: WebhookDeliveries | None = None,
         wrap_handler: Callable[[JobKind, JobHandler], JobHandler] | None = None,
+        access: AccessPolicy = _open_access,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -682,6 +716,7 @@ class IngestionModule:
             webhooks: Where webhook secrets are kept; None: no library can have one.
             webhook_deliveries: Where deliveries are remembered; None: none is.
             wrap_handler: Wraps the ``push`` handler, given its kind; None: it runs as built.
+            access: Library roles: what the caller may do with a library; everything without it.
 
         Returns:
             The module.
@@ -720,7 +755,7 @@ class IngestionModule:
         schedules = auto_syncs or _NoAutoSyncs()
         switch = schedule_switch or _NoSwitch()
         remove_version = RemoveVersionUseCase(
-            jobs=jobs, removals=removals, index=index, enqueue_job=enqueue_job
+            jobs=jobs, removals=removals, index=index, enqueue_job=enqueue_job, access=access
         )
         sync_library = SyncLibraryUseCase(
             remote=remote,
@@ -729,6 +764,7 @@ class IngestionModule:
             clock=clock,
             enqueue_job=enqueue_job,
             vault=vault,
+            access=access,
         )
         add_library = AddLibraryUseCase(
             remote=remote,
@@ -744,6 +780,7 @@ class IngestionModule:
             jobs=jobs,
             enqueue_job=enqueue_job,
             vault=vault,
+            access=access,
         )
         remove_library = RemoveLibraryUseCase(
             jobs=jobs,
@@ -755,6 +792,7 @@ class IngestionModule:
             switch=switch,
             webhooks=webhooks or _NoWebhooks(),
             deliveries=webhook_deliveries or _NoDeliveries(),
+            access=access,
         )
         update_library_settings = UpdateLibrarySettingsUseCase(
             sources=sources,
@@ -762,6 +800,7 @@ class IngestionModule:
             jobs=jobs,
             enqueue_job=enqueue_job,
             locks=settings_locks or TagLocks(),
+            access=access,
         )
         kinds[PUSH_JOB] = _wrapped(
             PUSH_JOB,
@@ -795,28 +834,30 @@ class IngestionModule:
                 add_version=add_version,
                 update_library_settings=update_library_settings,
                 set_auto_sync=SetAutoSyncUseCase(
-                    sources=sources, schedules=schedules, switch=switch
+                    sources=sources, schedules=schedules, switch=switch, access=access
                 ),
                 disable_auto_sync=DisableAutoSyncUseCase(
-                    sources=sources, schedules=schedules, switch=switch
+                    sources=sources, schedules=schedules, switch=switch, access=access
                 ),
                 remove_version=remove_version,
                 remove_library=remove_library,
             ),
             check_repository=CheckRepositoryUseCase(remote=remote, library_ids=library_ids),
             disable_auto_sync=DisableAutoSyncUseCase(
-                sources=sources, schedules=schedules, switch=switch
+                sources=sources, schedules=schedules, switch=switch, access=access
             ),
             disable_webhook=DisableWebhookUseCase(
                 sources=sources, webhooks=webhooks or _NoWebhooks()
             ),
             enqueue_job=enqueue_job,
-            get_auto_sync=GetAutoSyncUseCase(sources=sources, schedules=schedules),
-            get_job=GetJobUseCase(jobs=jobs),
-            get_library_access=GetLibraryAccessUseCase(vault=vault, library_ids=library_ids),
+            get_auto_sync=GetAutoSyncUseCase(sources=sources, schedules=schedules, access=access),
+            get_job=GetJobUseCase(jobs=jobs, access=access),
+            get_library_access=GetLibraryAccessUseCase(
+                vault=vault, library_ids=library_ids, access=access
+            ),
             get_webhook=GetWebhookUseCase(sources=sources, webhooks=webhooks or _NoWebhooks()),
-            list_latest_jobs=ListLatestJobsUseCase(jobs=jobs),
-            list_library_jobs=ListLibraryJobsUseCase(jobs=jobs),
+            list_latest_jobs=ListLatestJobsUseCase(jobs=jobs, access=access),
+            list_library_jobs=ListLibraryJobsUseCase(jobs=jobs, access=access),
             list_repository_refs=ListRepositoryRefsUseCase(remote=remote),
             plan_sources=PlanSourcesUseCase(
                 reader=SourcesReader(
@@ -845,6 +886,7 @@ class IngestionModule:
                 jobs=jobs,
                 enqueue_job=enqueue_job,
                 vault=vault,
+                access=access,
             ),
             remove_library=remove_library,
             remove_version=remove_version,
@@ -862,7 +904,9 @@ class IngestionModule:
                 remove_version=remove_version,
                 switch=switch,
             ),
-            set_auto_sync=SetAutoSyncUseCase(sources=sources, schedules=schedules, switch=switch),
+            set_auto_sync=SetAutoSyncUseCase(
+                sources=sources, schedules=schedules, switch=switch, access=access
+            ),
             set_webhook=SetWebhookUseCase(
                 sources=sources, webhooks=webhooks or _NoWebhooks(), clock=clock
             ),
@@ -870,7 +914,10 @@ class IngestionModule:
             switch_schedule=SwitchScheduleUseCase(schedules=schedules, switch=switch),
             sync_library=sync_library,
             tag_article=TagArticleUseCase(
-                tags=manual_tags or _NoManualTags(), index=index, locks=tag_locks or TagLocks()
+                tags=manual_tags or _NoManualTags(),
+                index=index,
+                locks=tag_locks or TagLocks(),
+                access=access,
             ),
             update_library_settings=update_library_settings,
         )

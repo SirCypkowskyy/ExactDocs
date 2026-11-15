@@ -4,10 +4,10 @@ The golden corpus (starlette, pydantic, tanstack-query, zod, electron; every pin
 
 | configuration | coverage | held | cut fence / table / list | lost chars | tokens p50 / p95 / max | small | multi-top | empty / wrong path | headings missed / extra | BM25 recall@5 (exact) | MRR |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `default` | 100.0% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 88 / 507 / 9276 | 32.2% | 0.0% | 713 / 103 | 60 / 3 | 79.4% (79.4%) | 0.626 |
-| `h2` | 49.9% | 367/367 | 3 / 0 / 0 | 11446 of 7940351 | 166 / 1311 / 22515 | 15.1% | 0.6% | 716 / 95 | 60 / 3 | 81.3% (37.8%) | 0.670 |
-| `h3-max-4000` | 91.3% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 114 / 727 / 9276 | 23.1% | 0.0% | 713 / 102 | 60 / 3 | 81.3% (76.4%) | 0.651 |
-| `merge-400` | 77.1% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 183 / 651 / 9276 | 3.0% | 5.1% | 713 / 88 | 60 / 3 | 74.2% (65.2%) | 0.604 |
+| `default` | 100.0% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 88 / 516 / 8645 | 32.2% | 0.0% | 723 / 103 | 60 / 3 | 79.8% (79.8%) | 0.626 |
+| `h2` | 51.8% | 367/367 | 3 / 0 / 0 | 11446 of 7940351 | 179 / 1699 / 8645 | 14.3% | 0.6% | 726 / 95 | 60 / 3 | 76.0% (39.3%) | 0.626 |
+| `h3-max-4000` | 91.3% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 114 / 738 / 8645 | 23.1% | 0.0% | 723 / 102 | 60 / 3 | 81.7% (76.8%) | 0.651 |
+| `merge-400` | 77.1% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 183 / 654 / 8645 | 3.0% | 5.1% | 723 / 88 | 60 / 3 | 74.2% (65.2%) | 0.602 |
 
 - `default`: today's default: every heading starts a chunk; nothing is merged or bounded.
 - `h2`: only # and ## start a chunk; deeper sections stay inside their parent.
@@ -21,38 +21,38 @@ The golden corpus (starlette, pydantic, tanstack-query, zod, electron; every pin
 | starlette | 0.27.0 | 23 (0) | 346 | 100.0% | 0 | 0 | 64 / 446 / 825 | 41.6% | 20 / 0 | 0 / 0 | 21 | 0 | 9 |
 | starlette | 0.52.1 | 25 (0) | 500 | 100.0% | 0 | 0 | 52 / 418 / 932 | 48.6% | 20 / 0 | 0 / 0 | 21 | 0 | 14 |
 | starlette | 1.10.0 | 25 (0) | 538 | 100.0% | 0 | 0 | 52 / 431 / 923 | 49.1% | 21 / 0 | 0 / 0 | 22 | 0 | 20 |
-| pydantic | v1.10.22 | 25 (0) | 246 | 100.0% | 0 | 0 | 147 / 582 / 3216 | 11.0% | 23 / 0 | 0 / 0 | 23 | 117 | 67 |
-| pydantic | v2.5.3 | 67 (1) | 549 | 100.0% | 0 | 0 | 138 / 729 / 3226 | 12.4% | 56 / 40 | 0 / 0 | 56 | 0 | 118 |
-| pydantic | v2.14.3 | 91 (0) | 674 | 100.0% | 0 | 0 | 156 / 871 / 3116 | 10.7% | 77 / 60 | 0 / 0 | 79 | 0 | 204 |
-| tanstack-query | v4.36.1 | 140 (27) | 494 | 100.0% | 0 | 0 | 133 / 526 / 3572 | 15.0% | 100 / 0 | 0 / 0 | 113 | 0 | 0 |
-| tanstack-query | v5.0.0 | 147 (25) | 571 | 100.0% | 0 | 0 | 142 / 598 / 3417 | 13.0% | 107 / 0 | 0 / 0 | 122 | 0 | 0 |
-| tanstack-query | v5.90.3 | 327 (67) | 1318 | 100.0% | 0 | 0 | 70 / 506 / 3719 | 40.6% | 207 / 0 | 0 / 0 | 170 | 0 | 0 |
+| pydantic | v1.10.22 | 25 (0) | 248 | 100.0% | 0 | 0 | 147 / 582 / 3017 | 10.9% | 23 / 0 | 0 / 0 | 23 | 117 | 67 |
+| pydantic | v2.5.3 | 67 (1) | 553 | 100.0% | 0 | 0 | 138 / 738 / 3017 | 12.3% | 56 / 40 | 0 / 0 | 56 | 0 | 118 |
+| pydantic | v2.14.3 | 91 (0) | 677 | 100.0% | 0 | 0 | 159 / 871 / 2762 | 10.6% | 77 / 60 | 0 / 0 | 79 | 0 | 204 |
+| tanstack-query | v4.36.1 | 140 (27) | 497 | 100.0% | 0 | 0 | 134 / 540 / 3424 | 14.9% | 103 / 0 | 0 / 0 | 113 | 0 | 0 |
+| tanstack-query | v5.0.0 | 147 (25) | 574 | 100.0% | 0 | 0 | 143 / 600 / 3269 | 12.9% | 110 / 0 | 0 / 0 | 122 | 0 | 0 |
+| tanstack-query | v5.90.3 | 327 (67) | 1322 | 100.0% | 0 | 0 | 71 / 506 / 3571 | 40.5% | 211 / 0 | 0 / 0 | 170 | 0 | 0 |
 | zod | v3.23.8 | 1 (0) | 118 | 100.0% | 2 | 0 | 150 / 528 / 996 | 11.0% | 1 / 0 | 0 / 1 | 1 | 0 | 0 |
-| zod | v4.0.17 | 17 (0) | 242 | 100.0% | 1 | 5289 | 164 / 630 / 2721 | 14.1% | 17 / 0 | 27 / 1 | 17 | 0 | 0 |
-| zod | v4.6.7 | 24 (0) | 348 | 100.0% | 1 | 6157 | 183 / 684 / 9276 | 12.4% | 24 / 3 | 33 / 1 | 24 | 0 | 0 |
-| electron | v30.0.0 | 239 (0) | 2852 | 100.0% | 0 | 0 | 70 / 395 / 2732 | 38.0% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
-| electron | v38.0.0 | 264 (0) | 3174 | 100.0% | 0 | 0 | 77 / 440 / 5140 | 35.4% | 14 / 0 | 0 / 0 | 37 | 0 | 0 |
-| electron | v45.3.2 | 301 (0) | 3455 | 100.0% | 0 | 0 | 80 / 464 / 5140 | 34.0% | 14 / 0 | 0 / 0 | 40 | 0 | 0 |
+| zod | v4.0.17 | 17 (0) | 244 | 100.0% | 1 | 5289 | 166 / 630 / 2306 | 13.9% | 17 / 0 | 27 / 1 | 17 | 0 | 0 |
+| zod | v4.6.7 | 24 (0) | 351 | 100.0% | 1 | 6157 | 183 / 684 / 8645 | 12.5% | 24 / 3 | 33 / 1 | 24 | 0 | 0 |
+| electron | v30.0.0 | 239 (0) | 2853 | 100.0% | 0 | 0 | 70 / 398 / 2493 | 38.0% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
+| electron | v38.0.0 | 264 (0) | 3180 | 100.0% | 0 | 0 | 77 / 448 / 3582 | 35.3% | 14 / 0 | 0 / 0 | 37 | 0 | 0 |
+| electron | v45.3.2 | 301 (0) | 3464 | 100.0% | 0 | 0 | 81 / 470 / 3582 | 33.9% | 14 / 0 | 0 / 0 | 40 | 0 | 0 |
 
 ## `h2` per version
 
 | project | version | articles (no chunk) | chunks | coverage | cut fence | lost chars | tokens p50 / p95 / max | small | empty / wrong path | headings missed / extra | no H1 | includes | MkDocs blocks as code |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| starlette | 0.27.0 | 23 (0) | 157 | 57.9% | 0 | 0 | 122 / 875 / 3993 | 26.8% | 20 / 0 | 0 / 0 | 21 | 0 | 9 |
-| starlette | 0.52.1 | 25 (0) | 222 | 60.9% | 0 | 0 | 114 / 759 / 3992 | 25.7% | 20 / 0 | 0 / 0 | 21 | 0 | 14 |
-| starlette | 1.10.0 | 25 (0) | 232 | 53.6% | 0 | 0 | 106 / 875 / 3992 | 25.4% | 21 / 0 | 0 / 0 | 22 | 0 | 20 |
-| pydantic | v1.10.22 | 25 (0) | 129 | 68.8% | 0 | 0 | 207 / 1513 / 5995 | 7.8% | 23 / 0 | 0 / 0 | 23 | 79 | 67 |
-| pydantic | v2.5.3 | 67 (1) | 382 | 37.5% | 0 | 0 | 138 / 1124 / 8044 | 10.0% | 56 / 40 | 0 / 0 | 56 | 0 | 118 |
-| pydantic | v2.14.3 | 91 (0) | 477 | 57.1% | 0 | 0 | 144 / 1476 / 8983 | 10.3% | 77 / 55 | 0 / 0 | 79 | 0 | 204 |
-| tanstack-query | v4.36.1 | 140 (27) | 332 | 61.9% | 0 | 0 | 164 / 900 / 4911 | 11.1% | 101 / 0 | 0 / 0 | 113 | 0 | 0 |
-| tanstack-query | v5.0.0 | 147 (25) | 362 | 61.9% | 0 | 0 | 174 / 900 / 5431 | 9.1% | 108 / 0 | 0 / 0 | 122 | 0 | 0 |
-| tanstack-query | v5.90.3 | 327 (67) | 879 | 68.0% | 0 | 0 | 96 / 708 / 5971 | 33.5% | 208 / 0 | 0 / 0 | 170 | 0 | 0 |
-| zod | v3.23.8 | 1 (0) | 37 | 16.7% | 1 | 0 | 311 / 4007 / 4411 | 5.4% | 1 / 0 | 0 / 1 | 1 | 0 | 0 |
-| zod | v4.0.17 | 17 (0) | 143 | 72.0% | 1 | 5289 | 243 / 1171 / 3984 | 7.7% | 17 / 0 | 27 / 1 | 17 | 0 | 0 |
-| zod | v4.6.7 | 24 (0) | 191 | 59.4% | 1 | 6157 | 259 / 1479 / 9276 | 7.3% | 24 / 0 | 33 / 1 | 24 | 0 | 0 |
-| electron | v30.0.0 | 239 (0) | 685 | 34.6% | 0 | 0 | 195 / 1610 / 19229 | 10.8% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
-| electron | v38.0.0 | 264 (0) | 787 | 26.9% | 0 | 0 | 211 / 1867 / 21312 | 10.3% | 14 / 0 | 0 / 0 | 37 | 0 | 0 |
-| electron | v45.3.2 | 301 (0) | 862 | 14.3% | 0 | 0 | 220 / 1963 / 22515 | 9.9% | 14 / 0 | 0 / 0 | 40 | 0 | 0 |
+| starlette | 0.27.0 | 23 (0) | 159 | 63.2% | 0 | 0 | 123 / 1040 / 1821 | 26.4% | 20 / 0 | 0 / 0 | 21 | 0 | 9 |
+| starlette | 0.52.1 | 25 (0) | 224 | 60.9% | 0 | 0 | 115 / 875 / 1923 | 25.4% | 20 / 0 | 0 / 0 | 21 | 0 | 14 |
+| starlette | 1.10.0 | 25 (0) | 235 | 53.6% | 0 | 0 | 107 / 978 / 1946 | 25.1% | 21 / 0 | 0 / 0 | 22 | 0 | 20 |
+| pydantic | v1.10.22 | 25 (0) | 136 | 68.8% | 0 | 0 | 215 / 1591 / 3017 | 7.3% | 23 / 0 | 0 / 0 | 23 | 81 | 67 |
+| pydantic | v2.5.3 | 67 (1) | 400 | 50.0% | 0 | 0 | 148 / 1378 / 3017 | 9.5% | 56 / 40 | 0 / 0 | 56 | 0 | 118 |
+| pydantic | v2.14.3 | 91 (0) | 504 | 57.1% | 0 | 0 | 156 / 1610 / 2762 | 9.7% | 77 / 55 | 0 / 0 | 79 | 0 | 204 |
+| tanstack-query | v4.36.1 | 140 (27) | 339 | 61.9% | 0 | 0 | 166 / 1027 / 3424 | 10.9% | 104 / 0 | 0 / 0 | 113 | 0 | 0 |
+| tanstack-query | v5.0.0 | 147 (25) | 374 | 61.9% | 0 | 0 | 179 / 1182 / 3269 | 8.8% | 111 / 0 | 0 / 0 | 122 | 0 | 0 |
+| tanstack-query | v5.90.3 | 327 (67) | 893 | 72.0% | 0 | 0 | 98 / 802 / 3571 | 32.9% | 212 / 0 | 0 / 0 | 170 | 0 | 0 |
+| zod | v3.23.8 | 1 (0) | 41 | 22.2% | 1 | 0 | 334 / 1846 / 1969 | 4.9% | 1 / 0 | 0 / 1 | 1 | 0 | 0 |
+| zod | v4.0.17 | 17 (0) | 146 | 72.0% | 1 | 5289 | 243 / 1263 / 2306 | 7.5% | 17 / 0 | 27 / 1 | 17 | 0 | 0 |
+| zod | v4.6.7 | 24 (0) | 200 | 59.4% | 1 | 6157 | 265 / 1402 / 8645 | 7.5% | 24 / 0 | 33 / 1 | 24 | 0 | 0 |
+| electron | v30.0.0 | 239 (0) | 742 | 34.6% | 0 | 0 | 220 / 1906 / 2493 | 10.0% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
+| electron | v38.0.0 | 264 (0) | 871 | 26.9% | 0 | 0 | 238 / 1931 / 3582 | 9.4% | 14 / 0 | 0 / 0 | 37 | 0 | 0 |
+| electron | v45.3.2 | 301 (0) | 965 | 17.9% | 0 | 0 | 265 / 1929 / 3582 | 8.8% | 14 / 0 | 0 / 0 | 40 | 0 | 0 |
 
 Sections that start no chunk under `h2`:
 
@@ -102,7 +102,6 @@ Sections that start no chunk under `h2`:
 - electron v45.3.2:docs/api/session.md [session > Class: Session > Instance Methods > ses.registerLocalAIHandler(handler) Experimental] (held)
 - electron v45.3.2:docs/breaking-changes.md [Breaking Changes > Breaking API Changes (42.0) > Behavior Changed: electron no longer downloads itself via postinstall script] (held)
 - electron v45.3.2:docs/breaking-changes.md [Breaking Changes > Breaking API Changes (43.0) > Behavior Changed: Dialog methods default to Downloads directory] (held)
-- electron v45.3.2:docs/breaking-changes.md [Breaking Changes > Breaking API Changes (44.0) > API Changed: clipboard module rearchitected to align with the W3C Clipboard API] (held)
 - electron v45.3.2:docs/breaking-changes.md [Breaking Changes > Breaking API Changes (44.0) > Removed: clipboard module is no longer available in the renderer process] (held)
 - electron v45.3.2:docs/breaking-changes.md [Breaking Changes > Breaking API Changes (45.0) > Deprecated: safeStorage.isEncryptionAvailable(), safeStorage.encryptString() and safeStorage.decryptString()] (held)
 - electron v45.3.2:docs/breaking-changes.md [Breaking Changes > Breaking API Changes (45.0) > Removed: Node.js module shims and Buffer, setImmediate, clearImmediate globals in sandboxed preload scripts] (held)
@@ -136,24 +135,20 @@ Sections that start no chunk under `h2`:
 - pydantic v2.14.3:docs/integrations/mypy.md [Configuring the Plugin > init_forbid_extra] (held)
 - pydantic v2.14.3:docs/migration.md [Continue using Pydantic V1 features > Using Pydantic v1 features in a v1/v2 environment] (held)
 - pydantic v2.14.3:docs/migration.md [Migration guide > Type conversion from floats to integers] (held)
-- pydantic v2.5.3:docs/concepts/fields.md [Field aliases > AliasPath and AliasChoices] (held)
 - pydantic v2.5.3:docs/concepts/serialization.md [Serializing subclasses > Serializing with duck-typing] (held)
 - pydantic v2.5.3:docs/concepts/serialization.md [Serializing subclasses > Subclass instances for fields of BaseModel, dataclasses, TypedDict] (held)
 - pydantic v2.5.3:docs/concepts/unions.md [Union Modes > Smart Mode] (held)
 - pydantic v2.5.3:docs/concepts/validators.md [Annotated Validators > Before, After, Wrap and Plain validators] (held)
 - pydantic v2.5.3:docs/migration.md [Migration guide > BaseSettings has moved to pydantic-settings] (held)
 - pydantic v2.5.3:docs/migration.md [Migration guide > Changes to Handling of Standard Types > Patterns / regex on strings] (held)
-- pydantic v2.5.3:docs/migration.md [Migration guide > Changes to Handling of Standard Types > Required, optional, and nullable fields] (held)
 - pydantic v2.5.3:docs/migration.md [Migration guide > Changes to config] (held)
 - pydantic v2.5.3:docs/migration.md [Migration guide > Changes to pydantic.BaseModel] (held)
 - pydantic v2.5.3:docs/migration.md [Migration guide > Changes to pydantic.Field] (held)
 - pydantic v2.5.3:docs/migration.md [Migration guide > Changes to validators > @validator and @root_validator are deprecated] (held)
-- pydantic v2.5.3:docs/migration.md [Migration guide > Changes to validators > TypeError is no longer converted to ValidationError in validators] (held)
 - pydantic v2.5.3:docs/migration.md [Migration guide > Constrained types] (held)
 - pydantic v2.5.3:docs/migration.md [Migration guide > Introduction of TypeAdapter] (held)
 - starlette 0.27.0:docs/endpoints.md [WebSocketEndpoint] (held)
 - starlette 0.27.0:docs/middleware.md [BaseHTTPMiddleware > Limitations] (held)
-- starlette 0.27.0:docs/middleware.md [Pure ASGI Middleware > Gotchas > ASGI middleware should be stateless] (held)
 - starlette 0.27.0:docs/release-notes.md [0.26.0 > Deprecated] (held)
 - starlette 0.27.0:docs/release-notes.md [0.27.0 > Fixed] (held)
 - starlette 0.27.0:docs/requests.md [Request > Client Address] (held)
@@ -198,7 +193,6 @@ Sections that start no chunk under `h2`:
 - tanstack-query v5.0.0:docs/react/guides/migrating-to-v5.md [Breaking Changes > status: loading has been changed to status: pending and isLoading has been changed to isPending and isInitialLoading has now been renamed to isLoading] (held)
 - tanstack-query v5.0.0:docs/react/guides/optimistic-updates.md [Via the UI > If the mutation and the query don't live in the same component] (held)
 - tanstack-query v5.90.3:docs/framework/react/guides/filters.md [Utils > matchQuery] (held)
-- tanstack-query v5.90.3:docs/framework/react/guides/migrating-to-v5.md [Breaking Changes > Query defaults changes] (held)
 - tanstack-query v5.90.3:docs/framework/react/guides/migrating-to-v5.md [Breaking Changes > hashQueryKey has been renamed to hashKey] (held)
 - tanstack-query v5.90.3:docs/framework/react/guides/optimistic-updates.md [Via the cache > Updating a single todo] (held)
 - tanstack-query v5.90.3:docs/framework/react/guides/render-optimizations.md [select > memoization] (held)
@@ -213,7 +207,6 @@ Sections that start no chunk under `h2`:
 - zod v3.23.8:README.md [Schema methods > .catch] (held)
 - zod v3.23.8:README.md [Schema methods > .default] (held)
 - zod v3.23.8:README.md [Schema methods > .pipe > You can use .pipe() to fix common issues with z.coerce.] (held)
-- zod v3.23.8:README.md [Schema methods > .readonly] (held)
 - zod v3.23.8:README.md [Schema methods > .refine > Arguments] (held)
 - zod v3.23.8:README.md [Schema methods > .refine > Customize error path] (held)
 - zod v3.23.8:README.md [Schema methods > .safeParse] (held)
@@ -248,18 +241,18 @@ Sections that start no chunk under `h2`:
 | starlette | 0.27.0 | 23 (0) | 299 | 89.5% | 0 | 0 | 69 / 569 / 900 | 40.5% | 20 / 0 | 0 / 0 | 21 | 0 | 9 |
 | starlette | 0.52.1 | 25 (0) | 390 | 87.0% | 0 | 0 | 69 / 540 / 932 | 39.0% | 20 / 0 | 0 / 0 | 21 | 0 | 14 |
 | starlette | 1.10.0 | 25 (0) | 396 | 85.7% | 0 | 0 | 69 / 561 / 989 | 38.1% | 21 / 0 | 0 / 0 | 22 | 0 | 20 |
-| pydantic | v1.10.22 | 25 (0) | 231 | 93.8% | 0 | 0 | 153 / 641 / 3216 | 10.8% | 23 / 0 | 0 / 0 | 23 | 113 | 67 |
-| pydantic | v2.5.3 | 67 (1) | 533 | 91.7% | 0 | 0 | 136 / 830 / 3226 | 12.2% | 56 / 40 | 0 / 0 | 56 | 0 | 118 |
-| pydantic | v2.14.3 | 91 (0) | 641 | 91.4% | 0 | 0 | 160 / 910 / 3116 | 10.3% | 77 / 59 | 0 / 0 | 79 | 0 | 204 |
-| tanstack-query | v4.36.1 | 140 (27) | 472 | 95.2% | 0 | 0 | 140 / 550 / 3572 | 14.6% | 100 / 0 | 0 / 0 | 113 | 0 | 0 |
-| tanstack-query | v5.0.0 | 147 (25) | 547 | 100.0% | 0 | 0 | 152 / 614 / 3417 | 12.4% | 107 / 0 | 0 / 0 | 122 | 0 | 0 |
-| tanstack-query | v5.90.3 | 327 (67) | 1249 | 100.0% | 0 | 0 | 80 / 523 / 3719 | 38.3% | 207 / 0 | 0 / 0 | 170 | 0 | 0 |
+| pydantic | v1.10.22 | 25 (0) | 233 | 93.8% | 0 | 0 | 153 / 641 / 3017 | 10.7% | 23 / 0 | 0 / 0 | 23 | 113 | 67 |
+| pydantic | v2.5.3 | 67 (1) | 537 | 91.7% | 0 | 0 | 138 / 832 / 3017 | 12.1% | 56 / 40 | 0 / 0 | 56 | 0 | 118 |
+| pydantic | v2.14.3 | 91 (0) | 644 | 91.4% | 0 | 0 | 160 / 910 / 2762 | 10.2% | 77 / 59 | 0 / 0 | 79 | 0 | 204 |
+| tanstack-query | v4.36.1 | 140 (27) | 475 | 95.2% | 0 | 0 | 140 / 585 / 3424 | 14.5% | 103 / 0 | 0 / 0 | 113 | 0 | 0 |
+| tanstack-query | v5.0.0 | 147 (25) | 550 | 100.0% | 0 | 0 | 152 / 637 / 3269 | 12.4% | 110 / 0 | 0 / 0 | 122 | 0 | 0 |
+| tanstack-query | v5.90.3 | 327 (67) | 1253 | 100.0% | 0 | 0 | 81 / 528 / 3571 | 38.1% | 211 / 0 | 0 / 0 | 170 | 0 | 0 |
 | zod | v3.23.8 | 1 (0) | 97 | 72.2% | 2 | 0 | 157 / 814 / 996 | 13.4% | 1 / 0 | 0 / 1 | 1 | 0 | 0 |
-| zod | v4.0.17 | 17 (0) | 241 | 100.0% | 1 | 5289 | 167 / 630 / 2721 | 14.1% | 17 / 0 | 27 / 1 | 17 | 0 | 0 |
-| zod | v4.6.7 | 24 (0) | 348 | 100.0% | 1 | 6157 | 183 / 684 / 9276 | 12.4% | 24 / 3 | 33 / 1 | 24 | 0 | 0 |
-| electron | v30.0.0 | 239 (0) | 1851 | 84.6% | 0 | 0 | 103 / 765 / 2732 | 24.2% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
-| electron | v38.0.0 | 264 (0) | 2093 | 92.3% | 0 | 0 | 109 / 819 / 5140 | 22.4% | 14 / 0 | 0 / 0 | 37 | 0 | 0 |
-| electron | v45.3.2 | 301 (0) | 2320 | 82.1% | 0 | 0 | 119 / 821 / 5140 | 21.9% | 14 / 0 | 0 / 0 | 40 | 0 | 0 |
+| zod | v4.0.17 | 17 (0) | 243 | 100.0% | 1 | 5289 | 169 / 630 / 2306 | 14.0% | 17 / 0 | 27 / 1 | 17 | 0 | 0 |
+| zod | v4.6.7 | 24 (0) | 351 | 100.0% | 1 | 6157 | 183 / 684 / 8645 | 12.5% | 24 / 3 | 33 / 1 | 24 | 0 | 0 |
+| electron | v30.0.0 | 239 (0) | 1852 | 84.6% | 0 | 0 | 103 / 765 / 2493 | 24.2% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
+| electron | v38.0.0 | 264 (0) | 2099 | 92.3% | 0 | 0 | 110 / 824 / 3582 | 22.3% | 14 / 0 | 0 / 0 | 37 | 0 | 0 |
+| electron | v45.3.2 | 301 (0) | 2329 | 82.1% | 0 | 0 | 120 / 828 / 3582 | 21.8% | 14 / 0 | 0 / 0 | 40 | 0 | 0 |
 
 Sections that start no chunk under `h3-max-4000`:
 
@@ -303,18 +296,18 @@ Sections that start no chunk under `h3-max-4000`:
 | starlette | 0.27.0 | 23 (0) | 184 | 68.4% | 0 | 0 | 160 / 561 / 891 | 4.3% | 20 / 0 | 0 / 0 | 21 | 0 | 9 |
 | starlette | 0.52.1 | 25 (0) | 236 | 73.9% | 0 | 0 | 153 / 605 / 932 | 3.8% | 20 / 0 | 0 / 0 | 21 | 0 | 14 |
 | starlette | 1.10.0 | 25 (0) | 250 | 82.1% | 0 | 0 | 153 / 560 / 989 | 3.2% | 21 / 0 | 0 / 0 | 22 | 0 | 20 |
-| pydantic | v1.10.22 | 25 (0) | 192 | 68.8% | 0 | 0 | 216 / 637 / 3216 | 1.6% | 23 / 0 | 0 / 0 | 23 | 91 | 67 |
-| pydantic | v2.5.3 | 67 (1) | 436 | 87.5% | 0 | 0 | 207 / 830 / 3226 | 5.7% | 56 / 33 | 0 / 0 | 56 | 0 | 118 |
-| pydantic | v2.14.3 | 91 (0) | 566 | 80.0% | 0 | 0 | 213 / 930 / 3116 | 6.2% | 77 / 52 | 0 / 0 | 79 | 0 | 204 |
-| tanstack-query | v4.36.1 | 140 (27) | 385 | 90.5% | 0 | 0 | 184 / 644 / 3572 | 5.2% | 100 / 0 | 0 / 0 | 113 | 0 | 0 |
-| tanstack-query | v5.0.0 | 147 (25) | 452 | 90.5% | 0 | 0 | 189 / 659 / 3417 | 4.0% | 107 / 0 | 0 / 0 | 122 | 0 | 0 |
-| tanstack-query | v5.90.3 | 327 (67) | 792 | 92.0% | 0 | 0 | 174 / 651 / 3719 | 9.7% | 207 / 0 | 0 / 0 | 170 | 0 | 0 |
+| pydantic | v1.10.22 | 25 (0) | 194 | 68.8% | 0 | 0 | 215 / 637 / 3017 | 1.6% | 23 / 0 | 0 / 0 | 23 | 91 | 67 |
+| pydantic | v2.5.3 | 67 (1) | 440 | 87.5% | 0 | 0 | 207 / 830 / 3017 | 5.7% | 56 / 33 | 0 / 0 | 56 | 0 | 118 |
+| pydantic | v2.14.3 | 91 (0) | 568 | 80.0% | 0 | 0 | 213 / 930 / 2762 | 6.2% | 77 / 52 | 0 / 0 | 79 | 0 | 204 |
+| tanstack-query | v4.36.1 | 140 (27) | 388 | 90.5% | 0 | 0 | 184 / 644 / 3424 | 5.1% | 103 / 0 | 0 / 0 | 113 | 0 | 0 |
+| tanstack-query | v5.0.0 | 147 (25) | 455 | 90.5% | 0 | 0 | 191 / 679 / 3269 | 4.0% | 110 / 0 | 0 / 0 | 122 | 0 | 0 |
+| tanstack-query | v5.90.3 | 327 (67) | 796 | 92.0% | 0 | 0 | 176 / 656 / 3571 | 9.7% | 211 / 0 | 0 / 0 | 170 | 0 | 0 |
 | zod | v3.23.8 | 1 (0) | 88 | 77.8% | 2 | 0 | 200 / 564 / 996 | 0.0% | 1 / 0 | 0 / 1 | 1 | 0 | 0 |
-| zod | v4.0.17 | 17 (0) | 180 | 80.0% | 1 | 5289 | 237 / 701 / 2721 | 1.1% | 17 / 0 | 27 / 1 | 17 | 0 | 0 |
-| zod | v4.6.7 | 24 (0) | 270 | 71.9% | 1 | 6157 | 237 / 761 / 9276 | 0.7% | 24 / 3 | 33 / 1 | 24 | 0 | 0 |
-| electron | v30.0.0 | 239 (0) | 1520 | 69.2% | 0 | 0 | 171 / 544 / 2732 | 1.4% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
-| electron | v38.0.0 | 264 (0) | 1762 | 46.2% | 0 | 0 | 177 / 621 / 5140 | 1.2% | 14 / 0 | 0 / 0 | 37 | 0 | 0 |
-| electron | v45.3.2 | 301 (0) | 1970 | 78.6% | 0 | 0 | 181 / 615 / 5140 | 1.4% | 14 / 0 | 0 / 0 | 40 | 0 | 0 |
+| zod | v4.0.17 | 17 (0) | 182 | 80.0% | 1 | 5289 | 237 / 701 / 2306 | 1.1% | 17 / 0 | 27 / 1 | 17 | 0 | 0 |
+| zod | v4.6.7 | 24 (0) | 273 | 71.9% | 1 | 6157 | 237 / 761 / 8645 | 1.1% | 24 / 3 | 33 / 1 | 24 | 0 | 0 |
+| electron | v30.0.0 | 239 (0) | 1521 | 69.2% | 0 | 0 | 171 / 544 / 2493 | 1.4% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
+| electron | v38.0.0 | 264 (0) | 1768 | 46.2% | 0 | 0 | 177 / 628 / 3582 | 1.2% | 14 / 0 | 0 / 0 | 37 | 0 | 0 |
+| electron | v45.3.2 | 301 (0) | 1979 | 78.6% | 0 | 0 | 181 / 627 / 3582 | 1.4% | 14 / 0 | 0 / 0 | 40 | 0 | 0 |
 
 Sections that start no chunk under `merge-400`:
 
