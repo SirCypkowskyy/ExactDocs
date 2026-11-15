@@ -47,10 +47,17 @@ jobs:
 
       - name: Public health check
         run: |
+          set -euo pipefail
           for i in $(seq 30); do
-            if curl -fsS --max-time 10 https://exact-docs.gburek.app/healthz; then echo; exit 0; fi
+            if curl -fsS --max-time 10 https://exact-docs.gburek.app/healthz \
+              && curl -fsS --max-time 10 https://exact-docs.gburek.app/api/v1/session \
+                | jq -e '.state == "signed_out"' >/dev/null; then
+              status=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' https://exact-docs.gburek.app/mcp) || status=000
+              if [ "$status" = 401 ] || [ "$status" = 406 ]; then exit 0; fi
+              echo "::warning::unauthenticated MCP answered $status"
+            fi
             echo "attempt $i/30 failed; retrying in 5 s"
             sleep 5
           done
-          echo "::error::https://exact-docs.gburek.app/healthz did not answer 200"
+          echo "::error::public health, sign-in state or unauthenticated MCP acceptance failed"
           exit 1

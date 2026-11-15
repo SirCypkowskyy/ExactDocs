@@ -576,12 +576,14 @@ flowchart LR
   and `EXACTDOCS_PUBLIC_URL` name the public host.
 - **First admin.** Before the server starts, `admin create --password-stdin` runs on the data
   volume, so no visitor ever sees the setup page. The admin is `admin`, and its password is only in
-  `~/exactdocs-trial/admin-password` (mode 600) on the host. The deploy then checks that
-  `/api/v1/session` no longer says `setup_required`. If it still does, the deploy stops the
-  container and removes the route.
+  `~/exactdocs-trial/admin-password` (mode 600) on the host. The deploy requires `/api/v1/session` to say `signed_out` before routing. Any other
+  state stops the container and removes the route. The workflow also verifies public health,
+  the signed-out session and an unauthenticated MCP response of 401 or 406.
 - **State on the host.** `~/exactdocs-trial/` holds `trial.env` (`EXACTDOCS_SECRET_KEY`, generated
   once and never overwritten), `admin-password`, `deploy.lock` (`flock`, one deploy at a time) and
-  `backups/` (the tunnel config before each change, the last 50).
+  `backups/` (the tunnel config before each change, the last 50). If the data volume already
+  exists, missing or empty secret files stop deployment: restore the original files from backup
+  rather than generating a different encryption key or admin password.
 - **Cloudflare.** `deploy/trial/cloudflare.sh` follows the rules of the tunnel it shares. It adds
   or removes only `exact-docs.gburek.app` and puts that rule before any wildcard. It backs up the
   whole config before each write and never restarts `cloudflared`. DNS (a proxied CNAME, comment

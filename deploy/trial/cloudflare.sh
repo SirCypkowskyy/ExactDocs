@@ -9,6 +9,8 @@
 # insert it before any wildcard, and back up the full config before every write. A remotely
 # managed tunnel picks up config changes live: cloudflared is never restarted.
 
+set -euo pipefail
+
 CF_API="https://api.cloudflare.com/client/v4"
 CF_MARK="managed-by=exactdocs-trial-deploy"
 # The only hostname this tooling may touch.
@@ -51,7 +53,7 @@ cf_put_config() {
   local old=$1 new=$2 backup resp
   if [ "$(jq -S . <<<"$old")" = "$(jq -S . <<<"$new")" ]; then ed_log "tunnel ingress unchanged"; return 0; fi
   mkdir -p "$ED_STATE_DIR/backups"
-  backup="$ED_STATE_DIR/backups/tunnel-config-$(date -u +%Y%m%dT%H%M%SZ)-$$.json"
+  backup=$(mktemp "$ED_STATE_DIR/backups/tunnel-config-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX.json")
   printf '%s\n' "$old" >"$backup"
   # shellcheck disable=SC2012  # our own timestamped file names
   ls -1t "$ED_STATE_DIR"/backups/tunnel-config-*.json | tail -n +51 | xargs -r rm -f  # keep 50
