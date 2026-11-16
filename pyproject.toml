@@ -135,6 +135,8 @@ ignore = [
 "deploy/upgrade_check.py" = ["implicit-namespace-package", "suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path", "print", "undocumented-public-function", "undocumented-public-method"]
 # Runs the app in a fresh interpreter to see which modules it imports.
 "**/tests/bootstrap/test_model_free.py" = ["suspicious-subprocess-import", "subprocess-run-without-check", "subprocess-without-shell-equals-true"]
+# The browser CI regression runs a fixed repository script and local fake executables.
+"**/tests/ci/test_playwright_setup.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
 # Runs its span test in a fresh interpreter: a process's tracer provider is set once.
 "**/tests/retrieval/test_agentic_search.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
 # Runs the app behind a socket guard in a fresh interpreter, with the SDKs' variables set.
