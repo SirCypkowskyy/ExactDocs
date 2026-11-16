@@ -15,6 +15,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.sign_in import SignInStandIns
+from exactdocs.catalog.dtos import CreateLibraryCommand
 
 fake_oidc = import_module("fake_oidc")  # test support on sys.path (environment.py)
 host = import_module("mcp_oauth_host")
@@ -40,6 +41,7 @@ def step_served(context: Context, name: str, group: str) -> None:
         ),
         sign_in=SignInStandIns(transport=context.issuer.transport()),
     )
+    context.container = container
     context.client = stack.enter_context(
         TestClient(create_app(container), base_url="http://localhost")
     )
@@ -92,3 +94,43 @@ def step_refused(context: Context) -> None:
     for tool in ("list_libraries", "list_articles"):
         response = host.call_tool(context.client, context.token, tool)
         assert response.status_code == HTTPStatus.UNAUTHORIZED, response.text
+
+
+@given('the library "{library}" is shared with OAuth group "{group}"')
+def step_oauth_library(context: Context, library: str, group: str) -> None:
+    client = context.client
+    username, password = ADMIN
+    assert (
+        client.post("/api/v1/setup", json={"username": username, "password": password}).status_code
+        == HTTPStatus.CREATED
+    )
+    assert (
+        client.post(
+            "/api/v1/session", json={"username": username, "password": password}
+        ).status_code
+        == HTTPStatus.CREATED
+    )
+    client.portal.call(
+        context.container.catalog.create_library,
+        CreateLibraryCommand(
+            id=library,
+            title="Docs",
+            source_url="https://example.com/acme/docs.git",
+            default_branch="main",
+            host="git",
+        ),
+    )
+    granted = client.put(
+        f"/api/v1/libraries{library}/grants",
+        json={"kind": "group", "subject": group, "role": "viewer"},
+    )
+    assert granted.status_code == HTTPStatus.OK, granted.text
+    client.cookies.clear()
+
+
+@then('the OAuth host lists the library "{library}"')
+def step_oauth_library_listed(context: Context, library: str) -> None:
+    response = host.call_tool(context.client, context.token, "list_libraries")
+    assert response.status_code == HTTPStatus.OK, response.text
+    result = host.tool_result(response)
+    assert [item["id"] for item in result["structuredContent"]["libraries"]] == [library], result

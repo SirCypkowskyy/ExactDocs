@@ -12,6 +12,7 @@ from exactdocs.identity.dtos import (
     DropLibraryGrantsCommand,
     ExternalSignInResult,
     ExternalSignInStart,
+    ExternalTokenIdentity,
     FinishExternalSignInCommand,
     GrantLibraryRoleCommand,
     LibraryGrants,
@@ -300,7 +301,7 @@ class IdentifyExternalToken(Protocol):
     ``NotAllowedError`` for a person in no allowed group and ``AccountDisabledError``.
     """
 
-    async def __call__(self, provider: str, token: str) -> AccountSummary:
+    async def __call__(self, provider: str, token: str) -> ExternalTokenIdentity:
         """Run the use case.
 
         Args:
@@ -309,7 +310,7 @@ class IdentifyExternalToken(Protocol):
 
         Returns:
             The linked account, or, for a person who never signed in to the web UI, a caller
-            named ``<provider>:<subject>`` that no account backs.
+            named ``<provider>:<subject>`` that no account backs, and their verified groups.
         """
         ...
 

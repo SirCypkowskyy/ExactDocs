@@ -1,17 +1,18 @@
 import base64
+import json
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ResourceError, ToolError
 from fastmcp.server.auth import AuthProvider
-from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from mcp.server.context import ServerRequestContext
 from mcp.shared.exceptions import MCPError
 from mcp.types import INVALID_PARAMS, ListResourcesResult, PaginatedRequestParams
 
 from exactdocs import __version__
+from exactdocs.bootstrap.caller import current_account_id, current_external_identity
 from exactdocs.bootstrap.constants import RESOURCE_NOT_FOUND, SKILL_PATH
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.mcp_oauth import build_mcp_auth
@@ -229,7 +230,7 @@ def _build(
         list_libraries=catalog.list_libraries,
         list_articles=catalog.list_articles,
         get_article=catalog.get_article,
-        caller=_token_account,
+        caller=_resource_caller,
     )
     retrieval_mcp.register_tools(
         mcp,
@@ -245,10 +246,24 @@ def _build(
 
 
 def _token_account() -> str | None:
-    """Name the account of the current MCP request: its API token's (``ApiTokenVerifier``).
+    """Name the account of the current MCP request, from its verified credential.
 
     Returns:
         The account ID; ``None`` over stdio and in-process clients, which carry no token.
     """
-    token = get_access_token()
-    return None if token is None else token.client_id
+    return current_account_id()
+
+
+def _resource_caller() -> str | None:
+    """Partition resource snapshots by account and the credential's effective OAuth claims.
+
+    Returns:
+        A stable cache key, or ``None`` for unauthenticated in-process and stdio callers.
+    """
+    account = current_account_id()
+    if account is None:
+        return None
+    identity = current_external_identity()
+    if identity is None:
+        return json.dumps(["account", account])
+    return json.dumps(["oauth", account, identity.account.role, sorted(identity.groups)])

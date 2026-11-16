@@ -92,7 +92,10 @@ to it, so the CLI and coding agents are unaffected.
       `401`, renews with its refresh token, and the provider's current groups apply: a person
       outside the allowed groups gets no working token.
   Anyone who never signed in to the web UI acts as `<provider>:<subject>`, and no account is
-  created.
+  created. Library group grants use the verified ID token's groups with the provider's
+  `group_prefix`, including for these OAuth-only callers; members of `admin_groups` can manage
+  every library. A linked caller can also use grants to their account. The request's signed
+  groups and role are used without changing stored web-account memberships or refresh tokens.
 - **What the host sees when the ID token expires.** A `401` with the usual `WWW-Authenticate`
   header. A host that keeps its refresh token trades it for a new token and carries on; one that
   does not sends the person through the sign-in again.

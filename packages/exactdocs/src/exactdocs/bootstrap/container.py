@@ -48,7 +48,7 @@ from exactdocs.bootstrap.bridges import (
     RetrievalGuidancePolicy,
     RetrievalVersionEmbedder,
 )
-from exactdocs.bootstrap.caller import current_account_id
+from exactdocs.bootstrap.caller import current_account_id, current_external_identity
 from exactdocs.bootstrap.cancellation import being_cancelled
 from exactdocs.bootstrap.constants import (
     AGENT_CACHE_PURPOSE,
@@ -438,6 +438,7 @@ def _access_policy(identity: IdentityModule) -> IdentityAccessPolicy:
         claim_library=identity.claim_library,
         drop_library_grants=identity.drop_library_grants,
         caller=current_account_id,
+        external_identity=current_external_identity,
     )
 
 

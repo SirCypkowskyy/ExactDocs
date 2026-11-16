@@ -743,6 +743,14 @@ The proxy's token verifier (`identity/adapters/driving/mcp.py:ExternalTokenVerif
 (`SignInProvider.verify_id_token`) and the provider's `SignInPolicy` admits the person. Nothing is
 stored by the domain. A disabled account is refused at the next call; the groups are those of the
 ID token the proxy holds, so a group change shows when it expires and the host renews it.
+The verifier carries a frozen `ExternalTokenIdentity` object in request-local access-token claims.
+`bootstrap/caller.py` accepts only that object type for the same authenticated account; JSON
+claims cannot assert it. Library role resolution uses its mapped groups and policy role, while
+still denying disabled or missing linked accounts. This lets OAuth-only callers use group grants
+without creating accounts or overwriting web memberships and refresh tokens. `MultiAuth` qualifies
+its `client_id` by trust source; the original typed `original_client_id` names the stored account.
+Resource-list snapshots also distinguish OAuth policy roles and mapped groups, so one credential
+cannot reuse a broader list built by another credential for the same account.
 
 ```mermaid
 sequenceDiagram

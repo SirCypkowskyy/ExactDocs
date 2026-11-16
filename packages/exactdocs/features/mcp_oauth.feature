@@ -15,3 +15,8 @@ Feature: MCP hosts connect with OAuth as well as API tokens
   Scenario: A person outside the allowed group cannot use a token
     When a web MCP host signs "bob" (group "other") in
     Then the token is refused and no tool can be called
+
+  Scenario: An OAuth member reads a library shared with their group
+    Given the library "/acme/docs" is shared with OAuth group "docs"
+    When a web MCP host discovers the OAuth metadata and signs "alice" (group "docs") in
+    Then the OAuth host lists the library "/acme/docs"

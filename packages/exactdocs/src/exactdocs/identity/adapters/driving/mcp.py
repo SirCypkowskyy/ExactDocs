@@ -81,13 +81,18 @@ class ExternalTokenVerifier(TokenVerifier):
             person is not admitted, their account is disabled or the provider cannot be reached.
         """
         try:
-            caller = await self._identify(self._provider, token)
+            identity = await self._identify(self._provider, token)
         except DomainError as error:
             logger.info("MCP OAuth token refused (%s)", error.code)
             return None
+        caller = identity.account
         return AccessToken(
-            token="",  # the secret is not kept in the request-scoped auth object
+            token="",
             client_id=caller.id,
             scopes=[],
-            claims={"username": caller.username, "role": caller.role},
+            claims={
+                "username": caller.username,
+                "role": caller.role,
+                "external_identity": identity,
+            },
         )

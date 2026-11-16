@@ -100,7 +100,12 @@ from exactdocs.catalog.ports.driving import (
     SetManualTags,
     StoreManifest,
 )
-from exactdocs.identity.dtos import ClaimLibraryCommand, DropLibraryGrantsCommand, LibraryRolesQuery
+from exactdocs.identity.dtos import (
+    ClaimLibraryCommand,
+    DropLibraryGrantsCommand,
+    ExternalTokenIdentity,
+    LibraryRolesQuery,
+)
 from exactdocs.identity.ports.driving import ClaimLibrary, DropLibraryGrants, ResolveLibraryRoles
 from exactdocs.ingestion.constants import PARSER_VERSION
 from exactdocs.ingestion.errors import EmbeddingUnavailableError, StoredTextOutdatedError
@@ -1467,6 +1472,8 @@ class IdentityAccessPolicy:
     """Identity's drop of every grant on a removed library."""
     caller: Callable[[], str | None]
     """The account ID of the current request; ``None`` when no person made it."""
+    external_identity: Callable[[], ExternalTokenIdentity | None] | None = None
+    """The verified OAuth caller, when this request carries one."""
 
     async def allows(
         self, library: str, access: CatalogAccess | IngestionAccess | RetrievalAccess
@@ -1484,7 +1491,13 @@ class IdentityAccessPolicy:
         if account is None:
             return True
         found = await self.resolve_library_roles(
-            LibraryRolesQuery(account_id=account, libraries=[library])
+            LibraryRolesQuery(
+                account_id=account,
+                libraries=[library],
+                external_identity=None
+                if self.external_identity is None
+                else self.external_identity(),
+            )
         )
         return found.allows(library, access.value)
 
@@ -1501,7 +1514,13 @@ class IdentityAccessPolicy:
         if account is None:
             return frozenset(library.casefold() for library in libraries)
         found = await self.resolve_library_roles(
-            LibraryRolesQuery(account_id=account, libraries=list(libraries))
+            LibraryRolesQuery(
+                account_id=account,
+                libraries=list(libraries),
+                external_identity=None
+                if self.external_identity is None
+                else self.external_identity(),
+            )
         )
         return frozenset(found.roles)
 

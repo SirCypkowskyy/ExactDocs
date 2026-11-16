@@ -46,6 +46,17 @@ class AccountSummary(_Dto):
         return cls(id=account.id, username=account.username.value, role=account.role.value)
 
 
+class ExternalTokenIdentity(_Dto):
+    """The verified identity of one OAuth request, without changing web-account state."""
+
+    account: AccountSummary
+    """The linked account, or the synthetic provider/subject caller."""
+    groups: frozenset[str]
+    """Groups from this signed ID token, mapped with the provider's group prefix."""
+    linked: bool
+    """Whether this caller must still have its linked account in the repository."""
+
+
 class SetupState(_Dto):
     """Whether the instance still waits for its first admin."""
 
@@ -384,12 +395,14 @@ class TokenGrant(TokenSummary):
 
 
 class LibraryRolesQuery(_Dto):
-    """Ask what one account may do with libraries."""
+    """Ask what one authenticated caller may do with libraries."""
 
     account_id: str
     """The account."""
     libraries: list[str]
     """Library IDs (``/owner/repo``)."""
+    external_identity: ExternalTokenIdentity | None = None
+    """Trusted request identity from the token verifier; never accepted from client arguments."""
 
 
 class LibraryRoles(_Dto):

@@ -4,6 +4,7 @@ The identity provider is the fake issuer; the OAuth flow is FastMCP's proxy, dri
 web host drives it (``mcp_oauth_host``).
 """
 
+import asyncio
 import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -21,6 +22,7 @@ from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.mcp_oauth import _storage
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.sign_in import SignInStandIns
+from exactdocs.catalog.dtos import CreateLibraryCommand
 from exactdocs.identity.dtos import SetUserDisabledCommand
 from fake_oidc import CLIENT_ID, CLIENT_SECRET, ISSUER, FakeIssuer
 from mcp_oauth_host import call_tool, connect, fake_issuer, tool_result
@@ -55,7 +57,9 @@ class Instance:
     clock: Clock
 
 
-def running(**settings: Any) -> Iterator[Instance]:
+def running(
+    *, provider_overrides: dict[str, Any] | None = None, **settings: Any
+) -> Iterator[Instance]:
     clock = Clock()
     issuer = FakeIssuer(now=clock.now)
     issuer.add_user("u-1", "alice", groups=["docs"])
@@ -65,7 +69,7 @@ def running(**settings: Any) -> Iterator[Instance]:
             Settings(
                 data_dir=Path(data_dir),
                 public_url=PUBLIC,
-                auth={"providers": {"corp": provider()}},
+                auth={"providers": {"corp": provider(**(provider_overrides or {}))}},
                 **settings,
             ),
             sign_in=SignInStandIns(clock=clock, transport=issuer.transport()),
@@ -258,3 +262,137 @@ def test_a_rotated_client_secret_removes_the_state_kept_under_the_old_one() -> N
         assert first is not None
         assert second is not None
         assert len(list(root.iterdir())) == 1
+
+
+def shared_library(oauth: Instance, group: str = "docs") -> None:
+    client = oauth.client
+    assert (
+        client.post(
+            "/api/v1/setup", json={"username": "ada", "password": "correct horse battery staple"}
+        ).status_code
+        == 201
+    )
+    assert (
+        client.post(
+            "/api/v1/session", json={"username": "ada", "password": "correct horse battery staple"}
+        ).status_code
+        == 201
+    )
+    assert client.portal is not None
+    client.portal.call(
+        oauth.container.catalog.create_library,
+        CreateLibraryCommand(
+            id="/acme/docs",
+            title="Docs",
+            source_url="https://example.com/acme/docs.git",
+            default_branch="main",
+            host="git",
+        ),
+    )
+    granted = client.put(
+        "/api/v1/libraries/acme/docs/grants",
+        json={"kind": "group", "subject": group, "role": "viewer"},
+    )
+    assert granted.status_code == 200, granted.text
+    client.cookies.clear()
+
+
+def listed_libraries(oauth: Instance, token: str) -> list[str]:
+    response = call_tool(oauth.client, token, "list_libraries")
+    assert response.status_code == 200, response.text
+    result = tool_result(response)
+    assert result["isError"] is False, result
+    return [item["id"] for item in result["structuredContent"]["libraries"]]
+
+
+def test_an_oauth_only_member_reads_libraries_shared_with_their_group(oauth: Instance) -> None:
+    shared_library(oauth)
+    token = connect(oauth.client, oauth.issuer, "u-1").json()["access_token"]
+    assert listed_libraries(oauth, token) == ["/acme/docs"]
+
+
+def test_an_oauth_only_operator_reads_libraries_without_a_group_grant() -> None:
+    for oauth in running(
+        mcp_oauth_provider="corp", provider_overrides={"admin_groups": ["exactdocs-admins"]}
+    ):
+        shared_library(oauth, group="other")
+        oauth.issuer.add_user("u-1", "alice", groups=["docs", "exactdocs-admins"])
+        token = connect(oauth.client, oauth.issuer, "u-1").json()["access_token"]
+        assert listed_libraries(oauth, token) == ["/acme/docs"]
+
+
+def test_an_admitted_oauth_user_without_a_library_role_cannot_read_it(oauth: Instance) -> None:
+    shared_library(oauth, group="other")
+    token = connect(oauth.client, oauth.issuer, "u-1").json()["access_token"]
+    assert listed_libraries(oauth, token) == []
+
+
+def test_a_linked_oauth_caller_uses_the_current_token_groups_not_web_groups(
+    oauth: Instance,
+) -> None:
+    shared_library(oauth, group="readers")
+    begun = oauth.client.get("/api/v1/auth/corp/start", follow_redirects=False)
+    callback = oauth.issuer.authorize(begun.headers["location"], "u-1")
+    assert oauth.client.get(callback, follow_redirects=False).status_code == 303
+    oauth.client.cookies.clear()
+    oauth.issuer.add_user("u-1", "alice", groups=["docs", "readers"])
+    token = connect(oauth.client, oauth.issuer, "u-1").json()["access_token"]
+    assert listed_libraries(oauth, token) == ["/acme/docs"]
+    oauth.issuer.add_user("u-1", "alice", groups=["docs"])
+    token = connect(oauth.client, oauth.issuer, "u-1").json()["access_token"]
+    assert listed_libraries(oauth, token) == []
+
+
+def test_concurrent_oauth_requests_keep_their_own_group_memberships(oauth: Instance) -> None:
+    shared_library(oauth, group="readers")
+    oauth.issuer.add_user("u-1", "alice", groups=["docs", "readers"])
+    oauth.issuer.add_user("u-2", "bob", groups=["docs"])
+    alice = connect(oauth.client, oauth.issuer, "u-1").json()["access_token"]
+    bob = connect(oauth.client, oauth.issuer, "u-2").json()["access_token"]
+
+    async def simultaneous() -> list[list[str]]:
+        return list(
+            await asyncio.gather(
+                asyncio.to_thread(listed_libraries, oauth, alice),
+                asyncio.to_thread(listed_libraries, oauth, bob),
+            )
+        )
+
+    assert asyncio.run(simultaneous()) == [["/acme/docs"], []]
+
+
+def test_an_api_token_operator_keeps_library_access_when_oauth_is_enabled(oauth: Instance) -> None:
+    shared_library(oauth, group="other")
+    client = oauth.client
+    assert (
+        client.post(
+            "/api/v1/session", json={"username": "ada", "password": "correct horse battery staple"}
+        ).status_code
+        == 201
+    )
+    created = client.post("/api/v1/tokens", json={"name": "cli"})
+    assert created.status_code == 201, created.text
+    client.cookies.clear()
+    assert listed_libraries(oauth, created.json()["token"]) == ["/acme/docs"]
+
+
+def test_a_linked_oauth_caller_keeps_grants_to_their_web_account(oauth: Instance) -> None:
+    shared_library(oauth, group="other")
+    client = oauth.client
+    begun = client.get("/api/v1/auth/corp/start", follow_redirects=False)
+    callback = oauth.issuer.authorize(begun.headers["location"], "u-1")
+    assert client.get(callback, follow_redirects=False).status_code == 303
+    assert (
+        client.post(
+            "/api/v1/session", json={"username": "ada", "password": "correct horse battery staple"}
+        ).status_code
+        == 201
+    )
+    granted = client.put(
+        "/api/v1/libraries/acme/docs/grants",
+        json={"kind": "user", "subject": "alice", "role": "viewer"},
+    )
+    assert granted.status_code == 200, granted.text
+    client.cookies.clear()
+    token = connect(client, oauth.issuer, "u-1").json()["access_token"]
+    assert listed_libraries(oauth, token) == ["/acme/docs"]

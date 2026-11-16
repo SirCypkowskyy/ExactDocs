@@ -969,7 +969,9 @@ async def test_an_id_token_of_an_allowed_person_acts_as_their_linked_account() -
 
     caller = await world.identity.identify_external_token("corp", "tok")
 
-    assert caller == account
+    assert caller.account == account
+    assert caller.groups == frozenset({"docs"})
+    assert caller.linked is True
 
 
 async def test_an_unlinked_person_is_identified_without_creating_an_account() -> None:
@@ -979,7 +981,13 @@ async def test_an_unlinked_person_is_identified_without_creating_an_account() ->
 
     caller = await world.identity.identify_external_token("corp", "tok")
 
-    assert (caller.id, caller.username, caller.role) == ("corp:u-9", "dora", "admin")
+    assert (caller.account.id, caller.account.username, caller.account.role) == (
+        "corp:u-9",
+        "dora",
+        "admin",
+    )
+    assert caller.groups == frozenset({"exactdocs-admins"})
+    assert caller.linked is False
     assert await world.accounts.any_exists() is False
 
 
@@ -1013,3 +1021,34 @@ async def test_a_token_the_provider_does_not_vouch_for_is_refused() -> None:
 async def test_an_unknown_provider_is_refused_for_a_token_too() -> None:
     with pytest.raises(UnknownSignInProviderError):
         await build().identity.identify_external_token("nope", "tok")
+
+
+async def test_an_oauth_token_cannot_revive_a_dangling_account_link() -> None:
+    world = build()
+    world.provider.add("u-1", "alice", "exactdocs-admins")
+    await sign_in(world, "u-1")
+    world.accounts.accounts.clear()
+    world.provider.id_tokens["tok"] = world.provider.people["u-1"]
+    with pytest.raises(ExternalSignInFailedError):
+        await world.identity.identify_external_token("corp", "tok")
+
+
+async def test_oauth_groups_use_the_same_provider_prefix_as_web_groups() -> None:
+    world = build(policy(group_prefix="corp:"))
+    world.provider.add("u-1", "alice", "docs")
+    world.provider.id_tokens["tok"] = world.provider.people["u-1"]
+    caller = await world.identity.identify_external_token("corp", "tok")
+    assert caller.groups == frozenset({"corp:docs"})
+
+
+async def test_oauth_uses_signed_groups_without_overwriting_web_memberships() -> None:
+    world = build()
+    world.provider.add("u-1", "alice", "docs")
+    account = await sign_in(world, "u-1")
+    before = await world.externals.get(ISSUER, "u-1")
+    world.provider.add("u-1", "alice", "readers")
+    world.provider.id_tokens["tok"] = world.provider.people["u-1"]
+    caller = await world.identity.identify_external_token("corp", "tok")
+    assert caller.groups == frozenset({"readers"})
+    assert await world.externals.groups_of(AccountId(account.id)) == frozenset({"docs"})
+    assert await world.externals.get(ISSUER, "u-1") == before
