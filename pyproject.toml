@@ -175,7 +175,7 @@ possibly-unresolved-reference = "error"
 [[tool.ty.overrides]]
 # behave's bundled type hints declare its step decorators as non-callable objects.
 include = ["packages/*/features/**"]
-rules = { call-non-callable = "ignore" }
+rules = { not-callable = "ignore" }
 
 # ---------------------------------------------------------------- pytest
 [tool.pytest]
