@@ -24,6 +24,20 @@ for vm in exactdocs-runner-1 exactdocs-runner-2; do
 done
 ```
 
+## Browser dependencies
+
+The built-wheel CI job caches Chromium and probes a real headless launch, page rendering and
+screenshot before its browser E2E test. Working persistent runners skip APT entirely. If the
+probe fails, the job attempts Playwright system dependency installation with passwordless sudo,
+15-second APT network timeouts, one retry and a 180-second overall deadline (then a 10-second
+kill grace). These APT settings live in a temporary command-specific config; host configuration
+is unchanged. A second failed probe fails the job. This readiness probe does not replace the
+application E2E gate or verify visual fidelity/font coverage. The fallback runs the pinned
+Playwright CLI through an absolute Node executable as root inside the deadline, keeping its
+APT children in the privileged timeout process group; it does not run pnpm as root or carry
+the user PATH into sudo. Browser download also has a 180-second deadline; each readiness
+probe has a 30-second deadline.
+
 ## Setup
 
 From a workstation with `gh` logged in (NVIDIA Sync's SSH config provides the `dellpromaxgb10.local` host):
