@@ -13,6 +13,7 @@ from exactdocs.ingestion.models import (
     AutoSync,
     ChunkingConfig,
     Collected,
+    ConvertedArticle,
     CopiedVersion,
     Credential,
     EmbeddedBatch,
@@ -23,6 +24,7 @@ from exactdocs.ingestion.models import (
     ImportedTags,
     ImportedVersion,
     ImportSource,
+    IncludeRefused,
     InstructionPolicy,
     Job,
     JobId,
@@ -432,7 +434,7 @@ class RenameSource(Protocol):
         refs: Sequence[str] = (),
         credential: Credential | None = None,
     ) -> Sequence[GitRename]:
-        """Return the ``.md`` / ``.mdx`` files (any letter case) git sees as renamed.
+        """Return the article files (``.md``, ``.mdx``, ``.rst``, ``.txt``) git sees as renamed.
 
         Only the two commits' trees are fetched (no history, no blobs); git then asks for the
         few blobs that renames with edits need to be told apart. Everything is bounded: one
@@ -569,6 +571,48 @@ class Chunker(Protocol):
 
         Returns:
             The chunks, in order.
+        """
+        ...
+
+
+class IncludedFiles(Protocol):
+    """Reads the repository files a reStructuredText article includes, within import limits."""
+
+    def read(self, path: str) -> str | IncludeRefused:
+        """Return a file's text, or why it is not read.
+
+        A file outside the fetched files, not a plain file, too large, not text, or over the
+        article's budget of includes is refused. Synchronous: it runs in the converter's thread.
+
+        Args:
+            path: A repository path (resolved, inside the repository).
+
+        Returns:
+            The text, or the refusal.
+        """
+        ...
+
+
+class MarkupConverter(Protocol):
+    """Writes an article in another markup (reStructuredText) as the Markdown the chunker takes."""
+
+    @property
+    def version(self) -> str:
+        """The converter's identity: in a converted article's key, so a new one converts again."""
+        ...
+
+    def convert(self, path: str, source: str, files: IncludedFiles) -> ConvertedArticle:
+        """Convert one file; never raises for what the file holds (a problem says what was lost).
+
+        CPU-bound and synchronous: the import use case calls it through ``asyncio.to_thread``.
+
+        Args:
+            path: The article's repository path.
+            source: Its text.
+            files: Reads the files its includes name.
+
+        Returns:
+            The Markdown body and the problems.
         """
         ...
 

@@ -80,8 +80,8 @@ export function PathFields({ include, exclude, error, onInclude, onExclude }: Pa
         <PathError id="paths-error" message={shared} />
         <p id="paths-hint" className="text-sm text-muted-foreground">
           One per line, relative to the repository root: a folder (<code>docs/</code>), a file or a
-          glob (<code>**/*.mdx</code>). Empty means every Markdown file. Leaving a path out always
-          wins.
+          glob (<code>**/*.mdx</code>). Empty means every Markdown and reStructuredText (.rst) file.
+          A .txt file needs a path that names .txt. Leaving a path out always wins.
         </p>
       </div>
     </div>

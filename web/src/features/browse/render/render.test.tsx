@@ -247,6 +247,8 @@ describe("relative links (table)", () => {
   const cases: [string, string, unknown][] = [
     ["docs/a/b.md", "../setup.md#docker", { kind: "doc", path: "docs/setup.md", hash: "#docker" }],
     ["docs/a/b.md", "./c.mdx", { kind: "doc", path: "docs/a/c.mdx", hash: "" }],
+    // A converted reStructuredText article links to the .rst files it names (:doc:).
+    ["doc/a/b.rst", "../install.rst", { kind: "doc", path: "doc/install.rst", hash: "" }],
     ["docs/a/b.md", "/README.md#top", { kind: "doc", path: "README.md", hash: "#top" }],
     ["docs/a/b.md", "c%20d.md", { kind: "doc", path: "docs/a/c d.md", hash: "" }],
     ["docs/a/b.md", "../x.png", { kind: "file", path: "docs/x.png" }],

@@ -113,6 +113,14 @@ from exactdocs.ingestion.constants._models import (
     ChunkerName,
     JobKind,
 )
+from exactdocs.ingestion.constants._restructuredtext import (
+    EXPLICIT_SUFFIXES,
+    MARKDOWN_SUFFIXES,
+    MAX_INCLUDE_DEPTH,
+    MAX_INCLUDES,
+    MAX_MARKUP_REASON,
+    RESTRUCTUREDTEXT_SUFFIXES,
+)
 from exactdocs.ingestion.constants._secrets import OPENSSH_MAGIC
 from exactdocs.ingestion.constants._sources import (
     FULL_SHA,
@@ -171,6 +179,7 @@ __all__ = [
     "EMBED_RETRY_SECONDS",
     "ERROR_CODE",
     "EVERY_MINUTE",
+    "EXPLICIT_SUFFIXES",
     "FETCH_TIMEOUT_SECONDS",
     "FLAT_HOSTS",
     "FULL_SHA",
@@ -186,6 +195,7 @@ __all__ = [
     "KNOWN_HOSTS",
     "LEGACY_CODES",
     "LIBRARY_KINDS",
+    "MARKDOWN_SUFFIXES",
     "MAX_CHECK_ERROR",
     "MAX_CHUNK_CHARS",
     "MAX_CONTEXT7_RULES",
@@ -198,6 +208,8 @@ __all__ = [
     "MAX_HEADING_LEVEL",
     "MAX_IMAGES",
     "MAX_IMAGES_PER_ARTICLE",
+    "MAX_INCLUDES",
+    "MAX_INCLUDE_DEPTH",
     "MAX_INSTRUCTION_DIRS",
     "MAX_INSTRUCTION_FILE_BYTES",
     "MAX_INTERVAL_MINUTES",
@@ -205,6 +217,7 @@ __all__ = [
     "MAX_JOB_PROBLEMS",
     "MAX_KEEP_LAST",
     "MAX_LISTED_REFS",
+    "MAX_MARKUP_REASON",
     "MAX_PREVIEWS",
     "MAX_PREVIEW_FILES",
     "MAX_PREVIOUS_VERSIONS",
@@ -242,6 +255,7 @@ __all__ = [
     "RENAME_LIMIT",
     "RENAME_TIMEOUT_SECONDS",
     "REPROCESS_JOB",
+    "RESTRUCTUREDTEXT_SUFFIXES",
     "RETAG_JOB",
     "SAVE_EVERY_FILES",
     "SAVE_EVERY_SECONDS",

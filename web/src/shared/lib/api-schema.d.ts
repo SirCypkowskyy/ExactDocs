@@ -1395,7 +1395,8 @@ export interface components {
             readonly ref?: string | null;
             /**
              * Include Paths
-             * @description Folders, files or globs to import; empty: every `.md`/`.mdx` file.
+             * @description Folders, files or globs to import; empty: every `.md`/`.mdx`/`.rst` file (`.txt` only
+             *     when a path names it).
              */
             readonly include_paths?: readonly string[];
             /**
@@ -1421,7 +1422,7 @@ export interface components {
             /**
              * Context7 Paths
              * @description Without paths, take those of the repository's root `context7.json` (null or true); false:
-             *     no paths mean every `.md`/`.mdx` file.
+             *     no paths mean every `.md`/`.mdx`/`.rst` file.
              */
             readonly context7_paths?: boolean | null;
         };
@@ -3428,7 +3429,8 @@ export interface components {
         readonly LibrarySettingsIn: {
             /**
              * Include Paths
-             * @description Folders, files or globs to import; empty: every `.md`/`.mdx` file.
+             * @description Folders, files or globs to import; empty: every `.md`/`.mdx`/`.rst` file (`.txt` only
+             *     when a path names it).
              */
             readonly include_paths?: readonly string[];
             /**
@@ -3911,7 +3913,8 @@ export interface components {
             readonly ref?: string | null;
             /**
              * Include Paths
-             * @description Folders, files or globs to import; empty: every `.md`/`.mdx` file.
+             * @description Folders, files or globs to import; empty: every `.md`/`.mdx`/`.rst` file (`.txt` only
+             *     when a path names it).
              */
             readonly include_paths?: readonly string[];
             /**
@@ -3946,7 +3949,7 @@ export interface components {
          * @description Why a file shows up in a job's problems; stable, clients may branch on it.
          * @enum {string}
          */
-        readonly ProblemCode: "binary" | "too_large" | "undecodable" | "not_a_file" | "unreadable" | "bad_file_name" | "unparsable" | "front_matter" | "not_an_image" | "image_budget" | "missing_image" | "truncated" | "context7" | "instruction_files";
+        readonly ProblemCode: "binary" | "too_large" | "undecodable" | "not_a_file" | "unreadable" | "bad_file_name" | "unparsable" | "front_matter" | "not_an_image" | "image_budget" | "missing_image" | "truncated" | "context7" | "instruction_files" | "markup";
         /**
          * ProfileOrigin
          * @description Who manages a profile.
@@ -4794,7 +4797,7 @@ export interface components {
             readonly refs: readonly string[];
             /**
              * Include Paths
-             * @description Folders, files or globs to import; empty: every `.md`/`.mdx` file (the repository's
+             * @description Folders, files or globs to import; empty: every `.md`/`.mdx`/`.rst` file (the repository's
              *     `context7.json` does not fill in a managed empty list). Left out: not managed.
              */
             readonly include_paths?: readonly string[] | null;

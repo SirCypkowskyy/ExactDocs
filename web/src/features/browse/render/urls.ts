@@ -94,7 +94,7 @@ export function classifyLink(articlePath: string, href: string): LinkTarget {
   if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("//")) return { kind: "none" };
   const path = repoPath(articlePath, target);
   if (!path) return { kind: "none" };
-  if (/\.mdx?$/i.test(path)) {
+  if (/\.(mdx?|rst)$/i.test(path)) {
     const hash = target.includes("#") ? target.slice(target.indexOf("#")) : "";
     return { kind: "doc", path, hash };
   }
