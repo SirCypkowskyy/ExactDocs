@@ -655,6 +655,13 @@ class Settings(BaseSettings):
     """Sign-in through identity providers (`[auth.providers.<name>]` in the
     `EXACTDOCS_CONFIG_FILE` TOML file, or `EXACTDOCS_AUTH__PROVIDERS__<NAME>__<FIELD>`)."""
 
+    mcp_oauth_provider: str | None = None
+    """The sign-in provider (a name under `[auth.providers]`) MCP hosts that cannot paste an API
+    token (Claude, ChatGPT) sign in through with OAuth (`EXACTDOCS_MCP_OAUTH_PROVIDER`). One only:
+    an MCP client discovers a single authorization server. API tokens keep working. Its
+    `client_id` also needs `<public_url>/auth/callback` among the redirect URIs registered at
+    the provider; the groups must be in the ID token."""
+
     @classmethod
     def settings_customise_sources(
         cls,
@@ -794,6 +801,45 @@ class Settings(BaseSettings):
                 "EXACTDOCS_PUBLIC_URL is required once a sign-in provider is configured: it "
                 "gives the redirect URI <public_url>/api/v1/auth/<name>/callback"
             )
+            raise ValueError(message)
+        return self
+
+    @field_validator("mcp_oauth_provider", mode="before")
+    @classmethod
+    def _blank_mcp_oauth_provider_is_unset(cls, value: object) -> object:
+        """Treat a blank value as unset.
+
+        Args:
+            value: The raw setting.
+
+        Returns:
+            ``None`` for blank text, otherwise the value unchanged.
+        """
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @model_validator(mode="after")
+    def _mcp_oauth_provider_is_configured(self) -> Self:
+        """Require the MCP OAuth provider to be a configured sign-in provider with a secret.
+
+        Returns:
+            The settings, unchanged.
+
+        Raises:
+            ValueError: The name is not under ``auth.providers``, or that provider has no
+                client secret (the proxy derives its token signing key from it).
+        """
+        name = self.mcp_oauth_provider
+        if name is None:
+            return self
+        provider = self.auth.providers.get(name)
+        if provider is None:
+            message = (
+                f"EXACTDOCS_MCP_OAUTH_PROVIDER={name!r} is not a configured sign-in provider "
+                f"(configured: {', '.join(sorted(self.auth.providers)) or 'none'})"
+            )
+            raise ValueError(message)
+        if provider.client_secret is None and provider.client_secret_file is None:
+            message = f"sign-in provider {name!r} needs a client secret to serve MCP OAuth"
             raise ValueError(message)
         return self
 

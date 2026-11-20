@@ -45,11 +45,12 @@ The command prints its id on stderr, for `exactdocs token revoke <id>`.
 }
 ```
 
-MCP over HTTP needs an API token, and the token acts as the account that created it. Tokens start
-with `exd_`. They are shown once when created, stored only as a hash, may expire, and stop working
-the moment they are revoked. Create, list and revoke them on the **Account** page of the web UI,
-with `exactdocs token`, or over the REST API with a signed-in session. The token routes do not
-accept a token, so a leaked token cannot mint successors.
+MCP over HTTP needs an API token (or [OAuth](#oauth-for-web-hosts), for hosts that cannot paste
+one), and the token acts as the account that created it. Tokens start with `exd_`. They are shown
+once when created, stored only as a hash, may expire, and stop working the moment they are
+revoked. Create, list and revoke them on the **Account** page of the web UI, with
+`exactdocs token`, or over the REST API with a signed-in session. The token routes do not accept a
+token, so a leaked token cannot mint successors.
 
 ```bash
 curl -c jar.txt -H 'content-type: application/json' http://localhost:3000/api/v1/session \
@@ -62,6 +63,51 @@ curl -b jar.txt -X DELETE http://localhost:3000/api/v1/tokens/<id>   # revoke
 
 REST clients and scripts send the same token as `Authorization: Bearer exd_...` to any `/api/v1`
 route except the token routes themselves.
+
+### OAuth for web hosts
+
+Web hosts such as Claude and ChatGPT cannot paste an API token; they connect with OAuth. Choose
+one of your [sign-in providers](getting-started.md#sign-in-through-an-identity-provider) for them
+(an MCP client discovers a single authorization server):
+
+```bash
+EXACTDOCS_MCP_OAUTH_PROVIDER=corp
+```
+
+The host then finds the OAuth metadata at `/.well-known/oauth-authorization-server` and
+`/.well-known/oauth-protected-resource/mcp` on the server's root, registers itself, shows the
+person a consent page on your server, and sends them to the provider. API tokens keep working next
+to it, so the CLI and coding agents are unaffected.
+
+- **Register a second redirect URI.** At the provider, add `<EXACTDOCS_PUBLIC_URL>/auth/callback`
+  to the client's redirect URIs, next to the one for the web sign-in. The provider needs a client
+  secret (the proxy derives its token signing key from it).
+- **Same membership checks.** The provider's `allowed_groups`, `allow_any_user` and `admin_groups`
+  apply, and a disabled account is refused. The check runs at every call, not only at sign-in, but
+  it reads the ID token the server holds for the host, so what it sees depends on the change:
+    - A person who signs in to the web UI as well acts as that account; **disabling the account
+      gives a `401` at the next call**, with the same token.
+    - A person who **leaves a group at the provider** keeps access until the ID token expires
+      (usually about an hour), because the token itself does not change. Then the host gets a
+      `401`, renews with its refresh token, and the provider's current groups apply: a person
+      outside the allowed groups gets no working token.
+  Anyone who never signed in to the web UI acts as `<provider>:<subject>`, and no account is
+  created. Library group grants use the verified ID token's groups with the provider's
+  `group_prefix`, including for these OAuth-only callers; members of `admin_groups` can manage
+  every library. A linked caller can also use grants to their account. The request's signed
+  groups and role are used without changing stored web-account memberships or refresh tokens.
+- **What the host sees when the ID token expires.** A `401` with the usual `WWW-Authenticate`
+  header. A host that keeps its refresh token trades it for a new token and carries on; one that
+  does not sends the person through the sign-in again.
+- **The groups must be in the ID token.** The check reads the provider's ID token (always a JWT),
+  not userinfo. Make sure the `groups_claim` is in it (ADFS: an issuance transform rule for
+  `group`; Entra ID: the groups optional claim).
+- **Only `oidc` providers (ADFS included) can be chosen for now.** `oauth2` and `github` kinds
+  follow with their sign-in.
+- The `Host` and `Origin` allowlist (`EXACTDOCS_ALLOWED_HOSTS`, `EXACTDOCS_ALLOWED_ORIGINS`)
+  applies to the OAuth routes too. The proxy keeps its registrations and tokens, encrypted, in
+  `<data dir>/mcp-oauth`; changing the client secret makes hosts sign in again, and the state kept
+  under the old secret is deleted at the next start.
 
 ### Without a network port: stdio
 

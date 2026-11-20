@@ -78,6 +78,10 @@ uvx exactdocs serve
 same steps over REST, and covers the command line, private repositories, the sources file,
 webhooks, user accounts and sign-in through an identity provider.
 
+> [!NOTE]
+> Web hosts that cannot paste a token (Claude, ChatGPT) connect with OAuth through one of your
+> sign-in providers: set `EXACTDOCS_MCP_OAUTH_PROVIDER` ([MCP](docs/mcp.md#oauth-for-web-hosts)).
+
 > [!TIP]
 > For a local agent that only reads, `uvx exactdocs serve --stdio` needs no token, no port and no
 > `git`. It opens an existing database read-only, so run `exactdocs serve` (or `admin create`) once

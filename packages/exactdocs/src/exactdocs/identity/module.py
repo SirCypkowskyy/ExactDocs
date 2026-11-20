@@ -33,6 +33,7 @@ from exactdocs.identity.ports.driving import (
     GetSetupState,
     GrantLibraryRole,
     IdentifyCaller,
+    IdentifyExternalToken,
     IdentifyToken,
     ListLibraryGrants,
     ListTokens,
@@ -60,6 +61,7 @@ from exactdocs.identity.use_cases import (
     GetSetupStateUseCase,
     GrantLibraryRoleUseCase,
     IdentifyCallerUseCase,
+    IdentifyExternalTokenUseCase,
     IdentifyTokenUseCase,
     ListLibraryGrantsUseCase,
     ListTokensUseCase,
@@ -115,6 +117,8 @@ class IdentityModule:
     """Revoke one of the caller's API tokens."""
     identify_token: IdentifyToken
     """Resolve an API token to its account."""
+    identify_external_token: IdentifyExternalToken
+    """Resolve an ID token of a sign-in provider (MCP's OAuth) to who it acts as."""
     start_external_sign_in: StartExternalSignIn
     """Start a sign-in through a configured identity provider."""
     finish_external_sign_in: FinishExternalSignIn
@@ -223,6 +227,9 @@ class IdentityModule:
             revoke_token=RevokeTokenUseCase(tokens=tokens),
             identify_token=IdentifyTokenUseCase(
                 tokens=tokens, accounts=repository, externals=externals, clock=clock
+            ),
+            identify_external_token=IdentifyExternalTokenUseCase(
+                providers=providers, policies=policies, accounts=repository, externals=externals
             ),
             start_external_sign_in=StartExternalSignInUseCase(
                 providers=providers, policies=policies, attempts=attempts, clock=clock

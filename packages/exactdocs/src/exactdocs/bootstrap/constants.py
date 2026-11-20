@@ -608,6 +608,8 @@ DEFAULT_LOCAL_RERANKER: Final[str] = "Xenova/ms-marco-MiniLM-L-6-v2"
 """The default local cross-encoder (91 MB)."""
 MODELS_SUBDIR: Final[str] = "models"
 """Where models live in the data directory unless ``EXACTDOCS_MODELS_DIR`` says otherwise."""
+MCP_OAUTH_SUBDIR: Final[str] = "mcp-oauth"
+"""Under the data directory: the MCP OAuth proxy's encrypted registrations and tokens."""
 MODEL_MARKER: Final[str] = "exactdocs-model.json"
 """Written last by ``exactdocs models pull`` in a model's folder: the model is complete."""
 MODEL_NAME: Final[re.Pattern[str]] = re.compile(

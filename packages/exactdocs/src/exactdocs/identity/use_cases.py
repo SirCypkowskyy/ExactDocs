@@ -37,6 +37,7 @@ from exactdocs.identity.dtos import (
     DropLibraryGrantsCommand,
     ExternalSignInResult,
     ExternalSignInStart,
+    ExternalTokenIdentity,
     FinishExternalSignInCommand,
     GrantLibraryRoleCommand,
     LibraryGrants,
@@ -926,6 +927,67 @@ def _configured(
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class IdentifyExternalTokenUseCase:
+    """Implements ``ports.driving.IdentifyExternalToken``.
+
+    The provider's adapter validates the ID token; the provider's policy then decides, as at a
+    web sign-in, whether the person is admitted and with which role. A person linked to an
+    account acts as it (a disabled one is refused); anyone else acts as ``<provider>:<subject>``.
+    Nothing is created or changed: the MCP host's token is checked at every request, so a
+    disabled account loses access at the next call; the groups come from the ID token, so a group
+    change shows once the token expires and the host renews it.
+    """
+
+    providers: Mapping[str, SignInProvider]
+    """The configured identity providers, by name."""
+    policies: Mapping[str, SignInPolicy]
+    """Their policies, by name."""
+    accounts: AccountRepository
+    """Where accounts are stored."""
+    externals: ExternalIdentityRepository
+    """The links of external identities to accounts."""
+
+    async def __call__(self, provider: str, token: str) -> ExternalTokenIdentity:
+        """Validate the token and return who it acts as.
+
+        Args:
+            provider: The provider's name.
+            token: The ID token.
+
+        Returns:
+            The caller and signed groups, with the role the policy gives those groups.
+
+        Raises:
+            AccountDisabledError: The linked account is disabled.
+            ExternalSignInFailedError: The identity links an account that no longer exists.
+            NotAllowedError: The provider puts the person in no allowed group.
+        """
+        adapter, policy = _configured(self.providers, self.policies, provider)
+        claims = await adapter.verify_id_token(token)
+        link = await self.externals.get(claims.issuer, claims.subject)
+        account = None if link is None else await self.accounts.get_by_id(link.account_id)
+        if link is not None and account is None:
+            raise ExternalSignInFailedError
+        if account is not None and account.is_disabled:
+            raise AccountDisabledError
+        if not policy.admits(claims.groups):
+            logger.info("MCP OAuth through %s refused: not in an allowed group", policy.name)
+            raise NotAllowedError
+        role = policy.role_for(claims.groups).value
+        if account is not None:
+            caller = AccountSummary(id=account.id, username=account.username.value, role=role)
+        else:
+            candidates = username_candidates(claims, policy.name)
+            username = candidates[0].value if candidates else claims.subject
+            caller = AccountSummary(
+                id=f"{policy.name}:{claims.subject}", username=username, role=role
+            )
+        return ExternalTokenIdentity(
+            account=caller, groups=policy.stored_groups(claims.groups), linked=link is not None
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class StartExternalSignInUseCase:
     """Implements ``ports.driving.StartExternalSignIn``."""
 
@@ -1329,12 +1391,14 @@ async def _library_roles(
     grants: LibraryGrantRepository,
     account_id: str,
     libraries: Collection[str],
+    external_identity: ExternalTokenIdentity | None = None,
 ) -> dict[str, LibraryRole]:
     """Work out an account's effective role on each library: the highest one it holds.
 
-    An operator (account role ``admin``) is ``creator`` of every library, so a library whose
-    creator is gone, or that no grant was ever made on, can still be managed. A disabled or
-    unknown account holds none.
+    An operator is ``creator`` of every library, so a library whose creator is gone, or that
+    no grant was ever made on, can still be managed. OAuth requests use only their verified
+    token's policy role and mapped groups, without writing them over stored web-account state.
+    Disabled accounts, missing linked accounts and unknown ordinary callers hold no roles.
 
     Args:
         accounts: Where accounts are stored.
@@ -1342,19 +1406,31 @@ async def _library_roles(
         grants: Who holds which role on which library.
         account_id: The account.
         libraries: Library IDs; compared lower-case.
+        external_identity: The verified caller and groups of this OAuth request, if any.
 
     Returns:
         The role on each library the account has one on, by lower-case library ID.
     """
     wanted = {library.casefold() for library in libraries}
     account = await accounts.get_by_id(AccountId(account_id))
-    if account is None or account.is_disabled:
-        return {}
-    if account.is_operator:
+    if external_identity is not None:
+        if external_identity.account.id != account_id:
+            return {}
+        if account is None and external_identity.linked:
+            return {}
+        if account is not None and account.is_disabled:
+            return {}
+        operator = external_identity.account.role == Role.ADMIN.value
+        groups = external_identity.groups
+    else:
+        if account is None or account.is_disabled:
+            return {}
+        operator = account.is_operator
+        groups = await externals.groups_of(account.id)
+    if operator:
         return dict.fromkeys(wanted, LibraryRole.CREATOR)
-    groups = await externals.groups_of(account.id)
     held: dict[str, list[LibraryGrant]] = {}
-    for grant in await grants.matching(wanted, account_id=account.id, groups=groups):
+    for grant in await grants.matching(wanted, account_id=AccountId(account_id), groups=groups):
         held.setdefault(grant.library, []).append(grant)
     return {library: role for library, found in held.items() if (role := effective_role(found))}
 
@@ -1385,6 +1461,7 @@ class ResolveLibraryRolesUseCase:
             grants=self.grants,
             account_id=query.account_id,
             libraries=query.libraries,
+            external_identity=query.external_identity,
         )
         return LibraryRoles(roles={library: role.value for library, role in roles.items()})
 

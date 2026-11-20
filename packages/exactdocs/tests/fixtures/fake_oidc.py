@@ -49,7 +49,7 @@ class FakeUser:
 @dataclass(slots=True)
 class _Code:
     user: FakeUser
-    nonce: str
+    nonce: str | None
     challenge: str
     method: str
     redirect_uri: str
@@ -122,7 +122,7 @@ class FakeIssuer:
         code = secrets.token_urlsafe(16)
         self.codes[code] = _Code(
             user=self.users[subject],
-            nonce=query["nonce"],
+            nonce=query.get("nonce"),  # a proxy that only wants an ID token sends none
             challenge=query["code_challenge"],
             method=query["code_challenge_method"],
             redirect_uri=query["redirect_uri"],

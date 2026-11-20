@@ -17,10 +17,12 @@ from exactdocs.identity.adapters.driven.memory import (
     InMemoryTokenRepository,
 )
 from exactdocs.identity.dtos import (
+    AccountSummary,
     ClaimLibraryCommand,
     CreateFirstAdminCommand,
     CreateUserCommand,
     DropLibraryGrantsCommand,
+    ExternalTokenIdentity,
     GrantLibraryRoleCommand,
     LibraryRolesQuery,
     ListLibraryGrantsQuery,
@@ -316,3 +318,67 @@ async def test_the_grants_are_listed_with_usernames_users_first(world: World) ->
         ("user", "carol", "contributor"),
         ("group", "corp:payments", "viewer"),
     ]
+
+
+@pytest.mark.parametrize("linked", [True, False])
+async def test_a_verified_identity_for_another_caller_has_no_library_role(
+    world: World, linked: bool
+) -> None:
+    principal = ExternalTokenIdentity(
+        account=AccountSummary(id=world.ids["ada"], username="ada", role="admin"),
+        groups=frozenset(),
+        linked=linked,
+    )
+    roles = await world.identity.resolve_library_roles(
+        LibraryRolesQuery(
+            account_id=world.ids["bob"], libraries=[LIBRARY], external_identity=principal
+        )
+    )
+    assert roles.roles == {}
+
+
+async def test_a_deleted_linked_oauth_operator_has_no_library_role(world: World) -> None:
+    principal = ExternalTokenIdentity(
+        account=AccountSummary(id="deleted-account", username="alice", role="admin"),
+        groups=frozenset(),
+        linked=True,
+    )
+    roles = await world.identity.resolve_library_roles(
+        LibraryRolesQuery(
+            account_id=principal.account.id, libraries=[LIBRARY], external_identity=principal
+        )
+    )
+    assert roles.roles == {}
+
+
+async def test_a_disabled_linked_account_cannot_use_signed_operator_claims(world: World) -> None:
+    await world.identity.set_user_disabled(
+        SetUserDisabledCommand(id=world.ids["bob"], disabled=True)
+    )
+    principal = ExternalTokenIdentity(
+        account=AccountSummary(id=world.ids["bob"], username="bob", role="admin"),
+        groups=frozenset(),
+        linked=True,
+    )
+    roles = await world.identity.resolve_library_roles(
+        LibraryRolesQuery(
+            account_id=principal.account.id, libraries=[LIBRARY], external_identity=principal
+        )
+    )
+    assert roles.roles == {}
+
+
+async def test_a_linked_oauth_caller_does_not_inherit_an_old_stored_operator_role(
+    world: World,
+) -> None:
+    principal = ExternalTokenIdentity(
+        account=AccountSummary(id=world.ids["ada"], username="ada", role="user"),
+        groups=frozenset(),
+        linked=True,
+    )
+    roles = await world.identity.resolve_library_roles(
+        LibraryRolesQuery(
+            account_id=principal.account.id, libraries=[LIBRARY], external_identity=principal
+        )
+    )
+    assert roles.roles == {}
