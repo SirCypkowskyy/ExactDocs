@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
 import { usePageTitle } from "@/shared/lib/use-page-title";
+import { ThemeSwitch } from "@/shared/ui/theme-switch";
 
 /** A verbatim quote, the way ExactDocs hands it to an agent: the words, and where they live. */
 function Excerpt() {
   return (
     <figure aria-hidden="true" className="max-w-lg">
       <blockquote className="font-serif text-2xl leading-snug text-field-foreground">
-        <mark className="rounded-sm bg-mark px-1 py-0.5 text-field-foreground [box-decoration-break:clone]">
+        <mark className="rounded-sm bg-mark px-1 py-0.5 text-mark-foreground [box-decoration-break:clone]">
           useEffect is a React Hook that lets you synchronize a component with an external system.
         </mark>
       </blockquote>
@@ -39,7 +40,8 @@ export function AuthLayout({
           <Excerpt />
         </div>
       </aside>
-      <main className="flex items-start px-6 py-10 sm:py-16 lg:items-center lg:justify-center lg:px-14">
+      <main className="relative flex items-start px-6 py-10 sm:py-16 lg:items-center lg:justify-center lg:px-14">
+        <ThemeSwitch className="absolute top-3 right-3 sm:top-4 sm:right-4" />
         <div className="w-full max-w-sm">
           <h1
             ref={heading}

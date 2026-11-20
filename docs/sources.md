@@ -100,6 +100,11 @@ Apply is idempotent: a second apply of the same file, also while the first one's
 queued or running, reports every library as unchanged and writes nothing. Apply does not wait for
 the imports; follow them in the UI or with `GET /api/v1/jobs/{id}`.
 
+The server answers once the whole file is applied, about a second or two per new library, so the
+CLI's `sources plan` and `sources apply` wait 15 s plus 15 s per declared library for that answer
+(other commands wait 15 s). If even that runs out, the server may still be applying the file: run
+`sources plan` to see what is left, or `sources apply` again.
+
 Out of scope for now: a drift check between plan and apply, a lock against two concurrent applies,
 waiting for the queued jobs, library titles, descriptions, the pinned default version, retrieval
 settings, manual tags and webhooks.

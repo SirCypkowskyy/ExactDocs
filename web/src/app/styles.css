@@ -2,7 +2,7 @@
 @import "tw-animate-css";
 @import "@fontsource-variable/source-serif-4";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:where(.dark, .dark *));
 
 :root {
   --radius: 0.5rem;
@@ -29,7 +29,63 @@
   --field-foreground: oklch(0.96 0.01 250);
   --field-muted: oklch(0.78 0.02 250);
   --mark: oklch(0.5 0.09 215);
+  --mark-foreground: oklch(0.985 0.005 250);
+  /* The scrim behind a modal. */
+  --overlay: oklch(0.24 0.035 255 / 0.3);
+  /* Syntax roles in code blocks: every one clears 4.5:1 on the code ground. */
+  --hl-comment: oklch(0.48 0.02 255);
+  --hl-keyword: oklch(0.44 0.14 255);
+  --hl-string: oklch(0.43 0.1 155);
+  --hl-number: oklch(0.5 0.12 55);
+  --hl-title: oklch(0.44 0.13 305);
+  --hl-type: oklch(0.46 0.12 25);
+  --hl-meta: oklch(0.45 0.02 255);
+  --hl-deletion: oklch(0.45 0.15 27);
+  /* Callout tints (note, tip, warning; danger is --destructive). */
+  --tint-note: oklch(0.5 0.1 250);
+  --tint-tip: oklch(0.52 0.11 155);
+  --tint-warning: oklch(0.6 0.13 75);
   color-scheme: light;
+}
+
+/* Dark: the same ink world at night. Set on <html> before first paint (index.html). */
+.dark {
+  --background: oklch(0.17 0.02 255);
+  --foreground: oklch(0.93 0.01 250);
+  --card: oklch(0.2 0.022 255);
+  --card-foreground: oklch(0.93 0.01 250);
+  --popover: oklch(0.21 0.024 255);
+  --popover-foreground: oklch(0.93 0.01 250);
+  --primary: oklch(0.9 0.02 240);
+  --primary-foreground: oklch(0.2 0.035 255);
+  --secondary: oklch(0.25 0.024 255);
+  --secondary-foreground: oklch(0.93 0.01 250);
+  --muted: oklch(0.25 0.024 255);
+  --muted-foreground: oklch(0.74 0.02 255);
+  --accent: oklch(0.28 0.03 235);
+  --accent-foreground: oklch(0.95 0.01 250);
+  --destructive: oklch(0.7 0.16 25);
+  --border: oklch(0.3 0.022 255);
+  --input: oklch(0.52 0.025 255);
+  --ring: oklch(0.72 0.1 215);
+  --field: oklch(0.13 0.025 255);
+  --field-foreground: oklch(0.95 0.01 250);
+  --field-muted: oklch(0.74 0.02 250);
+  --mark: oklch(0.76 0.1 210);
+  --mark-foreground: oklch(0.17 0.03 255);
+  --overlay: oklch(0.05 0.01 255 / 0.6);
+  --hl-comment: oklch(0.7 0.02 255);
+  --hl-keyword: oklch(0.79 0.1 255);
+  --hl-string: oklch(0.8 0.11 155);
+  --hl-number: oklch(0.82 0.11 65);
+  --hl-title: oklch(0.8 0.1 305);
+  --hl-type: oklch(0.79 0.11 30);
+  --hl-meta: oklch(0.72 0.02 255);
+  --hl-deletion: oklch(0.74 0.14 27);
+  --tint-note: oklch(0.74 0.1 250);
+  --tint-tip: oklch(0.76 0.12 155);
+  --tint-warning: oklch(0.8 0.13 80);
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -59,6 +115,8 @@
   --color-field-foreground: var(--field-foreground);
   --color-field-muted: var(--field-muted);
   --color-mark: var(--mark);
+  --color-mark-foreground: var(--mark-foreground);
+  --color-overlay: var(--overlay);
   --font-serif: "Source Serif 4 Variable", "Iowan Old Style", Georgia, serif;
 }
 
@@ -69,6 +127,20 @@
   body {
     @apply bg-background text-foreground;
   }
+  ::selection {
+    background: color-mix(in oklab, var(--mark) 30%, transparent);
+    color: var(--foreground);
+  }
+  html {
+    scrollbar-color: color-mix(in oklab, var(--muted-foreground) 45%, transparent) transparent;
+  }
+}
+
+/* A theme switch cross-fades the whole page (theme.ts skips it under reduced motion). */
+html.theme-fade::view-transition-old(root),
+html.theme-fade::view-transition-new(root) {
+  animation-duration: 180ms;
+  animation-timing-function: ease-out;
 }
 
 /* One calm entrance for the auth pages; reduced-motion users get the content at once. */

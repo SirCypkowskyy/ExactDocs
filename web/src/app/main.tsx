@@ -2,11 +2,15 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
+import { applyTheme, readTheme } from "@/shared/lib/theme";
 import { createQueryClient } from "./query-client";
 import { createAppRouter } from "./router";
 import "./styles.css";
 
 const Devtools = import.meta.env.DEV ? lazy(() => import("./devtools")) : () => null;
+
+// index.html already did this before first paint; again here in case its script did not run.
+applyTheme(readTheme());
 
 const queryClient = createQueryClient();
 const router = createAppRouter(queryClient);

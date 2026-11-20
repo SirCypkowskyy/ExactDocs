@@ -66,7 +66,7 @@ function Versions({ library }: { library: Library }) {
                 </span>
               )}
               {isDefault && sha && (
-                <span aria-hidden="true" className="font-normal opacity-70">
+                <span aria-hidden="true" className="font-normal">
                   {shortSha(sha)}
                 </span>
               )}

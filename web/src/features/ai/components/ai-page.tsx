@@ -296,7 +296,13 @@ function UsageSection() {
             LLM searches per minute per caller:{" "}
             {usage.data.llm_searches_per_minute ?? "not limited"}
           </p>
-          <div className="mt-4 overflow-x-auto">
+          {/* Scrolls sideways on a phone: focusable, so a keyboard can scroll it too. */}
+          <section
+            aria-label="Usage table"
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: a table wider than the screen scrolls
+            tabIndex={0}
+            className="mt-4 overflow-x-auto rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
             <table className="w-full min-w-[36rem] text-left text-sm">
               <thead className="text-muted-foreground">
                 <tr>
@@ -320,7 +326,7 @@ function UsageSection() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </section>
         </>
       )}
     </Section>
