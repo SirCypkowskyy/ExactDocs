@@ -1,5 +1,6 @@
 """Cloudflare Access over HTTP: the settings, REST and MCP callers, and what still wins over it."""
 
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.sign_in import SignInStandIns
+from exactdocs.catalog.dtos import CreateLibraryCommand
 from exactdocs.identity.constants import ACCESS_ASSERTION_HEADER, ACCESS_COOKIE, SESSION_COOKIE
 from exactdocs.identity.dtos import CreateFirstAdminCommand, CreateUserCommand
 from fake_cf_access import AUDIENCE, TEAM_DOMAIN, FakeAccess
@@ -139,6 +141,74 @@ async def test_an_explicit_api_token_acts_as_its_own_account_over_mcp(instance: 
     assert only_access.status_code == 200, only_access.text
     assert from_cookie.status_code == 200, from_cookie.text
     assert nothing.status_code == 401
+
+
+async def test_a_token_library_scope_narrows_only_that_token_never_the_access_caller(
+    instance: Instance,
+) -> None:
+    libraries = ("/acme/api", "/acme/docs")
+    for library in libraries:
+        await instance.container.catalog.create_library(
+            CreateLibraryCommand(
+                id=library, title=library, source_url="https://example.com/a/b.git", host="git"
+            )
+        )
+    signed_in = await send(
+        instance, "POST", "/api/v1/session", json={"username": "ada", "password": HORSE}
+    )
+    session = signed_in.cookies[SESSION_COOKIE]
+    for library in libraries:
+        granted = await send(
+            instance,
+            "PUT",
+            f"/api/v1/libraries{library}/grants",
+            session=session,
+            json={"kind": "user", "subject": "ci-bot", "role": "viewer"},
+        )
+        assert granted.status_code == 200, granted.text
+    bot = instance.access.service("abc.access")
+    made = await send(
+        instance,
+        "POST",
+        "/api/v1/tokens",
+        assertion=bot,
+        json={"name": "docs only", "library_ids": ["/acme/docs"]},
+    )
+    assert made.status_code == 201, made.text
+    scoped = made.json()["token"]
+
+    async def rest(**credentials: str) -> list[str]:
+        response = await send(instance, "GET", "/api/v1/libraries", **credentials)
+        assert response.status_code == 200, response.text
+        return sorted(library["id"] for library in response.json()["libraries"])
+
+    async def mcp(**credentials: str) -> list[str]:
+        call = {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "list_libraries", "arguments": {}},
+        }
+        response = await send(
+            instance, "POST", "/mcp", json=call, headers=MCP_HEADERS, **credentials
+        )
+        assert response.status_code == 200, response.text
+        data = next(
+            line.removeprefix("data:")
+            for line in response.text.splitlines()
+            if line.startswith("data:")
+        )
+        found = json.loads(data)["result"]["structuredContent"]["libraries"]
+        return sorted(library["id"] for library in found)
+
+    # Access callers carry no token, so no selection: they keep their account's live grants.
+    assert await rest(assertion=bot) == list(libraries)
+    assert await mcp(assertion=bot) == list(libraries)
+    # The scoped token narrows itself, also when an Access token rides along (the bearer wins).
+    assert await rest(bearer=scoped) == ["/acme/docs"]
+    assert await rest(bearer=scoped, assertion=bot) == ["/acme/docs"]
+    assert await mcp(bearer=scoped, assertion=bot) == ["/acme/docs"]
+    assert await mcp(assertion=bot) == list(libraries)
 
 
 async def test_a_session_cookie_wins_over_the_access_token(instance: Instance) -> None:

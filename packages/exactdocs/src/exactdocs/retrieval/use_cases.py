@@ -331,9 +331,12 @@ async def _require(access: AccessPolicy, library: str, needed: Access) -> None:
         needed: The role the action needs.
 
     Raises:
+        UnknownLibraryError: The library is hidden from this caller.
         LibraryAccessDeniedError: The caller's role on the library is lower.
     """
-    if not await access.allows(library, needed):
+    if not await access.allows(library, Access.READ):
+        raise UnknownLibraryError(library)
+    if needed is not Access.READ and not await access.allows(library, needed):
         raise LibraryAccessDeniedError(library, needed.value)
 
 
@@ -2157,7 +2160,8 @@ class ReadChunkUseCase:
         if len({m.version_id for m in holders}) != 1:
             raise ChunkNotFoundError(query.chunk_id)
         first = holders[0]
-        await _require(self.access, first.library, Access.READ)
+        if not await self.access.allows(first.library, Access.READ):
+            raise ChunkNotFoundError(query.chunk_id)
         ref = first.version_id.removeprefix(f"{first.library}/")
         version = await self.versions.find(first.library, ref)
         ids = {m.manifest_id for m in holders}

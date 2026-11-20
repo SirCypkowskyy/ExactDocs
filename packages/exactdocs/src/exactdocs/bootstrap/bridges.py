@@ -102,6 +102,7 @@ from exactdocs.catalog.ports.driving import (
     StoreManifest,
 )
 from exactdocs.identity.dtos import (
+    ApiTokenIdentity,
     ClaimLibraryCommand,
     DropLibraryGrantsCommand,
     ExternalTokenIdentity,
@@ -1503,16 +1504,41 @@ class IdentityAccessPolicy:
     external_identity: Callable[[], ExternalTokenIdentity | None] | None = None
     """The verified OAuth caller, when this request carries one."""
 
+    api_identity: Callable[[], ApiTokenIdentity | None] | None = None
+    """The verified API credential and its optional library selection."""
+
+    def _selected(self, library: str) -> bool:
+        """Check the current credential's library selection.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            Whether the credential includes the library; scopes never grant a user role.
+        """
+        identity = None if self.api_identity is None else self.api_identity()
+        return (
+            identity is None
+            or identity.library_ids is None
+            or library.casefold() in identity.library_ids
+        )
+
     async def can_create(self, library: str | None = None) -> bool:
         """Resolve creation permission for the caller, preserving internal process access.
 
         Args:
-            library: Proposed ID when known; reserved for credential scope intersection.
+            library: Proposed ID when known; scoped credentials deny an unknown ID.
 
         Returns:
             True for internal work or an authorized authenticated creator.
         """
-        del library
+        identity = None if self.api_identity is None else self.api_identity()
+        if (
+            identity is not None
+            and identity.library_ids is not None
+            and (library is None or not self._selected(library))
+        ):
+            return False
         account = self.caller()
         if account is None:
             return True
@@ -1537,6 +1563,8 @@ class IdentityAccessPolicy:
         Returns:
             ``True`` for work no person started, else whether the role is high enough.
         """
+        if not self._selected(library):
+            return False
         account = self.caller()
         if account is None:
             return True
@@ -1572,7 +1600,7 @@ class IdentityAccessPolicy:
                 else self.external_identity(),
             )
         )
-        return frozenset(found.roles)
+        return frozenset(library for library in found.roles if self._selected(library))
 
     async def claim(self, library: str) -> None:
         """Make the caller, if there is one, the creator of the library just created.

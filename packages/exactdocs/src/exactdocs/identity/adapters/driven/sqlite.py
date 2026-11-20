@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import weakref
 from collections.abc import AsyncGenerator, Collection, Iterable, Mapping, Sequence
@@ -90,6 +91,7 @@ api_tokens = Table(
     Column("created_at", Text, nullable=False),  # see `_stamp`
     Column("expires_at", Text),
     Column("last_used_at", Text),
+    Column("library_ids", Text),
 )
 
 failed_sign_ins = Table(
@@ -487,6 +489,9 @@ class SqliteTokenRepository:
             "created_at": _stamp(token.created_at),
             "expires_at": None if token.expires_at is None else _stamp(token.expires_at),
             "last_used_at": None if token.last_used_at is None else _stamp(token.last_used_at),
+            "library_ids": None
+            if token.library_ids is None
+            else json.dumps(sorted(token.library_ids)),
         }
         async with self.engine.begin() as connection:
             await connection.execute(insert(api_tokens).values(values))
@@ -594,6 +599,7 @@ def _token(row: Row[Any]) -> ApiToken:
         created_at=datetime.fromisoformat(row.created_at),
         expires_at=_moment(row.expires_at),
         last_used_at=_moment(row.last_used_at),
+        library_ids=None if row.library_ids is None else frozenset(json.loads(row.library_ids)),
     )
 
 

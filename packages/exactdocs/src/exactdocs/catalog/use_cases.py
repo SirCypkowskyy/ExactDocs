@@ -168,9 +168,12 @@ async def _require(access: AccessPolicy, library: str, needed: Access) -> None:
         needed: The role the action needs.
 
     Raises:
+        LibraryNotFoundError: The library is hidden from this caller.
         LibraryAccessDeniedError: The caller's role on the library is lower.
     """
-    if not await access.allows(library, needed):
+    if not await access.allows(library, Access.READ):
+        raise LibraryNotFoundError(library)
+    if needed is not Access.READ and not await access.allows(library, needed):
         raise LibraryAccessDeniedError(library, needed.value)
 
 

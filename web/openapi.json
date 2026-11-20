@@ -10193,6 +10193,24 @@
       },
       "CreateTokenCommand": {
         "properties": {
+          "library_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 256,
+                  "pattern": "^/[^/]+/[^/]+$"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Ids",
+            "description": "Selected library IDs; omit or use null for all libraries the user can access."
+          },
           "name": {
             "type": "string",
             "maxLength": 256,
@@ -12253,6 +12271,24 @@
       },
       "LoginForTokenCommand": {
         "properties": {
+          "library_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 256,
+                  "pattern": "^/[^/]+/[^/]+$"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Ids",
+            "description": "Selected library IDs; omit or use null for all libraries the user can access."
+          },
           "username": {
             "type": "string",
             "maxLength": 256,
@@ -15015,6 +15051,24 @@
       },
       "TokenGrant": {
         "properties": {
+          "library_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 256,
+                  "pattern": "^/[^/]+/[^/]+$"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Ids",
+            "description": "Selected library IDs; omit or use null for all libraries the user can access."
+          },
           "id": {
             "type": "string",
             "title": "Id",
@@ -15103,6 +15157,24 @@
       },
       "TokenSummary": {
         "properties": {
+          "library_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 256,
+                  "pattern": "^/[^/]+/[^/]+$"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Ids",
+            "description": "Selected library IDs; omit or use null for all libraries the user can access."
+          },
           "id": {
             "type": "string",
             "title": "Id",

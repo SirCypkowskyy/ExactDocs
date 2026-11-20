@@ -816,33 +816,46 @@ async def remove(api: ApiClient, target: str, *, as_json: bool = False) -> None:
         say(f"{result['library']} now resolves to {result['default_version']}.")
 
 
-async def create_token(api: ApiClient, name: str, days: int | None) -> dict[str, Any]:
+async def create_token(
+    api: ApiClient, name: str, days: int | None, *, library_ids: list[str] | None = None
+) -> dict[str, Any]:
     """``POST /tokens`` (a session is needed) and return the grant; ``days=None`` never expires.
 
     Args:
         api: The API client, signed in with a session.
         name: The token's name.
         days: Days until the token expires, or ``None`` for never.
+        library_ids: Selected libraries; ``None`` leaves user access unrestricted.
 
     Returns:
         The decoded ``TokenGrant``, with the secret.
     """
     body: dict[str, Any] = {"name": name}
+    if library_ids is not None:
+        body["library_ids"] = library_ids
     if days is not None:
         body["expires_at"] = (datetime.now(UTC) + timedelta(days=days)).isoformat()
     return await api.request("POST", "/tokens", json=body)
 
 
-async def token_create(api: ApiClient, name: str, days: int | None, *, as_json: bool) -> None:
+async def token_create(
+    api: ApiClient,
+    name: str,
+    days: int | None,
+    *,
+    as_json: bool,
+    library_ids: list[str] | None = None,
+) -> None:
     """Create a token; the secret is shown this once.
 
     Args:
         api: The API client, signed in with a session.
         name: The token's name.
         days: Days until the token expires, or ``None`` for never.
+        library_ids: Selected libraries; ``None`` leaves user access unrestricted.
         as_json: Print JSON for scripts instead of text.
     """
-    grant = await create_token(api, name, days)
+    grant = await create_token(api, name, days, library_ids=library_ids)
     if as_json:
         dump(grant)
         return

@@ -34,14 +34,23 @@ export function TokenList({
               className={`fade-in flex items-center justify-between gap-4 py-4 ${columns}`}
             >
               <div className="min-w-0 md:contents">
-                <p className="flex flex-wrap items-baseline gap-x-2 md:block">
-                  <span
-                    className={`font-medium break-words ${expired ? "text-muted-foreground" : ""}`}
-                  >
-                    {token.name}
-                  </span>{" "}
-                  <code className="text-sm text-muted-foreground">{token.prefix}…</code>
-                </p>
+                <div>
+                  <p className="flex flex-wrap items-baseline gap-x-2 md:block">
+                    <span
+                      className={`font-medium break-words ${expired ? "text-muted-foreground" : ""}`}
+                    >
+                      {token.name}
+                    </span>{" "}
+                    <code className="text-sm text-muted-foreground">{token.prefix}…</code>
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {token.library_ids == null
+                      ? "All libraries you can access"
+                      : token.library_ids.length === 0
+                        ? "No libraries"
+                        : token.library_ids.join(", ")}
+                  </p>
+                </div>
                 <p className="mt-1 flex flex-wrap gap-x-2 text-sm text-muted-foreground tabular-nums md:contents">
                   <span className={expired ? "font-medium text-destructive" : undefined}>
                     {token.expires_at ? (

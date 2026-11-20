@@ -159,3 +159,60 @@ def test_opaque_linked_identity_keeps_user_grants_and_api_tokens(tmp_path: Path,
         )
         assert call_tool(client, bearer, "list_libraries").status_code == 401
         assert call_tool(client, api, "list_libraries").status_code == 200
+
+
+@pytest.mark.parametrize("kind", ["oauth2", "github"])
+def test_token_library_scopes_and_opaque_oauth_callers_stay_apart(
+    tmp_path: Path, kind: str
+) -> None:
+    fake = FakeGithub() if kind == "github" else FakeOAuth2()
+    fake.add_user("123", "alice", groups=["docs"])
+    config = (
+        {"kind": kind, "base_url": fake.issuer, "allowed_teams": ["acme/docs-readers"]}
+        if kind == "github"
+        else {
+            "kind": kind,
+            "authorization_url": f"{fake.issuer}/authorize",
+            "token_url": f"{fake.issuer}/token",
+            "userinfo_url": f"{fake.issuer}/userinfo",
+            "allowed_groups": ["docs"],
+        }
+    )
+    with running(tmp_path, fake, config) as (client, container):
+        admin = {"username": "ada", "password": "correct horse battery staple"}
+        assert client.post("/api/v1/setup", json=admin).status_code == 201
+        started = client.get("/api/v1/auth/corp/start", follow_redirects=False)
+        callback = fake.authorize(started.headers["location"], "123")
+        assert client.get(callback, follow_redirects=False).status_code == 303
+        assert client.post("/api/v1/session", json=admin).status_code == 201
+        assert client.portal is not None
+        for library in ("/acme/docs", "/acme/api"):
+            client.portal.call(
+                container.catalog.create_library,
+                CreateLibraryCommand(
+                    id=library,
+                    title=library,
+                    source_url="https://example.com/docs.git",
+                    default_branch="main",
+                    host="git",
+                ),
+            )
+            granted = client.put(
+                f"/api/v1/libraries{library}/grants",
+                json={"kind": "user", "subject": "alice", "role": "viewer"},
+            )
+            assert granted.status_code == 200, granted.text
+        scoped = client.post(
+            "/api/v1/tokens", json={"name": "docs only", "library_ids": ["/acme/docs"]}
+        ).json()["token"]
+        scope = "read:user read:org" if kind == "github" else "offline_access"
+        bearer = connect(client, fake, "123", scope=scope).json()["access_token"]
+
+        def listed(credential: str) -> list[str]:
+            result = tool_result(call_tool(client, credential, "list_libraries"))
+            return sorted(item["id"] for item in result["structuredContent"]["libraries"])
+
+        # The selection narrows only that API token; the OAuth caller keeps its user's grants.
+        assert listed(scoped) == ["/acme/docs"]
+        assert listed(bearer) == ["/acme/api", "/acme/docs"]
+        assert listed(scoped) == ["/acme/docs"]

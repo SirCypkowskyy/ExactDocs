@@ -233,6 +233,10 @@ def login(
     expires_in: Annotated[
         int, Parameter(help="Days until the new token expires.", validator=Number(gte=1))
     ] = DEFAULT_TOKEN_DAYS,
+    library: Annotated[
+        list[str] | None,
+        Parameter(help="Limit to these library IDs; repeat --library to select more."),
+    ] = None,
     no_expiry: Annotated[bool, Parameter(help="Create a token that never expires.")] = False,
 ) -> None:
     """Sign in to an instance and store the server URL and an API token for the other commands.
@@ -248,6 +252,7 @@ def login(
         password_stdin: Read the password from one line of stdin instead of prompting.
         name: Name of the new token (default: this machine's name).
         expires_in: Days until the new token expires.
+        library: Selected library IDs; omitted means all current user access.
         no_expiry: Create a token that never expires.
 
     Raises:
@@ -283,7 +288,9 @@ def login(
                 except EOFError, KeyboardInterrupt:
                     message = "no username or password to read"
                     raise ClientError(message) from None
-                grant = await api.login(user, password, name or machine_name(), expires_at)
+                grant = await api.login(
+                    user, password, name or machine_name(), expires_at, library_ids=library
+                )
                 secret, label = (
                     grant["token"],
                     f"new token {grant['name']!r} ({grant['prefix']}...), "
@@ -871,6 +878,10 @@ def token_create(
     expires_in: Annotated[
         int, Parameter(help="Days until it expires.", validator=Number(gte=1))
     ] = DEFAULT_TOKEN_DAYS,
+    library: Annotated[
+        list[str] | None,
+        Parameter(help="Limit to these library IDs; repeat --library to select more."),
+    ] = None,
     no_expiry: Annotated[bool, Parameter(help="Never expires.")] = False,
     username: UsernameOption = None,
     password_stdin: PasswordStdin = False,
@@ -882,6 +893,7 @@ def token_create(
     Args:
         name: The token's name.
         expires_in: Days until it expires.
+        library: Selected library IDs; omitted means all current user access.
         no_expiry: Never expires.
         username: Who signs in; asked for when omitted.
         password_stdin: Read the password from one line of stdin instead of prompting.
@@ -893,7 +905,11 @@ def token_create(
         """Sign in and create the token."""
         async with _session(url, username, password_stdin=password_stdin) as api:
             await lib.token_create(
-                api, name, None if no_expiry else expires_in, as_json=json_output
+                api,
+                name,
+                None if no_expiry else expires_in,
+                as_json=json_output,
+                library_ids=library,
             )
 
     _call(work())

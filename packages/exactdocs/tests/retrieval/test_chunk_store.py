@@ -1159,3 +1159,20 @@ async def test_a_set_stored_without_heading_records_is_reused_as_it_is_by_one_wi
         GetChunkSetsQuery(config_hash=CONFIG, blob_shas=["blob"])
     )
     assert sets.chunks["blob"][0].headings is None
+
+
+async def test_a_hidden_chunk_id_matches_a_missing_chunk_without_revealing_its_library(
+    world: World,
+) -> None:
+    indexed = await world.index("hidden", "main", {"a.md": "secret"}, status=ManifestStatus.ACTIVE)
+    chunk_id = indexed.chunk_ids["a.md"][0]
+    read = ReadChunkUseCase(
+        versions=world.catalog,
+        manifests=world.catalog,
+        chunks=world.chunks,
+        access=FakeAccess(role=None),
+    )
+    for identifier in (chunk_id, "missing"):
+        with pytest.raises(ChunkNotFoundError) as caught:
+            await read(ReadChunkQuery(chunk_id=identifier))
+        assert "/acme/payments" not in str(caught.value)

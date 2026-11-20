@@ -69,6 +69,8 @@ function Body({
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [expiry, setExpiry] = useState<ExpiryChoice>("never");
+  const [scope, setScope] = useState("all");
+  const [libraries, setLibraries] = useState("");
   const [nameError, setNameError] = useState<string>();
   const [problem, setProblem] = useState<{ message: string; signIn: boolean }>();
   const [pending, setPending] = useState(false);
@@ -89,7 +91,11 @@ function Body({
     setPending(true);
     onLock(true);
     try {
-      const grant = await createToken(trimmed, expiresAt(expiry));
+      const grant = await createToken(
+        trimmed,
+        expiresAt(expiry),
+        scope === "all" ? undefined : libraries.split(/[\s,]+/).filter(Boolean),
+      );
       setSecret(grant.token);
       onCreated(grant.name);
     } catch (error) {
@@ -177,6 +183,36 @@ function Body({
             className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-muted-foreground"
           />
         </div>
+      </div>
+      <div className="mt-4 flex flex-col gap-1.5">
+        <label htmlFor="token-scope" className="text-sm font-medium">
+          Library access
+        </label>
+        <select
+          id="token-scope"
+          value={scope}
+          onChange={(e) => setScope(e.target.value)}
+          className="h-11 rounded-md border border-input bg-secondary px-3"
+        >
+          <option value="all">All libraries I can access</option>
+          <option value="selected">Selected libraries</option>
+        </select>
+        {scope === "selected" && (
+          <>
+            <label htmlFor="token-libraries" className="text-sm font-medium">
+              Library IDs
+            </label>
+            <Input
+              id="token-libraries"
+              value={libraries}
+              onChange={(e) => setLibraries(e.target.value)}
+              placeholder="/owner/repo, /owner/another"
+            />
+          </>
+        )}
+        <p className="text-sm text-muted-foreground">
+          Access always follows your current permissions. An empty selection allows no libraries.
+        </p>
       </div>
       <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <Button variant="ghost" aria-disabled={pending} onClick={() => !pending && onClose()}>

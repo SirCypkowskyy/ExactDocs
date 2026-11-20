@@ -137,10 +137,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   last path segment, declared `{ref:path}`; a route that needs a ref and an article path takes
   `?ref=` and `?path=`, because servers decode `%2F` before routing.
 
-- **API tokens**: `POST /api/v1/tokens` (`{"name", "expires_at"?}`, timezone-aware, in the future)
+- **API tokens**: `POST /api/v1/tokens` (`{"name", "expires_at"?, "library_ids"?}`, timezone-aware, in the future)
   answers 201 with the token's fields and `token`, the secret `exd_...`, which no other call ever
   returns (`Cache-Control: no-store`). `GET /tokens` lists the caller's tokens (`id`, `name`,
-  `prefix`, `created_at`, `expires_at`, `last_used_at`; newest first) and `DELETE /tokens/{id}`
+  `prefix`, `created_at`, `expires_at`, `last_used_at`, `library_ids`; newest first) and `DELETE /tokens/{id}`
   revokes one at once (204; 404 `unknown_token` for another account's or a missing id). The
   secret is 256 random bits and only its SHA-256 is stored. An unknown, expired or revoked token is
   the same 401. `last_used_at` is written at most hourly, best effort (a failed write is logged
@@ -689,3 +689,17 @@ New codes may be added: clients must treat an unknown `code` as a generic proble
 - **Known limits**: chunk IDs of a removed version answer `not_found`; they are not kept as
   tombstones yet (E9-03 follow-up, the strict xfail in `test_chunk_store.py`). A library title
   derived from the default version's README (#33) is not re-derived by a removal.
+
+API token creation and password login accept optional `library_ids`: omit it or use `null`
+for all libraries the account can currently access, use `[]` for no libraries, or supply IDs
+such as `["/acme/docs"]` for a subset. IDs are case-insensitive. The selection never grants a
+role: removing the account's access immediately removes token access too. Hidden libraries and
+their articles, assets, chunks and jobs answer the same not-found errors as missing resources.
+The token dialog offers the same selection. CLI `login` and `token create` accept repeatable
+`--library /acme/docs`; omitting the option preserves the unrestricted default.
+
+Before rolling back to a version without library scopes, revoke every scoped API token,
+including tokens with an empty selection. The schema downgrade refuses to drop the scope
+column while any scoped token remains. Revoke them before starting an older server binary
+as well: older code can ignore the column and otherwise treat those credentials as unrestricted.
+Unrestricted legacy tokens are preserved by downgrade.

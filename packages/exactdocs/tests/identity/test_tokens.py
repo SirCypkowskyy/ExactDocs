@@ -95,7 +95,9 @@ async def test_a_token_is_recognizable_shown_once_and_stored_only_hashed(world: 
 async def test_a_token_acts_as_its_account_and_records_when_it_was_used(world: World) -> None:
     grant = await world.identity.create_token(world.ada, CreateTokenCommand(name="laptop"))
 
-    assert await world.identity.identify_token(grant.token) == world.ada
+    assert (await world.identity.identify_token(grant.token)).model_dump(
+        include={"id", "username", "role"}
+    ) == world.ada.model_dump()
     listed = (await world.identity.list_tokens(world.ada)).tokens[0]
     assert listed.last_used_at == START
 
@@ -228,3 +230,20 @@ async def test_a_failing_last_used_write_does_not_fail_the_authentication(
     assert account.username == "ada"
     assert "could not record API token use" in caplog.text
     assert grant.token not in caplog.text
+
+
+@pytest.mark.parametrize("selection", [None, frozenset(), frozenset({"/Acme/Docs", "/acme/docs"})])
+async def test_token_selection_is_canonical_and_does_not_change_its_user(
+    world: World, selection: frozenset[str] | None
+) -> None:
+    command = CreateTokenCommand(name="limited", library_ids=selection)
+    grant = await world.identity.create_token(world.ada, command)
+    expected = None if selection is None else frozenset(value.casefold() for value in selection)
+    principal = await world.identity.identify_token(grant.token)
+    assert principal.id == world.ada.id
+    assert principal.username == world.ada.username
+    assert principal.role == world.ada.role
+    assert principal.token_id == grant.id
+    assert principal.library_ids == expected
+    assert grant.library_ids == expected
+    assert (await world.identity.list_tokens(world.ada)).tokens[0].library_ids == expected

@@ -491,7 +491,13 @@ class ApiClient:
         raise self._error(response, body)
 
     async def login(
-        self, username: str, password: str, name: str, expires_at: datetime | None = None
+        self,
+        username: str,
+        password: str,
+        name: str,
+        expires_at: datetime | None = None,
+        *,
+        library_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """Exchange credentials for a new named API token (``POST /tokens/login``).
 
@@ -500,11 +506,14 @@ class ApiClient:
             password: Its password.
             name: The new token's name.
             expires_at: When the token expires; never when ``None``.
+            library_ids: Selected libraries; ``None`` leaves user access unrestricted.
 
         Returns:
             The decoded ``TokenGrant``, with the secret.
         """
-        body = {"username": username, "password": password, "name": name}
+        body: dict[str, Any] = {"username": username, "password": password, "name": name}
+        if library_ids is not None:
+            body["library_ids"] = library_ids
         if expires_at is not None:
             body["expires_at"] = expires_at.isoformat()
         return await self.request("POST", "/tokens/login", json=body)

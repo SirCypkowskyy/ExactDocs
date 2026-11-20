@@ -31,6 +31,7 @@ from exactdocs.identity.constants import (
 )
 from exactdocs.identity.dtos import (
     AccountSummary,
+    ApiTokenIdentity,
     AuthenticateQuery,
     ClaimLibraryCommand,
     CreateFirstAdminCommand,
@@ -991,6 +992,7 @@ class CreateTokenUseCase:
             prefix=secret[:PREFIX_SHOWN],
             created_at=now,
             expires_at=command.expires_at,
+            library_ids=command.library_ids,
         )
         await self.tokens.add(token)
         return TokenGrant(**TokenSummary.from_model(token).model_dump(), token=secret)
@@ -1020,7 +1022,10 @@ class LoginForTokenUseCase:
         query = AuthenticateQuery(username=command.username, password=command.password)
         account = await self.authenticate(query, client=client)
         return await self.create_token(
-            account, CreateTokenCommand(name=command.name, expires_at=command.expires_at)
+            account,
+            CreateTokenCommand(
+                name=command.name, expires_at=command.expires_at, library_ids=command.library_ids
+            ),
         )
 
 
@@ -1083,7 +1088,7 @@ class IdentifyTokenUseCase:
     clock: Clock
     """The current time."""
 
-    async def __call__(self, token: str) -> AccountSummary:
+    async def __call__(self, token: str) -> ApiTokenIdentity:
         """Return the account the token acts as, or raise ``InvalidTokenError``.
 
         Args:
@@ -1116,7 +1121,11 @@ class IdentifyTokenUseCase:
                 await self.tokens.touch(token_hash, now)
             except Exception:  # ruff: ignore[blind-except] - bookkeeping must not break a valid token
                 logger.warning("could not record API token use")
-        return AccountSummary.from_model(account)
+        return ApiTokenIdentity(
+            **AccountSummary.from_model(account).model_dump(),
+            token_id=found.id,
+            library_ids=found.library_ids,
+        )
 
 
 def _configured(
