@@ -11,6 +11,18 @@ Feature: A library gets its title and description from the root README
     Then the title of the library is the first heading of the README
     And the description of the library is the first paragraph of the README
 
+  Scenario Outline: A README that opens with a logo is named after the logo, not a section
+    Given the fixture repository is a private copy
+    And a branch "<branch>" has a README shaped like "<readme>"
+    When "docs/" of the fixture repository at "<branch>" is imported
+    Then the title of the library is "<title>"
+    And the description of the library starts with "<description>"
+
+    Examples:
+      | branch      | readme         | title       | description                         |
+      | fastapi     | fastapi.md     | FastAPI     | FastAPI is a modern, fast           |
+      | pydantic-ai | pydantic-ai.md | Pydantic AI | Pydantic AI is the Python AI SDK: a |
+
   Scenario: The user can edit them
     Given "/fixture/docs-repo/v1.3.0" is imported
     When the user changes the title to "Payments SDK"

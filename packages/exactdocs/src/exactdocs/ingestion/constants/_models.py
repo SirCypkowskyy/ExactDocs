@@ -78,6 +78,16 @@ README_TITLE_MAX: Final[int] = 120
 """Longest library title taken from a README, in characters."""
 README_DESCRIPTION_MAX: Final[int] = 500
 """Longest library description taken from a README, in characters."""
+_README_LABEL: Final[re.Pattern[str]] = re.compile(
+    r"^\s*[\w-]+(?:\s+[\w-]+){0,2}\s*:", re.MULTILINE
+)
+"""A short label opening a README line (``Documentation:``): with the links after it, a nav line."""
+_README_NAV_CHARS: Final[str] = " \n|-*.,;:·•"
+"""What may sit between the links of a README nav line."""
+_LOGO_WORDS: Final[re.Pattern[str]] = re.compile(r"\b(?:logo|banner)\b", re.IGNORECASE)
+"""Words an image ``alt`` adds to the project's name (``Acme logo``)."""
+_BADGE_SOURCES: Final[tuple[str, ...]] = ("badge", "shields.io", "badgen.net")
+"""An image whose source holds one of these is a badge, not a logo."""
 DEFAULT_GRACE_SECONDS: Final[int] = 7 * 24 * 3600
 """How long a replaced manifest is kept so that its chunk IDs can still be recognized as stale."""
 PERMANENT_IMPORT_FAILURES: Final[frozenset[str]] = frozenset({"no_articles", "import_too_large"})
