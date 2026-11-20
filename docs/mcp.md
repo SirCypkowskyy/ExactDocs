@@ -84,7 +84,7 @@ to it, so the CLI and coding agents are unaffected.
   secret (the proxy derives its token signing key from it).
 - **Same membership checks.** The provider's `allowed_groups`, `allow_any_user` and `admin_groups`
   apply, and a disabled account is refused. The check runs at every call, not only at sign-in, but
-  it reads the ID token the server holds for the host, so what it sees depends on the change:
+  for OIDC it reads the ID token the server holds for the host, so what it sees depends on the change:
     - A person who signs in to the web UI as well acts as that account; **disabling the account
       gives a `401` at the next call**, with the same token.
     - A person who **leaves a group at the provider** keeps access until the ID token expires
@@ -92,18 +92,24 @@ to it, so the CLI and coding agents are unaffected.
       `401`, renews with its refresh token, and the provider's current groups apply: a person
       outside the allowed groups gets no working token.
   Anyone who never signed in to the web UI acts as `<provider>:<subject>`, and no account is
-  created. Library group grants use the verified ID token's groups with the provider's
+  created. Library group grants use the verified provider groups with the provider's
   `group_prefix`, including for these OAuth-only callers; members of `admin_groups` can manage
-  every library. A linked caller can also use grants to their account. The request's signed
+  every library. A linked caller can also use grants to their account. The request's verified
   groups and role are used without changing stored web-account memberships or refresh tokens.
 - **What the host sees when the ID token expires.** A `401` with the usual `WWW-Authenticate`
   header. A host that keeps its refresh token trades it for a new token and carries on; one that
   does not sends the person through the sign-in again.
-- **The groups must be in the ID token.** The check reads the provider's ID token (always a JWT),
+- **OIDC groups must be in the ID token.** The check reads the provider's ID token (always a JWT),
   not userinfo. Make sure the `groups_claim` is in it (ADFS: an issuance transform rule for
   `group`; Entra ID: the groups optional claim).
-- **Only `oidc` providers (ADFS included) can be chosen for now.** `oauth2` and `github` kinds
-  follow with their sign-in.
+- **OAuth2 and GitHub use opaque access tokens.** `oauth2` reads current userinfo at each MCP
+  request; `github` reads the current user and applies the same organization/team checks and
+  app-approval/SSO refusals as browser sign-in. Lost membership is refused at the next MCP request.
+  Both use FastMCP `OAuthProxy` with the configured endpoints; OIDC/ADFS uses `OIDCProxy`.
+  GitHub `base_url`/`api_url` support GitHub.com, Enterprise Server and `*.ghe.com`, as in
+  [GitHub setup](configuration.md#github-and-github-enterprise-sign-in). GitHub OAuth Apps accept
+  one callback URL: use a separate OAuth App/provider for MCP with `/auth/callback` as its
+  callback, and choose that provider with `EXACTDOCS_MCP_OAUTH_PROVIDER`.
 - The `Host` and `Origin` allowlist (`EXACTDOCS_ALLOWED_HOSTS`, `EXACTDOCS_ALLOWED_ORIGINS`)
   applies to the OAuth routes too. The proxy keeps its registrations and tokens, encrypted, in
   `<data dir>/mcp-oauth`; changing the client secret makes hosts sign in again, and the state kept

@@ -30,7 +30,9 @@ def step_served(context: Context, name: str, group: str) -> None:
     data_dir = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="exactdocs-")))
     # The proxy and the app run on the real clock, not the movable one of the shared Background.
     context.issuer.now = lambda: datetime.now(UTC)
-    stack.enter_context(host.fake_issuer(context.issuer))
+    stack.enter_context(
+        host.fake_issuer(context.issuer, oidc=context.provider_config["kind"] == "oidc")
+    )
     config = {**context.provider_config, "allow_any_user": False, "allowed_groups": [group]}
     container = Container.build(
         Settings(
@@ -52,7 +54,12 @@ def _connect(context: Context, name: str, group: str) -> None:
     context.issuer.add_user(subject, name, groups=[group])
     metadata = context.client.get("/.well-known/oauth-authorization-server")
     assert metadata.status_code == HTTPStatus.OK, metadata.text
-    context.granted = host.connect(context.client, context.issuer, subject)
+    context.granted = host.connect(
+        context.client,
+        context.issuer,
+        subject,
+        scope=" ".join(context.container.settings.auth.providers[context.provider].scopes),
+    )
     assert context.granted.status_code == HTTPStatus.OK, context.granted.text
     context.token = context.granted.json()["access_token"]
 
@@ -134,3 +141,8 @@ def step_oauth_library_listed(context: Context, library: str) -> None:
     assert response.status_code == HTTPStatus.OK, response.text
     result = host.tool_result(response)
     assert [item["id"] for item in result["structuredContent"]["libraries"]] == [library], result
+
+
+@when("the GitHub MCP user loses the allowed team")
+def github_mcp_loses_team(context: Context) -> None:
+    context.issuer.teams.clear()

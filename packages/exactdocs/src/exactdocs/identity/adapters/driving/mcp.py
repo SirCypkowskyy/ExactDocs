@@ -1,4 +1,4 @@
-"""MCP adapter for identity: API tokens and OAuth ID tokens as the bearer credential of HTTP."""
+"""MCP identity adapter: API tokens and verified OAuth credentials for HTTP."""
 
 import logging
 
@@ -49,13 +49,14 @@ class ApiTokenVerifier(TokenVerifier):
 
 
 class ExternalTokenVerifier(TokenVerifier):
-    """Check the ID token the MCP OAuth proxy holds for a host, at every request.
+    """Check the provider credential the MCP OAuth proxy holds for a host, at every request.
 
-    The proxy (FastMCP's ``OIDCProxy``) runs the OAuth flow with the host and the provider, and
-    asks this verifier to vouch for the provider's ID token before each call. The provider's
-    adapter validates the token and its policy admits the person (the same allowed groups as at
-    the web sign-in), so a disabled account is refused at the next call and a person who lost their
-    group once the ID token expires and is renewed.
+    The proxy runs the OAuth flow with the host and the provider, and asks this verifier to
+    vouch for an OIDC ID token or an opaque OAuth2/GitHub access token before each call.
+    The provider adapter verifies the token and applies the web sign-in membership policy.
+    Disabled accounts are refused at the next call. OIDC group loss takes effect when the ID
+    token expires and is renewed; opaque access tokens read current userinfo and memberships
+    on every request.
     """
 
     def __init__(self, *, provider: str, identify_external_token: IdentifyExternalToken) -> None:
@@ -63,8 +64,8 @@ class ExternalTokenVerifier(TokenVerifier):
 
         Args:
             provider: The name of the sign-in provider the proxy signs people in through.
-            identify_external_token: The driving port that resolves its ID token to who it
-                acts as.
+            identify_external_token: The driving port that resolves the provider credential
+                to who it acts as.
         """
         super().__init__()
         self._provider = provider
@@ -74,7 +75,7 @@ class ExternalTokenVerifier(TokenVerifier):
         """Return the access of the token's owner, or ``None`` (a 401) when it is refused.
 
         Args:
-            token: The provider's ID token.
+            token: The provider's ID token or opaque access token.
 
         Returns:
             The access of whoever the token acts as, or ``None`` when the token is no good, the

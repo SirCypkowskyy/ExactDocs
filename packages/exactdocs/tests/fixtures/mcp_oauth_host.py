@@ -34,13 +34,15 @@ _OK = 200
 
 
 @contextmanager
-def fake_issuer(issuer: FakeIssuer) -> Generator[None]:
+def fake_issuer(issuer: FakeIssuer, *, oidc: bool = True) -> Generator[None]:
     """Make FastMCP's OAuth proxy reach ``issuer`` (discovery and token endpoint) in-process.
 
     Yields:
         Nothing: the patches hold for the block.
     """
-    document = TestClient(issuer.app).get("/.well-known/openid-configuration").json()
+    document = (
+        TestClient(issuer.app).get("/.well-known/openid-configuration").json() if oidc else {}
+    )
 
     class ViaIssuer(AsyncOAuth2Client):
         def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -64,7 +66,9 @@ def _challenge(verifier: str) -> str:
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
 
 
-def connect(client: TestClient, issuer: FakeIssuer, subject: str) -> httpx2.Response:
+def connect(
+    client: TestClient, issuer: FakeIssuer, subject: str, *, scope: str = "openid"
+) -> httpx2.Response:
     """Run the host's OAuth flow for ``subject``; return the answer of the token endpoint.
 
     Args:
@@ -99,7 +103,7 @@ def connect(client: TestClient, issuer: FakeIssuer, subject: str) -> httpx2.Resp
             "code_challenge": _challenge(verifier),
             "code_challenge_method": "S256",
             "state": state,
-            "scope": "openid",
+            "scope": scope,
             "resource": f"{client.base_url}/mcp",
         },
         follow_redirects=False,

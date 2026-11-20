@@ -1,9 +1,9 @@
 """External sign-in wiring: identity providers from the settings, and the revalidation loop.
 
 Each ``[auth.providers.<name>]`` becomes the identity domain's ``SignInPolicy`` (who is admitted,
-with which role and groups, for how long) and an ``OidcProvider`` (the protocol). The redirect
-URI is built from ``EXACTDOCS_PUBLIC_URL``, never from a request. The client secret is read at
-every use, so a rotated ``client_secret_file`` needs no restart.
+with which role and groups, for how long) and its OIDC, OAuth2 or GitHub protocol adapter.
+The redirect URI comes from ``EXACTDOCS_PUBLIC_URL``. Secrets are read at every use,
+so a rotated ``client_secret_file`` needs no restart.
 """
 
 import asyncio
@@ -17,9 +17,12 @@ import httpx2
 
 from exactdocs.bootstrap.constants import SIGN_IN_STOP_SECONDS, V1_PREFIX
 from exactdocs.bootstrap.settings import Settings, SignInProviderSettings
+from exactdocs.identity.adapters.driven.github import GithubProvider, github_api_url
+from exactdocs.identity.adapters.driven.oauth2 import OAuth2ClaimNames, OAuth2Provider
 from exactdocs.identity.adapters.driven.oidc import OidcClaimNames, OidcProvider
 from exactdocs.identity.constants import OIDC_TIMEOUT
 from exactdocs.identity.models import SignInPolicy
+from exactdocs.identity.ports.driven import SignInProvider
 from exactdocs.identity.ports.driving import RevalidateExternalAccounts
 from exactdocs_kernel import Clock
 
@@ -53,7 +56,7 @@ def sign_in_client(transport: httpx2.AsyncBaseTransport | None = None) -> httpx2
 
 def sign_in_providers(
     settings: Settings, client: httpx2.AsyncClient, clock: Clock
-) -> tuple[dict[str, OidcProvider], dict[str, SignInPolicy]]:
+) -> tuple[dict[str, SignInProvider], dict[str, SignInPolicy]]:
     """Build the configured identity providers and their policies, by name.
 
     Args:
@@ -64,19 +67,56 @@ def sign_in_providers(
     Returns:
         The providers and their policies, under the same names.
     """
-    providers: dict[str, OidcProvider] = {}
+    providers: dict[str, SignInProvider] = {}
     policies: dict[str, SignInPolicy] = {}
     for name, config in settings.auth.providers.items():
         policies[name] = SignInPolicy(
             name=name,
             display_name=config.display_name or name,
             allowed_groups=frozenset(config.allowed_groups),
-            allow_any_user=config.allow_any_user,
+            allow_any_user=config.allow_any_user
+            or (
+                config.kind == "github"
+                and not config.allowed_groups
+                and bool(config.allowed_orgs or config.allowed_teams)
+            ),
             admin_groups=frozenset(config.admin_groups),
             group_prefix=config.group_prefix,
             revalidate_every=timedelta(minutes=config.revalidate_minutes),
             grace=timedelta(minutes=config.revalidate_grace_minutes),
         )
+        if config.kind == "github":
+            providers[name] = GithubProvider(
+                base_url=config.base_url.rstrip("/"),
+                api_url=github_api_url(config.base_url, config.api_url),
+                client_id=config.client_id,
+                client_secret=client_secret_reader(name, config),
+                redirect_uri=f"{settings.public_url}{V1_PREFIX}/auth/{name}/callback",
+                allowed_orgs=tuple(config.allowed_orgs),
+                allowed_teams=tuple(config.allowed_teams),
+                client=client,
+            )
+            continue
+        if config.kind == "oauth2":
+            providers[name] = OAuth2Provider(
+                issuer=config.issuer,
+                authorization_endpoint=config.authorization_url or "",
+                token_endpoint=config.token_url or "",
+                userinfo_endpoint=config.userinfo_url or "",
+                client_id=config.client_id,
+                client_secret=client_secret_reader(name, config),
+                redirect_uri=f"{settings.public_url}{V1_PREFIX}/auth/{name}/callback",
+                scopes=tuple(config.scopes),
+                claims=OAuth2ClaimNames(
+                    subject=config.subject_claim,
+                    username=config.username_claim,
+                    email=config.email_claim,
+                    groups=config.groups_claim,
+                ),
+                client_auth_method=config.client_auth_method,
+                client=client,
+            )
+            continue
         providers[name] = OidcProvider(
             issuer=config.issuer,
             client_id=config.client_id,

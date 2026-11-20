@@ -243,3 +243,12 @@ class CookieAttributes(TypedDict):
 
 COOKIE_ATTRS: Final[CookieAttributes] = {"path": COOKIE_PATH, "httponly": True, "samesite": "lax"}
 """Shared by ``set_cookie`` and ``delete_cookie``: a deletion only works if the attributes match."""
+
+GITHUB_MAX_TEAM_PAGES: Final[int] = 100
+"""Maximum GitHub team pages per check; reaching an unfinished bound fails closed."""
+
+OAUTH_CLIENT_BASIC: Final[str] = "client_secret_basic"
+"""OAuth client authentication using the HTTP Basic header."""
+
+OAUTH_CLIENT_POST: Final[str] = "client_secret_post"
+"""OAuth client authentication using token form fields (GitHub OAuth Apps)."""

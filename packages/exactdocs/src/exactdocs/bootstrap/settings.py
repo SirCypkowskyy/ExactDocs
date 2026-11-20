@@ -407,14 +407,32 @@ class SignInProviderSettings(BaseModel):
 
     model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
 
-    kind: Literal["oidc"]
+    kind: Literal["oidc", "oauth2", "github"]
     """`oidc`: OpenID Connect with discovery, authorization code + PKCE S256 (Keycloak, Entra ID,
-    Okta, Google, ADFS). `oauth2` and `github` follow (#383)."""
+    Okta, Google, ADFS). `oauth2`: explicit endpoints/userinfo. `github`: OAuth App/membership."""
     display_name: str | None = None
     """What the sign-in button says (`Sign in with <display_name>`); default: the name."""
-    issuer: str
+    issuer: str = ""
     """The issuer URL, exactly as its discovery document's `issuer` says (HTTPS; plain HTTP only
     to a loopback host, for development)."""
+    authorization_url: str | None = None
+    """OAuth2 authorization endpoint (required for oauth2)."""
+    token_url: str | None = None
+    """OAuth2 token endpoint (required for oauth2)."""
+    userinfo_url: str | None = None
+    """OAuth2 authenticated userinfo endpoint (required for oauth2)."""
+    subject_claim: str = "sub"
+    """Stable OAuth2 subject claim, optionally a dotted path."""
+    client_auth_method: Literal["client_secret_basic", "client_secret_post"] = "client_secret_basic"
+    """OAuth2 token endpoint client authentication method."""
+    base_url: str = "https://github.com"
+    """GitHub web origin; GitHub Enterprise Server and *.ghe.com are supported."""
+    api_url: str | None = None
+    """Optional GitHub API URL override."""
+    allowed_orgs: list[str] = Field(default_factory=list)
+    """GitHub organizations; memberships must be active."""
+    allowed_teams: list[str] = Field(default_factory=list)
+    """GitHub teams in org/slug form; at least one is required when configured."""
     client_id: str = Field(min_length=1)
     """The client ID registered at the issuer."""
     client_secret: SecretStr | None = None
@@ -424,8 +442,8 @@ class SignInProviderSettings(BaseModel):
     scopes: list[str] = Field(
         default_factory=lambda: ["openid", "profile", "email", "offline_access"]
     )
-    """The scopes asked for; `openid` is required, `offline_access` asks for the refresh token
-    the revalidation needs."""
+    """Requested scopes: OIDC requires `openid`; OAuth2 adds `offline_access` for refresh tokens.
+    GitHub always uses `read:user read:org`."""
     username_claim: str = "preferred_username"
     """The claim naming a new account (ADFS: `upn` or `unique_name`); when absent, the local part
     of the email. Only read when the account is created."""
@@ -462,6 +480,52 @@ class SignInProviderSettings(BaseModel):
         """
         return None if isinstance(value, str) and not value.strip() else value
 
+    @model_validator(mode="before")
+    @classmethod
+    def _provider_defaults(cls, value: object) -> object:
+        """Supply protocol-specific scopes and the OAuth2 default linking issuer.
+
+        Args:
+            value: Raw provider settings.
+
+        Returns:
+            Settings with protocol defaults, leaving explicit values intact.
+        """
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        kind = data.get("kind")
+        if kind == "github":
+            data["scopes"] = ["read:user", "read:org"]
+        elif kind == "oauth2":
+            scopes = data.get("scopes", [])
+            if isinstance(scopes, list) and "offline_access" not in scopes:
+                data["scopes"] = [*scopes, "offline_access"]
+            if not data.get("issuer") and isinstance(data.get("token_url"), str):
+                parts = urlsplit(data["token_url"])
+                data["issuer"] = f"{parts.scheme}://{parts.netloc}"
+        return data
+
+    def _github_consistent(self) -> None:
+        """Validate GitHub endpoints and configured organization/team path components.
+
+        Raises:
+            ValueError: An endpoint is insecure or a membership filter is malformed.
+        """
+        if not secure_url(self.base_url) or (
+            self.api_url is not None and not secure_url(self.api_url)
+        ):
+            message = "GitHub base_url and api_url must be secure URLs"
+            raise ValueError(message)
+        for org in self.allowed_orgs:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", org):
+                message = "allowed_orgs must contain organization names"
+                raise ValueError(message)
+        for team in self.allowed_teams:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_-]*", team):
+                message = "allowed_teams must contain org/team-slug names"
+                raise ValueError(message)
+
     @model_validator(mode="after")
     def _consistent(self) -> Self:
         """Refuse a provider that would sign in nobody on purpose, or insecurely.
@@ -474,16 +538,27 @@ class SignInProviderSettings(BaseModel):
                 both secret settings are given, or nobody is admitted without
                 `allow_any_user`.
         """
-        if not secure_url(self.issuer):
+        if self.kind == "github":
+            self._github_consistent()
+        if self.kind == "oauth2":
+            endpoints = (self.authorization_url, self.token_url, self.userinfo_url)
+            if not all(isinstance(url, str) and secure_url(url) for url in endpoints):
+                message = "oauth2 requires secure authorization_url, token_url and userinfo_url"
+                raise ValueError(message)
+        if self.kind != "github" and not secure_url(self.issuer):
             message = "issuer must be an https:// URL (http:// only to a loopback host)"
             raise ValueError(message)
-        if "openid" not in self.scopes:
+        if self.kind == "oidc" and "openid" not in self.scopes:
             message = "scopes must include openid"
             raise ValueError(message)
         if self.client_secret is not None and self.client_secret_file is not None:
             message = "set client_secret or client_secret_file, not both"
             raise ValueError(message)
-        if not self.allowed_groups and not self.allow_any_user:
+        if (
+            not self.allowed_groups
+            and not self.allow_any_user
+            and not (self.kind == "github" and (self.allowed_orgs or self.allowed_teams))
+        ):
             message = "set allowed_groups, or allow_any_user = true to admit everyone"
             raise ValueError(message)
         return self

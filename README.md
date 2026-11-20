@@ -133,7 +133,9 @@ benchmark numbers. See [Search and AI models](docs/search.md).
 - Libraries declared in an `exactdocs.sources.yaml` that you review like code: `sources plan`
   shows the diff, `sources apply` makes it.
 - Local accounts managed by an admin, and sign-in through any OpenID Connect provider (Keycloak,
-  Entra ID, Okta, Google, ADFS), with access and roles that follow the provider's groups.
+  Entra ID, Okta, Google, ADFS), OAuth2-only providers, or GitHub/GitHub Enterprise, with access
+  and roles that follow verified groups and organization/team membership. See
+  [GitHub setup](docs/configuration.md#github-and-github-enterprise-sign-in).
 - Branch versions kept fresh by hand, on a schedule or by a webhook from GitHub, GitLab or
   Bitbucket; new tags imported automatically if you want.
 - `context7.json` support, custom chunking, tags from front matter, path rules or by hand, images
@@ -271,7 +273,7 @@ Read [docs/architecture.md](docs/architecture.md) (modular monolith, ports and a
 - [x] Webhooks that sync a library on push
 - [x] Sign-in through OIDC with groups from the identity provider
 - [x] Libraries declared in an `exactdocs.sources.yaml` and applied with a dry-run diff
-- [ ] Sign-in through OAuth2-only providers and GitHub, with organization and team checks
+- [x] Sign-in through OAuth2-only providers and GitHub, with organization and team checks
 - [ ] Sharing libraries with viewer, contributor, admin and creator roles, enforced in the UI, REST and MCP
 - [ ] MCP Apps: articles and results rendered as UI in hosts that support them (Claude, ChatGPT)
 

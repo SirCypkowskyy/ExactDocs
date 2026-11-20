@@ -516,3 +516,108 @@ def step_succeeds(context: Context) -> None:
 def step_provider_refused(context: Context, code: str) -> None:
     response = _client(context).get(START.format(context.provider), follow_redirects=False)
     assert _refusal(response) == code
+
+
+@given("a generic OAuth2 provider maps a nested subject and groups")
+def generic_provider(context: Context) -> None:
+    step_provider(context, "corp2", "oauth2", "https://idp.example.com")
+    context.issuer = import_module("fake_oauth2").FakeOAuth2(
+        now=context.clock.now, nested_claims=True
+    )
+    context.provider_config.update(
+        {
+            "authorization_url": "https://idp.example.com/authorize",
+            "token_url": "https://idp.example.com/token",
+            "userinfo_url": "https://idp.example.com/userinfo",
+            "subject_claim": "person.subject",
+            "username_claim": "person.name",
+            "groups_claim": "person.groups",
+        }
+    )
+    context.issuer.add_user("u-123", "alice", groups=["payments"])
+
+
+@when("Alice completes the generic OAuth2 sign-in")
+def generic_sign_in(context: Context) -> None:
+    context.session = _session_of(_sign_in(context, "u-123"))
+
+
+@then("her OAuth2 account is linked to the configured subject and groups")
+def generic_account(context: Context) -> None:
+    result = _whoami(context, context.session)
+    assert result["account"]["username"] == "alice", result
+    assert _users(context)["alice"]["groups"] == ["payments"], result
+
+
+@given('GitHub Enterprise provider "ghe" allows team "acme/docs-readers"')
+def github_provider(context: Context) -> None:
+    step_provider(context, "ghe", "github", "https://github.example.com")
+    context.issuer = import_module("fake_github").FakeGithub(
+        issuer="https://github.example.com", now=context.clock.now
+    )
+    context.issuer.add_user("123", "carol")
+    context.provider_config.pop("issuer")
+    context.provider_config.update(
+        {
+            "base_url": context.issuer.issuer,
+            "allowed_orgs": ["acme"],
+            "allowed_teams": ["acme/docs-readers"],
+            "allow_any_user": False,
+        }
+    )
+
+
+@given("the GitHub user has organization access but no allowed team")
+def github_no_team(context: Context) -> None:
+    context.issuer.teams.clear()
+
+
+@given("the GitHub organization requires {restriction}")
+def github_restricted(context: Context, restriction: str) -> None:
+    context.issuer.restricted = {"app approval": "app", "SSO authorization": "sso"}[restriction]
+
+
+@when("the GitHub user completes external sign-in")
+def github_sign_in(context: Context) -> None:
+    context.github_response = _sign_in(context, "123")
+
+
+@then('GitHub sign-in is refused with code "{code}"')
+def github_refused(context: Context, code: str) -> None:
+    location = urlsplit(context.github_response.headers["location"])
+    assert location.path == "/sign-in"
+    assert parse_qs(location.query)["error"] == [code]
+
+
+@given("the GitHub user has an active session and API token")
+def github_session_token(context: Context) -> None:
+
+    context.session = _session_of(_sign_in(context, "123"))
+    response = _send(
+        context, "POST", "/api/v1/tokens", session=context.session, json={"name": "cli"}
+    )
+    assert response.status_code == HTTPStatus.CREATED, response.text
+    context.api_token = response.json()["token"]
+
+
+@when("the GitHub user loses the allowed team")
+def github_loses_team(context: Context) -> None:
+
+    context.issuer.teams.clear()
+    context.clock.advance(timedelta(minutes=61))
+    assert _revalidate(context).revoked == 1
+
+
+@then("both the GitHub session and API token are refused")
+def github_credentials_refused(context: Context) -> None:
+
+    assert _whoami(context, context.session)["state"] == "signed_out"
+    response = _send(
+        context,
+        "GET",
+        "/api/v1/libraries",
+        headers={"Authorization": f"Bearer {context.api_token}"},
+    )
+    assert response.status_code == HTTPStatus.UNAUTHORIZED, response.text
+    github_sign_in(context)
+    github_refused(context, "github_team_required")
