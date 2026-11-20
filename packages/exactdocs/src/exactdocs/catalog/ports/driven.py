@@ -621,6 +621,17 @@ class ManifestCopier(Protocol):
 class AccessPolicy(Protocol):
     """Library roles: what the caller may do with a library (a bridge to identity)."""
 
+    async def can_create(self, library: str | None = None) -> bool:
+        """Tell whether the caller has the instance-wide library creation permission.
+
+        Args:
+            library: Proposed ID when known; None before one is available.
+
+        Returns:
+            Whether creation is permitted.
+        """
+        ...
+
     async def allows(self, library: str, access: Access) -> bool:
         """Tell whether the caller may do what ``access`` stands for with the library.
 

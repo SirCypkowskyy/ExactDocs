@@ -23,7 +23,7 @@ PHRASE = "a long enough passphrase"
 MCP_HEADERS = {"accept": "application/json, text/event-stream"}
 
 
-def _send(
+def send_as(
     context: Context,
     method: str,
     path: str,
@@ -48,7 +48,7 @@ def _library_path(library: str) -> str:
 
 
 def _create_user(context: Context, username: str) -> None:
-    created = _send(
+    created = send_as(
         context,
         "POST",
         "/api/v1/users",
@@ -56,12 +56,12 @@ def _create_user(context: Context, username: str) -> None:
         json={"username": username, "password": PHRASE},
     )
     assert created.status_code == HTTPStatus.CREATED, created.text
-    signed_in = _send(
+    signed_in = send_as(
         context, "POST", "/api/v1/session", json={"username": username, "password": PHRASE}
     )
     assert signed_in.status_code == HTTPStatus.CREATED, signed_in.text
     session = signed_in.cookies[SESSION_COOKIE]
-    made = _send(context, "POST", "/api/v1/tokens", session=session, json={"name": "agent"})
+    made = send_as(context, "POST", "/api/v1/tokens", session=session, json={"name": "agent"})
     assert made.status_code == HTTPStatus.CREATED, made.text
     context.people = getattr(context, "people", {})
     context.people[username] = {
@@ -71,14 +71,14 @@ def _create_user(context: Context, username: str) -> None:
     }
 
 
-def _person(context: Context, username: str) -> dict[str, str]:
+def get_person(context: Context, username: str) -> dict[str, str]:
     if username not in getattr(context, "people", {}):
         _create_user(context, username)
     return context.people[username]
 
 
 def _grant(context: Context, library: str, kind: str, subject: str, role: str) -> None:
-    granted = _send(
+    granted = send_as(
         context,
         "PUT",
         f"{_library_path(library)}/grants",
@@ -95,11 +95,11 @@ def _mcp(context: Context, username: str, tool: str, arguments: dict[str, Any]) 
         "method": "tools/call",
         "params": {"name": tool, "arguments": arguments},
     }
-    response = _send(
+    response = send_as(
         context,
         "POST",
         "/mcp",
-        token=_person(context, username)["token"],
+        token=get_person(context, username)["token"],
         json=body,
         headers=MCP_HEADERS,
     )
@@ -116,19 +116,19 @@ def _mcp(context: Context, username: str, tool: str, arguments: dict[str, Any]) 
 
 @given('"{username}" is a viewer of "{library}"')
 def step_viewer(context: Context, username: str, library: str) -> None:
-    _person(context, username)
+    get_person(context, username)
     _grant(context, library, "user", username, "viewer")
 
 
 @given('"{username}" has no role on "{library}"')
 def step_no_role(context: Context, username: str, library: str) -> None:
     del library
-    _person(context, username)
+    get_person(context, username)
 
 
 @given('"{username}" is in the group "{group}" that is a contributor of "{library}"')
 def step_group(context: Context, username: str, group: str, library: str) -> None:
-    person = _person(context, username)
+    person = get_person(context, username)
     # Groups come from an identity provider; here the stored membership is written directly.
     with closing(sqlite3.connect(context.settings.data_dir / DATABASE_MEMBER)) as database:
         database.execute(
@@ -141,7 +141,7 @@ def step_group(context: Context, username: str, group: str, library: str) -> Non
 
 @then('"{username}" can search and read it in the UI and over MCP')
 def step_can_read(context: Context, username: str) -> None:
-    person = _person(context, username)
+    person = get_person(context, username)
     library = "/fixture/docs-repo"
     base = _library_path(library)
     for path, params in [
@@ -149,14 +149,14 @@ def step_can_read(context: Context, username: str) -> None:
         (f"{base}/search", {"q": "retry_policy"}),
         (f"{base}/articles", {}),
     ]:
-        answer = _send(context, "GET", path, session=person["session"], params=params)
+        answer = send_as(context, "GET", path, session=person["session"], params=params)
         assert answer.status_code == HTTPStatus.OK, (path, answer.text)
-    assert _send(
+    assert send_as(
         context, "GET", f"{base}/search", session=person["session"], params={"q": "retry_policy"}
     ).json()["results"]
-    first = _send(context, "GET", f"{base}/articles", session=person["session"]).json()
+    first = send_as(context, "GET", f"{base}/articles", session=person["session"]).json()
     article = first["articles"][0]["path"]
-    read = _send(
+    read = send_as(
         context, "GET", f"{base}/article", session=person["session"], params={"path": article}
     )
     assert read.status_code == HTTPStatus.OK, read.text
@@ -168,14 +168,14 @@ def step_can_read(context: Context, username: str) -> None:
 
 @then('"{username}" is refused when searching and reading it in the UI and over MCP')
 def step_refused_reading(context: Context, username: str) -> None:
-    person = _person(context, username)
+    person = get_person(context, username)
     base = _library_path("/fixture/docs-repo")
     for path, params in [
         (base, {}),
         (f"{base}/search", {"q": "retry_policy"}),
         (f"{base}/articles", {}),
     ]:
-        answer = _send(context, "GET", path, session=person["session"], params=params)
+        answer = send_as(context, "GET", path, session=person["session"], params=params)
         assert (answer.status_code, answer.json()["error"]) == (403, "forbidden"), answer.text
     for tool, arguments in [
         ("search_docs", {"library": "/fixture/docs-repo", "query": "retry_policy"}),
@@ -188,9 +188,9 @@ def step_refused_reading(context: Context, username: str) -> None:
 
 @then("changing its paths is refused")
 def step_cannot_edit(context: Context) -> None:
-    person = _person(context, "bob")
+    person = get_person(context, "bob")
     base = _library_path("/fixture/docs-repo")
-    changed = _send(
+    changed = send_as(
         context,
         "PUT",
         f"{base}/settings",
@@ -198,18 +198,18 @@ def step_cannot_edit(context: Context) -> None:
         json={"include_paths": ["docs/guide/"]},
     )
     assert (changed.status_code, changed.json()["error"]) == (403, "forbidden"), changed.text
-    stored = _send(context, "GET", base, session=DEMO_COOKIE).json()
+    stored = send_as(context, "GET", base, session=DEMO_COOKIE).json()
     assert stored["settings"]["include_paths"] != ["docs/guide/"], stored["settings"]
 
 
 @then('"{username}" may tag an article of it but not change its paths')
 def step_contributor(context: Context, username: str) -> None:
-    person = _person(context, username)
+    person = get_person(context, username)
     base = _library_path("/fixture/docs-repo")
-    path = _send(context, "GET", f"{base}/articles", session=DEMO_COOKIE).json()["articles"][0][
+    path = send_as(context, "GET", f"{base}/articles", session=DEMO_COOKIE).json()["articles"][0][
         "path"
     ]
-    tagged = _send(
+    tagged = send_as(
         context,
         "PUT",
         f"{base}/tags",
@@ -218,7 +218,7 @@ def step_contributor(context: Context, username: str) -> None:
         json={"tags": ["reviewed"]},
     )
     assert tagged.status_code == HTTPStatus.OK, tagged.text
-    changed = _send(
+    changed = send_as(
         context, "PUT", f"{base}/settings", session=person["session"], json={"include_paths": []}
     )
     assert (changed.status_code, changed.json()["error"]) == (403, "forbidden"), changed.text

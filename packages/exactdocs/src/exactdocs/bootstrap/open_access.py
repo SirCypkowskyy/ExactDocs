@@ -9,6 +9,18 @@ from enum import StrEnum
 class OpenAccess:
     """Implements the ``AccessPolicy`` ports of catalog, ingestion and retrieval with no roles."""
 
+    async def can_create(self, library: str | None = None) -> bool:
+        """Allow creation by the local process.
+
+        Args:
+            library: Proposed ID, if known.
+
+        Returns:
+            Always True.
+        """
+        del library
+        return True
+
     async def allows(self, library: str, access: StrEnum) -> bool:
         """Allow everything.
 

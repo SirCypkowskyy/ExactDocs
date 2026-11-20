@@ -40,6 +40,7 @@ from exactdocs.identity.dtos import (
     ExternalTokenIdentity,
     FinishExternalSignInCommand,
     GrantLibraryRoleCommand,
+    LibraryCreationQuery,
     LibraryGrants,
     LibraryGrantSummary,
     LibraryRoles,
@@ -97,6 +98,7 @@ from exactdocs.identity.models import (
     ApiToken,
     ExternalGrant,
     ExternalIdentity,
+    LibraryCreationPolicy,
     LibraryGrant,
     LibraryRole,
     Role,
@@ -1671,3 +1673,47 @@ class ListLibraryGrantsUseCase:
         library = query.library.casefold()
         await self.sharing.caller_role(query.caller_id, library)
         return await self.sharing.listing(library)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CanCreateLibraryUseCase:
+    """Implements ``ports.driving.CanCreateLibrary`` using current trusted identity state."""
+
+    accounts: AccountRepository
+    """Where accounts are stored."""
+    externals: ExternalIdentityRepository
+    """Current stored provider groups for ordinary credentials."""
+    policy: LibraryCreationPolicy | None = None
+    """None preserves creation by every authenticated caller; empty allows operators only."""
+
+    async def __call__(self, query: LibraryCreationQuery) -> bool:
+        """Resolve permission without accepting display names or stale OAuth groups.
+
+        Args:
+            query: The stable caller and optional verified OAuth principal.
+
+        Returns:
+            Whether the valid caller is an operator or matches the creation policy.
+        """
+        account = await self.accounts.get_by_id(AccountId(query.account_id))
+        principal = query.external_identity
+        if principal is not None:
+            if principal.account.id != query.account_id:
+                return False
+            if account is None and principal.linked:
+                return False
+            if account is not None and account.is_disabled:
+                return False
+            operator = principal.account.role == Role.ADMIN.value
+            groups = principal.groups
+        else:
+            if account is None or account.is_disabled:
+                return False
+            operator = account.is_operator
+            groups = await self.externals.groups_of(account.id)
+        return (
+            operator
+            or self.policy is None
+            or query.account_id in self.policy.users
+            or bool(self.policy.groups.intersection(groups))
+        )

@@ -514,3 +514,12 @@ class LibraryGrants(_Dto):
 
     grants: list[LibraryGrantSummary]
     """The grants: users first, then groups, by name."""
+
+
+class LibraryCreationQuery(_Dto):
+    """Ask whether an authenticated caller may create libraries on this instance."""
+
+    account_id: str
+    """The stable account ID."""
+    external_identity: ExternalTokenIdentity | None = None
+    """Trusted verified request identity; never client arguments."""

@@ -87,6 +87,7 @@ from exactdocs.catalog.ports.driving import (
     GetLibrary,
     GetManifestStates,
     GetVersionTags,
+    IsLibraryIdTaken,
     ListArticles,
     ListDefaultManifests,
     ListLibraries,
@@ -104,9 +105,15 @@ from exactdocs.identity.dtos import (
     ClaimLibraryCommand,
     DropLibraryGrantsCommand,
     ExternalTokenIdentity,
+    LibraryCreationQuery,
     LibraryRolesQuery,
 )
-from exactdocs.identity.ports.driving import ClaimLibrary, DropLibraryGrants, ResolveLibraryRoles
+from exactdocs.identity.ports.driving import (
+    CanCreateLibrary,
+    ClaimLibrary,
+    DropLibraryGrants,
+    ResolveLibraryRoles,
+)
 from exactdocs.ingestion.constants import PARSER_VERSION
 from exactdocs.ingestion.errors import EmbeddingUnavailableError, StoredTextOutdatedError
 from exactdocs.ingestion.models import Access as IngestionAccess
@@ -338,6 +345,25 @@ class CatalogLibraryIds:
         except ForbiddenError:  # there, but the caller may not read it: still taken
             return True
         return True
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CatalogCreationIds:
+    """Implements ``ingestion.ports.driven.LibraryIds`` with the catalog's creation probe."""
+
+    is_library_id_taken: IsLibraryIdTaken
+    """Creation-authorized availability check independent of library read access."""
+
+    async def is_taken(self, library_id: ProposedId) -> bool:
+        """Tell whether an authorized creator's proposed library ID is occupied.
+
+        Args:
+            library_id: The proposed library ID.
+
+        Returns:
+            Whether the catalog has the ID.
+        """
+        return await self.is_library_id_taken(GetLibraryQuery(id=library_id))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1464,6 +1490,8 @@ class IdentityAccessPolicy:
     takes the identity role's name as its value, so one class serves all three.
     """
 
+    can_create_library: CanCreateLibrary
+    """Identity instance-wide creation permission."""
     resolve_library_roles: ResolveLibraryRoles
     """Identity's effective role of an account on libraries."""
     claim_library: ClaimLibrary
@@ -1474,6 +1502,28 @@ class IdentityAccessPolicy:
     """The account ID of the current request; ``None`` when no person made it."""
     external_identity: Callable[[], ExternalTokenIdentity | None] | None = None
     """The verified OAuth caller, when this request carries one."""
+
+    async def can_create(self, library: str | None = None) -> bool:
+        """Resolve creation permission for the caller, preserving internal process access.
+
+        Args:
+            library: Proposed ID when known; reserved for credential scope intersection.
+
+        Returns:
+            True for internal work or an authorized authenticated creator.
+        """
+        del library
+        account = self.caller()
+        if account is None:
+            return True
+        return await self.can_create_library(
+            LibraryCreationQuery(
+                account_id=account,
+                external_identity=None
+                if self.external_identity is None
+                else self.external_identity(),
+            )
+        )
 
     async def allows(
         self, library: str, access: CatalogAccess | IngestionAccess | RetrievalAccess

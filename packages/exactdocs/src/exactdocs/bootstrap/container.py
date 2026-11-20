@@ -25,6 +25,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogArticleSuggestions,
     CatalogArticleTitles,
     CatalogCollector,
+    CatalogCreationIds,
     CatalogDefaultVersions,
     CatalogImportedTags,
     CatalogInstructionFiles,
@@ -115,6 +116,7 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteSignInAttemptRepository,
     SqliteTokenRepository,
 )
+from exactdocs.identity.models import LibraryCreationPolicy
 from exactdocs.ingestion import IngestionModule, TagLocks, collect_job, import_job
 from exactdocs.ingestion.adapters.driven.dbos import (
     DbosCheckpoints,
@@ -404,7 +406,11 @@ def _identity(settings: Settings, engine: AsyncEngine, stand_ins: SignInStandIns
     clock = stand_ins.clock or SystemClock()
     client = sign_in_client(stand_ins.transport) if settings.auth.providers else None
     providers, policies = sign_in_providers(settings, client, clock) if client else ({}, {})
+    creation = settings.auth.library_creation
     identity = IdentityModule.build(
+        library_creation=None
+        if creation is None
+        else LibraryCreationPolicy(users=creation.users, groups=creation.groups),
         repository=SqliteAccountRepository(engine=engine),
         sessions=SqliteSessionRepository(engine=engine),
         tokens=SqliteTokenRepository(engine=engine),
@@ -435,6 +441,7 @@ def _access_policy(identity: IdentityModule) -> IdentityAccessPolicy:
     """
     return IdentityAccessPolicy(
         resolve_library_roles=identity.resolve_library_roles,
+        can_create_library=identity.can_create_library,
         claim_library=identity.claim_library,
         drop_library_grants=identity.drop_library_grants,
         caller=current_account_id,
@@ -1108,6 +1115,9 @@ class Container:
             remote=remote,
             tree=tree,
             library_ids=CatalogLibraryIds(get_library=read.catalog.get_library),
+            creation_library_ids=CatalogCreationIds(
+                is_library_id_taken=read.catalog.is_library_id_taken
+            ),
             libraries=CatalogNewLibraries(
                 create_library=read.catalog.create_library,
                 discard_library=read.catalog.discard_library,

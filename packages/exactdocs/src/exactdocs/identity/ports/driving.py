@@ -15,6 +15,7 @@ from exactdocs.identity.dtos import (
     ExternalTokenIdentity,
     FinishExternalSignInCommand,
     GrantLibraryRoleCommand,
+    LibraryCreationQuery,
     LibraryGrants,
     LibraryRoles,
     LibraryRolesQuery,
@@ -462,5 +463,20 @@ class ListLibraryGrants(Protocol):
 
         Returns:
             The grants.
+        """
+        ...
+
+
+class CanCreateLibrary(Protocol):
+    """Resolve the instance-wide library creation permission."""
+
+    async def __call__(self, query: LibraryCreationQuery) -> bool:
+        """Resolve the permission from current authenticated identity state.
+
+        Args:
+            query: The caller and optional verified OAuth identity.
+
+        Returns:
+            Whether the caller may create a library.
         """
         ...

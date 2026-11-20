@@ -88,6 +88,7 @@ from exactdocs.catalog.errors import (
     ConflictingContentError,
     ConflictingImageError,
     LibraryAccessDeniedError,
+    LibraryCreationDeniedError,
     LibraryNotEmptyError,
     LibraryNotFoundError,
     ManifestNotFoundError,
@@ -219,7 +220,12 @@ class CreateLibraryUseCase:
 
         Returns:
             The new library, without versions.
+
+        Raises:
+            LibraryCreationDeniedError: The caller lacks instance creation permission.
         """
+        if not await self.access.can_create(command.id):
+            raise LibraryCreationDeniedError
         library = Library(
             id=LibraryId(command.id),
             title=command.title,
@@ -1682,3 +1688,29 @@ class CopyManifestUseCase:
                 for a in articles
             ],
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IsLibraryIdTakenUseCase:
+    """Implements ``ports.driving.IsLibraryIdTaken`` for authorized creators."""
+
+    repository: LibraryRepository
+    """The catalog's libraries."""
+    access: AccessPolicy
+    """Instance creation permission."""
+
+    async def __call__(self, query: GetLibraryQuery) -> bool:
+        """Check an ID without granting the caller read access to its existing library.
+
+        Args:
+            query: The proposed ID.
+
+        Returns:
+            Whether the ID is occupied.
+
+        Raises:
+            LibraryCreationDeniedError: The caller lacks creation permission.
+        """
+        if not await self.access.can_create(query.id):
+            raise LibraryCreationDeniedError
+        return await self.repository.get(LibraryId(query.id)) is not None

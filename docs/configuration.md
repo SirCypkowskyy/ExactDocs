@@ -161,3 +161,30 @@ HyDE's and the agentic cache's answers are keyed with the current key only, so a
 every cached answer is a miss (the LLM is asked again) until the TTL prunes the old rows.
 
 Backups and the secret key are covered in [Backup and restore](deployment.md#backup-and-restore).
+
+### Who may create libraries
+
+By default every authenticated user may create a library and becomes its owner. Operators
+can restrict creation in the configuration file:
+
+```toml
+[auth.library_creation]
+users = ["stable-account-id"]
+groups = ["corp:docs-admins"]
+```
+
+A user matching either list may create libraries. `users` contains exact stable account IDs,
+not usernames (the users API exposes each account's `id`). For an unlinked verified MCP OAuth
+identity, its stable ID is `<provider>:<subject>`. `groups` contains ExactDocs' exact mapped group
+names, including the provider's `group_prefix`. Browser sessions and API tokens use the account's
+current stored groups; verified MCP OAuth requests use their verified token's mapped groups and
+role instead. Disabled accounts cannot create libraries.
+
+The environment equivalents are `EXACTDOCS_AUTH__LIBRARY_CREATION__USERS='["stable-account-id"]'`
+and `EXACTDOCS_AUTH__LIBRARY_CREATION__GROUPS='["corp:docs-admins"]'`. An omitted
+`auth.library_creation` section preserves existing access. Supplying an empty section (or
+`EXACTDOCS_AUTH__LIBRARY_CREATION='{}'`) permits only operators. Operators retain creation
+permission regardless of these lists. Local internal commands, stdio MCP and scheduled jobs
+retain their existing instance access. Read-only repository checks and previews remain available;
+adding a library is checked before Git access, credential storage or import queueing, including
+additions made by sources apply. Changing this configuration requires restarting the server.
