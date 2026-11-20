@@ -49,7 +49,7 @@ function explain(error: unknown): string {
 function Group({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-      <dt className="w-24 shrink-0 text-xs text-muted-foreground/80">{label}</dt>
+      <dt className="w-24 shrink-0 text-xs text-muted-foreground">{label}</dt>
       <dd className="m-0 min-w-0 flex-1">{children}</dd>
     </div>
   );

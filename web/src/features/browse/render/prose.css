@@ -1,21 +1,10 @@
 /*
  * A long document, set for reading: one 56ch measure for text; code and tables may run to the
  * full column, callouts to a little past the text. Plain CSS on the app's tokens (styles.css).
- * Syntax and callout colours are custom properties, so a dark theme is one override block.
+ * Syntax and callout colours are theme tokens (styles.css, light and dark).
  */
 .doc {
   --measure: 56ch;
-  --hl-comment: oklch(0.48 0.02 255);
-  --hl-keyword: oklch(0.44 0.14 255);
-  --hl-string: oklch(0.43 0.1 155);
-  --hl-number: oklch(0.5 0.12 55);
-  --hl-title: oklch(0.44 0.13 305);
-  --hl-type: oklch(0.46 0.12 25);
-  --hl-meta: oklch(0.45 0.02 255);
-  --hl-deletion: oklch(0.45 0.15 27);
-  --tint-note: oklch(0.5 0.1 250);
-  --tint-tip: oklch(0.52 0.11 155);
-  --tint-warning: oklch(0.6 0.13 75);
   --tint-danger: var(--destructive);
   --code-ground: color-mix(in oklab, var(--secondary) 75%, var(--background));
   --scroll-shade: color-mix(in oklab, var(--foreground) 12%, transparent);

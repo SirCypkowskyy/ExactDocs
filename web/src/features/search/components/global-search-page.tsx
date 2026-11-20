@@ -25,7 +25,7 @@ const chip =
 
 const chipTone = (selected: boolean) =>
   selected
-    ? "bg-mark text-primary-foreground"
+    ? "bg-mark text-mark-foreground"
     : "bg-secondary text-secondary-foreground [@media(hover:hover)]:hover:bg-accent";
 
 /** `owner/repo` with the owner softer and the repo firm; the owner gives way first when it is long. */
