@@ -652,6 +652,7 @@ the list is capped.
 | `not_a_file` | true | not a regular file (for example a symlink) |
 | `unreadable` | true | the file could not be read |
 | `bad_file_name` | true | the file name is not valid UTF-8 |
+| `unparsable` | true | the file was read but could not be parsed or cut into chunks; the rest of the version is imported |
 | `front_matter` | false | the article was imported, its front matter is malformed or partly ignored |
 | `truncated` | false | marker with an empty `path`: more files were skipped than are listed |
 

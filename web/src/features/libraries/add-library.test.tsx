@@ -189,6 +189,20 @@ describe("add library model", () => {
     expect(s.notes.map((n) => n.path)).toEqual(["d.md"]);
     expect(s.truncated).toBe(true);
   });
+
+  it("names the group of files that could not be parsed or chunked", () => {
+    const s = summarizeProblems([
+      {
+        path: "articles/storage/a.md",
+        code: "unparsable",
+        reason: "could not be parsed or chunked: IndexError",
+        is_skip: true,
+      },
+    ]);
+    expect(s.skipGroups.map((g) => [g.label, g.known, g.files[0]?.path])).toEqual([
+      ["Couldn't be parsed or split into chunks", true, "articles/storage/a.md"],
+    ]);
+  });
 });
 
 describe("add library flow", () => {

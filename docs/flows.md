@@ -50,7 +50,10 @@ completed (files listed, batches parsed and chunked) are taken from DBOS's store
 the import goes on from the first unfinished one.
 
 Skipped files (binary, too large, undecodable...) do not fail the import: they are recorded as
-job problems with a code, and the version is published without them.
+job problems with a code, and the version is published without them. So is a file the parser or
+the chunker fails on (`unparsable`, naming the file and the error's type, #430); a failure that is
+not about one file (the store, the repository, running out of memory) still fails the import.
+A re-chunk that meets such a file re-imports the version instead, which lists it.
 
 ### Editing a library's settings
 

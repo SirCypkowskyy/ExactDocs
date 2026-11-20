@@ -12950,6 +12950,7 @@
           "not_a_file",
           "unreadable",
           "bad_file_name",
+          "unparsable",
           "front_matter",
           "not_an_image",
           "image_budget",
