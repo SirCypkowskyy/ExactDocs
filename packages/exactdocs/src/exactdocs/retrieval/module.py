@@ -27,6 +27,7 @@ from exactdocs.retrieval.ports.driven import (
     ActiveManifests,
     AgentAnswerCache,
     AgentReads,
+    Answerer,
     ArticleSuggestions,
     ArticleTitles,
     CallRates,
@@ -56,6 +57,7 @@ from exactdocs.retrieval.ports.driven import (
     VersionArticles,
 )
 from exactdocs.retrieval.ports.driving import (
+    AnswerQuestion,
     ArticleOutline,
     CheckProvider,
     CheckRoles,
@@ -67,6 +69,7 @@ from exactdocs.retrieval.ports.driving import (
     FinishEmbedding,
     ForgetLibrary,
     GetAiUsage,
+    GetAnswerAvailability,
     GetChunkSets,
     GetEmbeddingProgress,
     GetLibraryRetrieval,
@@ -96,6 +99,7 @@ from exactdocs.retrieval.use_cases import (
     AgenticPipeline,
     AiProviders,
     AiSpend,
+    AnswerQuestionUseCase,
     ArticleOutlineUseCase,
     Bm25Pipeline,
     CheckProviderUseCase,
@@ -109,6 +113,7 @@ from exactdocs.retrieval.use_cases import (
     FinishEmbeddingUseCase,
     ForgetLibraryUseCase,
     GetAiUsageUseCase,
+    GetAnswerAvailabilityUseCase,
     GetChunkSetsUseCase,
     GetEmbeddingProgressUseCase,
     GetLibraryRetrievalUseCase,
@@ -253,6 +258,10 @@ class RetrievalModule:
     """Spend and budget left per scope (``GET /api/v1/ai/usage``)."""
     prune_hypotheses: PruneHypotheses
     """Deletes HyDE's cached answers past their TTL or of models no longer configured."""
+    answer_question: AnswerQuestion
+    """An agent answers a question from chosen libraries, with its sources (#428)."""
+    get_answer_availability: GetAnswerAvailability
+    """Whether agentic answers can run now, and why not."""
 
     @classmethod
     def build(
@@ -294,6 +303,7 @@ class RetrievalModule:
         embedding_batch_size: int = DEFAULT_EMBEDDING_BATCH,
         query_embedding_timeout: float = QUERY_EMBEDDING_TIMEOUT,
         explorer: Explorer | None = None,
+        answerer: Answerer | None = None,
         version_articles: VersionArticles | None = None,
         agent_bounds: AgentBounds | None = None,
         agent_reads: AgentReads | None = None,
@@ -361,6 +371,7 @@ class RetrievalModule:
             query_embedding_timeout: Seconds ``hybrid`` waits for a query's embedding.
             explorer: The agent of ``agentic`` (``AgenticPipeline``); the mode cannot run
                 without it.
+            answerer: The agent of agentic answers (#428); none can run without it.
             version_articles: Lists and reads a version's articles for the agent.
             agent_bounds: The agent's limits.
             agent_reads: Records each read of the agent (the runs' trace); none by default.
@@ -508,6 +519,23 @@ class RetrievalModule:
                 tracer=tracer,
                 access=access,
                 modes=modes,
+            ),
+            answer_question=AnswerQuestionUseCase(
+                defaults=defaults,
+                versions=searchable,
+                access=access,
+                providers=providers,
+                chunks=chunks,
+                search=search,
+                spend=ai_spend,
+                answerer=answerer,
+                articles=version_articles,
+                bounds=agent_bounds or AgentBounds(),
+                tracer=tracer,
+                reads=agent_reads or UnrecordedAgentReads(),
+            ),
+            get_answer_availability=GetAnswerAvailabilityUseCase(
+                providers=providers, answerer=answerer, bounds=agent_bounds or AgentBounds()
             ),
             index_manifest=IndexManifestUseCase(chunks=chunks, search=search, clock=clock),
             get_chunk_sets=GetChunkSetsUseCase(chunks=chunks),

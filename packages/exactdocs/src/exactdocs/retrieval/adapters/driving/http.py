@@ -1,12 +1,14 @@
 """REST adapter for retrieval."""
 
-from collections.abc import Awaitable, Callable
+import asyncio
+import json
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Path, Query, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 from pydantic.alias_generators import to_camel
 
@@ -36,6 +38,9 @@ from exactdocs.retrieval.dtos import (
     MAX_NAME,
     MAX_PATH,
     AiUsageOut,
+    AnswerAvailabilityOut,
+    AnswerQuery,
+    AnswerResult,
     ArticleOutlineOut,
     ArticleOutlineQuery,
     CheckProviderCommand,
@@ -71,11 +76,13 @@ from exactdocs.retrieval.models import (
     TagMatch,
 )
 from exactdocs.retrieval.ports.driving import (
+    AnswerQuestion,
     ArticleOutline,
     CheckProvider,
     DeleteProvider,
     EstimateEmbedding,
     GetAiUsage,
+    GetAnswerAvailability,
     GetEmbeddingProgress,
     GetLibraryRetrieval,
     GetProvider,
@@ -89,7 +96,7 @@ from exactdocs.retrieval.ports.driving import (
     SearchDocs,
     SetLibraryRetrieval,
 )
-from exactdocs_kernel import NOTICE
+from exactdocs_kernel import NOTICE, DomainError
 
 
 class LibraryRetrievalIn(BaseModel):
@@ -342,6 +349,8 @@ def build_router(
     article_outline: ArticleOutline,
     resolve_library_id: ResolveLibraryId,
     query_docs: QueryDocs,
+    answer_question: AnswerQuestion,
+    get_answer_availability: GetAnswerAvailability,
     caller: Callable[..., Awaitable[str | None]],
 ) -> APIRouter:
     """Expose retrieval: search beside the catalog's ``/libraries`` routes, ``/chunks``, ``/c7``.
@@ -356,6 +365,8 @@ def build_router(
         article_outline: Builds an article's outline.
         resolve_library_id: Finds libraries by name.
         query_docs: Answers ``query-docs``.
+        answer_question: Runs the answering agent (``/answer``).
+        get_answer_availability: Says whether it can run.
         caller: The dependency naming the request's account.
 
     Returns:
@@ -364,6 +375,13 @@ def build_router(
     router = APIRouter(tags=["retrieval"])
     account = Annotated[str | None, Depends(caller)]
     router.include_router(_outline_router(article_outline))
+    router.include_router(
+        build_answer_router(
+            answer_question=answer_question,
+            get_answer_availability=get_answer_availability,
+            caller=caller,
+        )
+    )
 
     # The ref is `?ref=` (it may contain `/`); no ref means the default version.
     @router.get("/libraries/{owner}/{repo}/search")
@@ -608,6 +626,162 @@ def build_router(
         # The notice leads the body, as it leads the MCP result, and repeats in a header.
         return PlainTextResponse(
             f"{NOTICE}\n\n{format_docs(found)}", headers={NOTICE_HEADER: NOTICE}
+        )
+
+    return router
+
+
+type _Event = tuple[str, dict[str, Any]]
+"""A server-sent event: its name and its JSON data."""
+
+
+class _QueuedProgress:
+    """Implements ``ports.driven.AnswerProgress`` by queueing a ``progress`` event per call."""
+
+    def __init__(self, queue: asyncio.Queue[_Event]) -> None:
+        """Queue onto ``queue``.
+
+        Args:
+            queue: Where the events go.
+        """
+        self.queue = queue
+
+    def tool_call(self, made: int, limit: int) -> None:
+        """Queue a progress event.
+
+        Args:
+            made: Tool calls made so far.
+            limit: The most the run may make.
+        """
+        self.queue.put_nowait(("progress", {"tool_calls": made, "max_tool_calls": limit}))
+
+
+def _sse(event: _Event) -> str:
+    """Write one server-sent event.
+
+    Args:
+        event: Its name and data.
+
+    Returns:
+        The event's text, ``event:`` and ``data:`` lines and a blank line.
+    """
+    name, data = event
+    return f"event: {name}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n"
+
+
+async def _answer_events(
+    task: asyncio.Task[AnswerResult], queue: asyncio.Queue[_Event]
+) -> AsyncIterator[str]:
+    """Stream an answer's progress, then the answer (or the error), as server-sent events.
+
+    The run is cancelled when the client goes away.
+
+    Args:
+        task: The running answer.
+        queue: Its progress events.
+
+    Yields:
+        ``progress`` events, then one ``answer`` (the ``AnswerResult``) or ``error`` event.
+    """
+    try:
+        while True:
+            getter = asyncio.ensure_future(queue.get())
+            done, _ = await asyncio.wait({task, getter}, return_when=asyncio.FIRST_COMPLETED)
+            if getter not in done:
+                getter.cancel()
+                break
+            yield _sse(getter.result())
+        while not queue.empty():
+            yield _sse(queue.get_nowait())
+        try:
+            result = task.result()
+        except DomainError as error:
+            yield _sse(("error", {"error": error.code, "detail": str(error)}))
+            return
+        yield _sse(("answer", result.model_dump(mode="json")))
+    finally:
+        task.cancel()
+
+
+def build_answer_router(
+    *,
+    answer_question: AnswerQuestion,
+    get_answer_availability: GetAnswerAvailability,
+    caller: Callable[..., Awaitable[str | None]],
+) -> APIRouter:
+    """Expose agentic answers over chosen libraries (#428): ``/answer``.
+
+    Args:
+        answer_question: Runs the answering agent.
+        get_answer_availability: Says whether it can run.
+        caller: The dependency naming the request's account (its spend and rate limit).
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["retrieval"])
+    account = Annotated[str | None, Depends(caller)]
+
+    @router.get("/answer", name="get_answer_availability")
+    async def availability() -> AnswerAvailabilityOut:
+        """Say whether agentic answers can run now (an `llm` role is configured), and why not.
+
+        Returns:
+            Whether they can, why not, and the tool-call limit.
+        """
+        return await get_answer_availability()
+
+    @router.post("/answer", name="answer_question")
+    async def answer(body: AnswerQuery, asker: account) -> AnswerResult:
+        """Answer a question from the default versions of chosen libraries with an agent.
+
+        The agent reads only libraries you may read (and your API token's scope allows) with AI
+        on, within `[ai.agentic]`'s limits, the budgets and the LLM search rate limit. Every
+        source is checked against those libraries; `fallback_reason` says why there is no answer.
+        422 `mode_unavailable` without an `llm` role; 404 for a chosen library you cannot read.
+
+        Args:
+            body: The question, the libraries and the filters.
+            asker: The account asking.
+
+        Returns:
+            The answer, its sources and what the run used.
+        """
+        return await answer_question(body, caller=asker)
+
+    @router.post(
+        "/answer/stream",
+        name="answer_question_stream",
+        response_class=StreamingResponse,
+        responses={
+            200: {
+                "content": {"text/event-stream": {}},
+                "description": (
+                    "Server-sent events: `progress` (`{tool_calls, max_tool_calls}`) after each "
+                    "tool call, then one `answer` (an `AnswerResult`) or `error` "
+                    "(`{error, detail}`, the error shape of the API)."
+                ),
+            }
+        },
+    )
+    async def answer_stream(body: AnswerQuery, asker: account) -> StreamingResponse:
+        """Answer as `POST /answer` does, streaming the agent's progress (server-sent events).
+
+        Args:
+            body: The question, the libraries and the filters.
+            asker: The account asking.
+
+        Returns:
+            The event stream; closing it cancels the run.
+        """
+        queue: asyncio.Queue[_Event] = asyncio.Queue()
+        task = asyncio.create_task(
+            answer_question(body, caller=asker, progress=_QueuedProgress(queue))
+        )
+        return StreamingResponse(
+            _answer_events(task, queue),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
     return router

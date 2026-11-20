@@ -15,6 +15,7 @@ from pydantic import (
 )
 
 from exactdocs.retrieval.constants import (
+    DEFAULT_ANSWER_SOURCES,
     DEFAULT_GRACE_SECONDS,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_RETRIES,
@@ -24,6 +25,8 @@ from exactdocs.retrieval.constants import (
     EXPLORED_PATH_DESCRIPTION,
     JUSTIFICATION_DESCRIPTION,
     LIBRARY_VERSIONS_DESCRIPTION,
+    MAX_ANSWER_LIBRARIES,
+    MAX_ANSWER_SOURCES,
     MAX_CHOSEN_LIBRARIES,
     MAX_EMBEDDING_DIMENSIONS,
     MAX_KEY,
@@ -436,6 +439,136 @@ class SearchAllResult(_Dto):
     """Libraries with at least one BM25 match, most matches first. Never narrowed."""
     results: list[LibrarySearchResultOut]
     """The results, best first, each naming its library and version."""
+
+
+class AnswerQuery(_Dto):
+    """A question for the answering agent (#428), over the default versions of chosen libraries."""
+
+    question: str = Field(min_length=1, max_length=MAX_QUERY)
+    """What to answer, in your words."""
+    libraries: list[LibraryId] = Field(default_factory=list, max_length=MAX_ANSWER_LIBRARIES)
+    """`/owner/repo` of each library to read; none: every library you may read (the first 20)."""
+    tags: list[Tag] = Field(default_factory=list, max_length=MAX_TAGS)
+    """Only chunks of articles so tagged. Case-insensitive; a comma separates tags."""
+    tags_match: TagMatch = Field(default=TagMatch.ANY)
+    """`any`: at least one of `tags`; `all`: every one."""
+    max_sources: int = Field(default=DEFAULT_ANSWER_SOURCES, ge=1, le=MAX_ANSWER_SOURCES)
+    """The most sources the answer lists."""
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _split_tags(cls, value: object) -> object:
+        """Split comma-separated tags and normalize them.
+
+        Args:
+            value: The tags as sent.
+
+        Returns:
+            The tags normalized, without blanks or repeats; any other value unchanged.
+        """
+        return _normalize_tags(value)
+
+    @property
+    def chosen(self) -> list[str]:
+        """The libraries to read, each once (any letter case).
+
+        Returns:
+            The library IDs; empty for every library.
+        """
+        once: dict[str, str] = {}
+        for library in self.libraries:
+            once.setdefault(library.casefold(), library)
+        return list(once.values())
+
+
+class AnswerSourceOut(_Dto):
+    """A source of an agentic answer: a chunk of a chosen library's default version."""
+
+    library: str
+    """Library ID, `/owner/repo`."""
+    version: str
+    """The version read: the library's default version."""
+    commit_sha: str
+    """The commit that version was imported at."""
+    chunk_id: str
+    """The chunk's ID: `read_chunk` returns it whole."""
+    article_path: str
+    """Path of the chunk's article, e.g. `docs/guide/auth.md`."""
+    heading_path: list[str]
+    """The chunk's heading and those above it, outermost first."""
+    anchor: str
+    """Anchor of the chunk's heading in the article; empty when it has none."""
+    source_url: str | None
+    """Link to the section at the commit; null when the host is unknown."""
+    quote: str | None
+    """A passage of the chunk the agent quoted, verbatim (checked); null when it quoted none or
+    the chunk does not hold it."""
+    reason: str = Field(description=JUSTIFICATION_DESCRIPTION)
+    """Why the agent cites it, in its own words; its schema description is
+    ``JUSTIFICATION_DESCRIPTION``."""
+
+
+class AnswerUsageOut(_Dto):
+    """What an agentic answer used."""
+
+    requests: int
+    """Model requests made."""
+    input_tokens: int
+    """Tokens sent, as the provider reported them."""
+    output_tokens: int
+    """Tokens received, as the provider reported them."""
+    tool_calls: int
+    """Tool calls made: `run_code` and every read inside it."""
+    max_tool_calls: int
+    """The most tool calls the run could make (`[ai.agentic] max_tool_calls`)."""
+    cost_usd: float | None
+    """What the tokens cost at the model's price; null when the model has no known price."""
+
+
+class AnswerLibraryOut(_Dto):
+    """A library an agentic answer read, at its default version."""
+
+    library: str
+    """Library ID, `/owner/repo`."""
+    version: str
+    """The version read."""
+
+
+class AnswerResult(_Dto):
+    """An agentic answer (#428): the answer in Markdown and the sources it stands on."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    notice: str = Field(default=NOTICE)
+    """Untrusted-content notice: the answer and the reasons are model output over untrusted
+    documentation."""
+    answer: str
+    """The answer, in Markdown; model output. Empty when the run stopped (`fallback_reason`)."""
+    sources: list[AnswerSourceOut]
+    """The sources it cites, best first, each checked against a chosen library's version; when
+    the run stopped, the chunks the agent had read."""
+    libraries: list[AnswerLibraryOut]
+    """The libraries the agent could read."""
+    libraries_without_ai: list[str] = Field(default_factory=list)
+    """Chosen libraries left out because AI is off for them: nothing of them is sent."""
+    libraries_omitted: int = 0
+    """Readable libraries left out because there were more than 20 and none was chosen."""
+    fallback_reason: FallbackReason | None = None
+    """Why there is no answer: `agent_limit_reached`, `llm_budget_reached`, `llm_rate_limited`,
+    `agent_loop_detected`, `agent_failed`, or `mode_unavailable` (no library may be sent)."""
+    usage: AnswerUsageOut
+    """What the run used."""
+
+
+class AnswerAvailabilityOut(_Dto):
+    """Whether agentic answers can run on this instance now."""
+
+    available: bool
+    """An `llm` role is configured and its profile exists."""
+    reason: str | None = None
+    """Why not, when not."""
+    max_tool_calls: int
+    """The most tool calls one answer may make."""
 
 
 class ChunkHeadingIn(_Dto):
