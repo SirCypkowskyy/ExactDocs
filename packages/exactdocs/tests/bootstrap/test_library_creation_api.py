@@ -234,3 +234,27 @@ async def test_library_reader_can_inspect_access_without_creation_permission(tmp
         client.headers["authorization"] = f"Bearer {token.token}"
         response = await client.get("/api/v1/libraries/acme/new-library/access")
         assert response.status_code == HTTPStatus.OK, response.text
+
+
+@pytest.mark.parametrize("mode", ["admin", "user", "empty"])
+@pytest.mark.parametrize("selection", [None, [], [LIBRARY], ["/acme/other"]])
+async def test_token_library_selection_intersects_creation_policy(
+    tmp_path: Path, mode: str, selection: list[str] | None
+) -> None:
+    async with instance(tmp_path, mode) as (container, client, admin, bob, remote):
+        account = admin if mode == "admin" else bob
+        grant = await container.identity.create_token(
+            account, CreateTokenCommand(name="scoped", library_ids=selection)
+        )
+        client.headers["authorization"] = f"Bearer {grant.token}"
+        response = await client.post(
+            "/api/v1/libraries", json={"url": URL, "include_paths": ["docs/**"]}
+        )
+        allowed = mode != "empty" and (selection is None or LIBRARY in selection)
+        if allowed:
+            assert response.status_code == HTTPStatus.CREATED, response.text
+            assert remote.asked == 1
+        else:
+            assert response.status_code == HTTPStatus.FORBIDDEN, response.text
+            assert response.json()["error"] == "library_creation_denied"
+            assert remote.asked == 0

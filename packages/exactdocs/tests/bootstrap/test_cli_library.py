@@ -811,3 +811,47 @@ def test_a_commit_ref_is_not_followed_by_its_own_short_sha(
     assert _exit(["add", "https://x.io/a/b", "--ref", sha, "--dry-run"]) == 0
     first = capsys.readouterr().out.splitlines()[0]
     assert first.startswith(f"Dry run of {sha} (commit): ")
+
+
+@pytest.mark.parametrize("library_ids", [None, [], ["/acme/docs", "/acme/api"]])
+async def test_token_creation_preserves_the_optional_library_selection(
+    transport: httpx2.ASGITransport,
+    capsys: pytest.CaptureFixture[str],
+    library_ids: list[str] | None,
+) -> None:
+    async with ApiClient("http://localhost", transport=transport) as api:
+        await api.sign_in("ada", HORSE)
+        await token_create(api, "selected", None, as_json=True, library_ids=library_ids)
+        created = json.loads(capsys.readouterr().out)
+        await api.sign_out()
+    assert created["library_ids"] == library_ids
+
+
+def test_token_create_accepts_repeated_library_options(server: Recorder) -> None:
+    server.routes = {
+        ("POST", "/api/v1/session"): [httpx2.Response(201, json=SESSION)],
+        ("POST", "/api/v1/tokens"): [
+            httpx2.Response(201, json={"id": "id", "name": "ci", "token": "secret"})
+        ],
+        ("DELETE", "/api/v1/session"): [httpx2.Response(204)],
+    }
+    assert (
+        _exit(
+            [
+                "token",
+                "create",
+                "ci",
+                "--library",
+                "/acme/docs",
+                "--library",
+                "/acme/api",
+                "--username",
+                "ada",
+                "--password-stdin",
+                "--json",
+            ],
+            HORSE + "\n",
+        )
+        == 0
+    )
+    assert json.loads(server.requests[1].content)["library_ids"] == ["/acme/docs", "/acme/api"]

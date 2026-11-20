@@ -2408,6 +2408,11 @@ export interface components {
          */
         readonly CreateTokenCommand: {
             /**
+             * Library Ids
+             * @description Selected library IDs; omit or use null for all libraries the user can access.
+             */
+            readonly library_ids?: readonly string[] | null;
+            /**
              * Name
              * @description Label of the new token, to tell it apart in the token list: 1 to 64 characters once trimmed. `maxLength` (256) only caps the raw input; a name longer than 64 characters after trimming, or a blank one, is refused with `invalid_token_name` (422).
              */
@@ -3578,6 +3583,11 @@ export interface components {
          * @description Credentials exchanged for an API token (the CLI's login); ``name`` labels the token.
          */
         readonly LoginForTokenCommand: {
+            /**
+             * Library Ids
+             * @description Selected library IDs; omit or use null for all libraries the user can access.
+             */
+            readonly library_ids?: readonly string[] | null;
             /**
              * Username
              * @description Login name of the account, compared case-insensitively.
@@ -5157,6 +5167,11 @@ export interface components {
          */
         readonly TokenGrant: {
             /**
+             * Library Ids
+             * @description Selected library IDs; omit or use null for all libraries the user can access.
+             */
+            readonly library_ids?: readonly string[] | null;
+            /**
              * Id
              * @description Stable identifier of the token, used to revoke it.
              */
@@ -5209,6 +5224,11 @@ export interface components {
          * @description A token as listed: everything but the secret.
          */
         readonly TokenSummary: {
+            /**
+             * Library Ids
+             * @description Selected library IDs; omit or use null for all libraries the user can access.
+             */
+            readonly library_ids?: readonly string[] | null;
             /**
              * Id
              * @description Stable identifier of the token, used to revoke it.

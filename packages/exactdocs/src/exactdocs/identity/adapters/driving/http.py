@@ -742,6 +742,7 @@ def build_grants_router(
     grant_role: GrantLibraryRole,
     revoke_role: RevokeLibraryRole,
     caller: CurrentCaller,
+    require_library: Callable[[str], Awaitable[None]],
 ) -> APIRouter:
     """Expose ``/libraries/{owner}/{repo}/grants``: who holds which role on a library.
 
@@ -754,6 +755,7 @@ def build_grants_router(
         grant_role: The driving port that gives a role.
         revoke_role: The driving port that takes a role away.
         caller: The dependency that names the calling account.
+        require_library: Verifies live catalog presence and credential read access.
 
     Returns:
         The router.
@@ -773,6 +775,7 @@ def build_grants_router(
         Returns:
             The grants.
         """
+        await require_library(f"/{owner}/{repo}")
         return await list_grants(
             ListLibraryGrantsQuery(caller_id=who.id, library=f"/{owner}/{repo}")
         )
@@ -796,6 +799,7 @@ def build_grants_router(
         Returns:
             The library's grants now.
         """
+        await require_library(f"/{owner}/{repo}")
         return await grant_role(
             GrantLibraryRoleCommand(
                 caller_id=who.id, library=f"/{owner}/{repo}", **request.model_dump()
@@ -820,6 +824,7 @@ def build_grants_router(
         Returns:
             The library's grants now.
         """
+        await require_library(f"/{owner}/{repo}")
         return await revoke_role(
             RevokeLibraryRoleCommand(
                 caller_id=who.id, library=f"/{owner}/{repo}", kind=kind, subject=subject

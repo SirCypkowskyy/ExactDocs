@@ -45,7 +45,11 @@ from exactdocs.identity.dtos import (
     CreateUserCommand,
     GrantLibraryRoleCommand,
     LibraryRolesQuery,
+    RevokeLibraryRoleCommand,
 )
+from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository
+from exactdocs.ingestion.constants import JobKind
+from exactdocs.ingestion.models import Job, JobId
 
 IMPORTED = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 LIBRARIES = [
@@ -221,7 +225,7 @@ async def test_every_action_asks_for_its_role(instance: Instance, action: Action
             if role is not None and not needs_more(role, action.needs) and action.reaches_git:
                 return  # the refusal side is done; the allowed side would call the network
             response = await client.request(action.method, action.path, **action.options)
-        refused = response.status_code == 403
+        refused = response.status_code == (404 if role is None else 403)
         assert refused is needs_more(role, action.needs), (
             action.name,
             role,
@@ -229,7 +233,7 @@ async def test_every_action_asks_for_its_role(instance: Instance, action: Action
             response.text,
         )
         if refused:
-            assert response.json()["error"] == "forbidden"
+            assert response.json()["error"] == ("not_found" if role is None else "forbidden")
 
 
 async def test_a_viewer_reads_and_searches_but_changing_its_paths_is_refused(
@@ -252,7 +256,7 @@ async def test_a_role_without_a_grant_leaves_the_library_unreadable_and_unlisted
 ) -> None:
     await instance.give("bob", "viewer")
     async with instance.signed_in("carol") as carol, instance.signed_in("bob") as bob:
-        assert (await carol.get(PATH)).status_code == 403
+        assert (await carol.get(PATH)).status_code == 404
         assert (await carol.get("/api/v1/libraries")).json()["libraries"] == []
         listed = (await bob.get("/api/v1/libraries")).json()["libraries"]
         assert [library["id"] for library in listed] == [LIBRARY]
@@ -290,7 +294,7 @@ async def test_a_grant_to_a_group_gives_its_members_the_role(instance: Instance)
 
 async def test_grants_are_given_listed_and_revoked_over_rest(instance: Instance) -> None:
     async with instance.signed_in("ada") as ada, instance.signed_in("bob") as bob:
-        assert (await bob.get(PATH)).status_code == 403
+        assert (await bob.get(PATH)).status_code == 404
 
         await ada.put(f"{PATH}/grants", json={"kind": "user", "subject": "bob", "role": "viewer"})
         assert (await bob.get(PATH)).status_code == 200
@@ -299,7 +303,7 @@ async def test_grants_are_given_listed_and_revoked_over_rest(instance: Instance)
 
         revoked = await ada.delete(f"{PATH}/grants/user/bob")
         assert revoked.json() == {"grants": []}
-        assert (await bob.get(PATH)).status_code == 403
+        assert (await bob.get(PATH)).status_code == 404
         missing = await ada.delete(f"{PATH}/grants/user/bob")
         assert (missing.status_code, missing.json()["error"]) == (404, "unknown_grant")
         unknown = await ada.put(
@@ -397,7 +401,7 @@ async def test_a_viewer_reads_over_mcp_and_a_caller_without_a_role_is_refused(
 
     async with mcp_client(instance.app, await instance.token("carol")) as nobody:
         for tool, arguments in reads:
-            with pytest.raises(ToolError, match="forbidden"):
+            with pytest.raises(ToolError, match="not_found"):
                 await nobody.call_tool(tool, arguments)
         listed = await nobody.call_tool("list_libraries", {})
         assert LIBRARY not in str(listed.content)
@@ -479,3 +483,100 @@ async def test_the_ai_routes_are_for_the_operator_whatever_the_library_roles(
     async with instance.signed_in("ada") as operator:
         allowed = await operator.request(method, path, **options)
         assert allowed.status_code not in {401, 403}, allowed.text
+
+
+async def test_two_tokens_of_one_operator_have_distinct_live_resource_scopes(
+    instance: Instance,
+) -> None:
+    for library in (LIBRARY, "/acme/ledger"):
+        await _publish_plan(instance.container, library)
+    identity = instance.container.identity
+    grants = [
+        await identity.create_token(
+            instance.accounts["ada"], CreateTokenCommand(name="scoped", library_ids=selection)
+        )
+        for selection in (None, {"/acme/ledger"}, set())
+    ]
+    wanted = "exactdocs://acme/payments/plan.md?ref=v1.3.0"
+    for grant, visible in zip(grants, (True, False, False), strict=True):
+        async with mcp_client(instance.app, grant.token) as client:
+            assert (wanted in {str(r.uri) for r in await client.list_resources()}) is visible
+            listing = await client.call_tool("list_libraries", {})
+            assert (LIBRARY in str(listing.content)) is visible
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=instance.app),
+            base_url="http://localhost",
+            headers={"authorization": f"Bearer {grant.token}"},
+        ) as client:
+            response = await client.get("/api/v1/libraries")
+            assert (LIBRARY in response.text) is visible
+
+
+async def test_warm_resources_immediately_lose_a_revoked_library_role(instance: Instance) -> None:
+    await _publish_plan(instance.container, LIBRARY)
+    await instance.give("bob", "viewer")
+    secret = await instance.token("bob")
+    wanted = "exactdocs://acme/payments/plan.md?ref=v1.3.0"
+    async with mcp_client(instance.app, secret) as client:
+        assert wanted in {str(r.uri) for r in await client.list_resources()}
+        await instance.container.identity.revoke_library_role(
+            RevokeLibraryRoleCommand(
+                caller_id=instance.accounts["ada"].id, library=LIBRARY, kind="user", subject="bob"
+            )
+        )
+        assert wanted not in {str(r.uri) for r in await client.list_resources()}
+
+
+@pytest.mark.parametrize(
+    ("method", "suffix", "options"),
+    [
+        ("GET", "", {}),
+        ("PATCH", "", {"json": {"title": "hidden"}}),
+        ("GET", "/grants", {}),
+        ("GET", "/article", {"params": {"path": "plan.md"}}),
+        ("GET", "/assets/logo.png", {}),
+    ],
+)
+async def test_scoped_hidden_and_missing_library_errors_have_identical_details(
+    instance: Instance, method: str, suffix: str, options: dict[str, Any]
+) -> None:
+    grant = await instance.container.identity.create_token(
+        instance.accounts["ada"], CreateTokenCommand(name="no libraries", library_ids=set())
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=instance.app),
+        base_url="http://localhost",
+        headers={"authorization": f"Bearer {grant.token}"},
+    ) as client:
+        hidden = await client.request(method, PATH + suffix, **options)
+        missing_path = "/api/v1/libraries/acme/absent"
+        missing = await client.request(method, missing_path + suffix, **options)
+        assert hidden.status_code == missing.status_code == 404
+        assert hidden.json()["error"] == missing.json()["error"] == "not_found"
+        assert hidden.text.replace(LIBRARY, "/acme/absent") == missing.text
+
+
+async def test_hidden_opaque_job_errors_match_missing_jobs(instance: Instance) -> None:
+    jobs = SqliteJobRepository(engine=instance.container.engine)
+    await jobs.add(
+        Job.queued(
+            job_id=JobId("hidden"),
+            kind=JobKind("import"),
+            library=LIBRARY,
+            version=None,
+            now=IMPORTED,
+        )
+    )
+    grant = await instance.container.identity.create_token(
+        instance.accounts["ada"], CreateTokenCommand(name="empty", library_ids=set())
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=instance.app),
+        base_url="http://localhost",
+        headers={"authorization": f"Bearer {grant.token}"},
+    ) as client:
+        hidden = await client.get("/api/v1/jobs/hidden")
+        missing = await client.get("/api/v1/jobs/missing")
+        assert hidden.status_code == missing.status_code == 404
+        assert hidden.text.replace("hidden", "missing") == missing.text
+        assert LIBRARY not in hidden.text

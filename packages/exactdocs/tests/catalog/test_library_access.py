@@ -36,7 +36,7 @@ from exactdocs.catalog.dtos import (
     SetLibrarySettingsCommand,
     UpdateLibraryCommand,
 )
-from exactdocs.catalog.errors import LibraryAccessDeniedError
+from exactdocs.catalog.errors import LibraryAccessDeniedError, LibraryNotFoundError
 from exactdocs.catalog.models import HostKind, Library, LibraryId, RefKind, Version, VersionRef
 from exactdocs.catalog.module import CatalogModule
 from library_access import ROLES, FakeAccess
@@ -131,8 +131,12 @@ async def test_an_action_is_refused_below_the_role_it_needs(name: str, role: str
         outcome = error
 
     allowed = role is not None and ROLES.index(role) >= ROLES.index(needed)
-    assert isinstance(outcome, LibraryAccessDeniedError) is not allowed, (name, role, outcome)
-    assert access.asked[0] == (LIBRARY, needed)
+    assert isinstance(outcome, (LibraryAccessDeniedError, LibraryNotFoundError)) is not allowed, (
+        name,
+        role,
+        outcome,
+    )
+    assert access.asked[0] == (LIBRARY, "viewer")
 
 
 @pytest.mark.parametrize("role", ROLES_AND_NONE, ids=lambda r: r or "no role")

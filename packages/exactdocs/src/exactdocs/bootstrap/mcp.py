@@ -12,7 +12,11 @@ from mcp.shared.exceptions import MCPError
 from mcp.types import INVALID_PARAMS, ListResourcesResult, PaginatedRequestParams
 
 from exactdocs import __version__
-from exactdocs.bootstrap.caller import current_account_id, current_external_identity
+from exactdocs.bootstrap.caller import (
+    current_account_id,
+    current_api_identity,
+    current_external_identity,
+)
 from exactdocs.bootstrap.constants import RESOURCE_NOT_FOUND, SKILL_PATH
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.mcp_oauth import build_mcp_auth
@@ -263,6 +267,16 @@ def _resource_caller() -> str | None:
     account = current_account_id()
     if account is None:
         return None
+    api_identity = current_api_identity()
+    if api_identity is not None:
+        return json.dumps(
+            [
+                "api",
+                account,
+                api_identity.token_id,
+                None if api_identity.library_ids is None else sorted(api_identity.library_ids),
+            ]
+        )
     identity = current_external_identity()
     if identity is None:
         return json.dumps(["account", account])

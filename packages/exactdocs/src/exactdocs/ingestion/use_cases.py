@@ -306,9 +306,12 @@ async def _require(access: AccessPolicy, library: str, needed: Access) -> None:
         needed: The role the action needs.
 
     Raises:
+        UnknownLibraryError: The library is hidden from this caller.
         LibraryAccessDeniedError: The caller's role on the library is lower.
     """
-    if not await access.allows(library, needed):
+    if not await access.allows(library, Access.READ):
+        raise UnknownLibraryError(library)
+    if needed is not Access.READ and not await access.allows(library, needed):
         raise LibraryAccessDeniedError(library, needed.value)
 
 
@@ -386,9 +389,8 @@ class GetJobUseCase:
             JobNotFoundError: No job has that ID.
         """
         job = await self.jobs.get(JobId(query.job_id))
-        if job is None:
+        if job is None or not await self.access.allows(job.library, Access.READ):
             raise JobNotFoundError(query.job_id)
-        await _require(self.access, job.library, Access.READ)
         return JobSummary.from_model(job)
 
 

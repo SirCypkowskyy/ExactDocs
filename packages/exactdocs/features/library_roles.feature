@@ -19,3 +19,9 @@ Feature: Library roles
     Given "bob" is in the group "corp:docs" that is a contributor of "/fixture/docs-repo"
     And "bob" is a viewer of "/fixture/docs-repo"
     Then "bob" may tag an article of it but not change its paths
+
+  Scenario: A token can select fewer libraries than its user
+    Given "bob" is a viewer of "/fixture/docs-repo"
+    And "bob" has an agent token limited to "/other/docs"
+    Then "bob" cannot discover "/fixture/docs-repo"
+    And "bob" sees the same query error for a hidden and a missing library

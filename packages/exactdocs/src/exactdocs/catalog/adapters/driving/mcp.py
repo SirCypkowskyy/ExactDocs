@@ -248,6 +248,8 @@ class _Snapshot:
 
     expires: float
     """When it goes stale (``time.monotonic``)."""
+    libraries: tuple[str, ...]
+    """The live visible default libraries when this snapshot was built."""
     resources: list[Resource]
     """The listed articles, sorted by URI."""
     truncated: bool
@@ -304,10 +306,14 @@ class ArticleResources(Provider):
         who = self._caller()
         now = time.monotonic()
         snapshot = self._snapshots.get(who)
-        if snapshot is None or now >= snapshot.expires:
-            resources, truncated = await self._build()
+        libraries, libraries_truncated = await self._visible_libraries()
+        if snapshot is None or now >= snapshot.expires or snapshot.libraries != tuple(libraries):
+            resources, truncated = await self._build(libraries, truncated=libraries_truncated)
             snapshot = _Snapshot(
-                expires=now + RESOURCE_LIST_TTL, resources=resources, truncated=truncated
+                expires=now + RESOURCE_LIST_TTL,
+                libraries=tuple(libraries),
+                resources=resources,
+                truncated=truncated,
             )
             self._snapshots.pop(who, None)
             if len(self._snapshots) >= MAX_RESOURCE_SNAPSHOTS:
@@ -318,14 +324,11 @@ class ArticleResources(Provider):
             self._snapshots[who] = snapshot
         return snapshot.resources
 
-    async def _build(self) -> tuple[list[Resource], bool]:
-        """Share ``MAX_LISTED_RESOURCES`` fairly among the default versions of the libraries.
-
-        Each round gives every library that has more articles an equal share of what is left; a
-        library whose default version has no active manifest lists nothing.
+    async def _visible_libraries(self) -> tuple[list[str], bool]:
+        """Recheck live library visibility before serving cached resource metadata.
 
         Returns:
-            The listed articles, sorted by URI, and whether the cap cut them.
+            The visible default libraries and whether their listing was capped.
         """
         libraries: list[str] = []
         cursor = None
@@ -335,7 +338,21 @@ class ArticleResources(Provider):
             cursor = page.next_cursor
             if cursor is None or len(libraries) >= MAX_LISTED_RESOURCES:
                 break
-        truncated = cursor is not None or len(libraries) > MAX_LISTED_RESOURCES
+        return libraries, cursor is not None or len(libraries) > MAX_LISTED_RESOURCES
+
+    async def _build(self, libraries: list[str], *, truncated: bool) -> tuple[list[Resource], bool]:
+        """Share ``MAX_LISTED_RESOURCES`` fairly among the default versions of the libraries.
+
+        Each round gives every library that has more articles an equal share of what is left; a
+        library whose default version has no active manifest lists nothing.
+
+        Args:
+            libraries: The currently visible default libraries.
+            truncated: Whether the library listing was capped.
+
+        Returns:
+            The listed articles, sorted by URI, and whether the cap cut them.
+        """
         cursors: dict[str, str | None] = dict.fromkeys(libraries[:MAX_LISTED_RESOURCES])
         active = list(cursors)
         found: list[Resource] = []

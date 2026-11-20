@@ -1,4 +1,4 @@
-from collections.abc import AsyncGenerator, Iterable
+from collections.abc import AsyncGenerator, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Annotated, Any
@@ -12,7 +12,7 @@ from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from exactdocs import __version__
-from exactdocs.bootstrap.caller import bind_caller
+from exactdocs.bootstrap.caller import bind_caller, reset_caller
 from exactdocs.bootstrap.constants import (
     _UNSAFE_METHODS,
     MCP_PATH,
@@ -25,10 +25,11 @@ from exactdocs.bootstrap.probes import ProbeAwareHostCheck, build_probes
 from exactdocs.bootstrap.rest import SetupGuard, add_error_handlers, error_responses, v1_openapi
 from exactdocs.bootstrap.telemetry import build_metrics_router, is_untraced, start_telemetry
 from exactdocs.catalog.adapters.driving import http as catalog_http
+from exactdocs.catalog.dtos import GetLibraryQuery
 from exactdocs.identity.adapters.driving import http as identity_http
 from exactdocs.identity.adapters.driving.mcp import AccessAssertionAsBearer
 from exactdocs.identity.constants import SESSION_COOKIE
-from exactdocs.identity.dtos import AccountSummary
+from exactdocs.identity.dtos import AccountSummary, ApiTokenIdentity
 from exactdocs.identity.models import Role
 from exactdocs.ingestion.adapters.driving import http as ingestion_http
 from exactdocs.retrieval.adapters.driving import http as retrieval_http
@@ -88,13 +89,32 @@ def _protected_router(
         The router; domain routers are added to it.
     """
 
-    async def bind_account(account: Annotated[AccountSummary, Depends(current_caller)]) -> None:
+    async def bind_account(
+        account: Annotated[AccountSummary, Depends(current_caller)],
+    ) -> AsyncIterator[None]:
         """Tell the library roles whose request this is.
 
         Args:
             account: The caller (FastAPI runs ``current_caller`` once per request).
+
+        Yields:
+            Control to the protected request.
         """
-        bind_caller(account.id)
+        binding = bind_caller(
+            account.id, api_identity=account if isinstance(account, ApiTokenIdentity) else None
+        )
+        try:
+            yield
+        finally:
+            reset_caller(binding)
+
+    async def require_library(library: str) -> None:
+        """Check a sharing request's live read access before revealing its grants.
+
+        Args:
+            library: The requested library ID.
+        """
+        await container.catalog.get_library(GetLibraryQuery(id=library))
 
     router = APIRouter(dependencies=[Depends(current_caller), Depends(bind_account)])
     router.include_router(
@@ -103,6 +123,7 @@ def _protected_router(
             grant_role=container.identity.grant_library_role,
             revoke_role=container.identity.revoke_library_role,
             caller=current_caller,
+            require_library=require_library,
         )
     )
     return router

@@ -176,14 +176,14 @@ def step_refused_reading(context: Context, username: str) -> None:
         (f"{base}/articles", {}),
     ]:
         answer = send_as(context, "GET", path, session=person["session"], params=params)
-        assert (answer.status_code, answer.json()["error"]) == (403, "forbidden"), answer.text
+        assert (answer.status_code, answer.json()["error"]) == (404, "not_found"), answer.text
     for tool, arguments in [
         ("search_docs", {"library": "/fixture/docs-repo", "query": "retry_policy"}),
         ("list_articles", {"library": "/fixture/docs-repo"}),
     ]:
         refused = _mcp(context, username, tool, arguments)
         assert refused["isError"], refused
-        assert "forbidden" in json.dumps(refused), refused
+        assert "not_found" in json.dumps(refused), refused
 
 
 @then("changing its paths is refused")
@@ -222,3 +222,43 @@ def step_contributor(context: Context, username: str) -> None:
         context, "PUT", f"{base}/settings", session=person["session"], json={"include_paths": []}
     )
     assert (changed.status_code, changed.json()["error"]) == (403, "forbidden"), changed.text
+
+
+@given('"{username}" has an agent token limited to "{library}"')
+def step_narrow_agent(context: Context, username: str, library: str) -> None:
+    person = get_person(context, username)
+    response = send_as(
+        context,
+        "POST",
+        "/api/v1/tokens",
+        session=person["session"],
+        json={"name": "limited agent", "library_ids": [library]},
+    )
+    assert response.status_code == HTTPStatus.CREATED, response.text
+    person["token"] = response.json()["token"]
+
+
+@then('"{username}" cannot discover "{library}"')
+def step_cannot_discover(context: Context, username: str, library: str) -> None:
+    token = get_person(context, username)["token"]
+    response = send_as(context, "GET", "/api/v1/libraries", token=token)
+    assert response.status_code == HTTPStatus.OK, response.text
+    assert library not in response.text
+    listing = _mcp(context, username, "list_libraries", {})
+    assert library not in str(listing)
+    resolved = _mcp(
+        context, username, "resolve-library-id", {"libraryName": "docs-repo", "query": "retry"}
+    )
+    assert library not in str(resolved)
+
+
+@then('"{username}" sees the same query error for a hidden and a missing library')
+def step_hidden_query(context: Context, username: str) -> None:
+    hidden = "/fixture/docs-repo"
+    missing = "/missing/docs-repo"
+    answers = [
+        _mcp(context, username, "query-docs", {"libraryId": library, "query": "retry"})
+        for library in (hidden, missing)
+    ]
+    assert all(answer.get("isError") and "not_found" in str(answer) for answer in answers), answers
+    assert str(answers[0]).replace(hidden, missing) == str(answers[1]), answers

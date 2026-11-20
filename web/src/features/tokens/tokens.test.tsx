@@ -13,6 +13,7 @@ const row = (n: number, extra = {}) => ({
   created_at: "2026-11-01T10:00:00Z",
   expires_at: null,
   last_used_at: null,
+  library_ids: null,
   ...extra,
 });
 const json = (body: unknown, status = 200) => Response.json(body, { status });
@@ -79,6 +80,21 @@ describe("tokens", () => {
       expect(item).toHaveTextContent(/never used/i);
     }
     expect(within(list).getByText(/^Expired/)).toBeInTheDocument();
+  });
+
+  it("creates a selected-library token and displays its scope", async () => {
+    const request = stubApi([row(1, { library_ids: [] }), row(2, { library_ids: ["/acme/api"] })]);
+    renderSection();
+    expect(await screen.findByText("No libraries")).toBeInTheDocument();
+    expect(screen.getByText("/acme/api")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "New token" }));
+    await userEvent.type(screen.getByLabelText("Name"), "limited");
+    await userEvent.selectOptions(screen.getByLabelText("Library access"), "selected");
+    await userEvent.type(screen.getByLabelText("Library IDs"), "/acme/docs, /acme/api");
+    await userEvent.click(screen.getByRole("button", { name: "Create token" }));
+    await screen.findByText(SECRET);
+    const post = request.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(JSON.parse(String(post?.[1]?.body)).library_ids).toEqual(["/acme/docs", "/acme/api"]);
   });
 
   it("shows the secret once, copies it, and drops it from every store", async () => {

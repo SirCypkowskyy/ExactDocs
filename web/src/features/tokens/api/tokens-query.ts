@@ -16,9 +16,10 @@ export const tokensQueryOptions = () =>
  * Deliberately not a mutation or a query: the response holds the one-time secret, so it must
  * live only in the caller's state and never in a TanStack cache.
  */
-export function createToken(name: string, expiresAt: string | undefined) {
+export function createToken(name: string, expiresAt: string | undefined, libraryIds?: string[]) {
   return sendJson<TokenGrant>("POST", "/v1/tokens", {
     name,
+    ...(libraryIds !== undefined && { library_ids: libraryIds }),
     ...(expiresAt && { expires_at: expiresAt }),
   });
 }

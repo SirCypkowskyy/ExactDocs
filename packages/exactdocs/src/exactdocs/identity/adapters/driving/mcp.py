@@ -52,7 +52,7 @@ class ApiTokenVerifier(TokenVerifier):
             token="",  # the secret is not kept in the request-scoped auth object
             client_id=account.id,
             scopes=[],
-            claims={"username": account.username, "role": account.role},
+            claims={"username": account.username, "role": account.role, "api_identity": account},
         )
 
 
