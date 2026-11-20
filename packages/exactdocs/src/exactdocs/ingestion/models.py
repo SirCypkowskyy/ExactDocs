@@ -799,6 +799,8 @@ class ProblemCode(StrEnum):
     NOT_A_FILE = "not_a_file"
     UNREADABLE = "unreadable"
     BAD_FILE_NAME = "bad_file_name"
+    UNPARSABLE = "unparsable"
+    """The file was read but could not be parsed or cut into chunks; the rest was imported."""
     FRONT_MATTER = "front_matter"
     """The article was imported, but its front matter is malformed or partly ignored."""
     NOT_AN_IMAGE = "not_an_image"

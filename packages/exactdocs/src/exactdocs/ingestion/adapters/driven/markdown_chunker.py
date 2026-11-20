@@ -401,9 +401,8 @@ def _sections(tokens: list[Token], line_count: int, skip: int) -> list[_Section]
         elif counted and token.type == "inline" and _opens_top_paragraph(tokens[i - 1]):
             depth = max(0, depth + _html_depth(_line_start_html(token)))
         if token.type == "fence" and token.map and token.map[0] >= skip:
-            match = _LANGUAGE.search(token.info.split(maxsplit=1)[0]) if token.info else None
-            if match:
-                sections[-1].fences.append((token.map[0], match[0]))
+            if language := _fence_language(token.info):
+                sections[-1].fences.append((token.map[0], language))
         elif token.type == "heading_open" and token.map and token.map[0] >= skip:
             text = _plain(tokens[i + 1])
             anchor = _anchor(text, anchors)  # every heading takes a slug, as on GitHub
@@ -423,6 +422,23 @@ def _sections(tokens: list[Token], line_count: int, skip: int) -> list[_Section]
                 )
             )
     return sections
+
+
+def _fence_language(info: str) -> str | None:
+    """The language a fence's info string names: the bare name in its first word.
+
+    An info string of only blanks (```` ``` ```` then spaces or tabs) names none, like a missing
+    one (#430).
+
+    Args:
+        info: The fence's info string, as markdown-it gives it.
+
+    Returns:
+        The language, or None.
+    """
+    first = next(iter(info.split(maxsplit=1)), "")
+    match = _LANGUAGE.search(first)
+    return match[0] if match else None
 
 
 def _opens_top_paragraph(token: Token) -> bool:
