@@ -33,6 +33,9 @@ export function AppShell({ children, search }: { children: ReactNode; search?: R
           >
             Libraries
           </Link>
+          <Link to="/playground" className={navLink}>
+            Playground
+          </Link>
           {/* AI providers and accounts are for operators (admins); the API refuses anyone else. */}
           {session?.account?.role === "admin" && (
             <>
