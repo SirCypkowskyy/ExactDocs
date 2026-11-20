@@ -5361,11 +5361,12 @@ class PlanEmbeddingUseCase:
                     dimensions = await (await self.runs.model(configured)).dimensions()
                 spec = configured.target.spec(dimensions)
                 space = await self.runs.store().create_space(spec, self.runs.clock.now())
-        coverage = await self.runs.store().coverage(space.id, version.manifest_id)
+        # Each chunk once, as the batches embed it: not the manifest's rows, one per path (#431).
+        missing = await self.runs.store().count_missing(space.id, version.manifest_id)
         return EmbeddingPlanOut(
             space_id=space.id,
             manifest_id=version.manifest_id,
-            missing=coverage.chunks - coverage.embedded,
+            missing=missing,
             created=created,
             skipped=None,
         )
@@ -5385,13 +5386,16 @@ def _skipped(reason: EmbeddingSkip) -> EmbeddingPlanOut:
     )
 
 
-def _done() -> EmbeddedBatchOut:
+def _done(left: int | None = None) -> EmbeddedBatchOut:
     """Say a batch embedded nothing and the job is done.
+
+    Args:
+        left: The chunks still without a vector; ``None`` when the job stops without counting.
 
     Returns:
         The batch.
     """
-    return EmbeddedBatchOut(embedded=0, input_tokens=0, finished=True)
+    return EmbeddedBatchOut(embedded=0, input_tokens=0, left=left, finished=True)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -5425,8 +5429,8 @@ class EmbedBatchUseCase:
         vectors = runs.store()
         keys = await vectors.missing(space.id, command.manifest_id, runs.batch_size)
         sources = await runs.chunks.embedding_sources(command.manifest_id, keys)
-        if not sources:
-            return _done()
+        if not sources:  # nothing left, or found embedded by a job sharing chunks with this one
+            return _done(await vectors.count_missing(space.id, command.manifest_id))
         ordered = sorted(sources)
         titles: Mapping[str, str] = {}
         if runs.titles is not None:  # the plan's manifest: the job's library runs one job at a time
@@ -5453,11 +5457,14 @@ class EmbedBatchUseCase:
             stored = await vectors.upsert(
                 space.id, dict(zip(ordered, embedded.vectors, strict=True))
             )
+            # Counted again rather than worked out: other jobs embed chunks shared with this one.
+            left = await vectors.count_missing(space.id, command.manifest_id)
         except RetiredEmbeddingSpaceError:
             return _done()
         return EmbeddedBatchOut(
             embedded=stored,
             input_tokens=embedded.input_tokens,
+            left=left,
             finished=len(keys) < runs.batch_size or stored == 0,
         )
 

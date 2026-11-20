@@ -613,7 +613,10 @@ See [AI retrieval decisions](decisions/ai-retrieval.md) for the kinds and what e
   embedding was cancelled alone; an import of the version, or a change of the embedding model,
   queues it again, and it resumes from the chunks still missing vectors. CLI:
   `exactdocs jobs cancel <id>`.
-  An `embed` job embeds one version with the instance's embedding model; a failed one has
+  An `embed` job embeds one version with the instance's embedding model. Its `total` counts the
+  version's chunks without a vector, each once (identical files share their chunks, so they are
+  embedded once); chunks another job embedded while it ran (files shared with another library)
+  count in `done` and in `reused`, so a succeeded `embed` job ends with `done` = `total`. A failed one has
   `error_code` `embedding_failed` (its error names the model and the HTTP status, never a key) and
   is queued again at the next start, or `ai_budget_reached` when a budget its embedding counts to
   (embedding, instance or library) was used up before its next batch: it is queued again just
@@ -668,6 +671,7 @@ the list is capped.
 | `not_a_file` | true | not a regular file (for example a symlink) |
 | `unreadable` | true | the file could not be read |
 | `bad_file_name` | true | the file name is not valid UTF-8 |
+| `unparsable` | true | the file was read but could not be parsed or cut into chunks; the rest of the version is imported |
 | `front_matter` | false | the article was imported, its front matter is malformed or partly ignored |
 | `truncated` | false | marker with an empty `path`: more files were skipped than are listed |
 

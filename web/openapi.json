@@ -10926,7 +10926,7 @@
           "reused": {
             "type": "integer",
             "title": "Reused",
-            "description": "Articles whose chunk set an earlier import had stored (files, not blobs)."
+            "description": "Articles whose chunk set an earlier import had stored (files, not blobs). For `embed`, the\nchunks another job embedded while this one ran (files shared with another library); they\ncount in `done` too, so a succeeded `embed` job has `done` = `total`."
           },
           "parsed": {
             "type": "integer",
@@ -13128,6 +13128,7 @@
           "not_a_file",
           "unreadable",
           "bad_file_name",
+          "unparsable",
           "front_matter",
           "not_an_image",
           "image_budget",

@@ -2823,7 +2823,9 @@ export interface components {
             readonly chunked: number;
             /**
              * Reused
-             * @description Articles whose chunk set an earlier import had stored (files, not blobs).
+             * @description Articles whose chunk set an earlier import had stored (files, not blobs). For `embed`, the
+             *     chunks another job embedded while this one ran (files shared with another library); they
+             *     count in `done` too, so a succeeded `embed` job has `done` = `total`.
              */
             readonly reused: number;
             /**
@@ -4019,7 +4021,7 @@ export interface components {
          * @description Why a file shows up in a job's problems; stable, clients may branch on it.
          * @enum {string}
          */
-        readonly ProblemCode: "binary" | "too_large" | "undecodable" | "not_a_file" | "unreadable" | "bad_file_name" | "front_matter" | "not_an_image" | "image_budget" | "missing_image" | "truncated" | "context7" | "instruction_files";
+        readonly ProblemCode: "binary" | "too_large" | "undecodable" | "not_a_file" | "unreadable" | "bad_file_name" | "unparsable" | "front_matter" | "not_an_image" | "image_budget" | "missing_image" | "truncated" | "context7" | "instruction_files";
         /**
          * ProfileOrigin
          * @description Who manages a profile.

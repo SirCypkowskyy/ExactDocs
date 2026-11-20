@@ -32,6 +32,7 @@ from exactdocs.ingestion.models import (
     Job,
     JobId,
     JobState,
+    ParsedArticle,
     PathSelection,
     ProblemCode,
     ProposedId,
@@ -239,9 +240,27 @@ class Progress:
         self.parses.append((parsed, taken))
 
 
+class FailingChunker:
+    """The real chunker, raising on the articles at ``failing`` (one bad file, as in #430)."""
+
+    def __init__(self, failing: set[str], inner: MarkdownChunker | None = None) -> None:
+        self.failing = failing
+        self.inner = inner or MarkdownChunker()
+        self.config_hash = self.inner.config_hash
+
+    def configured(self, config: ChunkingConfig) -> FailingChunker:
+        return FailingChunker(self.failing, self.inner.configured(config))
+
+    def chunk(self, article: ParsedArticle) -> Sequence[ArticleChunk]:
+        if article.path in self.failing:
+            raise IndexError(article.path)
+        return self.inner.chunk(article)
+
+
 @dataclass
 class World:
     sources: InMemoryLibrarySources
+    chunker: MarkdownChunker | FailingChunker = field(default_factory=MarkdownChunker)
     log: list[str] = field(default_factory=list)
     copier: Copier = field(init=False)
     tags: Tags = field(init=False)
@@ -258,7 +277,7 @@ class World:
         return RechunkLibraryUseCase(
             sources=self.sources,
             copier=self.copier,
-            chunker=MarkdownChunker(),
+            chunker=self.chunker,
             tags=self.tags,
             versions=self.publisher,  # ty: ignore[invalid-argument-type]
             index=self.index,
@@ -419,6 +438,21 @@ async def test_an_article_only_its_file_can_rebuild_has_its_version_re_imported(
     assert "activate main-copy2" not in world.log
     assert world.publisher.active["v1.0.0"] == "v1.0.0-copy1"  # the others are cut from the copy
     assert world.progress.counters[-1] == (8, 0)  # 3 cut from v1.0.0's copy, 5 by the re-import
+
+
+async def test_an_article_the_chunker_cannot_cut_has_its_version_re_imported(world):
+    """The re-import lists the file as a problem and serves the rest (#430)."""
+    world.chunker = FailingChunker({"docs/broken.md"})  # only v1.0.0 has that article
+
+    await world.run()
+
+    assert [(j.kind, j.version, j.commit_sha) for j in world.importer.seen] == [
+        (REFRESH_JOB, "v1.0.0", "a" * 40)
+    ]
+    assert "v1.0.0-copy1" not in world.index.indexed  # nothing half-cut is served
+    assert "discard manifest v1.0.0-copy1" in world.log
+    assert world.publisher.active["v1.0.0"] == "m1"
+    assert world.publisher.active["main"] == "main-copy2"
 
 
 @pytest.mark.parametrize(

@@ -2503,7 +2503,9 @@ class RechunkLibraryUseCase:
             for a in copied.articles
         }
         tagged = await self.tags.set_imported_tags(copied.manifest_id, wanted)
-        cut = await asyncio.to_thread(_cut, chunker, unknown)
+        cut, failed = await asyncio.to_thread(_cut, chunker, unknown)
+        if failed:  # a re-import lists the file and serves the rest
+            return False
         every = found | cut
         version = ImportedVersion(
             library=library,
@@ -3172,18 +3174,7 @@ class ImportVersionUseCase:
         read, used = await self._read(await checkout.folder(), given, progress)
         files = [(path, sha) for path, sha, _ in (r for r in read if not isinstance(r, Skip))]
         found = await self._stored(given.library, given.ref, files)
-        loaded: list[tuple[str, str, ParsedArticle]] = []
-        problems: list[tuple[str, ProblemCode, str]] = []
-        for path, result in zip(given.paths, read, strict=True):
-            shown = path.encode(errors="replace").decode()
-            if isinstance(result, Skip):
-                problems.append((shown, result.code, result.reason))
-                continue
-            _, blob_sha, text = result
-            parsed = found.get((path, blob_sha)) or parse_article(path, text)
-            loaded.append((path, blob_sha, parsed))
-            # The article is imported; the note is listed.
-            problems.extend((shown, ProblemCode.FRONT_MATTER, note) for note in parsed.problems)
+        loaded, problems = _parse(given.paths, read, found)
         known = given.known
         asked = [sha for sha in dict.fromkeys(sha for _, sha, _ in loaded) if sha not in known]
         chunked: dict[str, tuple[ArticleChunk, ...]] = {}
@@ -3193,7 +3184,13 @@ class ImportVersionUseCase:
         for _, blob_sha, parsed in loaded:
             if blob_sha not in known and blob_sha not in chunked:
                 unknown.setdefault(blob_sha, parsed)
-        cut = await asyncio.to_thread(_cut, given.chunker, unknown)
+        cut, failed = await asyncio.to_thread(_cut, given.chunker, unknown)
+        problems.extend(  # every path of a blob the chunker failed on is left out
+            (_shown(path), ProblemCode.UNPARSABLE, failed[sha])
+            for path, sha, _ in loaded
+            if sha in failed
+        )
+        loaded = [file for file in loaded if file[1] not in failed]
         every = {**known, **chunked, **cut}
         tags = {
             path: imported_tags(path, parsed.tags, given.source.tag_rules)
@@ -3292,19 +3289,124 @@ async def _same[T](value: T) -> T:
     return value
 
 
+def _parse(
+    paths: Sequence[str],
+    read: Sequence[tuple[str, str, str] | Skip],
+    found: Mapping[tuple[str, str], ParsedArticle],
+) -> tuple[list[tuple[str, str, ParsedArticle]], list[tuple[str, ProblemCode, str]]]:
+    """Parse the files read, unless an earlier import stored them; list every file's problems.
+
+    A file skipped while reading, or that cannot be parsed, is left out with a problem; an
+    article imported with notes on its front matter is listed with them.
+
+    Args:
+        paths: The batch's files.
+        read: Each file's ``(path, blob SHA, text)`` or why it was skipped, in ``paths`` order.
+        found: What earlier imports stored, by ``(path, blob SHA)``.
+
+    Returns:
+        ``(path, blob SHA, article)`` of each article, and ``(path, code, reason)`` of each
+        problem.
+    """
+    loaded: list[tuple[str, str, ParsedArticle]] = []
+    problems: list[tuple[str, ProblemCode, str]] = []
+    for path, result in zip(paths, read, strict=True):
+        shown = _shown(path)
+        if isinstance(result, Skip):
+            problems.append((shown, result.code, result.reason))
+            continue
+        _, blob_sha, text = result
+        parsed = found.get((path, blob_sha)) or _one_file(shown, partial(parse_article, path, text))
+        if isinstance(parsed, _Unparsable):  # the version imports without it
+            problems.append((shown, ProblemCode.UNPARSABLE, parsed.reason))
+            continue
+        loaded.append((path, blob_sha, parsed))
+        # The article is imported; the note is listed.
+        problems.extend((shown, ProblemCode.FRONT_MATTER, note) for note in parsed.problems)
+    return loaded, problems
+
+
+def _shown(path: str) -> str:
+    """A path as a job lists it: a name that is not valid UTF-8 gets replacement characters.
+
+    Args:
+        path: The file's path, maybe with surrogate escapes.
+
+    Returns:
+        A printable path.
+    """
+    return path.encode(errors="replace").decode()
+
+
 def _cut(
     chunker: Chunker, articles: Mapping[str, ParsedArticle]
-) -> dict[str, tuple[ArticleChunk, ...]]:
+) -> tuple[dict[str, tuple[ArticleChunk, ...]], dict[str, str]]:
     """Cut articles into chunks (CPU-bound: call it in a thread).
+
+    An article the chunker fails on is that file's problem, not the version's: it is left out
+    and the others are cut (#430).
 
     Args:
         chunker: The configured chunker.
         articles: The articles to cut, by blob SHA.
 
     Returns:
-        Their chunks, by blob SHA.
+        Their chunks, by blob SHA; and why each article the chunker failed on was left out.
     """
-    return {sha: tuple(chunker.chunk(a)) for sha, a in articles.items()}
+    chunks: dict[str, tuple[ArticleChunk, ...]] = {}
+    failed: dict[str, str] = {}
+    for sha, article in articles.items():
+        cut = _one_file(article.path, partial(_chunks_of, chunker, article))
+        if isinstance(cut, _Unparsable):
+            failed[sha] = cut.reason
+        else:
+            chunks[sha] = cut
+    return chunks, failed
+
+
+def _chunks_of(chunker: Chunker, article: ParsedArticle) -> tuple[ArticleChunk, ...]:
+    """Cut one article.
+
+    Args:
+        chunker: The configured chunker.
+        article: The article.
+
+    Returns:
+        Its chunks.
+    """
+    return tuple(chunker.chunk(article))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Unparsable:
+    """Why one file could not be parsed or chunked."""
+
+    reason: str
+    """The job problem's reason: the error's type only, never the file's text."""
+
+
+def _one_file[T](path: str, work: Callable[[], T]) -> T | _Unparsable:
+    """Parse or chunk one file; an error there is that file's problem, not the version's (#430).
+
+    Running out of memory is not about one file: it is raised, and fails the import.
+
+    Args:
+        path: The file's repository path, for the log.
+        work: The parse or the cut.
+
+    Returns:
+        What ``work`` returned, or why it failed.
+
+    Raises:
+        MemoryError: ``work`` ran out of memory.
+    """
+    try:
+        return work()
+    except MemoryError:
+        raise
+    except Exception as error:  # one file's problem: listed on the job, the rest is imported
+        log.warning("parsing or chunking %s failed", path, exc_info=True)
+        return _Unparsable(reason=f"could not be parsed or chunked: {type(error).__name__}")
 
 
 async def _activate(
@@ -4785,13 +4887,21 @@ class EmbedVersionUseCase:
                 partial(self.queue, None, besides=(library, ref), retry_cancelled=True),
             )
         await progress.report(done=0, total=plan.missing)
-        done, number = 0, 0
+        embedded, reused, number = 0, 0, 0
         while True:
             number += 1
             batch: EmbeddedBatch = await steps.step(
                 f"embed batch {number}", partial(self._batch, library, ref, plan)
             )
-            done += batch.embedded
+            embedded += batch.embedded
+            done = embedded + reused
+            if batch.left is not None:
+                # What the job did not embed and is not left was embedded by a job sharing
+                # chunks with it: done all the same, and counted as reused (#431).
+                done = max(embedded, plan.missing - batch.left)
+                if done - embedded > reused:
+                    reused = done - embedded
+                    await progress.chunking(chunked=0, reused=reused)
             await progress.report(done=done, total=max(done, plan.missing))
             if batch.finished:
                 break

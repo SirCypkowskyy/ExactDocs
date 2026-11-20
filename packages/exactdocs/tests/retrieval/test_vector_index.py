@@ -67,10 +67,13 @@ class World:
         sets: dict[str, int],
         *,
         tags: dict[str, tuple[str, ...]] | None = None,
+        copies: int = 1,
     ) -> None:
         """Store a manifest with one article per blob; ``sets`` maps blob SHA to chunk count.
 
-        Each chunk's ID is ``<manifest>:<blob>:<position>``; ``tags`` are per blob.
+        Each chunk's ID is ``<manifest>:<blob>:<position>``; ``tags`` are per blob. ``copies``
+        articles hold each blob (``docs/<blob>.md``, then ``docs/<blob>-<n>.md``, chunk IDs
+        ``<manifest>:<blob>-<n>:<position>``), as identical files at several paths do.
         """
         chunk_sets = {
             (blob, "cfg"): ChunkSet(
@@ -91,8 +94,8 @@ class World:
         }
         rows = [
             ManifestChunk(
-                chunk_id=ChunkId(f"{manifest_id}:{blob}:{i}"),
-                article_path=f"docs/{blob}.md",
+                chunk_id=ChunkId(f"{manifest_id}:{name}:{i}"),
+                article_path=f"docs/{name}.md",
                 position=i,
                 total=count,
                 prev_chunk_id=None,
@@ -101,6 +104,7 @@ class World:
                 chunk_set=(blob, "cfg"),
             )
             for blob, count in sets.items()
+            for name in [blob, *(f"{blob}-{n}" for n in range(1, copies))]
             for i in range(count)
         ]
         manifest = IndexedManifest(
@@ -207,6 +211,7 @@ async def test_an_unknown_space_is_not_found(world: World) -> None:
         world.vectors.nearest(missing, "m1", [1, 0, 0], NO_TAGS, 5),
         world.vectors.coverage(missing, "m1"),
         world.vectors.missing(missing, "m1", 5),
+        world.vectors.count_missing(missing, "m1"),
     ):
         with pytest.raises(UnknownEmbeddingSpaceError):
             await call
@@ -389,6 +394,27 @@ async def test_coverage_and_missing_chunks_of_a_manifest(world: World) -> None:
     assert (await world.vectors.coverage(space.id, "m")).complete
     assert await world.vectors.missing(space.id, "m", 10) == []
     assert (await world.vectors.coverage(space.id, "unknown")).complete
+
+
+async def test_missing_chunks_are_counted_once_each_like_the_keys_returned(
+    world: World,
+) -> None:
+    await world.index("m", {"a": 2, "b": 1}, copies=3)  # the same files at three paths
+    await world.index("n", {"a": 2})  # another version sharing blob a
+    space = await world.vectors.create_space(SMALL, T0)
+
+    before = await world.vectors.count_missing(space.id, "m")
+    await world.vectors.upsert(space.id, {key("a", 0): [1, 0, 0], key("a", 1): [0, 1, 0]})
+
+    assert (await world.vectors.coverage(space.id, "m")).chunks == 9  # rows, one per path
+    assert before == 3  # a's two chunks and b's one, whatever the number of paths
+    assert await world.vectors.count_missing(space.id, "m") == 1  # only b's chunk is left
+    assert await world.vectors.missing(space.id, "m", 100) == [key("b", 0)]
+    assert await world.vectors.count_missing(space.id, "n") == 0  # embedded through m
+    assert await world.vectors.count_missing(space.id, "unknown") == 0
+    await world.vectors.retire_space(space.id)
+    with pytest.raises(RetiredEmbeddingSpaceError):
+        await world.vectors.count_missing(space.id, "m")
 
 
 async def test_coverage_of_many_manifests_is_counted_at_once(world: World) -> None:

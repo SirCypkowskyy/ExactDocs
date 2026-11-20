@@ -81,12 +81,19 @@ class SwitchableGit:
 class HeldChunker:
     """The real chunker; ``held`` makes cutting wait until it is cleared (it runs in a thread).
 
-    Every chunker it hands out (one per chunking config) waits on the same switch.
+    Every chunker it hands out (one per chunking config) waits on the same switch, and raises
+    on the articles at ``failing`` (a file the chunker cannot cut, #430).
     """
 
-    def __init__(self, inner: MarkdownChunker, released: threading.Event | None = None) -> None:
+    def __init__(
+        self,
+        inner: MarkdownChunker,
+        released: threading.Event | None = None,
+        failing: set[str] | None = None,
+    ) -> None:
         self.inner = inner
         self.released = released or threading.Event()
+        self.failing = set() if failing is None else failing
         if released is None:
             self.released.set()
 
@@ -106,10 +113,12 @@ class HeldChunker:
         return self.inner.config_hash
 
     def configured(self, config: ChunkingConfig) -> HeldChunker:
-        return HeldChunker(self.inner.configured(config), self.released)
+        return HeldChunker(self.inner.configured(config), self.released, self.failing)
 
     def chunk(self, article: ParsedArticle) -> Sequence[ArticleChunk]:
         self.released.wait(JOB_SECONDS)
+        if article.path in self.failing:
+            raise IndexError(article.path)
         return self.inner.chunk(article)
 
 
@@ -345,6 +354,17 @@ def step_skipped(context: Context) -> None:
     expected = [(r["path"], r["code"], r["reason"]) for r in context.table or []]
     assert listed == expected, listed
     assert all(p["is_skip"] for p in context.job["problems"])
+
+
+@given('the chunker cannot cut "{path}"')
+def step_chunker_fails(context: Context, path: str) -> None:
+    context.chunker.failing.add(path)
+
+
+@then('the job lists "{path}" as a file that could not be parsed')
+def step_unparsable(context: Context, path: str) -> None:
+    listed = [(p["path"], p["code"], p["is_skip"]) for p in context.job["problems"]]
+    assert (path, "unparsable", True) in listed, listed
 
 
 @then('the article "{path}" of "{target}" keeps its accented characters')

@@ -1619,7 +1619,8 @@ class EmbeddingPlanOut(_Dto):
     manifest_id: str | None
     """The version's active manifest; null when nothing is to be sent."""
     missing: int
-    """Chunks of the manifest without a vector in the space when the plan was made."""
+    """Chunks of the manifest without a vector in the space when the plan was made, each once
+    (a chunk held by several identical files is embedded once)."""
     created: bool
     """This plan created the space: the model changed, so every version needs embedding."""
     skipped: EmbeddingSkip | None
@@ -1646,6 +1647,11 @@ class EmbeddedBatchOut(_Dto):
     """Vectors stored."""
     input_tokens: int
     """Tokens the provider reported."""
+    left: int | None
+    """Chunks of the manifest still without a vector after the batch, counted like the plan's
+    ``missing``; fewer than the plan's ``missing`` less what was embedded when another job
+    embedded chunks shared with it meanwhile. Null when the job stops without counting (the
+    model changed, the library's AI was switched off, the space was retired)."""
     finished: bool
     """No chunk of the manifest is left to embed (or nothing may be sent any more)."""
 

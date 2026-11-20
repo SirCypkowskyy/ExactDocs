@@ -26,6 +26,7 @@ from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ChunkIn,
     EmbedBatchCommand,
+    EmbeddedBatchOut,
     EmbeddingPlanOut,
     EmbeddingProgressOut,
     EmbedVersionCommand,
@@ -274,6 +275,22 @@ async def _search(module: RetrievalModule, ref: str) -> tuple[RetrievalMode, obj
     return result.retrieval_mode, result.fallback_reason
 
 
+async def _embed_batches(
+    module: RetrievalModule, library: str, ref: str
+) -> tuple[EmbeddingPlanOut, list[EmbeddedBatchOut]]:
+    """Run an ``embed`` job of one version as ingestion does, keeping every batch."""
+    plan = await module.plan_embedding(EmbedVersionCommand(library=library, ref=ref))
+    assert plan.space_id is not None
+    assert plan.manifest_id is not None
+    batches: list[EmbeddedBatchOut] = []
+    while not batches or not batches[-1].finished:
+        command = EmbedBatchCommand(
+            library=library, ref=ref, manifest_id=plan.manifest_id, space_id=plan.space_id
+        )
+        batches.append(await module.embed_batch(command))
+    return plan, batches
+
+
 @pytest.fixture
 def stores() -> Stores:
     return Stores()
@@ -326,6 +343,57 @@ async def test_a_blob_shared_by_two_versions_is_embedded_once(stores: Stores) ->
     await _embed(module, LIB, "v2")
 
     assert len(stores.models.sent) == 4  # three chunks of b1, once; one of b2
+
+
+async def test_a_plan_counts_each_chunk_once_however_many_files_hold_it(stores: Stores) -> None:
+    module = _module(stores, batch=2)
+    manifest = f"{LIB}@v1"
+    await module.index_manifest(
+        IndexManifestCommand(
+            manifest_id=manifest,
+            library=LIB,
+            ref="v1",
+            config_hash="cfg",
+            articles=[  # the same file at three paths, as examples' READMEs are (#431)
+                ArticleChunksIn(
+                    path=f"examples/{name}/README.md",
+                    blob_sha="readme",
+                    chunks=[_chunk("Run", "npm install"), _chunk("Build", "npm run build")],
+                )
+                for name in ("react", "vue", "solid")
+            ]
+            + [ArticleChunksIn(path="docs/b1.md", blob_sha="b1", chunks=[_chunk("S0", "token")])],
+        )
+    )
+    stores.catalog.add(LIB, "v1", manifest, {})
+
+    plan, batches = await _embed_batches(module, LIB, "v1")
+
+    assert plan.missing == 3  # two chunks of the README, one of b1: as many as are embedded
+    assert sum(b.embedded for b in batches) == 3
+    assert [b.left for b in batches] == [1, 0]
+
+
+async def test_chunks_embedded_meanwhile_by_another_library_are_reported_left_no_more(
+    stores: Stores,
+) -> None:
+    module = _module(stores, batch=2)
+    shared = {"b1": ["token one", "token two", "three"]}
+    await _import(stores, module, LIB, "v1", shared)
+    await _import(stores, module, SECRET, "v1", shared)  # the same files in another library
+    plan = await module.plan_embedding(EmbedVersionCommand(library=SECRET, ref="v1"))
+
+    await _embed(module, LIB, "v1")  # embeds every chunk the other plan counted
+    assert plan.space_id is not None
+    assert plan.manifest_id is not None
+    batch = await module.embed_batch(
+        EmbedBatchCommand(
+            library=SECRET, ref="v1", manifest_id=plan.manifest_id, space_id=plan.space_id
+        )
+    )
+
+    assert plan.missing == 3
+    assert (batch.embedded, batch.left, batch.finished) == (0, 0, True)
 
 
 async def test_configured_dimensions_are_used_without_asking_the_model(stores: Stores) -> None:
