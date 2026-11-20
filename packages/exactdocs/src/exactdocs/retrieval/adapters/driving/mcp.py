@@ -214,8 +214,8 @@ def register_tools(
             Field(
                 max_length=MAX_NAME,
                 description=(
-                    "Retrieval mode: 'bm25', 'hybrid', 'hybrid_hyde' or 'agentic', if this "
-                    "instance has it; any other is an error listing the available ones. Omit "
+                    "Retrieval mode: 'bm25', 'vector', 'hybrid', 'hybrid_hyde' or 'agentic', if "
+                    "this instance has it; any other is an error listing the available ones. Omit "
                     "for the default (the library's, else the instance's, else the best)."
                 ),
             ),

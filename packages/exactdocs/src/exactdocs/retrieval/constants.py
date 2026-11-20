@@ -98,6 +98,8 @@ UNKNOWN_MANIFEST_GRACE: Final[timedelta] = timedelta(minutes=5)
 -> Index -> Activate, but the calls are not one transaction), so it is removed only once it is
 this old.
 """
+MAX_CHOSEN_LIBRARIES: Final[int] = 50
+"""Libraries a search across libraries may name (``library`` repeated); none means every one."""
 MAX_SEARCHED_LIBRARIES: Final[int] = 500
 """Libraries searched at once: bounds the size of the one FTS query."""
 MAX_RESOLVED: Final[int] = 10
@@ -568,6 +570,9 @@ mode (``EXACTDOCS_AI__MODE``, a library's mode or the call).
 SEARCH_DOCS: Final[str] = "search_docs"
 """The search ``search_docs`` runs: the prefix of its spans' names (``search_docs.<stage>``), the
 same in the use case and in the pipeline's own stages (``PipelineRequest.search``)."""
+SEARCH_ALL: Final[str] = "search_all_libraries"
+"""The search across libraries (``GET /api/v1/search``, ``search_all_docs``): the prefix of its
+spans' names, and the span of its query embedding (``search_all_libraries.embed_query``)."""
 QUERY_DOCS: Final[str] = "query_docs"
 """The search ``query_docs`` runs: the prefix of its spans' names (``query_docs.<stage>``)."""
 RRF_K: Final[int] = 60

@@ -482,6 +482,24 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   search: one that would run an LLM step answers in the best mode without one, with
   `fallback_reason` `llm_budget_reached` or `llm_rate_limited`, and a paid rerank over budget is
   skipped (`reranked: false`, `fallback_reason: llm_budget_reached`).
+- **Search across libraries** (#428): `GET /search?q=` ranks the default versions of every library
+  the caller may read (and the API token's library scope allows) in one ranking, or of the chosen
+  ones: `library` repeated or comma-separated (at most 50; an unknown or unreadable one is 404 `not_found`). `mode` is
+  `bm25` (the default), `vector` or `hybrid`; the vector modes need an embedding model (422
+  `mode_unavailable` names the `embedding` role otherwise) and `hybrid_hyde` or `agentic` are
+  refused. Each result names its `library` and `version`, and carries `bm25_rank` and
+  `vector_rank` (1-based; `null` where that ranking did not hold it). `vector` embeds the query
+  once and ranks the chunks of every searched version the configured model has embedded, nearest
+  first (`score` is the cosine similarity); `hybrid` fuses that ranking with the BM25 one (RRF,
+  `k` = 60, 50 of each). A library with AI off, or whose default version is not embedded with the
+  current model yet, is left out of the vector ranking and named in `libraries_without_vectors`.
+  When no searched version can be ranked by vectors, or the model fails, BM25 answers with
+  `retrieval_mode: bm25` and `fallback_reason` (`embedding_in_progress`, `embedding_unavailable`,
+  `vector_store_unavailable`, `llm_budget_reached`). The query embedding counts to the embedding
+  budget, the instance and the caller, never to a library. `libraries` counts BM25 matches per
+  library over every readable library whatever the mode. Nothing is reranked (`reranked: false`).
+- **Vector search** (#428): `mode=vector` on one version ranks its chunks by their vectors alone,
+  with no BM25 half, and falls back exactly as `hybrid` does. It is never a default.
 - **Agentic search** (RET-04): `mode=agentic` (never a default) lets an agent on the `llm` role
   browse the version (outlines, articles, chunks and BM25, all of that version only) and pick the
   chunks that answer the question. Its results are the picks the version holds and the call's

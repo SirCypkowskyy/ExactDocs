@@ -37,6 +37,7 @@ export type OverridableRole = (typeof OVERRIDABLE)[number];
 
 export const MODE_LABEL: Record<RetrievalMode, string> = {
   bm25: "BM25",
+  vector: "Vector",
   hybrid: "Hybrid",
   hybrid_hyde: "Hybrid with HyDE",
   agentic: "Agentic",
@@ -45,6 +46,7 @@ export const MODE_LABEL: Record<RetrievalMode, string> = {
 /** What each mode does, in the order a search runs it. */
 const MODE_STEPS: Record<RetrievalMode, readonly string[]> = {
   bm25: ["Keyword search (BM25)"],
+  vector: ["Vector search with the embedding model"],
   hybrid: ["Keyword search (BM25)", "Vector search with the embedding model", "Results merged"],
   hybrid_hyde: [
     "The LLM writes a hypothetical answer (HyDE)",
@@ -61,6 +63,7 @@ const MODE_STEPS: Record<RetrievalMode, readonly string[]> = {
 /** The model roles each mode's pipeline calls; the reranker is a stage of its own. */
 const MODE_ROLES: Record<RetrievalMode, readonly ModelRole[]> = {
   bm25: [],
+  vector: ["embedding"],
   hybrid: ["embedding"],
   hybrid_hyde: ["embedding", "llm"],
   agentic: ["llm"],

@@ -188,7 +188,7 @@ async def test_a_stored_mode_is_kept_and_shown_with_the_instance_mode(
         "bm25",
         "hybrid",
     )
-    assert shown["available_modes"] == ["bm25", "hybrid"]
+    assert shown["available_modes"] == ["bm25", "vector", "hybrid"]
 
     cleared = await with_embeddings.put(SETTING, json={"mode": None})
     assert (cleared.json()["mode"], cleared.json()["effective_mode"]) == (None, "bm25")

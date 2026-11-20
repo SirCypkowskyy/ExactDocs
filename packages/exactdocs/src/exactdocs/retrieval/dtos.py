@@ -24,6 +24,7 @@ from exactdocs.retrieval.constants import (
     EXPLORED_PATH_DESCRIPTION,
     JUSTIFICATION_DESCRIPTION,
     LIBRARY_VERSIONS_DESCRIPTION,
+    MAX_CHOSEN_LIBRARIES,
     MAX_EMBEDDING_DIMENSIONS,
     MAX_KEY,
     MAX_MODEL_NAME,
@@ -131,8 +132,8 @@ class SearchDocsQuery(_Dto):
     limit: int = Field(default=5, ge=1, le=50)
     """How many results to return, best first."""
     mode: str | None = Field(default=None, max_length=MAX_NAME)
-    """`bm25`, `hybrid`, `hybrid_hyde` or `agentic`, if configured; default: the library's mode,
-    else the instance's, else the best one configured.
+    """`bm25`, `vector`, `hybrid`, `hybrid_hyde` or `agentic`, if configured; default: the
+    library's mode, else the instance's, else the best one configured.
     """
 
     @field_validator("ref", "mode", mode="before")
@@ -162,13 +163,21 @@ class SearchDocsQuery(_Dto):
         return _normalize_tags(value)
 
 
+LibraryId = Annotated[str, StringConstraints(pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)]
+
+
 class SearchAllQuery(_Dto):
-    """Search the default version of every library at once, or of one when ``library`` is set."""
+    """Search the default version of every library at once, or of the chosen ones."""
 
     query: str = Field(min_length=1, max_length=MAX_QUERY)
     """What to look for: an identifier, an error message or a question."""
     library: str | None = Field(default=None, pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)
     """`/owner/repo`: only its results (its default version); counts stay global."""
+    libraries: list[LibraryId] = Field(default_factory=list, max_length=MAX_CHOSEN_LIBRARIES)
+    """`/owner/repo` of each library to search (with `library`, if set); none: every library
+    the caller may read. Counts stay global."""
+    mode: str | None = Field(default=None, max_length=MAX_NAME)
+    """`bm25` (the default), `vector` or `hybrid`; the vector modes need an embedding model."""
     tags: list[Tag] = Field(default_factory=list, max_length=MAX_TAGS)
     """Only chunks of articles so tagged. Case-insensitive; a comma separates tags."""
     tags_match: TagMatch = Field(default=TagMatch.ANY)
@@ -189,10 +198,37 @@ class SearchAllQuery(_Dto):
         """
         return _normalize_tags(value)
 
-    @field_validator("library", mode="before")
+    @field_validator("libraries", mode="before")
+    @classmethod
+    def _split_libraries(cls, value: object) -> object:
+        """Split comma-separated library IDs (a library ID never holds a comma); drop blanks.
+
+        Args:
+            value: The libraries as sent.
+
+        Returns:
+            One ID per item; any other value unchanged.
+        """
+        if not isinstance(value, list | tuple) or not all(isinstance(v, str) for v in value):
+            return value
+        return [part.strip() for v in value for part in v.split(",") if part.strip()]
+
+    @property
+    def chosen(self) -> list[str]:
+        """The libraries to search, ``library`` first, each once (any letter case).
+
+        Returns:
+            The library IDs; empty for every library.
+        """
+        once: dict[str, str] = {}
+        for library in [*([self.library] if self.library else []), *self.libraries]:
+            once.setdefault(library.casefold(), library)
+        return list(once.values())
+
+    @field_validator("library", "mode", mode="before")
     @classmethod
     def _blank_is_none(cls, value: object) -> object:
-        """Treat a blank library as none.
+        """Treat a blank library or mode as none.
 
         Args:
             value: The raw field.
@@ -331,6 +367,12 @@ class LibrarySearchResultOut(SearchResultOut):
     """Library ID, `/owner/repo`, of the library the result is from."""
     version: str
     """The default version of that library, the one searched."""
+    bm25_rank: int | None = None
+    """Its 1-based rank in the search's BM25 ranking; null when BM25 did not rank it (`vector`,
+    or a `hybrid` result only the vectors found)."""
+    vector_rank: int | None = None
+    """Its 1-based rank in the search's vector ranking; null when the vectors did not rank it
+    (`bm25`, or a `hybrid` result only BM25 found)."""
 
     @classmethod
     def of(cls, version: SearchableVersion, stored: StoredChunk, hit: SearchHit) -> Self:
@@ -345,7 +387,13 @@ class LibrarySearchResultOut(SearchResultOut):
             The result, naming its library and version.
         """
         result = SearchResultOut.from_models(version, stored, hit)
-        return cls(**dict(result), library=version.library, version=version.version)
+        return cls(
+            **dict(result),
+            library=version.library,
+            version=version.version,
+            bm25_rank=hit.bm25_rank,
+            vector_rank=hit.vector_rank,
+        )
 
 
 class LibraryFacetOut(_Dto):
@@ -369,17 +417,23 @@ class SearchAllResult(_Dto):
     notice: str = Field(default=NOTICE)
     """Untrusted-content notice; read it before the results."""
     retrieval_mode: RetrievalMode
-    """The mode that answered."""
+    """The mode that answered: the one asked for, or `bm25` when the vectors could not be used
+    (`fallback_reason` says why)."""
     reranked: bool
     """A reranker reordered the candidates."""
     coverage: CoverageOut
     """How much of the index the answer stands on."""
+    fallback_reason: FallbackReason | None = Field(default=None)
+    """Set when BM25 answered a `vector` or `hybrid` search: says why."""
     libraries_searched: int
     """Libraries whose default version was searched."""
     libraries_omitted: int
     """Libraries with a default version left out because there are too many."""
+    libraries_without_vectors: list[str] = Field(default_factory=list)
+    """Libraries searched but left out of the vector ranking (`vector`, `hybrid`): AI is off for
+    them, or their default version is not embedded with the current model yet."""
     libraries: list[LibraryFacetOut]
-    """Libraries with at least one match, most matches first. Never narrowed."""
+    """Libraries with at least one BM25 match, most matches first. Never narrowed."""
     results: list[LibrarySearchResultOut]
     """The results, best first, each naming its library and version."""
 
@@ -1172,8 +1226,8 @@ class SetLibraryRetrievalCommand(_Dto):
     library: str = Field(pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)
     """`/owner/repo`, any letter case."""
     mode: str | None = Field(default=None, max_length=MAX_NAME)
-    """`bm25`, `hybrid`, `hybrid_hyde` or `agentic`; it must be available now. Empty: use the
-    instance's mode.
+    """`bm25`, `vector`, `hybrid`, `hybrid_hyde` or `agentic`; it must be available now. Empty:
+    use the instance's mode.
     """
 
     ai_enabled: bool = True
