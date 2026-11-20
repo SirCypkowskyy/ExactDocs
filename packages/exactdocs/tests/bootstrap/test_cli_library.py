@@ -824,7 +824,7 @@ async def test_token_creation_preserves_the_optional_library_selection(
         await token_create(api, "selected", None, as_json=True, library_ids=library_ids)
         created = json.loads(capsys.readouterr().out)
         await api.sign_out()
-    assert created["library_ids"] == library_ids
+    assert created["library_ids"] == (None if library_ids is None else sorted(library_ids))
 
 
 def test_token_create_accepts_repeated_library_options(server: Recorder) -> None:

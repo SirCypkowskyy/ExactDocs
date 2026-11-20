@@ -312,4 +312,4 @@ async def test_login_preserves_the_optional_token_library_selection(
 ) -> None:
     async with ApiClient("http://localhost", transport=transport) as api:
         grant = await api.login("ada", HORSE, "selected", library_ids=library_ids)
-    assert grant["library_ids"] == library_ids
+    assert grant["library_ids"] == (None if library_ids is None else sorted(library_ids))

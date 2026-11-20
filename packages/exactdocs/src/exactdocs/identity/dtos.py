@@ -9,6 +9,7 @@ from pydantic import (
     ConfigDict,
     Field,
     SecretStr,
+    field_serializer,
     field_validator,
     model_validator,
 )
@@ -32,12 +33,14 @@ class _Dto(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
 
 
+_LibraryId = Annotated[str, Field(pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)]
+_SortedLibraryIds = Annotated[list[_LibraryId], Field(json_schema_extra={"uniqueItems": True})]
+
+
 class _LibrarySelection(_Dto):
     """An optional, canonical selection of libraries; an empty selection allows none."""
 
-    library_ids: (
-        frozenset[Annotated[str, Field(pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)]] | None
-    ) = None
+    library_ids: frozenset[_LibraryId] | None = None
     """Selected library IDs; omit or use null for all libraries the user can access."""
 
     @field_validator("library_ids")
@@ -52,6 +55,18 @@ class _LibrarySelection(_Dto):
             Casefolded unique IDs, preserving unrestricted and empty selections.
         """
         return None if value is None else frozenset(library.casefold() for library in value)
+
+    @field_serializer("library_ids")
+    def _sorted_libraries(self, value: frozenset[str] | None) -> _SortedLibraryIds | None:
+        """Serialize the selection in a stable order (a set's order varies per process).
+
+        Args:
+            value: The canonical selected IDs.
+
+        Returns:
+            The IDs sorted, or ``None`` for an unrestricted selection.
+        """
+        return None if value is None else sorted(value)
 
 
 class AccountSummary(_Dto):
