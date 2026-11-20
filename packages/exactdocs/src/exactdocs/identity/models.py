@@ -671,3 +671,13 @@ def effective_role(grants: Iterable[LibraryGrant]) -> LibraryRole | None:
         The highest role, or ``None`` without a grant.
     """
     return max((grant.role for grant in grants), key=lambda role: role.rank, default=None)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LibraryCreationPolicy:
+    """An operator's instance-wide creation allowlist; empty permits operators only."""
+
+    users: frozenset[str] = frozenset()
+    """Exact stable account IDs, including verified unlinked provider:subject IDs."""
+    groups: frozenset[str] = frozenset()
+    """Exact mapped group names, including any provider prefix."""

@@ -489,11 +489,24 @@ class SignInProviderSettings(BaseModel):
         return self
 
 
+class LibraryCreationSettings(BaseModel):
+    """Operator-managed library creation permission; supplying an empty table restricts users."""
+
+    model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
+
+    users: frozenset[str] = frozenset()
+    """Exact stable account IDs, never usernames."""
+    groups: frozenset[str] = frozenset()
+    """Exact mapped provider groups, including their configured prefixes."""
+
+
 class AuthSettings(BaseModel):
     """The ``auth`` section: sign-in through identity providers (``EXACTDOCS_AUTH__...``)."""
 
     model_config = ConfigDict(use_attribute_docstrings=True, frozen=True)
 
+    library_creation: LibraryCreationSettings | None = None
+    """None preserves existing creation access; an empty section permits operators only."""
     providers: dict[str, SignInProviderSettings] = Field(default_factory=dict)
     """Named identity providers (`[auth.providers.<name>]`); names are lower-case `[a-z0-9-]`.
     Configured or not decides whether external sign-in is offered; password sign-in stays."""

@@ -22,6 +22,12 @@ class FakeAccess:
     asked: list[tuple[str, str]] = field(default_factory=list)
     """Each check made: the library and the role it needed."""
 
+    creation_allowed: bool = True
+
+    async def can_create(self, library: str | None = None) -> bool:
+        del library
+        return self.creation_allowed
+
     async def allows(self, library: str, access: StrEnum) -> bool:
         self.asked.append((library, access.value))
         return self.role is not None and ROLES.index(self.role) >= ROLES.index(access.value)

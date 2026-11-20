@@ -421,3 +421,13 @@ class LibraryAccessDeniedError(ForbiddenError):
         """
         super().__init__(f"library {library_id!r}: this needs the {needed} role")
         self.library_id = library_id
+
+
+class LibraryCreationDeniedError(ForbiddenError):
+    """The caller lacks the instance-wide library creation permission."""
+
+    code = "library_creation_denied"
+
+    def __init__(self) -> None:
+        """Report missing instance creation permission."""
+        super().__init__("library creation is not permitted")

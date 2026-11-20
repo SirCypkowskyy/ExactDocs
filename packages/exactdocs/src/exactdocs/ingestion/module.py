@@ -166,6 +166,18 @@ from exactdocs_kernel import Clock, NotFoundError
 class _EveryoneMayDoAnything:
     """The default ``access`` of ``build``: no roles, as in a local process the owner runs."""
 
+    async def can_create(self, library: str | None = None) -> bool:
+        """Allow creation by internal callers.
+
+        Args:
+            library: The proposed ID, if known.
+
+        Returns:
+            Always True.
+        """
+        del library
+        return True
+
     async def allows(self, library: str, access: Access) -> bool:
         """Allow everything.
 
@@ -647,6 +659,7 @@ class IngestionModule:
         remote: GitRemote,
         tree: RepositoryTree | None = None,
         library_ids: LibraryIds,
+        creation_library_ids: LibraryIds | None = None,
         libraries: NewLibraries,
         sources: LibrarySources | None = None,
         removals: Removals,
@@ -696,6 +709,7 @@ class IngestionModule:
             remote: Lists a repository's refs.
             tree: Lists a commit's files and reads its root files; None: no git for previews.
             library_ids: Tells which library IDs are taken.
+            creation_library_ids: Creation-authorized ID probe; defaults to library_ids.
             libraries: Where new libraries go.
             sources: Where a library's articles come from; None: no library is known.
             removals: Removes versions and libraries from the catalog.
@@ -767,8 +781,9 @@ class IngestionModule:
             access=access,
         )
         add_library = AddLibraryUseCase(
+            access=access,
             remote=remote,
-            library_ids=library_ids,
+            library_ids=creation_library_ids or library_ids,
             libraries=libraries,
             enqueue_job=enqueue_job,
             vault=vault,

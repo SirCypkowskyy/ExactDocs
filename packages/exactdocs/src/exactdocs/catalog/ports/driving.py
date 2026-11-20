@@ -665,3 +665,18 @@ class CopyManifest(Protocol):
             The pending copy with its articles' texts.
         """
         ...
+
+
+class IsLibraryIdTaken(Protocol):
+    """Check creation ID availability without requiring read access to an existing library."""
+
+    async def __call__(self, query: GetLibraryQuery) -> bool:
+        """Check the catalog after verifying instance creation permission.
+
+        Args:
+            query: The proposed library ID.
+
+        Returns:
+            Whether a library already occupies the ID.
+        """
+        ...

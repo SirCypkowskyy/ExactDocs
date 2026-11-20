@@ -36,6 +36,7 @@ from exactdocs.catalog.ports.driving import (
     GetLibrary,
     GetManifestStates,
     GetVersionTags,
+    IsLibraryIdTaken,
     ListArticles,
     ListDefaultManifests,
     ListLibraries,
@@ -71,6 +72,7 @@ from exactdocs.catalog.use_cases import (
     GetLibraryUseCase,
     GetManifestStatesUseCase,
     GetVersionTagsUseCase,
+    IsLibraryIdTakenUseCase,
     ListArticlesUseCase,
     ListDefaultManifestsUseCase,
     ListLibrariesUseCase,
@@ -110,6 +112,18 @@ class _NoInstructions:
 
 class _EveryoneMayDoAnything:
     """The default ``access`` of ``build``: no roles, as in a local process the owner runs."""
+
+    async def can_create(self, library: str | None = None) -> bool:
+        """Allow creation by internal callers.
+
+        Args:
+            library: The proposed ID, if known.
+
+        Returns:
+            Always True.
+        """
+        del library
+        return True
 
     async def allows(self, library: str, access: Access) -> bool:
         """Allow everything.
@@ -179,6 +193,8 @@ class CatalogModule:
     """Add a library without versions."""
     discard_library: DiscardLibrary
     """Remove a library that has no versions yet (the undo of ``CreateLibrary``)."""
+    is_library_id_taken: IsLibraryIdTaken
+    """Probe a proposed ID for an authorized creator without granting read access."""
     get_library: GetLibrary
     """Fetch one library; raises ``LibraryNotFoundError`` when it is missing."""
     resolve_version: ResolveVersion
@@ -285,6 +301,7 @@ class CatalogModule:
             list_libraries=ListLibrariesUseCase(repository=repository, access=access),
             create_library=CreateLibraryUseCase(repository=repository, access=access),
             discard_library=DiscardLibraryUseCase(repository=repository, access=access),
+            is_library_id_taken=IsLibraryIdTakenUseCase(repository=repository, access=access),
             get_library=GetLibraryUseCase(repository=repository, access=access),
             resolve_version=ResolveVersionUseCase(repository=repository, access=access),
             resolve_renamed_path=ResolveRenamedPathUseCase(

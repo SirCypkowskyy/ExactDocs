@@ -127,6 +127,7 @@ from exactdocs.ingestion.errors import (
     InvalidWebhookSignatureError,
     JobNotFoundError,
     LibraryAccessDeniedError,
+    LibraryCreationDeniedError,
     LibraryIdTakenError,
     NoArticlesError,
     NotAGitRepositoryError,
@@ -966,6 +967,8 @@ class AddLibraryUseCase:
     """Lists a repository's refs."""
     library_ids: LibraryIds
     """Tells which library IDs are taken."""
+    access: AccessPolicy
+    """Resolves instance-wide library creation permission."""
     libraries: NewLibraries
     """Where new libraries go."""
     enqueue_job: EnqueueJob
@@ -998,8 +1001,11 @@ class AddLibraryUseCase:
 
         Raises:
             LibraryIdTakenError: A library already has the ID.
+            LibraryCreationDeniedError: The caller lacks instance creation permission.
         """
         repository = RepositoryUrl.parse(command.url)
+        if not await self.access.can_create(command.library_id or repository.library_id):
+            raise LibraryCreationDeniedError
         credential = _credential(command.credential, repository)
         selection = PathSelection.of(command.include_paths, command.exclude_paths)
         tag_rules = TagRule.many([(r.pattern, r.tag) for r in command.tag_rules])

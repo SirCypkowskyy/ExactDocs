@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Self
 
-from exactdocs.identity.models import SignInPolicy
+from exactdocs.identity.models import LibraryCreationPolicy, SignInPolicy
 from exactdocs.identity.ports.driven import (
     AccountRepository,
     ExternalIdentityRepository,
@@ -23,6 +23,7 @@ from exactdocs.identity.ports.driven import (
 )
 from exactdocs.identity.ports.driving import (
     Authenticate,
+    CanCreateLibrary,
     ClaimLibrary,
     CreateFirstAdmin,
     CreateToken,
@@ -51,6 +52,7 @@ from exactdocs.identity.ports.driving import (
 )
 from exactdocs.identity.use_cases import (
     AuthenticateUseCase,
+    CanCreateLibraryUseCase,
     ClaimLibraryUseCase,
     CreateFirstAdminUseCase,
     CreateTokenUseCase,
@@ -125,6 +127,8 @@ class IdentityModule:
     """Finish an external sign-in (the provider's callback) and start a session."""
     revalidate_external_accounts: RevalidateExternalAccounts
     """Check again the memberships of the external identities that are due."""
+    can_create_library: CanCreateLibrary
+    """Resolve the instance-wide creation permission."""
     resolve_library_roles: ResolveLibraryRoles
     """Tell what an account may do with libraries (the highest role it or its groups hold)."""
     claim_library: ClaimLibrary
@@ -154,10 +158,12 @@ class IdentityModule:
         clock: Clock,
         providers: Mapping[str, SignInProvider] = MappingProxyType({}),
         policies: Mapping[str, SignInPolicy] = MappingProxyType({}),
+        library_creation: LibraryCreationPolicy | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
         Args:
+            library_creation: Optional instance-wide creation allowlist.
             repository: Where accounts are stored.
             sessions: Where browser sessions are stored.
             tokens: Where API tokens are stored.
@@ -252,6 +258,9 @@ class IdentityModule:
                 sessions=sessions,
                 box=box,
                 clock=clock,
+            ),
+            can_create_library=CanCreateLibraryUseCase(
+                accounts=repository, externals=externals, policy=library_creation
             ),
             resolve_library_roles=ResolveLibraryRolesUseCase(
                 accounts=repository, externals=externals, grants=library_grants
