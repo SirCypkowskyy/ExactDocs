@@ -3,7 +3,7 @@ import type * as React from "react";
 import { cn } from "@/shared/lib/utils";
 
 const overlay =
-  "fixed inset-0 z-50 bg-foreground/30 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:duration-200 data-[state=open]:ease-[cubic-bezier(0.23,1,0.32,1)] data-[state=closed]:duration-150";
+  "fixed inset-0 z-50 bg-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:duration-200 data-[state=open]:ease-[cubic-bezier(0.23,1,0.32,1)] data-[state=closed]:duration-150";
 
 // Centered (a modal is not anchored to a trigger); fast exit, slightly slower enter.
 const panel =

@@ -2,6 +2,7 @@ import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import { Search } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/utils";
+import { ThemeSwitch } from "@/shared/ui/theme-switch";
 import { useSession } from "../hooks/use-session";
 import { SignOutButton } from "./sign-out-button";
 
@@ -63,8 +64,9 @@ export function AppShell({ children, search }: { children: ReactNode; search?: R
             <div className="hidden sm:ml-auto sm:flex sm:flex-1 sm:justify-end">{search}</div>
           </>
         )}
+        <ThemeSwitch className={cn(!search && "ml-auto")} />
         {/* On a phone the Account page holds sign-out, which keeps this to one row. */}
-        <div className={cn("hidden items-center gap-3 sm:flex", !search && "ml-auto")}>
+        <div className="hidden items-center gap-3 sm:flex">
           <span className="max-w-[12rem] truncate text-sm text-muted-foreground">
             {session?.account?.username}
           </span>
