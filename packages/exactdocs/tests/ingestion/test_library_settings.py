@@ -1,13 +1,14 @@
 """Editing a library's settings: which job re-processes the versions, and what each job does."""
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
+from cancelling import WHO, Canceller, run_job
 from exactdocs.ingestion.adapters.driven.memory import (
     InMemoryCheckpoints,
     InMemoryJobRepository,
@@ -63,6 +64,7 @@ from exactdocs.ingestion.module import IngestionModule
 from exactdocs.ingestion.use_cases import (
     ReprocessLibraryUseCase,
     RetagLibraryUseCase,
+    StopOnCancel,
     TagLocks,
     UpdateLibrarySettingsUseCase,
 )
@@ -563,9 +565,12 @@ class Importer:
 
     failures: dict[str, BaseException] = field(default_factory=dict)
     seen: list[Job] = field(default_factory=list)
+    on_seen: Callable[[], Awaitable[None]] | None = None
 
     async def __call__(self, job: Job, progress, /) -> None:
         self.seen.append(job)
+        if self.on_seen is not None:
+            await self.on_seen()
         if isinstance(self.failures.get(str(job.version)), Killed):
             raise self.failures.pop(str(job.version))  # the process dies; once
         await progress.report(done=0, total=2)
@@ -715,8 +720,11 @@ class Index:
     retagged: list[tuple[str, dict[str, tuple[str, ...]]]] = field(default_factory=list)
     failures: int = 0
     kill_on: str | None = None
+    on_retag: Callable[[], Awaitable[None]] | None = None
 
     async def retag(self, manifest_id: str, tags: Mapping[str, tuple[str, ...]]) -> None:
+        if self.on_retag is not None:
+            await self.on_retag()
         if manifest_id == self.kill_on:
             self.kill_on = None
             raise Killed
@@ -869,3 +877,46 @@ def test_a_stored_article_is_retagged_with_rule_tags_first():
     assert article("docs/a.md", front_matter={"tags": ["b"]}).retagged(rules) == ImportedTags(
         tags=("docs", "b"), front_matter=("b",), rules=("docs",)
     )
+
+
+def _queued(kind) -> Job:
+    return Job.queued(
+        job_id=JobId("job"), kind=kind, library=LIBRARY, version=None, now=datetime.now(UTC)
+    )
+
+
+async def test_a_cancelled_reprocess_stops_before_its_next_version(sources):
+    jobs = InMemoryJobRepository()
+    importer = Importer(on_seen=Canceller(jobs, job_id="job"))  # during the first version
+    handler = ReprocessLibraryUseCase(
+        sources=sources, importer=importer, checkpoints=StopOnCancel(inner=InMemoryCheckpoints())
+    )
+
+    ended = await run_job(jobs, _queued(REPROCESS_JOB), handler)
+
+    assert [j.version for j in importer.seen] == ["v1.0.0"]  # re-imported whole, then stopped
+    assert (ended.state, ended.cancelled_by, ended.done) == (JobState.CANCELLED, WHO, 1)
+    assert ended.finished_at is not None
+
+
+async def test_a_cancelled_retag_stops_before_its_next_version(sources):
+    store = Store(
+        {
+            ref: StoredTags(manifest_id=f"m-{ref}", articles=(article("docs/a.md", ("x",)),))
+            for ref in ("v1.0.0", "main")
+        }
+    )
+    jobs = InMemoryJobRepository()
+    index = Index(on_retag=Canceller(jobs, job_id="job"))
+    handler = RetagLibraryUseCase(
+        sources=sources,
+        tags=store,
+        index=index,
+        tag_locks=TagLocks(),
+        checkpoints=StopOnCancel(inner=InMemoryCheckpoints()),
+    )
+
+    ended = await run_job(jobs, _queued(RETAG_JOB), handler)
+
+    assert [manifest for manifest, _ in index.retagged] == ["m-v1.0.0"]
+    assert (ended.state, ended.done) == (JobState.CANCELLED, 1)

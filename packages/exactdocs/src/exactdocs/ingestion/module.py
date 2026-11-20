@@ -83,6 +83,7 @@ from exactdocs.ingestion.ports.driving import (
     AddLibrary,
     AddVersion,
     ApplySources,
+    CancelJob,
     CheckRepository,
     DisableAutoSync,
     DisableWebhook,
@@ -118,6 +119,7 @@ from exactdocs.ingestion.use_cases import (
     AddVersionUseCase,
     ApplySourcesUseCase,
     AutoImports,
+    CancelJobUseCase,
     CheckRepositoryUseCase,
     CollectGarbageUseCase,
     DisableAutoSyncUseCase,
@@ -153,6 +155,7 @@ from exactdocs.ingestion.use_cases import (
     SetAutoSyncUseCase,
     SetWebhookUseCase,
     SourcesReader,
+    StopOnCancel,
     SubmitQueuedJobsUseCase,
     SwitchScheduleUseCase,
     SyncLibraryUseCase,
@@ -591,6 +594,8 @@ class IngestionModule:
     """Pins another ref of a library and queues its import."""
     apply_sources: ApplySources
     """Applies a sources file library by library."""
+    cancel_job: CancelJob
+    """Cancels a queued or running job."""
     check_repository: CheckRepository
     """Validates a git URL and proposes a library ID, saving nothing."""
     disable_auto_sync: DisableAutoSync
@@ -760,7 +765,10 @@ class IngestionModule:
                     for kind, handler in kinds.items()
                 },
                 EMBED_JOB: EmbedVersionUseCase(
-                    embedder=embedder, queue=embedding, checkpoints=checkpoints or _InlineSteps()
+                    embedder=embedder,
+                    queue=embedding,
+                    # A cancelled job stops before its next batch; the batches done are kept.
+                    checkpoints=StopOnCancel(inner=checkpoints or _InlineSteps()),
                 ),
             }
         enqueue_job = EnqueueJobUseCase(jobs=jobs, clock=clock, handlers=kinds, runner=runner)
@@ -857,6 +865,7 @@ class IngestionModule:
                 remove_version=remove_version,
                 remove_library=remove_library,
             ),
+            cancel_job=CancelJobUseCase(jobs=jobs, clock=clock, access=access),
             check_repository=CheckRepositoryUseCase(remote=remote, library_ids=library_ids),
             disable_auto_sync=DisableAutoSyncUseCase(
                 sources=sources, schedules=schedules, switch=switch, access=access
@@ -1014,8 +1023,8 @@ def import_job(
         guidance=guidance,
         files=files,
     )
-    if checkpoints is not None:
-        importer = replace(importer, checkpoints=checkpoints)
+    # A cancelled job stops before its next step; each step leaves nothing half done.
+    importer = replace(importer, checkpoints=StopOnCancel(inner=checkpoints or _InlineSteps()))
     refresher = replace(importer, refresh=True)
     hook = DiscardInterruptedImportUseCase(versions=versions, index=index)
     steps = importer.checkpoints

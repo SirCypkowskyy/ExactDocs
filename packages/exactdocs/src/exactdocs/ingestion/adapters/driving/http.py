@@ -16,6 +16,7 @@ from exactdocs.ingestion.dtos import (
     ApplySourcesCommand,
     AutoSyncIn,
     AutoSyncOut,
+    CancelJobCommand,
     CheckedRepository,
     CheckRepositoryCommand,
     DisableAutoSyncCommand,
@@ -60,6 +61,7 @@ from exactdocs.ingestion.ports.driving import (
     AddLibrary,
     AddVersion,
     ApplySources,
+    CancelJob,
     CheckRepository,
     DisableAutoSync,
     DisableWebhook,
@@ -120,6 +122,8 @@ def build_router(
     apply_sources: ApplySources,
     require_session: Callable[[Request], Awaitable[object]],
     require_operator: Callable[..., Awaitable[object]],
+    cancel_job: CancelJob,
+    caller_name: Callable[..., Awaitable[str | None]],
 ) -> APIRouter:
     """Expose adding a library, the repository checks and the job read side.
 
@@ -148,6 +152,9 @@ def build_router(
         require_session: Refuses (401) a request without a session cookie.
         require_operator: Refuses (403) a caller that is not an operator; a session or an
             API token may call (the CLI and CI only have tokens).
+        cancel_job: Cancels a queued or running job.
+        caller_name: A FastAPI dependency naming the caller (a user name), recorded as who
+            cancelled a job.
 
     Returns:
         The router, with the job, removal, manual-tag, settings and sources routes included.
@@ -438,6 +445,44 @@ def build_router(
     router.include_router(
         _read_router(get_job, list_latest_jobs, list_library_jobs, get_library_access)
     )
+    router.include_router(_cancel_router(cancel_job, caller_name))
+
+    return router
+
+
+def _cancel_router(
+    cancel_job: CancelJob, caller_name: Callable[..., Awaitable[str | None]]
+) -> APIRouter:
+    """Build the route that cancels a job.
+
+    Args:
+        cancel_job: Cancels a queued or running job.
+        caller_name: The dependency naming the caller.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["ingestion"])
+
+    @router.post("/jobs/{job_id}/cancel", name="cancel_job")
+    async def cancel(job_id: str, by: Annotated[str | None, Depends(caller_name)]) -> JobSummary:
+        """Cancel a queued or running job (contributor on its library; operators always may).
+
+        A queued job is cancelled at once and never starts: its version stays as it was (or is
+        never created, for a first import). A running job stops at its next step boundary: no
+        version is left half replaced and no new embedding batch is sent after the one in
+        flight; what it finished is kept (an embedding's vectors). Until it stops it answers
+        `running` with `cancelled_at` set, and asking again answers the same. A job that ended
+        (`succeeded`, `failed` or `cancelled`) answers 409 `job_finished`, with its `job_state`.
+
+        Args:
+            job_id: The job ID.
+            by: Who cancels it.
+
+        Returns:
+            The job, `cancelled` or still `running` while it stops.
+        """
+        return await cancel_job(CancelJobCommand(job_id=job_id, by=by))
 
     return router
 

@@ -1,10 +1,10 @@
 import copy
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Self, cast
 
-from exactdocs.ingestion.constants import ACTIVE_JOB_STATES, IMPORT_KINDS, PUSH_JOB
+from exactdocs.ingestion.constants import ACTIVE_JOB_STATES, IMPORT_KINDS, PUSH_JOB, JobKind
 from exactdocs.ingestion.errors import (
     CredentialsRequiredError,
     PushQueuedError,
@@ -74,12 +74,36 @@ class InMemoryJobRepository:
         self.jobs[job.id] = job
 
     async def save(self, job: Job) -> None:
-        """Replace the stored job that has the same ID.
+        """Replace the stored job that has the same ID, unless it is ``cancelled``.
+
+        The stored cancellation (who, when) is kept: only ``cancel`` sets it.
 
         Args:
             job: The job as it is now.
         """
+        stored = self.jobs.get(job.id)
+        if stored is not None and stored.state is JobState.CANCELLED:
+            return
+        if stored is not None:
+            job = replace(job, cancelled_by=stored.cancelled_by, cancelled_at=stored.cancelled_at)
         self.jobs[job.id] = job
+
+    async def cancel(self, job_id: JobId, *, by: str | None, now: datetime) -> Job | None:
+        """Ask to cancel a queued or running job, once; a finished one is left as it is.
+
+        Args:
+            job_id: The job's ID.
+            by: Who cancels it.
+            now: The time of the request.
+
+        Returns:
+            The job after the request, or ``None`` when there is none.
+        """
+        job = self.jobs.get(job_id)
+        if job is None or job.finished or job.cancel_requested:
+            return job
+        self.jobs[job_id] = job.cancelling(by, now)
+        return self.jobs[job_id]
 
     async def get(self, job_id: JobId) -> Job | None:
         """Return the job, or ``None``.
@@ -103,6 +127,24 @@ class InMemoryJobRepository:
         """
         mine = [job for job in self.jobs.values() if job.library == library]
         return sorted(mine, key=lambda job: job.id, reverse=True)
+
+    async def list_newest_of_kind(self, library: str, kind: JobKind) -> Sequence[Job]:
+        """Return the newest job of ``kind`` of each version of the library.
+
+        Args:
+            library: The library ID.
+            kind: The job kind.
+
+        Returns:
+            One job per version.
+        """
+        newest: dict[str | None, Job] = {}
+        for job in self.jobs.values():
+            if job.library == library and job.kind == kind:
+                known = newest.get(job.version)
+                if known is None or job.id > known.id:
+                    newest[job.version] = job
+        return list(newest.values())
 
     async def list_unfinished_for_library(self, library: str) -> Sequence[Job]:
         """Return the library's ``queued`` and ``running`` jobs, newest first.

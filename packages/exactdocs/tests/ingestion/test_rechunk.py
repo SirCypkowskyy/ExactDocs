@@ -1,14 +1,19 @@
 """Re-chunking every version of a library from what it stores, after its chunking changed."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
+from cancelling import WHO, Canceller, run_job
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
-from exactdocs.ingestion.adapters.driven.memory import InMemoryCheckpoints, InMemoryLibrarySources
+from exactdocs.ingestion.adapters.driven.memory import (
+    InMemoryCheckpoints,
+    InMemoryJobRepository,
+    InMemoryLibrarySources,
+)
 from exactdocs.ingestion.constants import PARSER_VERSION, RECHUNK_JOB, REFRESH_JOB
 from exactdocs.ingestion.errors import (
     RepositoryUnreachableError,
@@ -26,6 +31,7 @@ from exactdocs.ingestion.models import (
     ImportSource,
     Job,
     JobId,
+    JobState,
     PathSelection,
     ProblemCode,
     ProposedId,
@@ -36,7 +42,7 @@ from exactdocs.ingestion.models import (
     git_blob_sha,
     parse_article,
 )
-from exactdocs.ingestion.use_cases import RechunkLibraryUseCase, TagLocks
+from exactdocs.ingestion.use_cases import RechunkLibraryUseCase, StopOnCancel, TagLocks
 
 LIBRARY = "/acme/docs"
 URL = RepositoryUrl(
@@ -98,9 +104,12 @@ class Copier:
     )
     outdated: set[str] = field(default_factory=set)
     copies: int = 0
+    on_copy: Callable[[], Awaitable[None]] | None = None
 
     async def copy(self, library: str, ref: str, *, content_version: int) -> CopiedVersion | None:
         assert (library, content_version) == (LIBRARY, PARSER_VERSION)
+        if self.on_copy is not None:
+            await self.on_copy()
         if ref in self.outdated:
             raise StoredTextOutdatedError(library, ref)
         if ref not in self.articles:
@@ -446,3 +455,18 @@ def test_an_article_with_ordinary_front_matter_is_rebuilt_without_its_file(sourc
 @pytest.mark.parametrize("source", [ODD, "---\n\n---\n---\ntitle: [\n# Inside\n---\n# Real\n"])
 def test_a_blank_front_matter_before_an_invalid_block_needs_the_file(source):
     assert stored("docs/a.md", source).parsed() is None
+
+
+async def test_a_cancelled_rechunk_stops_between_versions_and_keeps_the_ones_it_finished(world):
+    jobs = InMemoryJobRepository()
+    world.copier.on_copy = Canceller(jobs, job_id="job")  # in the first version's step
+    handler = replace(world.handler(), checkpoints=StopOnCancel(inner=InMemoryCheckpoints()))
+    queued = Job.queued(
+        job_id=JobId("job"), kind=RECHUNK_JOB, library=LIBRARY, version=None, now=datetime.now(UTC)
+    )
+
+    ended = await run_job(jobs, queued, handler)
+
+    assert (ended.state, ended.cancelled_by, ended.done) == (JobState.CANCELLED, WHO, 1)
+    assert world.publisher.active == {"v1.0.0": "v1.0.0-copy1", "main": "m2"}  # never half
+    assert world.copier.copies == 1

@@ -270,6 +270,10 @@ async def _watch(
             code = f" [{printable(job['error_code'])}]" if job.get("error_code") else ""
             message = f"importing {label} failed{code}: {printable(reason)} (job {job_id})"
             raise ImportFailedError(message)
+        if job["state"] == "cancelled":
+            who = f" by {printable(job['cancelled_by'])}" if job.get("cancelled_by") else ""
+            message = f"importing {label} was cancelled{who} (job {job_id})"
+            raise ImportFailedError(message)
         if job["state"] not in {"queued", "running"}:
             message = f"job {job_id} is in the unknown state {printable(str(job['state']))!r}"
             raise ClientError(message)
@@ -814,6 +818,27 @@ async def remove(api: ApiClient, target: str, *, as_json: bool = False) -> None:
     say(f"Removed {what}.")
     if result["ref"] and result["default_version"]:
         say(f"{result['library']} now resolves to {result['default_version']}.")
+
+
+async def cancel_job(api: ApiClient, job_id: str, *, as_json: bool = False) -> None:
+    """``POST /jobs/{id}/cancel``: a queued job is cancelled, a running one stops at its next step.
+
+    Args:
+        api: The API client.
+        job_id: The job's ID.
+        as_json: Print JSON for scripts instead of text.
+    """
+    job = await api.request("POST", f"/jobs/{quote(job_id, safe='')}/cancel")
+    if as_json:
+        dump(job)
+        return
+    what = f"{job['kind']} job {job['id']} of {job['library']}"
+    if job["version"]:
+        what += f" {printable(job['version'])}"
+    if job["state"] == "cancelled":
+        say(f"Cancelled the {what}.")
+    else:
+        say(f"Cancelling the {what}: it stops after the step it is running.")
 
 
 async def create_token(

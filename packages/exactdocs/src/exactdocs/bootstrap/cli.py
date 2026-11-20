@@ -801,6 +801,38 @@ def remove(
     _call(work())
 
 
+jobs = App(name="jobs", help="Background jobs: imports, syncs, re-processing, embedding.")
+app.command(jobs)
+
+
+@jobs.command(name="cancel")
+def jobs_cancel(
+    job_id: str,
+    *,
+    json_output: JsonOption = False,
+    url: UrlOption = None,
+    token: TokenOption = None,
+) -> None:
+    """Cancel a queued or running job (needs the contributor role on its library).
+
+    A queued job never starts; a running one stops after the step it is running (an embedding
+    after the batch in flight), keeping what it finished.
+
+    Args:
+        job_id: The job's ID (the web UI and `--json` output show it).
+        json_output: Print JSON for scripts.
+        url: Server URL (default: EXACTDOCS_URL, config).
+        token: ExactDocs API token (default: EXACTDOCS_TOKEN, config); not a git token.
+    """
+
+    async def work() -> None:
+        """Cancel the job."""
+        async with _api(url, token) as api:
+            await lib.cancel_job(api, job_id, as_json=json_output)
+
+    _call(work())
+
+
 sources = App(
     name="sources",
     help="Declare libraries in exactdocs.sources.yaml, review the diff, apply it.",
