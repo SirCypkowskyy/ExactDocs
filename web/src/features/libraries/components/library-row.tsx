@@ -130,7 +130,7 @@ export function LibraryRow({ library, sync, now }: LibraryRowProps) {
               </Link>
             </h2>
             {library.title && (
-              <p className="font-mono text-[12px] text-muted-foreground [overflow-wrap:anywhere]">
+              <p className="font-mono text-[13px] text-muted-foreground [overflow-wrap:anywhere]">
                 <Id id={library.id} />
               </p>
             )}

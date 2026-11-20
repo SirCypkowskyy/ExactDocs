@@ -4,6 +4,7 @@ import { type ReactNode, useId } from "react";
 import { HttpError } from "@/shared/lib/http";
 import { normalizeQuery } from "@/shared/lib/search-query";
 import { cn } from "@/shared/lib/utils";
+import { buttonVariants } from "@/shared/ui/button";
 import { globalSearchQueryOptions } from "../api/global-search-queries";
 import {
   countLine,
@@ -14,7 +15,11 @@ import {
   totalMatches,
 } from "../model/global";
 import { GLOBAL_RESULTS_ID, GlobalSearchBox } from "./global-search-box";
-import { Crumbs, retry, Skeleton, Snippet } from "./hit-parts";
+import { Crumbs, Skeleton, Snippet } from "./hit-parts";
+
+/** A secondary action under a search state (retry, widen, another version). */
+const retry = buttonVariants({ variant: "outline", size: "sm" });
+
 import { focusGlobalInput, onArrows } from "./keyboard";
 
 /** Chips shown before "+N more"; the selected library always stays visible. */

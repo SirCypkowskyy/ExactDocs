@@ -3,6 +3,10 @@ import { Link } from "@tanstack/react-router";
 import { ArrowUpRight, Info, Settings } from "lucide-react";
 import { absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 import { usePageTitle } from "@/shared/lib/use-page-title";
+import { buttonVariants } from "@/shared/ui/button";
+import { EmptyState, Page, PageHeader } from "@/shared/ui/page";
+import { kbd } from "@/shared/ui/recipes";
+import { Commit, LibraryBullet, VersionStation } from "@/shared/ui/route";
 import { libraryQueryOptions } from "../api/browse-queries";
 import {
   type BrowseSearch,
@@ -35,29 +39,41 @@ function Overview({
   searchable: boolean;
 }) {
   return (
-    <div className="fade-in max-w-3xl">
-      <h2 className="text-2xl font-semibold tracking-tight">
+    <div className="fade-in max-w-[72ch]">
+      <p className="flex items-center gap-2 text-body text-muted-foreground">
+        <VersionStation
+          version={version.ref}
+          isDefault={version.is_default}
+          className="text-foreground"
+        />
+        <span aria-hidden="true" className="route-draw h-0.5 w-3 rounded-full bg-route/50" />
+        <Commit sha={version.commit_sha} />
+      </p>
+      <h2 className="mt-2 text-title font-semibold">
         Browsing <span className="font-mono text-[0.9em]">{version.ref}</span>
       </h2>
-      {library.description && <p className="mt-2 text-muted-foreground">{library.description}</p>}
-      <p className="mt-4 text-muted-foreground">
-        This is the text exactly as imported from commit{" "}
-        <code className="font-mono text-foreground">{shortSha(version.commit_sha)}</code>. Pick a
-        file from the tree to read it.
+      {library.description && (
+        <p className="mt-2 text-section text-pretty text-foreground">{library.description}</p>
+      )}
+      <ul className="mt-6 grid gap-x-8 gap-y-4 border-t border-rule pt-5 text-body text-muted-foreground sm:grid-cols-2">
+        <li>
+          <span className="block font-medium text-foreground">Read an article</span>
+          Pick a file from the tree. The text is exactly as imported from commit{" "}
+          <code className="font-mono text-foreground">{shortSha(version.commit_sha)}</code>.
+        </li>
         {searchable && (
-          <>
-            {" "}
-            Or search every article in{" "}
-            <span className="font-mono text-foreground">{version.ref}</span>
+          <li>
+            <span className="block font-medium text-foreground">Search {version.ref}</span>
+            Every article of this version, and nothing from another one
             <span className="hidden lg:inline">
               {" "}
-              (press <kbd className="rounded bg-secondary px-1 font-mono text-xs">/</kbd>)
+              (press <kbd className={kbd}>/</kbd>)
             </span>
             .
-          </>
+          </li>
         )}
-      </p>
-      <div className="mt-2">
+      </ul>
+      <div className="mt-4">
         <CommitLinks library={library} version={version} />
       </div>
     </div>
@@ -82,7 +98,7 @@ function VersionBrowser({
   };
   const searching = slots !== undefined && search.q !== undefined;
   return (
-    <div className="mt-6 grid gap-x-10 gap-y-5 lg:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)] lg:items-start">
+    <div className="grid gap-x-10 gap-y-5 lg:grid-cols-[minmax(17rem,20rem)_minmax(0,1fr)] lg:items-start xl:gap-x-14">
       <FilesAside
         owner={owner}
         repo={repo}
@@ -118,10 +134,10 @@ function VersionBrowser({
 
 function UnknownVersion({ missing, shown }: { missing: string; shown: string }) {
   return (
-    <div className="expand-in mt-4 grid max-w-2xl">
+    <div className="expand-in mb-6 grid max-w-2xl">
       <p
         role="status"
-        className="flex items-start gap-2 overflow-hidden rounded-md bg-accent px-3 py-2.5 text-sm"
+        className="flex items-start gap-2 overflow-hidden rounded-md bg-route-soft px-3 py-2.5 text-body"
       >
         <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
         <span>
@@ -140,58 +156,72 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
   const web = repoWebUrl(library.source_url);
 
   return (
-    <main className="px-4 py-6 sm:px-6 sm:py-8 2xl:mx-auto 2xl:max-w-[96rem]">
-      <div className="flex items-center justify-between gap-4">
-        <nav aria-label="Breadcrumb" className="min-w-0 text-sm text-muted-foreground">
+    <Page width="wide">
+      <PageHeader
+        headingRef={heading}
+        title={library.title || library.id}
+        above={
+          <nav aria-label="Breadcrumb" className="min-w-0 text-body text-muted-foreground">
+            <ol className="flex min-w-0 flex-wrap items-center gap-x-1.5">
+              <li>
+                <Link
+                  to="/"
+                  className="-ml-1 inline-flex min-h-11 items-center rounded px-1 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-7"
+                >
+                  Libraries
+                </Link>
+              </li>
+              <li aria-hidden="true">/</li>
+              <li className="inline-flex min-w-0 items-center gap-1.5">
+                <LibraryBullet id={library.id} size="sm" />
+                <span
+                  aria-current="page"
+                  className="truncate font-mono text-[13px] text-foreground"
+                >
+                  {library.id}
+                </span>
+              </li>
+            </ol>
+          </nav>
+        }
+        description={
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            {web && (
+              <a
+                href={web}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex min-h-8 max-w-full items-center gap-1 rounded outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span className="truncate">{web.replace(/^https?:\/\//, "")}</span>
+                <ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
+                <span className="sr-only">(opens the repository)</span>
+              </a>
+            )}
+            {version && (
+              <span>
+                {version.kind === "tag" ? "Imported" : `${capitalize(version.kind)} · imported`}{" "}
+                <time
+                  dateTime={version.imported_at}
+                  title={absoluteTimeWithZone(version.imported_at)}
+                >
+                  {relativeTime(version.imported_at, Date.now())}
+                </time>
+              </span>
+            )}
+          </span>
+        }
+        actions={
           <Link
-            to="/"
-            className="-ml-1 inline-flex min-h-11 items-center rounded px-1 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-8"
+            to="/libraries/$owner/$repo/settings"
+            params={{ owner, repo }}
+            className={buttonVariants({ variant: "outline", size: "sm" })}
           >
-            Libraries
+            <Settings aria-hidden="true" />
+            Settings
           </Link>
-          <span aria-hidden="true"> / </span>
-          <span aria-current="page" className="font-mono">
-            {library.id}
-          </span>
-        </nav>
-        <Link
-          to="/libraries/$owner/$repo/settings"
-          params={{ owner, repo }}
-          className="-mr-2 inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground outline-none transition-colors duration-150 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-8"
-        >
-          <Settings aria-hidden="true" className="size-4" />
-          Settings
-        </Link>
-      </div>
-      <h1
-        ref={heading}
-        tabIndex={-1}
-        className="mt-1 text-3xl font-semibold tracking-tight outline-none [overflow-wrap:anywhere]"
-      >
-        {library.title || library.id}
-      </h1>
-      <p className="mt-0.5 flex flex-wrap items-center gap-x-3 text-sm text-muted-foreground">
-        {web && (
-          <a
-            href={web}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex min-h-8 max-w-full items-center gap-1 rounded outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <span className="truncate">{web.replace(/^https?:\/\//, "")}</span>
-            <ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
-            <span className="sr-only">(opens the repository)</span>
-          </a>
-        )}
-        {version && (
-          <span>
-            {version.kind === "tag" ? "Imported" : `${capitalize(version.kind)} · imported`}{" "}
-            <time dateTime={version.imported_at} title={absoluteTimeWithZone(version.imported_at)}>
-              {relativeTime(version.imported_at, Date.now())}
-            </time>
-          </span>
-        )}
-      </p>
+        }
+      />
       {missing && version && <UnknownVersion missing={missing} shown={version.ref} />}
       {version ? (
         <VersionBrowser
@@ -204,14 +234,11 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
           version={version}
         />
       ) : (
-        <div className="mt-8 max-w-xl">
-          <h2 className="text-2xl font-semibold tracking-tight">Nothing imported yet</h2>
-          <p className="mt-2 text-muted-foreground">
-            This library has no versions. Once its first import finishes they appear here.
-          </p>
-        </div>
+        <EmptyState title="Nothing imported yet" className="max-w-xl">
+          This library has no versions. Once its first import finishes they appear here.
+        </EmptyState>
       )}
-    </main>
+    </Page>
   );
 }
 

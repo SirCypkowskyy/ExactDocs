@@ -1,7 +1,8 @@
 import { Link } from "@tanstack/react-router";
-import { ChevronDown, ChevronRight, CircleAlert, Loader } from "lucide-react";
+import { ChevronDown, ChevronRight, CircleAlert } from "lucide-react";
 import { type KeyboardEvent, memo, useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/shared/lib/utils";
+import { Spinner } from "@/shared/ui/spinner";
 import { type Row, showFileName } from "../model/browse";
 
 type ScopeState = "idle" | "paging" | "error";
@@ -25,8 +26,8 @@ interface FileTreeProps {
 const INDENT = 12;
 const MAX_INDENT_LEVELS = 6;
 const rowBase =
-  "flex min-h-11 w-full cursor-pointer items-center gap-1.5 rounded-md pr-2 text-left text-[15px] outline-none transition-colors duration-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring lg:min-h-8 lg:text-sm";
-const hoverable = "[@media(hover:hover)]:hover:bg-accent/70";
+  "flex min-h-11 w-full cursor-pointer items-center gap-1.5 rounded-md pr-2 text-left text-[15px] outline-none transition-colors duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring lg:min-h-8 lg:text-body";
+const hoverable = "[@media(hover:hover)]:hover:bg-accent";
 
 const indent = (depth: number) => ({
   paddingLeft: `${Math.min(depth, MAX_INDENT_LEVELS) * INDENT + 8}px`,
@@ -93,7 +94,7 @@ function Folder({
       <ChevronRight
         aria-hidden="true"
         className={cn(
-          "size-4 shrink-0 text-muted-foreground transition-transform duration-150 ease-out motion-reduce:transition-none",
+          "size-4 shrink-0 text-muted-foreground transition-transform duration-(--dur) ease-(--ease-out) motion-reduce:transition-none",
           row.open && "rotate-90",
         )}
       />
@@ -136,7 +137,7 @@ function Pager({
       {bad ? (
         <CircleAlert aria-hidden="true" className="size-4 shrink-0" />
       ) : state === "paging" ? (
-        <Loader aria-hidden="true" className="spin size-4 shrink-0 text-muted-foreground" />
+        <Spinner className="text-muted-foreground" />
       ) : (
         <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-route" />
       )}
@@ -170,13 +171,13 @@ function File({
       aria-current={selected ? "page" : undefined}
       onClick={onOpen}
       title={`${row.title}\n${row.path}`}
-      className={cn(rowBase, "py-1", selected ? "bg-route/[0.16] ring-1 ring-route/40" : hoverable)}
+      className={cn(rowBase, "py-1", selected ? "bg-route-soft font-medium" : hoverable)}
     >
       <span aria-hidden="true" className="size-4 shrink-0" />
       <span className="min-w-0">
         <span className="block truncate leading-snug">{row.title}</span>
         {showFileName(row.title, row.name) && (
-          <span className="block truncate text-xs leading-snug text-muted-foreground">
+          <span className="block truncate font-mono text-[11px] leading-snug text-muted-foreground">
             <span className="sr-only">File </span>
             {row.name}
           </span>
@@ -195,9 +196,9 @@ function Loading({ depth }: { depth: number }) {
       aria-disabled="true"
       aria-level={depth + 1}
       style={indent(depth)}
-      className="flex min-h-9 items-center gap-2 text-sm text-muted-foreground"
+      className="flex min-h-9 items-center gap-2 text-body text-muted-foreground"
     >
-      <Loader aria-hidden="true" className="spin ml-[18px] size-3.5" />
+      <Spinner className="ml-[18px] size-3.5" />
       Loading
     </div>
   );

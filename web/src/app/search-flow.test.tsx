@@ -355,7 +355,7 @@ describe("searching a version", () => {
 
   it("points at search on the empty page", async () => {
     mount("/libraries/acme/payments?version=v1.4.0");
-    expect(await screen.findByText(/Or search every article in/)).toBeVisible();
+    expect(await screen.findByText(/Every article of this version/)).toBeVisible();
   });
 
   it("reports a failed search and retries", async () => {
