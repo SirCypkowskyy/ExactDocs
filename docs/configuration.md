@@ -54,15 +54,15 @@ not valid stops the server at start, with a message naming the field.
 
 | Field | Default | What it does |
 |---|---|---|
-| `kind` | required | `oidc`, the only kind so far: OpenID Connect with discovery and the authorization code flow with PKCE. ADFS 2016+ is an `oidc` provider |
+| `kind` | required | `oidc`, `oauth2`, or `github`, using authorization code + PKCE S256. ADFS 2016+ is `oidc` |
 | `display_name` | the name | What the button says: **Sign in with** *display_name* |
-| `issuer` | required | The issuer URL, exactly as the discovery document's `issuer` says. HTTPS; plain HTTP only to a loopback host, for development |
+| `issuer` | required for `oidc` | OIDC discovery issuer; OAuth2 stable linking namespace (default: token URL origin). HTTPS; plain HTTP only to loopback for development |
 | `client_id` | required | The client ID registered at the provider |
 | `client_secret` | unset | The client secret, from the environment only (`EXACTDOCS_AUTH__PROVIDERS__<NAME>__CLIENT_SECRET`). Leave it and `client_secret_file` unset for a public client |
 | `client_secret_file` | unset | A file holding the client secret, read at every use (Docker and Kubernetes secrets). Not together with `client_secret` |
-| `scopes` | `["openid", "profile", "email", "offline_access"]` | The scopes asked for. `openid` is required; `offline_access` gets the refresh token that revalidation needs |
+| `scopes` | `["openid", "profile", "email", "offline_access"]` | OIDC requires `openid`; OAuth2 always adds `offline_access` for revalidation. GitHub uses `read:user read:org` |
 | `allowed_groups` | `[]` | Groups, as the provider names them, whose members may sign in |
-| `allow_any_user` | `false` | Admit everyone the provider vouches for. Either this or `allowed_groups` is required |
+| `allow_any_user` | `false` | Admit everyone the provider vouches for. Either this, `allowed_groups`, or GitHub membership filters is required |
 | `admin_groups` | `[]` | Members of these groups get the role `admin`, everyone else `user`, decided again at every sign-in and revalidation |
 | `groups_claim` | `groups` | The claim holding the groups, a dotted path (Keycloak: `realm_access.roles`; ADFS: `group`). Read from userinfo when the ID token lacks it |
 | `group_prefix` | empty | Put before each group name ExactDocs stores for the account (for example `corp:`). Matching against `allowed_groups` and `admin_groups` uses the provider's names |
@@ -70,6 +70,64 @@ not valid stops the server at start, with a message naming the field.
 | `email_claim` | `email` | The email claim |
 | `revalidate_minutes` | `60` | How often the groups are checked again with the stored refresh token |
 | `revalidate_grace_minutes` | `1440` | How long access lasts without a successful check (the provider is unreachable, or it gave no refresh token). After that, access ends until the next sign-in |
+
+### OAuth2-only sign-in
+
+For `kind = "oauth2"`, set `authorization_url`, `token_url`, and `userinfo_url` to the provider's
+HTTPS endpoints (HTTP loopback is allowed for development). Set `client_id` and a secret as above.
+`subject_claim` defaults to `sub`; `username_claim`, `email_claim` and `groups_claim` use the
+same defaults as OIDC. Claim names can be literal keys or dotted nested paths. A literal key wins
+when both exist. The subject must be a nonempty string; it, together with `issuer`, links the
+account. Email and username changes never link another account.
+
+`client_auth_method` is `client_secret_basic` by default; use `client_secret_post` if required by
+the token endpoint. Configure `scopes` as needed; `offline_access` is always requested. The
+provider must return a refresh token for continuing web revalidation; otherwise access ends after
+the configured grace period. Refresh tokens are sealed, and a refreshed subject change is refused.
+
+### GitHub and GitHub Enterprise sign-in
+
+Create an **OAuth App** in GitHub's developer settings. Register
+`<EXACTDOCS_PUBLIC_URL>/api/v1/auth/ghe/callback` as its authorization callback URL (`ghe` is the
+provider name below). Configure the client secret through the environment or a mounted secret:
+
+```toml
+[auth.providers.ghe]
+kind = "github"
+display_name = "GitHub Enterprise"
+base_url = "https://github.example.com"
+client_id = "your-oauth-app-client-id"
+client_secret_file = "/run/secrets/github-client-secret"
+allowed_orgs = ["acme"]
+allowed_teams = ["acme/docs-readers"]
+admin_groups = ["github:acme/docs-admins"]
+```
+
+Use `base_url = "https://github.com"` for GitHub.com (API `https://api.github.com`). Enterprise
+Server derives `<base_url>/api/v3`; data-residency Cloud `https://<sub>.ghe.com` derives
+`https://api.<sub>.ghe.com`. An explicit `api_url` overrides this. Identity links use the API URL
+and numeric user ID, so login renames keep the account. Changing the API URL changes that identity
+namespace. GitHub Apps are outside this integration; use an OAuth App with `read:user read:org`.
+
+Each configured organization, including organizations of `allowed_teams`, is checked first for
+active membership. Teams are then read from paginated `/user/teams`, with an individual team
+membership fallback. At least one configured team is required when `allowed_teams` is set. A
+verified configured team becomes group `github:<org>/<team>`; include admin teams in
+`allowed_teams` to make their groups available to `admin_groups`. If `allowed_groups` is also
+set, it is an additional admission requirement. `group_prefix` applies as for OIDC. With no
+membership filters, explicitly set `allow_any_user = true`; it never bypasses configured filters.
+
+For an organization that restricts OAuth Apps, an organization owner must approve the ExactDocs
+OAuth App under **Organization settings → Third-party access → OAuth app policy**. A refusal
+names the organization and says it has not approved the app. For a SAML-enforced organization,
+authorize the app using **Settings → Applications → Authorized OAuth Apps → Configure SSO**.
+An SSO refusal asks the person to authorize SSO for that organization. These are separate from a
+missing organization/team membership; provider messages and SSO URLs are never rendered directly.
+
+The non-expiring OAuth App access token is sealed and used for periodic membership checks. Losing
+membership or explicit token revocation ends web sessions and refuses API tokens on the next
+check; transient provider outages retain access only within the existing bounded grace period.
+The local password admin remains available for recovery.
 
 Two settings apply to all providers:
 

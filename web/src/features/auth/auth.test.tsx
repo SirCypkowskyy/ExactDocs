@@ -372,6 +372,11 @@ describe("sign-in through an identity provider", () => {
 
   it.each([
     ["not_allowed", /not in a group allowed/],
+    ["github_team_required", /not a member of an allowed team/],
+    ["github_org_required", /not a member of an allowed organization/],
+    ["github_app_not_approved:acme", /organization acme has not approved this app/],
+    ["github_sso_required:acme", /authorize SSO for acme/],
+    ["github_access_denied:acme", /organization acme refused access/],
     ["account_disabled", /account is disabled/],
     ["username_unavailable", /username is taken/],
     ["provider_unavailable", /can't be reached/],
@@ -380,6 +385,16 @@ describe("sign-in through an identity provider", () => {
   ])("explains a refused sign-in (%s)", (code, message) => {
     renderWithClient(<SignInPage error={code} providers={providers} onSignedIn={vi.fn()} />);
     expect(screen.getByRole("alert")).toHaveTextContent(message);
+  });
+
+  it.each([
+    "github_sso_required:<img src=x onerror=alert(1)>",
+    "github_sso_required:acme:extra",
+    "github_sso_required:acme\n",
+    `github_sso_required:${"a".repeat(101)}`,
+  ])("ignores malformed GitHub refusal %s", (error) => {
+    renderWithClient(<SignInPage error={error} providers={providers} onSignedIn={vi.fn()} />);
+    expect(screen.queryByRole("alert")).toHaveTextContent("");
   });
 
   it("shows nothing for a code it does not know (the query string is not trusted)", () => {

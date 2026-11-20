@@ -384,7 +384,11 @@ async def test_before_the_setup_no_external_sign_in_starts() -> None:
             {"auth": {"providers": {"corp": provider(client_secret_file="/run/secret")}}},
             "not both",
         ),
-        ({"auth": {"providers": {"corp": provider(kind="github")}}}, "kind"),
+        ({"auth": {"providers": {"corp": provider(kind="saml")}}}, "kind"),
+        (
+            {"auth": {"providers": {"corp": provider(kind="oauth2")}}},
+            "oauth2 requires secure authorization_url, token_url and userinfo_url",
+        ),
         ({"auth": {"providers": {"corp": provider(scope="x")}}}, "scope"),
     ],
 )

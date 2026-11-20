@@ -14,7 +14,29 @@ export interface FormProblem {
  * on. Only known codes are shown: the query string is not trusted to say anything else.
  */
 export function explainSignInRefusal(code: unknown): string | undefined {
+  if (typeof code === "string") {
+    const github =
+      /^(github_app_not_approved|github_sso_required|github_access_denied):([a-zA-Z0-9][a-zA-Z0-9-]{0,99})$/.exec(
+        code,
+      );
+    if (github) {
+      const organization = github[2];
+      if (github[1] === "github_app_not_approved") {
+        return `The organization ${organization} has not approved this app. Ask an organization owner to approve the ExactDocs OAuth App in GitHub settings.`;
+      }
+      if (github[1] === "github_sso_required") {
+        return `Please authorize SSO for ${organization}. Authorize the ExactDocs OAuth App for your organization in GitHub settings, then try again.`;
+      }
+      return `The organization ${organization} refused access. Ask an organization owner to check the ExactDocs OAuth App permissions.`;
+    }
+  }
   switch (code) {
+    case "github_team_required":
+      return "You are not a member of an allowed team. Ask an organization owner to add you to a team allowed to use this server.";
+    case "github_org_required":
+      return "You are not a member of an allowed organization. Ask an organization owner to check your membership.";
+    case "provider_access_revoked":
+      return "Your identity provider revoked this sign-in. Sign in again to authorize access.";
     case "not_allowed":
       return "Your identity provider signed you in, but you are not in a group allowed to use this server. Ask an admin to add you.";
     case "account_disabled":

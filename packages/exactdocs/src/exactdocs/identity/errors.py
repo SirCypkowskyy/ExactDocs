@@ -341,3 +341,19 @@ class UnknownGrantError(NotFoundError):
     def __init__(self) -> None:
         """Create the error with its fixed message."""
         super().__init__("the library has no such grant")
+
+
+class GithubAccessDeniedError(ProviderAccessRevokedError):
+    """GitHub refused organization/team admission or requires administrator action."""
+
+    code = "github_access_denied"
+
+    def __init__(self, reason: str, *, refusal_code: str = "github_access_denied") -> None:
+        """Create a safe refusal containing only configured organization names.
+
+        Args:
+            reason: The fixed refusal message with the configured organization, if applicable.
+            refusal_code: A known browser refusal code, optionally suffixed with a safe org.
+        """
+        self.code = refusal_code
+        UnauthenticatedError.__init__(self, reason)

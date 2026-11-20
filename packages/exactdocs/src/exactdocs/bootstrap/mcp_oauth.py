@@ -1,14 +1,14 @@
 """OAuth for MCP hosts that cannot paste an API token (Claude, ChatGPT).
 
 One sign-in provider of ``[auth.providers]`` is chosen (``EXACTDOCS_MCP_OAUTH_PROVIDER``): an MCP
-client discovers a single authorization server. FastMCP's ``OIDCProxy`` serves the discovery
+client discovers a single authorization server. FastMCP's OAuth proxy serves the discovery
 documents, dynamic client registration, the consent page and the token endpoint, and signs the
-person in at the provider; our ``ExternalTokenVerifier`` then vouches for the provider's ID token
+person in at the provider; our ``ExternalTokenVerifier`` then vouches for the provider credential
 at every call, applying the provider's policy (allowed groups, disabled accounts). It is combined
 with the API-token verifier by ``MultiAuth``, so both credentials open ``/mcp``.
 
-Only the ``oidc`` kind (ADFS included) exists; ``oauth2`` and ``github`` kinds join it with #383,
-through ``OAuthProxy`` with the provider's endpoints.
+OIDC (ADFS included) uses ``OIDCProxy``; OAuth2 and GitHub use ``OAuthProxy`` with the configured
+provider endpoints and opaque access-token verification.
 """
 
 import hashlib
@@ -16,7 +16,7 @@ import shutil
 from pathlib import Path
 
 from cryptography.fernet import Fernet
-from fastmcp.server.auth import AuthProvider, MultiAuth, OIDCProxy
+from fastmcp.server.auth import AuthProvider, MultiAuth, OAuthProxy, OIDCProxy
 from fastmcp.server.auth.jwt_issuer import derive_jwt_key
 from key_value.aio.protocols import AsyncKeyValue
 from key_value.aio.stores.filetree import (
@@ -55,6 +55,35 @@ def build_mcp_auth(settings: Settings, identity: IdentityModule) -> AuthProvider
     if secret is None:
         message = f"sign-in provider {name!r}: its client secret cannot be read"
         raise ValueError(message)
+    verifier = ExternalTokenVerifier(
+        provider=name, identify_external_token=identity.identify_external_token
+    )
+    storage = _storage(settings.data_dir / MCP_OAUTH_SUBDIR, secret)
+    signing_key = derive_jwt_key(
+        high_entropy_material=secret, salt="exactdocs-mcp-oauth-jwt-signing-key"
+    )
+    if provider.kind != "oidc":
+        github = provider.kind == "github"
+        base = provider.base_url.rstrip("/")
+        proxy = OAuthProxy(
+            upstream_authorization_endpoint=(
+                f"{base}/login/oauth/authorize" if github else provider.authorization_url or ""
+            ),
+            upstream_token_endpoint=(
+                f"{base}/login/oauth/access_token" if github else provider.token_url or ""
+            ),
+            upstream_client_id=provider.client_id,
+            upstream_client_secret=secret,
+            token_endpoint_auth_method=(
+                "client_secret_post" if github else provider.client_auth_method
+            ),
+            base_url=f"{settings.public_url}",
+            token_verifier=verifier,
+            valid_scopes=provider.scopes,
+            client_storage=storage,
+            jwt_signing_key=signing_key,
+        )
+        return MultiAuth(server=proxy, verifiers=[api_tokens])
     config_url = f"{provider.issuer.rstrip('/')}/.well-known/openid-configuration"
     proxy = OIDCProxy(
         config_url=config_url,
@@ -65,14 +94,10 @@ def build_mcp_auth(settings: Settings, identity: IdentityModule) -> AuthProvider
         # The provider's ID token is what is checked (always a JWT, unlike many access tokens);
         # the scopes are those of the web sign-in, `openid` and `offline_access` among them.
         verify_id_token=True,
-        token_verifier=ExternalTokenVerifier(
-            provider=name, identify_external_token=identity.identify_external_token
-        ),
+        token_verifier=verifier,
         valid_scopes=provider.scopes,
-        client_storage=_storage(settings.data_dir / MCP_OAUTH_SUBDIR, secret),
-        jwt_signing_key=derive_jwt_key(
-            high_entropy_material=secret, salt="exactdocs-mcp-oauth-jwt-signing-key"
-        ),
+        client_storage=storage,
+        jwt_signing_key=signing_key,
     )
     return MultiAuth(server=proxy, verifiers=[api_tokens])
 
