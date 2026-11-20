@@ -1,24 +1,13 @@
 import type { ReactNode } from "react";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { ThemeSwitch } from "@/shared/ui/theme-switch";
+import { Wordmark } from "@/shared/ui/wordmark";
 
-/** A verbatim quote, the way ExactDocs hands it to an agent: the words, and where they live. */
-function Excerpt() {
-  return (
-    <figure aria-hidden="true" className="max-w-lg">
-      <blockquote className="font-serif text-2xl leading-snug text-field-foreground">
-        <mark className="rounded-sm bg-mark px-1 py-0.5 text-mark-foreground [box-decoration-break:clone]">
-          useEffect is a React Hook that lets you synchronize a component with an external system.
-        </mark>
-      </blockquote>
-      <figcaption className="mt-4 font-mono text-xs text-field-muted">
-        react@19.3.1 · reference/useEffect
-      </figcaption>
-    </figure>
-  );
-}
-
-/** Two-column frame for setup and sign-in: an ink field with the product's promise, the form beside it. */
+/**
+ * The frame for setup and sign-in, after the free shadcnblocks "Login 2" block (a wordmark over
+ * one centred form card): the card is the app's white sheet on its tinted frame, and the line
+ * under it says what the server is for.
+ */
 export function AuthLayout({
   title,
   intro,
@@ -30,37 +19,30 @@ export function AuthLayout({
 }) {
   const heading = usePageTitle(title);
   return (
-    <div className="grid min-h-dvh grid-rows-[auto_1fr] lg:grid-cols-[5fr_6fr] lg:grid-rows-none">
-      <aside className="flex h-16 flex-col justify-center bg-field px-6 text-field-foreground lg:h-auto lg:justify-between lg:px-14 lg:py-12">
-        <p className="font-serif text-xl font-semibold tracking-tight">ExactDocs</p>
-        <div className="hidden flex-col gap-12 lg:flex">
-          <p className="max-w-[14ch] text-balance font-serif text-5xl leading-[1.05] tracking-tight">
-            Documentation, word for word.
-          </p>
-          <Excerpt />
+    <div className="relative grid min-h-dvh place-items-center bg-frame px-4 py-12">
+      <ThemeSwitch className="absolute top-2 right-2 sm:top-3 sm:right-3" />
+      <div className="w-full max-w-[25rem]">
+        <div className="rise mb-6 flex justify-center">
+          <Wordmark />
         </div>
-      </aside>
-      <main className="relative flex items-start px-6 py-10 sm:py-16 lg:items-center lg:justify-center lg:px-14">
-        <ThemeSwitch className="absolute top-3 right-3 sm:top-4 sm:right-4" />
-        <div className="w-full max-w-sm">
-          <h1
-            ref={heading}
-            tabIndex={-1}
-            className="rise font-serif text-3xl font-semibold tracking-tight outline-none"
-          >
+        <main
+          id="main"
+          className="rise rounded-sheet border border-border bg-background px-6 py-7 sm:px-8 sm:py-8"
+          style={{ "--i": 1 } as React.CSSProperties}
+        >
+          <h1 ref={heading} tabIndex={-1} className="text-title font-semibold outline-none">
             {title}
           </h1>
-          <p
-            className="rise mt-2 text-muted-foreground"
-            style={{ "--i": 1 } as React.CSSProperties}
-          >
-            {intro}
-          </p>
-          <div className="rise mt-8" style={{ "--i": 2 } as React.CSSProperties}>
-            {children}
-          </div>
-        </div>
-      </main>
+          <p className="mt-1.5 text-body text-muted-foreground">{intro}</p>
+          <div className="mt-6">{children}</div>
+        </main>
+        <p
+          className="rise mx-auto mt-6 max-w-[22rem] text-center text-body text-muted-foreground text-balance"
+          style={{ "--i": 2 } as React.CSSProperties}
+        >
+          Documentation, word for word: every answer names its library, version and commit.
+        </p>
+      </div>
     </div>
   );
 }

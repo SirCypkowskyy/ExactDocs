@@ -36,7 +36,7 @@ function Overview({
 }) {
   return (
     <div className="fade-in max-w-3xl">
-      <h2 className="font-serif text-2xl font-semibold tracking-tight">
+      <h2 className="text-2xl font-semibold tracking-tight">
         Browsing <span className="font-mono text-[0.9em]">{version.ref}</span>
       </h2>
       {library.description && <p className="mt-2 text-muted-foreground">{library.description}</p>}
@@ -123,7 +123,7 @@ function UnknownVersion({ missing, shown }: { missing: string; shown: string }) 
         role="status"
         className="flex items-start gap-2 overflow-hidden rounded-md bg-accent px-3 py-2.5 text-sm"
       >
-        <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
+        <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
         <span>
           <span className="font-mono">{missing}</span> is not an imported version of this library.
           Showing <span className="font-mono">{shown}</span> instead.
@@ -166,7 +166,7 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
       <h1
         ref={heading}
         tabIndex={-1}
-        className="mt-1 font-serif text-3xl font-semibold tracking-tight outline-none [overflow-wrap:anywhere]"
+        className="mt-1 text-3xl font-semibold tracking-tight outline-none [overflow-wrap:anywhere]"
       >
         {library.title || library.id}
       </h1>
@@ -205,7 +205,7 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
         />
       ) : (
         <div className="mt-8 max-w-xl">
-          <h2 className="font-serif text-2xl font-semibold tracking-tight">Nothing imported yet</h2>
+          <h2 className="text-2xl font-semibold tracking-tight">Nothing imported yet</h2>
           <p className="mt-2 text-muted-foreground">
             This library has no versions. Once its first import finishes they appear here.
           </p>

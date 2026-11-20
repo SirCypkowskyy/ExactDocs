@@ -62,7 +62,7 @@ function Context7Note({
   return (
     <div className="mt-4 rounded-md bg-accent px-3 py-2.5 text-sm">
       <p className="inline-flex items-start gap-2 font-medium">
-        <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
+        <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
         {context7
           ? "This repository has a context7.json."
           : "This repository's context7.json is ignored."}

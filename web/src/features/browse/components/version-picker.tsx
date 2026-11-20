@@ -129,7 +129,7 @@ export function VersionPicker({
             {shownVersion.ref}
           </span>
           {shownVersion.is_default && (
-            <span className="text-xs text-mark max-sm:hidden">{defaultLabel}</span>
+            <span className="text-xs text-route max-sm:hidden">{defaultLabel}</span>
           )}
         </span>
         <span className="flex shrink-0 items-center gap-2">
@@ -197,16 +197,16 @@ export function VersionPicker({
                     }}
                     className={cn(
                       "flex min-h-11 items-center gap-2 rounded-md px-2.5 py-1 text-sm lg:min-h-9 outline-none transition-colors duration-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                      isCurrent ? "bg-mark/[0.16]" : "[@media(hover:hover)]:hover:bg-accent",
+                      isCurrent ? "bg-route/[0.16]" : "[@media(hover:hover)]:hover:bg-accent",
                     )}
                   >
                     <Check
                       aria-hidden="true"
-                      className={cn("size-4 shrink-0 text-mark", !isCurrent && "invisible")}
+                      className={cn("size-4 shrink-0 text-route", !isCurrent && "invisible")}
                     />
                     <span className="flex min-w-0 flex-1 items-baseline gap-2">
                       <span className="truncate font-mono font-medium">{v.ref}</span>
-                      {v.is_default && <span className="text-xs text-mark">{defaultLabel}</span>}
+                      {v.is_default && <span className="text-xs text-route">{defaultLabel}</span>}
                       {v.kind !== "tag" && (
                         <span className="text-xs text-muted-foreground">{v.kind}</span>
                       )}

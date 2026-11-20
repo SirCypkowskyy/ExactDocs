@@ -41,7 +41,7 @@ interface ArticleViewProps {
 const external =
   "group inline-flex min-h-11 items-center gap-1 rounded-md px-1 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring lg:min-h-8";
 const underline =
-  "underline decoration-mark/40 underline-offset-4 group-hover:decoration-mark group-focus-visible:decoration-mark";
+  "underline decoration-route/40 underline-offset-4 group-hover:decoration-route group-focus-visible:decoration-route";
 const action =
   "inline-flex h-11 items-center rounded-md px-5 text-sm font-medium outline-none transition-[background-color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:scale-[0.97]";
 const secondary = `${action} bg-secondary text-secondary-foreground [@media(hover:hover)]:hover:bg-accent`;
@@ -132,7 +132,7 @@ function NotInVersion({
     "flex h-11 items-center justify-between gap-2 rounded-md bg-secondary px-3 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(hover:hover)]:hover:bg-accent";
   return (
     <div className="fade-in max-w-3xl">
-      <h2 className="font-serif text-2xl font-semibold tracking-tight">
+      <h2 className="text-2xl font-semibold tracking-tight">
         Not in <span className="font-mono text-[0.9em]">{version.ref}</span>
       </h2>
       <p className="mt-2 text-pretty text-muted-foreground">
@@ -418,7 +418,7 @@ function Body({
       <p className="font-mono text-[13px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
         <PathText path={article.path} />
       </p>
-      <h2 className="mt-1 font-serif text-2xl font-semibold tracking-tight text-balance [overflow-wrap:anywhere] sm:text-3xl">
+      <h2 className="mt-1 text-2xl font-semibold tracking-tight text-balance [overflow-wrap:anywhere] sm:text-3xl">
         {article.title}
       </h2>
       <TagEditor owner={owner} repo={repo} article={article} />
@@ -490,9 +490,7 @@ export function ArticleView(props: ArticleViewProps) {
     }
     return (
       <div role="alert" className="max-w-3xl">
-        <h2 className="font-serif text-2xl font-semibold tracking-tight">
-          Couldn't load this article
-        </h2>
+        <h2 className="text-2xl font-semibold tracking-tight">Couldn't load this article</h2>
         <p className="mt-2 text-muted-foreground">
           {error instanceof HttpError && error.code
             ? error.message

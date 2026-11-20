@@ -108,7 +108,7 @@ function PipelineSummary({
       <h3 id="pipeline-heading" className="text-sm font-medium text-muted-foreground">
         Effective pipeline
       </h3>
-      <p className="mt-1 font-serif text-xl font-semibold" data-testid="effective-mode">
+      <p className="mt-1 text-xl font-semibold" data-testid="effective-mode">
         {MODE_LABEL[r.effective_mode]}
       </p>
       <p className="mt-0.5 text-sm text-muted-foreground">{modeSource(r)}</p>
@@ -135,7 +135,7 @@ function PipelineSummary({
         )
       ) : (
         <p className="mt-3 flex items-start gap-2 text-sm">
-          <ShieldOff aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
+          <ShieldOff aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
           <span>No content of this library is sent to any AI provider.</span>
         </p>
       )}
@@ -380,7 +380,7 @@ function AiForm({ owner, repo, r, providers, providersError, activity, onStart }
           <p role="status" className="min-h-5 text-sm">
             {done && unchanged && activity.by === "ai" && (
               <span className="fade-in inline-flex items-center gap-1.5">
-                <Check aria-hidden="true" className="size-4 text-mark" />
+                <Check aria-hidden="true" className="size-4 text-route" />
                 Saved.
               </span>
             )}

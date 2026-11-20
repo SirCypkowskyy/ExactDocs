@@ -52,7 +52,7 @@ function NoResults({ ctx, q }: { ctx: SearchContext; q: string }) {
   const tags = parseTags(ctx.tags);
   return (
     <div className="max-w-xl">
-      <h2 className="font-serif text-2xl font-semibold tracking-tight">No results in {ctx.ref}</h2>
+      <h2 className="text-2xl font-semibold tracking-tight">No results in {ctx.ref}</h2>
       <p className="mt-2 text-muted-foreground">
         Nothing in <span className="font-mono text-foreground">{ctx.ref}</span> matches{" "}
         <span className="font-medium text-foreground [overflow-wrap:anywhere]">“{q}”</span>
@@ -136,7 +136,7 @@ function HitList({
 function Failed({ refName, onRetry }: { refName: string; onRetry: () => void }) {
   return (
     <div role="alert" className="max-w-xl">
-      <h2 className="font-serif text-2xl font-semibold tracking-tight">Search failed</h2>
+      <h2 className="text-2xl font-semibold tracking-tight">Search failed</h2>
       <p className="mt-2 text-muted-foreground">
         Couldn't search {refName}. Check your connection or try again.
       </p>

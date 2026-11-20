@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { UI_LOCALE } from "@/shared/lib/time";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { Button } from "@/shared/ui/button";
 import {
@@ -15,7 +16,7 @@ import { explainUserError, ROLE_LABELS, type Role, type User } from "../model/us
 import { CreateUserDialog } from "./create-user-dialog";
 import { ResetPasswordDialog } from "./reset-password-dialog";
 
-const date = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+const date = new Intl.DateTimeFormat(UI_LOCALE, { dateStyle: "medium" });
 
 /** The operator's users page: list, create, disable or enable, and reset a password. */
 export function UsersPage({ currentUserId }: { currentUserId: string }) {
@@ -48,7 +49,7 @@ export function UsersPage({ currentUserId }: { currentUserId: string }) {
           <h1
             ref={heading}
             tabIndex={-1}
-            className="font-serif text-3xl font-semibold tracking-tight outline-none"
+            className="text-3xl font-semibold tracking-tight outline-none"
           >
             Users
           </h1>

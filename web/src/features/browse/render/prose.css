@@ -34,7 +34,7 @@
 /* Headings: serif, loose above what they head and tight below. */
 .doc-h {
   position: relative;
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-weight: 600;
   letter-spacing: -0.012em;
   line-height: 1.25;
@@ -117,7 +117,7 @@
     opacity: 1;
   }
   .doc-anchor:hover {
-    color: var(--mark);
+    color: var(--route);
   }
 }
 @media (hover: none) {
@@ -137,21 +137,21 @@
 }
 @keyframes doc-target {
   from {
-    background: color-mix(in oklab, var(--mark) 16%, transparent);
+    background: color-mix(in oklab, var(--route) 16%, transparent);
   }
 }
 @media (prefers-reduced-motion: reduce) {
   .doc-target {
     animation: none;
-    background: color-mix(in oklab, var(--mark) 10%, transparent);
+    background: color-mix(in oklab, var(--route) 10%, transparent);
   }
 }
 
 /* Inline */
 .doc a:not(.doc-anchor) {
-  color: var(--mark);
+  color: var(--route);
   text-decoration: underline;
-  text-decoration-color: color-mix(in oklab, var(--mark) 40%, transparent);
+  text-decoration-color: color-mix(in oklab, var(--route) 40%, transparent);
   text-underline-offset: 0.2em;
   border-radius: 2px;
   outline: none;
@@ -217,7 +217,7 @@
   color: var(--muted-foreground);
 }
 .doc .doc-task-done > svg {
-  color: var(--mark);
+  color: var(--route);
 }
 
 .doc blockquote {

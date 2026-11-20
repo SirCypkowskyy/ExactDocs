@@ -138,7 +138,7 @@ function Pager({
       ) : state === "paging" ? (
         <Loader aria-hidden="true" className="spin size-4 shrink-0 text-muted-foreground" />
       ) : (
-        <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-mark" />
+        <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-route" />
       )}
       <span className="truncate">{pagerText(row, state, bad)}</span>
     </div>
@@ -170,7 +170,7 @@ function File({
       aria-current={selected ? "page" : undefined}
       onClick={onOpen}
       title={`${row.title}\n${row.path}`}
-      className={cn(rowBase, "py-1", selected ? "bg-mark/[0.16] ring-1 ring-mark/40" : hoverable)}
+      className={cn(rowBase, "py-1", selected ? "bg-route/[0.16] ring-1 ring-route/40" : hoverable)}
     >
       <span aria-hidden="true" className="size-4 shrink-0" />
       <span className="min-w-0">

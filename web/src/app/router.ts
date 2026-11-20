@@ -16,6 +16,8 @@ export function createAppRouter(queryClient: QueryClient, history?: RouterHistor
     // TanStack Query owns caching; the router only triggers loaders.
     defaultPreloadStaleTime: 0,
     scrollRestoration: true,
+    // Route changes cross-fade the sheet (styles.css, `page`); skipped under reduced motion there.
+    defaultViewTransition: true,
     defaultPendingComponent: Pending,
     defaultErrorComponent: RouteError,
     defaultNotFoundComponent: NotFound,

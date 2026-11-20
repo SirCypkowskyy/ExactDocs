@@ -154,7 +154,7 @@ function Running({ job }: { job: LatestJob }) {
       >
         <div
           className={cn(
-            "h-full origin-left bg-mark transition-transform duration-500 ease-out",
+            "h-full origin-left bg-route transition-transform duration-500 ease-out",
             !known && "w-1/3 motion-safe:animate-pulse",
           )}
           style={

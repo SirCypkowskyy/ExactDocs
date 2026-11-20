@@ -11,7 +11,7 @@ export function Snippet({ hit }: { hit: Pick<SearchHit, "snippet" | "highlights"
           // No horizontal padding: a match inside a word ("RetryPolicy") must not open a gap in it.
           <mark
             key={piece.at}
-            className="rounded-[3px] bg-mark/[0.22] text-foreground [box-decoration-break:clone]"
+            className="rounded-[3px] bg-route/[0.22] text-foreground [box-decoration-break:clone]"
           >
             {piece.text}
           </mark>
@@ -31,7 +31,7 @@ export function Crumbs({ hit }: { hit: Pick<SearchHit, "heading_path" | "article
   return (
     <span
       title={all.length > 3 ? all.join(" › ") : undefined}
-      className="block font-serif text-lg leading-snug font-semibold [overflow-wrap:anywhere]"
+      className="block text-lg leading-snug font-semibold [overflow-wrap:anywhere]"
     >
       {crumbs.map((crumb, i) => (
         <span

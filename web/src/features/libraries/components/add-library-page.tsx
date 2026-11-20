@@ -53,7 +53,7 @@ function RepoFound({ checked }: { checked: Checked | undefined }) {
       <p role="status" className="min-h-5 text-sm text-muted-foreground">
         {checked && (
           <span className="fade-in inline-flex items-start gap-1.5">
-            <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
+            <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
             <span>
               Found on {HOSTS[checked.host] ?? "a git server"}.{" "}
               {checked.default_branch
@@ -288,7 +288,7 @@ function PageHeading({
       <h1
         ref={heading}
         tabIndex={-1}
-        className="mt-2 font-serif text-3xl font-semibold tracking-tight outline-none"
+        className="mt-2 text-3xl font-semibold tracking-tight outline-none"
       >
         {added ? "Import" : "Add a library"}
       </h1>

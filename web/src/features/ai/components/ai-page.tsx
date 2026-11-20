@@ -28,18 +28,14 @@ import {
   usd,
 } from "../model/ai";
 
-const heading = "font-serif text-2xl font-semibold tracking-tight";
+const heading = "text-2xl font-semibold tracking-tight";
 
 /** The instance's AI: providers and roles, embedding progress and spend (admins). */
 export function AiPage() {
   const title = usePageTitle("AI");
   return (
     <main className="px-4 py-6 pb-12 sm:px-6 sm:py-8 sm:pb-16 2xl:mx-auto 2xl:max-w-[72rem]">
-      <h1
-        ref={title}
-        tabIndex={-1}
-        className="font-serif text-4xl font-semibold tracking-tight outline-none"
-      >
+      <h1 ref={title} tabIndex={-1} className="text-4xl font-semibold tracking-tight outline-none">
         AI
       </h1>
       <p className="mt-1 max-w-prose text-muted-foreground">
@@ -189,7 +185,7 @@ function ProviderCard({ provider: p }: { provider: AiProvider }) {
             {check.data.checks.map((c) => (
               <li key={`${c.role}-${c.model}`} className="flex items-start gap-2">
                 {c.status === "ok" ? (
-                  <CircleCheck aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
+                  <CircleCheck aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
                 ) : (
                   <CircleAlert
                     aria-hidden="true"
