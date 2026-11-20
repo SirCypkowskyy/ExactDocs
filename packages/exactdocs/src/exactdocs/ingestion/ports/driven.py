@@ -673,6 +673,22 @@ class LibrarySettingsStore(Protocol):
         ...
 
 
+class LibraryTexts(Protocol):
+    """Where a library's title and description are kept (the catalog, in ingestion's words)."""
+
+    async def save(self, library: str, *, title: str | None, description: str | None) -> None:
+        """Store a title and/or description the way an edit by hand is, so imports keep them.
+
+        Raises ``NotFoundError`` for an unknown library. A ``None`` leaves that field as it is.
+
+        Args:
+            library: The library ID.
+            title: The new title, cleaned; ``None``: unchanged.
+            description: The new description, cleaned (empty: none); ``None``: unchanged.
+        """
+        ...
+
+
 class VersionCopier(Protocol):
     """Copies what a version serves into a new pending manifest (the catalog, in its words)."""
 

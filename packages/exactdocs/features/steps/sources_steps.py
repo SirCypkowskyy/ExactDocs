@@ -143,3 +143,40 @@ def step_listed_and_kept(context: Context, library: str, section: str) -> None:
 def step_removed(context: Context, library: str) -> None:
     assert context.exit_code == 0, (context.exit_code, context.errors, context.output)
     assert library not in _library_ids(context)
+
+
+@given('the sources file also declares the title "{title}" and the description "{description}"')
+def step_declares_texts(context: Context, title: str, description: str) -> None:
+    with context.sources_file.open("a", encoding="utf-8") as file:
+        file.write(f"    title: '{title}'
+    description: '{description}'
+")
+
+
+@when('the sources file declares the title "{title}"')
+def step_declares_title(context: Context, title: str) -> None:
+    lines = context.sources_file.read_text(encoding="utf-8").splitlines(keepends=True)
+    kept = [line for line in lines if not line.startswith("    title:")]
+    context.sources_file.write_text("".join(kept) + f"    title: '{title}'
+", encoding="utf-8")
+
+
+@then('the output shows the title changing to "{title}"')
+def step_title_change(context: Context, title: str) -> None:
+    assert f'title: "Azure Functions" -> "{title}"' in context.output, context.output
+
+
+@then('"{library}" has the title "{title}" and the description "{description}"')
+def step_has_texts(context: Context, library: str, title: str, description: str) -> None:
+    assert context.exit_code == 0, (context.exit_code, context.errors, context.output)
+    _admin(context)
+    detail = context.client.get(f"/api/v1/libraries{library}").json()
+    assert (detail["title"], detail["description"]) == (title, description), detail
+
+
+@then('the library "{library}" was named by its README')
+def step_readme_title(context: Context, library: str) -> None:
+    assert context.exit_code == 0, (context.exit_code, context.errors, context.output)
+    _admin(context)
+    detail = context.client.get(f"/api/v1/libraries{library}").json()
+    assert detail["title"] not in {"", "Azure Functions"}, detail

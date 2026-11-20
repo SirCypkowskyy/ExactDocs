@@ -64,6 +64,7 @@ from exactdocs.ingestion.ports.driven import (
     LibraryLocks,
     LibrarySettingsStore,
     LibrarySources,
+    LibraryTexts,
     ManualTagStore,
     NewLibraries,
     RecoveryHook,
@@ -286,6 +287,25 @@ class _NoSettings:
             NotFoundError: Always.
         """
         del selection, tag_rules, chunking
+        message = f"library {library!r} not found"
+        raise NotFoundError(message)
+
+
+class _NoTexts:
+    """The default ``texts`` of ``build``: no library is known, so none can be edited."""
+
+    async def save(self, library: str, *, title: str | None, description: str | None) -> None:
+        """Refuse: no library is known.
+
+        Args:
+            library: The library ID.
+            title: The new title.
+            description: The new description.
+
+        Raises:
+            NotFoundError: Always.
+        """
+        del title, description
         message = f"library {library!r} not found"
         raise NotFoundError(message)
 
@@ -674,6 +694,7 @@ class IngestionModule:
         auto_syncs: AutoSyncStore | None = None,
         schedule_switch: ScheduleSwitch | None = None,
         settings: LibrarySettingsStore | None = None,
+        texts: LibraryTexts | None = None,
         embedder: VersionEmbedder | None = None,
         checkpoints: Checkpoints | None = None,
         known_libraries: KnownLibraries | None = None,
@@ -724,6 +745,7 @@ class IngestionModule:
             auto_syncs: Where the scheduled checks are kept.
             schedule_switch: Turns the tick on or off.
             settings: Where edited settings are stored; None: no library can be edited.
+            texts: Where a library's title and description are stored; None: none can be.
             embedder: Embeds versions; None: no ``embed`` job.
             checkpoints: Makes the ``embed`` job's batches durable steps.
             known_libraries: Lists the libraries, for a sources file; None: none is known.
@@ -856,6 +878,7 @@ class IngestionModule:
                 ),
                 remove_version=remove_version,
                 remove_library=remove_library,
+                texts=texts or _NoTexts(),
             ),
             check_repository=CheckRepositoryUseCase(remote=remote, library_ids=library_ids),
             disable_auto_sync=DisableAutoSyncUseCase(

@@ -187,6 +187,7 @@ from exactdocs.ingestion.models import (
     RepositoryUrl,
     ResolvedRef,
     SettingsChange,
+    SourcesField,
     SourcesPlan,
     StoredArticleTags,
     SyncErrorCode,
@@ -237,6 +238,7 @@ from exactdocs.ingestion.ports.driven import (
     LibraryLocks,
     LibrarySettingsStore,
     LibrarySources,
+    LibraryTexts,
     ManualTagStore,
     NewLibraries,
     RecoveryHook,
@@ -4707,6 +4709,8 @@ def _declared_entry(index: int, entry: SourceLibrary) -> DeclaredLibrary:
             if entry.tag_rules is None
             else TagRule.many([(r.pattern, r.tag) for r in entry.tag_rules]),
             chunking=_chunking_of(entry.chunking),
+            title=entry.title,
+            description=entry.description,
             manages_auto_sync=schedule is not None,
             auto_sync=AutoSync(library=library_id, **schedule.model_dump()) if schedule else None,
         )
@@ -4817,6 +4821,8 @@ class ApplySourcesUseCase:
     """Removes an undeclared version (``prune``)."""
     remove_library: RemoveLibrary
     """Removes an undeclared library (``prune``)."""
+    texts: LibraryTexts
+    """Stores a declared title and description the way an edit by hand is stored."""
 
     async def __call__(self, command: ApplySourcesCommand) -> AppliedSources:
         """Plan again, then create, update and (only with ``prune``) remove, library by library.
@@ -4924,6 +4930,10 @@ class ApplySourcesUseCase:
         )
         applying.wrote = True
         applying.jobs.append(added.job_id)
+        if declared.title is not None or declared.description is not None:
+            await self.texts.save(
+                added.library_id, title=declared.title, description=declared.description
+            )
         await self._add_refs(added.library_id, others, applying)
         if declared.auto_sync is not None:
             await self._schedule(added.library_id, declared.auto_sync)
@@ -4939,7 +4949,16 @@ class ApplySourcesUseCase:
             applying: Collects the jobs.
         """
         library, declared = update.library_id, update.declared
-        if update.changed:
+        if update.text_changed:
+            await self.texts.save(
+                library,
+                title=declared.title if SourcesField.TITLE in update.changed else None,
+                description=declared.description
+                if SourcesField.DESCRIPTION in update.changed
+                else None,
+            )
+            applying.wrote = True
+        if update.settings_changed:
             selection = update.selection
             stored = await self.update_library_settings(
                 UpdateLibrarySettingsCommand(

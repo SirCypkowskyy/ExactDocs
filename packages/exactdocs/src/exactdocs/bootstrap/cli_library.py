@@ -1137,6 +1137,8 @@ def _update_lines(update: dict[str, Any]) -> list[str]:
         *_paths_change("exclude_paths", update["exclude_paths"]),
         *_paths_change("tag_rules", update["tag_rules"]),
         *_paths_change("chunking", update["chunking"]),
+        *_paths_change("title", update["title"]),
+        *_paths_change("description", update["description"]),
     ]
     if update["refs_to_add"]:
         lines.append(f"      refs to add: {', '.join(update['refs_to_add'])}")

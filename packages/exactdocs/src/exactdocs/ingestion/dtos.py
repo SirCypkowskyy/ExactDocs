@@ -1,5 +1,6 @@
 """Data crossing the ingestion boundary (into and out of driving ports). Immutable, validated."""
 
+import unicodedata
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated, Literal, Self
@@ -17,8 +18,10 @@ from exactdocs.ingestion.constants import (
     MAX_HEADING_LEVEL,
     MAX_INTERVAL_MINUTES,
     MAX_KEEP_LAST,
+    MAX_SOURCE_DESCRIPTION,
     MAX_SOURCE_REF,
     MAX_SOURCE_REFS,
+    MAX_SOURCE_TITLE,
     MAX_SOURCES,
     MAX_TAG_PATTERN,
     MAX_TAG_RULES,
@@ -1048,6 +1051,20 @@ def _source_ref(ref: str) -> str:
     return ref
 
 
+def _clean_text(text: str) -> str:
+    r"""Drop control and format characters (zero-width, bidi, tags, escapes); keep \n and \t.
+
+    Args:
+        text: Text a user typed.
+
+    Returns:
+        The text without those characters.
+    """
+    return "".join(
+        c for c in text if c in "\n\t" or unicodedata.category(c) not in {"Cc", "Cf", "Co", "Cs"}
+    )
+
+
 class SourceLibrary(_Dto):
     """One library of a sources file. A setting left out is not managed: never compared or changed.
 
@@ -1086,6 +1103,55 @@ class SourceLibrary(_Dto):
     """The scheduled check, as a whole (what it leaves out takes its default); `false` turns it
     off. Left out: not managed.
     """
+    title: str | None = Field(default=None, min_length=1, max_length=MAX_SOURCE_TITLE)
+    """The library's title, on one line; stored like an edit by hand, so a later import keeps it.
+    Left out: not managed, and the repository's README names the library.
+    """
+    description: str | None = Field(default=None, max_length=MAX_SOURCE_DESCRIPTION)
+    """The library's description (empty: none); stored like an edit by hand, so a later import
+    keeps it. Left out: not managed, and the repository's README describes the library.
+    """
+
+    @field_validator("title")
+    @classmethod
+    def _single_line(cls, title: str | None) -> str | None:
+        """Refuse a title on several lines; drop invisible characters and collapse spaces.
+
+        The same cleaning ``PATCH /libraries/{owner}/{repo}`` does, so what is declared is what
+        is stored and a plan never shows the same title again.
+
+        Args:
+            title: The title as declared; ``None`` when left out.
+
+        Returns:
+            The cleaned title, or ``None``.
+
+        Raises:
+            ValueError: The title has a line break, or no visible text.
+        """
+        if title is None:
+            return None
+        if any(unicodedata.category(c) in {"Zl", "Zp"} or c in "\n\r\v\f\x85" for c in title):
+            message = "the title must be a single line"
+            raise ValueError(message)
+        title = " ".join(_clean_text(title).split())
+        if not title:
+            message = "the title must have visible text"
+            raise ValueError(message)
+        return title
+
+    @field_validator("description")
+    @classmethod
+    def _plain(cls, description: str | None) -> str | None:
+        """Drop invisible characters and surrounding whitespace from the description.
+
+        Args:
+            description: The description as declared; ``None`` when left out.
+
+        Returns:
+            The cleaned description, or ``None``.
+        """
+        return None if description is None else _clean_text(description).strip()
 
     @field_validator("refs")
     @classmethod
@@ -1208,6 +1274,15 @@ class ChunkingChange(_Dto):
     """As declared."""
 
 
+class TextChange(_Dto):
+    """A managed title or description as stored and as declared."""
+
+    before: str
+    """As stored."""
+    after: str
+    """As declared, cleaned the way an edit by hand is."""
+
+
 class AutoSyncChange(_Dto):
     """The managed scheduled check as it is and as declared; null is off."""
 
@@ -1230,6 +1305,10 @@ class LibraryUpdateOut(_Dto):
     """The tag rules, when they change."""
     chunking: ChunkingChange | None
     """The chunking, when it changes."""
+    title: TextChange | None
+    """The title, when it changes."""
+    description: TextChange | None
+    """The description, when it changes."""
     refs_to_add: list[str]
     """Declared refs that are neither versions nor being imported: each queues an import."""
     auto_sync: AutoSyncChange | None
@@ -1288,6 +1367,12 @@ class LibraryUpdateOut(_Dto):
                 before=ChunkingIn.of(source.chunking), after=ChunkingIn.of(declared.chunking)
             )
             if SourcesField.CHUNKING in changed and declared.chunking is not None
+            else None,
+            title=TextChange(before=source.title, after=declared.title or "")
+            if SourcesField.TITLE in changed
+            else None,
+            description=TextChange(before=source.description, after=declared.description or "")
+            if SourcesField.DESCRIPTION in changed
             else None,
             refs_to_add=list(update.refs_to_add),
             auto_sync=AutoSyncChange(
@@ -1354,6 +1439,8 @@ def declared_out(declared: DeclaredLibrary) -> SourceLibrary:
         tag_rules=None if declared.tag_rules is None else _rules_out(declared.tag_rules),
         chunking=None if declared.chunking is None else ChunkingIn.of(declared.chunking),
         auto_sync=schedule,
+        title=declared.title,
+        description=declared.description,
     )
 
 

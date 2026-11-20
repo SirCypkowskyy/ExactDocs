@@ -7,6 +7,10 @@ MAX_SOURCES: Final[int] = 300
 """Libraries one sources file (one plan or apply request) may declare."""
 MAX_SOURCE_REFS: Final[int] = 100
 """Refs one library of a sources file may declare."""
+MAX_SOURCE_TITLE: Final[int] = 120
+"""Longest title a sources file may declare for a library, in characters."""
+MAX_SOURCE_DESCRIPTION: Final[int] = 500
+"""Longest description a sources file may declare for a library, in characters."""
 MAX_SOURCE_REF: Final[int] = 255
 """Longest ref a sources file may declare, in characters."""
 FULL_SHA: Final[re.Pattern[str]] = re.compile(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}")

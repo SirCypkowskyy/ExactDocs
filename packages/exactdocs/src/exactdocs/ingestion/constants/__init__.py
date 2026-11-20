@@ -116,8 +116,10 @@ from exactdocs.ingestion.constants._models import (
 from exactdocs.ingestion.constants._secrets import OPENSSH_MAGIC
 from exactdocs.ingestion.constants._sources import (
     FULL_SHA,
+    MAX_SOURCE_DESCRIPTION,
     MAX_SOURCE_REF,
     MAX_SOURCE_REFS,
+    MAX_SOURCE_TITLE,
     MAX_SOURCES,
     SHORT_SHA,
     SOURCE_MISMATCH,
@@ -213,8 +215,10 @@ __all__ = [
     "MAX_RENAMES",
     "MAX_SIMILARITY",
     "MAX_SOURCES",
+    "MAX_SOURCE_DESCRIPTION",
     "MAX_SOURCE_REF",
     "MAX_SOURCE_REFS",
+    "MAX_SOURCE_TITLE",
     "MAX_STDERR",
     "MAX_STDOUT",
     "MAX_TAG_PATTERN",
