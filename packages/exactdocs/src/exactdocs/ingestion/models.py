@@ -858,7 +858,8 @@ class Job:
     """A long task for one library (optionally one version) and how far it got.
 
     ``total`` is 0 until the job knows its size. ``chunked`` and ``reused`` count the articles an
-    import cut into chunks and those whose chunks an earlier import had already stored;
+    import cut into chunks and those whose chunks an earlier import had already stored (for an
+    ``embed`` job, ``reused`` counts the chunks another job embedded meanwhile, within ``done``);
     ``parsed`` and ``taken`` the articles it parsed and those it took as an earlier import had
     stored them.
     ``commit_sha`` is the commit the job's ``version`` was pinned to when it was queued,
@@ -891,7 +892,7 @@ class Job:
     chunked: int = 0
     """Articles an import cut into chunks."""
     reused: int = 0
-    """Articles whose chunks an earlier import had stored."""
+    """Articles whose chunks an earlier import had stored; for ``embed``, chunks found embedded."""
     parsed: int = 0
     """Articles an import parsed."""
     taken: int = 0
@@ -3170,7 +3171,7 @@ class EmbedPlan:
     manifest_id: str | None
     """The version's manifest when the job started."""
     missing: int
-    """Chunks without a vector then."""
+    """Chunks without a vector then, each once: the job's ``total``."""
     created: bool
     """The job created the space (the model changed): every other version needs embedding too."""
     skipped: str | None
@@ -3185,6 +3186,10 @@ class EmbeddedBatch:
     """Vectors stored."""
     finished: bool
     """Nothing of the version is left to embed, or nothing more may be sent."""
+    left: int | None = None
+    """Chunks of the plan's ``missing`` still without a vector after the batch; ``None`` when not
+    counted (the job stopped early). What is neither embedded by the job nor left was embedded
+    meanwhile by another job sharing chunks with it (identical files in another library)."""
 
 
 # ---------------------------------------------------------------- the sources file (TEAM-02)

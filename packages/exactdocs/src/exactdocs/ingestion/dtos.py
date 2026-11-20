@@ -125,7 +125,9 @@ class JobSummary(_Dto):
     chunked: int
     """Chunk sets cut by an import: one per distinct new file content."""
     reused: int
-    """Articles whose chunk set an earlier import had stored (files, not blobs)."""
+    """Articles whose chunk set an earlier import had stored (files, not blobs). For `embed`, the
+    chunks another job embedded while this one ran (files shared with another library); they
+    count in `done` too, so a succeeded `embed` job has `done` = `total`."""
     parsed: int = Field(default=0)
     """Articles an import parsed."""
     taken: int = Field(default=0)

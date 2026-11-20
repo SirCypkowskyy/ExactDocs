@@ -2786,7 +2786,9 @@ export interface components {
             readonly chunked: number;
             /**
              * Reused
-             * @description Articles whose chunk set an earlier import had stored (files, not blobs).
+             * @description Articles whose chunk set an earlier import had stored (files, not blobs). For `embed`, the
+             *     chunks another job embedded while this one ran (files shared with another library); they
+             *     count in `done` too, so a succeeded `embed` job has `done` = `total`.
              */
             readonly reused: number;
             /**

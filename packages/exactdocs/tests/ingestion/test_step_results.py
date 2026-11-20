@@ -59,6 +59,7 @@ FINGERPRINTS = {
     "jobs-8": "735ed31784ba667faeadaaadb839c68ea9104143ee5d310e895d07c75c7ee7c5",
     "jobs-9": "6abe3ebc617913f98fef0fba509eedb6b94a157c29f8634a415409dbf13f372a",
     "jobs-10": "b1433c48a661ba8d697f9ed176da2fe711b0bab1790c388d6b8bacc132b5c014",
+    "jobs-11": "8a0581e1ea62b42263e81f23349121b6cbc95bb5b86841e27409288bef2b15d0",
 }
 
 

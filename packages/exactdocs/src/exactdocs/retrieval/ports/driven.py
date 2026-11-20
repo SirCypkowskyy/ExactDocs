@@ -1012,6 +1012,25 @@ class VectorIndex(Protocol):
         """
         ...
 
+    async def count_missing(self, space_id: EmbeddingSpaceId, manifest_id: str) -> int:
+        """Count the chunks ``missing`` would return without a limit: each stored chunk once.
+
+        Unlike ``coverage``, which counts the manifest's rows (one per article path), a chunk
+        held by several paths (identical files) counts once, as it is embedded once.
+
+        Args:
+            space_id: The space.
+            manifest_id: The version's manifest; an unknown one has none.
+
+        Returns:
+            How many chunks of the manifest have no vector in the space.
+
+        Raises:
+            UnknownEmbeddingSpaceError: No space has this ID.
+            RetiredEmbeddingSpaceError: The space was retired.
+        """
+        ...
+
     async def pending(
         self, space_id: EmbeddingSpaceId | None, manifest_ids: Collection[str]
     ) -> PendingChunks:

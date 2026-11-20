@@ -4528,13 +4528,21 @@ class EmbedVersionUseCase:
                 partial(self.queue, None, besides=(library, ref)),
             )
         await progress.report(done=0, total=plan.missing)
-        done, number = 0, 0
+        embedded, reused, number = 0, 0, 0
         while True:
             number += 1
             batch: EmbeddedBatch = await steps.step(
                 f"embed batch {number}", partial(self._batch, library, ref, plan)
             )
-            done += batch.embedded
+            embedded += batch.embedded
+            done = embedded + reused
+            if batch.left is not None:
+                # What the job did not embed and is not left was embedded by a job sharing
+                # chunks with it: done all the same, and counted as reused (#431).
+                done = max(embedded, plan.missing - batch.left)
+                if done - embedded > reused:
+                    reused = done - embedded
+                    await progress.chunking(chunked=0, reused=reused)
             await progress.report(done=done, total=max(done, plan.missing))
             if batch.finished:
                 break

@@ -60,6 +60,8 @@ class Embedder:
     created: bool = False
     skipped: str | None = None
     kill_at_batch: int | None = None
+    embedded_elsewhere: dict[int, int] = field(default_factory=dict)
+    """Chunks another job (a library sharing files) embeds before batch ``n``."""
     batches: int = 0
     finished: list[int] = field(default_factory=list)
     planned: list[tuple[str, str]] = field(default_factory=list)
@@ -82,9 +84,11 @@ class Embedder:
         self.batches += 1
         if self.batches == self.kill_at_batch:
             raise Killed
+        self.missing[library, ref] -= self.embedded_elsewhere.get(self.batches, 0)
         done = min(self.batch, self.missing[library, ref])
         self.missing[library, ref] -= done
-        return EmbeddedBatch(embedded=done, finished=self.missing[library, ref] == 0)
+        left = self.missing[library, ref]
+        return EmbeddedBatch(embedded=done, left=left, finished=left == 0)
 
     async def finish(self, plan: EmbedPlan) -> None:
         assert plan.space_id is not None
@@ -101,6 +105,7 @@ class Embedder:
 @dataclass(slots=True)
 class Progress:
     reports: list[tuple[int, int]] = field(default_factory=list)
+    reused: list[int] = field(default_factory=list)
 
     async def report(self, *, done: int, total: int) -> None:
         self.reports.append((done, total))
@@ -109,7 +114,8 @@ class Progress:
         del path, code, reason
 
     async def chunking(self, *, chunked: int, reused: int) -> None:
-        del chunked, reused
+        assert chunked == 0
+        self.reused.append(reused)
 
     async def parsing(self, *, parsed: int, taken: int) -> None:
         del parsed, taken
@@ -154,6 +160,36 @@ async def test_a_version_is_embedded_batch_by_batch_then_the_spaces_switch() -> 
     ]
     assert world.embedder.finished == [7]
     assert progress.reports == [(0, 5), (2, 5), (4, 5), (5, 5)]
+
+
+async def test_chunks_another_job_embedded_meanwhile_count_as_done_and_reused() -> None:
+    # Another library shares files with this version and embeds 2 of its chunks during batch 2.
+    world = World(Embedder(missing={(LIB, "v1"): 6}, embedded_elsewhere={2: 2}))
+    progress = Progress()
+
+    await world.handler()(_job(), progress)
+
+    assert world.embedder.batches == 2  # 2 embedded, 2 found embedded, 2 embedded: none left
+    assert progress.reports == [(0, 6), (2, 6), (6, 6)]  # a finished job is done == total
+    assert progress.reused == [2]
+
+
+async def test_a_job_stopped_before_the_end_reports_only_what_is_done() -> None:
+    @dataclass(slots=True)
+    class Stops(Embedder):
+        """Stops after one batch, the way a library switched to AI off does."""
+
+        async def embed_batch(self, library: str, ref: str, plan: EmbedPlan) -> EmbeddedBatch:
+            batch = await Embedder.embed_batch(self, library, ref, plan)
+            return EmbeddedBatch(embedded=batch.embedded, left=None, finished=True)
+
+    world = World(Stops(missing={(LIB, "v1"): 5}))
+    progress = Progress()
+
+    await world.handler()(_job(), progress)
+
+    assert progress.reports == [(0, 5), (2, 5)]
+    assert progress.reused == []
 
 
 async def test_a_killed_job_resumes_at_its_first_unfinished_batch() -> None:

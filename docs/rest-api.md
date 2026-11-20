@@ -597,7 +597,10 @@ See [AI retrieval decisions](decisions/ai-retrieval.md) for the kinds and what e
 - **Jobs**: `GET /jobs/{id}` is one job (kind `import`, `refresh`, `reprocess`, `rechunk`, `retag`,
   `collect` or `embed`; state `queued`,
   `running`, `succeeded` or `failed`; `done` / `total` files, or chunks for `embed`; `chunked` / `reused`; `parsed` / `taken`; problems).
-  An `embed` job embeds one version with the instance's embedding model; a failed one has
+  An `embed` job embeds one version with the instance's embedding model. Its `total` counts the
+  version's chunks without a vector, each once (identical files share their chunks, so they are
+  embedded once); chunks another job embedded while it ran (files shared with another library)
+  count in `done` and in `reused`, so a succeeded `embed` job ends with `done` = `total`. A failed one has
   `error_code` `embedding_failed` (its error names the model and the HTTP status, never a key) and
   is queued again at the next start, or `ai_budget_reached` when a budget its embedding counts to
   (embedding, instance or library) was used up before its next batch: it is queued again just
