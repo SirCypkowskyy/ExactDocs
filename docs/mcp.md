@@ -115,6 +115,32 @@ to it, so the CLI and coding agents are unaffected.
   `<data dir>/mcp-oauth`; changing the client secret makes hosts sign in again, and the state kept
   under the old secret is deleted at the next start.
 
+### Behind Cloudflare Access
+
+When ExactDocs runs [behind Cloudflare Access](deployment.md#behind-cloudflare-access) with
+[`[auth.cloudflare_access]`](configuration.md#cloudflare-access) configured, an MCP client needs
+no ExactDocs token: it sends only the Access service-token headers. Access checks them, adds its
+signed token to the request, and ExactDocs runs the call as the account the service token's client
+ID is mapped to in `service_tokens`, with that account's library roles.
+
+```json
+{
+  "mcpServers": {
+    "exactdocs": {
+      "url": "https://docs.acme.com/mcp",
+      "headers": {
+        "CF-Access-Client-Id": "<client id>.access",
+        "CF-Access-Client-Secret": "<client secret>"
+      }
+    }
+  }
+}
+```
+
+A client that also sends `Authorization: Bearer exd_...` acts as that token's account instead
+(a wrong token is refused, never replaced by the Access identity). A service token that is not
+mapped, or whose account is missing or disabled, gets a `401`.
+
 ### Without a network port: stdio
 
 ```json
