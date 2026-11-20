@@ -1,12 +1,28 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Button } from "@/shared/ui/button";
+import { Button, buttonVariants } from "@/shared/ui/button";
 import { signOut } from "../api/session-query";
+import { useSession } from "../hooks/use-session";
 
 export function SignOutButton({ onSignedOut }: { onSignedOut: () => void }) {
   const queryClient = useQueryClient();
+  const session = useSession();
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
+
+  // Cloudflare Access signs this browser in on every request: ending only the ExactDocs session
+  // would sign it straight back in. Access's own logout ends both.
+  if (session?.source === "cloudflare_access" && session.sign_out_url) {
+    return (
+      <a
+        href={session.sign_out_url}
+        className={buttonVariants({ variant: "ghost" })}
+        title="Signs you out of Cloudflare Access"
+      >
+        Sign out
+      </a>
+    );
+  }
 
   async function run() {
     if (pending) return;

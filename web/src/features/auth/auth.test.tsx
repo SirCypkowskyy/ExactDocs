@@ -318,6 +318,56 @@ describe("account panel", () => {
   });
 });
 
+describe("signed in through Cloudflare Access", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const accessSession = {
+    state: "signed_in",
+    account,
+    source: "cloudflare_access",
+    sign_out_url: "https://team.cloudflareaccess.com/cdn-cgi/access/logout",
+  };
+
+  it("signs out at Access, never only locally (which would sign straight back in)", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new QueryClient();
+    client.setQueryData(["session"], accessSession);
+    render(
+      <QueryClientProvider client={client}>
+        <SignOutButton onSignedOut={() => {}} />
+      </QueryClientProvider>,
+    );
+    const link = screen.getByRole("link", { name: "Sign out" });
+    expect(link).toHaveAttribute("href", accessSession.sign_out_url);
+    expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("says on the account page where the sign-in comes from", () => {
+    const client = new QueryClient();
+    client.setQueryData(["session"], accessSession);
+    render(
+      <QueryClientProvider client={client}>
+        <AccountPanel onSignedOut={() => {}} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText("through Cloudflare Access")).toBeInTheDocument();
+  });
+
+  it("says nothing of Access for a session of ExactDocs", () => {
+    const client = new QueryClient();
+    client.setQueryData(["session"], { state: "signed_in", account, source: "session" });
+    render(
+      <QueryClientProvider client={client}>
+        <AccountPanel onSignedOut={() => {}} />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByText("through Cloudflare Access")).toBeNull();
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+  });
+});
+
 describe("sign-out error placement", () => {
   afterEach(() => vi.unstubAllGlobals());
 

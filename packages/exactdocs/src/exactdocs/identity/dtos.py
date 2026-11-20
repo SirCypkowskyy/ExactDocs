@@ -275,6 +275,12 @@ class SessionState(_Dto):
     providers: list[SignInProviderSummary] = Field(default_factory=list)
     """The identity providers one may sign in with besides a password; empty when none is
     configured (and while setup is due: the first admin is always local)."""
+    source: Literal["session", "cloudflare_access"] | None = None
+    """How the caller is signed in: an ExactDocs session cookie, or the Cloudflare Access token
+    of the request; `null` unless `state` is `signed_in`."""
+    sign_out_url: str | None = None
+    """Where to send the browser to sign out when `source` is `cloudflare_access` (Access's own
+    logout: ending the ExactDocs session alone would sign it in again); `null` otherwise."""
 
 
 class StartExternalSignInCommand(_Dto):

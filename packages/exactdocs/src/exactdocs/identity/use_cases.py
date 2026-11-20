@@ -14,6 +14,8 @@ from pydantic import SecretStr
 
 from exactdocs.identity.constants import (
     ABSOLUTE_TIMEOUT,
+    ACCESS_LINK_LIFETIME,
+    ACCESS_LINK_REFRESH,
     CODE_VERIFIER_BYTES,
     IDLE_TIMEOUT,
     MAX_TOKENS_PER_ACCOUNT,
@@ -65,6 +67,7 @@ from exactdocs.identity.dtos import (
     UserSummary,
 )
 from exactdocs.identity.errors import (
+    AccessAssertionRefusedError,
     AccountDisabledError,
     AlreadySetUpError,
     ExternalAccountError,
@@ -93,6 +96,8 @@ from exactdocs.identity.errors import (
     UsernameUnavailableError,
 )
 from exactdocs.identity.models import (
+    AccessClaims,
+    AccessPolicy,
     Account,
     AccountId,
     ApiToken,
@@ -107,6 +112,7 @@ from exactdocs.identity.models import (
     SignInPolicy,
     SubjectKind,
     Username,
+    access_username_candidates,
     address_key,
     effective_role,
     hash_token,
@@ -115,6 +121,7 @@ from exactdocs.identity.models import (
     username_candidates,
 )
 from exactdocs.identity.ports.driven import (
+    AccessAssertionVerifier,
     AccountRepository,
     ExternalIdentityRepository,
     FailedSignInLog,
@@ -126,7 +133,12 @@ from exactdocs.identity.ports.driven import (
     SignInProvider,
     TokenRepository,
 )
-from exactdocs.identity.ports.driving import Authenticate, CreateToken, IdentifyCaller
+from exactdocs.identity.ports.driving import (
+    Authenticate,
+    CreateToken,
+    IdentifyAccessCaller,
+    IdentifyCaller,
+)
 from exactdocs_kernel import Clock, SealedTextUnreadableError
 
 
@@ -443,7 +455,11 @@ class IdentifyCallerUseCase:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GetSessionStateUseCase:
-    """Implements ``ports.driving.GetSessionState``."""
+    """Implements ``ports.driving.GetSessionState``.
+
+    A live session cookie wins; without one, a Cloudflare Access token signs its owner in (when
+    Access is configured), and the state says so, with where to sign out of Access.
+    """
 
     accounts: AccountRepository
     """Where accounts are stored."""
@@ -451,12 +467,19 @@ class GetSessionStateUseCase:
     """Resolves the session token."""
     policies: Mapping[str, SignInPolicy] = field(default_factory=dict)
     """The configured identity providers, offered on the sign-in page."""
+    identify_access: IdentifyAccessCaller | None = None
+    """Resolves a Cloudflare Access token; ``None`` while Access is not configured."""
+    access_sign_out_url: str | None = None
+    """Where the browser signs out of Cloudflare Access."""
 
-    async def __call__(self, token: str | None) -> SessionState:
+    async def __call__(
+        self, token: str | None, access_assertion: str | None = None
+    ) -> SessionState:
         """Report the setup, signed-out or signed-in state for the token.
 
         Args:
             token: The session token, or ``None`` when the request carried none.
+            access_assertion: The Cloudflare Access token, used when no session signs anyone in.
 
         Returns:
             The setup and sign-in state, with the identity providers one may sign in with.
@@ -467,8 +490,198 @@ class GetSessionStateUseCase:
         try:
             account = await self.identify_caller(token)
         except NotSignedInError:
-            return SessionState(state="signed_out", providers=providers)
-        return SessionState(state="signed_in", account=account, providers=providers)
+            pass
+        else:
+            return SessionState(
+                state="signed_in", account=account, providers=providers, source="session"
+            )
+        if self.identify_access is not None and access_assertion:
+            try:
+                account = await self.identify_access(access_assertion)
+            except NotSignedInError:
+                pass
+            else:
+                return SessionState(
+                    state="signed_in",
+                    account=account,
+                    providers=providers,
+                    source="cloudflare_access",
+                    sign_out_url=self.access_sign_out_url,
+                )
+        return SessionState(state="signed_out", providers=providers)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IdentifyAccessCallerUseCase:
+    """Implements ``ports.driving.IdentifyAccessCaller``.
+
+    The verifier checks the token (signature by the team's keys, issuer, audience, times). A
+    person reaches the account linked to (team domain, Access ``sub``); a first visit creates it
+    when ``auto_create_users`` is on, never taking over an existing account by name. The role
+    follows ``admin_emails`` at every visit. A service token acts as the existing account its
+    client ID is mapped to. Every refusal is logged without the token and answers
+    ``NotSignedInError``, so the request falls back to the other credentials (or none).
+
+    A visit writes the account's link only when it is older than ``ACCESS_LINK_REFRESH`` or the
+    role changed: its ``access_until`` (``ACCESS_LINK_LIFETIME`` ahead) keeps the account's
+    sessions and API tokens working that long after its owner last came through Access.
+    """
+
+    verifier: AccessAssertionVerifier | None
+    """Checks the token; ``None`` while Cloudflare Access is not configured (all refused)."""
+    policy: AccessPolicy | None
+    """Who Access signs in, and as which account."""
+    accounts: AccountRepository
+    """Where accounts are stored."""
+    externals: ExternalIdentityRepository
+    """The links of external identities to accounts."""
+    clock: Clock
+    """The current time."""
+
+    async def __call__(self, assertion: str | None) -> AccountSummary:
+        """Return the account the Access token signs in, or raise ``NotSignedInError``.
+
+        Args:
+            assertion: The Access application token, or ``None`` when the request carried none.
+
+        Returns:
+            The account, with its role as of now.
+
+        Raises:
+            NotSignedInError: Access is not configured, the token is missing or refused, or it
+                names nobody with a usable account.
+        """
+        if not assertion or self.verifier is None or self.policy is None:
+            raise NotSignedInError
+        try:
+            claims = await self.verifier.verify(assertion)
+        except AccessAssertionRefusedError, ProviderUnavailableError:
+            raise NotSignedInError from None
+        if claims.common_name:
+            account = await self._service_account(self.policy, claims.common_name)
+        else:
+            account = await self._person(self.policy, claims)
+        if account is None:
+            raise NotSignedInError
+        return AccountSummary.from_model(account)
+
+    async def _service_account(self, policy: AccessPolicy, client_id: str) -> Account | None:
+        """Return the account a service token is mapped to, if it may be used.
+
+        Args:
+            policy: The Access policy.
+            client_id: The service token's client ID (``common_name``).
+
+        Returns:
+            The account; ``None`` when the token is not mapped, or its account is missing,
+            disabled or an external account whose access ended.
+        """
+        username = policy.service_tokens.get(client_id)
+        if username is None:
+            logger.info(
+                "Cloudflare Access: service token %r is not mapped to an account", client_id
+            )
+            return None
+        account = await self.accounts.get(username)
+        if account is None:
+            logger.warning(
+                "Cloudflare Access: service token %r is mapped to %r, which does not exist",
+                client_id,
+                username.value,
+            )
+            return None
+        if account.is_disabled or await _external_access_ended(
+            self.externals, account, self.clock.now()
+        ):
+            logger.info("Cloudflare Access: the account of service token %r is disabled", client_id)
+            return None
+        return account
+
+    async def _person(self, policy: AccessPolicy, claims: AccessClaims) -> Account | None:
+        """Return the account of the person the token names, creating it on a first visit.
+
+        Args:
+            policy: The Access policy.
+            claims: The checked claims.
+
+        Returns:
+            The account, with its role as of now; ``None`` when the token names no person, the
+            account is disabled or gone, or a first visit may not (or cannot) create one.
+        """
+        if not claims.subject or not claims.email:
+            logger.info("Cloudflare Access: a token names neither a person nor a service token")
+            return None
+        now = self.clock.now()
+        role = policy.role_for(claims.email)
+        link = await self.externals.get(policy.team_domain, claims.subject)
+        if link is None:
+            if not policy.auto_create_users:
+                logger.info(
+                    "Cloudflare Access: no account is linked to this person and "
+                    "auto_create_users is off"
+                )
+                return None
+            return await self._create_account(policy, claims, role, now)
+        account = await self.accounts.get_by_id(link.account_id)
+        if account is None or account.is_disabled:
+            logger.info("Cloudflare Access: the linked account is disabled or gone")
+            return None
+        if account.role != role or now - link.checked_at >= ACCESS_LINK_REFRESH:
+            until = now + ACCESS_LINK_LIFETIME
+            await self.externals.record_check(
+                replace(
+                    link, signed_in_at=now, checked_at=now, next_check_at=until, access_until=until
+                ),
+                role=role,
+                groups=frozenset(),
+            )
+        return replace(account, role=role)
+
+    async def _create_account(
+        self, policy: AccessPolicy, claims: AccessClaims, role: Role, now: datetime
+    ) -> Account | None:
+        """Create the account of a person's first visit, linked to their Access identity.
+
+        Args:
+            policy: The Access policy.
+            claims: The checked claims (a person's).
+            role: The new account's role.
+            now: The current time.
+
+        Returns:
+            The new account (or the one a concurrent first visit linked); ``None`` when every
+            username it could take is taken.
+        """
+        email = claims.email or ""
+        until = now + ACCESS_LINK_LIFETIME
+        identity = ExternalIdentity(
+            issuer=policy.team_domain,
+            subject=claims.subject,
+            account_id=AccountId(""),
+            provider=policy.provider,
+            signed_in_at=now,
+            checked_at=now,
+            next_check_at=until,
+            access_until=until,
+        )
+        for username in access_username_candidates(email):
+            account = Account(
+                id=AccountId(uuid7().hex),
+                username=username,
+                password_hash=None,
+                role=role,
+                created_at=now,
+            )
+            outcome = await self.externals.create_linked_account(
+                account, replace(identity, account_id=account.id), frozenset()
+            )
+            if outcome == "created":
+                logger.info("Cloudflare Access: created account %r", username.value)
+                return account
+            if outcome == "already_linked":
+                return await self._person(policy, claims)
+        logger.warning("Cloudflare Access: no free username for a person's first visit")
+        return None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

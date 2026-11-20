@@ -12,16 +12,18 @@ from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
+from types import MappingProxyType
 
 import httpx2
 
 from exactdocs.bootstrap.constants import SIGN_IN_STOP_SECONDS, V1_PREFIX
 from exactdocs.bootstrap.settings import Settings, SignInProviderSettings
+from exactdocs.identity.adapters.driven.cloudflare_access import CloudflareAccessVerifier
 from exactdocs.identity.adapters.driven.github import GithubProvider, github_api_url
 from exactdocs.identity.adapters.driven.oauth2 import OAuth2ClaimNames, OAuth2Provider
 from exactdocs.identity.adapters.driven.oidc import OidcClaimNames, OidcProvider
 from exactdocs.identity.constants import OIDC_TIMEOUT
-from exactdocs.identity.models import SignInPolicy
+from exactdocs.identity.models import AccessPolicy, SignInPolicy, Username
 from exactdocs.identity.ports.driven import SignInProvider
 from exactdocs.identity.ports.driving import RevalidateExternalAccounts
 from exactdocs_kernel import Clock
@@ -132,6 +134,39 @@ def sign_in_providers(
             clock=clock,
         )
     return providers, policies
+
+
+def cloudflare_access(
+    settings: Settings, client: httpx2.AsyncClient, clock: Clock
+) -> tuple[CloudflareAccessVerifier, AccessPolicy] | None:
+    """Build the Cloudflare Access verifier and policy, when ``[auth.cloudflare_access]`` is set.
+
+    Args:
+        settings: The runtime configuration.
+        client: The HTTP client the team's certs are fetched through.
+        clock: The current time.
+
+    Returns:
+        The verifier and the policy; ``None`` while Access is not configured.
+    """
+    config = settings.auth.cloudflare_access
+    if config is None:
+        return None
+    policy = AccessPolicy(
+        team_domain=config.team_domain,
+        admin_emails=frozenset(config.admin_emails),
+        auto_create_users=config.auto_create_users,
+        service_tokens=MappingProxyType(
+            {client_id: Username(name) for client_id, name in config.service_tokens.items()}
+        ),
+    )
+    verifier = CloudflareAccessVerifier(
+        team_domain=policy.team_domain,
+        audiences=frozenset(config.audience),
+        client=client,
+        clock=clock,
+    )
+    return verifier, policy
 
 
 def client_secret_reader(name: str, config: SignInProviderSettings) -> Callable[[], str | None]:

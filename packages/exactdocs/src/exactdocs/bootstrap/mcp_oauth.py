@@ -16,7 +16,13 @@ import shutil
 from pathlib import Path
 
 from cryptography.fernet import Fernet
-from fastmcp.server.auth import AuthProvider, MultiAuth, OAuthProxy, OIDCProxy
+from fastmcp.server.auth import (
+    AuthProvider,
+    MultiAuth,
+    OAuthProxy,
+    OIDCProxy,
+    TokenVerifier,
+)
 from fastmcp.server.auth.jwt_issuer import derive_jwt_key
 from key_value.aio.protocols import AsyncKeyValue
 from key_value.aio.stores.filetree import (
@@ -30,26 +36,36 @@ from exactdocs.bootstrap.constants import MCP_OAUTH_SUBDIR
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.sign_in import client_secret_reader
 from exactdocs.identity import IdentityModule
-from exactdocs.identity.adapters.driving.mcp import ApiTokenVerifier, ExternalTokenVerifier
+from exactdocs.identity.adapters.driving.mcp import (
+    AccessTokenVerifier,
+    ApiTokenVerifier,
+    ExternalTokenVerifier,
+)
 
 
 def build_mcp_auth(settings: Settings, identity: IdentityModule) -> AuthProvider:
     """Return what guards ``/mcp``: API tokens, plus OAuth when a provider is chosen.
+
+    With Cloudflare Access configured, its application token is accepted too, tried last (so an
+    API token or OAuth bearer the client sent always wins); ``AccessAssertionAsBearer`` hands it
+    over as the bearer of a request that has none.
 
     Args:
         settings: The runtime configuration.
         identity: The identity domain.
 
     Returns:
-        The API-token verifier alone, or the OAuth proxy combined with it.
+        The API-token verifier alone, or combined with the OAuth proxy and the Access verifier.
 
     Raises:
         ValueError: The chosen provider's client secret cannot be read.
     """
-    api_tokens = ApiTokenVerifier(identify_token=identity.identify_token)
+    verifiers: list[TokenVerifier] = [ApiTokenVerifier(identify_token=identity.identify_token)]
+    if settings.auth.cloudflare_access is not None:
+        verifiers.append(AccessTokenVerifier(identify_access=identity.identify_access_caller))
     name = settings.mcp_oauth_provider
     if name is None:
-        return api_tokens
+        return verifiers[0] if len(verifiers) == 1 else MultiAuth(verifiers=verifiers)
     provider = settings.auth.providers[name]
     secret = client_secret_reader(name, provider)()
     if secret is None:
@@ -83,7 +99,7 @@ def build_mcp_auth(settings: Settings, identity: IdentityModule) -> AuthProvider
             client_storage=storage,
             jwt_signing_key=signing_key,
         )
-        return MultiAuth(server=proxy, verifiers=[api_tokens])
+        return MultiAuth(server=proxy, verifiers=verifiers)
     config_url = f"{provider.issuer.rstrip('/')}/.well-known/openid-configuration"
     proxy = OIDCProxy(
         config_url=config_url,
@@ -99,7 +115,7 @@ def build_mcp_auth(settings: Settings, identity: IdentityModule) -> AuthProvider
         client_storage=storage,
         jwt_signing_key=signing_key,
     )
-    return MultiAuth(server=proxy, verifiers=[api_tokens])
+    return MultiAuth(server=proxy, verifiers=verifiers)
 
 
 def _storage(directory: Path, secret: str) -> AsyncKeyValue:

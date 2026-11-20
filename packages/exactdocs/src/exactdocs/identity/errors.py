@@ -287,6 +287,20 @@ class ProviderUnavailableError(BusyError):
         super().__init__("the identity provider cannot be reached; try again later", retry_after=30)
 
 
+class AccessAssertionRefusedError(UnauthenticatedError):
+    """A Cloudflare Access token that proves nothing: its signature, issuer, audience or times.
+
+    Deliberately not told apart: the verifier logs the reason (never the token), and the request
+    is treated as if it carried no token.
+    """
+
+    code = "access_assertion_refused"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__("the Cloudflare Access token was refused")
+
+
 class ProviderAccessRevokedError(UnauthenticatedError):
     """The identity provider refused the stored refresh token: the grant was revoked or expired."""
 
