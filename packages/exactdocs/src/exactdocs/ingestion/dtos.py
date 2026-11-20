@@ -1,7 +1,7 @@
 """Data crossing the ingestion boundary (into and out of driving ports). Immutable, validated."""
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
@@ -13,6 +13,7 @@ from exactdocs.ingestion.constants import (
     DEFAULT_KEEP_LAST,
     ERROR_CODE,
     FULL_SHA,
+    JOB_SORT_FIELDS,
     MAX_CHUNK_CHARS,
     MAX_HEADING_LEVEL,
     MAX_INTERVAL_MINUTES,
@@ -60,7 +61,15 @@ from exactdocs.ingestion.models import (
     VersionOrigin,
     Webhook,
 )
-from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, MAX_PATH, MAX_TAG_INPUT, MAX_TAGS, Page
+from exactdocs_kernel import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    MAX_NAME,
+    MAX_PATH,
+    MAX_TAG_INPUT,
+    MAX_TAGS,
+    Page,
+)
 
 
 class _Dto(BaseModel):
@@ -182,12 +191,14 @@ class JobSummary(_Dto):
 
 
 class JobList(_Dto):
-    """A page of the jobs of one library, newest first."""
+    """A page of jobs, newest first unless sorted otherwise."""
 
     jobs: list[JobSummary]
-    """The jobs, highest ID (newest) first."""
+    """The jobs in the requested order (highest ID, so newest, first by default)."""
     next_cursor: str | None
     """Pass as `cursor` to get the next page; null on the last page."""
+    total: int
+    """How many jobs match the filters, across every page; never counts a hidden library."""
 
     @classmethod
     def from_page(cls, page: Page[Job]) -> Self:
@@ -200,7 +211,9 @@ class JobList(_Dto):
             The page at the boundary.
         """
         return cls(
-            jobs=[JobSummary.from_model(job) for job in page.items], next_cursor=page.next_cursor
+            jobs=[JobSummary.from_model(job) for job in page.items],
+            next_cursor=page.next_cursor,
+            total=len(page.items) if page.total is None else page.total,
         )
 
 
@@ -296,15 +309,76 @@ class GetJobQuery(_Dto):
     """The job ID."""
 
 
-class ListLibraryJobsQuery(_Dto):
-    """One page of a library's jobs: ``limit`` items after the ``cursor`` of the previous page."""
+class JobListQuery(_Dto):
+    """How a list of jobs is filtered, sorted and paged; every filter that is set must match."""
 
-    library: str = Field(min_length=1)
-    """The library ID, `/owner/repo`."""
+    state: list[JobState] | None = Field(
+        default=None,
+        description="Only jobs in one of these states; repeat the parameter for several.",
+    )
+    """Only jobs in one of these states."""
+    kind: list[str] | None = Field(
+        default=None,
+        description="Only jobs of one of these kinds (`import`, `embed`, ...); repeatable.",
+    )
+    """Only jobs of one of these kinds."""
+    version: str | None = Field(
+        default=None, max_length=MAX_NAME, description="Only jobs for this exact ref."
+    )
+    """Only jobs for this exact ref."""
+    q: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description="Only jobs whose library, version or error contains this text (any case).",
+    )
+    """Text filter on the library, the version and the error."""
+    created_after: datetime | None = None
+    """Only jobs queued at or after this time (ISO 8601; no offset means UTC)."""
+    created_before: datetime | None = None
+    """Only jobs queued before this time (ISO 8601; no offset means UTC)."""
+    sort: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description=(
+            f"Sort by one of {', '.join(JOB_SORT_FIELDS)}; prefix `-` for descending. "
+            "Default: `-id` (newest first). An unknown field is a 422."
+        ),
+    )
+    """The sort field; its schema description names ``JOB_SORT_FIELDS``."""
     limit: Annotated[int, Field(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT
     """How many jobs the page holds at most."""
     cursor: str | None = None
-    """The `next_cursor` of the previous page; null for the first page."""
+    """The `next_cursor` of the previous page, which only works with the same `sort` and filters;
+    null for the first page."""
+
+    @field_validator("created_after", "created_before")
+    @classmethod
+    def _utc(cls, value: datetime | None) -> datetime | None:
+        """Read a time without an offset as UTC.
+
+        Args:
+            value: The time as sent.
+
+        Returns:
+            The time with an offset, or ``None``.
+        """
+        return value if value is None or value.tzinfo else value.replace(tzinfo=UTC)
+
+
+class ListLibraryJobsQuery(JobListQuery):
+    """One page of a library's jobs, filtered and sorted."""
+
+    library: str = Field(min_length=1)
+    """The library ID, `/owner/repo`."""
+
+
+class ListJobsQuery(JobListQuery):
+    """One page of the jobs of every library the caller may read, filtered and sorted."""
+
+    library: str | None = Field(
+        default=None, min_length=1, description="Only jobs of this library, `/owner/repo`."
+    )
+    """Only jobs of this library."""
 
 
 class GetLibraryAccessQuery(_Dto):

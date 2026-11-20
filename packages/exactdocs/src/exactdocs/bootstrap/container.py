@@ -44,6 +44,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogVersionCopier,
     CatalogVersionPublisher,
     IdentityAccessPolicy,
+    RetrievalAiSwitches,
     RetrievalChunkIndex,
     RetrievalCollector,
     RetrievalGuidancePolicy,
@@ -102,6 +103,7 @@ from exactdocs.bootstrap.workdirs import held, new_work_root, sweep_abandoned_wo
 from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driven.sqlite import (
     SqliteArticleTitles,
+    SqliteEntrySearch,
     SqliteImportedTags,
     SqliteInstructionFiles,
     SqliteLibraryRepository,
@@ -626,6 +628,7 @@ def _build_read_side(
     local = LocalModels(models_dir=settings.effective_models_dir)
     ai = _ai_configuration(settings, local, model_factory)
     access = access or OpenAccess()
+    library_modes = SqliteLibraryModes(engine=engine)
     catalog = CatalogModule.build(
         repository=SqliteLibraryRepository(engine=engine),
         manifests=SqliteManifestRepository(engine=engine),
@@ -635,6 +638,8 @@ def _build_read_side(
         article_titles=SqliteArticleTitles(engine=engine),
         instruction_files=SqliteInstructionFiles(engine=engine),
         access=access,
+        ai_switches=RetrievalAiSwitches(settings=library_modes),
+        entry_search=SqliteEntrySearch(engine=engine),
     )
     choice = None
     search: SqliteSearchIndex | PostgresSearchChoice = SqliteSearchIndex(engine=engine)
@@ -670,7 +675,7 @@ def _build_read_side(
         search=search,
         maintenance=search,
         renames=CatalogRenamedPaths(resolve_renamed_path=catalog.resolve_renamed_path),
-        library_modes=SqliteLibraryModes(engine=engine),
+        library_modes=library_modes,
         roles=model_roles,
         configured_profiles=ai.profiles,
         stored_profiles=SqliteProviderProfiles(engine=engine),

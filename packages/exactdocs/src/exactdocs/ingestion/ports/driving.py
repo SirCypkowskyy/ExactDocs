@@ -22,6 +22,7 @@ from exactdocs.ingestion.dtos import (
     JobSummary,
     LatestJobs,
     LibraryAccess,
+    ListJobsQuery,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
     PlanSourcesCommand,
@@ -94,6 +95,21 @@ class GetLibraryAccess(Protocol):
 
         Returns:
             Whether it has a stored credential.
+        """
+        ...
+
+
+class ListJobs(Protocol):
+    """List a page of the jobs of every library the caller may read, filtered and sorted."""
+
+    async def __call__(self, query: ListJobsQuery) -> JobList:
+        """Run the use case.
+
+        Args:
+            query: The filters, the sort, the page size and where the page starts.
+
+        Returns:
+            The page, the next cursor and the count of every match.
         """
         ...
 

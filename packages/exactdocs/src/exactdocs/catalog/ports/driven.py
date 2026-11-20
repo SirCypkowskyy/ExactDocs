@@ -26,6 +26,7 @@ from exactdocs.catalog.models import (
     Version,
     VersionRef,
 )
+from exactdocs_kernel import Sort, SortValue
 
 
 class LibraryRepository(Protocol):
@@ -668,5 +669,71 @@ class AccessPolicy(Protocol):
 
         Args:
             library: The library ID.
+        """
+        ...
+
+
+class AiSwitches(Protocol):
+    """Which libraries have AI turned off, for the libraries list's `ai_enabled` filter."""
+
+    async def disabled(self) -> frozenset[str]:
+        """Return the libraries whose AI is turned off.
+
+        Returns:
+            Their lower-case IDs; a library that is not in the set has AI on.
+        """
+        ...
+
+
+class EntrySearch(Protocol):
+    """Filters, sorts and pages the entries of a manifest in the store.
+
+    A read of the same tables as ``ManifestRepository``, split from it for ``PLR0904``.
+    """
+
+    async def search(
+        self,
+        manifest_id: ManifestId,
+        *,
+        prefix: str,
+        tags: TagSelection,
+        text: str | None,
+        sort: Sort,
+        after: tuple[SortValue, str] | None,
+        limit: int,
+    ) -> Sequence[ManifestEntry]:
+        """Return up to ``limit`` filtered entries in ``sort`` order, after the ``after`` key.
+
+        The filters are those of ``ManifestRepository.list_entries`` plus ``text``.
+        ``sort.field`` is ``path``, ``title`` (compared lower-cased, by code point) or ``size``;
+        the path breaks ties, in the sort's direction.
+
+        Args:
+            manifest_id: The manifest.
+            prefix: Only paths inside this directory; empty: every path.
+            tags: Only entries that pass this filter.
+            text: Only entries whose path or title contains this text, any case; ``None``: all.
+            sort: The order.
+            after: The sort value and path of the last entry of the previous page.
+            limit: The most entries returned.
+
+        Returns:
+            The entries in order.
+        """
+        ...
+
+    async def count(
+        self, manifest_id: ManifestId, *, prefix: str, tags: TagSelection, text: str | None
+    ) -> int:
+        """Count the entries that ``search`` pages over.
+
+        Args:
+            manifest_id: The manifest.
+            prefix: Only paths inside this directory; empty: every path.
+            tags: Only entries that pass this filter.
+            text: Only entries whose path or title contains this text, any case; ``None``: all.
+
+        Returns:
+            How many entries match.
         """
         ...

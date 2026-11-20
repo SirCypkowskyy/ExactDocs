@@ -21,6 +21,7 @@ from exactdocs.ingestion.models import (
     ImportedVersion,
     ImportSource,
     Job,
+    JobFilter,
     JobId,
     JobState,
     Removed,
@@ -28,7 +29,7 @@ from exactdocs.ingestion.models import (
     Webhook,
     WebhookDelivery,
 )
-from exactdocs_kernel import NotFoundError
+from exactdocs_kernel import NotFoundError, Sort, SortValue, is_after
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -139,6 +140,98 @@ class InMemoryJobRepository:
             if job.library == library and (before is None or job.id < before)
         ]
         return sorted(mine, key=lambda job: job.id, reverse=True)[:limit]
+
+    def _matching(self, job_filter: JobFilter) -> list[Job]:
+        """Return the jobs that pass the filter, in no particular order.
+
+        Args:
+            job_filter: Which jobs.
+
+        Returns:
+            The matching jobs.
+        """
+        needle = job_filter.text.lower() if job_filter.text else None
+        floor = job_filter.created_after
+        ceiling = job_filter.created_before
+        return [
+            job
+            for job in self.jobs.values()
+            if (job_filter.libraries is None or job.library in job_filter.libraries)
+            and (not job_filter.states or job.state in job_filter.states)
+            and (not job_filter.kinds or job.kind in job_filter.kinds)
+            and (job_filter.version is None or job.version == job_filter.version)
+            and (floor is None or job.created_at >= floor)
+            and (ceiling is None or job.created_at < ceiling)
+            and (
+                needle is None
+                or any(
+                    needle in (text or "").lower() for text in (job.version, job.library, job.error)
+                )
+            )
+        ]
+
+    async def search(
+        self,
+        job_filter: JobFilter,
+        *,
+        sort: Sort,
+        after: tuple[SortValue, str] | None,
+        limit: int,
+    ) -> Sequence[Job]:
+        """Return up to ``limit`` of the jobs that pass the filter, in ``sort`` order.
+
+        Args:
+            job_filter: Which jobs.
+            sort: The order.
+            after: The sort value and ID of the last job of the previous page.
+            limit: At most this many jobs.
+
+        Returns:
+            The jobs in order.
+        """
+
+        def value(job: Job) -> SortValue:
+            """Return the job's value of the sort field.
+
+            Args:
+                job: The job.
+
+            Returns:
+                The ID, the stored form of the creation time, the state, the kind or the library.
+            """
+            return {
+                "id": job.id,
+                "created_at": job.created_at.isoformat(timespec="microseconds"),
+                "state": job.state.value,
+                "kind": job.kind,
+                "library": job.library,
+            }[sort.field]
+
+        ordered = sorted(
+            self._matching(job_filter), key=lambda j: (value(j), j.id), reverse=sort.descending
+        )
+        if after is not None:
+            ordered = [j for j in ordered if is_after((value(j), j.id), after, sort=sort)]
+        return ordered[:limit]
+
+    async def count(self, job_filter: JobFilter) -> int:
+        """Count the jobs that pass the filter.
+
+        Args:
+            job_filter: Which jobs.
+
+        Returns:
+            How many there are.
+        """
+        return len(self._matching(job_filter))
+
+    async def libraries(self) -> Sequence[str]:
+        """Return every library that has a job, as spelled in the jobs.
+
+        Returns:
+            The distinct library IDs.
+        """
+        return sorted({job.library for job in self.jobs.values()})
 
     async def list_latest(self) -> Sequence[Job]:
         """Return the newest job of every (library, version), ordered by library and version.

@@ -579,6 +579,14 @@ class LibraryModes(Protocol):
         """
         ...
 
+    async def ai_disabled(self) -> frozenset[str]:
+        """Read which libraries have AI turned off, in one read.
+
+        Returns:
+            The case-folded IDs of the libraries whose AI is off.
+        """
+        ...
+
     async def forget(self, library: str) -> None:
         """Drop everything stored for a library that was removed (a no-op when nothing is).
 

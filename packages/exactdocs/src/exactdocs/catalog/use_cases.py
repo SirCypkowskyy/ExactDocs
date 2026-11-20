@@ -3,16 +3,19 @@
 import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import timedelta
+from datetime import UTC, timedelta
 from uuid import uuid4
 
 from exactdocs.catalog.constants import (
+    ARTICLE_SORT_FIELDS,
+    LIBRARY_SORT_FIELDS,
     MAX_RENAME_HOPS,
     MAX_RENAMES,
     MAX_SIMILARITY,
     MAX_SUGGESTION_SCAN,
     MAX_TAG_FACETS,
     TAG_SOURCE_PAGE,
+    VERSION_SORT_FIELDS,
 )
 from exactdocs.catalog.dtos import (
     ActivatedManifest,
@@ -55,6 +58,7 @@ from exactdocs.catalog.dtos import (
     ListLibrariesQuery,
     ListRenamesQuery,
     ListTagsQuery,
+    ListVersionsQuery,
     ManifestStates,
     ManualTagsOut,
     PinDefaultVersionCommand,
@@ -80,6 +84,8 @@ from exactdocs.catalog.dtos import (
     TagCount,
     TagList,
     UpdateLibraryCommand,
+    VersionList,
+    VersionOut,
     VersionTags,
 )
 from exactdocs.catalog.errors import (
@@ -122,7 +128,9 @@ from exactdocs.catalog.models import (
 )
 from exactdocs.catalog.ports.driven import (
     AccessPolicy,
+    AiSwitches,
     ArticleTitleFinder,
+    EntrySearch,
     ImportedTagWriter,
     InstructionFileReader,
     LibraryRepository,
@@ -130,7 +138,14 @@ from exactdocs.catalog.ports.driven import (
     ManifestRepository,
     StoredArticleFinder,
 )
-from exactdocs_kernel import Clock, decode_cursor, encode_cursor, paginate, section_link
+from exactdocs_kernel import (
+    Clock,
+    decode_sort_cursor,
+    encode_sort_cursor,
+    parse_sort,
+    section_link,
+    sorted_page,
+)
 
 
 async def _find_version(
@@ -185,25 +200,145 @@ class ListLibrariesUseCase:
     """Stores the libraries, their versions, settings and manual tags."""
     access: AccessPolicy
     """Decides what the caller may do with the library."""
+    ai_switches: AiSwitches
+    """Tells which libraries have AI turned off, for the `ai_enabled` filter."""
 
     async def __call__(self, query: ListLibrariesQuery) -> LibraryList:
-        """List a page of libraries, sorted by ID.
+        """List a page of the libraries the caller may read, filtered and sorted.
+
+        Permissions apply first: a hidden library is in no page and in no count.
 
         Args:
-            query: The page size and the cursor of the previous page.
+            query: The filters, the sort, the page size and the cursor of the previous page.
 
         Returns:
-            The page of libraries, sorted by ID, with the next cursor.
+            The page of libraries with the next cursor and the count of every match.
         """
+        sort = parse_sort(query.sort, allowed=LIBRARY_SORT_FIELDS, default="id")
         every = await self.repository.list_all()
         readable = await self.access.readable([lib.id.value for lib in every])
-        libraries = sorted(
-            (lib for lib in every if lib.id.value in readable), key=lambda lib: lib.id.value
-        )
-        page = paginate(
-            libraries, key=lambda lib: lib.id.value, limit=query.limit, cursor=query.cursor
+        libraries = [lib for lib in every if lib.id.value in readable]
+        if query.ai_enabled is not None:
+            off = await self.ai_switches.disabled()
+            libraries = [
+                lib for lib in libraries if (lib.id.value.lower() not in off) is query.ai_enabled
+            ]
+        libraries = [lib for lib in libraries if _library_matches(lib, query)]
+        page = sorted_page(
+            libraries,
+            sort=sort,
+            key_field="id",
+            values={
+                "id": lambda lib: lib.id.value,
+                "title": lambda lib: lib.title.lower(),
+                "last_imported_at": _last_imported,
+                "version_count": lambda lib: len(lib.versions),
+            },
+            key=lambda lib: lib.id.value,
+            limit=query.limit,
+            cursor=query.cursor,
         )
         return LibraryList.from_page(page)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ListVersionsUseCase:
+    """Implements ``ports.driving.ListVersions``."""
+
+    repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
+
+    async def __call__(self, query: ListVersionsQuery) -> VersionList:
+        """List a page of a library's versions, filtered and sorted.
+
+        Args:
+            query: The library, the filters, the sort and the page.
+
+        Returns:
+            The page, the next cursor and the count of every match.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog.
+        """
+        await _require(self.access, query.id, Access.READ)
+        sort = parse_sort(query.sort, allowed=VERSION_SORT_FIELDS, default="ref")
+        library = await self.repository.get(LibraryId(query.id))
+        if library is None:
+            raise LibraryNotFoundError(query.id)
+        default = library.default_version()
+        needle = query.q.lower() if query.q else None
+        kinds, origins = set(query.kind or ()), set(query.origin or ())
+        found = [
+            v
+            for v in library.versions
+            if (needle is None or needle in str(v.ref).lower() or needle in v.commit_sha.lower())
+            and (not kinds or v.kind in kinds)
+            and (not origins or v.origin in origins)
+            and (query.imported_after is None or v.imported_at >= query.imported_after)
+            and (query.imported_before is None or v.imported_at < query.imported_before)
+        ]
+        page = sorted_page(
+            found,
+            sort=sort,
+            key_field="ref",
+            values={
+                "ref": lambda v: str(v.ref),
+                "kind": lambda v: v.kind.value,
+                "imported_at": lambda v: v.imported_at.astimezone(UTC).isoformat(),
+                "origin": lambda v: v.origin.value,
+            },
+            key=lambda v: str(v.ref),
+            limit=query.limit,
+            cursor=query.cursor,
+        )
+        return VersionList(
+            library=str(library.id),
+            versions=[VersionOut.from_model(v, is_default=v == default) for v in page.items],
+            next_cursor=page.next_cursor,
+            total=len(found),
+        )
+
+
+def _last_imported(library: Library) -> str:
+    """Return when a library was last imported as sortable text.
+
+    Args:
+        library: The library.
+
+    Returns:
+        An ISO 8601 UTC timestamp; empty while no version is imported (it sorts first).
+    """
+    latest = max((v.imported_at for v in library.versions), default=None)
+    return "" if latest is None else latest.astimezone(UTC).isoformat()
+
+
+def _library_matches(library: Library, query: ListLibrariesQuery) -> bool:
+    """Tell whether a library passes the list's text, version and date filters.
+
+    Args:
+        library: The library.
+        query: The filters.
+
+    Returns:
+        Whether it matches every filter that is set.
+    """
+    if query.q:
+        needle = query.q.lower()
+        if not any(
+            needle in text.lower()
+            for text in (library.id.value, library.title, library.description)
+        ):
+            return False
+    if query.has_versions is not None and bool(library.versions) is not query.has_versions:
+        return False
+    latest = max((v.imported_at for v in library.versions), default=None)
+    if query.updated_after is not None and (latest is None or latest < query.updated_after):
+        return False
+    return not (
+        query.updated_before is not None and (latest is None or latest >= query.updated_before)
+    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -993,6 +1128,8 @@ class ListArticlesUseCase:
     """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
     """Stores the manifests with their articles, images and renames."""
+    entries: EntrySearch
+    """Filters, sorts and pages a manifest's entries."""
     access: AccessPolicy
     """Decides what the caller may do with the library."""
 
@@ -1017,23 +1154,56 @@ class ListArticlesUseCase:
         manifest = await self.manifests.get_active(library.id, version.ref)
         if manifest is None:
             raise ArticleNotFoundError(str(library.id), str(version.ref), None)
-        after = decode_cursor(query.cursor) if query.cursor is not None else None
-        entries = await self.manifests.list_entries(
+        sort = parse_sort(query.sort, allowed=ARTICLE_SORT_FIELDS, default="path")
+        after = (
+            decode_sort_cursor(query.cursor, sort, key_field="path")
+            if query.cursor is not None
+            else None
+        )
+        prefix = query.path_prefix.strip("/")
+        tags = query.tag_filter.selection()
+        entries = await self.entries.search(
             manifest.id,
-            prefix=query.path_prefix.strip("/"),
-            tags=query.tag_filter.selection(),
+            prefix=prefix,
+            tags=tags,
+            text=query.q,
+            sort=sort,
             after=after,
             limit=query.limit + 1,  # one more than asked tells whether another page follows
         )
         page = entries[: query.limit]
+        more = len(entries) > query.limit
         return ArticleList(
             library=str(library.id),
             ref=str(version.ref),
             commit_sha=manifest.commit_sha,
             manifest_id=manifest.id,
             articles=[ArticleSummary.from_model(e) for e in page],
-            next_cursor=encode_cursor(page[-1].path) if len(entries) > query.limit else None,
+            next_cursor=(
+                encode_sort_cursor(
+                    sort,
+                    key_field="path",
+                    value=_entry_value(page[-1], sort.field),
+                    key=page[-1].path,
+                )
+                if more
+                else None
+            ),
+            total=await self.entries.count(manifest.id, prefix=prefix, tags=tags, text=query.q),
         )
+
+
+def _entry_value(entry: ManifestEntry, field: str) -> str | int:
+    """Return an entry's value of a sort field, as the store compares it.
+
+    Args:
+        entry: The article's entry.
+        field: `path`, `title` or `size`.
+
+    Returns:
+        The path, the lower-cased title or the size.
+    """
+    return {"path": entry.path, "title": entry.title.lower(), "size": entry.size}[field]
 
 
 async def _renames_manifest(

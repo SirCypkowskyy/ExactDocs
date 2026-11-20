@@ -567,6 +567,14 @@ class InMemoryLibraryModes:
         """
         return {key: ai.budgets for key, ai in self.overrides.items() if ai.budgets}
 
+    async def ai_disabled(self) -> frozenset[str]:
+        """Read which libraries have AI turned off.
+
+        Returns:
+            The case-folded IDs of the libraries whose AI is off.
+        """
+        return frozenset(key for key, ai in self.overrides.items() if not ai.enabled)
+
     async def forget(self, library: str) -> None:
         """Drop the library's settings.
 
