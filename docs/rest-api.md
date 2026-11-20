@@ -437,6 +437,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   (404 `unknown_provider` for a profile that does not exist, 422 `provider_unsupported` for one this
   installation cannot call (an extra or SDK is missing), 422 `invalid_model` when not written
   `<profile>:<model>`); there is no `embedding` override (one vector space per instance).
+  `llm_thinking` and `judge_thinking` (`minimal`, `low`, `medium`, `high`, `xhigh`; `null`: the
+  instance's) set how much the role's model thinks before it answers, its own or the instance's
+  ([Thinking level](search.md#thinking-level)); 422 `thinking_unsupported` names the role and the
+  model when the model is known to take no thinking setting.
   `rerank_top_n` (1 to 200) is how many of its best candidates the reranker reorders (`null`: the
   instance's `EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default).
   `rerank_with` chooses what reranks its searches: `cross_encoder` (the `reranker` role) or
@@ -557,7 +561,16 @@ See [AI retrieval decisions](decisions/ai-retrieval.md) for the kinds and what e
   named.
 - `GET /ai/roles`: the instance roles (`embedding`, `reranker`, `llm`, `judge`), each with its
   `model` (`<profile>:<model>`), its `source` (`instance`, or `llm` for a judge that defaults to
-  the LLM) and whether its profile exists.
+  the LLM) and whether its profile exists. The `llm` and `judge` roles also have their `thinking`
+  level (the one their calls send; a judge that is the LLM thinks as the LLM), `own_thinking` (set
+  for the role itself), `thinking_configured` (set in the environment or the TOML file, so
+  read-only here) and `thinking_unsupported` (why its model cannot take the level, which its calls
+  then leave out). See [Thinking level](search.md#thinking-level).
+- `PUT /ai/roles/{role}` with `{"thinking": "low"}` (`null` clears it): the thinking level of the
+  `llm` or `judge` role, used from the next call; answers the role as `GET /ai/roles` shows it.
+  409 `role_configured` when `EXACTDOCS_AI__<ROLE>__THINKING` sets it, 422
+  `role_takes_no_thinking` for `embedding` and `reranker`, 422 `thinking_unsupported` (naming the
+  role and the model) when the role's model is known to take no thinking setting.
 - `GET /ai/embedding/estimate`: what embedding every version not embedded yet would send and cost,
   before it runs (`exactdocs ai estimate` over REST): `{"model", "space_id", "versions", "chunks",
   "characters", "estimated_tokens", "usd_per_million_tokens", "estimated_usd", "note"}`;

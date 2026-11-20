@@ -64,6 +64,7 @@ from exactdocs.retrieval.models import (
     RetrievalMode,
     RoleSource,
     SpendWindow,
+    ThinkingLevel,
     bind_role,
 )
 from exactdocs.retrieval.module import RetrievalModule
@@ -477,7 +478,23 @@ class FakeFactory:
     def unsupported(self, profile: ProviderProfile) -> str | None:
         return "not installed" if profile.kind in self.unsupported_kinds else None
 
-    async def chat_model(self, profile: ProviderProfile, model: str) -> object:
+    async def thinking_unsupported(self, profile: ProviderProfile, model: str) -> str | None:
+        """Know of no model that cannot think.
+
+        Args:
+            profile: The profile.
+            model: The model.
+
+        Returns:
+            ``None``.
+        """
+        del profile, model
+        return None
+
+    async def chat_model(
+        self, profile: ProviderProfile, model: str, *, thinking: ThinkingLevel | None = None
+    ) -> object:
+        del thinking
         self.built.append((profile, model))
         return ("chat", profile.base_url, model)
 
@@ -489,7 +506,15 @@ class FakeFactory:
         self.built.append((profile, model))
         return NamedReranker(base_url=profile.base_url, model=model)
 
-    async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
+    async def check(
+        self,
+        profile: ProviderProfile,
+        model: str,
+        role: ModelRole,
+        *,
+        thinking: ThinkingLevel | None = None,
+    ) -> ModelCheck:
+        del thinking
         self.built.append((profile, model))
         dimensions = 3 if role is ModelRole.EMBEDDING else None
         return ModelCheck(

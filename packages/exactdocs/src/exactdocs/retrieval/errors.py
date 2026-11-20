@@ -369,6 +369,60 @@ class ProviderInUseError(ConflictError):
         self.name = name
 
 
+class ThinkingUnsupportedError(ValidationError):
+    """A role's model cannot take a thinking level (#421)."""
+
+    code = "thinking_unsupported"
+
+    def __init__(self, role: str, model: str, reason: str) -> None:
+        """Name the role, its model and why.
+
+        Args:
+            role: The role (``llm`` or ``judge``).
+            model: Its ``<profile>:<model>``, quoted as untrusted text.
+            reason: A fixed text saying what the model takes instead.
+        """
+        super().__init__(
+            f"the {role} role's model {_data(model)} cannot take a thinking level: {reason}; "
+            "leave the level unset"
+        )
+        self.role = role
+        self.model = model
+
+
+class RoleTakesNoThinkingError(ValidationError):
+    """A thinking level was set for a role that does not think (embedding, reranker)."""
+
+    code = "role_takes_no_thinking"
+
+    def __init__(self, role: str) -> None:
+        """Name the role.
+
+        Args:
+            role: The role.
+        """
+        super().__init__(f"the {role} role takes no thinking level; only llm and judge do")
+        self.role = role
+
+
+class RoleConfiguredError(ConflictError):
+    """The role's thinking level is set in the environment or the configuration file."""
+
+    code = "role_configured"
+
+    def __init__(self, role: str) -> None:
+        """Name the role.
+
+        Args:
+            role: The role.
+        """
+        super().__init__(
+            f"the {role} role's thinking level is set in the environment or the configuration "
+            f"file (EXACTDOCS_AI__{role.upper()}__THINKING); change it there"
+        )
+        self.role = role
+
+
 class SecretKeyRequiredError(ValidationError):
     """A key cannot be stored: this process has no secret key to seal it with."""
 

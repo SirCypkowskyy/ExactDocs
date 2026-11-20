@@ -5706,6 +5706,116 @@
         ]
       }
     },
+    "/api/v1/ai/roles/{role}": {
+      "put": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Set Role Thinking",
+        "description": "Set (or clear, with null) the thinking level of the `llm` or `judge` role.\n\nThe level is sent as the provider's own setting at the next call: Google's thinking level\nor budget, Claude's effort or budget, OpenAI's `reasoning_effort`. A level set in the\nenvironment or the configuration file (`EXACTDOCS_AI__<ROLE>__THINKING`) cannot be\nchanged here (409 `role_configured`); another role takes none (422\n`role_takes_no_thinking`); a level the role's model cannot take is refused (422\n`thinking_unsupported`, naming the role and the model).",
+        "operationId": "ai-set_role_thinking",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "role",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ModelRole"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleThinkingIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/ai/embedding/estimate": {
       "get": {
         "tags": [
@@ -11553,6 +11663,28 @@
             "title": "Reranker",
             "description": "The library's own reranker, `<profile>:<model>`; null: the instance's. The embedding model\nis instance-wide only and cannot be set here."
           },
+          "llm_thinking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThinkingLevel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How much its `llm` role's model (its own or the instance's) thinks before it answers:\n`minimal`, `low`, `medium`, `high` or `xhigh`. Thinking tokens are billed as output, and\nseveral providers default to a high level; HyDE and the agentic mode rarely need more than\n`low`. Null: the instance's level (`EXACTDOCS_AI__LLM__THINKING`). A level the model cannot\ntake is refused (422 `thinking_unsupported`, naming the role and the model)."
+          },
+          "judge_thinking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThinkingLevel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The same for its `judge` role; null: the instance's (the `llm` role's when the judge is\nthe LLM)."
+          },
           "rerank_top_n": {
             "anyOf": [
               {
@@ -11695,6 +11827,28 @@
             "title": "Reranker",
             "description": "The library's own reranker (`<profile>:<model>`); null: the instance's."
           },
+          "llm_thinking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThinkingLevel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The library's own thinking level for the `llm` role; null: the instance's."
+          },
+          "judge_thinking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThinkingLevel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The library's own thinking level for the `judge` role; null: the instance's."
+          },
           "rerank_top_n": {
             "anyOf": [
               {
@@ -11767,6 +11921,8 @@
           "llm",
           "judge",
           "reranker",
+          "llm_thinking",
+          "judge_thinking",
           "rerank_top_n",
           "effective_rerank_top_n",
           "rerank_with",
@@ -13942,6 +14098,46 @@
             "type": "boolean",
             "title": "Profile Exists",
             "description": "False when the role names a profile that does not exist (the role is then not usable)."
+          },
+          "thinking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThinkingLevel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`llm` and `judge` only: how much the model thinks before it answers (`minimal`, `low`,\n`medium`, `high`, `xhigh`); null: the provider's default. A judge that is the LLM thinks as\nthe LLM does unless it has a level of its own."
+          },
+          "own_thinking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThinkingLevel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The level set for this role itself (the configuration's, else the REST API's); null: none of\nits own (the judge then thinks as the LLM when it is the LLM)."
+          },
+          "thinking_configured": {
+            "type": "boolean",
+            "title": "Thinking Configured",
+            "description": "True when the level is set in the environment or the configuration file\n(`EXACTDOCS_AI__<ROLE>__THINKING`): it cannot be changed over the REST API.",
+            "default": false
+          },
+          "thinking_unsupported": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinking Unsupported",
+            "description": "Why the role's model cannot take its level, when that is known: the level is then left out\nof its calls (and a warning logged at start)."
           }
         },
         "additionalProperties": false,
@@ -13950,7 +14146,11 @@
           "role",
           "model",
           "source",
-          "profile_exists"
+          "profile_exists",
+          "thinking",
+          "own_thinking",
+          "thinking_configured",
+          "thinking_unsupported"
         ],
         "title": "RoleOut",
         "description": "One instance role and the model it uses."
@@ -13964,6 +14164,25 @@
         ],
         "title": "RoleSource",
         "description": "Where a role's model came from."
+      },
+      "RoleThinkingIn": {
+        "properties": {
+          "thinking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThinkingLevel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How much the role's model thinks before it answers: `minimal`, `low`, `medium`, `high` or\n`xhigh`; null: the provider's default. Thinking tokens are billed as output."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RoleThinkingIn",
+        "description": "An instance role's thinking level, as the admin sets it."
       },
       "ScopeUsageOut": {
         "properties": {
@@ -15049,6 +15268,18 @@
         ],
         "title": "TaggedArticle",
         "description": "The manual tags of a path as stored: every version's article at that path carries them.\n\nSo does, in a later version, the article git saw it renamed to."
+      },
+      "ThinkingLevel": {
+        "type": "string",
+        "enum": [
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "title": "ThinkingLevel",
+        "description": "How much a chat model thinks before it answers (#421); unset: the provider's default.\n\nEach provider gets its own control for the level: Google's thinking level (Gemini 3 and\nlater) or budget (Gemini 2.5), Claude's effort or budget, OpenAI's ``reasoning_effort``.\nThinking tokens are billed as output, and several providers default to a high level."
       },
       "TokenGrant": {
         "properties": {

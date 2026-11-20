@@ -58,6 +58,7 @@ from exactdocs.retrieval.models import (
     SpendKey,
     StoredChunk,
     TagFilter,
+    ThinkingLevel,
     VectorCoverage,
     VectorHit,
     VersionCounts,
@@ -606,6 +607,30 @@ class LibraryModes(Protocol):
         ...
 
 
+class RoleThinkingLevels(Protocol):
+    """The thinking levels of the instance's ``llm`` and ``judge`` roles set over the REST API.
+
+    A level set in the environment or the configuration file wins over a stored one (#421).
+    """
+
+    async def levels(self) -> Mapping[ModelRole, ThinkingLevel]:
+        """Read every stored level.
+
+        Returns:
+            Each role's level; a role without one is missing.
+        """
+        ...
+
+    async def save(self, role: ModelRole, level: ThinkingLevel | None) -> None:
+        """Store a role's level, or clear it.
+
+        Args:
+            role: ``llm`` or ``judge``.
+            level: The level; ``None`` removes it.
+        """
+        ...
+
+
 class ProviderProfiles(Protocol):
     """The provider profiles stored over the REST API (the environment's are given read-only).
 
@@ -725,15 +750,31 @@ class ModelFactory(Protocol):
         """
         ...
 
-    async def chat_model(self, profile: ProviderProfile, model: str) -> object:
+    async def chat_model(
+        self, profile: ProviderProfile, model: str, *, thinking: ThinkingLevel | None = None
+    ) -> object:
         """Build a chat model (``llm`` and ``judge`` roles).
+
+        Args:
+            profile: The profile.
+            model: The model name.
+            thinking: Its thinking level, sent as the provider's own setting; left out when the
+                model cannot take one. ``None``: the provider's default.
+
+        Returns:
+            An opaque handle (a pydantic-ai model).
+        """
+        ...
+
+    async def thinking_unsupported(self, profile: ProviderProfile, model: str) -> str | None:
+        """Say why a chat model cannot take a thinking level, when that is known without a call.
 
         Args:
             profile: The profile.
             model: The model name.
 
         Returns:
-            An opaque handle (a pydantic-ai model).
+            A fixed text, or ``None`` when it can, or when that cannot be known in advance.
         """
         ...
 
@@ -772,13 +813,21 @@ class ModelFactory(Protocol):
         """
         ...
 
-    async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
+    async def check(
+        self,
+        profile: ProviderProfile,
+        model: str,
+        role: ModelRole,
+        *,
+        thinking: ThinkingLevel | None = None,
+    ) -> ModelCheck:
         """Make one minimal call to the model as ``role`` uses it and time it.
 
         Args:
             profile: The profile.
             model: The model name.
             role: Which kind of call: a chat turn, an embedding or a rerank.
+            thinking: A chat model's thinking level, as its role's calls send it.
 
         Returns:
             The outcome; a failed call is ``ok=False`` with an error text holding no key.
