@@ -697,3 +697,9 @@ role: removing the account's access immediately removes token access too. Hidden
 their articles, assets, chunks and jobs answer the same not-found errors as missing resources.
 The token dialog offers the same selection. CLI `login` and `token create` accept repeatable
 `--library /acme/docs`; omitting the option preserves the unrestricted default.
+
+Before rolling back to a version without library scopes, revoke every scoped API token,
+including tokens with an empty selection. The schema downgrade refuses to drop the scope
+column while any scoped token remains. Revoke them before starting an older server binary
+as well: older code can ignore the column and otherwise treat those credentials as unrestricted.
+Unrestricted legacy tokens are preserved by downgrade.

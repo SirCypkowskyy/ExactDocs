@@ -19,6 +19,7 @@ from fastapi import FastAPI
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
+from mcp.shared.exceptions import MCPError as McpError
 from pydantic import SecretStr
 from sqlalchemy import text
 
@@ -519,12 +520,17 @@ async def test_warm_resources_immediately_lose_a_revoked_library_role(instance: 
     wanted = "exactdocs://acme/payments/plan.md?ref=v1.3.0"
     async with mcp_client(instance.app, secret) as client:
         assert wanted in {str(r.uri) for r in await client.list_resources()}
+        assert await client.read_resource(wanted)
         await instance.container.identity.revoke_library_role(
             RevokeLibraryRoleCommand(
                 caller_id=instance.accounts["ada"].id, library=LIBRARY, kind="user", subject="bob"
             )
         )
         assert wanted not in {str(r.uri) for r in await client.list_resources()}
+        with pytest.raises(McpError):
+            await client.read_resource(wanted)
+        with pytest.raises(ToolError, match="not_found"):
+            await client.call_tool("read_article", {"library": LIBRARY, "path": "plan.md"})
 
 
 @pytest.mark.parametrize(

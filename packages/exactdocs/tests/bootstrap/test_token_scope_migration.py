@@ -63,3 +63,41 @@ async def test_legacy_tokens_keep_null_scope_and_survive_upgrade_and_downgrade(
             ).scalar_one() is None
     finally:
         await engine.dispose()
+
+
+@pytest.mark.parametrize("backend", SQL_BACKENDS)
+@pytest.mark.parametrize("scope", ["[]", '["/acme/docs"]'])
+async def test_downgrade_refuses_to_widen_scoped_tokens(
+    backend: str, scope: str, request: pytest.FixtureRequest
+) -> None:
+    if backend == "postgres":
+        request.getfixturevalue("on_postgres")
+    engine = open_database(Settings())
+    try:
+        await migrate(engine)
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO identity_accounts (id, username, password_hash, role, created_at) "
+                    "VALUES ('ada', 'ada', 'hash', 'admin', 't')"
+                )
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO identity_api_tokens "
+                    "(id, account_id, name, token_hash, prefix, created_at, library_ids) "
+                    "VALUES ('scoped', 'ada', 'limited', 'hash', 'exd_scope', 't', :scope), "
+                    "('legacy', 'ada', 'old', 'legacyhash', 'exd_old', 't', NULL)"
+                ),
+                {"scope": scope},
+            )
+            with pytest.raises(RuntimeError, match="Revoke scoped API tokens"):
+                await connection.run_sync(_migrate, "downgrade", BEFORE)
+            rows = (
+                await connection.execute(
+                    text("SELECT id, library_ids FROM identity_api_tokens ORDER BY id")
+                )
+            ).all()
+            assert rows == [("legacy", None), ("scoped", scope)]
+    finally:
+        await engine.dispose()

@@ -18,4 +18,15 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    scoped = (
+        op.get_bind()
+        .execute(sa.text("SELECT 1 FROM identity_api_tokens WHERE library_ids IS NOT NULL LIMIT 1"))
+        .first()
+    )
+    if scoped is not None:
+        message = (
+            "Revoke scoped API tokens before downgrading; "
+            "removing library scopes would widen their access."
+        )
+        raise RuntimeError(message)
     op.drop_column("identity_api_tokens", "library_ids")

@@ -246,6 +246,13 @@ async def test_token_library_selection_intersects_creation_policy(
         grant = await container.identity.create_token(
             account, CreateTokenCommand(name="scoped", library_ids=selection)
         )
+        identity = await container.identity.identify_token(grant.token)
+        creation = container.catalog.create_library
+        assert isinstance(creation, CreateLibraryUseCase)
+        policy = creation.access
+        assert isinstance(policy, IdentityAccessPolicy)
+        scoped = replace(policy, caller=lambda: account.id, api_identity=lambda: identity)
+        assert await scoped.can_create() is (mode != "empty" and selection is None)
         client.headers["authorization"] = f"Bearer {grant.token}"
         response = await client.post(
             "/api/v1/libraries", json={"url": URL, "include_paths": ["docs/**"]}
