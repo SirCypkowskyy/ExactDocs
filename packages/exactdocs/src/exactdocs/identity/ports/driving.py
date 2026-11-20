@@ -4,6 +4,7 @@ from typing import Protocol
 
 from exactdocs.identity.dtos import (
     AccountSummary,
+    ApiTokenIdentity,
     AuthenticateQuery,
     ClaimLibraryCommand,
     CreateFirstAdminCommand,
@@ -303,7 +304,7 @@ class RevokeToken(Protocol):
 class IdentifyToken(Protocol):
     """Who an API token acts as; raises ``InvalidTokenError`` when it is no good."""
 
-    async def __call__(self, token: str) -> AccountSummary:
+    async def __call__(self, token: str) -> ApiTokenIdentity:
         """Run the use case.
 
         Args:

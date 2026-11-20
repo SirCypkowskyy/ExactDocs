@@ -203,12 +203,19 @@ class ApiToken:
     last_used_at: datetime | None = None
     """When the token last authenticated a request; ``None`` if never used."""
 
+    library_ids: frozenset[str] | None = None
+    """Optional library selection; ``None`` allows every library the account can access."""
+
     def __post_init__(self) -> None:
         """Check the name.
 
         Raises:
             InvalidTokenNameError: The name is blank or too long.
         """
+        if self.library_ids is not None:
+            object.__setattr__(
+                self, "library_ids", frozenset(v.casefold() for v in self.library_ids)
+            )
         if not self.name.strip() or len(self.name) > MAX_TOKEN_NAME_LENGTH:
             raise InvalidTokenNameError(MAX_TOKEN_NAME_LENGTH)
 

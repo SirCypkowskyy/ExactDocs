@@ -1,9 +1,17 @@
 """Data crossing the identity boundary (into and out of driving ports). Immutable, validated."""
 
 from datetime import datetime
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 
 from exactdocs.identity.constants import (
     MAX_PASSWORD_LENGTH,
@@ -17,10 +25,33 @@ from exactdocs.identity.constants import (
     USERNAME_DESCRIPTION,
 )
 from exactdocs.identity.models import Account, ApiToken, LibraryGrant, LibraryRole, SignInPolicy
+from exactdocs_kernel import LIBRARY_ID_PATTERN, MAX_NAME
 
 
 class _Dto(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
+
+
+class _LibrarySelection(_Dto):
+    """An optional, canonical selection of libraries; an empty selection allows none."""
+
+    library_ids: (
+        frozenset[Annotated[str, Field(pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)]] | None
+    ) = None
+    """Selected library IDs; omit or use null for all libraries the user can access."""
+
+    @field_validator("library_ids")
+    @classmethod
+    def _canonical_libraries(cls, value: frozenset[str] | None) -> frozenset[str] | None:
+        """Normalize the library selection.
+
+        Args:
+            value: The optional selected IDs.
+
+        Returns:
+            Casefolded unique IDs, preserving unrestricted and empty selections.
+        """
+        return None if value is None else frozenset(library.casefold() for library in value)
 
 
 class AccountSummary(_Dto):
@@ -44,6 +75,13 @@ class AccountSummary(_Dto):
             Its summary.
         """
         return cls(id=account.id, username=account.username.value, role=account.role.value)
+
+
+class ApiTokenIdentity(AccountSummary, _LibrarySelection):
+    """A verified API credential and the account it acts as; never parsed from token claims."""
+
+    token_id: str
+    """Stable credential ID, without its secret."""
 
 
 class ExternalTokenIdentity(_Dto):
@@ -86,7 +124,7 @@ class AuthenticateQuery(_Dto):
     """Password of the account."""
 
 
-class LoginForTokenCommand(_Dto):
+class LoginForTokenCommand(_LibrarySelection):
     """Credentials exchanged for an API token (the CLI's login); ``name`` labels the token."""
 
     username: str = Field(max_length=4 * MAX_USERNAME_LENGTH)
@@ -341,7 +379,7 @@ class RevalidationReport(_Dto):
     the answer was dropped and the newer state kept."""
 
 
-class CreateTokenCommand(_Dto):
+class CreateTokenCommand(_LibrarySelection):
     """A new API token for the caller. ``expires_at`` (timezone-aware) is optional."""
 
     name: str = Field(max_length=MAX_TOKEN_NAME_INPUT, description=TOKEN_NAME_DESCRIPTION)
@@ -350,7 +388,7 @@ class CreateTokenCommand(_Dto):
     """When the token stops working (in the future, with a timezone); omit it for no expiry."""
 
 
-class TokenSummary(_Dto):
+class TokenSummary(_LibrarySelection):
     """A token as listed: everything but the secret."""
 
     id: str
@@ -383,6 +421,7 @@ class TokenSummary(_Dto):
             created_at=token.created_at,
             expires_at=token.expires_at,
             last_used_at=token.last_used_at,
+            library_ids=token.library_ids,
         )
 
 

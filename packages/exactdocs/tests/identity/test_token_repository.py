@@ -1,6 +1,7 @@
 """Adapter contract: every ``TokenRepository`` behaves the same, whatever stores the data."""
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -103,3 +104,16 @@ async def test_deleting_for_an_account_removes_all_its_tokens(repository: TokenR
     await repository.delete_for_account(ADA)
 
     assert await repository.list_for_account(ADA) == []
+
+
+@pytest.mark.parametrize("selection", [None, frozenset(), frozenset({"/acme/docs"})])
+async def test_token_library_selection_survives_storage_and_touch(
+    repository: TokenRepository, selection: frozenset[str] | None
+) -> None:
+    scoped = replace(token("selected"), library_ids=selection)
+    await repository.add(scoped)
+    await repository.touch(scoped.token_hash, NOW)
+    stored = await repository.get(scoped.token_hash)
+    assert stored is not None
+    assert stored.library_ids == selection
+    assert (await repository.list_for_account(ADA))[0].library_ids == selection
