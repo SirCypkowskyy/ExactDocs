@@ -120,6 +120,19 @@ def table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
     )
 
 
+def say_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> None:
+    """Print a table, one line per row.
+
+    Not through ``say``: it drops every control character, the newlines between the rows too
+    (#423). ``table`` has already made each cell printable.
+
+    Args:
+        headers: The column headers.
+        rows: The rows, one cell per header.
+    """
+    sys.stdout.write(table(headers, rows) + "\n")
+
+
 def split_target(target: str) -> tuple[str, str | None]:
     """Split ``owner/repo`` or ``/owner/repo/ref`` (a ref may hold slashes) into library and ref.
 
@@ -586,7 +599,7 @@ async def list_libraries(api: ApiClient, *, as_json: bool = False) -> None:
         ]
         for lib in libraries
     ]  # fmt: skip
-    say(table(["LIBRARY", "VERSIONS (* default)", "TITLE"], rows))
+    say_table(["LIBRARY", "VERSIONS (* default)", "TITLE"], rows)
 
 
 async def _follow(
@@ -737,7 +750,7 @@ async def sync_library(
         dump({"library": synced["library_id"], "versions": versions, "jobs": jobs})
     else:
         rows = [[v["ref"], v["ref_kind"], v["status"], v["commit_sha"][:9]] for v in versions]
-        say(table(["REF", "KIND", "STATUS", "COMMIT"], rows))
+        say_table(["REF", "KIND", "STATUS", "COMMIT"], rows)
         for v in reimported:  # a tag that moved is news even when confirmed: say from where
             say(
                 f"{v['ref']}: re-import queued, "
@@ -879,7 +892,7 @@ async def token_list(api: ApiClient, *, as_json: bool) -> None:
          (t["last_used_at"] or "never")[:10]]
         for t in tokens
     ]  # fmt: skip
-    say(table(["ID", "NAME", "PREFIX", "EXPIRES", "LAST USED"], rows))
+    say_table(["ID", "NAME", "PREFIX", "EXPIRES", "LAST USED"], rows)
 
 
 async def token_revoke(api: ApiClient, token_id: str) -> None:
@@ -1212,7 +1225,7 @@ async def apply_sources(api: ApiClient, path: str, *, prune: bool, as_json: bool
             say(line)
         if applied["plan"]["changes"] or applied["failed"]:
             say("applied:")
-            say(table(["LIBRARY", "ACTION", "JOBS"], [_outcome_row(r) for r in applied["results"]]))
+            say_table(["LIBRARY", "ACTION", "JOBS"], [_outcome_row(r) for r in applied["results"]])
         for result in applied["results"]:
             if result["error"]:
                 to_stderr(f"{result['library_id']}: {result['error']} [{result['error_code']}]")
