@@ -861,6 +861,21 @@ class InMemoryVectorIndex:
         keys = {(*r.chunk_set, r.position) for r in self.chunks.rows.get(manifest_id, {}).values()}
         return sorted(k for k in keys if k not in stored)[:limit]
 
+    async def count_missing(self, space_id: EmbeddingSpaceId, manifest_id: str) -> int:
+        """Count the manifest's chunks without a vector, each once.
+
+        Args:
+            space_id: The space.
+            manifest_id: The manifest.
+
+        Returns:
+            The count.
+        """
+        self._live(space_id)
+        stored = self._stored(space_id)
+        rows = self.chunks.rows.get(manifest_id, {}).values()
+        return len({(*r.chunk_set, r.position) for r in rows} - stored.keys())
+
     async def pending(
         self, space_id: EmbeddingSpaceId | None, manifest_ids: Collection[str]
     ) -> PendingChunks:
