@@ -89,6 +89,13 @@ MAX_TOKEN_NAME_LENGTH: Final[int] = (
 """The server's limit, so a long hostname is cut instead of refused."""
 TIMEOUT_SECONDS: Final[float] = 15.0
 """How long the CLI client waits for one HTTP answer."""
+SOURCES_SECONDS_PER_LIBRARY: Final[float] = 15.0
+"""What ``sources plan|apply`` add to ``TIMEOUT_SECONDS`` per declared library (#422).
+
+The server works through the file library by library (resolving refs, creating, queueing) and
+answers once at the end; about 1.5 s per new library was measured, and one git call on the server
+may take up to 15 s. A file with 300 libraries may so take up to about 75 minutes.
+"""
 FRIENDLY: Final[dict[str, str]] = {
     "invalid_credentials": "wrong username or password",
     "unauthenticated": "the server did not accept the token (invalid, expired or revoked); "

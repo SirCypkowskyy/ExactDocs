@@ -27,6 +27,7 @@ from exactdocs.bootstrap.client import (
     ApiClient,
     ApiError,
     ClientError,
+    ClientTimeoutError,
     printable,
     printable_text,
 )
@@ -45,8 +46,10 @@ from exactdocs.bootstrap.constants import (
     PAGE,
     POLL_RETRIES,
     POLL_SECONDS,
+    SOURCES_SECONDS_PER_LIBRARY,
     SYNC_FAILED_STATUS,
     TAG_MOVED,
+    TIMEOUT_SECONDS,
     WAIT_SECONDS,
 )
 
@@ -1186,6 +1189,23 @@ def _plan_lines(plan: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _sources_timeout(sources: dict[str, Any]) -> float:
+    """Seconds to wait for the server to plan or apply a sources file.
+
+    The server works through the file library by library and answers once, so one request's
+    timeout is too short for a file of any size (#422).
+
+    Args:
+        sources: The file's content.
+
+    Returns:
+        ``TIMEOUT_SECONDS`` plus ``SOURCES_SECONDS_PER_LIBRARY`` per declared library.
+    """
+    libraries = sources.get("libraries")
+    count = len(libraries) if isinstance(libraries, list) else 0
+    return TIMEOUT_SECONDS + SOURCES_SECONDS_PER_LIBRARY * count
+
+
 async def plan_sources(api: ApiClient, path: str, *, prune: bool, as_json: bool) -> None:
     """``POST /sources/plan`` with the file and print the diff; nothing changes on the server.
 
@@ -1195,8 +1215,11 @@ async def plan_sources(api: ApiClient, path: str, *, prune: bool, as_json: bool)
         prune: Show undeclared libraries and versions as removed.
         as_json: Print JSON for scripts instead of text.
     """
-    body = {"sources": read_sources(path), "prune": prune}
-    plan = await api.request("POST", "/sources/plan", json=body)
+    sources = read_sources(path)
+    body = {"sources": sources, "prune": prune}
+    plan = await api.request(
+        "POST", "/sources/plan", json=body, read_timeout=_sources_timeout(sources)
+    )
     if as_json:
         dump(plan)
         return
@@ -1215,9 +1238,21 @@ async def apply_sources(api: ApiClient, path: str, *, prune: bool, as_json: bool
 
     Raises:
         SourcesFailedError: At least one library failed (after printing every outcome).
+        ClientTimeoutError: The server did not answer within the file's budget; it may still
+            be applying it.
     """
-    body = {"sources": read_sources(path), "prune": prune}
-    applied = await api.request("POST", "/sources/apply", json=body)
+    sources = read_sources(path)
+    body = {"sources": sources, "prune": prune}
+    try:
+        applied = await api.request(
+            "POST", "/sources/apply", json=body, read_timeout=_sources_timeout(sources)
+        )
+    except ClientTimeoutError as exc:
+        message = (
+            f"{exc}; the server may still be applying the file: run `exactdocs sources plan` "
+            "to see what is left (apply is safe to run again)"
+        )
+        raise ClientTimeoutError(message) from None
     if as_json:
         dump(applied)
     else:
