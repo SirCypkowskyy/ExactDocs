@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Literal, Protocol
 
 from exactdocs.identity.models import (
+    AccessClaims,
     Account,
     AccountId,
     ApiToken,
@@ -426,6 +427,29 @@ class SignInProvider(Protocol):
 
         Returns:
             The current claims and the refresh token to keep (a rotated one, or the same).
+        """
+        ...
+
+
+class AccessAssertionVerifier(Protocol):
+    """Checks the application token Cloudflare Access puts on each request it lets through.
+
+    The adapter accepts a token only with a valid signature by a key of the team's certs, the
+    configured issuer (the team domain) and one of the configured audiences, and valid times.
+    It raises ``AccessAssertionRefusedError`` for a token that does not check out and
+    ``ProviderUnavailableError`` when the team's certs cannot be fetched. It never logs or raises
+    with a token.
+    """
+
+    async def verify(self, assertion: str) -> AccessClaims:
+        """Validate an Access application token and return who it is about.
+
+        Args:
+            assertion: The compact JWT, from the ``Cf-Access-Jwt-Assertion`` header or the
+                ``CF_Authorization`` cookie.
+
+        Returns:
+            The person or service token the token names.
         """
         ...
 

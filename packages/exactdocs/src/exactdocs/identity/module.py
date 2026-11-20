@@ -8,8 +8,9 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Self
 
-from exactdocs.identity.models import LibraryCreationPolicy, SignInPolicy
+from exactdocs.identity.models import AccessPolicy, LibraryCreationPolicy, SignInPolicy
 from exactdocs.identity.ports.driven import (
+    AccessAssertionVerifier,
     AccountRepository,
     ExternalIdentityRepository,
     FailedSignInLog,
@@ -33,6 +34,7 @@ from exactdocs.identity.ports.driving import (
     GetSessionState,
     GetSetupState,
     GrantLibraryRole,
+    IdentifyAccessCaller,
     IdentifyCaller,
     IdentifyExternalToken,
     IdentifyToken,
@@ -62,6 +64,7 @@ from exactdocs.identity.use_cases import (
     GetSessionStateUseCase,
     GetSetupStateUseCase,
     GrantLibraryRoleUseCase,
+    IdentifyAccessCallerUseCase,
     IdentifyCallerUseCase,
     IdentifyExternalTokenUseCase,
     IdentifyTokenUseCase,
@@ -99,6 +102,8 @@ class IdentityModule:
     """End a browser session."""
     identify_caller: IdentifyCaller
     """Resolve a session token to its account."""
+    identify_access_caller: IdentifyAccessCaller
+    """Resolve a Cloudflare Access token to its account (refuses every token when not set up)."""
     get_session_state: GetSessionState
     """Tell the UI whether setup is due and who is signed in."""
     reset_password: ResetPassword
@@ -159,6 +164,8 @@ class IdentityModule:
         providers: Mapping[str, SignInProvider] = MappingProxyType({}),
         policies: Mapping[str, SignInPolicy] = MappingProxyType({}),
         library_creation: LibraryCreationPolicy | None = None,
+        access_verifier: AccessAssertionVerifier | None = None,
+        access_policy: AccessPolicy | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -177,21 +184,34 @@ class IdentityModule:
             clock: The current time.
             providers: The configured identity providers, by name.
             policies: Their policies, by the same names.
+            access_verifier: Checks Cloudflare Access tokens; ``None`` when Access is off.
+            access_policy: Who Cloudflare Access signs in; given with ``access_verifier``.
 
         Returns:
             The module, its driving ports wired.
 
         Raises:
-            ValueError: ``providers`` and ``policies`` do not name the same providers.
+            ValueError: ``providers`` and ``policies`` do not name the same providers, or only
+                one of ``access_verifier`` and ``access_policy`` is given.
         """
         if providers.keys() != policies.keys() or any(n != p.name for n, p in policies.items()):
             message = "every sign-in provider needs its policy, under the same name"
+            raise ValueError(message)
+        if (access_verifier is None) != (access_policy is None):
+            message = "Cloudflare Access needs both its verifier and its policy"
             raise ValueError(message)
         authenticate = AuthenticateUseCase(
             repository=repository, hasher=hasher, failures=failures, clock=clock
         )
         identify_caller = IdentifyCallerUseCase(
             sessions=sessions, accounts=repository, externals=externals, clock=clock
+        )
+        identify_access_caller = IdentifyAccessCallerUseCase(
+            verifier=access_verifier,
+            policy=access_policy,
+            accounts=repository,
+            externals=externals,
+            clock=clock,
         )
         create_token = CreateTokenUseCase(tokens=tokens, clock=clock)
         sharing = Sharing(accounts=repository, externals=externals, grants=library_grants)
@@ -204,8 +224,13 @@ class IdentityModule:
             sign_in=SignInUseCase(authenticate=authenticate, sessions=sessions, clock=clock),
             sign_out=SignOutUseCase(sessions=sessions),
             identify_caller=identify_caller,
+            identify_access_caller=identify_access_caller,
             get_session_state=GetSessionStateUseCase(
-                accounts=repository, identify_caller=identify_caller, policies=policies
+                accounts=repository,
+                identify_caller=identify_caller,
+                policies=policies,
+                identify_access=None if access_policy is None else identify_access_caller,
+                access_sign_out_url=None if access_policy is None else access_policy.sign_out_url,
             ),
             reset_password=ResetPasswordUseCase(
                 accounts=repository,

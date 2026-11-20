@@ -136,14 +136,35 @@ class IdentifyCaller(Protocol):
         ...
 
 
+class IdentifyAccessCaller(Protocol):
+    """Who a Cloudflare Access token signs in; raises ``NotSignedInError`` when nobody.
+
+    Off (``NotSignedInError`` for every token) unless Cloudflare Access is configured.
+    """
+
+    async def __call__(self, assertion: str | None) -> AccountSummary:
+        """Run the use case.
+
+        Args:
+            assertion: The Access application token, or ``None`` when the request carried none.
+
+        Returns:
+            The account the token's person or service token is linked to.
+        """
+        ...
+
+
 class GetSessionState(Protocol):
     """Tell whether setup is due, nobody is signed in, or the token's owner is."""
 
-    async def __call__(self, token: str | None) -> SessionState:
+    async def __call__(
+        self, token: str | None, access_assertion: str | None = None
+    ) -> SessionState:
         """Run the use case.
 
         Args:
             token: The session token, or ``None`` when the request carried none.
+            access_assertion: The Cloudflare Access token, used when no session signs anyone in.
 
         Returns:
             The setup and sign-in state.

@@ -87,6 +87,7 @@ from exactdocs.bootstrap.secret_box import FernetSecretBox, derived_key, read_ke
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.sign_in import (
     SignInStandIns,
+    cloudflare_access,
     revalidating,
     sign_in_client,
     sign_in_providers,
@@ -404,8 +405,10 @@ def _identity(settings: Settings, engine: AsyncEngine, stand_ins: SignInStandIns
         The module, and the providers' HTTP client.
     """
     clock = stand_ins.clock or SystemClock()
-    client = sign_in_client(stand_ins.transport) if settings.auth.providers else None
+    wanted = settings.auth.providers or settings.auth.cloudflare_access is not None
+    client = sign_in_client(stand_ins.transport) if wanted else None
     providers, policies = sign_in_providers(settings, client, clock) if client else ({}, {})
+    access = cloudflare_access(settings, client, clock) if client else None
     creation = settings.auth.library_creation
     identity = IdentityModule.build(
         library_creation=None
@@ -426,6 +429,8 @@ def _identity(settings: Settings, engine: AsyncEngine, stand_ins: SignInStandIns
         clock=clock,
         providers=providers,
         policies=policies,
+        access_verifier=None if access is None else access[0],
+        access_policy=None if access is None else access[1],
     )
     return _Identity(module=identity, client=client)
 

@@ -11,6 +11,8 @@ from pydantic import SecretStr
 
 from exactdocs.identity.constants import (
     _THROTTLED,
+    ACCESS_ASSERTION_HEADER,
+    ACCESS_COOKIE,
     COOKIE_ATTRS,
     CREATE_TOKEN_DESCRIPTION,
     LOGIN_FOR_TOKEN_DESCRIPTION,
@@ -47,6 +49,7 @@ from exactdocs.identity.dtos import (
 from exactdocs.identity.errors import (
     InvalidTokenError,
     NotAnOperatorError,
+    NotSignedInError,
     UnknownSignInProviderError,
 )
 from exactdocs.identity.models import Role
@@ -57,6 +60,7 @@ from exactdocs.identity.ports.driving import (
     FinishExternalSignIn,
     GetSessionState,
     GrantLibraryRole,
+    IdentifyAccessCaller,
     IdentifyCaller,
     IdentifyToken,
     ListLibraryGrants,
@@ -108,51 +112,89 @@ def client_address(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
-def build_session_caller(*, identify_caller: IdentifyCaller) -> CurrentCaller:
-    """Return the dependency that accepts the session cookie only (401 otherwise).
+def access_assertion(request: Request) -> str | None:
+    """Return the request's Cloudflare Access token: its header, else its cookie.
+
+    Only a configured Access verifier trusts it (``IdentifyAccessCaller``); anyone can send one.
+
+    Args:
+        request: The HTTP request.
+
+    Returns:
+        The token, or ``None`` when the request carries none.
+    """
+    return request.headers.get(ACCESS_ASSERTION_HEADER) or request.cookies.get(ACCESS_COOKIE)
+
+
+def build_session_caller(
+    *, identify_caller: IdentifyCaller, identify_access: IdentifyAccessCaller | None = None
+) -> CurrentCaller:
+    """Return the dependency that accepts a browser's sign-in only (401 otherwise).
+
+    The session cookie; without a live one, the Cloudflare Access token of the request (a
+    person who passed Access is signed in by it, with no session of ExactDocs).
 
     Args:
         identify_caller: The driving port that resolves a session token.
+        identify_access: The driving port that resolves a Cloudflare Access token.
 
     Returns:
         The dependency.
     """
 
     async def session_caller(
+        request: Request,
         session_token: Annotated[str | None, Depends(_session_cookie)] = None,
     ) -> AccountSummary:
-        """Resolve the request's session cookie to its account.
+        """Resolve the request's session cookie, or else its Access token, to its account.
 
         Args:
+            request: The HTTP request, for its Cloudflare Access token.
             session_token: The session cookie, if the request carried one.
 
         Returns:
             The signed-in account.
+
+        Raises:
+            NotSignedInError: Neither signs anyone in.
         """
-        return await identify_caller(session_token)
+        try:
+            return await identify_caller(session_token)
+        except NotSignedInError:
+            assertion = access_assertion(request)
+            if identify_access is None or not assertion:
+                raise
+            return await identify_access(assertion)
 
     return session_caller
 
 
 def build_current_caller(
-    *, identify_caller: IdentifyCaller, identify_token: IdentifyToken
+    *,
+    identify_caller: IdentifyCaller,
+    identify_token: IdentifyToken,
+    identify_access: IdentifyAccessCaller | None = None,
 ) -> CurrentCaller:
     """Return the FastAPI dependency that answers "who is calling?" (401 when nobody is).
 
     Depend on it to require a caller (``Depends(current_caller)``); a route that needs the
     account takes ``caller: Annotated[AccountSummary, Depends(current_caller)]``. It is the one
     place that learns how a request proves who it is: an API token in ``Authorization: Bearer``,
-    or else the session cookie. A bearer token that is wrong is refused outright, never
-    quietly replaced by a cookie that happens to be there.
+    or else the session cookie, or else the Cloudflare Access token. A bearer token that is wrong
+    is refused outright, never quietly replaced by a cookie or an Access token that happens to be
+    there.
 
     Args:
         identify_caller: The driving port that resolves a session token.
         identify_token: The driving port that resolves an API token.
+        identify_access: The driving port that resolves a Cloudflare Access token.
 
     Returns:
         The dependency.
     """
-    session_caller = build_session_caller(identify_caller=identify_caller)
+    session_caller = build_session_caller(
+        identify_caller=identify_caller, identify_access=identify_access
+    )
 
     async def current_caller(
         request: Request,
@@ -178,7 +220,7 @@ def build_current_caller(
             if scheme.lower() != "bearer":
                 raise InvalidTokenError
             return await identify_token(credentials.strip())
-        return await session_caller(session_token)
+        return await session_caller(request, session_token)
 
     return current_caller
 
@@ -437,14 +479,16 @@ def build_router(
         """Tell whether setup is due, nobody is signed in, or who is.
 
         Args:
-            request: The HTTP request, for its session cookie.
+            request: The HTTP request, for its session cookie and its Cloudflare Access token.
             response: The HTTP response, to forbid caching it.
 
         Returns:
             The setup and sign-in state.
         """
         response.headers["Cache-Control"] = "no-store"
-        return await get_session_state(request.cookies.get(SESSION_COOKIE))
+        return await get_session_state(
+            request.cookies.get(SESSION_COOKIE), access_assertion(request)
+        )
 
     @router.post(
         "/tokens/login",
@@ -493,7 +537,7 @@ def build_router(
             **COOKIE_ATTRS,
         )
         response.headers["Cache-Control"] = "no-store"
-        return SessionState(state="signed_in", account=grant.account)
+        return SessionState(state="signed_in", account=grant.account, source="session")
 
     @router.delete("/session", status_code=204)
     async def delete_session(request: Request, response: Response) -> None:

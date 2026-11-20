@@ -30,6 +30,8 @@ from exactdocs.bootstrap.constants import (
 )
 from exactdocs.identity.adapters.driven.oidc import secure_url
 from exactdocs.identity.constants import PROVIDER_NAME_PATTERN
+from exactdocs.identity.errors import InvalidUsernameError
+from exactdocs.identity.models import Username
 from exactdocs.retrieval.constants import (
     DEFAULT_AGENT_CACHE_TTL_DAYS,
     DEFAULT_AGENT_REPEATED_CALLS,
@@ -575,6 +577,136 @@ class LibraryCreationSettings(BaseModel):
     """Exact mapped provider groups, including their configured prefixes."""
 
 
+class CloudflareAccessSettings(BaseModel):
+    """Sign people and MCP clients in by their Cloudflare Access identity.
+
+    ``[auth.cloudflare_access]`` in the TOML file, or ``EXACTDOCS_AUTH__CLOUDFLARE_ACCESS__<FIELD>``
+    in the environment, where lists and tables are JSON (``..._AUDIENCE='["<aud tag>"]'``,
+    ``..._SERVICE_TOKENS='{"<client id>": "ci-bot"}'``). Off unless the section exists. The
+    origin must then be reachable only through Access (a Cloudflare Tunnel), never directly.
+    """
+
+    model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
+
+    team_domain: str
+    """`https://<team>.cloudflareaccess.com`: the tokens' issuer; its keys are read from
+    `<team_domain>/cdn-cgi/access/certs`."""
+    audience: list[str] = Field(min_length=1)
+    """The Access application's Application Audience (AUD) tag(s); a token must name one."""
+    admin_emails: list[str] = Field(default_factory=list)
+    """Emails whose accounts are `admin` (compared case-insensitively), at every visit; everyone
+    else Access signs in is `user`."""
+    auto_create_users: bool = True
+    """Create an account at a person's first visit; when false, only people already linked get in.
+    """
+    service_tokens: dict[str, str] = Field(default_factory=dict)
+    """Service token client ID (`<id>.access`) to the username of an existing account it acts
+    as. A service token not listed here signs nobody in."""
+
+    @field_validator("team_domain")
+    @classmethod
+    def _team_domain(cls, value: str) -> str:
+        """Require an HTTPS origin (no path), without its trailing slash.
+
+        Args:
+            value: The raw team domain.
+
+        Returns:
+            The team domain, without a trailing slash.
+
+        Raises:
+            ValueError: It is not ``https://<host>``.
+        """
+        domain = value.strip().rstrip("/")
+        parts = urlsplit(domain)
+        if parts.scheme != "https" or not parts.hostname or parts.path or parts.query:
+            message = "team_domain must be like https://<team>.cloudflareaccess.com"
+            raise ValueError(message)
+        return domain
+
+    @field_validator("audience", mode="before")
+    @classmethod
+    def _one_audience(cls, value: object) -> object:
+        """Accept a single tag as a list of one.
+
+        Args:
+            value: The raw audience.
+
+        Returns:
+            A list for a text value, otherwise the value unchanged.
+        """
+        return [value] if isinstance(value, str) else value
+
+    @field_validator("audience")
+    @classmethod
+    def _audience(cls, value: list[str]) -> list[str]:
+        """Refuse blank tags.
+
+        Args:
+            value: The tags.
+
+        Returns:
+            The tags, trimmed.
+
+        Raises:
+            ValueError: A tag is blank.
+        """
+        tags = [tag.strip() for tag in value]
+        if not all(tags):
+            message = "audience tags may not be blank"
+            raise ValueError(message)
+        return tags
+
+    @field_validator("admin_emails")
+    @classmethod
+    def _emails(cls, value: list[str]) -> list[str]:
+        """Refuse what is not an email address.
+
+        Args:
+            value: The emails.
+
+        Returns:
+            The emails, trimmed.
+
+        Raises:
+            ValueError: One has no local part, no ``@`` or no domain.
+        """
+        emails = [email.strip() for email in value]
+        for email in emails:
+            local, at, domain = email.partition("@")
+            if not (local and at and domain):
+                message = f"admin_emails: {email!r} is not an email address"
+                raise ValueError(message)
+        return emails
+
+    @field_validator("service_tokens")
+    @classmethod
+    def _service_tokens(cls, value: dict[str, str]) -> dict[str, str]:
+        """Refuse a blank client ID or a username no account could have.
+
+        Args:
+            value: The client IDs and usernames.
+
+        Returns:
+            The mapping, client IDs trimmed.
+
+        Raises:
+            ValueError: A client ID is blank, or a username is not valid.
+        """
+        tokens: dict[str, str] = {}
+        for client_id, username in value.items():
+            if not client_id.strip():
+                message = "service_tokens: a client ID is blank"
+                raise ValueError(message)
+            try:
+                Username(username)
+            except InvalidUsernameError:
+                message = f"service_tokens: {username!r} is not a valid username"
+                raise ValueError(message) from None
+            tokens[client_id.strip()] = username
+        return tokens
+
+
 class AuthSettings(BaseModel):
     """The ``auth`` section: sign-in through identity providers (``EXACTDOCS_AUTH__...``)."""
 
@@ -587,6 +719,9 @@ class AuthSettings(BaseModel):
     Configured or not decides whether external sign-in is offered; password sign-in stays."""
     revalidate_poll_seconds: float = Field(default=300, gt=0)
     """How often the server looks for external identities whose memberships are due a check."""
+    cloudflare_access: CloudflareAccessSettings | None = None
+    """Sign in by the Cloudflare Access identity of each request (`[auth.cloudflare_access]`);
+    off when unset."""
 
     @field_validator("providers")
     @classmethod

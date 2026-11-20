@@ -11,7 +11,8 @@ export function AccountPanel({
   /** Sections composed by the route (the auth slice cannot import other features). */
   children?: ReactNode;
 }) {
-  const account = useSession()?.account;
+  const session = useSession();
+  const account = session?.account;
   const heading = usePageTitle("Account");
   return (
     <main className="mx-auto max-w-4xl px-4 py-10 sm:px-6">
@@ -27,6 +28,12 @@ export function AccountPanel({
         <dd className="font-medium break-all">{account?.username}</dd>
         <dt className="text-muted-foreground">Role</dt>
         <dd className="font-medium">{account?.role}</dd>
+        {session?.source === "cloudflare_access" && (
+          <>
+            <dt className="text-muted-foreground">Signed in</dt>
+            <dd className="font-medium">through Cloudflare Access</dd>
+          </>
+        )}
       </dl>
       {/* The header carries sign-out from sm up; a phone's header hides it, so it sits here,
           above the sections, where a long token list can't push it off the screen. -ml-3 cancels

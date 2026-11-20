@@ -4696,6 +4696,18 @@ export interface components {
              *     configured (and while setup is due: the first admin is always local).
              */
             readonly providers?: readonly components["schemas"]["SignInProviderSummary"][];
+            /**
+             * Source
+             * @description How the caller is signed in: an ExactDocs session cookie, or the Cloudflare Access token
+             *     of the request; `null` unless `state` is `signed_in`.
+             */
+            readonly source?: ("session" | "cloudflare_access") | null;
+            /**
+             * Sign Out Url
+             * @description Where to send the browser to sign out when `source` is `cloudflare_access` (Access's own
+             *     logout: ending the ExactDocs session alone would sign it in again); `null` otherwise.
+             */
+            readonly sign_out_url?: string | null;
         };
         /**
          * SettingsChange

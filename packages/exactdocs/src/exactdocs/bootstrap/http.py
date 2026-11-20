@@ -26,6 +26,7 @@ from exactdocs.bootstrap.rest import SetupGuard, add_error_handlers, error_respo
 from exactdocs.bootstrap.telemetry import build_metrics_router, is_untraced, start_telemetry
 from exactdocs.catalog.adapters.driving import http as catalog_http
 from exactdocs.identity.adapters.driving import http as identity_http
+from exactdocs.identity.adapters.driving.mcp import AccessAssertionAsBearer
 from exactdocs.identity.constants import SESSION_COOKIE
 from exactdocs.identity.dtos import AccountSummary
 from exactdocs.identity.models import Role
@@ -48,7 +49,8 @@ def _include_session_routers(v1: APIRouter, container: Container) -> identity_ht
         The dependency that requires a signed-in session, for other routes to use.
     """
     session_caller = identity_http.build_session_caller(
-        identify_caller=container.identity.identify_caller
+        identify_caller=container.identity.identify_caller,
+        identify_access=container.identity.identify_access_caller,
     )
     v1.include_router(
         identity_http.build_tokens_router(
@@ -213,6 +215,7 @@ def create_app(container: Container) -> FastAPI:
     current_caller = identity_http.build_current_caller(
         identify_caller=container.identity.identify_caller,
         identify_token=container.identity.identify_token,
+        identify_access=container.identity.identify_access_caller,
     )
 
     protected = _protected_router(container, current_caller)
@@ -234,7 +237,7 @@ def create_app(container: Container) -> FastAPI:
         Args:
             request: The HTTP request, for its session cookie.
         """
-        await session_caller(request.cookies.get(SESSION_COOKIE))
+        await session_caller(request, request.cookies.get(SESSION_COOKIE))
 
     protected.include_router(
         catalog_http.build_router(
@@ -328,7 +331,11 @@ def create_app(container: Container) -> FastAPI:
         """
         return v1_openapi(app)
 
-    _mount_mcp(app, mcp_app)
+    # Behind Cloudflare Access, its token is the bearer of an MCP request that sends none.
+    served = (
+        mcp_app if settings.auth.cloudflare_access is None else AccessAssertionAsBearer(app=mcp_app)
+    )
+    _mount_mcp(app, mcp_app, served)
     if WEB_DIST.is_dir():
         # SPA: `index.html` only for HTML navigation requests; API and assets keep real 404s.
         app.frontend("/", directory=WEB_DIST, fallback="index.html")
@@ -366,7 +373,7 @@ def _include_sync_triggers(
         Raises:
             ForbiddenError: The account is not an ``admin``.
         """
-        account = await session_caller(request.cookies.get(SESSION_COOKIE))
+        account = await session_caller(request, request.cookies.get(SESSION_COOKIE))
         if account.role != Role.ADMIN.value:
             message = "only an admin manages a library's webhook"
             raise ForbiddenError(message)
@@ -392,7 +399,7 @@ def _include_sync_triggers(
     )
 
 
-def _mount_mcp(app: FastAPI, mcp_app: Starlette) -> None:
+def _mount_mcp(app: FastAPI, mcp_app: Starlette, served: ASGIApp) -> None:
     """Serve every route of the MCP app as-is, keeping the MCP app's own middleware.
 
     That is the endpoint, and the OAuth/.well-known routes once auth is on; `/mcp/` is an alias
@@ -400,12 +407,13 @@ def _mount_mcp(app: FastAPI, mcp_app: Starlette) -> None:
 
     Args:
         app: The HTTP service.
-        mcp_app: FastMCP's Streamable HTTP app.
+        mcp_app: FastMCP's Streamable HTTP app, for its routes.
+        served: What serves them: the MCP app, maybe wrapped.
     """
     for path in _route_paths(mcp_app.routes):
-        app.router.routes.append(Route(path, endpoint=mcp_app))
+        app.router.routes.append(Route(path, endpoint=served))
     app.router.routes.append(
-        Route(f"{MCP_PATH}/", endpoint=_RewritePath(app=mcp_app, path=MCP_PATH))
+        Route(f"{MCP_PATH}/", endpoint=_RewritePath(app=served, path=MCP_PATH))
     )
 
 
