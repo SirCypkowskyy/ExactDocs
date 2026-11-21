@@ -388,6 +388,26 @@ async def test_content_stays_verbatim_whatever_gitattributes_say(
                 assert (d / name).read_bytes() == content, name
 
 
+async def test_the_file_and_byte_limits_count_restructuredtext_files_as_well(
+    tmp_path: Path,
+) -> None:
+    tree: dict[str, str | bytes] = {f"doc/build/{n}.rst": f"T{n}\n===\n" for n in range(6)}
+    origin, pinned = commit_tree(tmp_path, tree)
+    selection = PathSelection.of(["doc/build/"])
+
+    work = tmp_path / "work"
+    for gateway, message in (
+        (GitCli(git=GitCli.locate().git, work_root=work, max_fetch_files=3), "more than 3 files"),
+        (
+            GitCli(git=GitCli.locate().git, work_root=work, max_fetch_bytes=20),
+            "larger than 20 bytes",
+        ),
+    ):
+        with pytest.raises(RepositoryTooLargeError, match=message):
+            async with gateway.fetch(repository(origin.as_uri()), pinned, selection):
+                pass
+
+
 @pytest.mark.parametrize(
     "ref",
     [
