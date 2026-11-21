@@ -288,9 +288,10 @@ def create_app(container: Container) -> FastAPI:
 
     protected.include_router(
         catalog_http.build_router(
-            list_libraries=container.catalog.list_libraries,
+            list_libraries=container.list_libraries,
             get_library=container.catalog.get_library,
             resolve_version=container.catalog.resolve_version,
+            list_versions=container.catalog.list_versions,
             list_articles=container.catalog.list_articles,
             list_tags=container.catalog.list_tags,
             get_article=container.catalog.get_article,
@@ -347,6 +348,7 @@ def create_app(container: Container) -> FastAPI:
             get_job=container.ingestion.get_job,
             get_library_access=container.ingestion.get_library_access,
             list_latest_jobs=container.ingestion.list_latest_jobs,
+            list_jobs=container.ingestion.list_jobs,
             list_library_jobs=container.ingestion.list_library_jobs,
             check_repository=container.ingestion.check_repository,
             list_repository_refs=container.ingestion.list_repository_refs,

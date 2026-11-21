@@ -286,6 +286,9 @@ byte: SQLite uses a partial index only for a query that spells its condition exa
 index's, so a condition that differs (another state, another order) silently stops the index
 being used.
 """
+JOB_SORT_FIELDS: Final[tuple[str, ...]] = ("id", "created_at", "state", "kind", "library")
+"""What the jobs lists can be sorted by (columns that are never null); `-id` is the default, which
+is newest first."""
 ABOVE_EVERY_JOB_ID: Final[str] = "\U0010ffff"
 """The first page's cursor in the SQL job repository: the last Unicode code point sorts after
 every job ID (a UUID string), by code point in Python and SQLite and byte-wise in PostgreSQL's

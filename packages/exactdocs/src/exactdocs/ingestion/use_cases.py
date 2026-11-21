@@ -37,6 +37,7 @@ from exactdocs.ingestion.constants import (
     IMPORT_JOB,
     IMPORT_KINDS,
     INSTRUCTIONS_NOT_READ,
+    JOB_SORT_FIELDS,
     KNOWN_BATCH,
     LIBRARY_KINDS,
     MAX_CONTROL_RATIO,
@@ -80,11 +81,13 @@ from exactdocs.ingestion.dtos import (
     GetJobQuery,
     GetLibraryAccessQuery,
     JobList,
+    JobListQuery,
     JobSummary,
     LatestJob,
     LatestJobs,
     LibraryAccess,
     LibraryOutcome,
+    ListJobsQuery,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
     PlanSourcesCommand,
@@ -179,6 +182,7 @@ from exactdocs.ingestion.models import (
     IncludeRefused,
     InstructionPolicy,
     Job,
+    JobFilter,
     JobId,
     JobState,
     LibraryUpdate,
@@ -282,8 +286,9 @@ from exactdocs_kernel import (
     NotFoundError,
     Page,
     ValidationError,
-    decode_cursor,
-    encode_cursor,
+    decode_sort_cursor,
+    encode_sort_cursor,
+    parse_sort,
 )
 
 log = logging.getLogger(__name__)
@@ -537,6 +542,81 @@ class GetLibraryAccessUseCase:
         return LibraryAccess(private=await self.vault.has(library))
 
 
+async def _job_page(
+    jobs: JobRepository,
+    access: AccessPolicy,
+    query: JobListQuery,
+    libraries: frozenset[str] | None,
+) -> JobList:
+    """Read the page of jobs a query asks for, inside ``libraries``.
+
+    Args:
+        jobs: Where jobs are stored.
+        access: Decides which of the jobs the caller may cancel.
+        query: The filters, the sort, the page size and the cursor.
+        libraries: The libraries as spelled in their jobs that the caller may read; ``None`` when
+            the caller's reach was not narrowed.
+
+    Returns:
+        The page, its next cursor and the count of every match.
+    """
+    sort = parse_sort(query.sort, allowed=JOB_SORT_FIELDS, default="-id")
+    after = (
+        decode_sort_cursor(query.cursor, sort, key_field="id") if query.cursor is not None else None
+    )
+    job_filter = JobFilter(
+        libraries=libraries,
+        states=frozenset(query.state or ()),
+        kinds=frozenset(query.kind or ()),
+        version=query.version,
+        text=query.q,
+        created_after=query.created_after,
+        created_before=query.created_before,
+    )
+    found = await jobs.search(
+        job_filter,
+        sort=sort,
+        after=after,
+        limit=query.limit + 1,  # one more than asked tells whether another page follows
+    )
+    page = list(found[: query.limit])
+    more = len(found) > query.limit
+    last = page[-1] if more else None
+    return JobList.from_page(
+        Page(
+            items=page,
+            next_cursor=(
+                None
+                if last is None
+                else encode_sort_cursor(
+                    sort, key_field="id", value=_job_value(last, sort.field), key=last.id
+                )
+            ),
+            total=await jobs.count(job_filter),
+        ),
+        cancellable=await _cancellable(access, page),
+    )
+
+
+def _job_value(job: Job, field: str) -> str:
+    """Return a job's value of a sort field, as the store compares it.
+
+    Args:
+        job: The job.
+        field: One of ``JOB_SORT_FIELDS``.
+
+    Returns:
+        The ID, the creation time as stored (UTC, microseconds), the state, the kind or the library.
+    """
+    return {
+        "id": job.id,
+        "created_at": job.created_at.isoformat(timespec="microseconds"),
+        "state": job.state.value,
+        "kind": job.kind,
+        "library": job.library,
+    }[field]
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ListLibraryJobsUseCase:
     """Implements ``ports.driving.ListLibraryJobs``."""
@@ -547,26 +627,49 @@ class ListLibraryJobsUseCase:
     """Decides what the caller may do with the library."""
 
     async def __call__(self, query: ListLibraryJobsQuery) -> JobList:
-        """List a page of the library's jobs, newest first; only that page is read.
+        """List a page of the library's jobs, filtered and sorted (newest first by default).
 
         Args:
-            query: The library, the page size and the cursor.
+            query: The library, the filters, the sort, the page size and the cursor.
 
         Returns:
-            The page, and the cursor of the next one when there is one.
+            The page, the cursor of the next one when there is one, and the count of every match.
         """
         await _require(self.access, query.library, Access.READ)
-        before = decode_cursor(query.cursor) if query.cursor is not None else None
-        jobs = await self.jobs.list_page_for_library(
-            query.library,
-            before=before,
-            limit=query.limit + 1,  # one more than asked tells whether another page follows
-        )
-        page = list(jobs[: query.limit])
-        more = len(jobs) > query.limit
-        return JobList.from_page(
-            Page(items=page, next_cursor=encode_cursor(page[-1].id) if more else None),
-            cancellable=await _cancellable(self.access, page),
+        return await _job_page(self.jobs, self.access, query, frozenset({query.library}))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ListJobsUseCase:
+    """Implements ``ports.driving.ListJobs``."""
+
+    jobs: JobRepository
+    """Where jobs are stored."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
+
+    async def __call__(self, query: ListJobsQuery) -> JobList:
+        """List a page of the jobs of the libraries the caller may read.
+
+        Permissions apply first: the jobs of a hidden library are in no page and in no count.
+
+        Args:
+            query: The filters, the sort, the page size and the cursor.
+
+        Returns:
+            The page, the cursor of the next one when there is one, and the count of every match.
+        """
+        stored = [
+            library
+            for library in await self.jobs.libraries()
+            if query.library is None or library.casefold() == query.library.casefold()
+        ]
+        readable = await self.access.readable(stored)
+        return await _job_page(
+            self.jobs,
+            self.access,
+            query,
+            frozenset(library for library in stored if library.casefold() in readable),
         )
 
 

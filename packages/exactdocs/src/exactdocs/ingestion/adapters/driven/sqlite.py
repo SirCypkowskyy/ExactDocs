@@ -1,7 +1,7 @@
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import (
@@ -11,12 +11,14 @@ from sqlalchemy import (
     Integer,
     MetaData,
     Row,
+    Select,
     Table,
     Text,
     case,
     delete,
     func,
     insert,
+    or_,
     select,
     text,
     tuple_,
@@ -50,6 +52,7 @@ from exactdocs.ingestion.models import (
     Credential,
     FileProblem,
     Job,
+    JobFilter,
     JobId,
     JobState,
     ProblemCode,
@@ -61,7 +64,7 @@ from exactdocs.ingestion.models import (
     load_credential,
 )
 from exactdocs.ingestion.ports.driven import SecretBox
-from exactdocs_kernel import SealedTextUnreadableError
+from exactdocs_kernel import SealedTextUnreadableError, Sort, SortValue, like_pattern
 
 # The ingestion's tables, prefixed `ingestion_`. The schema itself is created by an Alembic
 # revision in `exactdocs.bootstrap`; this is only the adapter's query-side description of it.
@@ -336,6 +339,115 @@ class SqliteJobRepository:
         async with self.engine.connect() as connection:
             return [_job(row) for row in await connection.execute(query)]
 
+    def _filtered(self, job_filter: JobFilter) -> Select[Any]:
+        """Build the query for the jobs that pass the filter, without order or limit.
+
+        Args:
+            job_filter: Which jobs.
+
+        Returns:
+            The query, selecting whole jobs.
+        """
+        query = select(jobs)
+        if job_filter.libraries is not None:
+            query = query.where(jobs.c.library.in_(sorted(job_filter.libraries)))
+        if job_filter.states:
+            query = query.where(jobs.c.state.in_(sorted(s.value for s in job_filter.states)))
+        if job_filter.kinds:
+            query = query.where(jobs.c.kind.in_(sorted(job_filter.kinds)))
+        if job_filter.version is not None:
+            query = query.where(jobs.c.version == job_filter.version)
+        if job_filter.created_after is not None:
+            query = query.where(jobs.c.created_at >= _utc_text(job_filter.created_after))
+        if job_filter.created_before is not None:
+            query = query.where(jobs.c.created_at < _utc_text(job_filter.created_before))
+        if job_filter.text:
+            pattern = like_pattern(job_filter.text)
+            query = query.where(
+                or_(
+                    func.lower(jobs.c.library).like(pattern, escape="\\"),
+                    func.lower(func.coalesce(jobs.c.version, "")).like(pattern, escape="\\"),
+                    func.lower(func.coalesce(jobs.c.error, "")).like(pattern, escape="\\"),
+                )
+            )
+        return query
+
+    async def search(
+        self,
+        job_filter: JobFilter,
+        *,
+        sort: Sort,
+        after: tuple[SortValue, str] | None,
+        limit: int,
+    ) -> Sequence[Job]:
+        """Return up to ``limit`` of the jobs that pass the filter, in ``sort`` order.
+
+        A keyset query: ``(sort value, id)`` compares as a row, in the sort's direction. Text
+        columns compare by code point on both databases (PostgreSQL's are collated ``C`` by the
+        migration), as Python compares str. A page of one library's jobs by ID keeps the range
+        scan of ``list_page_for_library`` (the library bounds the row comparison on both ends).
+
+        Args:
+            job_filter: Which jobs.
+            sort: The order.
+            after: The sort value and ID of the last job of the previous page.
+            limit: At most this many jobs.
+
+        Returns:
+            The jobs in order, with their problems.
+        """
+        column = jobs.c[sort.field]
+        query = self._filtered(job_filter)
+        order: tuple[Any, ...] = (
+            (column.desc(), jobs.c.id.desc()) if sort.descending else (column, jobs.c.id)
+        )
+        libraries = job_filter.libraries
+        if sort.field == "id" and libraries is not None and len(libraries) == 1:
+            (library,) = libraries
+            if sort.descending:
+                bound = ABOVE_EVERY_JOB_ID if after is None else after[1]
+                query = query.where(
+                    jobs.c.library >= library,
+                    tuple_(jobs.c.library, jobs.c.id) < tuple_(library, bound),
+                )
+                order = (jobs.c.library.desc(), jobs.c.id.desc())
+            else:
+                bound = "" if after is None else after[1]
+                query = query.where(
+                    jobs.c.library <= library,
+                    tuple_(jobs.c.library, jobs.c.id) > tuple_(library, bound),
+                )
+                order = (jobs.c.library, jobs.c.id)
+        elif after is not None:
+            row, bound = tuple_(column, jobs.c.id), tuple_(*after)
+            query = query.where(row < bound if sort.descending else row > bound)
+        async with self.engine.connect() as connection:
+            return [
+                _job(row) for row in await connection.execute(query.order_by(*order).limit(limit))
+            ]
+
+    async def count(self, job_filter: JobFilter) -> int:
+        """Count the jobs that pass the filter.
+
+        Args:
+            job_filter: Which jobs.
+
+        Returns:
+            How many there are.
+        """
+        query = select(func.count()).select_from(self._filtered(job_filter).subquery())
+        async with self.engine.connect() as connection:
+            return (await connection.execute(query)).scalar_one()
+
+    async def libraries(self) -> Sequence[str]:
+        """Return every library that has a job, as spelled in the jobs.
+
+        Returns:
+            The distinct library IDs.
+        """
+        async with self.engine.connect() as connection:
+            return list((await connection.execute(select(jobs.c.library).distinct())).scalars())
+
     async def list_latest(self) -> Sequence[Job]:
         """Return the newest job of every (library, version), ordered by library and version.
 
@@ -442,6 +554,18 @@ def _text(moment: datetime | None) -> str | None:
         The text, or None.
     """
     return moment.isoformat(timespec="microseconds") if moment else None
+
+
+def _utc_text(moment: datetime) -> str:
+    """Spell a moment as the stored columns do, in UTC, so text order is time order.
+
+    Args:
+        moment: The moment (with an offset).
+
+    Returns:
+        ISO-8601 text with microseconds and a ``+00:00`` offset.
+    """
+    return moment.astimezone(UTC).isoformat(timespec="microseconds")
 
 
 def _moment(text: str | None) -> datetime | None:
