@@ -296,6 +296,32 @@ def test_code_language_is_the_bare_language_name(chunker: Chunker) -> None:
     assert chunker.chunk(parse_article("a.md", body))[0].code_languages == ("python", "js", "c++")
 
 
+@pytest.mark.parametrize(
+    ("info", "languages"),
+    [
+        (" ", ()),
+        ("\t", ()),
+        (" \t ", ()),
+        ("  python  ", ("python",)),
+        ("python {.class}", ("python",)),
+        ("\tbash\ttitle=x", ("bash",)),
+        ("{}", ()),
+    ],
+    ids=["space", "tab", "spaces-and-tab", "padded", "attributes", "tab-separated", "no-word"],
+)
+def test_a_fence_info_of_only_whitespace_names_no_language(
+    chunker: Chunker, info: str, languages: tuple[str, ...]
+) -> None:
+    """Issue #430: ```` ``` ```` then blanks gave a non-empty info whose ``split()`` was empty."""
+    for fence in ("```", "~~~"):
+        body = f"# A\n\n{fence}{info}\nx = 1\n{fence}\n\nAfter.\n"
+
+        (chunk,) = chunker.chunk(parse_article("a.md", body))
+
+        assert chunk.code_languages == languages
+        assert chunk.content == body
+
+
 def test_config_hash_covers_the_markdown_engine_version(monkeypatch: pytest.MonkeyPatch) -> None:
     default = MarkdownChunker().config_hash
     monkeypatch.setattr(markdown_it, "__version__", "0.0.1")

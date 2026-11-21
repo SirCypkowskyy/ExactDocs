@@ -39,7 +39,7 @@ export function SearchTags({ ctx, onTags, onMatch, tagCount }: SearchTagsProps) 
                 className={cn(
                   mode,
                   ctx.match === m
-                    ? "bg-mark text-primary-foreground"
+                    ? "bg-route text-primary-foreground"
                     : "bg-secondary text-secondary-foreground [@media(hover:hover)]:hover:bg-accent",
                 )}
               >

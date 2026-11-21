@@ -73,6 +73,7 @@ from exactdocs.retrieval.models import (
     SpendWindow,
     StoredChunk,
     TagMatch,
+    ThinkingLevel,
     VectorMetric,
     source_link,
 )
@@ -1238,6 +1239,14 @@ class SetLibraryRetrievalCommand(_Dto):
     """The library's own judge, `<profile>:<model>`; empty: the instance's (else the LLM)."""
     reranker: str | None = Field(default=None, max_length=MAX_MODEL_REF)
     """The library's own reranker, `<profile>:<model>`; empty: the instance's `reranker` role."""
+    llm_thinking: ThinkingLevel | None = None
+    """The library's own thinking level for its `llm` role (its own LLM or the instance's):
+    `minimal`, `low`, `medium`, `high` or `xhigh`; empty: the instance's
+    (`EXACTDOCS_AI__LLM__THINKING`). Thinking tokens are billed as output; a level the model
+    cannot take is refused (422 `thinking_unsupported`)."""
+    judge_thinking: ThinkingLevel | None = None
+    """The library's own thinking level for its `judge` role, as `llm_thinking`; empty: the
+    instance's (the `llm` role's when the judge is the LLM)."""
     rerank_top_n: int | None = Field(
         default=None, ge=1, le=MAX_RERANK_TOP_N, description=RERANK_TOP_N_DESCRIPTION
     )
@@ -1294,6 +1303,10 @@ class LibraryRetrievalOut(_Dto):
     """The library's own judge (`<profile>:<model>`); null: the instance's, else the LLM."""
     reranker: str | None = None
     """The library's own reranker (`<profile>:<model>`); null: the instance's."""
+    llm_thinking: ThinkingLevel | None = None
+    """The library's own thinking level for the `llm` role; null: the instance's."""
+    judge_thinking: ThinkingLevel | None = None
+    """The library's own thinking level for the `judge` role; null: the instance's."""
     rerank_top_n: int | None = None
     """How many of its best candidates the reranker reorders; null: the instance's."""
     effective_rerank_top_n: int
@@ -1499,6 +1512,28 @@ class RoleOut(_Dto):
     """`instance`, or `llm` for a judge that defaults to the LLM; null when not set."""
     profile_exists: bool
     """False when the role names a profile that does not exist (the role is then not usable)."""
+    thinking: ThinkingLevel | None = None
+    """`llm` and `judge` only: how much the model thinks before it answers (`minimal`, `low`,
+    `medium`, `high`, `xhigh`); null: the provider's default. A judge that is the LLM thinks as
+    the LLM does unless it has a level of its own."""
+    own_thinking: ThinkingLevel | None = None
+    """The level set for this role itself (the configuration's, else the REST API's); null: none of
+    its own (the judge then thinks as the LLM when it is the LLM)."""
+    thinking_configured: bool = False
+    """True when the level is set in the environment or the configuration file
+    (`EXACTDOCS_AI__<ROLE>__THINKING`): it cannot be changed over the REST API."""
+    thinking_unsupported: str | None = None
+    """Why the role's model cannot take its level, when that is known: the level is then left out
+    of its calls (and a warning logged at start)."""
+
+
+class SetRoleThinkingCommand(_Dto):
+    """Set (or clear) the thinking level of an instance role over the REST API (#421)."""
+
+    role: ModelRole
+    """`llm` or `judge`; the other roles take no level."""
+    thinking: ThinkingLevel | None = None
+    """`minimal`, `low`, `medium`, `high` or `xhigh`; null: the provider's default."""
 
 
 class RoleListOut(_Dto):
@@ -1673,7 +1708,8 @@ class EmbeddingPlanOut(_Dto):
     manifest_id: str | None
     """The version's active manifest; null when nothing is to be sent."""
     missing: int
-    """Chunks of the manifest without a vector in the space when the plan was made."""
+    """Chunks of the manifest without a vector in the space when the plan was made, each once
+    (a chunk held by several identical files is embedded once)."""
     created: bool
     """This plan created the space: the model changed, so every version needs embedding."""
     skipped: EmbeddingSkip | None
@@ -1700,6 +1736,11 @@ class EmbeddedBatchOut(_Dto):
     """Vectors stored."""
     input_tokens: int
     """Tokens the provider reported."""
+    left: int | None
+    """Chunks of the manifest still without a vector after the batch, counted like the plan's
+    ``missing``; fewer than the plan's ``missing`` less what was embedded when another job
+    embedded chunks shared with it meanwhile. Null when the job stops without counting (the
+    model changed, the library's AI was switched off, the space was retired)."""
     finished: bool
     """No chunk of the manifest is left to embed (or nothing may be sent any more)."""
 

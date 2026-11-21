@@ -4,6 +4,7 @@ import { ChevronRight, FolderTree } from "lucide-react";
 import { type ReactNode, useCallback, useState } from "react";
 import { tagsQueryOptions } from "@/shared/lib/tags-query";
 import { cn } from "@/shared/lib/utils";
+import { trigger } from "@/shared/ui/recipes";
 import { TagChips } from "@/shared/ui/tag-chips";
 import type { Version } from "../model/browse";
 import { TreePane } from "./tree-pane";
@@ -39,14 +40,14 @@ function FilesToggle({
       aria-expanded={open}
       aria-controls="file-tree"
       onClick={onToggle}
-      className="flex h-11 min-w-0 cursor-pointer items-center gap-2 rounded-md bg-secondary px-3 text-sm font-medium outline-none ring-1 ring-inset ring-border transition-transform duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.98] lg:hidden"
+      className={cn(trigger, "justify-start font-medium lg:hidden")}
     >
       <FolderTree aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
       <span className="truncate">{label}</span>
       <ChevronRight
         aria-hidden="true"
         className={cn(
-          "ml-auto size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
+          "ml-auto size-4 shrink-0 text-muted-foreground transition-transform duration-(--dur) ease-(--ease-out) motion-reduce:transition-none",
           open && "rotate-90",
         )}
       />
@@ -93,7 +94,7 @@ export function FilesAside({
   const label = filesOpen || !name ? (path || q ? "Files" : "Browse files") : name;
 
   return (
-    <aside aria-label="Files" className="flex min-w-0 flex-col gap-3 lg:sticky lg:top-4">
+    <aside aria-label="Files" className="flex min-w-0 flex-col gap-3 lg:sticky lg:top-17">
       <div className="grid grid-cols-2 gap-2 lg:block">
         <VersionPicker
           owner={owner}
@@ -118,7 +119,7 @@ export function FilesAside({
             onChange={setTags}
           />
         )}
-        <div className="max-h-[min(70dvh,32rem)] overflow-y-auto overscroll-contain lg:max-h-[calc(100dvh-14rem)]">
+        <div className="-mx-1 max-h-[min(70dvh,32rem)] overflow-y-auto overscroll-contain px-1 lg:max-h-[calc(100dvh-17rem)]">
           <TreePane
             key={treeTags ?? ""}
             target={{ owner, repo, ref: version.ref, sha: version.commit_sha }}

@@ -1,6 +1,7 @@
 import type * as React from "react";
 import { cn } from "@/shared/lib/utils";
 import { Input } from "@/shared/ui/input";
+import { control } from "@/shared/ui/recipes";
 
 interface FieldProps extends Omit<React.ComponentProps<"input">, "id"> {
   id: string;
@@ -19,8 +20,8 @@ export function Field({ id, label, hint, error, alertId, errorAction, ...props }
     .filter(Boolean)
     .join(" ");
   return (
-    <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-sm font-medium">
+    <div className="flex flex-col gap-2">
+      <label htmlFor={id} className="text-body font-medium">
         {label}
       </label>
       <Input
@@ -31,12 +32,12 @@ export function Field({ id, label, hint, error, alertId, errorAction, ...props }
         {...props}
       />
       {hint && (
-        <p id={`${id}-hint`} className="text-sm text-muted-foreground">
+        <p id={`${id}-hint`} className="text-small text-muted-foreground">
           {hint}
         </p>
       )}
       {error && (
-        <p className="fade-in text-sm font-medium text-destructive">
+        <p className="fade-in text-small font-medium text-destructive">
           <span id={`${id}-error`}>{error}</span>
           {errorAction && <> {errorAction}</>}
         </p>
@@ -56,8 +57,8 @@ interface TextareaFieldProps extends Omit<React.ComponentProps<"textarea">, "id"
 export function TextareaField({ id, label, hint, error, className, ...props }: TextareaFieldProps) {
   const describedBy = [hint && `${id}-hint`, error && `${id}-error`].filter(Boolean).join(" ");
   return (
-    <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-sm font-medium">
+    <div className="flex flex-col gap-2">
+      <label htmlFor={id} className="text-body font-medium">
         {label}
       </label>
       <textarea
@@ -65,19 +66,16 @@ export function TextareaField({ id, label, hint, error, className, ...props }: T
         name={id}
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy || undefined}
-        className={cn(
-          "min-h-28 w-full resize-y rounded-md border border-input bg-secondary px-3 py-2.5 text-base leading-6 outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-muted-foreground/80 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 aria-invalid:border-destructive aria-invalid:ring-destructive/25",
-          className,
-        )}
+        className={cn(control, "min-h-28 resize-y px-3 py-2 leading-6", className)}
         {...props}
       />
       {hint && (
-        <p id={`${id}-hint`} className="text-sm text-muted-foreground">
+        <p id={`${id}-hint`} className="text-small text-muted-foreground">
           {hint}
         </p>
       )}
       {error && (
-        <p id={`${id}-error`} className="fade-in text-sm font-medium text-destructive">
+        <p id={`${id}-error`} className="fade-in text-small font-medium text-destructive">
           {error}
         </p>
       )}

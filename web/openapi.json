@@ -5729,6 +5729,116 @@
         ]
       }
     },
+    "/api/v1/ai/roles/{role}": {
+      "put": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Set Role Thinking",
+        "description": "Set (or clear, with null) the thinking level of the `llm` or `judge` role.\n\nThe level is sent as the provider's own setting at the next call: Google's thinking level\nor budget, Claude's effort or budget, OpenAI's `reasoning_effort`. A level set in the\nenvironment or the configuration file (`EXACTDOCS_AI__<ROLE>__THINKING`) cannot be\nchanged here (409 `role_configured`); another role takes none (422\n`role_takes_no_thinking`); a level the role's model cannot take is refused (422\n`thinking_unsupported`, naming the role and the model).",
+        "operationId": "ai-set_role_thinking",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "role",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ModelRole"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleThinkingIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/ai/embedding/estimate": {
       "get": {
         "tags": [
@@ -7598,6 +7708,108 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/JobList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/cancel": {
+      "post": {
+        "tags": [
+          "ingestion",
+          "ingestion"
+        ],
+        "summary": "Cancel Job",
+        "description": "Cancel a queued or running job (contributor on its library; operators always may).\n\nA queued job is cancelled at once and never starts: its version stays as it was (or is\nnever created, for a first import). A running job stops at its next step boundary: no\nversion is left half replaced and no new embedding batch is sent after the one in\nflight; what it finished is kept (an embedding's vectors). Until it stops it answers\n`running` with `cancelled_at` set, and asking again answers the same. A job that ended\n(`succeeded`, `failed` or `cancelled`) answers 409 `job_finished`, with its `job_state`.",
+        "operationId": "ingestion-cancel_job",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSummary"
                 }
               }
             }
@@ -10599,6 +10811,18 @@
             "title": "Library Id",
             "description": "On `library_id_taken`: the ID of the library that already exists, e.g. `/acme/payments`.\nNull otherwise."
           },
+          "job_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job State",
+            "description": "On `job_finished`: the state the job ended in (`succeeded`, `failed` or `cancelled`).\nNull otherwise."
+          },
           "message": {
             "type": "string",
             "title": "Message",
@@ -10613,6 +10837,7 @@
           "fields",
           "close_matches",
           "library_id",
+          "job_state",
           "message"
         ],
         "title": "ErrorResponse",
@@ -10757,7 +10982,8 @@
           "queued",
           "running",
           "succeeded",
-          "failed"
+          "failed",
+          "cancelled"
         ],
         "title": "JobState",
         "description": "Where a job is in its life. Only ``queued`` and ``running`` jobs are unfinished."
@@ -10772,7 +10998,7 @@
           "kind": {
             "type": "string",
             "title": "Kind",
-            "description": "What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect` or\n`embed`."
+            "description": "What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect`,\n`embed` or `push`."
           },
           "library": {
             "type": "string",
@@ -10805,7 +11031,7 @@
           },
           "state": {
             "$ref": "#/components/schemas/JobState",
-            "description": "`queued` and `running` jobs are unfinished; `succeeded` and `failed` ones are done."
+            "description": "`queued` and `running` jobs are unfinished; `succeeded`, `failed` and `cancelled` ones are\ndone. A running job someone cancelled stays `running` (with `cancelled_at` set) until it\nstops at its next step boundary."
           },
           "done": {
             "type": "integer",
@@ -10833,7 +11059,7 @@
           "reused": {
             "type": "integer",
             "title": "Reused",
-            "description": "Articles whose chunk set an earlier import had stored (files, not blobs)."
+            "description": "Articles whose chunk set an earlier import had stored (files, not blobs). For `embed`, the\nchunks another job embedded while this one ran (files shared with another library); they\ncount in `done` too, so a succeeded `embed` job has `done` = `total`."
           },
           "parsed": {
             "type": "integer",
@@ -10907,6 +11133,37 @@
             ],
             "title": "Finished At",
             "description": "When the job ended; null while it is unfinished."
+          },
+          "cancelled_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelled By",
+            "description": "The user name of who cancelled the job; null unless someone did."
+          },
+          "cancelled_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelled At",
+            "description": "When someone asked to cancel the job; null unless someone did."
+          },
+          "cancellable": {
+            "type": "boolean",
+            "title": "Cancellable",
+            "description": "Whether the caller may cancel the job now: it is queued or running, nobody cancelled it\nyet, and the caller has the `contributor` role on its library (operators always have).",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -10953,7 +11210,7 @@
           "kind": {
             "type": "string",
             "title": "Kind",
-            "description": "What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect` or\n`embed`."
+            "description": "What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect`,\n`embed` or `push`."
           },
           "library": {
             "type": "string",
@@ -10974,7 +11231,7 @@
           },
           "state": {
             "$ref": "#/components/schemas/JobState",
-            "description": "`queued` and `running` jobs are unfinished; `succeeded` and `failed` ones are done."
+            "description": "`queued` and `running` jobs are unfinished; `succeeded`, `failed` and `cancelled` ones are\ndone. A running job someone cancelled stays `running` (with `cancelled_at` set) until it\nstops at its next step boundary."
           },
           "done": {
             "type": "integer",
@@ -11046,6 +11303,37 @@
             ],
             "title": "Finished At",
             "description": "When the job ended; null while it is unfinished."
+          },
+          "cancelled_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelled By",
+            "description": "The user name of who cancelled the job; null unless someone did."
+          },
+          "cancelled_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelled At",
+            "description": "When someone asked to cancel the job; null unless someone did."
+          },
+          "cancellable": {
+            "type": "boolean",
+            "title": "Cancellable",
+            "description": "Whether the caller may cancel the job now: it is queued or running, nobody cancelled it\nyet, and the caller has the `contributor` role on its library (operators always have).",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -11576,6 +11864,28 @@
             "title": "Reranker",
             "description": "The library's own reranker, `<profile>:<model>`; null: the instance's. The embedding model\nis instance-wide only and cannot be set here."
           },
+          "llm_thinking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThinkingLevel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How much its `llm` role's model (its own or the instance's) thinks before it answers:\n`minimal`, `low`, `medium`, `high` or `xhigh`. Thinking tokens are billed as output, and\nseveral providers default to a high level; HyDE and the agentic mode rarely need more than\n`low`. Null: the instance's level (`EXACTDOCS_AI__LLM__THINKING`). A level the model cannot\ntake is refused (422 `thinking_unsupported`, naming the role and the model)."
+          },
+          "judge_thinking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThinkingLevel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The same for its `judge` role; null: the instance's (the `llm` role's when the judge is\nthe LLM)."
+          },
           "rerank_top_n": {
             "anyOf": [
               {
@@ -11718,6 +12028,28 @@
             "title": "Reranker",
             "description": "The library's own reranker (`<profile>:<model>`); null: the instance's."
           },
+          "llm_thinking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThinkingLevel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The library's own thinking level for the `llm` role; null: the instance's."
+          },
+          "judge_thinking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThinkingLevel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The library's own thinking level for the `judge` role; null: the instance's."
+          },
           "rerank_top_n": {
             "anyOf": [
               {
@@ -11790,6 +12122,8 @@
           "llm",
           "judge",
           "reranker",
+          "llm_thinking",
+          "judge_thinking",
           "rerank_top_n",
           "effective_rerank_top_n",
           "rerank_with",
@@ -12997,6 +13331,7 @@
           "not_a_file",
           "unreadable",
           "bad_file_name",
+          "unparsable",
           "front_matter",
           "not_an_image",
           "image_budget",
@@ -13989,6 +14324,46 @@
             "type": "boolean",
             "title": "Profile Exists",
             "description": "False when the role names a profile that does not exist (the role is then not usable)."
+          },
+          "thinking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThinkingLevel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`llm` and `judge` only: how much the model thinks before it answers (`minimal`, `low`,\n`medium`, `high`, `xhigh`); null: the provider's default. A judge that is the LLM thinks as\nthe LLM does unless it has a level of its own."
+          },
+          "own_thinking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThinkingLevel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The level set for this role itself (the configuration's, else the REST API's); null: none of\nits own (the judge then thinks as the LLM when it is the LLM)."
+          },
+          "thinking_configured": {
+            "type": "boolean",
+            "title": "Thinking Configured",
+            "description": "True when the level is set in the environment or the configuration file\n(`EXACTDOCS_AI__<ROLE>__THINKING`): it cannot be changed over the REST API.",
+            "default": false
+          },
+          "thinking_unsupported": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinking Unsupported",
+            "description": "Why the role's model cannot take its level, when that is known: the level is then left out\nof its calls (and a warning logged at start)."
           }
         },
         "additionalProperties": false,
@@ -13997,7 +14372,11 @@
           "role",
           "model",
           "source",
-          "profile_exists"
+          "profile_exists",
+          "thinking",
+          "own_thinking",
+          "thinking_configured",
+          "thinking_unsupported"
         ],
         "title": "RoleOut",
         "description": "One instance role and the model it uses."
@@ -14011,6 +14390,25 @@
         ],
         "title": "RoleSource",
         "description": "Where a role's model came from."
+      },
+      "RoleThinkingIn": {
+        "properties": {
+          "thinking": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThinkingLevel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How much the role's model thinks before it answers: `minimal`, `low`, `medium`, `high` or\n`xhigh`; null: the provider's default. Thinking tokens are billed as output."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RoleThinkingIn",
+        "description": "An instance role's thinking level, as the admin sets it."
       },
       "ScopeUsageOut": {
         "properties": {
@@ -14798,7 +15196,8 @@
           "up_to_date",
           "importing",
           "pinned",
-          "failed"
+          "failed",
+          "cancelled"
         ],
         "title": "SyncStatus",
         "description": "What a re-sync did with one version."
@@ -15117,6 +15516,18 @@
         ],
         "title": "TaggedArticle",
         "description": "The manual tags of a path as stored: every version's article at that path carries them.\n\nSo does, in a later version, the article git saw it renamed to."
+      },
+      "ThinkingLevel": {
+        "type": "string",
+        "enum": [
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "title": "ThinkingLevel",
+        "description": "How much a chat model thinks before it answers (#421); unset: the provider's default.\n\nEach provider gets its own control for the level: Google's thinking level (Gemini 3 and\nlater) or budget (Gemini 2.5), Claude's effort or budget, OpenAI's ``reasoning_effort``.\nThinking tokens are billed as output, and several providers default to a high level."
       },
       "TokenGrant": {
         "properties": {

@@ -133,6 +133,7 @@ async def test_domain_errors_use_the_envelope(client: httpx.AsyncClient) -> None
         "fields": [],
         "close_matches": [],
         "library_id": None,
+        "job_state": None,
     }
 
 
@@ -215,6 +216,7 @@ async def test_unhandled_errors_under_api_are_500_envelopes(app) -> None:
         "fields": [],
         "close_matches": [],
         "library_id": None,
+        "job_state": None,
     }
 
 

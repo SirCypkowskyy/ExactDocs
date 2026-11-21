@@ -60,6 +60,7 @@ export type Sync =
   | { kind: "none" }
   | { kind: "running"; job: LatestJob }
   | { kind: "failed"; job: LatestJob; failures: number }
+  | { kind: "cancelled"; job: LatestJob }
   | { kind: "ok"; skipped: number; job: LatestJob };
 
 const live = (job: LatestJob) => job.state === "queued" || job.state === "running";
@@ -76,6 +77,7 @@ export function syncOf(jobs: readonly LatestJob[]): Sync {
   if (running) return { kind: "running", job: running };
   const [last] = [...jobs].sort((a, b) => b.id.localeCompare(a.id));
   if (!last) return { kind: "none" };
+  if (last.state === "cancelled") return { kind: "cancelled", job: last };
   return { kind: "ok", job: last, skipped: jobs.reduce((n, j) => n + j.skipped, 0) };
 }
 

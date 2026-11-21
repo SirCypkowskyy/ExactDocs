@@ -18,7 +18,8 @@ import importlib
 import logging
 import os
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncGenerator, Callable, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -41,19 +42,25 @@ from google.genai.errors import APIError as GoogleAPIError
 from google.genai.types import HttpRetryOptions
 from google.oauth2 import service_account
 from openai import AsyncAzureOpenAI, AsyncOpenAI, OpenAIError
-from pydantic_ai import Embedder
+from pydantic_ai import Embedder, RunContext
 from pydantic_ai.direct import model_request
 from pydantic_ai.embeddings.google import GoogleEmbeddingModel
 from pydantic_ai.exceptions import AgentRunError, UserError
-from pydantic_ai.messages import ModelRequest
-from pydantic_ai.models import Model
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.models.cerebras import CerebrasModel
+from pydantic_ai.models.cerebras import CerebrasModel, CerebrasModelSettings
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, instrument_model
 from pydantic_ai.models.ollama import OllamaModel
-from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
-from pydantic_ai.models.openrouter import OpenRouterModel
+from pydantic_ai.models.openai import (
+    OpenAIChatModel,
+    OpenAIChatModelSettings,
+    OpenAIResponsesModel,
+)
+from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers.alibaba import AlibabaProvider
 from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -88,6 +95,7 @@ from exactdocs.bootstrap.constants import (
     DEFAULT_BASE_URLS,
     FOUNDRY_HOST,
     GOOGLE_SCOPE,
+    NAMED_MODEL_KINDS,
     NO_KEY,
     RERANK_DIALECTS,
     SDK_HEADER_VARIABLES,
@@ -100,6 +108,7 @@ from exactdocs.retrieval.models import (
     KeySource,
     ProviderKind,
     ProviderProfile,
+    ThinkingLevel,
 )
 from exactdocs.retrieval.ports.driven import Reranker
 from exactdocs_kernel import SealedTextUnreadableError
@@ -582,12 +591,13 @@ async def _anthropic_client(
             )
 
 
-def _bedrock_model(endpoint: Endpoint, model: str) -> Model:
+def _bedrock_model(endpoint: Endpoint, model: str, settings: ModelSettings | None) -> Model:
     """Claude on Bedrock, only with boto3 installed (never in the images; ``unsupported`` checks).
 
     Args:
         endpoint: The profile's endpoint.
         model: The model.
+        settings: The model's settings (its thinking level).
 
     Returns:
         The pydantic-ai model.
@@ -601,7 +611,8 @@ def _bedrock_model(endpoint: Endpoint, model: str) -> Model:
         max_retries=profile.max_retries,
         timeout=profile.request_timeout,
     )
-    return AnthropicModel(model, provider=AnthropicProvider(anthropic_client=client))
+    provider = AnthropicProvider(anthropic_client=client)
+    return AnthropicModel(model, provider=provider, settings=settings)
 
 
 def instrumentation() -> InstrumentationSettings:
@@ -617,28 +628,65 @@ def instrumentation() -> InstrumentationSettings:
     return InstrumentationSettings(include_content=False)
 
 
-async def chat_model(endpoint: Endpoint, model: str) -> Model:
-    """Build the chat model of the profile's kind, instrumented (*Telemetry*).
+async def chat_model(endpoint: Endpoint, model: str, thinking: ThinkingLevel | None) -> Model:
+    """Build the chat model of the profile's kind with its thinking level, instrumented.
+
+    The level becomes the model's own setting (``thinking_settings``), so every call made with
+    it sends the provider's control for the level: HyDE, the judge, the agentic mode and
+    ``exactdocs ai check`` alike. A model that cannot take one gets none (``list_roles`` and the
+    start say so). Calls are instrumented without content (*Telemetry*).
 
     Args:
         endpoint: The profile's endpoint.
         model: The model (an Azure deployment for ``azure``).
+        thinking: The role's level; ``None``: the provider's default.
 
     Returns:
         The pydantic-ai model.
     """
-    return instrument_model(await _chat_model(endpoint, model), instrumentation())
+    build = await _chat_builder(endpoint, model)
+    built = build(None)
+    if thinking is not None:
+        settings = thinking_settings(endpoint.profile.kind, built, thinking)
+        if settings is None:
+            logger.debug(
+                "AI model %s:%s takes no thinking level: %s is left out",
+                endpoint.profile.name,
+                model,
+                thinking.value,
+            )
+        else:
+            built = build(settings)
+            if (room := thinking_room(built, thinking)) > 0:
+                built = ThinkingRoom(built, room=room)
+    return instrument_model(built, instrumentation())
 
 
-async def _chat_model(endpoint: Endpoint, model: str) -> Model:
-    """Build the chat model of the profile's kind (decision record, *Provider abstraction*).
+async def bare_chat_model(endpoint: Endpoint, model: str) -> Model:
+    """Build the chat model of the profile's kind without settings or instrumentation.
+
+    Args:
+        endpoint: The profile's endpoint.
+        model: The model.
+
+    Returns:
+        The pydantic-ai model, for its profile (nothing is called).
+    """
+    return (await _chat_builder(endpoint, model))(None)
+
+
+async def _chat_builder(endpoint: Endpoint, model: str) -> Callable[[ModelSettings | None], Model]:
+    """Prepare the chat model of the profile's kind (decision record, *Provider abstraction*).
+
+    The provider (its client, its credentials) is made once; the model is then built with or
+    without settings, which need the model's profile to be chosen.
 
     Args:
         endpoint: The profile's endpoint.
         model: The model (an Azure deployment for ``azure``).
 
     Returns:
-        The pydantic-ai model.
+        Builds the pydantic-ai model with the settings given.
 
     Raises:
         ProviderUnsupportedError: The profile's kind serves no chat model.
@@ -649,20 +697,175 @@ async def _chat_model(endpoint: Endpoint, model: str) -> Model:
         raise ProviderUnsupportedError(profile.name, reason)
     match profile.kind:
         case ProviderKind.ANTHROPIC if profile.anthropic_platform is AnthropicPlatform.BEDROCK:
-            return _bedrock_model(endpoint, model)
+            return lambda settings: _bedrock_model(endpoint, model, settings)
         case ProviderKind.ANTHROPIC:
-            client = await _anthropic_client(endpoint)
-            return AnthropicModel(model, provider=AnthropicProvider(anthropic_client=client))
+            claude = AnthropicProvider(anthropic_client=await _anthropic_client(endpoint))
+            return lambda settings: AnthropicModel(model, provider=claude, settings=settings)
         case ProviderKind.GOOGLE | ProviderKind.GOOGLE_VERTEX:
-            return GoogleModel(model, provider=await _google_provider(endpoint))
+            google = await _google_provider(endpoint)
+            return lambda settings: GoogleModel(model, provider=google, settings=settings)
+        case ProviderKind.CEREBRAS:
+            cerebras = _openai_provider(endpoint)
+            return lambda settings: CerebrasModel(
+                model,
+                provider=cerebras,
+                settings=None if settings is None else CerebrasModelSettings(**settings),
+            )
         case _:
             model_class = {
                 ProviderKind.OPENAI: OpenAIResponsesModel,
                 ProviderKind.OPENROUTER: OpenRouterModel,
                 ProviderKind.OLLAMA: OllamaModel,
-                ProviderKind.CEREBRAS: CerebrasModel,
             }.get(profile.kind, OpenAIChatModel)
-            return model_class(model, provider=_openai_provider(endpoint))
+            openai = _openai_provider(endpoint)
+            return lambda settings: model_class(model, provider=openai, settings=settings)
+
+
+def thinking_settings(
+    kind: ProviderKind, model: Model, level: ThinkingLevel
+) -> ModelSettings | None:
+    """Map a thinking level to the model settings that send the provider's own control.
+
+    A model pydantic-ai knows to think takes the unified ``thinking`` setting, which pydantic-ai
+    translates for its provider and model: Google's ``thinking_level`` (Gemini 3 and later) or
+    ``thinking_budget`` (Gemini 2.5), Claude's adaptive thinking and effort or its
+    ``budget_tokens``, OpenAI's and Azure's ``reasoning_effort``, OpenRouter's ``reasoning``.
+    A model behind an OpenAI-compatible endpoint whose name pydantic-ai does not know (a
+    gateway's alias, an Azure deployment) gets ``reasoning_effort`` itself, or OpenRouter's
+    ``reasoning``: the endpoint takes it, and whether the model behind it does cannot be known
+    before a call. Anthropic, Google and OpenAI's own API know their models.
+
+    Args:
+        kind: The profile's kind.
+        model: The model built without settings (its profile is read).
+        level: The level.
+
+    Returns:
+        The settings, or ``None`` when the model takes no thinking level.
+    """
+    profile = model.profile
+    if profile.get("supports_thinking", False) or profile.get("thinking_always_enabled", False):
+        return ModelSettings(thinking=level.value)
+    if kind is ProviderKind.OPENROUTER:
+        return OpenRouterModelSettings(openrouter_reasoning={"effort": level.value})
+    if kind.value in NAMED_MODEL_KINDS:
+        return None
+    return OpenAIChatModelSettings(openai_reasoning_effort=level.value)
+
+
+def thinking_unsupported(kind: ProviderKind, model: Model) -> str | None:
+    """Say why a model takes no thinking level, from pydantic-ai's profile of it.
+
+    Args:
+        kind: The profile's kind.
+        model: The model built without settings.
+
+    Returns:
+        A fixed text, or ``None`` when it takes one.
+    """
+    if thinking_settings(kind, model, ThinkingLevel.LOW) is not None:
+        return None
+    return f"{kind.value} serves it without a thinking or reasoning setting"
+
+
+def thinking_room(model: Model, level: ThinkingLevel) -> int:
+    """The output tokens a thinking level spends ahead of the answer and needs room for.
+
+    Claude models without adaptive thinking think within ``budget_tokens``, which counts toward
+    ``max_tokens`` and must stay below it: an answer capped below the budget (HyDE's, the
+    judge's, a check's) would be refused. Other providers bound thinking by the level alone.
+
+    Args:
+        model: The model, built with its settings.
+        level: The level.
+
+    Returns:
+        The budget to add to an explicit ``max_tokens``; 0 when none is needed.
+    """
+    if not isinstance(model, AnthropicModel):
+        return 0
+    if model.profile.get("anthropic_supports_adaptive_thinking", False):
+        return 0
+    return ANTHROPIC_THINKING_BUDGET_MAP[level.value]
+
+
+class ThinkingRoom(WrapperModel):
+    """A model whose explicit ``max_tokens`` is raised by its thinking budget.
+
+    The caps ExactDocs sets (HyDE's answer, the judge's ratings, a check) bound the answer; a
+    Claude model that thinks within a token budget spends that budget out of the same
+    ``max_tokens``, so the budget is added to the cap.
+    """
+
+    room: int
+    """Output tokens added to an explicit ``max_tokens``."""
+
+    def __init__(self, wrapped: Model, *, room: int) -> None:
+        """Wrap a model.
+
+        Args:
+            wrapped: The model, built with its thinking settings.
+            room: The tokens to add.
+        """
+        super().__init__(wrapped)
+        self.room = room
+
+    def _roomy(self, settings: ModelSettings | None) -> ModelSettings | None:
+        """Raise an explicit ``max_tokens`` by the room.
+
+        Args:
+            settings: The request's settings.
+
+        Returns:
+            The settings with the larger cap, or unchanged without one.
+        """
+        if settings is None or "max_tokens" not in settings:
+            return settings
+        return ModelSettings(**{**settings, "max_tokens": settings["max_tokens"] + self.room})
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        """Make a request with the cap raised.
+
+        Args:
+            messages: The messages.
+            model_settings: The request's settings.
+            model_request_parameters: The request's parameters.
+
+        Returns:
+            The response.
+        """
+        return await super().request(
+            messages, self._roomy(model_settings), model_request_parameters
+        )
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        """Stream a request with the cap raised.
+
+        Args:
+            messages: The messages.
+            model_settings: The request's settings.
+            model_request_parameters: The request's parameters.
+            run_context: The run's context.
+
+        Yields:
+            The streamed response.
+        """
+        async with super().request_stream(
+            messages, self._roomy(model_settings), model_request_parameters, run_context
+        ) as stream:
+            yield stream
 
 
 async def embedder(endpoint: Endpoint, model: str) -> Embedder:

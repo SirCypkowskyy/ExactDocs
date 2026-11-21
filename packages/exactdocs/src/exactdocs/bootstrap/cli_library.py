@@ -27,6 +27,7 @@ from exactdocs.bootstrap.client import (
     ApiClient,
     ApiError,
     ClientError,
+    ClientTimeoutError,
     printable,
     printable_text,
 )
@@ -45,8 +46,10 @@ from exactdocs.bootstrap.constants import (
     PAGE,
     POLL_RETRIES,
     POLL_SECONDS,
+    SOURCES_SECONDS_PER_LIBRARY,
     SYNC_FAILED_STATUS,
     TAG_MOVED,
+    TIMEOUT_SECONDS,
     WAIT_SECONDS,
 )
 
@@ -118,6 +121,19 @@ def table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
     return "\n".join(
         "  ".join(c.ljust(w) for c, w in zip(row, widths, strict=True)).rstrip() for row in cells
     )
+
+
+def say_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> None:
+    """Print a table, one line per row.
+
+    Not through ``say``: it drops every control character, the newlines between the rows too
+    (#423). ``table`` has already made each cell printable.
+
+    Args:
+        headers: The column headers.
+        rows: The rows, one cell per header.
+    """
+    sys.stdout.write(table(headers, rows) + "\n")
 
 
 def split_target(target: str) -> tuple[str, str | None]:
@@ -269,6 +285,10 @@ async def _watch(
             reason = job.get("error") or "no reason recorded"
             code = f" [{printable(job['error_code'])}]" if job.get("error_code") else ""
             message = f"importing {label} failed{code}: {printable(reason)} (job {job_id})"
+            raise ImportFailedError(message)
+        if job["state"] == "cancelled":
+            who = f" by {printable(job['cancelled_by'])}" if job.get("cancelled_by") else ""
+            message = f"importing {label} was cancelled{who} (job {job_id})"
             raise ImportFailedError(message)
         if job["state"] not in {"queued", "running"}:
             message = f"job {job_id} is in the unknown state {printable(str(job['state']))!r}"
@@ -586,7 +606,7 @@ async def list_libraries(api: ApiClient, *, as_json: bool = False) -> None:
         ]
         for lib in libraries
     ]  # fmt: skip
-    say(table(["LIBRARY", "VERSIONS (* default)", "TITLE"], rows))
+    say_table(["LIBRARY", "VERSIONS (* default)", "TITLE"], rows)
 
 
 async def _follow(
@@ -737,7 +757,7 @@ async def sync_library(
         dump({"library": synced["library_id"], "versions": versions, "jobs": jobs})
     else:
         rows = [[v["ref"], v["ref_kind"], v["status"], v["commit_sha"][:9]] for v in versions]
-        say(table(["REF", "KIND", "STATUS", "COMMIT"], rows))
+        say_table(["REF", "KIND", "STATUS", "COMMIT"], rows)
         for v in reimported:  # a tag that moved is news even when confirmed: say from where
             say(
                 f"{v['ref']}: re-import queued, "
@@ -816,6 +836,27 @@ async def remove(api: ApiClient, target: str, *, as_json: bool = False) -> None:
         say(f"{result['library']} now resolves to {result['default_version']}.")
 
 
+async def cancel_job(api: ApiClient, job_id: str, *, as_json: bool = False) -> None:
+    """``POST /jobs/{id}/cancel``: a queued job is cancelled, a running one stops at its next step.
+
+    Args:
+        api: The API client.
+        job_id: The job's ID.
+        as_json: Print JSON for scripts instead of text.
+    """
+    job = await api.request("POST", f"/jobs/{quote(job_id, safe='')}/cancel")
+    if as_json:
+        dump(job)
+        return
+    what = f"{job['kind']} job {job['id']} of {job['library']}"
+    if job["version"]:
+        what += f" {printable(job['version'])}"
+    if job["state"] == "cancelled":
+        say(f"Cancelled the {what}.")
+    else:
+        say(f"Cancelling the {what}: it stops after the step it is running.")
+
+
 async def create_token(
     api: ApiClient, name: str, days: int | None, *, library_ids: list[str] | None = None
 ) -> dict[str, Any]:
@@ -879,7 +920,7 @@ async def token_list(api: ApiClient, *, as_json: bool) -> None:
          (t["last_used_at"] or "never")[:10]]
         for t in tokens
     ]  # fmt: skip
-    say(table(["ID", "NAME", "PREFIX", "EXPIRES", "LAST USED"], rows))
+    say_table(["ID", "NAME", "PREFIX", "EXPIRES", "LAST USED"], rows)
 
 
 async def token_revoke(api: ApiClient, token_id: str) -> None:
@@ -1173,6 +1214,23 @@ def _plan_lines(plan: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _sources_timeout(sources: dict[str, Any]) -> float:
+    """Seconds to wait for the server to plan or apply a sources file.
+
+    The server works through the file library by library and answers once, so one request's
+    timeout is too short for a file of any size (#422).
+
+    Args:
+        sources: The file's content.
+
+    Returns:
+        ``TIMEOUT_SECONDS`` plus ``SOURCES_SECONDS_PER_LIBRARY`` per declared library.
+    """
+    libraries = sources.get("libraries")
+    count = len(libraries) if isinstance(libraries, list) else 0
+    return TIMEOUT_SECONDS + SOURCES_SECONDS_PER_LIBRARY * count
+
+
 async def plan_sources(api: ApiClient, path: str, *, prune: bool, as_json: bool) -> None:
     """``POST /sources/plan`` with the file and print the diff; nothing changes on the server.
 
@@ -1182,8 +1240,11 @@ async def plan_sources(api: ApiClient, path: str, *, prune: bool, as_json: bool)
         prune: Show undeclared libraries and versions as removed.
         as_json: Print JSON for scripts instead of text.
     """
-    body = {"sources": read_sources(path), "prune": prune}
-    plan = await api.request("POST", "/sources/plan", json=body)
+    sources = read_sources(path)
+    body = {"sources": sources, "prune": prune}
+    plan = await api.request(
+        "POST", "/sources/plan", json=body, read_timeout=_sources_timeout(sources)
+    )
     if as_json:
         dump(plan)
         return
@@ -1202,9 +1263,21 @@ async def apply_sources(api: ApiClient, path: str, *, prune: bool, as_json: bool
 
     Raises:
         SourcesFailedError: At least one library failed (after printing every outcome).
+        ClientTimeoutError: The server did not answer within the file's budget; it may still
+            be applying it.
     """
-    body = {"sources": read_sources(path), "prune": prune}
-    applied = await api.request("POST", "/sources/apply", json=body)
+    sources = read_sources(path)
+    body = {"sources": sources, "prune": prune}
+    try:
+        applied = await api.request(
+            "POST", "/sources/apply", json=body, read_timeout=_sources_timeout(sources)
+        )
+    except ClientTimeoutError as exc:
+        message = (
+            f"{exc}; the server may still be applying the file: run `exactdocs sources plan` "
+            "to see what is left (apply is safe to run again)"
+        )
+        raise ClientTimeoutError(message) from None
     if as_json:
         dump(applied)
     else:
@@ -1212,7 +1285,7 @@ async def apply_sources(api: ApiClient, path: str, *, prune: bool, as_json: bool
             say(line)
         if applied["plan"]["changes"] or applied["failed"]:
             say("applied:")
-            say(table(["LIBRARY", "ACTION", "JOBS"], [_outcome_row(r) for r in applied["results"]]))
+            say_table(["LIBRARY", "ACTION", "JOBS"], [_outcome_row(r) for r in applied["results"]])
         for result in applied["results"]:
             if result["error"]:
                 to_stderr(f"{result['library_id']}: {result['error']} [{result['error_code']}]")

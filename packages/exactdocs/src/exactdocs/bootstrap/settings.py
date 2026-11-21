@@ -64,7 +64,13 @@ from exactdocs.retrieval.constants import (
     MIN_AGENT_REPEATED_CALLS,
     SANDBOX_NOT_BELOW_TIMEOUT,
 )
-from exactdocs.retrieval.models import AnthropicPlatform, AzureAuth, RerankWith, RetrievalMode
+from exactdocs.retrieval.models import (
+    AnthropicPlatform,
+    AzureAuth,
+    RerankWith,
+    RetrievalMode,
+    ThinkingLevel,
+)
 
 
 class ProviderSettings(BaseModel):
@@ -150,6 +156,36 @@ class RoleSettings(BaseModel):
     """`<profile>:<model>`, e.g. `corp:gpt-4.1-mini`."""
 
 
+class ChatRoleSettings(RoleSettings):
+    """A chat role, ``llm`` or ``judge``: its model and its thinking level (#421)."""
+
+    thinking: ThinkingLevel | None = None
+    """`EXACTDOCS_AI__LLM__THINKING`, `EXACTDOCS_AI__JUDGE__THINKING`: how much the model thinks
+    before it answers: `minimal`, `low`, `medium`, `high` or `xhigh`, sent as the provider's own
+    setting (Google's thinking level or budget, Claude's effort or budget, OpenAI's
+    `reasoning_effort`). Thinking tokens are billed as output and several providers default to
+    a high level; HyDE, the judge and the agentic mode rarely need more than `low`. Unset: the
+    provider's default (a judge that is the LLM thinks as the LLM does). A model that cannot take
+    a level gets none, with a warning at start. Set here, it cannot be changed over the REST
+    API."""
+
+    @field_validator("thinking", mode="before")
+    @classmethod
+    def _thinking_any_case(cls, value: object) -> object:
+        """Read the level in any letter case; blank counts as unset.
+
+        Args:
+            value: The raw setting.
+
+        Returns:
+            The level in lower case, or ``None``.
+        """
+        if isinstance(value, str):
+            level = value.strip().lower()
+            return level or None
+        return value
+
+
 class RerankerSettings(RoleSettings):
     """The reranker role: ``EXACTDOCS_AI__RERANKER__<FIELD>`` or ``[ai.reranker]`` (RET-02)."""
 
@@ -164,7 +200,7 @@ class RerankerSettings(RoleSettings):
     `fallback_reason` `reranker_timeout` or `reranker_failed`)."""
 
 
-class JudgeSettings(RoleSettings):
+class JudgeSettings(ChatRoleSettings):
     """The judge role: ``EXACTDOCS_AI__JUDGE__<FIELD>`` or ``[ai.judge]`` (#96)."""
 
     timeout: float = Field(default=DEFAULT_JUDGE_TIMEOUT, gt=0, le=MAX_JUDGE_TIMEOUT)
@@ -361,10 +397,11 @@ class AiSettings(BaseModel):
     """The embedding role, instance-wide only (`EXACTDOCS_AI__EMBEDDING__MODEL`)."""
     reranker: RerankerSettings = Field(default_factory=RerankerSettings)
     """The reranker role (`EXACTDOCS_AI__RERANKER__MODEL`, `__TOP_N`, `__TIMEOUT`)."""
-    llm: RoleSettings = Field(default_factory=RoleSettings)
-    """The LLM role (`EXACTDOCS_AI__LLM__MODEL`)."""
+    llm: ChatRoleSettings = Field(default_factory=ChatRoleSettings)
+    """The LLM role (`EXACTDOCS_AI__LLM__MODEL`, `__THINKING`)."""
     judge: JudgeSettings = Field(default_factory=JudgeSettings)
-    """The judge role (`EXACTDOCS_AI__JUDGE__MODEL`, `__TIMEOUT`); the LLM role when unset."""
+    """The judge role (`EXACTDOCS_AI__JUDGE__MODEL`, `__TIMEOUT`, `__THINKING`); the LLM role
+    when unset."""
     rerank_with: RerankWith = RerankWith.CROSS_ENCODER
     """`EXACTDOCS_AI__RERANK_WITH`: what reranks the searches of libraries without their own
     choice: `cross_encoder` (the `reranker` role, the default: cheaper) or `judge` (the `judge`

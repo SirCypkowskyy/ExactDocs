@@ -113,6 +113,7 @@ from exactdocs.retrieval.dtos import (
     SearchResultOut,
     SetChunkOut,
     SetLibraryRetrievalCommand,
+    SetRoleThinkingCommand,
     SpentOut,
     UnembeddedVersionsOut,
     UnembeddedVersionsQuery,
@@ -141,8 +142,11 @@ from exactdocs.retrieval.errors import (
     ProviderUnsupportedError,
     RerankerError,
     RetiredEmbeddingSpaceError,
+    RoleConfiguredError,
+    RoleTakesNoThinkingError,
     SecretKeyRequiredError,
     StaleChunkError,
+    ThinkingUnsupportedError,
     UnavailableModeError,
     UnknownEmbeddingSpaceError,
     UnknownLibraryError,
@@ -225,6 +229,7 @@ from exactdocs.retrieval.models import (
     StoredChunk,
     TagFilter,
     TagMatch,
+    ThinkingLevel,
     VectorCoverage,
     VectorHit,
     article_chunk_rows,
@@ -275,6 +280,7 @@ from exactdocs.retrieval.ports.driven import (
     RenamedPaths,
     Reranker,
     RetrievalPipeline,
+    RoleThinkingLevels,
     SearchableVersions,
     SearchIndex,
     SearchIndexMaintenance,
@@ -1618,7 +1624,8 @@ class Reranking:
             clock=spend.clock.now if spend is not None else SystemClock().now,
         )
         try:
-            model = await self.providers.factory.chat_model(profile, ref.model)
+            thinking = await self.providers.thinking_of(ModelRole.JUDGE, ai)
+            model = await self.providers.factory.chat_model(profile, ref.model, thinking=thinking)
             verdict = await self.judge.judge(model, query, candidates, step=step)
             return judged_scores(candidates, verdict.ratings)
         except LlmBudgetReachedError:
@@ -3338,6 +3345,8 @@ async def _library_retrieval(
         llm=_ref_text(ai.llm),
         judge=_ref_text(ai.judge),
         reranker=_ref_text(ai.reranker),
+        llm_thinking=ai.llm_thinking,
+        judge_thinking=ai.judge_thinking,
         rerank_top_n=ai.rerank_top_n,
         effective_rerank_top_n=modes.rerank_top_n(ai),
         rerank_with=ai.rerank_with,
@@ -3401,6 +3410,9 @@ class SetLibraryRetrievalUseCase:
     async def __call__(self, command: SetLibraryRetrievalCommand) -> LibraryRetrievalOut:
         """Validate the settings against what can run with them, then store them.
 
+        A thinking level of the library's own that its model cannot take is refused too
+        (``ThinkingUnsupportedError``, from ``AiProviders.refuse_unsupported_thinking``).
+
         Args:
             command: The library, its mode and its AI overrides.
 
@@ -3421,6 +3433,8 @@ class SetLibraryRetrievalUseCase:
             llm=_parse_ref(command.llm),
             judge=_parse_ref(command.judge),
             reranker=_parse_ref(command.reranker),
+            llm_thinking=command.llm_thinking,
+            judge_thinking=command.judge_thinking,
             rerank_top_n=command.rerank_top_n,
             rerank_with=command.rerank_with,
             budgets=command.budgets.limits(),
@@ -3435,6 +3449,10 @@ class SetLibraryRetrievalUseCase:
                 raise UnknownProviderError(name)
             if (reason := self.providers.factory.unsupported(profile)) is not None:
                 raise ProviderUnsupportedError(name, reason)
+        # Only the library's own levels are refused here: the instance's were checked when set.
+        await self.providers.refuse_unsupported_thinking(
+            _without_thinking(self.providers.roles), ai
+        )
         mode = None
         if command.mode is not None:
             mode = (await self.modes.registry(library, ai)).check(command.mode)
@@ -3484,6 +3502,28 @@ def _parse_ref(text: str | None) -> ModelRef | None:
         The reference, or ``None``.
     """
     return None if text is None else ModelRef.parse(text)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NoStoredThinking:
+    """Implements ``ports.driven.RoleThinkingLevels`` for a process that stores none."""
+
+    async def levels(self) -> Mapping[ModelRole, ThinkingLevel]:
+        """Read nothing.
+
+        Returns:
+            No level.
+        """
+        return {}
+
+    async def save(self, role: ModelRole, level: ThinkingLevel | None) -> None:
+        """Store nothing: such a process serves no REST API.
+
+        Args:
+            role: The role.
+            level: The level.
+        """
+        del role, level
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -3551,17 +3591,34 @@ class NoModelFactory:
         del profile
         return "this process calls no AI model"
 
-    async def chat_model(self, profile: ProviderProfile, model: str) -> object:
+    async def chat_model(
+        self, profile: ProviderProfile, model: str, *, thinking: ThinkingLevel | None = None
+    ) -> object:
         """Refuse.
+
+        Args:
+            profile: The profile.
+            model: The model.
+            thinking: The level (unused).
+
+        Returns:
+            Nothing: it raises ``ProviderUnsupportedError``.
+        """
+        del thinking
+        return self._refuse(profile, model)
+
+    async def thinking_unsupported(self, profile: ProviderProfile, model: str) -> str | None:
+        """Know nothing about any model.
 
         Args:
             profile: The profile.
             model: The model.
 
         Returns:
-            Nothing: it raises ``ProviderUnsupportedError``.
+            ``None``: that cannot be known here.
         """
-        return self._refuse(profile, model)
+        del profile, model
+        return None
 
     async def embedder(self, profile: ProviderProfile, model: str) -> object:
         """Refuse.
@@ -3608,17 +3665,26 @@ class NoModelFactory:
         del model
         raise ProviderUnsupportedError(profile.name, "this process calls no AI model")
 
-    async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
+    async def check(
+        self,
+        profile: ProviderProfile,
+        model: str,
+        role: ModelRole,
+        *,
+        thinking: ThinkingLevel | None = None,
+    ) -> ModelCheck:
         """Report that nothing can be called.
 
         Args:
             profile: The profile.
             model: The model.
             role: The role.
+            thinking: The level (unused).
 
         Returns:
             A failed check.
         """
+        del thinking
         return ModelCheck(
             role=role,
             profile=profile.name,
@@ -3649,6 +3715,78 @@ class AiProviders:
     """Turns a profile into a callable model."""
     box: SecretBox | None = None
     """Seals keys sent over the REST API; ``None``: they cannot be stored."""
+    thinking_levels: RoleThinkingLevels = field(default_factory=NoStoredThinking)
+    """The roles' thinking levels set over the REST API (#421); a configured level wins."""
+
+    async def instance_roles(self) -> InstanceRoles:
+        """The instance's roles with the thinking levels stored over the REST API.
+
+        A level set in the environment or the configuration file wins over a stored one.
+
+        Returns:
+            The roles.
+        """
+        stored = await self.thinking_levels.levels()
+        return replace(
+            self.roles,
+            llm_thinking=self.roles.llm_thinking or stored.get(ModelRole.LLM),
+            judge_thinking=self.roles.judge_thinking or stored.get(ModelRole.JUDGE),
+        )
+
+    async def bindings(self) -> list[RoleBinding]:
+        """Resolve the instance's roles outside any library, with their thinking levels.
+
+        Returns:
+            One binding per role that is set (the judge may default to the LLM).
+        """
+        roles, defaults = await self.instance_roles(), LibraryAi()
+        return [b for r in ModelRole if (b := bind_role(r, roles, defaults)) is not None]
+
+    async def thinking_of(self, role: ModelRole, ai: LibraryAi) -> ThinkingLevel | None:
+        """Resolve the thinking level a role's calls send for a library.
+
+        Args:
+            role: The role.
+            ai: The library's overrides (the defaults outside any library).
+
+        Returns:
+            The level, or ``None`` for the provider's default.
+        """
+        binding = bind_role(role, await self.instance_roles(), ai)
+        return None if binding is None else binding.thinking
+
+    async def thinking_problem(self, binding: RoleBinding) -> str | None:
+        """Say why a binding's model cannot take its thinking level, when that is known.
+
+        Args:
+            binding: The role, its model and its level.
+
+        Returns:
+            Why not, or ``None`` when it can, has no level, or that cannot be known.
+        """
+        if binding.thinking is None:
+            return None
+        profile = await self.profile(binding.ref.profile)
+        if profile is None or self.factory.unsupported(profile) is not None:
+            return None
+        return await self.factory.thinking_unsupported(profile, binding.ref.model)
+
+    async def refuse_unsupported_thinking(self, roles: InstanceRoles, ai: LibraryAi) -> None:
+        """Refuse thinking levels the models they apply to cannot take.
+
+        Args:
+            roles: The instance's roles, with only the levels being saved.
+            ai: The library's overrides, as they are about to be.
+
+        Raises:
+            ThinkingUnsupportedError: A role's model cannot take its level.
+        """
+        for role in (ModelRole.LLM, ModelRole.JUDGE):
+            binding = bind_role(role, roles, ai)
+            if binding is None or binding.thinking is None:
+                continue
+            if (reason := await self.thinking_problem(binding)) is not None:
+                raise ThinkingUnsupportedError(role.value, str(binding.ref), reason)
 
     def configured_profile(self, name: str) -> ProviderProfile | None:
         """Find a configured profile.
@@ -3769,7 +3907,8 @@ class AiProviders:
         Returns:
             An opaque handle, or ``None`` when the role does not resolve for the library.
         """
-        binding = bind_role(role, self.roles, await self.library_modes.ai_of(library))
+        roles = await self.instance_roles()
+        binding = bind_role(role, roles, await self.library_modes.ai_of(library))
         if binding is None:
             return None
         profile = await self.profile(binding.ref.profile)
@@ -3781,14 +3920,19 @@ class AiProviders:
             case ModelRole.RERANKER:
                 return await self.factory.reranker(profile, binding.ref.model)
             case ModelRole.LLM | ModelRole.JUDGE:
-                return await self.factory.chat_model(profile, binding.ref.model)
+                return await self.factory.chat_model(
+                    profile, binding.ref.model, thinking=binding.thinking
+                )
 
-    async def check(self, binding_role: ModelRole | None, ref: ModelRef) -> ModelCheck:
+    async def check(
+        self, binding_role: ModelRole | None, ref: ModelRef, thinking: ThinkingLevel | None = None
+    ) -> ModelCheck:
         """Make one minimal call, or say why it cannot be made.
 
         Args:
             binding_role: The role being checked; ``None`` when not a configured role.
             ref: The profile and model.
+            thinking: A chat role's thinking level, as its calls send it.
 
         Returns:
             The outcome.
@@ -3807,7 +3951,7 @@ class AiProviders:
             return ModelCheck(
                 role=binding_role, profile=ref.profile, model=ref.model, ok=False, error=reason
             )
-        return await self.factory.check(profile, ref.model, role)
+        return await self.factory.check(profile, ref.model, role, thinking=thinking)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -4035,12 +4179,10 @@ class CheckProviderUseCase:
             ref = ModelRef(profile=command.name, model=command.model)
             checks = [await self.providers.check(command.role, ref)]
         else:
-            bindings = [
-                b for b in self.providers.instance_bindings() if b.ref.profile == command.name
-            ]
+            bindings = [b for b in await self.providers.bindings() if b.ref.profile == command.name]
             if not bindings:
                 raise NothingToCheckError(command.name)
-            checks = [await self.providers.check(b.role, b.ref) for b in bindings]
+            checks = [await self.providers.check(b.role, b.ref, b.thinking) for b in bindings]
         return ModelChecksOut(checks=[ModelCheckOut.from_model(c) for c in checks])
 
 
@@ -4058,7 +4200,8 @@ class CheckRolesUseCase:
             One check per role that is set.
         """
         checks = [
-            await self.providers.check(b.role, b.ref) for b in self.providers.instance_bindings()
+            await self.providers.check(b.role, b.ref, b.thinking)
+            for b in await self.providers.bindings()
         ]
         return ModelChecksOut(checks=[ModelCheckOut.from_model(c) for c in checks])
 
@@ -4076,23 +4219,84 @@ class ListRolesUseCase:
         Returns:
             One entry per role, set or not.
         """
-        bound = {b.role: b for b in self.providers.instance_bindings()}
-        roles = []
-        for role in ModelRole:
-            binding = bound.get(role)
-            exists = (
-                binding is not None
-                and await self.providers.profile(binding.ref.profile) is not None
-            )
-            roles.append(
-                RoleOut(
-                    role=role,
-                    model=None if binding is None else str(binding.ref),
-                    source=None if binding is None else binding.source,
-                    profile_exists=exists,
-                )
-            )
-        return RoleListOut(roles=roles)
+        roles = await self.providers.instance_roles()
+        return RoleListOut(
+            roles=[await _role_out(self.providers, roles, role) for role in ModelRole]
+        )
+
+
+async def _role_out(providers: AiProviders, roles: InstanceRoles, role: ModelRole) -> RoleOut:
+    """Describe one instance role: its model, its thinking level and whether it can take it.
+
+    Args:
+        providers: The instance's AI configuration.
+        roles: The instance's roles with their stored thinking levels.
+        role: The role.
+
+    Returns:
+        The role.
+    """
+    binding = bind_role(role, roles, LibraryAi())
+    exists = binding is not None and await providers.profile(binding.ref.profile) is not None
+    thinking = roles.thinking(role) if binding is None else binding.thinking
+    return RoleOut(
+        role=role,
+        model=None if binding is None else str(binding.ref),
+        source=None if binding is None else binding.source,
+        profile_exists=exists,
+        thinking=thinking,
+        own_thinking=roles.thinking(role),
+        thinking_configured=providers.roles.thinking(role) is not None,
+        thinking_unsupported=(
+            await providers.thinking_problem(binding) if binding is not None and exists else None
+        ),
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SetRoleThinkingUseCase:
+    """Implements ``ports.driving.SetRoleThinking``."""
+
+    providers: AiProviders
+    """The instance's AI configuration."""
+
+    async def __call__(self, command: SetRoleThinkingCommand) -> RoleOut:
+        """Check the level against the role's model, then store it.
+
+        Args:
+            command: The role and its level.
+
+        Returns:
+            The role as it is now.
+
+        Raises:
+            RoleTakesNoThinkingError: The role is not ``llm`` or ``judge``.
+            RoleConfiguredError: Its level is set in the environment or the configuration file.
+        """
+        role = command.role
+        if not role.thinks:
+            raise RoleTakesNoThinkingError(role.value)
+        if self.providers.roles.thinking(role) is not None:
+            raise RoleConfiguredError(role.value)
+        field_name = f"{role.value}_thinking"
+        roles = replace(await self.providers.instance_roles(), **{field_name: command.thinking})
+        if command.thinking is not None:  # only the level being set is checked
+            only = replace(_without_thinking(roles), **{field_name: command.thinking})
+            await self.providers.refuse_unsupported_thinking(only, LibraryAi())
+        await self.providers.thinking_levels.save(role, command.thinking)
+        return await _role_out(self.providers, roles, role)
+
+
+def _without_thinking(roles: InstanceRoles) -> InstanceRoles:
+    """Drop the instance's thinking levels, keeping its models.
+
+    Args:
+        roles: The roles.
+
+    Returns:
+        The same models with no level.
+    """
+    return replace(roles, llm_thinking=None, judge_thinking=None)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -5752,9 +5956,10 @@ class HydePipeline:
             clock=self.spend.clock.now,
         )
         try:
+            thinking = await self.providers.thinking_of(ModelRole.LLM, ai)
             with self.tracer.span(f"{request.search}.hyde", mode=RetrievalMode.HYBRID_HYDE.value):
                 async with asyncio.timeout(self.timeout):
-                    text = await self._written(request.query, ref, profile, step)
+                    text = await self._written(request.query, ref, profile, step, thinking)
         except LlmBudgetReachedError:
             return FallbackReason.LLM_BUDGET_REACHED
         except LlmFailedError, ProviderUnsupportedError, TimeoutError:
@@ -5765,7 +5970,12 @@ class HydePipeline:
         return text
 
     async def _written(
-        self, query: str, ref: ModelRef, profile: ProviderProfile, step: LlmStep
+        self,
+        query: str,
+        ref: ModelRef,
+        profile: ProviderProfile,
+        step: LlmStep,
+        thinking: ThinkingLevel | None,
     ) -> str:
         """Build the ``llm`` role's model and have it write the hypothetical answer.
 
@@ -5774,6 +5984,7 @@ class HydePipeline:
             ref: The role's model.
             profile: Its profile, as it is now.
             step: Who it counts to and the budgets it runs within.
+            thinking: The role's thinking level for the library.
 
         Returns:
             The answer, stripped.
@@ -5787,7 +5998,7 @@ class HydePipeline:
             ProviderUnsupportedError: This process cannot call the model.
         """
         try:
-            model = await self.providers.factory.chat_model(profile, ref.model)
+            model = await self.providers.factory.chat_model(profile, ref.model, thinking=thinking)
             written = await self.writer.write(model, query, step=step)
         except LlmBudgetReachedError, LlmFailedError, ProviderUnsupportedError:
             raise
@@ -5842,11 +6053,12 @@ class PlanEmbeddingUseCase:
                     dimensions = await (await self.runs.model(configured)).dimensions()
                 spec = configured.target.spec(dimensions)
                 space = await self.runs.store().create_space(spec, self.runs.clock.now())
-        coverage = await self.runs.store().coverage(space.id, version.manifest_id)
+        # Each chunk once, as the batches embed it: not the manifest's rows, one per path (#431).
+        missing = await self.runs.store().count_missing(space.id, version.manifest_id)
         return EmbeddingPlanOut(
             space_id=space.id,
             manifest_id=version.manifest_id,
-            missing=coverage.chunks - coverage.embedded,
+            missing=missing,
             created=created,
             skipped=None,
         )
@@ -5866,13 +6078,16 @@ def _skipped(reason: EmbeddingSkip) -> EmbeddingPlanOut:
     )
 
 
-def _done() -> EmbeddedBatchOut:
+def _done(left: int | None = None) -> EmbeddedBatchOut:
     """Say a batch embedded nothing and the job is done.
+
+    Args:
+        left: The chunks still without a vector; ``None`` when the job stops without counting.
 
     Returns:
         The batch.
     """
-    return EmbeddedBatchOut(embedded=0, input_tokens=0, finished=True)
+    return EmbeddedBatchOut(embedded=0, input_tokens=0, left=left, finished=True)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -5906,8 +6121,8 @@ class EmbedBatchUseCase:
         vectors = runs.store()
         keys = await vectors.missing(space.id, command.manifest_id, runs.batch_size)
         sources = await runs.chunks.embedding_sources(command.manifest_id, keys)
-        if not sources:
-            return _done()
+        if not sources:  # nothing left, or found embedded by a job sharing chunks with this one
+            return _done(await vectors.count_missing(space.id, command.manifest_id))
         ordered = sorted(sources)
         titles: Mapping[str, str] = {}
         if runs.titles is not None:  # the plan's manifest: the job's library runs one job at a time
@@ -5934,11 +6149,14 @@ class EmbedBatchUseCase:
             stored = await vectors.upsert(
                 space.id, dict(zip(ordered, embedded.vectors, strict=True))
             )
+            # Counted again rather than worked out: other jobs embed chunks shared with this one.
+            left = await vectors.count_missing(space.id, command.manifest_id)
         except RetiredEmbeddingSpaceError:
             return _done()
         return EmbeddedBatchOut(
             embedded=stored,
             input_tokens=embedded.input_tokens,
+            left=left,
             finished=len(keys) < runs.batch_size or stored == 0,
         )
 

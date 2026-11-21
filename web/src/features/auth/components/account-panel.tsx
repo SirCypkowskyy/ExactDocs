@@ -19,7 +19,7 @@ export function AccountPanel({
       <h1
         ref={heading}
         tabIndex={-1}
-        className="font-serif text-3xl font-semibold tracking-tight outline-none"
+        className="text-3xl font-semibold tracking-tight outline-none"
       >
         Account
       </h1>

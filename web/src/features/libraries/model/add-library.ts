@@ -219,6 +219,7 @@ const SKIP_REASONS: Partial<Record<ProblemCode, string>> = {
   not_a_file: "Not regular files (symlinks)",
   unreadable: "Couldn't be read",
   bad_file_name: "File names that aren't valid UTF-8",
+  unparsable: "Couldn't be parsed or split into chunks",
 };
 
 const skipReason = (code: string) => SKIP_REASONS[code as ProblemCode];

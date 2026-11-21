@@ -1,25 +1,31 @@
-const widths = ["w-40", "w-56", "w-32", "w-48", "w-36"];
+import { Page, PageHeader } from "@/shared/ui/page";
+import { Skeleton } from "@/shared/ui/skeleton";
 
-/** Shape of the list while it loads, so the page does not jump when the rows arrive. */
+const rows = ["a", "b", "c", "d", "e"];
+
+/** The list's final layout with grey bars where the values will be, so nothing jumps when they land. */
 export function LibrariesSkeleton() {
   return (
-    <main className="pending-in mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10" aria-busy="true">
-      <h1 className="font-serif text-3xl font-semibold tracking-tight">Libraries</h1>
+    <Page className="pending-in" aria-busy="true">
+      <PageHeader title="Libraries" description={<Skeleton className="h-5 w-24" />} />
       <p role="status" className="sr-only">
         Loading libraries
       </p>
-      <ul aria-hidden="true" className="mt-12 divide-y divide-border motion-safe:animate-pulse">
-        {widths.map((w) => (
-          <li
-            key={w}
-            className="flex flex-col gap-3 py-5 md:min-h-[69px] md:flex-row md:items-center md:gap-6"
-          >
-            <span className={`h-4 rounded bg-muted-foreground/10 ${w}`} />
-            <span className="h-6 w-64 max-w-full rounded bg-muted-foreground/10" />
-            <span className="h-4 w-20 rounded bg-muted-foreground/10 md:ml-auto" />
+      <ul aria-hidden="true" className="divide-y divide-rule">
+        {rows.map((key) => (
+          <li key={key} className="flex items-start gap-3 py-4 md:min-h-[76px]">
+            <Skeleton className="size-9 rounded-full" />
+            <div className="flex min-w-0 flex-1 flex-col gap-2 md:flex-row md:gap-6">
+              <div className="flex flex-col gap-1.5 md:w-1/3">
+                <Skeleton className="h-5 w-40" />
+                <Skeleton className="h-4 w-28" />
+              </div>
+              <Skeleton className="h-6 w-48" />
+              <Skeleton className="h-4 w-20 md:ml-auto" />
+            </div>
           </li>
         ))}
       </ul>
-    </main>
+    </Page>
   );
 }

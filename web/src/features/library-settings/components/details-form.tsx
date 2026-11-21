@@ -112,7 +112,7 @@ export function DetailsForm({ owner, repo, library, activity, onStart }: Props) 
         >
           <div className="overflow-hidden" inert={unchanged}>
             <p className="flex items-start gap-2 text-sm text-muted-foreground">
-              <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
+              <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
               <span>
                 Edited fields are kept when the library is re-imported. Fields you leave alone keep
                 following the repository's README.
@@ -132,7 +132,7 @@ export function DetailsForm({ owner, repo, library, activity, onStart }: Props) 
           <p role="status" className="min-h-5 text-sm">
             {saved && unchanged && activity.by === "details" && (
               <span className="fade-in inline-flex items-center gap-1.5">
-                <Check aria-hidden="true" className="size-4 text-mark" />
+                <Check aria-hidden="true" className="size-4 text-route" />
                 Saved.
               </span>
             )}

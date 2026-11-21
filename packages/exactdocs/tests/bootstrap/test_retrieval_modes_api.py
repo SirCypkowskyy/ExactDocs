@@ -102,6 +102,8 @@ async def test_a_library_without_a_setting_uses_the_best_mode(plain: httpx.Async
         "ai_enabled": True,
         "llm": None,
         "judge": None,
+        "llm_thinking": None,
+        "judge_thinking": None,
         "reranker": None,
         "rerank_top_n": None,
         "effective_rerank_top_n": 32,

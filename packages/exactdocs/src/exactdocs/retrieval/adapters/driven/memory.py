@@ -63,6 +63,7 @@ from exactdocs.retrieval.models import (
     SpendWindow,
     StoredChunk,
     TagFilter,
+    ThinkingLevel,
     VectorCoverage,
     VectorHit,
     VersionCounts,
@@ -529,6 +530,34 @@ class StaticModelRoles:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryRoleThinkingLevels:
+    """Implements ``ports.driven.RoleThinkingLevels`` in a dict."""
+
+    stored: dict[ModelRole, ThinkingLevel] = field(default_factory=dict)
+    """Level by role."""
+
+    async def levels(self) -> dict[ModelRole, ThinkingLevel]:
+        """Read every stored level.
+
+        Returns:
+            A copy of them.
+        """
+        return dict(self.stored)
+
+    async def save(self, role: ModelRole, level: ThinkingLevel | None) -> None:
+        """Store a role's level, or clear it.
+
+        Args:
+            role: The role.
+            level: The level, or ``None``.
+        """
+        if level is None:
+            self.stored.pop(role, None)
+        else:
+            self.stored[role] = level
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryLibraryModes:
     """Implements ``ports.driven.LibraryModes`` in dicts keyed by the case-folded library ID."""
 
@@ -860,6 +889,21 @@ class InMemoryVectorIndex:
         stored = self._stored(space_id)
         keys = {(*r.chunk_set, r.position) for r in self.chunks.rows.get(manifest_id, {}).values()}
         return sorted(k for k in keys if k not in stored)[:limit]
+
+    async def count_missing(self, space_id: EmbeddingSpaceId, manifest_id: str) -> int:
+        """Count the manifest's chunks without a vector, each once.
+
+        Args:
+            space_id: The space.
+            manifest_id: The manifest.
+
+        Returns:
+            The count.
+        """
+        self._live(space_id)
+        stored = self._stored(space_id)
+        rows = self.chunks.rows.get(manifest_id, {}).values()
+        return len({(*r.chunk_set, r.position) for r in rows} - stored.keys())
 
     async def pending(
         self, space_id: EmbeddingSpaceId | None, manifest_ids: Collection[str]
