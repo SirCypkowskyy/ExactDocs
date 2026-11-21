@@ -588,6 +588,61 @@ def test_wait_that_ends_in_a_failed_job_exits_6(server: Recorder) -> None:
     assert _exit(["add", "https://x.io/a/b", "--wait"]) == EXIT_IMPORT
 
 
+def _cancelled(state: str, **extra: object) -> httpx2.Response:
+    job = {"id": "j7", "kind": "embed", "library": "/a/b", "version": "v1", "state": state}
+    return httpx2.Response(200, json=job | extra)
+
+
+def test_jobs_cancel_posts_to_the_job_and_says_a_queued_job_was_cancelled(
+    server: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    server.routes = {("POST", "/api/v1/jobs/j7/cancel"): [_cancelled("cancelled")]}
+
+    assert _exit(["jobs", "cancel", "j7"]) == 0
+
+    assert server.calls == ["POST /api/v1/jobs/j7/cancel"]
+    assert "Cancelled the embed job j7 of /a/b v1." in capsys.readouterr().out
+
+
+def test_jobs_cancel_says_a_running_job_stops_after_its_step(
+    server: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    server.routes = {("POST", "/api/v1/jobs/j7/cancel"): [_cancelled("running")]}
+
+    assert _exit(["jobs", "cancel", "j7"]) == 0
+
+    assert "stops after the step it is running" in capsys.readouterr().out
+
+
+def test_jobs_cancel_json_prints_the_job_as_the_server_sent_it(
+    server: Recorder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    server.routes = {
+        ("POST", "/api/v1/jobs/j7/cancel"): [_cancelled("cancelled", cancelled_by="alice")]
+    }
+
+    assert _exit(["jobs", "cancel", "j7", "--json"]) == 0
+
+    assert json.loads(capsys.readouterr().out)["cancelled_by"] == "alice"
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "exit_status"),
+    [
+        (403, "forbidden", EXIT_AUTH),
+        (404, "not_found", EXIT_NOT_FOUND),
+        (409, "job_finished", EXIT_CONFLICT),
+    ],
+)
+def test_jobs_cancel_refused_exits_with_the_kind_of_failure(
+    server: Recorder, status: int, code: str, exit_status: int
+) -> None:
+    refusal = httpx2.Response(status, json={"error": code, "detail": "no"})
+    server.routes = {("POST", "/api/v1/jobs/j7/cancel"): [refusal]}
+
+    assert _exit(["jobs", "cancel", "j7"]) == exit_status
+
+
 def test_a_4xx_while_polling_says_the_job_may_still_run(
     server: Recorder, capsys: pytest.CaptureFixture[str]
 ) -> None:

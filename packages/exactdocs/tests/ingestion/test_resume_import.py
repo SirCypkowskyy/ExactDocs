@@ -15,7 +15,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
     InMemoryCredentialVault,
     InMemoryJobRepository,
 )
-from exactdocs.ingestion.constants import IMPORT_JOB
+from exactdocs.ingestion.constants import IMPORT_JOB, REFRESH_JOB
 from exactdocs.ingestion.models import (
     ArticleChunk,
     ArticleTags,
@@ -26,6 +26,7 @@ from exactdocs.ingestion.models import (
     ImportSource,
     Job,
     JobId,
+    JobKind,
     JobState,
     ParsedArticle,
     PathSelection,
@@ -306,8 +307,9 @@ class CancelAfterFirstBatch:
         await self.inner.parsing(parsed=parsed, taken=taken)
 
 
+@pytest.mark.parametrize("kind", [IMPORT_JOB, REFRESH_JOB])  # a sync's re-import is a refresh
 async def test_a_cancelled_import_stops_between_batches_and_publishes_nothing(
-    tmp_path: Path,
+    tmp_path: Path, kind: JobKind
 ) -> None:
     jobs = InMemoryJobRepository()
     catalog = Catalog()
@@ -321,7 +323,7 @@ async def test_a_cancelled_import_stops_between_batches_and_publishes_nothing(
 
     queued = Job.queued(
         job_id=JobId("j1"),
-        kind=IMPORT_JOB,
+        kind=kind,
         library="/a/b",
         version="main",
         commit_sha=SHA,

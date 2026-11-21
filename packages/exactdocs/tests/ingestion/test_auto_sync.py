@@ -48,7 +48,7 @@ from exactdocs_kernel import NotFoundError
 
 LIBRARY = "/acme/docs"
 SHA = {name: f"{i:x}" * 40 for i, name in enumerate(["v1.2.0", "v1.3.0", "v1.4.0", "v1.5.0"], 1)}
-OLD, NEW = "a" * 40, "b" * 40
+OLD, NEW, NEWER = "a" * 40, "b" * 40, "e" * 40
 URL = RepositoryUrl(
     url="https://example.com/acme/docs",
     host_kind=RepositoryHost.GIT,
@@ -679,3 +679,81 @@ async def test_a_tag_that_moved_is_tried_at_once_whatever_failed_before(
     remote.tags["v1.4.0"] = NEW
 
     assert await _queues_v140(module, jobs)
+
+
+# ---------------------------------------------------- a cancelled job is not queued again (#432)
+
+
+async def _cancel(
+    module: IngestionModule,
+    jobs: InMemoryJobRepository,
+    clock: HandClock,
+    command: EnqueueJobCommand,
+) -> None:
+    """Queue ``command``'s job and cancel it as a person would."""
+    queued = await module.enqueue_job(command)
+    cancelled = await jobs.cancel(JobId(queued.id), by="alice", now=clock.now())
+    assert cancelled is not None
+    assert cancelled.state is JobState.CANCELLED
+
+
+async def test_a_tag_import_a_person_cancelled_is_not_queued_again_until_the_tag_moves(
+    module: IngestionModule, remote: Remote, jobs: InMemoryJobRepository, clock: HandClock
+) -> None:
+    await _cancel(
+        module,
+        jobs,
+        clock,
+        EnqueueJobCommand(
+            kind=IMPORT_JOB,
+            library=LIBRARY,
+            version="v1.4.0",
+            commit_sha=SHA["v1.4.0"],
+            ref_kind=RefKind.TAG,
+            origin=VersionOrigin.AUTO,
+        ),
+    )
+
+    assert not await _queues_v140(module, jobs)
+    assert not await _queues_v140(module, jobs)  # the next check neither
+
+    remote.tags["v1.4.0"] = NEW
+
+    assert await _queues_v140(module, jobs)
+
+
+async def test_a_branch_sync_a_person_cancelled_is_not_queued_again_by_the_schedule(
+    module: IngestionModule,
+    remote: Remote,
+    catalog: Catalog,
+    jobs: InMemoryJobRepository,
+    clock: HandClock,
+) -> None:
+    catalog.versions.append(ImportedRef(ref="main", kind=RefKind.BRANCH, commit_sha=OLD))
+    remote.heads["main"] = NEW
+    await _cancel(
+        module,
+        jobs,
+        clock,
+        EnqueueJobCommand(
+            kind=REFRESH_JOB,
+            library=LIBRARY,
+            version="main",
+            commit_sha=NEW,
+            ref_kind=RefKind.BRANCH,
+        ),
+    )
+    await module.set_auto_sync(schedule(tag_pattern=None, sync_branches=True))
+
+    held = await module.run_scheduled_checks()
+
+    assert not held.imports
+    assert [j.state for j in jobs.jobs.values()] == [JobState.CANCELLED]  # nothing else queued
+
+    clock.advance(minutes=60)
+    remote.heads["main"] = NEWER  # a new commit: the branch is synced again
+
+    await module.run_scheduled_checks()
+
+    queued = [j for j in jobs.jobs.values() if j.state is JobState.QUEUED]
+    assert [(j.version, j.commit_sha) for j in queued] == [("main", NEWER)]
