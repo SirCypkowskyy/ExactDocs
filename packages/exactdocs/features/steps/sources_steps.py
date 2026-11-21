@@ -148,17 +148,14 @@ def step_removed(context: Context, library: str) -> None:
 @given('the sources file also declares the title "{title}" and the description "{description}"')
 def step_declares_texts(context: Context, title: str, description: str) -> None:
     with context.sources_file.open("a", encoding="utf-8") as file:
-        file.write(f"    title: '{title}'
-    description: '{description}'
-")
+        file.write(f"    title: '{title}'\n    description: '{description}'\n")
 
 
 @when('the sources file declares the title "{title}"')
 def step_declares_title(context: Context, title: str) -> None:
     lines = context.sources_file.read_text(encoding="utf-8").splitlines(keepends=True)
     kept = [line for line in lines if not line.startswith("    title:")]
-    context.sources_file.write_text("".join(kept) + f"    title: '{title}'
-", encoding="utf-8")
+    context.sources_file.write_text("".join(kept) + f"    title: '{title}'\n", encoding="utf-8")
 
 
 @then('the output shows the title changing to "{title}"')
