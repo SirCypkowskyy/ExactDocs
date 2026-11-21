@@ -2628,6 +2628,10 @@ class ImportSource:
     """Tags given to articles by path."""
     chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
     """How articles are cut into chunks."""
+    title: str = ""
+    """The library's title as stored (a sources file compares its declared title with it)."""
+    description: str = ""
+    """The library's description as stored."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -3393,6 +3397,11 @@ class DeclaredLibrary:
     """The tag rules; ``None``: not managed."""
     chunking: ChunkingConfig | None = None
     """The chunking; ``None``: not managed."""
+    title: str | None = None
+    """The library's title, kept like an edit by hand; ``None``: not managed."""
+    description: str | None = None
+    """The library's description, kept like an edit by hand; ``None``: not managed. Empty is a
+    declared "no description"."""
     manages_auto_sync: bool = False
     """Whether the scheduled check is managed."""
     auto_sync: AutoSync | None = None
@@ -3427,6 +3436,13 @@ class SourcesField(StrEnum):
     EXCLUDE_PATHS = "exclude_paths"
     TAG_RULES = "tag_rules"
     CHUNKING = "chunking"
+    TITLE = "title"
+    DESCRIPTION = "description"
+
+    @property
+    def is_text(self) -> bool:
+        """Whether this is the library's text, stored apart from its import settings."""
+        return self in {SourcesField.TITLE, SourcesField.DESCRIPTION}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -3470,6 +3486,16 @@ class LibraryUpdate:
         """The tag rules to store: the declared ones, else the stored ones."""
         declared = self.declared.tag_rules
         return self.current.source.tag_rules if declared is None else declared
+
+    @property
+    def settings_changed(self) -> bool:
+        """Whether an import setting (paths, tag rules, chunking) differs."""
+        return any(not name.is_text for name in self.changed)
+
+    @property
+    def text_changed(self) -> bool:
+        """Whether the title or the description differs."""
+        return any(name.is_text for name in self.changed)
 
     @property
     def writes(self) -> bool:
@@ -3589,6 +3615,10 @@ def _changed_fields(declared: DeclaredLibrary, source: ImportSource) -> tuple[So
     ]
     if declared.chunking is not None and declared.chunking != source.chunking:
         changed.append(SourcesField.CHUNKING)
+    if declared.title is not None and declared.title != source.title:
+        changed.append(SourcesField.TITLE)
+    if declared.description is not None and declared.description != source.description:
+        changed.append(SourcesField.DESCRIPTION)
     return tuple(changed)
 
 

@@ -84,6 +84,7 @@ from exactdocs.bootstrap.database import (
 from exactdocs.bootstrap.embedding import SaveProviderThenEmbed, requeue_daily
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
 from exactdocs.bootstrap.library_filters import ListLibrariesByAi
+from exactdocs.bootstrap.library_texts import CatalogLibraryTexts
 from exactdocs.bootstrap.local_models import LocalModels
 from exactdocs.bootstrap.open_access import OpenAccess
 from exactdocs.bootstrap.repo_guidance import SetRetrievalThenReprocess
@@ -1182,6 +1183,7 @@ class Container:
             tag_locks=tag_locks,
             settings_locks=_library_locks(engine, "settings"),
             settings=CatalogLibrarySettings(set_library_settings=read.catalog.set_library_settings),
+            texts=CatalogLibraryTexts(update_library=read.catalog.update_library),
             runner=DbosJobQueue(),
             auto_syncs=SqliteAutoSyncStore(engine=engine),
             schedule_switch=DbosScheduleSwitch(SCHEDULE),

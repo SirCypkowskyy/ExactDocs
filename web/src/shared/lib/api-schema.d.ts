@@ -3730,6 +3730,10 @@ export interface components {
             readonly tag_rules: components["schemas"]["TagRulesChange"] | null;
             /** @description The chunking, when it changes. */
             readonly chunking: components["schemas"]["ChunkingChange"] | null;
+            /** @description The title, when it changes. */
+            readonly title: components["schemas"]["TextChange"] | null;
+            /** @description The description, when it changes. */
+            readonly description: components["schemas"]["TextChange"] | null;
             /**
              * Refs To Add
              * @description Declared refs that are neither versions nor being imported: each queues an import.
@@ -5058,6 +5062,18 @@ export interface components {
              *     off. Left out: not managed.
              */
             readonly auto_sync?: components["schemas"]["AutoSyncIn"] | false | null;
+            /**
+             * Title
+             * @description The library's title, on one line; stored like an edit by hand, so a later import keeps it.
+             *     Left out: not managed, and the repository's README names the library.
+             */
+            readonly title?: string | null;
+            /**
+             * Description
+             * @description The library's description (empty: none); stored like an edit by hand, so a later import
+             *     keeps it. Left out: not managed, and the repository's README describes the library.
+             */
+            readonly description?: string | null;
         };
         /**
          * SourcesFile
@@ -5404,6 +5420,22 @@ export interface components {
              * @description The path's manual tags, normalized; empty when it has none.
              */
             readonly tags: readonly string[];
+        };
+        /**
+         * TextChange
+         * @description A managed title or description as stored and as declared.
+         */
+        readonly TextChange: {
+            /**
+             * Before
+             * @description As stored.
+             */
+            readonly before: string;
+            /**
+             * After
+             * @description As declared, cleaned the way an edit by hand is.
+             */
+            readonly after: string;
         };
         /**
          * ThinkingLevel

@@ -16,6 +16,8 @@ libraries:
     tag_rules:
       - {pattern: "docs/api/**", tag: api}
     chunking: {split_level: 2}
+    title: Payments            # default: named after the repository's README
+    description: Payment APIs and the ledger.
     auto_sync: {tag_pattern: "v*", keep_last: 3}
   - url: https://gitlab.com/acme/ledger.git
     id: /acme/ledger-docs         # default: the ID derived from the URL, as when adding a library
@@ -43,12 +45,19 @@ or an API token; anyone else gets 403 (CLI exit code 5).
   characters, or 64 in a SHA-256 repository, in any letter case. A short SHA is refused because
   the version would be named after the full SHA and every plan would show it again. `id` defaults to the ID derived
   from the URL; one ID may appear once.
-- `include_paths`, `exclude_paths`, `tag_rules`, `chunking` and `auto_sync` are optional. **What
+- `include_paths`, `exclude_paths`, `tag_rules`, `chunking`, `title`, `description` and `auto_sync`
+  are optional. **What
   an entry leaves out is not managed**: plan never reports it and apply never changes it, so a
   library can be tuned in the UI for the settings the file does not declare. Path lists and tag
   rules are compared as sets after the server's normalization: reordering them or spelling a tag
   in other letter case is no change. A declared empty `include_paths` means every file: the
   repository's `context7.json` does not fill it in.
+- `title` (one line, at most 120 characters) and `description` (at most 500; empty means none)
+  name a library that the repository README would name wrongly, for example six libraries from
+  one repository limited by `include_paths`. A declared value is stored like an edit by hand
+  (`PATCH /libraries/{owner}/{repo}`, with the same cleaning), so a later import keeps it; plan
+  shows a changed one as an update of the library, and it queues no job. Left out, the README
+  (or `context7.json`) still names and describes the library.
 - Supported formats: Markdown (`.md`, `.mdx`) and reStructuredText (`.rst`, the Sphinx source of
   `doc/build/` or `docs/`). A `.txt` file is read as reStructuredText, but only when an
   `include_paths` entry names `.txt` (`doc/**/*.txt`), so a folder never brings in
@@ -112,5 +121,5 @@ CLI's `sources plan` and `sources apply` wait 15 s plus 15 s per declared librar
 `sources plan` to see what is left, or `sources apply` again.
 
 Out of scope for now: a drift check between plan and apply, a lock against two concurrent applies,
-waiting for the queued jobs, library titles, descriptions, the pinned default version, retrieval
+waiting for the queued jobs, the pinned default version, retrieval
 settings, manual tags and webhooks.

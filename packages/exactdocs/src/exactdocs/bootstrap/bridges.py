@@ -586,6 +586,8 @@ class CatalogLibrarySources:
                 max_chars=chunking.max_chars,
                 chunker=chunking.chunker,
             ),
+            title=detail.title,
+            description=detail.description,
         )
 
     async def imported_versions(self, library: str) -> list[ImportedRef]:

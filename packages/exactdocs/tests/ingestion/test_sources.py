@@ -73,12 +73,16 @@ def _source(
     exclude: Sequence[str] = (),
     rules: Sequence[tuple[str, str]] = (),
     chunking: ChunkingConfig | None = None,
+    title: str = "",
+    description: str = "",
 ) -> ImportSource:
     return ImportSource(
         url=RepositoryUrl.parse(url),
         selection=PathSelection.of(include, exclude),
         tag_rules=TagRule.many(list(rules)),
         chunking=chunking or ChunkingConfig(),
+        title=title,
+        description=description,
     )
 
 
@@ -111,6 +115,8 @@ def _declared(
     exclude: tuple[str, ...] | None = None,
     tag_rules: tuple[TagRule, ...] | None = None,
     chunking: ChunkingConfig | None = None,
+    title: str | None = None,
+    description: str | None = None,
     manages_auto_sync: bool = False,
     auto_sync: AutoSync | None = None,
 ) -> DeclaredLibrary:
@@ -122,6 +128,8 @@ def _declared(
         exclude=exclude,
         tag_rules=tag_rules,
         chunking=chunking,
+        title=title,
+        description=description,
         manages_auto_sync=manages_auto_sync,
         auto_sync=auto_sync,
     )
@@ -180,6 +188,33 @@ def test_each_managed_setting_that_differs_is_an_update_with_its_job(
     (update,) = plan_sources([_declared(**declared)], [current]).update
 
     assert (update.changed, update.reprocess, update.writes) == ((field,), change, True)
+
+
+def test_a_title_or_description_that_differs_is_an_update_without_a_job() -> None:
+    current = _current(source=_source(title="Azure", description="README text"))
+
+    (update,) = plan_sources(
+        [_declared(title="Azure Functions", description="Functions docs.")], [current]
+    ).update
+
+    assert update.changed == (SourcesField.TITLE, SourcesField.DESCRIPTION)
+    assert (update.reprocess, update.writes) == (None, True)
+
+
+def test_a_title_and_description_equal_to_the_stored_ones_are_unchanged() -> None:
+    current = _current(source=_source(title="Azure Functions", description="Docs."))
+
+    plan = plan_sources([_declared(title="Azure Functions", description="Docs.")], [current])
+
+    assert plan.unchanged == (LIBRARY,)
+
+
+def test_a_declared_empty_description_is_compared_not_ignored() -> None:
+    current = _current(source=_source(description="from the README"))
+
+    (update,) = plan_sources([_declared(description="")], [current]).update
+
+    assert update.changed == (SourcesField.DESCRIPTION,)
 
 
 def test_paths_and_chunking_together_queue_the_widest_job() -> None:
@@ -425,6 +460,41 @@ def test_the_committed_json_schema_is_the_models() -> None:
     assert committed == sources_json_schema(), "run `just sources-schema`"
 
 
+@pytest.mark.parametrize(
+    ("entry", "ok"),
+    [
+        ({"title": "T" * 120}, True),
+        ({"title": "T" * 121}, False),
+        ({"title": ""}, False),
+        ({"title": "  \u200b "}, False),
+        ({"title": "two\nlines"}, False),
+        ({"description": "D" * 500}, True),
+        ({"description": "D" * 501}, False),
+        ({"description": ""}, True),
+    ],
+)
+def test_title_and_description_limits(entry: dict, ok: bool) -> None:
+    if ok:
+        SourcesFile.model_validate(_file(**entry))
+    else:
+        with pytest.raises(ValidationError):
+            SourcesFile.model_validate(_file(**entry))
+
+
+def test_title_and_description_are_cleaned_like_an_edit_by_hand() -> None:
+    entry = SourcesFile.model_validate(
+        _file(title="  Azure\u200b   Functions ", description="  Docs.\u200b\n ")
+    ).libraries[0]
+
+    assert (entry.title, entry.description) == ("Azure Functions", "Docs.")
+
+
+def test_title_and_description_left_out_are_not_managed() -> None:
+    entry = SourcesFile.model_validate(_file()).libraries[0]
+
+    assert (entry.title, entry.description) == (None, None)
+
+
 # --- plan and apply over doubles ------------------------------------------------------------
 
 
@@ -437,6 +507,16 @@ class _World:
     schedules: InMemoryAutoSyncStore = field(default_factory=InMemoryAutoSyncStore)
     writes: list[str] = field(default_factory=list)
     unknown_refs: set[str] = field(default_factory=set)
+
+    async def save(self, library: str, *, title: str | None, description: str | None) -> None:
+        """The ``LibraryTexts`` port: store like an edit by hand."""
+        self.writes.append(f"texts {library}")
+        stored = self.sources.sources[library]
+        self.sources.sources[library] = replace(
+            stored,
+            title=stored.title if title is None else title,
+            description=stored.description if description is None else description,
+        )
 
     async def all(self) -> list[KnownLibrary]:
         return [
@@ -592,6 +672,7 @@ def _apply(world: _World) -> ApplySourcesUseCase:
         disable_auto_sync=_DisableAutoSync(world),
         remove_version=_RemoveVersion(world),
         remove_library=_RemoveLibrary(world),
+        texts=world,
     )
 
 
@@ -742,3 +823,42 @@ async def test_a_setting_the_server_cannot_store_names_the_entry() -> None:
 
     with pytest.raises(InvalidSourcesError, match=r"libraries\[0\] \(/acme/docs\)"):
         await PlanSourcesUseCase(reader=world.reader())(PlanSourcesCommand(sources=file))
+
+
+async def test_apply_stores_a_declared_title_and_description_of_a_new_library() -> None:
+    world = _World()
+    file = SourcesFile.model_validate(_file(title="Azure Functions", description="Docs."))
+
+    first = await _apply(world)(ApplySourcesCommand(sources=file))
+    second = await _apply(world)(ApplySourcesCommand(sources=file))
+
+    stored = world.sources.sources[LIBRARY]
+    assert (stored.title, stored.description) == ("Azure Functions", "Docs.")
+    assert world.writes == [f"add_library {LIBRARY}", f"texts {LIBRARY}"]
+    assert [r.action for r in first.results] == ["created"]
+    assert [r.action for r in second.results] == ["unchanged"]
+
+
+async def test_apply_changes_only_the_title_and_leaves_an_undeclared_description() -> None:
+    world = _World()
+    world.sources.sources[LIBRARY] = _source(title="README title", description="README text")
+    world.sources.versions[LIBRARY] = [_version("main")]
+    file = SourcesFile.model_validate(_file(title="Azure Functions"))
+
+    applied = await _apply(world)(ApplySourcesCommand(sources=file))
+
+    stored = world.sources.sources[LIBRARY]
+    assert (stored.title, stored.description) == ("Azure Functions", "README text")
+    assert world.writes == [f"texts {LIBRARY}"]  # no settings update, so no re-processing job
+    assert [(r.action, r.jobs) for r in applied.results] == [("updated", [])]
+
+
+async def test_a_file_without_title_and_description_never_touches_them() -> None:
+    world = _World()
+    world.sources.sources[LIBRARY] = _source(title="Edited", description="By hand")
+    world.sources.versions[LIBRARY] = [_version("main")]
+
+    applied = await _apply(world)(ApplySourcesCommand(sources=SourcesFile.model_validate(_file())))
+
+    assert world.writes == []
+    assert [r.action for r in applied.results] == ["unchanged"]
