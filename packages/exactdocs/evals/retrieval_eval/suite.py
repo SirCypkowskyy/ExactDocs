@@ -93,6 +93,7 @@ class EvalMode:
 
 MODES: Final[tuple[EvalMode, ...]] = (
     EvalMode(mode=RetrievalMode.BM25, tier=Tier.EVERY_PR),
+    EvalMode(mode=RetrievalMode.VECTOR, tier=Tier.LOCAL),
     EvalMode(mode=RetrievalMode.HYBRID, tier=Tier.LOCAL),
     EvalMode(mode=RetrievalMode.HYBRID_HYDE, tier=Tier.PROVIDER),
     EvalMode(mode=RetrievalMode.AGENTIC, tier=Tier.PROVIDER),
