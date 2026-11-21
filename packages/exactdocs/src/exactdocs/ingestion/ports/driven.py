@@ -28,6 +28,7 @@ from exactdocs.ingestion.models import (
     IncludeRefused,
     InstructionPolicy,
     Job,
+    JobFilter,
     JobId,
     KnownLibrary,
     NewLibrary,
@@ -46,6 +47,7 @@ from exactdocs.ingestion.models import (
     Webhook,
     WebhookDelivery,
 )
+from exactdocs_kernel import Sort, SortValue
 
 
 class JobRepository(Protocol):
@@ -154,6 +156,49 @@ class JobRepository(Protocol):
 
         Returns:
             Up to ``limit`` jobs, with their problems, highest ID first.
+        """
+        ...
+
+    async def search(
+        self,
+        job_filter: JobFilter,
+        *,
+        sort: Sort,
+        after: tuple[SortValue, str] | None,
+        limit: int,
+    ) -> Sequence[Job]:
+        """Return up to ``limit`` of the jobs that pass the filter, in ``sort`` order.
+
+        A keyset page: ``(sort value, job ID)`` after ``after``, in the sort's direction; the ID
+        breaks ties. ``sort.field`` is ``id``, ``created_at``, ``state``, ``kind`` or ``library``.
+
+        Args:
+            job_filter: Which jobs.
+            sort: The order.
+            after: The sort value and ID of the last job of the previous page; ``None`` starts.
+            limit: At most this many jobs.
+
+        Returns:
+            The jobs in order, with their problems.
+        """
+        ...
+
+    async def count(self, job_filter: JobFilter) -> int:
+        """Count the jobs that pass the filter.
+
+        Args:
+            job_filter: Which jobs.
+
+        Returns:
+            How many there are.
+        """
+        ...
+
+    async def libraries(self) -> Sequence[str]:
+        """Return every library that has a job, as spelled in the jobs.
+
+        Returns:
+            The distinct library IDs, in no particular order.
         """
         ...
 

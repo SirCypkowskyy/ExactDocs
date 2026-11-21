@@ -83,6 +83,7 @@ from exactdocs.bootstrap.database import (
 )
 from exactdocs.bootstrap.embedding import SaveProviderThenEmbed, requeue_daily
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
+from exactdocs.bootstrap.library_filters import ListLibrariesByAi
 from exactdocs.bootstrap.local_models import LocalModels
 from exactdocs.bootstrap.open_access import OpenAccess
 from exactdocs.bootstrap.repo_guidance import SetRetrievalThenReprocess
@@ -102,6 +103,7 @@ from exactdocs.bootstrap.workdirs import held, new_work_root, sweep_abandoned_wo
 from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driven.sqlite import (
     SqliteArticleTitles,
+    SqliteEntrySearch,
     SqliteImportedTags,
     SqliteInstructionFiles,
     SqliteLibraryRepository,
@@ -109,6 +111,7 @@ from exactdocs.catalog.adapters.driven.sqlite import (
     SqliteManifestRepository,
     SqliteStoredArticles,
 )
+from exactdocs.catalog.ports.driving import ListLibraries
 from exactdocs.identity import IdentityModule
 from exactdocs.identity.adapters.driven.argon2id import Argon2idPasswordHasher
 from exactdocs.identity.adapters.driven.memory import InMemoryFailedSignInLog
@@ -639,6 +642,7 @@ def _build_read_side(
     local = LocalModels(models_dir=settings.effective_models_dir)
     ai = _ai_configuration(settings, local, model_factory)
     access = access or OpenAccess()
+    library_modes = SqliteLibraryModes(engine=engine)
     catalog = CatalogModule.build(
         repository=SqliteLibraryRepository(engine=engine),
         manifests=SqliteManifestRepository(engine=engine),
@@ -648,6 +652,7 @@ def _build_read_side(
         article_titles=SqliteArticleTitles(engine=engine),
         instruction_files=SqliteInstructionFiles(engine=engine),
         access=access,
+        entry_search=SqliteEntrySearch(engine=engine),
     )
     choice = None
     search: SqliteSearchIndex | PostgresSearchChoice = SqliteSearchIndex(engine=engine)
@@ -683,7 +688,7 @@ def _build_read_side(
         search=search,
         maintenance=search,
         renames=CatalogRenamedPaths(resolve_renamed_path=catalog.resolve_renamed_path),
-        library_modes=SqliteLibraryModes(engine=engine),
+        library_modes=library_modes,
         roles=model_roles,
         configured_profiles=ai.profiles,
         stored_profiles=SqliteProviderProfiles(engine=engine),
@@ -990,6 +995,8 @@ class Container:
     """The retrieval domain, wired."""
     job_worker: DbosJobWorker
     """Runs the queued jobs (imports, syncs, embeddings) in ``running(jobs=True)``."""
+    list_libraries: ListLibraries
+    """Catalog's ``list_libraries`` with the ``ai_enabled`` filter resolved from retrieval."""
     save_provider: SaveProvider
     """Retrieval's ``save_provider``, then the embedding queued when the embedding role's profile
     changed (REST ``/ai/providers``)."""
@@ -1205,6 +1212,10 @@ class Container:
             identity=identity.module,
             ingestion=ingestion,
             retrieval=read.retrieval,
+            list_libraries=ListLibrariesByAi(
+                list_libraries=read.catalog.list_libraries,
+                settings=SqliteLibraryModes(engine=engine),
+            ),
             save_provider=SaveProviderThenEmbed(
                 save_provider=read.retrieval.save_provider,
                 queue_embedding=ingestion.queue_embedding,

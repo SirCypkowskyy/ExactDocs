@@ -24,10 +24,12 @@ from exactdocs.ingestion.dtos import (
     GetJobQuery,
     GetLibraryAccessQuery,
     JobList,
+    JobListQuery,
     JobSummary,
     LatestJobs,
     LibraryAccess,
     LibrarySettingsIn,
+    ListJobsQuery,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
     ManualTagsIn,
@@ -69,6 +71,7 @@ from exactdocs.ingestion.ports.driving import (
     GetJob,
     GetLibraryAccess,
     GetWebhook,
+    ListJobs,
     ListLatestJobs,
     ListLibraryJobs,
     ListRepositoryRefs,
@@ -84,7 +87,7 @@ from exactdocs.ingestion.ports.driving import (
     TagArticle,
     UpdateLibrarySettings,
 )
-from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, MAX_PATH
+from exactdocs_kernel import MAX_PATH
 
 
 async def _session_for(
@@ -106,6 +109,7 @@ def build_router(
     get_job: GetJob,
     get_library_access: GetLibraryAccess,
     list_latest_jobs: ListLatestJobs,
+    list_jobs: ListJobs,
     list_library_jobs: ListLibraryJobs,
     check_repository: CheckRepository,
     list_repository_refs: ListRepositoryRefs,
@@ -135,6 +139,7 @@ def build_router(
         get_job: Reads one job.
         get_library_access: Says whether a library has a stored credential.
         list_latest_jobs: Lists the newest job of every (library, version).
+        list_jobs: Lists a page of the jobs of every readable library.
         list_library_jobs: Lists a page of a library's jobs.
         check_repository: Validates a git URL.
         list_repository_refs: Lists a repository's branches and tags.
@@ -443,7 +448,7 @@ def build_router(
         return synced
 
     router.include_router(
-        _read_router(get_job, list_latest_jobs, list_library_jobs, get_library_access)
+        _read_router(get_job, list_latest_jobs, list_jobs, list_library_jobs, get_library_access)
     )
     router.include_router(_cancel_router(cancel_job, caller_name))
 
@@ -490,6 +495,7 @@ def _cancel_router(
 def _read_router(
     get_job: GetJob,
     list_latest_jobs: ListLatestJobs,
+    list_jobs: ListJobs,
     list_library_jobs: ListLibraryJobs,
     get_library_access: GetLibraryAccess,
 ) -> APIRouter:
@@ -498,6 +504,7 @@ def _read_router(
     Args:
         get_job: Reads one job.
         list_latest_jobs: Lists the newest job of every (library, version).
+        list_jobs: Lists a page of the jobs of every readable library.
         list_library_jobs: Lists a page of a library's jobs.
         get_library_access: Says whether a library has a stored credential.
 
@@ -505,6 +512,22 @@ def _read_router(
         The router.
     """
     router = APIRouter(tags=["ingestion"])
+
+    @router.get("/jobs", name="list_jobs")
+    async def list_all(query: Annotated[ListJobsQuery, Query()]) -> JobList:
+        """List the jobs of every library the caller may read, newest first unless sorted.
+
+        Filter with `library`, `state`, `kind`, `version`, `q`, `created_after` and
+        `created_before`; `total` counts every match (never a job of a library hidden from the
+        caller).
+
+        Args:
+            query: The filters, the sort, the page size and the cursor of the previous page.
+
+        Returns:
+            The page, its next cursor and the total.
+        """
+        return await list_jobs(query)
 
     @router.get("/jobs/latest", name="list_latest_jobs")
     async def latest() -> LatestJobs:
@@ -542,24 +565,22 @@ def _read_router(
 
     @router.get("/libraries/{owner}/{repo}/jobs", name="list_library_jobs")
     async def list_for_library(
-        owner: str,
-        repo: str,
-        limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
-        cursor: str | None = None,
+        owner: str, repo: str, query: Annotated[JobListQuery, Query()]
     ) -> JobList:
-        """List the library's jobs, newest first, a page at a time.
+        """List the library's jobs, newest first unless sorted, a page at a time.
+
+        Filter with `state`, `kind`, `version`, `q`, `created_after` and `created_before`.
 
         Args:
             owner: The library ID's owner.
             repo: The library ID's repository name.
-            limit: How many jobs the page holds at most.
-            cursor: The `next_cursor` of the previous page; none for the first page.
+            query: The filters, the sort, the page size and the cursor of the previous page.
 
         Returns:
-            The page and the cursor of the next one.
+            The page, the cursor of the next one and the total.
         """
         return await list_library_jobs(
-            ListLibraryJobsQuery(library=f"/{owner}/{repo}", limit=limit, cursor=cursor)
+            ListLibraryJobsQuery(library=f"/{owner}/{repo}", **query.model_dump(exclude_unset=True))
         )
 
     return router
