@@ -356,6 +356,35 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/libraries/{owner}/{repo}/versions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List All Versions
+         * @description List a library's versions, sorted by ref unless told, a page at a time.
+         *
+         *     Filter with `q`, `kind`, `origin`, `imported_after` and `imported_before`; `total` counts
+         *     every match.
+         */
+        readonly get: operations["catalog-list_all_versions"];
+        readonly put?: never;
+        /**
+         * Add Another Version
+         * @description Import another version of the library with the library's own settings.
+         *
+         *     The import is queued: `Location` is its job. A ref the library already has is a 409.
+         */
+        readonly post: operations["ingestion-add_another_version"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries": {
         readonly parameters: {
             readonly query?: never;
@@ -365,7 +394,10 @@ export interface paths {
         };
         /**
          * List All
-         * @description List the libraries, sorted by ID, a page at a time.
+         * @description List the libraries the caller may read, a page at a time; sort by ID unless told.
+         *
+         *     Filter with `q`, `has_versions`, `ai_enabled`, `updated_after` and `updated_before`;
+         *     `total` counts every match (never a library hidden from the caller).
          */
         readonly get: operations["catalog-list_all"];
         readonly put?: never;
@@ -1096,28 +1128,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/v1/libraries/{owner}/{repo}/versions": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Add Another Version
-         * @description Import another version of the library with the library's own settings.
-         *
-         *     The import is queued: `Location` is its job. A ref the library already has is a 409.
-         */
-        readonly post: operations["ingestion-add_another_version"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/v1/libraries/{owner}/{repo}/versions/reimport": {
         readonly parameters: {
             readonly query?: never;
@@ -1175,6 +1185,30 @@ export interface paths {
          *     jobs recorded for it are named in the message.
          */
         readonly post: operations["ingestion-sync"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/jobs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List Jobs
+         * @description List the jobs of every library the caller may read, newest first unless sorted.
+         *
+         *     Filter with `library`, `state`, `kind`, `version`, `q`, `created_after` and
+         *     `created_before`; `total` counts every match (never a job of a library hidden from the
+         *     caller).
+         */
+        readonly get: operations["ingestion-list_jobs"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1250,7 +1284,9 @@ export interface paths {
         };
         /**
          * List Library Jobs
-         * @description List the library's jobs, newest first, a page at a time.
+         * @description List the library's jobs, newest first unless sorted, a page at a time.
+         *
+         *     Filter with `state`, `kind`, `version`, `q`, `created_after` and `created_before`.
          */
         readonly get: operations["ingestion-list_library_jobs"];
         readonly put?: never;
@@ -1748,7 +1784,7 @@ export interface components {
             readonly manifest_id: string;
             /**
              * Articles
-             * @description The articles of this page, sorted by path.
+             * @description The articles of this page, in the requested order (by path by default).
              */
             readonly articles: readonly components["schemas"]["ArticleSummary"][];
             /**
@@ -1756,6 +1792,11 @@ export interface components {
              * @description Pass as `cursor` to get the next page; null on the last page.
              */
             readonly next_cursor: string | null;
+            /**
+             * Total
+             * @description How many articles match the filters (`path_prefix`, `tags`, `q`), across every page.
+             */
+            readonly total: number;
         };
         /**
          * ArticleOutlineOut
@@ -2775,12 +2816,12 @@ export interface components {
         readonly HostKind: "github" | "gitlab" | "bitbucket" | "gitea" | "git";
         /**
          * JobList
-         * @description A page of the jobs of one library, newest first.
+         * @description A page of jobs, newest first unless sorted otherwise.
          */
         readonly JobList: {
             /**
              * Jobs
-             * @description The jobs, highest ID (newest) first.
+             * @description The jobs in the requested order (highest ID, so newest, first by default).
              */
             readonly jobs: readonly components["schemas"]["JobSummary"][];
             /**
@@ -2788,6 +2829,11 @@ export interface components {
              * @description Pass as `cursor` to get the next page; null on the last page.
              */
             readonly next_cursor: string | null;
+            /**
+             * Total
+             * @description How many jobs match the filters, across every page; never counts a hidden library.
+             */
+            readonly total: number;
         };
         /**
          * JobState
@@ -3228,6 +3274,11 @@ export interface components {
              * @description Pass as `cursor` to get the next page; null on the last page.
              */
             readonly next_cursor: string | null;
+            /**
+             * Total
+             * @description How many libraries match the filters and are visible to the caller, across every page.
+             */
+            readonly total: number;
         };
         /**
          * LibraryOutcome
@@ -4312,6 +4363,12 @@ export interface components {
              */
             readonly unsupported: string | null;
         };
+        /**
+         * RefKind
+         * @description What a version was imported from.
+         * @enum {string}
+         */
+        readonly "RefKind-Input": "tag" | "branch" | "commit";
         /**
          * RefOut
          * @description A tag or branch and the commit it points at.
@@ -5614,6 +5671,38 @@ export interface components {
              */
             readonly groups?: readonly string[];
         };
+        /**
+         * VersionList
+         * @description A page of a library's versions.
+         */
+        readonly VersionList: {
+            /**
+             * Library
+             * @description Library ID, `/owner/repo`.
+             */
+            readonly library: string;
+            /**
+             * Versions
+             * @description The versions of this page, in the requested order (by ref by default).
+             */
+            readonly versions: readonly components["schemas"]["VersionOut"][];
+            /**
+             * Next Cursor
+             * @description Pass as `cursor` to get the next page; null on the last page.
+             */
+            readonly next_cursor: string | null;
+            /**
+             * Total
+             * @description How many of the library's versions match the filters, across every page.
+             */
+            readonly total: number;
+        };
+        /**
+         * VersionOrigin
+         * @description Who asked for a version: a person, or the scheduled check (which may prune its own).
+         * @enum {string}
+         */
+        readonly "VersionOrigin-Input": "manual" | "auto";
         /**
          * VersionOut
          * @description One imported version: the ref, what kind of ref it is, and the commit it stands for.
@@ -7427,13 +7516,208 @@ export interface operations {
             };
         };
     };
+    readonly "catalog-list_all_versions": {
+        readonly parameters: {
+            readonly query?: {
+                /** @description Only versions whose ref or commit SHA contains this text (any case). */
+                readonly q?: string | null;
+                /** @description Only versions of one of these kinds; repeat for several. */
+                readonly kind?: readonly components["schemas"]["RefKind-Input"][] | null;
+                /** @description Only versions with one of these origins; repeat for several. */
+                readonly origin?: readonly components["schemas"]["VersionOrigin-Input"][] | null;
+                /** @description Only versions last imported at or after this time (ISO 8601; no offset means UTC). */
+                readonly imported_after?: string | null;
+                /** @description Only versions last imported before this time (ISO 8601; no offset means UTC). */
+                readonly imported_before?: string | null;
+                /** @description Sort by one of ref, kind, imported_at, origin; prefix `-` for descending. Default: `ref`. An unknown field is a 422. */
+                readonly sort?: string | null;
+                /** @description How many versions per page. */
+                readonly limit?: number;
+                /**
+                 * @description Opaque: only ever a `next_cursor`; it only works with the `sort` and filters of the
+                 *     request that returned it.
+                 */
+                readonly cursor?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VersionList"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-add_another_version": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AddVersionBody"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 202: {
+                headers: {
+                    /** @description The import job: `/api/v1/jobs/{job_id}`. */
+                    readonly Location?: string;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AddedVersion"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     readonly "catalog-list_all": {
         readonly parameters: {
             readonly query?: {
                 /** @description How many libraries per page. */
                 readonly limit?: number;
-                /** @description Opaque: only ever a `next_cursor`; absent for the first page. */
+                /**
+                 * @description Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
+                 *     `sort` and filters of the request that returned it.
+                 */
                 readonly cursor?: string | null;
+                /** @description Sort by one of id, title, last_imported_at, version_count; prefix `-` for descending. Default: `id`. An unknown field is a 422. */
+                readonly sort?: string | null;
+                /** @description Only libraries whose ID, title or description contains this text (any case). */
+                readonly q?: string | null;
+                /** @description `true`: only libraries with an imported version; `false`: only those without one. */
+                readonly has_versions?: boolean | null;
+                /** @description `true`: only libraries that may use AI providers; `false`: only those with AI turned off. */
+                readonly ai_enabled?: boolean | null;
+                /** @description Only libraries whose latest import is at or after this time (ISO 8601). */
+                readonly updated_after?: string | null;
+                /** @description Only libraries whose latest import is before this time (ISO 8601). */
+                readonly updated_before?: string | null;
             };
             readonly header?: never;
             readonly path?: never;
@@ -7996,6 +8280,10 @@ export interface operations {
                 readonly tags?: readonly string[] | null;
                 /** @description `any` (default): one of the tags; `all`: every tag. */
                 readonly tags_match?: components["schemas"]["exactdocs__catalog__models__TagMatch"];
+                /** @description Only articles whose path or title contains this text (any case). */
+                readonly q?: string | null;
+                /** @description Sort by one of path, title, size; prefix `-` for descending. Default: `path`. An unknown field is a 422. */
+                readonly sort?: string | null;
                 readonly limit?: number;
                 readonly cursor?: string | null;
             };
@@ -10606,89 +10894,6 @@ export interface operations {
             };
         };
     };
-    readonly "ingestion-add_another_version": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly owner: string;
-                readonly repo: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["AddVersionBody"];
-            };
-        };
-        readonly responses: {
-            /** @description Successful Response */
-            readonly 202: {
-                headers: {
-                    /** @description The import job: `/api/v1/jobs/{job_id}`. */
-                    readonly Location?: string;
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["AddedVersion"];
-                };
-            };
-            /** @description The request cannot be processed (error code in `error`). */
-            readonly 400: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
-            readonly 401: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
-            readonly 403: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The thing does not exist or is not visible to the caller. */
-            readonly 404: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The request conflicts with the current state. */
-            readonly 409: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
-            readonly 422: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     readonly "ingestion-reimport": {
         readonly parameters: {
             readonly query?: never;
@@ -10801,6 +11006,104 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-list_jobs": {
+        readonly parameters: {
+            readonly query?: {
+                /** @description Only jobs in one of these states; repeat the parameter for several. */
+                readonly state?: readonly components["schemas"]["JobState"][] | null;
+                /** @description Only jobs of one of these kinds (`import`, `embed`, ...); repeatable. */
+                readonly kind?: readonly string[] | null;
+                /** @description Only jobs for this exact ref. */
+                readonly version?: string | null;
+                /** @description Only jobs whose library, version or error contains this text (any case). */
+                readonly q?: string | null;
+                /** @description Only jobs queued at or after this time (ISO 8601; no offset means UTC). */
+                readonly created_after?: string | null;
+                /** @description Only jobs queued before this time (ISO 8601; no offset means UTC). */
+                readonly created_before?: string | null;
+                /** @description Sort by one of id, created_at, state, kind, library; prefix `-` for descending. Default: `-id` (newest first). An unknown field is a 422. */
+                readonly sort?: string | null;
+                /** @description How many jobs the page holds at most. */
+                readonly limit?: number;
+                /**
+                 * @description The `next_cursor` of the previous page, which only works with the same `sort` and filters;
+                 *     null for the first page.
+                 */
+                readonly cursor?: string | null;
+                /** @description Only jobs of this library, `/owner/repo`. */
+                readonly library?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["JobList"];
+                };
             };
             /** @description The request cannot be processed (error code in `error`). */
             readonly 400: {
@@ -11088,7 +11391,26 @@ export interface operations {
     readonly "ingestion-list_library_jobs": {
         readonly parameters: {
             readonly query?: {
+                /** @description Only jobs in one of these states; repeat the parameter for several. */
+                readonly state?: readonly components["schemas"]["JobState"][] | null;
+                /** @description Only jobs of one of these kinds (`import`, `embed`, ...); repeatable. */
+                readonly kind?: readonly string[] | null;
+                /** @description Only jobs for this exact ref. */
+                readonly version?: string | null;
+                /** @description Only jobs whose library, version or error contains this text (any case). */
+                readonly q?: string | null;
+                /** @description Only jobs queued at or after this time (ISO 8601; no offset means UTC). */
+                readonly created_after?: string | null;
+                /** @description Only jobs queued before this time (ISO 8601; no offset means UTC). */
+                readonly created_before?: string | null;
+                /** @description Sort by one of id, created_at, state, kind, library; prefix `-` for descending. Default: `-id` (newest first). An unknown field is a 422. */
+                readonly sort?: string | null;
+                /** @description How many jobs the page holds at most. */
                 readonly limit?: number;
+                /**
+                 * @description The `next_cursor` of the previous page, which only works with the same `sort` and filters;
+                 *     null for the first page.
+                 */
                 readonly cursor?: string | null;
             };
             readonly header?: never;

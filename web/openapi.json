@@ -2202,13 +2202,400 @@
         }
       }
     },
+    "/api/v1/libraries/{owner}/{repo}/versions": {
+      "get": {
+        "tags": [
+          "catalog",
+          "catalog"
+        ],
+        "summary": "List All Versions",
+        "description": "List a library's versions, sorted by ref unless told, a page at a time.\n\nFilter with `q`, `kind`, `origin`, `imported_after` and `imported_before`; `total` counts\nevery match.",
+        "operationId": "catalog-list_all_versions",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only versions whose ref or commit SHA contains this text (any case).",
+              "title": "Q"
+            },
+            "description": "Only versions whose ref or commit SHA contains this text (any case)."
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RefKind-Input"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only versions of one of these kinds; repeat for several.",
+              "title": "Kind"
+            },
+            "description": "Only versions of one of these kinds; repeat for several."
+          },
+          {
+            "name": "origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/VersionOrigin-Input"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only versions with one of these origins; repeat for several.",
+              "title": "Origin"
+            },
+            "description": "Only versions with one of these origins; repeat for several."
+          },
+          {
+            "name": "imported_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only versions last imported at or after this time (ISO 8601; no offset means UTC).",
+              "title": "Imported After"
+            },
+            "description": "Only versions last imported at or after this time (ISO 8601; no offset means UTC)."
+          },
+          {
+            "name": "imported_before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only versions last imported before this time (ISO 8601; no offset means UTC).",
+              "title": "Imported Before"
+            },
+            "description": "Only versions last imported before this time (ISO 8601; no offset means UTC)."
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort by one of ref, kind, imported_at, origin; prefix `-` for descending. Default: `ref`. An unknown field is a 422.",
+              "title": "Sort"
+            },
+            "description": "Sort by one of ref, kind, imported_at, origin; prefix `-` for descending. Default: `ref`. An unknown field is a 422."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "How many versions per page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "How many versions per page."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque: only ever a `next_cursor`; it only works with the `sort` and filters of the\nrequest that returned it.",
+              "title": "Cursor"
+            },
+            "description": "Opaque: only ever a `next_cursor`; it only works with the `sort` and filters of the\nrequest that returned it."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "Add Another Version",
+        "description": "Import another version of the library with the library's own settings.\n\nThe import is queued: `Location` is its job. A ref the library already has is a 409.",
+        "operationId": "ingestion-add_another_version",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddVersionBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddedVersion"
+                }
+              }
+            },
+            "headers": {
+              "Location": {
+                "description": "The import job: `/api/v1/jobs/{job_id}`.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/libraries": {
       "get": {
         "tags": [
           "catalog"
         ],
         "summary": "List All",
-        "description": "List the libraries, sorted by ID, a page at a time.",
+        "description": "List the libraries the caller may read, a page at a time; sort by ID unless told.\n\nFilter with `q`, `has_versions`, `ai_enabled`, `updated_after` and `updated_before`;\n`total` counts every match (never a library hidden from the caller).",
         "operationId": "catalog-list_all",
         "security": [
           {
@@ -2246,10 +2633,122 @@
                   "type": "null"
                 }
               ],
-              "description": "Opaque: only ever a `next_cursor`; absent for the first page.",
+              "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it.",
               "title": "Cursor"
             },
-            "description": "Opaque: only ever a `next_cursor`; absent for the first page."
+            "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it."
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort by one of id, title, last_imported_at, version_count; prefix `-` for descending. Default: `id`. An unknown field is a 422.",
+              "title": "Sort"
+            },
+            "description": "Sort by one of id, title, last_imported_at, version_count; prefix `-` for descending. Default: `id`. An unknown field is a 422."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only libraries whose ID, title or description contains this text (any case).",
+              "title": "Q"
+            },
+            "description": "Only libraries whose ID, title or description contains this text (any case)."
+          },
+          {
+            "name": "has_versions",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`true`: only libraries with an imported version; `false`: only those without one.",
+              "title": "Has Versions"
+            },
+            "description": "`true`: only libraries with an imported version; `false`: only those without one."
+          },
+          {
+            "name": "ai_enabled",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`true`: only libraries that may use AI providers; `false`: only those with AI turned off.",
+              "title": "Ai Enabled"
+            },
+            "description": "`true`: only libraries that may use AI providers; `false`: only those with AI turned off."
+          },
+          {
+            "name": "updated_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only libraries whose latest import is at or after this time (ISO 8601).",
+              "title": "Updated After"
+            },
+            "description": "Only libraries whose latest import is at or after this time (ISO 8601)."
+          },
+          {
+            "name": "updated_before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only libraries whose latest import is before this time (ISO 8601).",
+              "title": "Updated Before"
+            },
+            "description": "Only libraries whose latest import is before this time (ISO 8601)."
           }
         ],
         "responses": {
@@ -3112,6 +3611,44 @@
               "default": "any"
             },
             "description": "`any` (default): one of the tags; `all`: every tag."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only articles whose path or title contains this text (any case).",
+              "title": "Q"
+            },
+            "description": "Only articles whose path or title contains this text (any case)."
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort by one of path, title, size; prefix `-` for descending. Default: `path`. An unknown field is a 422.",
+              "title": "Sort"
+            },
+            "description": "Sort by one of path, title, size; prefix `-` for descending. Default: `path`. An unknown field is a 422."
           },
           {
             "name": "limit",
@@ -6955,134 +7492,6 @@
         ]
       }
     },
-    "/api/v1/libraries/{owner}/{repo}/versions": {
-      "post": {
-        "tags": [
-          "ingestion"
-        ],
-        "summary": "Add Another Version",
-        "description": "Import another version of the library with the library's own settings.\n\nThe import is queued: `Location` is its job. A ref the library already has is a 409.",
-        "operationId": "ingestion-add_another_version",
-        "security": [
-          {
-            "ApiToken": []
-          },
-          {
-            "SessionCookie": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "owner",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Owner"
-            }
-          },
-          {
-            "name": "repo",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Repo"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AddVersionBody"
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AddedVersion"
-                }
-              }
-            },
-            "headers": {
-              "Location": {
-                "description": "The import job: `/api/v1/jobs/{job_id}`.",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "The request cannot be processed (error code in `error`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "The thing does not exist or is not visible to the caller.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The request conflicts with the current state.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/libraries/{owner}/{repo}/versions/reimport": {
       "post": {
         "tags": [
@@ -7325,6 +7734,287 @@
                 "description": "The import job (`/api/v1/jobs/{job_id}`) when one was queued, else the library's jobs (`/api/v1/libraries/{owner}/{repo}/jobs`).",
                 "schema": {
                   "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs": {
+      "get": {
+        "tags": [
+          "ingestion",
+          "ingestion"
+        ],
+        "summary": "List Jobs",
+        "description": "List the jobs of every library the caller may read, newest first unless sorted.\n\nFilter with `library`, `state`, `kind`, `version`, `q`, `created_after` and\n`created_before`; `total` counts every match (never a job of a library hidden from the\ncaller).",
+        "operationId": "ingestion-list_jobs",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JobState"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only jobs in one of these states; repeat the parameter for several.",
+              "title": "State"
+            },
+            "description": "Only jobs in one of these states; repeat the parameter for several."
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only jobs of one of these kinds (`import`, `embed`, ...); repeatable.",
+              "title": "Kind"
+            },
+            "description": "Only jobs of one of these kinds (`import`, `embed`, ...); repeatable."
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only jobs for this exact ref.",
+              "title": "Version"
+            },
+            "description": "Only jobs for this exact ref."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only jobs whose library, version or error contains this text (any case).",
+              "title": "Q"
+            },
+            "description": "Only jobs whose library, version or error contains this text (any case)."
+          },
+          {
+            "name": "created_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only jobs queued at or after this time (ISO 8601; no offset means UTC).",
+              "title": "Created After"
+            },
+            "description": "Only jobs queued at or after this time (ISO 8601; no offset means UTC)."
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only jobs queued before this time (ISO 8601; no offset means UTC).",
+              "title": "Created Before"
+            },
+            "description": "Only jobs queued before this time (ISO 8601; no offset means UTC)."
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort by one of id, created_at, state, kind, library; prefix `-` for descending. Default: `-id` (newest first). An unknown field is a 422.",
+              "title": "Sort"
+            },
+            "description": "Sort by one of id, created_at, state, kind, library; prefix `-` for descending. Default: `-id` (newest first). An unknown field is a 422."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "How many jobs the page holds at most.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "How many jobs the page holds at most."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The `next_cursor` of the previous page, which only works with the same `sort` and filters;\nnull for the first page.",
+              "title": "Cursor"
+            },
+            "description": "The `next_cursor` of the previous page, which only works with the same `sort` and filters;\nnull for the first page."
+          },
+          {
+            "name": "library",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only jobs of this library, `/owner/repo`.",
+              "title": "Library"
+            },
+            "description": "Only jobs of this library, `/owner/repo`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -7643,7 +8333,7 @@
           "ingestion"
         ],
         "summary": "List Library Jobs",
-        "description": "List the library's jobs, newest first, a page at a time.",
+        "description": "List the library's jobs, newest first unless sorted, a page at a time.\n\nFilter with `state`, `kind`, `version`, `q`, `created_after` and `created_before`.",
         "operationId": "ingestion-list_library_jobs",
         "security": [
           {
@@ -7673,6 +8363,143 @@
             }
           },
           {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JobState"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only jobs in one of these states; repeat the parameter for several.",
+              "title": "State"
+            },
+            "description": "Only jobs in one of these states; repeat the parameter for several."
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only jobs of one of these kinds (`import`, `embed`, ...); repeatable.",
+              "title": "Kind"
+            },
+            "description": "Only jobs of one of these kinds (`import`, `embed`, ...); repeatable."
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only jobs for this exact ref.",
+              "title": "Version"
+            },
+            "description": "Only jobs for this exact ref."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only jobs whose library, version or error contains this text (any case).",
+              "title": "Q"
+            },
+            "description": "Only jobs whose library, version or error contains this text (any case)."
+          },
+          {
+            "name": "created_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only jobs queued at or after this time (ISO 8601; no offset means UTC).",
+              "title": "Created After"
+            },
+            "description": "Only jobs queued at or after this time (ISO 8601; no offset means UTC)."
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only jobs queued before this time (ISO 8601; no offset means UTC).",
+              "title": "Created Before"
+            },
+            "description": "Only jobs queued before this time (ISO 8601; no offset means UTC)."
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort by one of id, created_at, state, kind, library; prefix `-` for descending. Default: `-id` (newest first). An unknown field is a 422.",
+              "title": "Sort"
+            },
+            "description": "Sort by one of id, created_at, state, kind, library; prefix `-` for descending. Default: `-id` (newest first). An unknown field is a 422."
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -7680,9 +8507,11 @@
               "type": "integer",
               "maximum": 200,
               "minimum": 1,
+              "description": "How many jobs the page holds at most.",
               "default": 50,
               "title": "Limit"
-            }
+            },
+            "description": "How many jobs the page holds at most."
           },
           {
             "name": "cursor",
@@ -7697,8 +8526,10 @@
                   "type": "null"
                 }
               ],
+              "description": "The `next_cursor` of the previous page, which only works with the same `sort` and filters;\nnull for the first page.",
               "title": "Cursor"
-            }
+            },
+            "description": "The `next_cursor` of the previous page, which only works with the same `sort` and filters;\nnull for the first page."
           }
         ],
         "responses": {
@@ -9253,7 +10084,7 @@
             },
             "type": "array",
             "title": "Articles",
-            "description": "The articles of this page, sorted by path."
+            "description": "The articles of this page, in the requested order (by path by default)."
           },
           "next_cursor": {
             "anyOf": [
@@ -9266,6 +10097,11 @@
             ],
             "title": "Next Cursor",
             "description": "Pass as `cursor` to get the next page; null on the last page."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "How many articles match the filters (`path_prefix`, `tags`, `q`), across every page."
           }
         },
         "additionalProperties": false,
@@ -9277,7 +10113,8 @@
           "commit_sha",
           "manifest_id",
           "articles",
-          "next_cursor"
+          "next_cursor",
+          "total"
         ],
         "title": "ArticleList",
         "description": "A page of articles of one manifest, sorted by path."
@@ -10952,7 +11789,7 @@
             },
             "type": "array",
             "title": "Jobs",
-            "description": "The jobs, highest ID (newest) first."
+            "description": "The jobs in the requested order (highest ID, so newest, first by default)."
           },
           "next_cursor": {
             "anyOf": [
@@ -10965,16 +11802,22 @@
             ],
             "title": "Next Cursor",
             "description": "Pass as `cursor` to get the next page; null on the last page."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "How many jobs match the filters, across every page; never counts a hidden library."
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
           "jobs",
-          "next_cursor"
+          "next_cursor",
+          "total"
         ],
         "title": "JobList",
-        "description": "A page of the jobs of one library, newest first."
+        "description": "A page of jobs, newest first unless sorted otherwise."
       },
       "JobState": {
         "type": "string",
@@ -11695,6 +12538,11 @@
             ],
             "title": "Next Cursor",
             "description": "Pass as `cursor` to get the next page; null on the last page."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "How many libraries match the filters and are visible to the caller, across every page."
           }
         },
         "additionalProperties": false,
@@ -11702,7 +12550,8 @@
         "required": [
           "notice",
           "libraries",
-          "next_cursor"
+          "next_cursor",
+          "total"
         ],
         "title": "LibraryList",
         "description": "A page of the libraries visible to the caller, sorted by ID."
@@ -13852,6 +14701,16 @@
         "title": "ProviderOut",
         "description": "A provider profile as the REST API shows it: never its key or its header values."
       },
+      "RefKind-Input": {
+        "type": "string",
+        "enum": [
+          "tag",
+          "branch",
+          "commit"
+        ],
+        "title": "RefKind",
+        "description": "What a version was imported from."
+      },
       "RefOut": {
         "properties": {
           "name": {
@@ -15979,6 +16838,59 @@
         ],
         "title": "UserSummary",
         "description": "An account as an operator sees it on the users page."
+      },
+      "VersionList": {
+        "properties": {
+          "library": {
+            "type": "string",
+            "title": "Library",
+            "description": "Library ID, `/owner/repo`."
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/VersionOut"
+            },
+            "type": "array",
+            "title": "Versions",
+            "description": "The versions of this page, in the requested order (by ref by default)."
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Pass as `cursor` to get the next page; null on the last page."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "How many of the library's versions match the filters, across every page."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "library",
+          "versions",
+          "next_cursor",
+          "total"
+        ],
+        "title": "VersionList",
+        "description": "A page of a library's versions."
+      },
+      "VersionOrigin-Input": {
+        "type": "string",
+        "enum": [
+          "manual",
+          "auto"
+        ],
+        "title": "VersionOrigin",
+        "description": "Who asked for a version: a person, or the scheduled check (which may prune its own)."
       },
       "VersionOut": {
         "properties": {

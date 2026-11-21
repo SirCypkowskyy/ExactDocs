@@ -94,6 +94,7 @@ from exactdocs.ingestion.ports.driving import (
     GetJob,
     GetLibraryAccess,
     GetWebhook,
+    ListJobs,
     ListLatestJobs,
     ListLibraryJobs,
     ListRepositoryRefs,
@@ -136,6 +137,7 @@ from exactdocs.ingestion.use_cases import (
     GetLibraryAccessUseCase,
     GetWebhookUseCase,
     ImportVersionUseCase,
+    ListJobsUseCase,
     ListLatestJobsUseCase,
     ListLibraryJobsUseCase,
     ListRepositoryRefsUseCase,
@@ -635,6 +637,8 @@ class IngestionModule:
     """Says whether a library's webhook is on."""
     list_latest_jobs: ListLatestJobs
     """Lists the newest job of every (library, version)."""
+    list_jobs: ListJobs
+    """Lists a page of the jobs of every readable library."""
     list_library_jobs: ListLibraryJobs
     """Lists a page of a library's jobs."""
     list_repository_refs: ListRepositoryRefs
@@ -905,6 +909,7 @@ class IngestionModule:
             ),
             get_webhook=GetWebhookUseCase(sources=sources, webhooks=webhooks or _NoWebhooks()),
             list_latest_jobs=ListLatestJobsUseCase(jobs=jobs, access=access),
+            list_jobs=ListJobsUseCase(jobs=jobs, access=access),
             list_library_jobs=ListLibraryJobsUseCase(jobs=jobs, access=access),
             list_repository_refs=ListRepositoryRefsUseCase(remote=remote),
             plan_sources=PlanSourcesUseCase(

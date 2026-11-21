@@ -870,6 +870,26 @@ class JobState(StrEnum):
     """A person cancelled it: before it started, or it stopped at its next step boundary."""
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class JobFilter:
+    """Which jobs a list is about; every field that is set must match."""
+
+    libraries: frozenset[str] | None = None
+    """Only jobs of these libraries, as spelled in the job; ``None``: any library."""
+    states: frozenset[JobState] = frozenset()
+    """Only jobs in one of these states; empty: any state."""
+    kinds: frozenset[str] = frozenset()
+    """Only jobs of one of these kinds; empty: any kind."""
+    version: str | None = None
+    """Only jobs for this exact ref."""
+    text: str | None = None
+    """Only jobs whose version, library or error contains this text, any case."""
+    created_after: datetime | None = None
+    """Only jobs queued at or after this time."""
+    created_before: datetime | None = None
+    """Only jobs queued before this time."""
+
+
 class ProblemCode(StrEnum):
     """Why a file shows up in a job's problems; stable, clients may branch on it."""
 
