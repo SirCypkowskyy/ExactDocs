@@ -1,4 +1,3 @@
-import { Link } from "@tanstack/react-router";
 import { useEffect, useId, useState } from "react";
 import { HttpError } from "@/shared/lib/http";
 import { streamAnswer } from "../api/answer-stream";
@@ -8,8 +7,8 @@ import {
   type AnswerSource,
   noAnswerSentence,
   spendSentence,
-  splitLibrary,
 } from "../model/playground";
+import { Notice, ResultHead, ResultsSkeleton, resultCard, resultList } from "./parts";
 
 type State =
   | { status: "running"; progress: AnswerProgress | null }
@@ -45,34 +44,21 @@ function useAnswer(q: string, libraries: readonly string[]): State {
 }
 
 function Source({ source }: { source: AnswerSource }) {
-  const { owner, repo } = splitLibrary(source.library);
   return (
-    <li className="space-y-1 rounded-md border border-border p-3">
-      <div className="flex flex-wrap items-baseline gap-x-2 text-xs text-muted-foreground">
-        <span className="font-medium text-foreground">{source.library}</span>
-        <span>
-          <span className="sr-only">version </span>
-          {source.version}
-        </span>
-      </div>
-      <Link
-        to="/libraries/$owner/$repo"
-        params={{ owner, repo }}
-        search={{ version: source.version, path: source.article_path }}
-        {...(source.anchor ? { hash: source.anchor } : {})}
-        className="block rounded-md text-sm font-medium underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        {source.heading_path.length > 0 ? source.heading_path.join(" › ") : source.article_path}
-      </Link>
-      <p className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
-        {source.article_path}
-      </p>
+    <li className={resultCard}>
+      <ResultHead
+        library={source.library}
+        version={source.version}
+        articlePath={source.article_path}
+        anchor={source.anchor}
+        headingPath={source.heading_path}
+      />
       {source.quote && (
-        <blockquote className="border-l-2 border-border pl-3 text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">
+        <blockquote className="mt-2 rounded-md bg-raised px-3 py-1.5 text-body whitespace-pre-wrap [overflow-wrap:anywhere]">
           {source.quote}
         </blockquote>
       )}
-      <p className="text-sm text-muted-foreground">{source.reason}</p>
+      <p className="mt-2 text-body text-muted-foreground">{source.reason}</p>
     </li>
   );
 }
@@ -82,27 +68,29 @@ function Answered({ result }: { result: AnswerResult }) {
   return (
     <>
       {result.fallback_reason ? (
-        <p className="rounded-md bg-accent px-3 py-2 text-sm">
+        <Notice tone="note">
           No answer: {noAnswerSentence(result.fallback_reason)}{" "}
-          <span className="font-mono text-xs">({result.fallback_reason})</span>
-        </p>
+          <span className="font-mono text-mono">({result.fallback_reason})</span>
+        </Notice>
       ) : (
-        <p className="text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">{result.answer}</p>
+        <p className="max-w-[68ch] text-section whitespace-pre-wrap [overflow-wrap:anywhere]">
+          {result.answer}
+        </p>
       )}
       {result.libraries_without_ai.length > 0 && (
-        <p className="text-sm text-muted-foreground">
+        <p className="text-body text-muted-foreground">
           Not read (AI is off for them): {result.libraries_without_ai.join(", ")}
         </p>
       )}
-      <p className="text-sm text-muted-foreground tabular-nums">
+      <p className="text-body text-muted-foreground tabular-nums">
         {usage.tool_calls} of {usage.max_tool_calls} tool calls · {spendSentence(usage)}
       </p>
       {result.sources.length > 0 && (
         <>
-          <h3 className="text-sm font-semibold">
+          <h3 className="pt-2 text-section font-semibold">
             {result.fallback_reason ? "Read before it stopped" : "Sources"}
           </h3>
-          <ol aria-label="Sources" className="space-y-2">
+          <ol aria-label="Sources" className={resultList}>
             {result.sources.map((source) => (
               <Source key={`${source.library}:${source.chunk_id}`} source={source} />
             ))}
@@ -127,21 +115,20 @@ export function AgentAnswer({ q, libraries }: { q: string; libraries: readonly s
       aria-busy={state.status === "running"}
       className="min-w-0 space-y-3"
     >
-      <h2 id={headingId} className="text-base font-semibold">
+      <h2 id={headingId} className="text-section font-semibold">
         Agent answer
       </h2>
       {state.status === "running" && (
-        <p role="status" className="text-sm text-muted-foreground">
-          {state.progress
-            ? `The agent has made ${state.progress.toolCalls} of ${state.progress.maxToolCalls} tool calls…`
-            : "The agent is starting…"}
-        </p>
+        <>
+          <p role="status" className="text-body text-muted-foreground">
+            {state.progress
+              ? `The agent has made ${state.progress.toolCalls} of ${state.progress.maxToolCalls} tool calls…`
+              : "The agent is starting…"}
+          </p>
+          <ResultsSkeleton />
+        </>
       )}
-      {state.status === "failed" && (
-        <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {state.message}
-        </p>
-      )}
+      {state.status === "failed" && <Notice tone="error">{state.message}</Notice>}
       {state.status === "done" && <Answered result={state.result} />}
     </section>
   );

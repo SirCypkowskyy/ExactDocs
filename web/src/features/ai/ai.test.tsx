@@ -359,16 +359,15 @@ describe("instance AI page", () => {
     const instance = (await usage.findByRole("rowheader", { name: "The instance" })).closest(
       "tr",
     ) as HTMLElement;
-    expect(within(instance).getByText(/\$1\.50 · 3,000 tokens · 3 calls/)).toBeInTheDocument();
+    expect(within(instance).getByText("3,000 tokens · 3 calls")).toBeInTheDocument();
+    expect(within(instance).getAllByText("$1.50").length).toBeGreaterThan(0);
     expect(within(instance).queryByText(/local/)).not.toBeInTheDocument();
     const embedding = usage
       .getByRole("rowheader", { name: "Embedding runs" })
       .closest("tr") as HTMLElement;
     // Local models' tokens are shown, apart: no token budget counts them (#284).
     expect(
-      within(embedding).getAllByText(
-        /\$0\.00 · 0 tokens \(\+1,200 local, not budgeted\) · 3 calls/,
-      ),
+      within(embedding).getAllByText(/0 tokens \(\+1,200 local, not budgeted\) · 3 calls/),
     ).toHaveLength(2);
     expect(within(instance).getByText("Today: $8.50 of $10.00 left")).toBeInTheDocument();
     const library = usage

@@ -43,7 +43,7 @@ export function PathFields({ include, exclude, error, onInclude, onExclude }: Pa
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="include" className="text-sm font-medium">
+        <label htmlFor="include" className="text-body font-medium">
           Only these paths
         </label>
         <textarea
@@ -61,7 +61,7 @@ export function PathFields({ include, exclude, error, onInclude, onExclude }: Pa
         <PathError id="include-error" message={own("include")} />
       </div>
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="exclude" className="text-sm font-medium">
+        <label htmlFor="exclude" className="text-body font-medium">
           Leave out
         </label>
         <textarea
@@ -78,7 +78,7 @@ export function PathFields({ include, exclude, error, onInclude, onExclude }: Pa
         />
         <PathError id="exclude-error" message={own("exclude")} />
         <PathError id="paths-error" message={shared} />
-        <p id="paths-hint" className="text-sm text-muted-foreground">
+        <p id="paths-hint" className="text-body text-muted-foreground">
           One per line, relative to the repository root: a folder (<code>docs/</code>), a file or a
           glob (<code>**/*.mdx</code>). Empty means every Markdown and reStructuredText (.rst) file.
           A .txt file needs a path that names .txt. Leaving a path out always wins.
@@ -96,7 +96,7 @@ interface RulesProps {
   onChange: (rules: TagRuleDraft[]) => void;
 }
 
-const label = "mb-1 block text-sm text-muted-foreground md:sr-only";
+const label = "mb-1 block text-body text-muted-foreground md:sr-only";
 
 /** Tag rules as rows of path and tag, added and removed one at a time. */
 export function TagRules({ rules, showErrors, error, onChange }: RulesProps) {
@@ -106,8 +106,8 @@ export function TagRules({ rules, showErrors, error, onChange }: RulesProps) {
   const focusAfterRender = useFocusAfterRender();
   return (
     <fieldset className="flex flex-col gap-2">
-      <legend className="mb-1.5 text-sm font-medium">Tags by path</legend>
-      <p id="tags-hint" className="text-sm text-muted-foreground">
+      <legend className="mb-1.5 text-body font-medium">Tags by path</legend>
+      <p id="tags-hint" className="text-body text-muted-foreground">
         Give articles a tag by where they live, so agents can filter by it. Added to the tags in
         each article's front matter.
         {full && ` You can have up to ${MAX_TAG_RULES} rules.`}
@@ -116,7 +116,7 @@ export function TagRules({ rules, showErrors, error, onChange }: RulesProps) {
         <>
           <div
             aria-hidden="true"
-            className="hidden gap-2 pr-[3.25rem] text-sm text-muted-foreground md:grid md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]"
+            className="hidden gap-2 pr-[3.25rem] text-body text-muted-foreground md:grid md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]"
           >
             <span>Path</span>
             <span>Tag</span>
@@ -142,7 +142,7 @@ export function TagRules({ rules, showErrors, error, onChange }: RulesProps) {
                           problem.pattern ? `rule-path-${rule.key}-error` : undefined
                         }
                         onChange={(e) => set(rule.key, { pattern: e.target.value })}
-                        className="scroll-mt-6 font-mono text-[15px]"
+                        className="scroll-mt-6 font-mono"
                       />
                     </div>
                     <div>
@@ -182,7 +182,7 @@ export function TagRules({ rules, showErrors, error, onChange }: RulesProps) {
                     aria-label={`Remove tag rule ${i + 1}`}
                     title={`Remove tag rule ${i + 1}`}
                     onClick={() => onChange(rules.filter((r) => r.key !== rule.key))}
-                    className="grid size-11 shrink-0 place-items-center rounded-md text-muted-foreground outline-none transition-colors duration-150 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] max-md:mt-6"
+                    className="grid size-11 shrink-0 place-items-center rounded-md text-muted-foreground outline-none transition-colors duration-(--dur-fast) hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] max-md:mt-6"
                   >
                     <X aria-hidden="true" className="size-4" />
                   </button>

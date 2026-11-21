@@ -23,7 +23,7 @@ export function AdvancedOptions(p: AdvancedProps) {
       <summary className="-ml-2 flex min-h-11 w-fit cursor-pointer list-none items-center gap-2 rounded-md px-2 text-body font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring active:bg-accent [&::-webkit-details-marker]:hidden">
         <ChevronRight
           aria-hidden="true"
-          className="size-4 text-muted-foreground transition-transform duration-(--dur-fast) ease-out group-open:rotate-90 motion-reduce:transition-none"
+          className="size-4 text-muted-foreground transition-transform duration-(--dur-fast) ease-(--ease-out) group-open:rotate-90 motion-reduce:transition-none"
         />
         Choose files and tags
         <span className="font-normal text-muted-foreground">(optional)</span>

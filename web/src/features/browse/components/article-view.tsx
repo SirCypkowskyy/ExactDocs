@@ -140,7 +140,7 @@ function NotInVersion({
   return (
     <div className="fade-in max-w-[72ch]">
       <h2 className="text-title font-semibold">
-        Not in <span className="font-mono text-[0.9em]">{version.ref}</span>
+        Not in <span className="font-mono">{version.ref}</span>
       </h2>
       <p className="mt-2 text-body text-pretty text-muted-foreground">
         {version.ref} has no{" "}
@@ -381,7 +381,7 @@ function SourceView({
           ref={pre}
           // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable text must be reachable by keyboard
           tabIndex={0}
-          className="overflow-x-auto px-4 pb-4 font-mono text-[14px] leading-[1.7] break-words whitespace-pre-wrap outline-none [tab-size:4] focus-visible:ring-2 focus-visible:ring-ring sm:px-6 sm:pb-6"
+          className="overflow-x-auto px-4 pb-4 font-mono text-mono leading-[1.7] break-words whitespace-pre-wrap outline-none [tab-size:4] focus-visible:ring-2 focus-visible:ring-ring sm:px-6 sm:pb-6"
         >
           {text}
         </pre>
@@ -443,11 +443,11 @@ function Body({
               aria-hidden="true"
               className="route-draw h-0.5 w-3 flex-none rounded-full bg-route/50"
             />
-            <span className="min-w-0 font-mono text-[13px] [overflow-wrap:anywhere]">
+            <span className="min-w-0 font-mono text-mono [overflow-wrap:anywhere]">
               <PathText path={article.path} />
             </span>
           </p>
-          <h2 className="mt-2 text-[1.875rem] leading-[1.2] font-semibold tracking-[-0.015em] text-balance [overflow-wrap:anywhere]">
+          <h2 className="mt-2 text-reader-title font-semibold tracking-[-0.015em] text-balance [overflow-wrap:anywhere]">
             {article.title}
           </h2>
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">

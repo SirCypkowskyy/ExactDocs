@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { Button } from "@/shared/ui/button";
 import { Field } from "@/shared/ui/field";
+import { Page, PageHeader } from "@/shared/ui/page";
 import { SelectField } from "@/shared/ui/select-field";
 import {
   answerAvailabilityQueryOptions,
@@ -33,26 +34,29 @@ function LibraryPicker({
     onChange(picked.has(id) ? chosen.filter((c) => c !== id) : [...chosen, id]);
   return (
     <fieldset className="space-y-2">
-      <legend className="text-sm font-medium">Libraries</legend>
-      <div className="flex flex-wrap gap-x-4 gap-y-2">
-        <label className="flex min-h-11 items-center gap-2 text-sm lg:min-h-8">
+      <legend className="text-body font-medium">Libraries</legend>
+      <div className="flex flex-wrap gap-x-5 gap-y-1">
+        <label className="flex min-h-11 cursor-pointer items-center gap-2.5 text-body md:min-h-9">
           <input
             type="checkbox"
             checked={chosen.length === 0}
             onChange={() => onChange([])}
-            className="size-4 accent-[var(--color-mark)]"
+            className="size-4 cursor-pointer accent-primary"
           />
           All libraries
         </label>
         {libraries.map((id) => (
-          <label key={id} className="flex min-h-11 items-center gap-2 text-sm lg:min-h-8">
+          <label
+            key={id}
+            className="flex min-h-11 cursor-pointer items-center gap-2.5 text-body md:min-h-9"
+          >
             <input
               type="checkbox"
               checked={picked.has(id)}
               onChange={() => toggle(id)}
-              className="size-4 accent-[var(--color-mark)]"
+              className="size-4 cursor-pointer accent-primary"
             />
-            <span className="font-mono text-xs">{id}</span>
+            <span className="font-mono text-mono">{id}</span>
           </label>
         ))}
       </div>
@@ -131,15 +135,16 @@ export function PlaygroundPage() {
   };
 
   return (
-    <main className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6">
-      <header className="space-y-1">
-        <h1 className="font-serif text-2xl font-semibold tracking-tight">Search playground</h1>
-        <p className="text-sm text-muted-foreground">
-          Run one query across the libraries you choose and compare how BM25, vector and hybrid
-          search rank it.
-        </p>
-      </header>
-      <form onSubmit={submit} className="space-y-4" aria-label="Playground query">
+    <Page>
+      <PageHeader
+        title="Search playground"
+        description="Run one query across the libraries you choose and compare how BM25, vector and hybrid search rank it."
+      />
+      <form
+        onSubmit={submit}
+        className="max-w-3xl space-y-5 rounded-lg border border-border bg-raised p-5"
+        aria-label="Playground query"
+      >
         <Field
           id="playground-q"
           label="Query"
@@ -167,17 +172,17 @@ export function PlaygroundPage() {
           )}
         </div>
         {agentChosen ? (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-body text-muted-foreground">
             An LLM searches and reads the chosen libraries and writes an answer. It counts to the
             LLM budgets and rate limit like an agentic search.
           </p>
         ) : (
-          <label className="flex min-h-11 items-center gap-2 text-sm lg:min-h-8">
+          <label className="flex min-h-11 cursor-pointer items-center gap-2.5 text-body md:min-h-9">
             <input
               type="checkbox"
               checked={compare}
               onChange={(e) => setCompare(e.target.checked)}
-              className="size-4 accent-[var(--color-mark)]"
+              className="size-4 cursor-pointer accent-primary"
             />
             Compare two modes side by side
           </label>
@@ -186,13 +191,17 @@ export function PlaygroundPage() {
           {agentChosen ? "Ask the agent" : "Search"}
         </Button>
       </form>
-      {run && run.first === AGENT && <AgentAnswer q={run.q} libraries={run.libraries} />}
+      {run && run.first === AGENT && (
+        <div className="mt-8 max-w-3xl">
+          <AgentAnswer q={run.q} libraries={run.libraries} />
+        </div>
+      )}
       {run && run.first !== AGENT && (
-        <div className={run.second ? "grid gap-6 lg:grid-cols-2" : ""}>
+        <div className={run.second ? "mt-8 grid gap-8 lg:grid-cols-2" : "mt-8 max-w-3xl"}>
           <ModeResults q={run.q} mode={run.first} libraries={run.libraries} />
           {run.second && <ModeResults q={run.q} mode={run.second} libraries={run.libraries} />}
         </div>
       )}
-    </main>
+    </Page>
   );
 }

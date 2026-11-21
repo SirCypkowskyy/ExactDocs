@@ -17,7 +17,7 @@ interface DefaultPinProps {
 }
 
 const ACTION =
-  "flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1 text-left text-body outline-none transition-colors duration-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-disabled:cursor-progress aria-disabled:opacity-60 lg:min-h-9 [@media(hover:hover)]:hover:bg-accent";
+  "flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1 text-left text-body outline-none transition-colors duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-disabled:cursor-progress aria-disabled:opacity-60 lg:min-h-9 [@media(hover:hover)]:hover:bg-accent";
 
 function explain(error: unknown): string {
   if (error instanceof HttpError && error.status === 404)

@@ -75,7 +75,7 @@ export function CredentialField({ id, kind, draft, error, hint, onChange, onComm
             ? "A token that can read this repository. It is stored encrypted and never shown again."
             : "The private half of a deploy key without a passphrase. Paste it or choose its file. It is stored encrypted and never shown again.")
         }
-        className="font-mono text-[15px]"
+        className="font-mono"
         onChange={(e) => {
           setLoaded(undefined);
           onChange({ ...draft, secret: e.target.value });
@@ -92,7 +92,7 @@ export function CredentialField({ id, kind, draft, error, hint, onChange, onComm
           placeholder="x-access-token"
           value={draft.username}
           hint="Leave it empty for GitHub and GitLab. Bitbucket repository tokens use x-token-auth."
-          className="font-mono text-[15px]"
+          className="font-mono"
           onChange={(e) => onChange({ ...draft, username: e.target.value })}
         />
       ) : (
@@ -114,7 +114,7 @@ export function CredentialField({ id, kind, draft, error, hint, onChange, onComm
             <KeyRound aria-hidden="true" className="size-4" />
             Choose key file
           </Button>
-          <p id={`${id}-file-status`} role="status" className="text-sm text-muted-foreground">
+          <p id={`${id}-file-status`} role="status" className="text-body text-muted-foreground">
             {loaded && `Key read from ${loaded}.`}
           </p>
         </div>

@@ -22,7 +22,7 @@ interface Props {
 }
 
 const crumb =
-  "-ml-1 inline-flex min-h-11 items-center rounded px-1 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-7";
+  "-ml-1 inline-flex min-h-11 items-center rounded px-1 outline-none transition-colors duration-(--dur-fast) hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-7";
 
 /** [heading id, label, the id its form reports unsaved edits under]. */
 const SECTIONS = [

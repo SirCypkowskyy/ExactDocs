@@ -167,7 +167,7 @@ export function GlobalSearchBox({
                 input.current?.focus();
               }}
               className={cn(
-                "absolute top-0 right-0 inline-flex size-11 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-transform duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.95] sm:size-9 [@media(hover:hover)]:hover:text-foreground",
+                "absolute top-0 right-0 inline-flex size-11 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-transform duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] sm:size-9 [@media(hover:hover)]:hover:text-foreground",
                 prominent && "sm:top-1.5 sm:right-1",
               )}
             >
