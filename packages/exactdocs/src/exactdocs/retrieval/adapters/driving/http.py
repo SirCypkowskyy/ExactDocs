@@ -17,6 +17,7 @@ from exactdocs.retrieval.constants import (
     CHARS_PER_TOKEN,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_RETRIES,
+    MAX_CHOSEN_LIBRARIES,
     MAX_KEY,
     MAX_LIBRARY_ID,
     MAX_MODEL_NAME,
@@ -101,8 +102,9 @@ class LibraryRetrievalIn(BaseModel):
     model_config = ConfigDict(extra="forbid", use_attribute_docstrings=True)
 
     mode: str | None = Field(default=None, max_length=MAX_NAME)
-    """`bm25`, `hybrid`, `hybrid_hyde` or `agentic`; it must be available with the settings below
-    (422 `mode_unavailable` names the missing model role otherwise). Null: the instance's mode.
+    """`bm25`, `vector`, `hybrid`, `hybrid_hyde` or `agentic`; it must be available with the
+    settings below (422 `mode_unavailable` names the missing model role otherwise). Null: the
+    instance's mode.
     """
     ai_enabled: bool = True
     """False: nothing of the library is ever sent to an AI provider; its searches are BM25."""
@@ -408,7 +410,7 @@ def build_router(
             Query(
                 max_length=MAX_NAME,
                 description=(
-                    "`bm25`, `hybrid`, `hybrid_hyde` or `agentic`, if available (422 "
+                    "`bm25`, `vector`, `hybrid`, `hybrid_hyde` or `agentic`, if available (422 "
                     "`mode_unavailable` otherwise). Default: the library's mode, else the "
                     "instance's, else the best one configured."
                 ),
@@ -452,13 +454,20 @@ def build_router(
 
     @router.get("/search")
     async def search_all(
+        searcher: account,
         q: Annotated[
             str,
             Query(min_length=1, max_length=MAX_QUERY, description="Identifier, error or question."),
         ],
         library: Annotated[
-            str | None,
-            Query(max_length=MAX_NAME, description="`/owner/repo`: narrow the results to it."),
+            list[Annotated[str, Query(max_length=MAX_NAME)]] | None,
+            Query(
+                max_length=MAX_CHOSEN_LIBRARIES,
+                description=(
+                    "`/owner/repo` of a library to search; repeat or comma-separate for "
+                    "several. None: every library you may read."
+                ),
+            ),
         ] = None,
         tags: Annotated[
             list[Annotated[str, Query(max_length=MAX_TAG)]] | None,
@@ -466,15 +475,31 @@ def build_router(
         ] = None,
         tags_match: TagMatch = TagMatch.ANY,
         limit: Annotated[int, Query(ge=1, le=50)] = 10,
+        mode: Annotated[
+            str | None,
+            Query(
+                max_length=MAX_NAME,
+                description=(
+                    "`bm25` (default), `vector` or `hybrid`; the vector modes need an embedding "
+                    "model (422 `mode_unavailable` otherwise)."
+                ),
+            ),
+        ] = None,
     ) -> SearchAllResult:
-        """Search the default version of every library; `libraries` counts matches per library.
+        """Search the default version of every library, or of the chosen ones, in one ranking.
+
+        `libraries` counts the BM25 matches per library. Each result carries its `bm25_rank` and
+        `vector_rank`; `retrieval_mode` says which mode answered and `fallback_reason` why BM25
+        answered a vector search.
 
         Args:
             q: The query.
-            library: Only this library's results.
+            library: Only these libraries' results.
             tags: Only chunks of articles so tagged.
             tags_match: `any` or `all` of the tags.
             limit: How many results at most.
+            mode: The retrieval mode; `bm25` without one.
+            searcher: The account searching.
 
         Returns:
             The results across libraries.
@@ -484,11 +509,16 @@ def build_router(
         """
         try:
             query = SearchAllQuery(
-                query=q, library=library, tags=tags or [], tags_match=tags_match, limit=limit
+                query=q,
+                libraries=library or [],
+                tags=tags or [],
+                tags_match=tags_match,
+                limit=limit,
+                mode=mode,
             )
         except ValidationError as error:
             raise RequestValidationError(error.errors()) from error
-        return await search_all_libraries(query)
+        return await search_all_libraries(query, caller=searcher)
 
     @router.get("/chunks/{chunk_id}")
     async def get_chunk(chunk_id: Annotated[str, Path(max_length=MAX_NAME)]) -> ChunkOut:

@@ -603,6 +603,10 @@ class SearchHit:
     explored_path: tuple[str, ...] = ()
     """The read calls the agentic explorer made up to the one that reached this chunk's article,
     in order (``search_docs(...)``, ``article_outline(guide/auth.md)``); empty for other modes."""
+    bm25_rank: int | None = None
+    """Its 1-based rank in the search's BM25 ranking, when the search ranked it with BM25."""
+    vector_rank: int | None = None
+    """Its 1-based rank in the search's vector ranking, when the search ranked it by vectors."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -662,6 +666,37 @@ class FusedRank:
     """Its 1-based rank in the vector half, if it is there."""
 
 
+def _fused_ranks[K: str | tuple[str, str]](
+    bm25: Sequence[K], vectors: Sequence[K], k: int
+) -> list[tuple[K, float, int | None, int | None]]:
+    """Fuse two rankings with reciprocal rank fusion, whatever names their items.
+
+    Args:
+        bm25: The BM25 half, best first.
+        vectors: The vector half, nearest first.
+        k: The constant damping the weight of the first ranks.
+
+    Returns:
+        ``(item, score, bm25 rank, vector rank)`` of every item of either half once, best first:
+        ties go to the item BM25 ranks higher, then to the one the vectors rank higher, then to
+        the item itself, so the order is reproducible.
+    """
+    bm25_rank = {c: r for r, c in enumerate(dict.fromkeys(bm25), start=1)}
+    vector_rank = {c: r for r, c in enumerate(dict.fromkeys(vectors), start=1)}
+    fused = [
+        (
+            c,
+            sum(1 / (k + r) for r in (bm25_rank.get(c), vector_rank.get(c)) if r),
+            bm25_rank.get(c),
+            vector_rank.get(c),
+        )
+        for c in dict.fromkeys([*bm25_rank, *vector_rank])
+    ]
+    unranked = math.inf
+    fused.sort(key=lambda f: (-f[1], f[2] or unranked, f[3] or unranked, f[0]))
+    return fused
+
+
 def reciprocal_rank_fusion(
     bm25: Sequence[ChunkId], vectors: Sequence[ChunkId], k: int = RRF_K
 ) -> list[FusedRank]:
@@ -679,27 +714,48 @@ def reciprocal_rank_fusion(
     Returns:
         Every chunk of either half once, best first.
     """
-    bm25_rank = {c: r for r, c in enumerate(dict.fromkeys(bm25), start=1)}
-    vector_rank = {c: r for r, c in enumerate(dict.fromkeys(vectors), start=1)}
-    fused = [
-        FusedRank(
-            chunk_id=c,
-            score=sum(1 / (k + r) for r in (bm25_rank.get(c), vector_rank.get(c)) if r),
-            bm25_rank=bm25_rank.get(c),
-            vector_rank=vector_rank.get(c),
-        )
-        for c in dict.fromkeys([*bm25_rank, *vector_rank])
+    return [
+        FusedRank(chunk_id=c, score=score, bm25_rank=b, vector_rank=v)
+        for c, score, b, v in _fused_ranks(bm25, vectors, k)
     ]
-    unranked = math.inf
-    fused.sort(
-        key=lambda f: (
-            -f.score,
-            f.bm25_rank or unranked,
-            f.vector_rank or unranked,
-            f.chunk_id,
-        )
-    )
-    return fused
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ManifestRank:
+    """A chunk's place after fusing two rankings of several manifests (across libraries)."""
+
+    manifest_id: str
+    """The manifest (so the library version) the chunk was found in."""
+    chunk_id: ChunkId
+    """The chunk."""
+    score: float
+    """The sum of ``1 / (k + rank)`` over the halves it is in; higher is better."""
+    bm25_rank: int | None
+    """Its 1-based rank in the BM25 half, if it is there."""
+    vector_rank: int | None
+    """Its 1-based rank in the vector half, if it is there."""
+
+
+def fuse_across_manifests(
+    bm25: Sequence[tuple[str, ChunkId]], vectors: Sequence[tuple[str, ChunkId]], k: int = RRF_K
+) -> list[ManifestRank]:
+    """Fuse two rankings of chunks of several manifests, as ``reciprocal_rank_fusion`` does.
+
+    A chunk ID can be in several manifests (the same section in two libraries): a chunk is named
+    by its manifest and its ID.
+
+    Args:
+        bm25: ``(manifest, chunk)`` of the BM25 half, best first.
+        vectors: ``(manifest, chunk)`` of the vector half, nearest first.
+        k: The constant damping the weight of the first ranks.
+
+    Returns:
+        Every chunk of either half once, best first.
+    """
+    return [
+        ManifestRank(manifest_id=m, chunk_id=c, score=score, bm25_rank=b, vector_rank=v)
+        for (m, c), score, b, v in _fused_ranks(bm25, vectors, k)
+    ]
 
 
 def highlights(text: str, terms: Collection[str]) -> tuple[tuple[int, int], ...]:
@@ -949,6 +1005,7 @@ class RetrievalMode(StrEnum):
     """How a search found its results. One result shape serves every mode."""
 
     BM25 = "bm25"
+    VECTOR = "vector"
     HYBRID = "hybrid"
     HYBRID_HYDE = "hybrid_hyde"
     AGENTIC = "agentic"
@@ -963,7 +1020,7 @@ class RetrievalMode(StrEnum):
         match self:
             case RetrievalMode.BM25:
                 return frozenset()
-            case RetrievalMode.HYBRID:
+            case RetrievalMode.VECTOR | RetrievalMode.HYBRID:
                 return frozenset({ModelRole.EMBEDDING})
             case RetrievalMode.HYBRID_HYDE:
                 return frozenset({ModelRole.EMBEDDING, ModelRole.LLM})
@@ -972,12 +1029,12 @@ class RetrievalMode(StrEnum):
 
     @property
     def needs_vectors(self) -> bool:
-        """Say whether this mode searches the vector store (the hybrid ones do).
+        """Say whether this mode searches the vector store (``vector`` and the hybrid ones do).
 
         Returns:
             True when the mode cannot run without the vector store.
         """
-        return self in {RetrievalMode.HYBRID, RetrievalMode.HYBRID_HYDE}
+        return self in {RetrievalMode.VECTOR, RetrievalMode.HYBRID, RetrievalMode.HYBRID_HYDE}
 
     @property
     def needs_llm(self) -> bool:

@@ -51,8 +51,9 @@ from exactdocs.retrieval.use_cases import Bm25Pipeline
 
 LIB = "/acme/payments"
 EMBEDDING, RERANKER, LLM = ModelRole.EMBEDDING, ModelRole.RERANKER, ModelRole.LLM
-BM25, HYBRID, HYDE, AGENTIC = (
+BM25, VECTOR, HYBRID, HYDE, AGENTIC = (
     RetrievalMode.BM25,
+    RetrievalMode.VECTOR,
     RetrievalMode.HYBRID,
     RetrievalMode.HYBRID_HYDE,
     RetrievalMode.AGENTIC,
@@ -221,8 +222,8 @@ async def _mode_of(world: World, mode: str | None = None, ref: str | None = None
         (set(), [BM25]),
         ({RERANKER}, [BM25]),
         ({LLM}, [BM25, AGENTIC]),
-        ({EMBEDDING}, [BM25, HYBRID]),
-        ({EMBEDDING, LLM}, [BM25, HYBRID, HYDE, AGENTIC]),
+        ({EMBEDDING}, [BM25, VECTOR, HYBRID]),
+        ({EMBEDDING, LLM}, [BM25, VECTOR, HYBRID, HYDE, AGENTIC]),
     ],
 )
 def test_the_configured_roles_decide_which_modes_are_available(
