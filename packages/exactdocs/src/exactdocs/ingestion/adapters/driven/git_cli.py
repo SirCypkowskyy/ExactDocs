@@ -373,7 +373,8 @@ class GitCli:
         """Implement ``GitGateway.fetch_files``: the same checkout, but of exactly these files.
 
         The watchdog's size limit is ``max_bytes`` twice (each file is on disk once checked out
-        and once in git's pack) plus room for git's own files, instead of the whole-repository limit, so a server cannot make a few images cost a repository.
+        and once in git's pack) plus room for git's own files, instead of the whole-repository
+        limit, so a server cannot make a few images cost a repository.
 
         Args:
             repository: The repository.
