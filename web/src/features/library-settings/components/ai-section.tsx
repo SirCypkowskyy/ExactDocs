@@ -1,12 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ShieldOff } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, Fragment, useState } from "react";
 import {
   type AiProvider,
   type AiRole,
   aiProvidersQueryOptions,
   aiRolesQueryOptions,
   ROLE_LABEL,
+  THINKING_HINT,
+  THINKING_LABEL,
+  THINKING_LEVELS,
+  type ThinkingLevel,
 } from "@/shared/lib/ai-queries";
 import { Button } from "@/shared/ui/button";
 import { Field } from "@/shared/ui/field";
@@ -17,6 +21,7 @@ import {
   bodyOf,
   ceilingHint,
   type DraftErrors,
+  instanceThinking,
   type LibraryRetrieval,
   MAX_RERANK_TOP_N,
   MODE_LABEL,
@@ -34,6 +39,7 @@ import {
   retrievalDraftOf,
   rolesInUse,
   sameDraft,
+  THINKING_ROLES,
   validateRetrieval,
 } from "../model/retrieval";
 import {
@@ -80,6 +86,7 @@ export function AiSection({ owner, repo, activity, onStart }: Props) {
             owner={owner}
             repo={repo}
             r={retrieval.data}
+            roles={roles.data}
             providers={providers.data}
             providersError={providers.isError ? explainProfilesError(providers.error) : undefined}
             activity={activity}
@@ -108,7 +115,7 @@ function PipelineSummary({
       <h3 id="pipeline-heading" className="text-sm font-medium text-muted-foreground">
         Effective pipeline
       </h3>
-      <p className="mt-1 font-serif text-xl font-semibold" data-testid="effective-mode">
+      <p className="mt-1 text-xl font-semibold" data-testid="effective-mode">
         {MODE_LABEL[r.effective_mode]}
       </p>
       <p className="mt-0.5 text-sm text-muted-foreground">{modeSource(r)}</p>
@@ -135,7 +142,7 @@ function PipelineSummary({
         )
       ) : (
         <p className="mt-3 flex items-start gap-2 text-sm">
-          <ShieldOff aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
+          <ShieldOff aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
           <span>No content of this library is sent to any AI provider.</span>
         </p>
       )}
@@ -147,6 +154,8 @@ interface FormProps {
   owner: string;
   repo: string;
   r: LibraryRetrieval;
+  /** The instance's roles, for the level a library without its own uses; undefined until read. */
+  roles: readonly AiRole[] | undefined;
   /** Undefined while the profiles load or when they could not be read. */
   providers: readonly AiProvider[] | undefined;
   /** Why the profiles could not be read, if they could not. */
@@ -155,7 +164,16 @@ interface FormProps {
   onStart: () => void;
 }
 
-function AiForm({ owner, repo, r, providers, providersError, activity, onStart }: FormProps) {
+function AiForm({
+  owner,
+  repo,
+  r,
+  roles,
+  providers,
+  providersError,
+  activity,
+  onStart,
+}: FormProps) {
   const queryClient = useQueryClient();
   const saved = retrievalDraftOf(r);
   const [draft, setDraft] = useState<RetrievalDraft>(saved);
@@ -271,16 +289,40 @@ function AiForm({ owner, repo, r, providers, providersError, activity, onStart }
             ) : providers === undefined ? (
               <p className="text-sm text-muted-foreground">Loading the profiles…</p>
             ) : null}
-            {OVERRIDABLE.map((role) => (
-              <RoleOverride
-                key={role}
-                role={role}
-                draft={draft}
-                providers={providers}
-                error={errors[role]}
-                onChange={(value) => edit({ [role]: value })}
-              />
-            ))}
+            {OVERRIDABLE.map((role) => {
+              const thinking = THINKING_ROLES.find(([r]) => r === role);
+              return (
+                <Fragment key={role}>
+                  <RoleOverride
+                    role={role}
+                    draft={draft}
+                    providers={providers}
+                    error={errors[role]}
+                    onChange={(value) => edit({ [role]: value })}
+                  />
+                  {thinking && (
+                    <SelectField
+                      id={`ai-${thinking[1]}`}
+                      label={`${ROLE_LABEL[thinking[0]]} thinking`}
+                      value={draft[thinking[1]]}
+                      hint={THINKING_HINT}
+                      onChange={(e) =>
+                        edit({ [thinking[1]]: e.target.value as "" | ThinkingLevel })
+                      }
+                    >
+                      <option value="">
+                        {instanceThinking(thinking[0], roles, (l) => THINKING_LABEL[l])}
+                      </option>
+                      {THINKING_LEVELS.map((level) => (
+                        <option key={level} value={level}>
+                          {THINKING_LABEL[level]}
+                        </option>
+                      ))}
+                    </SelectField>
+                  )}
+                </Fragment>
+              );
+            })}
             <Field
               id="ai-rerankTopN"
               label="Candidates to rerank"
@@ -380,7 +422,7 @@ function AiForm({ owner, repo, r, providers, providersError, activity, onStart }
           <p role="status" className="min-h-5 text-sm">
             {done && unchanged && activity.by === "ai" && (
               <span className="fade-in inline-flex items-center gap-1.5">
-                <Check aria-hidden="true" className="size-4 text-mark" />
+                <Check aria-hidden="true" className="size-4 text-route" />
                 Saved.
               </span>
             )}

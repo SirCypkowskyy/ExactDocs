@@ -63,6 +63,7 @@ from exactdocs.retrieval.models import (
     SpendWindow,
     StoredChunk,
     TagFilter,
+    ThinkingLevel,
     VectorCoverage,
     VectorHit,
     VersionCounts,
@@ -526,6 +527,34 @@ class StaticModelRoles:
         """
         del library
         return self.roles if ai is None or ai.enabled else frozenset()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryRoleThinkingLevels:
+    """Implements ``ports.driven.RoleThinkingLevels`` in a dict."""
+
+    stored: dict[ModelRole, ThinkingLevel] = field(default_factory=dict)
+    """Level by role."""
+
+    async def levels(self) -> dict[ModelRole, ThinkingLevel]:
+        """Read every stored level.
+
+        Returns:
+            A copy of them.
+        """
+        return dict(self.stored)
+
+    async def save(self, role: ModelRole, level: ThinkingLevel | None) -> None:
+        """Store a role's level, or clear it.
+
+        Args:
+            role: The role.
+            level: The level, or ``None``.
+        """
+        if level is None:
+            self.stored.pop(role, None)
+        else:
+            self.stored[role] = level
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -1,4 +1,4 @@
-from collections.abc import AsyncGenerator, AsyncIterator, Iterable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Annotated, Any
@@ -34,6 +34,32 @@ from exactdocs.identity.models import Role
 from exactdocs.ingestion.adapters.driving import http as ingestion_http
 from exactdocs.retrieval.adapters.driving import http as retrieval_http
 from exactdocs_kernel import ForbiddenError
+
+
+def _username_of(
+    current_caller: identity_http.CurrentCaller,
+) -> Callable[..., Awaitable[str]]:
+    """Return a FastAPI dependency naming the user of the request (who cancelled a job).
+
+    Args:
+        current_caller: The dependency that names the calling account.
+
+    Returns:
+        The dependency; FastAPI runs ``current_caller`` once per request.
+    """
+
+    async def username(account: Annotated[AccountSummary, Depends(current_caller)]) -> str:
+        """Name the caller as people see it.
+
+        Args:
+            account: The caller.
+
+        Returns:
+            Its user name.
+        """
+        return account.username
+
+    return username
 
 
 def _include_session_routers(v1: APIRouter, container: Container) -> identity_http.CurrentCaller:
@@ -302,6 +328,7 @@ def create_app(container: Container) -> FastAPI:
             delete_provider=container.retrieval.delete_provider,
             check_provider=container.retrieval.check_provider,
             list_roles=container.retrieval.list_roles,
+            set_role_thinking=container.retrieval.set_role_thinking,
             estimate_embedding=container.retrieval.estimate_embedding,
             get_embedding_progress=container.retrieval.get_embedding_progress,
             get_ai_usage=container.retrieval.get_ai_usage,
@@ -339,6 +366,8 @@ def create_app(container: Container) -> FastAPI:
             require_operator=identity_http.build_operator(
                 caller=current_caller, action="applies a sources file"
             ),
+            cancel_job=container.ingestion.cancel_job,
+            caller_name=_username_of(current_caller),
         )
     )
     _include_sync_triggers(container, v1=v1, protected=protected, session_caller=session_caller)

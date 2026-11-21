@@ -50,7 +50,7 @@ export function TokensSection() {
             id="tokens-heading"
             ref={heading}
             tabIndex={-1}
-            className="font-serif text-2xl font-semibold tracking-tight outline-none"
+            className="text-2xl font-semibold tracking-tight outline-none"
           >
             API tokens
           </h2>

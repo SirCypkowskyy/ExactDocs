@@ -3,6 +3,7 @@ import { Search, X } from "lucide-react";
 import { type KeyboardEvent, useEffect, useEffectEvent, useRef, useState } from "react";
 import { MAX_QUERY, normalizeQuery } from "@/shared/lib/search-query";
 import { cn } from "@/shared/lib/utils";
+import { control, controlHeight, kbd } from "@/shared/ui/recipes";
 import { hasVersionBox } from "./keyboard";
 
 const GLOBAL_INPUT_ID = "global-search-input";
@@ -90,7 +91,7 @@ export function GlobalSearchBox({ place = "header", autoFocus = false, className
   }
 
   return (
-    <search aria-label="All libraries" className={cn("min-w-0 flex-1 lg:max-w-md", className)}>
+    <search aria-label="All libraries" className={cn("min-w-0 flex-1", className)}>
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -121,11 +122,20 @@ export function GlobalSearchBox({ place = "header", autoFocus = false, className
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={onKeyDown}
-            className="h-11 w-full min-w-0 rounded-md bg-card pr-16 pl-9 text-base outline-none ring-1 ring-inset ring-input transition-shadow duration-150 [appearance:none] placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring sm:h-9 sm:text-sm [&::-webkit-search-cancel-button]:hidden"
+            className={cn(
+              control,
+              controlHeight,
+              "min-w-0 pr-16 pl-9 [appearance:none] [&::-webkit-search-cancel-button]:hidden",
+            )}
           />
           {draft === "" ? (
             // Hidden while the page has its own box: that one answers `/`, not this.
-            <kbd className="pointer-events-none absolute top-1/2 right-3 hidden h-5 min-w-5 -translate-y-1/2 items-center justify-center rounded bg-secondary px-1 font-mono text-xs text-muted-foreground lg:inline-flex [body:has(#search-input)_&]:hidden">
+            <kbd
+              className={cn(
+                kbd,
+                "pointer-events-none absolute top-1/2 right-3 hidden -translate-y-1/2 lg:inline-flex [body:has(#search-input)_&]:hidden",
+              )}
+            >
               /
             </kbd>
           ) : (

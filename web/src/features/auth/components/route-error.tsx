@@ -1,7 +1,9 @@
 import { Navigate, useLocation } from "@tanstack/react-router";
+import { CloudOff } from "lucide-react";
 import { HttpError } from "@/shared/lib/http";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { Button } from "@/shared/ui/button";
+import { StatusScreen } from "@/shared/ui/status-screen";
 
 /**
  * Error screen for every route. A request refused for want of a session (it expired after the
@@ -10,7 +12,7 @@ import { Button } from "@/shared/ui/button";
 export function RouteError({
   error,
   reset,
-  wide = false,
+  wide: _wide = false,
 }: {
   error: unknown;
   reset: () => void;
@@ -33,24 +35,14 @@ export function RouteError({
       ? error.message
       : "ExactDocs didn't answer. Check that it is running, then try again.";
   return (
-    <main
-      className={
-        wide
-          ? "mx-auto flex max-w-5xl flex-col items-start gap-4 px-4 py-8 sm:px-6 sm:py-10"
-          : "mx-auto flex max-w-md flex-col items-start gap-4 px-6 py-20"
-      }
+    <StatusScreen
+      icon={<CloudOff aria-hidden="true" />}
+      title={title}
+      headingRef={heading}
+      alert
+      actions={<Button onClick={reset}>Try again</Button>}
     >
-      <h1
-        ref={heading}
-        tabIndex={-1}
-        className="font-serif text-3xl font-semibold tracking-tight outline-none"
-      >
-        {title}
-      </h1>
-      <div role="alert" className="text-muted-foreground">
-        <p>{detail}</p>
-      </div>
-      <Button onClick={reset}>Try again</Button>
-    </main>
+      <p>{detail}</p>
+    </StatusScreen>
   );
 }

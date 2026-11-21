@@ -437,6 +437,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   (404 `unknown_provider` for a profile that does not exist, 422 `provider_unsupported` for one this
   installation cannot call (an extra or SDK is missing), 422 `invalid_model` when not written
   `<profile>:<model>`); there is no `embedding` override (one vector space per instance).
+  `llm_thinking` and `judge_thinking` (`minimal`, `low`, `medium`, `high`, `xhigh`; `null`: the
+  instance's) set how much the role's model thinks before it answers, its own or the instance's
+  ([Thinking level](search.md#thinking-level)); 422 `thinking_unsupported` names the role and the
+  model when the model is known to take no thinking setting.
   `rerank_top_n` (1 to 200) is how many of its best candidates the reranker reorders (`null`: the
   instance's `EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default).
   `rerank_with` chooses what reranks its searches: `cross_encoder` (the `reranker` role) or
@@ -557,7 +561,16 @@ See [AI retrieval decisions](decisions/ai-retrieval.md) for the kinds and what e
   named.
 - `GET /ai/roles`: the instance roles (`embedding`, `reranker`, `llm`, `judge`), each with its
   `model` (`<profile>:<model>`), its `source` (`instance`, or `llm` for a judge that defaults to
-  the LLM) and whether its profile exists.
+  the LLM) and whether its profile exists. The `llm` and `judge` roles also have their `thinking`
+  level (the one their calls send; a judge that is the LLM thinks as the LLM), `own_thinking` (set
+  for the role itself), `thinking_configured` (set in the environment or the TOML file, so
+  read-only here) and `thinking_unsupported` (why its model cannot take the level, which its calls
+  then leave out). See [Thinking level](search.md#thinking-level).
+- `PUT /ai/roles/{role}` with `{"thinking": "low"}` (`null` clears it): the thinking level of the
+  `llm` or `judge` role, used from the next call; answers the role as `GET /ai/roles` shows it.
+  409 `role_configured` when `EXACTDOCS_AI__<ROLE>__THINKING` sets it, 422
+  `role_takes_no_thinking` for `embedding` and `reranker`, 422 `thinking_unsupported` (naming the
+  role and the model) when the role's model is known to take no thinking setting.
 - `GET /ai/embedding/estimate`: what embedding every version not embedded yet would send and cost,
   before it runs (`exactdocs ai estimate` over REST): `{"model", "space_id", "versions", "chunks",
   "characters", "estimated_tokens", "usd_per_million_tokens", "estimated_usd", "note"}`;
@@ -595,8 +608,24 @@ See [AI retrieval decisions](decisions/ai-retrieval.md) for the kinds and what e
 ## Jobs, access and health
 
 - **Jobs**: `GET /jobs/{id}` is one job (kind `import`, `refresh`, `reprocess`, `rechunk`, `retag`,
-  `collect` or `embed`; state `queued`,
-  `running`, `succeeded` or `failed`; `done` / `total` files, or chunks for `embed`; `chunked` / `reused`; `parsed` / `taken`; problems).
+  `collect`, `embed` or `push`; state `queued`,
+  `running`, `succeeded`, `failed` or `cancelled`; `done` / `total` files, or chunks for `embed`; `chunked` / `reused`; `parsed` / `taken`; problems;
+  `cancelled_by` / `cancelled_at`; `cancellable`, whether the caller may cancel it now).
+- **Cancelling a job**: `POST /jobs/{id}/cancel` needs the `contributor` role on the job's library
+  (operators always may; 403 `forbidden` otherwise). A `queued` job becomes `cancelled` at once and
+  never starts: its version stays as it was, or is never created for a first import. A `running`
+  job answers `running` with `cancelled_at` set and stops at its next step boundary, then ends
+  `cancelled` with what it finished kept: an import publishes nothing (its version is replaced in
+  one step or not at all), a `reprocess`, `rechunk` or `retag` keeps the versions it had finished,
+  an `embed` job sends no batch after the one in flight and keeps the vectors stored (their spend
+  is counted as usual). Asking again while it stops answers the same job; a job that ended answers
+  409 `job_finished` with its `job_state`. The cancellation is stored, so it survives a restart:
+  a job interrupted while it was stopping ends `cancelled` on the next start. The scheduled check
+  does not queue a cancelled auto import or branch sync again at the same commit (a new commit, or
+  a sync or import by hand, does), and the start and the nightly upkeep leave a version whose
+  embedding was cancelled alone; an import of the version, or a change of the embedding model,
+  queues it again, and it resumes from the chunks still missing vectors. CLI:
+  `exactdocs jobs cancel <id>`.
   An `embed` job embeds one version with the instance's embedding model. Its `total` counts the
   version's chunks without a vector, each once (identical files share their chunks, so they are
   embedded once); chunks another job embedded while it ran (files shared with another library)
@@ -685,7 +714,7 @@ New codes may be added: clients must treat an unknown `code` as a generic proble
   library is reused. Removing the last version keeps the library, without versions.
 - **Removal and imports**: an unknown library or version is 404. While an import of that version
   (of any version, for a library) is queued or running the call is refused with 409
-  `import_in_progress`; removal never cancels a job. The removed version's (or library's) job
+  `import_in_progress`; removal never cancels a job (cancel it first: `POST /jobs/{id}/cancel`). The removed version's (or library's) job
   history is deleted, so `/jobs/latest` shows no state for it. A re-sync of an existing version
   (E9-01) must be queued as a `refresh` job: it fails with 404 `not_found` at store time if the
   version was removed meanwhile, so a removal is never undone by a late sync. A first import is an

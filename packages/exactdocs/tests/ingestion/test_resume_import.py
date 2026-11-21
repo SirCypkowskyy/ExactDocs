@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from cancelling import WHO, Canceller, run_job
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.memory import (
     InMemoryCheckpoints,
@@ -25,14 +26,17 @@ from exactdocs.ingestion.models import (
     ImportSource,
     Job,
     JobId,
+    JobState,
     ParsedArticle,
     PathSelection,
+    ProblemCode,
     ProposedId,
     RefKind,
     RepositoryHost,
     RepositoryUrl,
 )
-from exactdocs.ingestion.use_cases import ImportVersionUseCase, _Progress
+from exactdocs.ingestion.ports.driven import JobProgress
+from exactdocs.ingestion.use_cases import ImportVersionUseCase, StopOnCancel, _Progress
 
 SHA = "c" * 40
 FILES = 200
@@ -278,3 +282,55 @@ async def test_a_resumed_import_cuts_and_labels_with_the_chunking_its_first_run_
 
     [version] = catalog.stored
     assert version.config_hash == MarkdownChunker(ChunkingConfig(split_depth=1)).config_hash
+
+
+@dataclass(slots=True)
+class CancelAfterFirstBatch:
+    """The job's progress; the job is cancelled once its first batch of files is reported."""
+
+    inner: JobProgress
+    cancel: Canceller
+
+    async def report(self, *, done: int, total: int) -> None:
+        await self.inner.report(done=done, total=total)
+        if done == BATCH:
+            await self.cancel()
+
+    async def problem(self, path: str, code: ProblemCode, reason: str) -> None:
+        await self.inner.problem(path, code, reason)
+
+    async def chunking(self, *, chunked: int, reused: int) -> None:
+        await self.inner.chunking(chunked=chunked, reused=reused)
+
+    async def parsing(self, *, parsed: int, taken: int) -> None:
+        await self.inner.parsing(parsed=parsed, taken=taken)
+
+
+async def test_a_cancelled_import_stops_between_batches_and_publishes_nothing(
+    tmp_path: Path,
+) -> None:
+    jobs = InMemoryJobRepository()
+    catalog = Catalog()
+    chunker = CountingChunker()
+    use_case = importer(
+        Repository(tmp_path), chunker, catalog, StopOnCancel(inner=InMemoryCheckpoints())
+    )
+
+    async def handler(job: Job, progress: JobProgress, /) -> None:
+        await use_case(job, CancelAfterFirstBatch(inner=progress, cancel=Canceller(jobs, job.id)))
+
+    queued = Job.queued(
+        job_id=JobId("j1"),
+        kind=IMPORT_JOB,
+        library="/a/b",
+        version="main",
+        commit_sha=SHA,
+        ref_kind=RefKind.BRANCH,
+        now=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    ended = await run_job(jobs, queued, handler)
+
+    assert (ended.state, ended.cancelled_by, ended.done) == (JobState.CANCELLED, WHO, BATCH)
+    assert len(chunker.cut) == BATCH  # the second batch never started
+    assert catalog.log == []  # nothing stored, indexed or activated: the version is untouched

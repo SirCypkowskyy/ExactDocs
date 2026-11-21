@@ -1,6 +1,6 @@
 """Data crossing the ingestion boundary (into and out of driving ports). Immutable, validated."""
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import UTC, datetime
 from typing import Annotated, Literal, Self
 
@@ -112,8 +112,8 @@ class JobSummary(_Dto):
     id: str
     """The job ID, for `/jobs/{id}`."""
     kind: str
-    """What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect` or
-    `embed`.
+    """What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect`,
+    `embed` or `push`.
     """
     library: str
     """The library ID, `/owner/repo`."""
@@ -122,7 +122,10 @@ class JobSummary(_Dto):
     commit_sha: str | None
     """The commit `version` was pinned to, if any."""
     state: JobState
-    """`queued` and `running` jobs are unfinished; `succeeded` and `failed` ones are done."""
+    """`queued` and `running` jobs are unfinished; `succeeded`, `failed` and `cancelled` ones are
+    done. A running job someone cancelled stays `running` (with `cancelled_at` set) until it
+    stops at its next step boundary.
+    """
     done: int
     """How much of `total` is done."""
     total: int
@@ -156,13 +159,22 @@ class JobSummary(_Dto):
     """When the job last started running; null while it waits."""
     finished_at: datetime | None
     """When the job ended; null while it is unfinished."""
+    cancelled_by: str | None = None
+    """The user name of who cancelled the job; null unless someone did."""
+    cancelled_at: datetime | None = None
+    """When someone asked to cancel the job; null unless someone did."""
+    cancellable: bool = False
+    """Whether the caller may cancel the job now: it is queued or running, nobody cancelled it
+    yet, and the caller has the `contributor` role on its library (operators always have).
+    """
 
     @classmethod
-    def from_model(cls, job: Job) -> Self:
+    def from_model(cls, job: Job, *, cancellable: bool = False) -> Self:
         """Map a domain entity to its boundary representation.
 
         Args:
             job: The job.
+            cancellable: Whether the caller may cancel it now.
 
         Returns:
             The job at the boundary, with its problems.
@@ -187,6 +199,9 @@ class JobSummary(_Dto):
             created_at=job.created_at,
             started_at=job.started_at,
             finished_at=job.finished_at,
+            cancelled_by=job.cancelled_by,
+            cancelled_at=job.cancelled_at,
+            cancellable=cancellable,
         )
 
 
@@ -201,17 +216,20 @@ class JobList(_Dto):
     """How many jobs match the filters, across every page; never counts a hidden library."""
 
     @classmethod
-    def from_page(cls, page: Page[Job]) -> Self:
+    def from_page(cls, page: Page[Job], *, cancellable: Collection[str] = ()) -> Self:
         """Map a page of domain entities.
 
         Args:
             page: The jobs and the cursor of the next page.
+            cancellable: The IDs of the jobs the caller may cancel now.
 
         Returns:
             The page at the boundary.
         """
         return cls(
-            jobs=[JobSummary.from_model(job) for job in page.items],
+            jobs=[
+                JobSummary.from_model(job, cancellable=job.id in cancellable) for job in page.items
+            ],
             next_cursor=page.next_cursor,
             total=len(page.items) if page.total is None else page.total,
         )
@@ -223,15 +241,18 @@ class LatestJob(_Dto):
     id: str
     """The job ID, for `/jobs/{id}`."""
     kind: str
-    """What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect` or
-    `embed`.
+    """What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect`,
+    `embed` or `push`.
     """
     library: str
     """The library ID, `/owner/repo`."""
     version: str | None
     """The ref of the version the job is for; null for a job of the whole library."""
     state: JobState
-    """`queued` and `running` jobs are unfinished; `succeeded` and `failed` ones are done."""
+    """`queued` and `running` jobs are unfinished; `succeeded`, `failed` and `cancelled` ones are
+    done. A running job someone cancelled stays `running` (with `cancelled_at` set) until it
+    stops at its next step boundary.
+    """
     done: int
     """How much of `total` is done."""
     total: int
@@ -250,13 +271,22 @@ class LatestJob(_Dto):
     """When the job last started running; null while it waits."""
     finished_at: datetime | None
     """When the job ended; null while it is unfinished."""
+    cancelled_by: str | None = None
+    """The user name of who cancelled the job; null unless someone did."""
+    cancelled_at: datetime | None = None
+    """When someone asked to cancel the job; null unless someone did."""
+    cancellable: bool = False
+    """Whether the caller may cancel the job now: it is queued or running, nobody cancelled it
+    yet, and the caller has the `contributor` role on its library (operators always have).
+    """
 
     @classmethod
-    def from_model(cls, job: Job) -> Self:
+    def from_model(cls, job: Job, *, cancellable: bool = False) -> Self:
         """Map a domain entity, keeping the count of skipped files, not the files.
 
         Args:
             job: The job.
+            cancellable: Whether the caller may cancel it now.
 
         Returns:
             The job at the boundary, without its problems.
@@ -275,6 +305,9 @@ class LatestJob(_Dto):
             created_at=job.created_at,
             started_at=job.started_at,
             finished_at=job.finished_at,
+            cancelled_by=job.cancelled_by,
+            cancelled_at=job.cancelled_at,
+            cancellable=cancellable,
         )
 
 
@@ -307,6 +340,15 @@ class GetJobQuery(_Dto):
 
     job_id: str = Field(min_length=1)
     """The job ID."""
+
+
+class CancelJobCommand(_Dto):
+    """Cancel a queued or running job."""
+
+    job_id: str = Field(min_length=1)
+    """The job ID."""
+    by: str | None = Field(default=None)
+    """The user name of who cancels it; null for the instance itself."""
 
 
 class JobListQuery(_Dto):
@@ -1082,6 +1124,10 @@ class QueueEmbeddingCommand(_Dto):
 
     library: str | None = Field(default=None, min_length=1)
     """Only this library's versions; every library's when null."""
+    retry_cancelled: bool = Field(default=False)
+    """Also the versions whose newest embedding a person cancelled: a person asks again. The
+    start and the nightly upkeep leave those alone.
+    """
 
 
 class QueuedEmbedding(_Dto):

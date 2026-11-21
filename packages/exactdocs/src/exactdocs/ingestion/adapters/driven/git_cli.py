@@ -372,8 +372,9 @@ class GitCli:
     ) -> AsyncGenerator[Path]:
         """Implement ``GitGateway.fetch_files``: the same checkout, but of exactly these files.
 
-        The watchdog's size limit is ``max_bytes`` (plus room for git's own files) instead of
-        the whole-repository limit, so a server cannot make a few images cost a repository.
+        The watchdog's size limit is ``max_bytes`` twice (each file is on disk once checked out
+        and once in git's pack) plus room for git's own files, instead of the whole-repository
+        limit, so a server cannot make a few images cost a repository.
 
         Args:
             repository: The repository.
@@ -386,7 +387,7 @@ class GitCli:
         Yields:
             The folder with the checked-out files; it is removed afterwards.
         """
-        bounded = replace(self, max_fetch_bytes=max_bytes + _GIT_OVERHEAD)
+        bounded = replace(self, max_fetch_bytes=2 * max_bytes + _GIT_OVERHEAD)
         async with bounded.checkout(
             repository,
             commit_sha,
@@ -523,7 +524,9 @@ class GitCli:
         if out.code:
             raise _failure(out.stderr, ssh=ssh)
         size, count = await asyncio.to_thread(_measure, folder)
-        if size > self.max_fetch_bytes or count > self.max_fetch_files:
+        if count > self.max_fetch_files:
+            raise RepositoryTooLargeError(self.max_fetch_files, files=True)
+        if size > self.max_fetch_bytes:
             raise RepositoryTooLargeError(self.max_fetch_bytes)
 
     async def list_files(
@@ -928,7 +931,7 @@ class GitCli:
             start_new_session=True,
         )  # fmt: skip
         guard = asyncio.create_task(self._guard(process, watch, max_bytes)) if watch else None
-        tripped = False
+        tripped: bool | None = False
         try:
             async with asyncio.timeout(limit):
                 out, err = await asyncio.gather(
@@ -942,30 +945,36 @@ class GitCli:
             # Also when git itself is gone: a helper (git-remote-https, ssh) may still hold the
             # pipes. The group id stays valid while any member lives.
             tripped = guard is not None and guard.done() and not guard.cancelled()
+            by_files = tripped and guard is not None and guard.result() == "files"
             if guard:
                 guard.cancel()
             _kill_group(process)
             await _settle(process)
         if tripped:
+            if by_files:
+                raise RepositoryTooLargeError(self.max_fetch_files, files=True)
             raise RepositoryTooLargeError(max_bytes)
         if len(out) > cap:
             raise _OutputTooBigError(_TOO_BIG)
         return _Output(stdout=out, stderr=err.decode(errors="replace").lower(), code=code)
 
-    async def _guard(self, process: Process, folder: Path, max_bytes: int) -> None:
+    async def _guard(self, process: Process, folder: Path, max_bytes: int) -> str:
         """Return (after killing git) as soon as ``folder`` holds too many bytes or files.
 
         Args:
             process: The git process.
             folder: The folder to measure.
             max_bytes: The most bytes it may hold.
+
+        Returns:
+            Which limit was hit: ``"files"`` or ``"bytes"``.
         """
         while True:
             await asyncio.sleep(self.watch_interval)
             size, count = await asyncio.to_thread(_measure, folder)
-            if size > max_bytes or count > self.max_fetch_files:
+            if count > self.max_fetch_files or size > max_bytes:
                 _kill_group(process)
-                return
+                return "files" if count > self.max_fetch_files else "bytes"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

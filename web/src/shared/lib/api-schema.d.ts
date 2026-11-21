@@ -837,6 +837,33 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/ai/roles/{role}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set Role Thinking
+         * @description Set (or clear, with null) the thinking level of the `llm` or `judge` role.
+         *
+         *     The level is sent as the provider's own setting at the next call: Google's thinking level
+         *     or budget, Claude's effort or budget, OpenAI's `reasoning_effort`. A level set in the
+         *     environment or the configuration file (`EXACTDOCS_AI__<ROLE>__THINKING`) cannot be
+         *     changed here (409 `role_configured`); another role takes none (422
+         *     `role_takes_no_thinking`); a level the role's model cannot take is refused (422
+         *     `thinking_unsupported`, naming the role and the model).
+         */
+        readonly put: operations["ai-set_role_thinking"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/ai/embedding/estimate": {
         readonly parameters: {
             readonly query?: never;
@@ -1260,6 +1287,33 @@ export interface paths {
         readonly get: operations["ingestion-list_library_jobs"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/jobs/{job_id}/cancel": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Cancel Job
+         * @description Cancel a queued or running job (contributor on its library; operators always may).
+         *
+         *     A queued job is cancelled at once and never starts: its version stays as it was (or is
+         *     never created, for a first import). A running job stops at its next step boundary: no
+         *     version is left half replaced and no new embedding batch is sent after the one in
+         *     flight; what it finished is kept (an embedding's vectors). Until it stops it answers
+         *     `running` with `cancelled_at` set, and asking again answers the same. A job that ended
+         *     (`succeeded`, `failed` or `cancelled`) answers 409 `job_finished`, with its `job_state`.
+         */
+        readonly post: operations["ingestion-cancel_job"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2687,6 +2741,12 @@ export interface components {
              */
             readonly library_id: string | null;
             /**
+             * Job State
+             * @description On `job_finished`: the state the job ended in (`succeeded`, `failed` or `cancelled`).
+             *     Null otherwise.
+             */
+            readonly job_state: string | null;
+            /**
              * Message
              * @description Alias of ``detail`` under the name context7's errors use (``{error, message}``).
              */
@@ -2775,7 +2835,7 @@ export interface components {
          * @description Where a job is in its life. Only ``queued`` and ``running`` jobs are unfinished.
          * @enum {string}
          */
-        readonly JobState: "queued" | "running" | "succeeded" | "failed";
+        readonly JobState: "queued" | "running" | "succeeded" | "failed" | "cancelled";
         /**
          * JobSummary
          * @description A job and how far it got. ``total`` is 0 until the job knows its size.
@@ -2788,8 +2848,8 @@ export interface components {
             readonly id: string;
             /**
              * Kind
-             * @description What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect` or
-             *     `embed`.
+             * @description What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect`,
+             *     `embed` or `push`.
              */
             readonly kind: string;
             /**
@@ -2807,7 +2867,11 @@ export interface components {
              * @description The commit `version` was pinned to, if any.
              */
             readonly commit_sha: string | null;
-            /** @description `queued` and `running` jobs are unfinished; `succeeded` and `failed` ones are done. */
+            /**
+             * @description `queued` and `running` jobs are unfinished; `succeeded`, `failed` and `cancelled` ones are
+             *     done. A running job someone cancelled stays `running` (with `cancelled_at` set) until it
+             *     stops at its next step boundary.
+             */
             readonly state: components["schemas"]["JobState"];
             /**
              * Done
@@ -2882,6 +2946,23 @@ export interface components {
              * @description When the job ended; null while it is unfinished.
              */
             readonly finished_at: string | null;
+            /**
+             * Cancelled By
+             * @description The user name of who cancelled the job; null unless someone did.
+             */
+            readonly cancelled_by?: string | null;
+            /**
+             * Cancelled At
+             * @description When someone asked to cancel the job; null unless someone did.
+             */
+            readonly cancelled_at?: string | null;
+            /**
+             * Cancellable
+             * @description Whether the caller may cancel the job now: it is queued or running, nobody cancelled it
+             *     yet, and the caller has the `contributor` role on its library (operators always have).
+             * @default false
+             */
+            readonly cancellable: boolean;
         };
         /**
          * KeySource
@@ -2901,8 +2982,8 @@ export interface components {
             readonly id: string;
             /**
              * Kind
-             * @description What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect` or
-             *     `embed`.
+             * @description What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect`,
+             *     `embed` or `push`.
              */
             readonly kind: string;
             /**
@@ -2915,7 +2996,11 @@ export interface components {
              * @description The ref of the version the job is for; null for a job of the whole library.
              */
             readonly version: string | null;
-            /** @description `queued` and `running` jobs are unfinished; `succeeded` and `failed` ones are done. */
+            /**
+             * @description `queued` and `running` jobs are unfinished; `succeeded`, `failed` and `cancelled` ones are
+             *     done. A running job someone cancelled stays `running` (with `cancelled_at` set) until it
+             *     stops at its next step boundary.
+             */
             readonly state: components["schemas"]["JobState"];
             /**
              * Done
@@ -2959,6 +3044,23 @@ export interface components {
              * @description When the job ended; null while it is unfinished.
              */
             readonly finished_at: string | null;
+            /**
+             * Cancelled By
+             * @description The user name of who cancelled the job; null unless someone did.
+             */
+            readonly cancelled_by?: string | null;
+            /**
+             * Cancelled At
+             * @description When someone asked to cancel the job; null unless someone did.
+             */
+            readonly cancelled_at?: string | null;
+            /**
+             * Cancellable
+             * @description Whether the caller may cancel the job now: it is queued or running, nobody cancelled it
+             *     yet, and the caller has the `contributor` role on its library (operators always have).
+             * @default false
+             */
+            readonly cancellable: boolean;
         };
         /**
          * LatestJobs
@@ -3255,6 +3357,19 @@ export interface components {
              */
             readonly reranker?: string | null;
             /**
+             * @description How much its `llm` role's model (its own or the instance's) thinks before it answers:
+             *     `minimal`, `low`, `medium`, `high` or `xhigh`. Thinking tokens are billed as output, and
+             *     several providers default to a high level; HyDE and the agentic mode rarely need more than
+             *     `low`. Null: the instance's level (`EXACTDOCS_AI__LLM__THINKING`). A level the model cannot
+             *     take is refused (422 `thinking_unsupported`, naming the role and the model).
+             */
+            readonly llm_thinking?: components["schemas"]["ThinkingLevel"] | null;
+            /**
+             * @description The same for its `judge` role; null: the instance's (the `llm` role's when the judge is
+             *     the LLM).
+             */
+            readonly judge_thinking?: components["schemas"]["ThinkingLevel"] | null;
+            /**
              * Rerank Top N
              * @description How many of its best candidates the reranker reorders (1 to 200); null: the instance's (`EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default).
              */
@@ -3337,6 +3452,10 @@ export interface components {
              * @description The library's own reranker (`<profile>:<model>`); null: the instance's.
              */
             readonly reranker: string | null;
+            /** @description The library's own thinking level for the `llm` role; null: the instance's. */
+            readonly llm_thinking: components["schemas"]["ThinkingLevel"] | null;
+            /** @description The library's own thinking level for the `judge` role; null: the instance's. */
+            readonly judge_thinking: components["schemas"]["ThinkingLevel"] | null;
             /**
              * Rerank Top N
              * @description How many of its best candidates the reranker reorders; null: the instance's.
@@ -4538,6 +4657,30 @@ export interface components {
              * @description False when the role names a profile that does not exist (the role is then not usable).
              */
             readonly profile_exists: boolean;
+            /**
+             * @description `llm` and `judge` only: how much the model thinks before it answers (`minimal`, `low`,
+             *     `medium`, `high`, `xhigh`); null: the provider's default. A judge that is the LLM thinks as
+             *     the LLM does unless it has a level of its own.
+             */
+            readonly thinking: components["schemas"]["ThinkingLevel"] | null;
+            /**
+             * @description The level set for this role itself (the configuration's, else the REST API's); null: none of
+             *     its own (the judge then thinks as the LLM when it is the LLM).
+             */
+            readonly own_thinking: components["schemas"]["ThinkingLevel"] | null;
+            /**
+             * Thinking Configured
+             * @description True when the level is set in the environment or the configuration file
+             *     (`EXACTDOCS_AI__<ROLE>__THINKING`): it cannot be changed over the REST API.
+             * @default false
+             */
+            readonly thinking_configured: boolean;
+            /**
+             * Thinking Unsupported
+             * @description Why the role's model cannot take its level, when that is known: the level is then left out
+             *     of its calls (and a warning logged at start).
+             */
+            readonly thinking_unsupported: string | null;
         };
         /**
          * RoleSource
@@ -4545,6 +4688,17 @@ export interface components {
          * @enum {string}
          */
         readonly RoleSource: "instance" | "library" | "llm";
+        /**
+         * RoleThinkingIn
+         * @description An instance role's thinking level, as the admin sets it.
+         */
+        readonly RoleThinkingIn: {
+            /**
+             * @description How much the role's model thinks before it answers: `minimal`, `low`, `medium`, `high` or
+             *     `xhigh`; null: the provider's default. Thinking tokens are billed as output.
+             */
+            readonly thinking?: components["schemas"]["ThinkingLevel"] | null;
+        };
         /**
          * ScopeUsageOut
          * @description What one scope spent today and this month, and its budgets.
@@ -5010,7 +5164,7 @@ export interface components {
          * @description What a re-sync did with one version.
          * @enum {string}
          */
-        readonly SyncStatus: "queued" | "up_to_date" | "importing" | "pinned" | "failed";
+        readonly SyncStatus: "queued" | "up_to_date" | "importing" | "pinned" | "failed" | "cancelled";
         /**
          * SyncedLibrary
          * @description The outcome per version; ``queued`` ones have an import to poll by ``job_id``.
@@ -5220,6 +5374,16 @@ export interface components {
              */
             readonly tags: readonly string[];
         };
+        /**
+         * ThinkingLevel
+         * @description How much a chat model thinks before it answers (#421); unset: the provider's default.
+         *
+         *     Each provider gets its own control for the level: Google's thinking level (Gemini 3 and
+         *     later) or budget (Gemini 2.5), Claude's effort or budget, OpenAI's ``reasoning_effort``.
+         *     Thinking tokens are billed as output, and several providers default to a high level.
+         * @enum {string}
+         */
+        readonly ThinkingLevel: "minimal" | "low" | "medium" | "high" | "xhigh";
         /**
          * TokenGrant
          * @description A new token. ``token`` is the only copy of the secret and is never shown again.
@@ -9720,6 +9884,86 @@ export interface operations {
             };
         };
     };
+    readonly "ai-set_role_thinking": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly role: components["schemas"]["ModelRole"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RoleThinkingIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RoleOut"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     readonly "ai-estimate_embedding": {
         readonly parameters: {
             readonly query?: never;
@@ -11120,6 +11364,82 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["JobList"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-cancel_job": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly job_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["JobSummary"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

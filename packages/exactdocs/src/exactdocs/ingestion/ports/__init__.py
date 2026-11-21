@@ -31,6 +31,7 @@ from exactdocs.ingestion.ports.driven import (
 from exactdocs.ingestion.ports.driving import (
     AddLibrary,
     AddVersion,
+    CancelJob,
     CheckRepository,
     DisableWebhook,
     EnqueueJob,
@@ -58,6 +59,7 @@ __all__ = [
     "AddLibrary",
     "AddVersion",
     "AutoSyncStore",
+    "CancelJob",
     "CheckRepository",
     "Checkpoints",
     "ChunkIndex",

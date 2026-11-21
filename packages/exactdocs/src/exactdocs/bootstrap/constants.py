@@ -517,6 +517,12 @@ SECRETS_REFUSED_IN_FILE: Final[frozenset[str]] = frozenset(
     {"secret_key", "secret_key_previous", "metrics_token"}
 )
 """Top-level settings the configuration file may not hold: secrets come from the environment."""
+NAMED_MODEL_KINDS: Final[frozenset[str]] = frozenset(
+    {"anthropic", "google", "google-vertex", "openai"}
+)
+"""Provider kinds whose API serves the models pydantic-ai's profiles name (#421): a model they
+do not know to think takes no thinking level. Behind every other kind (an OpenAI-compatible
+endpoint) a model pydantic-ai does not know gets ``reasoning_effort`` all the same."""
 DEFAULT_BASE_URLS: Final[dict[str, str]] = {
     "openai": "https://api.openai.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",

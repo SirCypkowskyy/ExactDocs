@@ -11,6 +11,7 @@ from exactdocs.ingestion.dtos import (
     AppliedSources,
     ApplySourcesCommand,
     AutoSyncOut,
+    CancelJobCommand,
     CheckedRepository,
     CheckRepositoryCommand,
     DisableAutoSyncCommand,
@@ -80,6 +81,25 @@ class GetJob(Protocol):
 
         Returns:
             The job.
+        """
+        ...
+
+
+class CancelJob(Protocol):
+    """Cancel a queued or running job (contributor on its library; operators always may).
+
+    A queued job is cancelled at once and never starts; a running one stops at its next step
+    boundary, keeping what it finished. Asking again while it stops answers the same job.
+    """
+
+    async def __call__(self, command: CancelJobCommand) -> JobSummary:
+        """Run the use case.
+
+        Args:
+            command: The job's ID and who cancels it.
+
+        Returns:
+            The job: ``cancelled``, or ``running`` with ``cancelled_at`` set while it stops.
         """
         ...
 
@@ -378,13 +398,18 @@ class SyncLibraryFromRefs(Protocol):
     """
 
     async def __call__(
-        self, command: SyncLibraryCommand, *, refs: RemoteRefs | None = None
+        self,
+        command: SyncLibraryCommand,
+        *,
+        refs: RemoteRefs | None = None,
+        scheduled: bool = False,
     ) -> SyncedLibrary:
         """Run the use case.
 
         Args:
             command: The library to sync.
             refs: The refs the remote advertised; ``None`` lists them now.
+            scheduled: The scheduled check asks: a sync a person cancelled is not redone.
 
         Returns:
             What happened to each version.

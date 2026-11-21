@@ -122,6 +122,7 @@ from exactdocs.ingestion.errors import (
     InvalidRepositoryUrlError,
     InvalidTagError,
     InvalidWebhookPayloadError,
+    JobFinishedError,
     MissingDeliveryIdError,
     PatternProblem,
     TagProblem,
@@ -788,6 +789,8 @@ class JobState(StrEnum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+    """A person cancelled it: before it started, or it stopped at its next step boundary."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -931,6 +934,20 @@ class Job:
     """When the job last started running."""
     finished_at: datetime | None = None
     """When the job ended."""
+    cancelled_by: str | None = None
+    """Who asked to cancel it (their user name); ``None`` unless someone did."""
+    cancelled_at: datetime | None = None
+    """When someone asked to cancel it; a running job stops at its next step boundary."""
+
+    @property
+    def cancel_requested(self) -> bool:
+        """Whether someone asked to cancel the job (it may still be running until its next step)."""
+        return self.cancelled_at is not None
+
+    @property
+    def finished(self) -> bool:
+        """Whether the job has ended: ``succeeded``, ``failed`` or ``cancelled``."""
+        return self.state not in {JobState.QUEUED, JobState.RUNNING}
 
     @classmethod
     def queued(
@@ -1093,6 +1110,39 @@ class Job:
             The failed job.
         """
         return replace(self, state=JobState.FAILED, error=error, error_code=code, finished_at=now)
+
+    def cancelling(self, by: str | None, now: datetime) -> Self:
+        """Ask to cancel the job: a queued one is cancelled at once, a running one is flagged.
+
+        Asking again while a running job is being cancelled changes nothing.
+
+        Args:
+            by: Who asks (their user name); ``None`` for the instance itself.
+            now: The time of the request.
+
+        Returns:
+            The job, ``cancelled`` if it was queued, else flagged with who and when.
+
+        Raises:
+            JobFinishedError: The job has ended already.
+        """
+        if self.finished:
+            raise JobFinishedError(self.id, self.state)
+        if self.cancel_requested:
+            return self
+        flagged = replace(self, cancelled_by=by, cancelled_at=now)
+        return flagged.cancelled(now) if self.state is JobState.QUEUED else flagged
+
+    def cancelled(self, now: datetime) -> Self:
+        """Mark the job as stopped because someone cancelled it.
+
+        Args:
+            now: The time it ended.
+
+        Returns:
+            The cancelled job; what it did so far is kept.
+        """
+        return replace(self, state=JobState.CANCELLED, finished_at=now)
 
     def requeued(self) -> Self:
         """Run again from the beginning, as if never started.
@@ -2986,6 +3036,8 @@ class SyncStatus(StrEnum):
     """A tag or a commit never moves: it is not synced."""
     FAILED = "failed"
     """The branch is gone upstream: the version keeps what it served; the failure is on a job."""
+    CANCELLED = "cancelled"
+    """The scheduled check left the branch alone: a person cancelled its sync to this same tip."""
 
 
 # ---------------------------------------------------------------- the scheduled check (SYNC-02)
