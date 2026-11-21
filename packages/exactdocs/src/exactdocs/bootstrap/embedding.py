@@ -61,7 +61,8 @@ class SaveProviderThenEmbed:
         saved = await self.save_provider(command)
         if ModelRole.EMBEDDING in saved.roles:
             try:
-                queued = await self.queue_embedding(QueueEmbeddingCommand())
+                # A person changed the model: a version whose embedding was cancelled goes too.
+                queued = await self.queue_embedding(QueueEmbeddingCommand(retry_cancelled=True))
             except Exception:
                 logger.exception("could not queue the embedding after %s changed", saved.name)
             else:

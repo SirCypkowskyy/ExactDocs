@@ -331,6 +331,39 @@ class JobNotFoundError(NotFoundError):
         self.job_id = job_id
 
 
+class JobFinishedError(ConflictError):
+    """A job that has ended (succeeded, failed or cancelled) cannot be cancelled."""
+
+    code = "job_finished"
+
+    def __init__(self, job_id: str, state: str) -> None:
+        """Name the job and the state it ended in.
+
+        Args:
+            job_id: The job ID.
+            state: The state it is in: ``succeeded``, ``failed`` or ``cancelled``.
+        """
+        super().__init__(
+            f"job {job_id!r} is {state}: only a queued or running job can be cancelled"
+        )
+        self.job_id, self.job_state = job_id, str(state)
+
+
+class JobCancelledError(DomainError):
+    """Raised inside a running job at its next step boundary once someone cancelled it."""
+
+    code = "job_cancelled"
+
+    def __init__(self, job_id: str) -> None:
+        """Name the job that stops.
+
+        Args:
+            job_id: The job ID.
+        """
+        super().__init__(f"job {job_id!r} was cancelled")
+        self.job_id = job_id
+
+
 class UnknownLibraryError(NotFoundError):
     """No library with this ID exists."""
 
