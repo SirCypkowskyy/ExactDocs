@@ -133,6 +133,7 @@ from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit, swee
 from exactdocs.ingestion.adapters.driven.known_hosts import seed_known_hosts
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.postgres import PostgresLibraryLocks
+from exactdocs.ingestion.adapters.driven.restructuredtext import RestructuredTextConverter
 from exactdocs.ingestion.adapters.driven.sqlite import (
     SqliteAutoSyncStore,
     SqliteCredentialVault,
@@ -1122,6 +1123,7 @@ class Container:
             max_images_bytes=settings.max_images_bytes,
             checkpoints=DbosCheckpoints(),
             batch_files=settings.import_batch_files,
+            converter=RestructuredTextConverter(),
             tag_locks=tag_locks,
             imported_tags=CatalogImportedTags(
                 get_version_tags=read.catalog.get_version_tags,

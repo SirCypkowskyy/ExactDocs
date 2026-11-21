@@ -56,6 +56,7 @@ extend-exclude = [
     "web",
     "packages/exactdocs/src/exactdocs/_web",
     "packages/exactdocs/tests/fixtures/docs-repo",
+    "packages/exactdocs/tests/fixtures/sphinx-docs",
     # Code that breaks the Python conventions on purpose, read (never imported) by test_conventions.py.
     "packages/exactdocs/tests/architecture/fixtures",
 ]
@@ -167,7 +168,11 @@ extra-paths = ["packages/exactdocs/tests/fixtures", "packages/exactdocs/evals"]
 
 [tool.ty.src]
 include = ["packages"]
-exclude = ["packages/exactdocs/src/exactdocs/_web", "packages/exactdocs/tests/architecture/fixtures"]
+exclude = [
+    "packages/exactdocs/src/exactdocs/_web",
+    "packages/exactdocs/tests/architecture/fixtures",
+    "packages/exactdocs/tests/fixtures/sphinx-docs",
+]
 
 [tool.ty.rules]
 possibly-unresolved-reference = "error"

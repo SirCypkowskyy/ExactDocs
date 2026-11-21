@@ -1,0 +1,4 @@
+POOL_SIZE = 5
+RETRY = 3
+TIMEOUT = 30
+DEBUG = False

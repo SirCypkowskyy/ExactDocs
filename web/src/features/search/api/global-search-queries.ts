@@ -22,7 +22,7 @@ export const globalSearchQueryOptions = ({ q, library }: GlobalArgs) => {
     queryFn: ({ signal }) => {
       const query: QueryOf<"/api/v1/search"> = {
         q: text,
-        ...(library && { library }),
+        ...(library && { library: [library] }),
         limit: SEARCH_LIMIT,
       };
       return getJson<GlobalResults>("/v1/search", { signal, query });

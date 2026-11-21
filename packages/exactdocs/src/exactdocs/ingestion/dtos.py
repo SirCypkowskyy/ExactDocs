@@ -456,7 +456,8 @@ class AddLibraryCommand(_Dto):
     ref: str | None = Field(default=None, min_length=1, max_length=255)
     """A tag, a branch or a full or short commit SHA; omitted: the default branch."""
     include_paths: list[str] = Field(default_factory=list)
-    """Folders, files or globs to import; empty: every `.md`/`.mdx` file."""
+    """Folders, files or globs to import; empty: every `.md`/`.mdx`/`.rst` file (`.txt` only
+    when a path names it)."""
     exclude_paths: list[str] = Field(default_factory=list)
     """Folders, files or globs to leave out; they win."""
     tag_rules: list[TagRuleIn] = Field(default_factory=list, max_length=MAX_TAG_RULES)
@@ -469,7 +470,7 @@ class AddLibraryCommand(_Dto):
     """
     context7_paths: bool | None = Field(default=None)
     """Without paths, take those of the repository's root `context7.json` (null or true); false:
-    no paths mean every `.md`/`.mdx` file.
+    no paths mean every `.md`/`.mdx`/`.rst` file.
     """
 
 
@@ -1137,7 +1138,7 @@ class SourceLibrary(_Dto):
     is created.
     """
     include_paths: list[str] | None = Field(default=None)
-    """Folders, files or globs to import; empty: every `.md`/`.mdx` file (the repository's
+    """Folders, files or globs to import; empty: every `.md`/`.mdx`/`.rst` file (the repository's
     `context7.json` does not fill in a managed empty list). Left out: not managed.
     """
     exclude_paths: list[str] | None = Field(default=None)

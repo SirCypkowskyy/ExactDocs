@@ -39,6 +39,7 @@ from exactdocs.ingestion.constants import (
     DEFAULT_INTERVAL_MINUTES,
     DEFAULT_KEEP_LAST,
     DEFAULT_MAX_SECTION_CHARS,
+    EXPLICIT_SUFFIXES,
     FLAT_HOSTS,
     GITHUB_SIGNATURE_HEADER,
     GLOB_CHARS,
@@ -71,6 +72,7 @@ from exactdocs.ingestion.constants import (
     PEELED,
     README_DESCRIPTION_MAX,
     README_TITLE_MAX,
+    RESTRUCTUREDTEXT_SUFFIXES,
     SIGNATURE_SCHEME,
     SOURCE_MISMATCH,
     TAGS,
@@ -498,6 +500,81 @@ def _title(declared: object, body: str, path: str) -> str:
     return PurePosixPath(path).stem
 
 
+def is_restructuredtext(path: str) -> bool:
+    """Tell whether an article is reStructuredText (``.rst``, ``.txt``), not Markdown.
+
+    Args:
+        path: The article's repository path.
+
+    Returns:
+        True for a reStructuredText article.
+    """
+    return path.lower().endswith(RESTRUCTUREDTEXT_SUFFIXES)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IncludeRefused:
+    """A file a reStructuredText include names that is not read, and why."""
+
+    reason: str
+    """Why, in words for users (``not in the imported files``, ``too large``...)."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ConvertedArticle:
+    """A reStructuredText article written as Markdown (``MarkupConverter``)."""
+
+    body: str
+    """The Markdown the chunker cuts and the reader shows."""
+    problems: tuple[str, ...] = ()
+    """What was not converted (unknown directives and roles, unread includes); imported anyway."""
+
+
+def converted_article(path: str, converted: ConvertedArticle) -> ParsedArticle:
+    """Make the article of a converted reStructuredText file: its title is its first H1.
+
+    It has no front matter, tags or description; its problems are the conversion's.
+
+    Args:
+        path: The file's repository path.
+        converted: What the converter gave.
+
+    Returns:
+        The article.
+    """
+    body = strip_invisible(converted.body)
+    return ParsedArticle(
+        path=path,
+        title=_title(None, body, path),
+        body=body,
+        problems=converted.problems,
+        images=image_paths(path, body),
+    )
+
+
+def converted_key(path: str, source: str, read: Sequence[tuple[str, str]], converter: str) -> str:
+    """Key a converted article by everything its Markdown depends on, as a blob SHA would.
+
+    A reStructuredText article's text depends on its path (relative links) and on every file
+    its includes read, not only on its own bytes, and must never share a key with a Markdown
+    file of the same bytes: chunk sets and stored contents are found by this key.
+
+    Args:
+        path: The article's repository path.
+        source: Its text.
+        read: ``(path, text)`` of every file the conversion read, in order.
+        converter: The converter's version (``MarkupConverter.version``).
+
+    Returns:
+        A 64-character hex SHA-256, shaped like a SHA-256 git object ID.
+    """
+    digest = hashlib.sha256(b"exactdocs restructuredtext\0")
+    for part in (converter, path, source, *(f"{p}\0{t}" for p, t in read)):
+        digest.update(part.encode(errors="surrogatepass"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ReadmeSummary:
     """What a root README says about its library; ``None`` where it says nothing usable."""
@@ -818,12 +895,16 @@ class ProblemCode(StrEnum):
     """The root ``context7.json`` cannot be used and was ignored; the import went on without it."""
     INSTRUCTION_FILES = "instruction_files"
     """The instruction files (repo guidance) could not be read; the version has none."""
+    MARKUP = "markup"
+    """The article was imported, but some of its markup was not converted: an unknown
+    reStructuredText directive or role (kept as text), or an include that could not be read."""
 
     @property
     def is_skip(self) -> bool:
         """Whether the file was left out of the version (as opposed to imported with a note)."""
         return self not in {
             ProblemCode.FRONT_MATTER,
+            ProblemCode.MARKUP,
             ProblemCode.TRUNCATED,
             ProblemCode.CONTEXT7,
             ProblemCode.INSTRUCTION_FILES,
@@ -1968,18 +2049,20 @@ def _clean_pattern(raw: str) -> str:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PathSelection:
-    """Which repository files are articles: ``include`` minus ``exclude``, only ``.md``/``.mdx``.
+    """Which repository files are articles: ``include`` minus ``exclude``, only articles' suffixes.
 
+    Articles are ``.md``/``.mdx`` (Markdown) and ``.rst`` (reStructuredText) files, and ``.txt``
+    files (read as reStructuredText) that an include pattern naming ``.txt`` selects (#435).
     Patterns are repo-relative with ``/`` (an absolute path, ``..`` or a backslash is refused) and
-    **case-sensitive**: ``Docs/`` does not match ``docs/``. Only the ``.md``/``.mdx`` suffix is
+    **case-sensitive**: ``Docs/`` does not match ``docs/``. Only the suffix is
     case-insensitive. ``docs/`` is a folder and all below it, ``docs`` a file or a folder, ``*``
     and ``?`` stay within one name, ``**`` as a whole name crosses folders, ``{a,b}`` is a choice
     (not nestable; ``{}`` matches nothing; a lone ``}`` is a plain character). No ``include``
-    means every ``.md``/``.mdx`` file. An exclusion always wins.
+    means every ``.md``/``.mdx``/``.rst`` file. An exclusion always wins.
     """
 
     include: tuple[str, ...] = ()
-    """Patterns of what to import; empty: every ``.md``/``.mdx`` file."""
+    """Patterns of what to import; empty: every ``.md``/``.mdx``/``.rst`` file."""
     exclude: tuple[str, ...] = ()
     """Patterns of what to leave out; they win over ``include``."""
 
@@ -2011,13 +2094,21 @@ class PathSelection:
             path: A repository path.
 
         Returns:
-            True for a ``.md``/``.mdx`` file the patterns select.
+            True for an article file the patterns select (``.txt``: only a pattern naming it).
         """
-        if not path.lower().endswith(ARTICLE_SUFFIXES):
+        lowered = path.lower()
+        if not lowered.endswith(ARTICLE_SUFFIXES):
             return False
         if any(_matches(_glob(p), path) for p in self.exclude):
             return False
-        return not self.include or any(_matches(_glob(p), path) for p in self.include)
+        explicit = lowered.endswith(EXPLICIT_SUFFIXES)
+        if not self.include:
+            return not explicit
+        return any(
+            _matches(_glob(p), path)
+            for p in self.include
+            if not explicit or any(s in p.lower() for s in EXPLICIT_SUFFIXES)
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

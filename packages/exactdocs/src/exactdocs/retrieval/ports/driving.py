@@ -82,19 +82,23 @@ class SearchDocs(Protocol):
 
 
 class SearchAllLibraries(Protocol):
-    """Search the default version of every library at once (or of one, with ``library``).
+    """Search the default version of every library at once (or of the chosen ones).
 
-    Each result names its library and version; ``libraries`` counts the matches per library
-    over all of them, also when ``library`` narrows the results. A version other than a
-    library's default never answers. Raises ``VersionNotIndexedError`` for a ``library`` that
-    has no readable default version.
+    Each result names its library and version, and its BM25 and vector ranks; ``libraries``
+    counts the matches per library over all of them, also when ``library`` narrows the results.
+    A version other than a library's default never answers. ``mode`` is ``bm25``, ``vector`` or
+    ``hybrid``; a mode that cannot run raises ``UnavailableModeError``. Raises
+    ``VersionNotIndexedError`` for a chosen library that has no readable default version.
     """
 
-    async def __call__(self, query: SearchAllQuery) -> SearchAllResult:
+    async def __call__(
+        self, query: SearchAllQuery, *, caller: str | None = None
+    ) -> SearchAllResult:
         """Run the use case.
 
         Args:
-            query: The query, the filters and the limit.
+            query: The query, the mode, the libraries, the filters and the limit.
+            caller: The account searching (a paid query embedding counts to it).
 
         Returns:
             The results across libraries, best first, and the matches per library.

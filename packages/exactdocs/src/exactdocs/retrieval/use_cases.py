@@ -41,12 +41,14 @@ from exactdocs.retrieval.constants import (
     RULE_FRAMING_CHARS,
     RULES_FRAMING_CHARS,
     RULES_SHARE,
+    SEARCH_ALL,
     SEARCH_DOCS,
     SECTION_FRAMING_CHARS,
     SPEND_INSTANCE_ID,
     SPEND_SCOPE_EMBEDDING,
     SPEND_SCOPE_INSTANCE,
     SPEND_SCOPE_LIBRARY,
+    SPEND_SCOPE_USER,
     UNKNOWN_MANIFEST_GRACE,
 )
 from exactdocs.retrieval.dtos import (
@@ -145,6 +147,7 @@ from exactdocs.retrieval.errors import (
     SecretKeyRequiredError,
     StaleChunkError,
     ThinkingUnsupportedError,
+    UnavailableModeError,
     UnknownEmbeddingSpaceError,
     UnknownLibraryError,
     UnknownProviderError,
@@ -192,6 +195,7 @@ from exactdocs.retrieval.models import (
     LibraryAi,
     LlmStep,
     ManifestChunk,
+    ManifestHit,
     ManifestPaths,
     ManifestStatus,
     ModeChoice,
@@ -227,6 +231,7 @@ from exactdocs.retrieval.models import (
     TagMatch,
     ThinkingLevel,
     VectorCoverage,
+    VectorHit,
     article_chunk_rows,
     bind_role,
     caller_audience,
@@ -234,6 +239,7 @@ from exactdocs.retrieval.models import (
     embedding_spend,
     embedding_text,
     estimated_usd,
+    fuse_across_manifests,
     judge_window,
     judged_scores,
     language_first,
@@ -1919,9 +1925,67 @@ class SearchDocsUseCase:
         )
 
 
+def _cross_library_embedding_scopes(caller: str | None) -> tuple[tuple[str, str], ...]:
+    """Name the ledger scopes the query embedding of a search across libraries counts to.
+
+    It is made once for every library searched, so it counts to no one library: to the embedding
+    budget, the instance and the caller.
+
+    Args:
+        caller: The account searching; ``None`` for a stdio MCP process.
+
+    Returns:
+        (kind, ID) of each scope.
+    """
+    scopes = [(SPEND_SCOPE_EMBEDDING, SPEND_INSTANCE_ID), (SPEND_SCOPE_INSTANCE, SPEND_INSTANCE_ID)]
+    if caller is not None:
+        scopes.append((SPEND_SCOPE_USER, caller))
+    return tuple(scopes)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Ranked:
+    """A chunk a search across libraries keeps, before its row is read."""
+
+    manifest_id: str
+    """The manifest (so the library version) it was found in."""
+    chunk_id: ChunkId
+    """The chunk."""
+    score: float
+    """Its score in the mode that answered."""
+    bm25_rank: int | None = None
+    """Its 1-based rank in the BM25 ranking, if it is there."""
+    vector_rank: int | None = None
+    """Its 1-based rank in the vector ranking, if it is there."""
+    hit: SearchHit | None = None
+    """BM25's hit, with its marked snippet; ``None`` when only the vectors found it."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Nearest:
+    """The vector ranking of a search across libraries, or why there is none."""
+
+    hits: tuple[tuple[str, VectorHit], ...] = ()
+    """``(manifest, hit)``, nearest first across the manifests searched."""
+    reason: FallbackReason | None = None
+    """Why the vectors could not be used; ``None`` when they were."""
+    without: tuple[str, ...] = ()
+    """Libraries left out of the vector ranking: AI is off for them, or their version is not
+    embedded with the configured model yet."""
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SearchAllLibrariesUseCase:
-    """Implements ``ports.driving.SearchAllLibraries``."""
+    """Implements ``ports.driving.SearchAllLibraries`` (#428: ``bm25``, ``vector``, ``hybrid``).
+
+    BM25 ranks the chunks of every searched default version together in one full-text query. The
+    vector modes embed the query once with the instance's embedding model and rank the chunks of
+    every searched version its space covers by their distance to it, nearest first across the
+    versions (one space, so the distances compare); ``hybrid`` fuses both rankings with reciprocal
+    rank fusion. A library with AI off, or whose version the model has not embedded yet, is left
+    out of the vector ranking and named in ``libraries_without_vectors``. When the vectors cannot
+    be used at all, BM25 answers with the reason, as in a search of one version.
+    """
 
     defaults: DefaultVersions
     """Every library's default version."""
@@ -1935,105 +1999,410 @@ class SearchAllLibrariesUseCase:
     """Observes the search and its stages (traces); records nothing by default."""
     access: AccessPolicy
     """Decides what the caller may do with the library."""
+    modes: RetrievalModes | None = None
+    """The vector store and the embedding model the vector modes search with; without them only
+    ``bm25`` runs."""
 
-    async def __call__(self, query: SearchAllQuery) -> SearchAllResult:
-        """Rank the chunks of all default versions together; count the matches per library.
+    async def __call__(
+        self, query: SearchAllQuery, *, caller: str | None = None
+    ) -> SearchAllResult:
+        """Rank the chunks of the chosen default versions together; count the matches per library.
 
-        There is no ``mode`` (BM25 only until E11), unlike ``search_docs``. With ``library`` set
-        every library is still resolved: the counts stay global, which a facet needs.
+        With libraries chosen, every library is still resolved: the counts stay global, which a
+        facet needs.
 
         Args:
-            query: The query, the filters and the limit.
+            query: The query, the mode, the libraries, the filters and the limit.
+            caller: The account searching (a paid query embedding counts to it); ``None`` for a
+                stdio MCP process.
 
         Returns:
             The results across libraries and the matches per library.
         """
         text = SearchText(value=query.query)
-        mode = RetrievalMode.BM25.value
+        mode = await self._mode(query.mode)
+        libraries = ",".join(query.chosen) or None
         with self.tracer.span(
-            "search_all_libraries", mode=mode, query=text.value, library=query.library
-        ):
-            return await self._search(query, text, mode)
+            SEARCH_ALL, mode=mode.value, query=text.value, library=libraries
+        ) as whole:
+            result = await self._search(query, text, mode, caller)
+            whole.answered_by(result.retrieval_mode.value)
+            return result
 
-    async def _search(self, query: SearchAllQuery, text: SearchText, mode: str) -> SearchAllResult:
+    def _hybrid(self) -> HybridPipeline | None:
+        """Find the pipeline whose vector store and query embedding the vector modes use.
+
+        Returns:
+            The ``hybrid`` pipeline, or ``None`` when this build has none (no vector store).
+        """
+        found = None if self.modes is None else self.modes.pipelines.get(RetrievalMode.HYBRID)
+        return found if isinstance(found, HybridPipeline) else None
+
+    async def _mode(self, asked: str | None) -> RetrievalMode:
+        """Check the mode a call asked for; ``bm25`` when it names none.
+
+        Args:
+            asked: The mode as the caller wrote it, if any.
+
+        Returns:
+            The mode.
+
+        Raises:
+            UnavailableModeError: The mode is unknown, cannot search across libraries
+                (``hybrid_hyde``, ``agentic``), or cannot run now (no embedding model, or the
+                vector store cannot load).
+        """
+        if asked is None:
+            return RetrievalMode.BM25
+        hybrid = self._hybrid()
+        configured = None if hybrid is None else await hybrid.runs.configured()
+        store = hybrid is not None and await hybrid.vectors.available()
+        vectors = configured is not None and store
+        across = [RetrievalMode.BM25, RetrievalMode.VECTOR, RetrievalMode.HYBRID]
+        available = [m.value for m in across if vectors or not m.needs_vectors]
+        try:
+            mode = RetrievalMode(asked.strip().lower())
+        except ValueError:
+            raise UnavailableModeError(asked, available, []) from None
+        if mode.value in available:
+            return mode
+        if mode in across:
+            missing = [ModelRole.EMBEDDING.value] if configured is None else []
+            raise UnavailableModeError(asked, available, missing, vector_store=store)
+        raise UnavailableModeError(asked, available, [])
+
+    async def _scope(
+        self, query: SearchAllQuery, mode: RetrievalMode
+    ) -> tuple[dict[str, SearchableVersion], dict[str, SearchableVersion], int]:
+        """Resolve the default versions searched and counted.
+
+        Args:
+            query: The search as asked.
+            mode: The mode it runs in.
+
+        Returns:
+            The versions ranked (the chosen libraries', or every readable one's), the versions
+            counted (every readable one's, the chosen ones included), by manifest, and how many
+            readable libraries were left out because there are too many.
+
+        Raises:
+            VersionNotIndexedError: A chosen library has no default version the caller may read.
+        """
+        with self.tracer.span(f"{SEARCH_ALL}.versions", mode=mode.value):
+            every = await self.defaults.all()
+            allowed = await self.access.readable([v.library for v in every])
+            readable = [v for v in every if v.library.casefold() in allowed]
+        searched = {v.manifest_id: v for v in readable[:MAX_SEARCHED_LIBRARIES]}
+        omitted = len(readable) - len(searched)
+        if not query.chosen:
+            return searched, searched, omitted
+        scope: dict[str, SearchableVersion] = {}
+        for library in query.chosen:
+            with self.tracer.span(f"{SEARCH_ALL}.versions", mode=mode.value):
+                only = await self.versions.find(library, None)
+            if only is None or only.library.casefold() not in allowed:
+                raise VersionNotIndexedError(library, "(default version)")
+            if only.manifest_id not in searched:  # beyond the cap: searched, so no longer omitted
+                searched[only.manifest_id] = only
+                omitted -= 1
+            scope[only.manifest_id] = only
+        return scope, searched, omitted
+
+    async def _nearest(
+        self,
+        scope: Mapping[str, SearchableVersion],
+        text: str,
+        tag_filter: TagFilter,
+        depth: int,
+        *,
+        mode: RetrievalMode,
+        caller: str | None,
+    ) -> _Nearest:
+        """Embed the query once and rank the covered versions' chunks by their vectors.
+
+        Args:
+            scope: The versions searched, by manifest.
+            text: The query.
+            tag_filter: Which chunks may be returned.
+            depth: How many chunks at most.
+            mode: The mode searching, which labels the embedding's span.
+            caller: The account searching.
+
+        Returns:
+            The nearest chunks across the versions, or why the vectors cannot be used, and the
+            libraries left out.
+        """
+        hybrid = self._hybrid()
+        if hybrid is None:
+            return _Nearest(reason=FallbackReason.VECTOR_STORE_UNAVAILABLE)
+        configured = await hybrid.runs.configured()
+        if configured is None:
+            return _Nearest(reason=FallbackReason.EMBEDDING_UNAVAILABLE)
+        space = await hybrid.runs.space(configured.target)
+        covered, left_out = await _covered(hybrid.runs, space, scope)
+        if space is None or not covered:
+            return _Nearest(reason=FallbackReason.EMBEDDING_IN_PROGRESS, without=left_out)
+        scopes = _cross_library_embedding_scopes(caller)
+        vector = await hybrid.query_vector(space, text, mode=mode, scopes=scopes, search=SEARCH_ALL)
+        if isinstance(vector, FallbackReason):
+            return _Nearest(reason=vector, without=left_out)
+        found = await _nearest_in(hybrid.vectors, space.id, covered, vector, tag_filter, depth)
+        if isinstance(found, FallbackReason):
+            return _Nearest(reason=found, without=left_out)
+        found.sort(key=lambda p: (p[1].distance, scope[p[0]].library, p[1].chunk_id))
+        return _Nearest(hits=tuple(found[:depth]), without=left_out)
+
+    async def _search(
+        self, query: SearchAllQuery, text: SearchText, mode: RetrievalMode, caller: str | None
+    ) -> SearchAllResult:
         """Resolve the default versions, rank and count, then load the shown chunks.
 
         Args:
             query: The search as asked.
             text: Its validated query text.
-            mode: The retrieval mode it runs in.
+            mode: The mode asked for.
+            caller: The account searching.
 
         Returns:
             The results across the libraries, with a facet per library.
-
-        Raises:
-            VersionNotIndexedError: ``library`` has no readable default version.
         """
         tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
-        with self.tracer.span("search_all_libraries.versions", mode=mode):
-            allowed = await self.access.readable([v.library for v in await self.defaults.all()])
-            every = [v for v in await self.defaults.all() if v.library.casefold() in allowed]
-        searched = {v.manifest_id: v for v in every[:MAX_SEARCHED_LIBRARIES]}
-        omitted = len(every) - len(searched)
-        scope = searched
-        if query.library is not None:
-            with self.tracer.span("search_all_libraries.versions", mode=mode):
-                only = await self.versions.find(query.library, None)
-            if only is None:
-                raise VersionNotIndexedError(query.library, "(default version)")
-            if only.manifest_id not in searched:  # beyond the cap: searched, so no longer omitted
-                searched[only.manifest_id] = only
-                omitted -= 1
-            scope = {only.manifest_id: only}
-        # One more than asked for tells whether the answer was cut short.
-        with self.tracer.span("search_all_libraries.rank", mode=mode):
+        scope, searched, omitted = await self._scope(query, mode)
+        near = _Nearest()
+        if mode.needs_vectors:
+            depth = query.limit + 1 if mode is RetrievalMode.VECTOR else RRF_DEPTH
+            with self.tracer.span(f"{SEARCH_ALL}.vectors", mode=mode.value):
+                near = await self._nearest(
+                    scope, text.value, tag_filter, depth, mode=mode, caller=caller
+                )
+        answered = RetrievalMode.BM25 if near.reason is not None else mode
+        # One more than is kept tells whether the answer was cut short.
+        bm25_depth = (
+            max(RRF_DEPTH, query.limit) if answered is RetrievalMode.HYBRID else query.limit
+        ) + 1
+        with self.tracer.span(f"{SEARCH_ALL}.rank", mode=answered.value):
             found_hits, counts = await asyncio.gather(
-                self.search.search_many(list(scope), text.value, tag_filter, query.limit + 1),
+                self._bm25(answered, scope, text.value, tag_filter, bm25_depth),
                 self.search.count_many(list(searched), text.value, tag_filter),
             )
-        shown = found_hits[: query.limit]
-        wanted: dict[str, list[ChunkId]] = {}
-        for found_hit in shown:
-            wanted.setdefault(found_hit.manifest_id, []).append(found_hit.hit.chunk_id)
-        with self.tracer.span("search_all_libraries.chunks", mode=mode):
-            stored = await self.chunks.get_across(wanted)
-        # A chunk gone since the search (the manifest was collected) leaves no result.
-        results = [
-            LibrarySearchResultOut.of(
-                searched[found_hit.manifest_id],
-                stored[found_hit.manifest_id, found_hit.hit.chunk_id],
-                found_hit.hit,
-            )
-            for found_hit in shown
-            if (found_hit.manifest_id, found_hit.hit.chunk_id) in stored
-        ]
-        vanished = len(shown) - len(results)
-        facets = sorted(
-            (
-                LibraryFacetOut(
-                    library=searched[m].library,
-                    version=searched[m].version,
-                    commit_sha=searched[m].commit_sha,
-                    matches=n,
-                )
-                for m, n in counts.items()
-                if m in searched and n > 0
-            ),
-            key=lambda f: (-f.matches, f.library),
-        )
+        ranked, candidates, complete = _ranked_across(answered, found_hits, near, query.limit)
+        results = await self._results(ranked, scope, text.value, answered)
+        vanished = len(ranked) - len(results)
         return SearchAllResult(
-            retrieval_mode=RetrievalMode.BM25,
+            retrieval_mode=answered,
             reranked=False,
-            coverage=CoverageOut(
-                candidates=len(found_hits) - vanished,
-                reranked=0,
-                complete=len(found_hits) <= query.limit,
-            ),
+            coverage=CoverageOut(candidates=candidates - vanished, reranked=0, complete=complete),
+            fallback_reason=near.reason,
             libraries_searched=len(searched),
             libraries_omitted=omitted,
-            libraries=facets,
+            libraries_without_vectors=list(near.without),
+            libraries=_facets(counts, searched),
             results=results,
         )
+
+    async def _bm25(
+        self,
+        mode: RetrievalMode,
+        scope: Mapping[str, SearchableVersion],
+        text: str,
+        tag_filter: TagFilter,
+        depth: int,
+    ) -> Sequence[ManifestHit]:
+        """Rank the scope's chunks with BM25, unless the mode answering has no BM25 ranking.
+
+        Args:
+            mode: The mode answering.
+            scope: The versions searched, by manifest.
+            text: The query.
+            tag_filter: Which chunks may be returned.
+            depth: How many hits at most.
+
+        Returns:
+            The hits, best first; none for ``vector``.
+        """
+        if mode is RetrievalMode.VECTOR:
+            return ()
+        return await self.search.search_many(list(scope), text, tag_filter, depth)
+
+    async def _results(
+        self,
+        ranked: Sequence[_Ranked],
+        scope: Mapping[str, SearchableVersion],
+        text: str,
+        mode: RetrievalMode,
+    ) -> list[LibrarySearchResultOut]:
+        """Read the kept chunks and build their results.
+
+        Args:
+            ranked: The chunks kept, best first.
+            scope: The versions searched, by manifest.
+            text: The query, whose terms mark the snippets of chunks only the vectors found.
+            mode: The mode answering.
+
+        Returns:
+            The results; a chunk gone since the search (its manifest was collected) leaves none.
+        """
+        wanted: dict[str, list[ChunkId]] = {}
+        for entry in ranked:
+            wanted.setdefault(entry.manifest_id, []).append(entry.chunk_id)
+        with self.tracer.span(f"{SEARCH_ALL}.chunks", mode=mode.value):
+            stored = await self.chunks.get_across(wanted)
+        terms = search_terms(text)
+        results = []
+        for entry in ranked:
+            chunk = stored.get((entry.manifest_id, entry.chunk_id))
+            if chunk is None:
+                continue
+            hit = entry.hit or leading_hit(entry.chunk_id, entry.score, chunk.chunk.content, terms)
+            hit = replace(
+                hit, score=entry.score, bm25_rank=entry.bm25_rank, vector_rank=entry.vector_rank
+            )
+            results.append(LibrarySearchResultOut.of(scope[entry.manifest_id], chunk, hit))
+        return results
+
+
+def _facets(
+    counts: Mapping[str, int], searched: Mapping[str, SearchableVersion]
+) -> list[LibraryFacetOut]:
+    """Count the matches of each searched library, most first.
+
+    Args:
+        counts: BM25 matches by manifest.
+        searched: The versions counted, by manifest.
+
+    Returns:
+        A facet per library with at least one match.
+    """
+    return sorted(
+        (
+            LibraryFacetOut(
+                library=searched[m].library,
+                version=searched[m].version,
+                commit_sha=searched[m].commit_sha,
+                matches=n,
+            )
+            for m, n in counts.items()
+            if m in searched and n > 0
+        ),
+        key=lambda f: (-f.matches, f.library),
+    )
+
+
+async def _nearest_in(
+    vectors: VectorIndex,
+    space: EmbeddingSpaceId,
+    manifests: Sequence[str],
+    vector: Sequence[float],
+    tag_filter: TagFilter,
+    depth: int,
+) -> list[tuple[str, VectorHit]] | FallbackReason:
+    """Find each manifest's chunks nearest to a query vector.
+
+    Args:
+        vectors: The vector store.
+        space: The space searched.
+        manifests: The manifests searched.
+        vector: The query's vector.
+        tag_filter: Which chunks may be returned.
+        depth: How many chunks of each manifest at most.
+
+    Returns:
+        ``(manifest, hit)`` of every chunk found, in no particular order, or why the store could
+        not search.
+    """
+    try:
+        return [
+            (manifest, hit)
+            for manifest in manifests
+            for hit in await vectors.nearest(space, manifest, vector, tag_filter, depth)
+        ]
+    except UnknownEmbeddingSpaceError, RetiredEmbeddingSpaceError:
+        return FallbackReason.EMBEDDING_IN_PROGRESS  # retired by a switch of models meanwhile
+    except VectorStoreUnavailableError:
+        return FallbackReason.VECTOR_STORE_UNAVAILABLE
+    except VectorDimensionError, InvalidVectorError:
+        return FallbackReason.EMBEDDING_UNAVAILABLE
+
+
+async def _covered(
+    runs: EmbeddingRuns, space: EmbeddingSpace | None, scope: Mapping[str, SearchableVersion]
+) -> tuple[list[str], tuple[str, ...]]:
+    """Split the versions searched into those the vectors can rank and the libraries left out.
+
+    Args:
+        runs: The embedding model and which versions its space covers.
+        space: The configured model's space, if it has one.
+        scope: The versions searched, by manifest.
+
+    Returns:
+        The manifests with AI on that the space covers, and the libraries of the others, sorted.
+    """
+    covered: list[str] = []
+    without: list[str] = []
+    for manifest, version in scope.items():
+        ai = await runs.providers.library_modes.ai_of(version.library)
+        if ai.enabled and space is not None and await runs.covers(space, manifest):
+            covered.append(manifest)
+        else:
+            without.append(version.library)
+    return covered, tuple(sorted(without))
+
+
+def _ranked_across(
+    mode: RetrievalMode, found: Sequence[ManifestHit], near: _Nearest, limit: int
+) -> tuple[list[_Ranked], int, bool]:
+    """Keep the best ``limit`` chunks of a search across libraries, in the mode answering.
+
+    Args:
+        mode: The mode answering.
+        found: BM25's hits, best first (none for ``vector``); one more than kept when cut short.
+        near: The vector ranking (for ``vector`` and ``hybrid``).
+        limit: How many to keep.
+
+    Returns:
+        The kept chunks, best first; how many candidates were looked at; and whether nothing
+        more matched.
+    """
+    match mode:
+        case RetrievalMode.VECTOR:
+            kept = [
+                _Ranked(
+                    manifest_id=m, chunk_id=h.chunk_id, score=1.0 - h.distance, vector_rank=rank
+                )
+                for rank, (m, h) in enumerate(near.hits[:limit], start=1)
+            ]
+            return kept, len(near.hits), len(near.hits) <= limit
+        case RetrievalMode.HYBRID:
+            by_key = {(f.manifest_id, f.hit.chunk_id): f.hit for f in found}
+            fused = fuse_across_manifests(
+                [(f.manifest_id, f.hit.chunk_id) for f in found[:RRF_DEPTH]],
+                [(m, h.chunk_id) for m, h in near.hits],
+            )
+            kept = [
+                _Ranked(
+                    manifest_id=f.manifest_id,
+                    chunk_id=f.chunk_id,
+                    score=f.score,
+                    bm25_rank=f.bm25_rank,
+                    vector_rank=f.vector_rank,
+                    hit=by_key.get((f.manifest_id, f.chunk_id)),
+                )
+                for f in fused[:limit]
+            ]
+            cut = len(found) > RRF_DEPTH or len(near.hits) >= RRF_DEPTH
+            return kept, len(fused), not cut and len(fused) <= limit
+        case _:
+            kept = [
+                _Ranked(
+                    manifest_id=f.manifest_id,
+                    chunk_id=f.hit.chunk_id,
+                    score=f.hit.score,
+                    bm25_rank=rank,
+                    hit=f.hit,
+                )
+                for rank, f in enumerate(found[:limit], start=1)
+            ]
+            return kept, len(found), len(found) <= limit
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -4287,6 +4656,46 @@ class HybridPipeline:
             return _bm25_answer(found, request.limit, near)
         return await self._fused(request, found, near, mode)
 
+    async def nearest_only(self, request: PipelineRequest) -> PipelineAnswer:
+        """Rank the version's chunks by their vectors alone (``vector``): no BM25 half.
+
+        The score is the cosine similarity (1 minus the distance). When the vectors cannot be
+        used, BM25 answers with the reason, as ``fuse`` does.
+
+        Args:
+            request: What to search; ``space`` is the space to search.
+
+        Returns:
+            The nearest chunks, each with its vector rank, or BM25's with the reason.
+        """
+        near = await self._nearest_hits(
+            request, request.query, RetrievalMode.VECTOR, request.limit + 1
+        )
+        if isinstance(near, FallbackReason):
+            depth = request.limit + 1  # one more tells whether the answer was cut short
+            found = await self.search.search(
+                request.version.manifest_id, request.query, request.tag_filter, depth
+            )
+            return _bm25_answer(found, request.limit, near)
+        kept = near[: request.limit]
+        stored = await self.chunks.get_many(request.version.manifest_id, [h.chunk_id for h in kept])
+        terms = search_terms(request.query)
+        hits = [
+            replace(
+                leading_hit(h.chunk_id, 1.0 - h.distance, stored[h.chunk_id].chunk.content, terms),
+                vector_rank=rank,
+            )
+            for rank, h in enumerate(kept, start=1)
+            if h.chunk_id in stored
+        ]
+        return PipelineAnswer(
+            mode=RetrievalMode.VECTOR,
+            hits=tuple(hits),
+            candidates=len(near),
+            reranked=0,
+            complete=len(near) <= request.limit,
+        )
+
     async def _nearest(
         self, request: PipelineRequest, embed: str, mode: RetrievalMode
     ) -> list[ChunkId] | FallbackReason:
@@ -4300,6 +4709,24 @@ class HybridPipeline:
         Returns:
             The best ``RRF_DEPTH`` chunks, nearest first, or why the vectors cannot be used.
         """
+        near = await self._nearest_hits(request, embed, mode, RRF_DEPTH)
+        return near if isinstance(near, FallbackReason) else [h.chunk_id for h in near]
+
+    async def _nearest_hits(
+        self, request: PipelineRequest, embed: str, mode: RetrievalMode, depth: int
+    ) -> Sequence[VectorHit] | FallbackReason:
+        """Embed ``embed`` and find the version's chunks whose vectors are nearest to it.
+
+        Args:
+            request: The search; its ``space`` is the one searched.
+            embed: The text embedded: the query, or HyDE's hypothetical answer.
+            mode: The mode searching, which labels the embedding's span.
+            depth: How many chunks at most.
+
+        Returns:
+            The nearest chunks with their distances, nearest first, or why the vectors cannot be
+            used.
+        """
         space = request.space
         if space is None:  # no embedding model resolved when the gate looked
             return FallbackReason.EMBEDDING_UNAVAILABLE
@@ -4308,7 +4735,7 @@ class HybridPipeline:
             return vector
         try:
             near = await self.vectors.nearest(
-                space.id, request.version.manifest_id, vector, request.tag_filter, RRF_DEPTH
+                space.id, request.version.manifest_id, vector, request.tag_filter, depth
             )
         except UnknownEmbeddingSpaceError, RetiredEmbeddingSpaceError:
             return FallbackReason.EMBEDDING_IN_PROGRESS  # retired by a switch of models meanwhile
@@ -4316,7 +4743,7 @@ class HybridPipeline:
             return FallbackReason.VECTOR_STORE_UNAVAILABLE
         except VectorDimensionError, InvalidVectorError:
             return FallbackReason.EMBEDDING_UNAVAILABLE  # the model answered an unusable vector
-        return [h.chunk_id for h in near]
+        return near
 
     async def _query_vector(
         self, request: PipelineRequest, space: EmbeddingSpace, embed: str, mode: RetrievalMode
@@ -4334,18 +4761,44 @@ class HybridPipeline:
         """
         if not (await self.runs.providers.library_modes.ai_of(request.version.library)).enabled:
             return FallbackReason.MODE_UNAVAILABLE  # AI off: the query is never sent
+        return await self.query_vector(
+            space, embed, mode=mode, scopes=_query_embedding_scopes(request), search=request.search
+        )
+
+    async def query_vector(
+        self,
+        space: EmbeddingSpace,
+        embed: str,
+        *,
+        mode: RetrievalMode,
+        scopes: Sequence[tuple[str, str]],
+        search: str,
+    ) -> tuple[float, ...] | FallbackReason:
+        """Embed a text with the configured model, which must be the one that made ``space``.
+
+        Checked against the budgets of ``scopes`` first (a paid model only), and recorded to them.
+
+        Args:
+            space: The space the vector will search.
+            embed: The text embedded: the query, or HyDE's hypothetical answer.
+            mode: The mode searching, which labels the embedding's span.
+            scopes: (kind, ID) of each ledger scope the embedding counts to.
+            search: The search it runs in, which names the span.
+
+        Returns:
+            The vector, or why there is none.
+        """
         configured = await self.runs.configured()
         if configured is None:
             return FallbackReason.EMBEDDING_UNAVAILABLE
         if not configured.target.matches(space.spec):
             return FallbackReason.EMBEDDING_IN_PROGRESS  # the model changed since the gate
-        scopes = _query_embedding_scopes(request)
         spend = self.runs.spend
         paid = configured.target.profile_kind not in FREE_PROFILE_KINDS
         if spend is not None and paid and await spend.reached(scopes) is not None:
             return FallbackReason.LLM_BUDGET_REACHED  # as a paid rerank over budget (#95)
         try:
-            embedded = await self._embedded(request, configured, embed, mode)
+            embedded = await self._embedded(search, configured, embed, mode)
         except EmbeddingFailedError, ProviderUnsupportedError, TimeoutError:
             return FallbackReason.EMBEDDING_UNAVAILABLE
         if spend is not None:  # the one record of this call: the use case records no embedding
@@ -4363,12 +4816,12 @@ class HybridPipeline:
         )
 
     async def _embedded(
-        self, request: PipelineRequest, configured: _Configured, embed: str, mode: RetrievalMode
+        self, search: str, configured: _Configured, embed: str, mode: RetrievalMode
     ) -> EmbeddedTexts:
         """Embed the query, in its span; ``TimeoutError`` after ``timeout`` seconds.
 
         Args:
-            request: The search.
+            search: The search it runs in, which names the span.
             configured: The embedding role, which made the space searched.
             embed: The text embedded: the query, or HyDE's hypothetical answer.
             mode: The mode searching, which labels the span.
@@ -4383,7 +4836,7 @@ class HybridPipeline:
                 no ``Exception``, so cancelling a search still propagates.
             ProviderUnsupportedError: This process cannot call the model.
         """
-        stage = f"{request.search}.embed_query"
+        stage = f"{search}.embed_query"
         with self.tracer.span(stage, mode=mode.value):
             async with asyncio.timeout(self.timeout):
                 try:
@@ -4431,9 +4884,12 @@ class HybridPipeline:
         hits = []
         for rank in kept:
             if (bm25 := by_id.get(rank.chunk_id)) is not None:
-                hits.append(replace(bm25, score=rank.score))
+                hit = replace(bm25, score=rank.score)
             elif (chunk := stored.get(rank.chunk_id)) is not None:
-                hits.append(leading_hit(rank.chunk_id, rank.score, chunk.chunk.content, terms))
+                hit = leading_hit(rank.chunk_id, rank.score, chunk.chunk.content, terms)
+            else:
+                continue
+            hits.append(replace(hit, bm25_rank=rank.bm25_rank, vector_rank=rank.vector_rank))
         cut = len(found) > RRF_DEPTH or len(near) >= RRF_DEPTH
         return PipelineAnswer(
             mode=mode,
@@ -4442,6 +4898,31 @@ class HybridPipeline:
             reranked=0,
             complete=not cut and len(fused) <= request.limit,
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class VectorPipeline:
+    """Implements ``ports.driven.RetrievalPipeline`` for ``vector`` (#428): the vectors alone.
+
+    The version's chunks nearest to the query's embedding, in the space the gate checked covers
+    the version, with no BM25 half: a way to see what the embedding model finds on its own. It
+    is never a default. When the vectors cannot be used, BM25 answers with the reason, exactly as
+    ``hybrid`` does (it shares its query embedding and its fallbacks).
+    """
+
+    hybrid: HybridPipeline
+    """Embeds the query and searches the vector store."""
+
+    async def run(self, request: PipelineRequest) -> PipelineAnswer:
+        """Rank the version's chunks by their vectors.
+
+        Args:
+            request: What to search; ``space`` is the space to search.
+
+        Returns:
+            The nearest chunks, or BM25's with the reason the vectors were not used.
+        """
+        return await self.hybrid.nearest_only(request)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

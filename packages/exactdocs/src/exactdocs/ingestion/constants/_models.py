@@ -4,6 +4,11 @@ import re
 from datetime import timedelta
 from typing import Final, Literal, NewType
 
+from exactdocs.ingestion.constants._restructuredtext import (
+    MARKDOWN_SUFFIXES,
+    RESTRUCTUREDTEXT_SUFFIXES,
+)
+
 type ChunkerName = Literal["markdown"]
 """The chunkers ExactDocs has."""
 PARSER_VERSION: Final[int] = 3
@@ -145,8 +150,9 @@ stays within hosted embedding models' input (8,191 tokens for OpenAI's). It is i
 so changing it cuts every library again at its next import or re-chunk."""
 _SHA_PREFIX: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{7,64}")
 """An abbreviated or full commit SHA."""
-ARTICLE_SUFFIXES: Final[tuple[str, ...]] = (".md", ".mdx")
-"""File suffixes of articles: everything else in a repository is ignored."""
+ARTICLE_SUFFIXES: Final[tuple[str, ...]] = (*MARKDOWN_SUFFIXES, *RESTRUCTUREDTEXT_SUFFIXES)
+"""File suffixes of articles (Markdown, reStructuredText): everything else in a repository is
+ignored."""
 _MAX_PATTERNS: Final[int] = 64
 """Path patterns a library's settings may hold."""
 _MAX_PATTERN: Final[int] = 256

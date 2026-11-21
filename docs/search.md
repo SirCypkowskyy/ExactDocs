@@ -13,6 +13,7 @@ behind it, is on [Recommended defaults](benchmark/defaults.md).
 | Mode | Needs | What it does |
 |---|---|---|
 | `bm25` | nothing | Full-text search: SQLite FTS5, or on PostgreSQL `pg_search` or full-text search. Identifiers are indexed whole and by their parts (`camelCase`, `snake_case`, `pkg.mod.fn`) |
+| `vector` | an embedding model | Vector search alone: the version's chunks nearest to the query's embedding, with no BM25 half. Never a default; for comparing what the embedding model finds on its own |
 | `hybrid` | an embedding model | BM25 and vector search fused with reciprocal rank fusion (`k` = 60, the top 50 of each), within the version |
 | `hybrid_hyde` | an embedding model and an LLM | HyDE: the LLM writes a short hypothetical answer, whose embedding searches the vector half while BM25 keeps the query. Cached per query, version and model |
 | `agentic` | an LLM | A pydantic-ai agent browses the version's tree and returns the chunks that answer the question, each with a reason. Never a default; see [Agentic search](#agentic-search) |
@@ -25,9 +26,9 @@ a cheaper one and says why in `fallback_reason`:
 
 | Mode | Falls back when | `fallback_reason` |
 |---|---|---|
-| `hybrid` | the version is not embedded yet | `embedding_in_progress` |
-| `hybrid` | the embedding model fails on the query | `embedding_unavailable` |
-| `hybrid`, `hybrid_hyde` | the vector store's extension cannot be loaded | `vector_store_unavailable` |
+| `vector`, `hybrid` | the version is not embedded yet | `embedding_in_progress` |
+| `vector`, `hybrid` | the embedding model fails on the query | `embedding_unavailable` |
+| `vector`, `hybrid`, `hybrid_hyde` | the vector store's extension cannot be loaded | `vector_store_unavailable` |
 | `hybrid_hyde` | a budget is used up, the caller hit the LLM rate limit, or the LLM failed or timed out | `llm_budget_reached`, `llm_rate_limited`, `llm_unavailable` |
 | `agentic` | a limit, a budget, a loop or a failure ended the run | `agent_limit_reached`, `llm_budget_reached`, `agent_loop_detected`, `agent_failed` |
 | any | the library's or instance's mode cannot run (its model was removed) | `mode_unavailable` |
@@ -60,9 +61,15 @@ never fails a search. `vector_store_unavailable` means the hybrid modes cannot l
 store's extension (sqlite-vec on SQLite, pgvector's `vector` on PostgreSQL); `/healthz` names it in
 `vector_store_missing`, and BM25 keeps answering.
 
-Searching across libraries (`search_all_docs`, `GET /api/v1/search`) and `resolve-library-id` stay
-BM25 whatever the library and instance modes are, because their scores must compare across
-libraries. [Flows](flows.md) has more diagrams of the retrieval paths.
+Searching across libraries (`search_all_docs`, `GET /api/v1/search`) and `resolve-library-id`
+ignore the library and instance modes: their scores must compare across libraries. They are BM25
+unless `GET /api/v1/search` names `mode=vector` or `mode=hybrid` (the search playground does). Then
+the query is embedded once, and every chosen library's default version that the configured model
+has embedded is ranked by distance in that one space, so the distances compare across libraries;
+`hybrid` fuses that ranking with the BM25 one, as within a version. Each result carries its
+`bm25_rank` and `vector_rank`. A library with AI off, or not embedded yet, is left out of the
+vector ranking and named in `libraries_without_vectors`; when none can be, BM25 answers with the
+`fallback_reason`. [Flows](flows.md) has more diagrams of the retrieval paths.
 
 ## Chunks and tags
 

@@ -54,7 +54,12 @@ _ROOT_CONTEXT7: Final[str] = f"/{CONTEXT7_FILE}"
 """Last: no exclusion can drop it."""
 _ROOT_NAME: Final[re.Pattern[str]] = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*")
 """One plain name, never an option or glob."""
-_ARTICLE_PATHSPEC: Final[tuple[str, ...]] = (":(icase)*.md", ":(icase)*.mdx")
+_ARTICLE_PATHSPEC: Final[tuple[str, ...]] = (
+    ":(icase)*.md",
+    ":(icase)*.mdx",
+    ":(icase)*.rst",
+    ":(icase)*.txt",
+)
 """Models.ARTICLE_SUFFIXES, whatever the letter case: never fetch the blobs of other files."""
 _GONE: Final[re.Pattern[str]] = re.compile(
     r"not our ref|unadvertised object|couldn't find remote ref|no such remote ref"

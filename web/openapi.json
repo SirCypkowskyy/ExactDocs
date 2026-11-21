@@ -4156,10 +4156,10 @@
                   "type": "null"
                 }
               ],
-              "description": "`bm25`, `hybrid`, `hybrid_hyde` or `agentic`, if available (422 `mode_unavailable` otherwise). Default: the library's mode, else the instance's, else the best one configured.",
+              "description": "`bm25`, `vector`, `hybrid`, `hybrid_hyde` or `agentic`, if available (422 `mode_unavailable` otherwise). Default: the library's mode, else the instance's, else the best one configured.",
               "title": "Mode"
             },
-            "description": "`bm25`, `hybrid`, `hybrid_hyde` or `agentic`, if available (422 `mode_unavailable` otherwise). Default: the library's mode, else the instance's, else the best one configured."
+            "description": "`bm25`, `vector`, `hybrid`, `hybrid_hyde` or `agentic`, if available (422 `mode_unavailable` otherwise). Default: the library's mode, else the instance's, else the best one configured."
           }
         ],
         "responses": {
@@ -4242,7 +4242,7 @@
           "retrieval"
         ],
         "summary": "Search All",
-        "description": "Search the default version of every library; `libraries` counts matches per library.",
+        "description": "Search the default version of every library, or of the chosen ones, in one ranking.\n\n`libraries` counts the BM25 matches per library. Each result carries its `bm25_rank` and\n`vector_rank`; `retrieval_mode` says which mode answered and `fallback_reason` why BM25\nanswered a vector search.",
         "operationId": "retrieval-search_all",
         "security": [
           {
@@ -4273,17 +4273,21 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string",
-                  "maxLength": 256
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 256
+                  },
+                  "maxItems": 50
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "`/owner/repo`: narrow the results to it.",
+              "description": "`/owner/repo` of a library to search; repeat or comma-separate for several. None: every library you may read.",
               "title": "Library"
             },
-            "description": "`/owner/repo`: narrow the results to it."
+            "description": "`/owner/repo` of a library to search; repeat or comma-separate for several. None: every library you may read."
           },
           {
             "name": "tags",
@@ -4328,6 +4332,25 @@
               "default": 10,
               "title": "Limit"
             }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`bm25` (default), `vector` or `hybrid`; the vector modes need an embedding model (422 `mode_unavailable` otherwise).",
+              "title": "Mode"
+            },
+            "description": "`bm25` (default), `vector` or `hybrid`; the vector modes need an embedding model (422 `mode_unavailable` otherwise)."
           }
         ],
         "responses": {
@@ -8745,7 +8768,7 @@
             },
             "type": "array",
             "title": "Include Paths",
-            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx` file."
+            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx`/`.rst` file (`.txt` only\nwhen a path names it)."
           },
           "exclude_paths": {
             "items": {
@@ -8811,7 +8834,7 @@
               }
             ],
             "title": "Context7 Paths",
-            "description": "Without paths, take those of the repository's root `context7.json` (null or true); false:\nno paths mean every `.md`/`.mdx` file."
+            "description": "Without paths, take those of the repository's root `context7.json` (null or true); false:\nno paths mean every `.md`/`.mdx`/`.rst` file."
           }
         },
         "additionalProperties": false,
@@ -11794,7 +11817,7 @@
               }
             ],
             "title": "Mode",
-            "description": "`bm25`, `hybrid`, `hybrid_hyde` or `agentic`; it must be available with the settings below\n(422 `mode_unavailable` names the missing model role otherwise). Null: the instance's mode."
+            "description": "`bm25`, `vector`, `hybrid`, `hybrid_hyde` or `agentic`; it must be available with the\nsettings below (422 `mode_unavailable` names the missing model role otherwise). Null: the\ninstance's mode."
           },
           "ai_enabled": {
             "type": "boolean",
@@ -12244,6 +12267,30 @@
             "type": "string",
             "title": "Version",
             "description": "The default version of that library, the one searched."
+          },
+          "bm25_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bm25 Rank",
+            "description": "Its 1-based rank in the search's BM25 ranking; null when BM25 did not rank it (`vector`,\nor a `hybrid` result only the vectors found)."
+          },
+          "vector_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vector Rank",
+            "description": "Its 1-based rank in the search's vector ranking; null when the vectors did not rank it\n(`bm25`, or a `hybrid` result only BM25 found)."
           }
         },
         "additionalProperties": false,
@@ -12277,7 +12324,7 @@
             },
             "type": "array",
             "title": "Include Paths",
-            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx` file."
+            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx`/`.rst` file (`.txt` only\nwhen a path names it)."
           },
           "exclude_paths": {
             "items": {
@@ -13232,7 +13279,7 @@
             },
             "type": "array",
             "title": "Include Paths",
-            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx` file."
+            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx`/`.rst` file (`.txt` only\nwhen a path names it)."
           },
           "exclude_paths": {
             "items": {
@@ -13315,7 +13362,8 @@
           "missing_image",
           "truncated",
           "context7",
-          "instruction_files"
+          "instruction_files",
+          "markup"
         ],
         "title": "ProblemCode",
         "description": "Why a file shows up in a job's problems; stable, clients may branch on it."
@@ -14241,6 +14289,7 @@
         "type": "string",
         "enum": [
           "bm25",
+          "vector",
           "hybrid",
           "hybrid_hyde",
           "agentic"
@@ -14437,7 +14486,7 @@
           },
           "retrieval_mode": {
             "$ref": "#/components/schemas/RetrievalMode",
-            "description": "The mode that answered."
+            "description": "The mode that answered: the one asked for, or `bm25` when the vectors could not be used\n(`fallback_reason` says why)."
           },
           "reranked": {
             "type": "boolean",
@@ -14446,6 +14495,17 @@
           },
           "coverage": {
             "$ref": "#/components/schemas/CoverageOut"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FallbackReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set when BM25 answered a `vector` or `hybrid` search: says why."
           },
           "libraries_searched": {
             "type": "integer",
@@ -14457,13 +14517,21 @@
             "title": "Libraries Omitted",
             "description": "Libraries with a default version left out because there are too many."
           },
+          "libraries_without_vectors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Libraries Without Vectors",
+            "description": "Libraries searched but left out of the vector ranking (`vector`, `hybrid`): AI is off for\nthem, or their default version is not embedded with the current model yet."
+          },
           "libraries": {
             "items": {
               "$ref": "#/components/schemas/LibraryFacetOut"
             },
             "type": "array",
             "title": "Libraries",
-            "description": "Libraries with at least one match, most matches first. Never narrowed."
+            "description": "Libraries with at least one BM25 match, most matches first. Never narrowed."
           },
           "results": {
             "items": {
@@ -14481,8 +14549,10 @@
           "retrieval_mode",
           "reranked",
           "coverage",
+          "fallback_reason",
           "libraries_searched",
           "libraries_omitted",
+          "libraries_without_vectors",
           "libraries",
           "results"
         ],
@@ -14888,7 +14958,7 @@
               }
             ],
             "title": "Include Paths",
-            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx` file (the repository's\n`context7.json` does not fill in a managed empty list). Left out: not managed."
+            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx`/`.rst` file (the repository's\n`context7.json` does not fill in a managed empty list). Left out: not managed."
           },
           "exclude_paths": {
             "anyOf": [

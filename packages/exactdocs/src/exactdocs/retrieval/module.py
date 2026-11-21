@@ -149,6 +149,7 @@ from exactdocs.retrieval.use_cases import (
     SetRoleThinkingUseCase,
     UnrecordedAgentReads,
     UntracedSearches,
+    VectorPipeline,
 )
 from exactdocs_kernel import Clock, SystemClock
 
@@ -462,6 +463,7 @@ class RetrievalModule:
                 timeout=query_embedding_timeout,
             )
             built[RetrievalMode.HYBRID] = hybrid
+            built[RetrievalMode.VECTOR] = VectorPipeline(hybrid=hybrid)
             if hypotheses is not None:
                 built[RetrievalMode.HYBRID_HYDE] = HydePipeline(
                     hybrid=hybrid,
@@ -515,6 +517,7 @@ class RetrievalModule:
                 chunks=chunks,
                 tracer=tracer,
                 access=access,
+                modes=modes,
             ),
             index_manifest=IndexManifestUseCase(chunks=chunks, search=search, clock=clock),
             get_chunk_sets=GetChunkSetsUseCase(chunks=chunks),
