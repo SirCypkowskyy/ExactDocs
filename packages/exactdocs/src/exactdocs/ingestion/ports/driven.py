@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
+from exactdocs.ingestion.constants import JobKind
 from exactdocs.ingestion.models import (
     Access,
     ArticleChunk,
@@ -64,10 +65,31 @@ class JobRepository(Protocol):
         ...
 
     async def save(self, job: Job) -> None:
-        """Replace the stored job that has the same ID.
+        """Replace the stored job that has the same ID, unless it is ``cancelled``.
+
+        The cancellation fields (``cancelled_by``, ``cancelled_at``) are not written: only
+        ``cancel`` sets them, so a running job's progress never wipes a cancellation out.
 
         Args:
             job: The job as it is now.
+        """
+        ...
+
+    async def cancel(self, job_id: JobId, *, by: str | None, now: datetime) -> Job | None:
+        """Atomically ask to cancel a queued or running job, once.
+
+        A ``queued`` job becomes ``cancelled`` (``finished_at``, ``cancelled_by`` and
+        ``cancelled_at`` set); a ``running`` one only gets ``cancelled_by`` and ``cancelled_at``
+        and stops at its next step boundary. A finished job, or one already asked, is left as
+        it is. ``save`` never changes these two fields, nor a ``cancelled`` job at all.
+
+        Args:
+            job_id: The job's ID.
+            by: Who cancels it (a user name); ``None`` for the instance itself.
+            now: The time of the request.
+
+        Returns:
+            The job as it is after the request, or ``None`` when no job has this ID.
         """
         ...
 
@@ -104,6 +126,18 @@ class JobRepository(Protocol):
 
         Returns:
             The library's unfinished jobs, with their problems, highest ID first.
+        """
+        ...
+
+    async def list_newest_of_kind(self, library: str, kind: JobKind) -> Sequence[Job]:
+        """Return the newest job of ``kind`` of each version of the library, without the others.
+
+        Args:
+            library: The library ID.
+            kind: The job kind.
+
+        Returns:
+            One job per version (the newest), in no particular order.
         """
         ...
 

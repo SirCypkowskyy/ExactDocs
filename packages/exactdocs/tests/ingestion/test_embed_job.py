@@ -1,11 +1,12 @@
 """RET-01: an ``embed`` job embeds one version in the background, a durable step per batch."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import pytest
 
+from cancelling import WHO, Canceller, run_job
 from exactdocs.ingestion.adapters.driven.memory import InMemoryCheckpoints, InMemoryJobRepository
 from exactdocs.ingestion.constants import (
     EMBED_ATTEMPTS,
@@ -14,7 +15,12 @@ from exactdocs.ingestion.constants import (
     IMPORT_JOB,
     JobKind,
 )
-from exactdocs.ingestion.dtos import EnqueueJobCommand, GetJobQuery, QueueEmbeddingCommand
+from exactdocs.ingestion.dtos import (
+    CancelJobCommand,
+    EnqueueJobCommand,
+    GetJobQuery,
+    QueueEmbeddingCommand,
+)
 from exactdocs.ingestion.errors import EmbeddingUnavailableError, UnknownJobKindError
 from exactdocs.ingestion.models import (
     EmbeddedBatch,
@@ -27,7 +33,12 @@ from exactdocs.ingestion.models import (
 )
 from exactdocs.ingestion.module import IngestionModule
 from exactdocs.ingestion.ports.driven import JobProgress
-from exactdocs.ingestion.use_cases import EmbedAfterJob, EmbeddingQueue, EmbedVersionUseCase
+from exactdocs.ingestion.use_cases import (
+    EmbedAfterJob,
+    EmbeddingQueue,
+    EmbedVersionUseCase,
+    StopOnCancel,
+)
 from unfinished_jobs import UnfinishedOnly, finished_imports
 
 T0 = datetime(2026, 11, 7, 12, 0, tzinfo=UTC)
@@ -65,6 +76,7 @@ class Embedder:
     batches: int = 0
     finished: list[int] = field(default_factory=list)
     planned: list[tuple[str, str]] = field(default_factory=list)
+    on_batch: Callable[[], Awaitable[None]] | None = None
 
     async def plan(self, library: str, ref: str) -> EmbedPlan:
         self.planned.append((library, ref))
@@ -87,6 +99,8 @@ class Embedder:
         self.missing[library, ref] -= self.embedded_elsewhere.get(self.batches, 0)
         done = min(self.batch, self.missing[library, ref])
         self.missing[library, ref] -= done
+        if self.on_batch is not None:
+            await self.on_batch()
         left = self.missing[library, ref]
         return EmbeddedBatch(embedded=done, left=left, finished=left == 0)
 
@@ -360,3 +374,59 @@ async def test_a_model_that_never_answers_fails_the_job_after_a_bounded_number_o
 
     assert embedder.unavailable == 0
     assert embedder.finished == []
+
+
+# ------------------------------------------------------------------ cancellation (#432)
+
+
+async def test_a_cancelled_embedding_sends_no_batch_after_the_one_in_flight() -> None:
+    world = World(Embedder(missing={(LIB, "v1"): 7}))
+    world.embedder.on_batch = Canceller(world.jobs, job_id=f"{EMBED_JOB}-v1")  # mid-batch 1
+    handler = EmbedVersionUseCase(
+        embedder=world.embedder, queue=world.queue, checkpoints=StopOnCancel(inner=world.steps)
+    )
+
+    ended = await run_job(world.jobs, _job(state=JobState.QUEUED), handler)
+
+    assert world.embedder.batches == 1  # the batch in flight ended; no other was sent
+    assert world.embedder.finished == []  # the spaces did not switch
+    assert world.embedder.missing[LIB, "v1"] == 5  # its vectors are kept
+    assert (ended.state, ended.cancelled_by, ended.done) == (JobState.CANCELLED, WHO, 2)
+
+
+async def test_a_cancelled_embedding_is_queued_again_only_when_a_person_asks() -> None:
+    world = World(Embedder(missing={(LIB, "v1"): 5, (LIB, "v2"): 1}))
+    queued = _job(ref="v1", state=JobState.QUEUED)
+    await world.jobs.add(queued)
+    await world.jobs.cancel(queued.id, by=WHO, now=T0)
+
+    by_the_upkeep = await world.queue(LIB)  # the start, the nightly upkeep
+    by_a_person = await world.queue(LIB, retry_cancelled=True)  # an import, a new model
+
+    assert (by_the_upkeep, by_a_person) == (1, 1)
+    assert [j.version for j in world.runner.submitted] == ["v2", "v1"]
+
+
+async def test_the_module_stops_a_cancelled_embedding_and_queues_it_again_when_asked(
+    build_module: Callable[..., IngestionModule],
+) -> None:
+    embedder = Embedder(missing={(LIB, "v1"): 5})
+    module = build_module(embedder=embedder)
+    job = await module.enqueue_job(EnqueueJobCommand(kind=EMBED_JOB, library=LIB, version="v1"))
+
+    async def cancel() -> None:
+        await module.cancel_job(CancelJobCommand(job_id=job.id, by=WHO))
+
+    embedder.on_batch = cancel
+    assert await module.run_next_job()
+    embedder.on_batch = None
+
+    ended = await module.get_job(GetJobQuery(job_id=job.id))
+    assert (ended.state, ended.cancelled_by, ended.done) == (JobState.CANCELLED, WHO, 2)
+    assert embedder.batches == 1
+    skipped = await module.queue_embedding(QueueEmbeddingCommand(library=LIB))
+    asked = await module.queue_embedding(QueueEmbeddingCommand(library=LIB, retry_cancelled=True))
+    assert (skipped.queued, asked.queued) == (0, 1)
+    assert await module.run_next_job()
+    assert embedder.missing[LIB, "v1"] == 0
+    assert embedder.batches == 3  # 2 more batches: the 2 chunks embedded first are not sent again

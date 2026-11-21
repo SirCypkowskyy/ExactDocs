@@ -11,6 +11,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from http import HTTPStatus
+from typing import Any
 
 from behave import given, then, when
 from behave.runner import Context
@@ -32,6 +33,7 @@ from exactdocs.retrieval.models import (
     ProviderProfile,
     SpendEntry,
     SpendWindow,
+    ThinkingLevel,
 )
 from exactdocs.retrieval.ports.driven import Reranker
 from fake_llm import FakeGateway, gateway
@@ -58,8 +60,13 @@ class GatewayChatLocalEmbeddings:
             return None
         return self.real.unsupported(profile)
 
-    async def chat_model(self, profile: ProviderProfile, model: str) -> object:
-        return await self.real.chat_model(profile, model)
+    async def chat_model(
+        self, profile: ProviderProfile, model: str, *, thinking: ThinkingLevel | None = None
+    ) -> object:
+        return await self.real.chat_model(profile, model, thinking=thinking)
+
+    async def thinking_unsupported(self, profile: ProviderProfile, model: str) -> str | None:
+        return await self.real.thinking_unsupported(profile, model)
 
     async def embedder(self, profile: ProviderProfile, model: str) -> object:
         del profile, model
@@ -71,7 +78,15 @@ class GatewayChatLocalEmbeddings:
     async def release(self, name: str) -> None:
         await self.real.release(name)
 
-    async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
+    async def check(
+        self,
+        profile: ProviderProfile,
+        model: str,
+        role: ModelRole,
+        *,
+        thinking: ThinkingLevel | None = None,
+    ) -> ModelCheck:
+        del thinking
         return ModelCheck(role=role, profile=profile.name, model=model, ok=True)
 
 
@@ -87,27 +102,28 @@ def chat_calls(endpoint: FakeGateway) -> list[dict[str, str]]:
     return [s.headers for s in endpoint.seen if s.path.endswith("/chat/completions")]
 
 
-@given(
-    'an embedding model and an LLM are configured, and the operator chose retrieval mode "{mode}"'
-)
-def step_hyde_instance(context: Context, mode: str) -> None:
-    stack = ExitStack()
-    context.add_cleanup(stack.close)
-    context.endpoint = stack.enter_context(gateway())
+def serve_with_llm(
+    context: Context,
+    *,
+    mode: str,
+    providers: dict[str, Any],
+    llm: dict[str, Any],
+) -> None:
+    """Serve the fixture with the local embedding stand-in and an ``llm`` role on a gateway.
+
+    Args:
+        context: The behave context; ``context.endpoint`` must be the running gateway.
+        mode: The instance's retrieval mode.
+        providers: The profiles besides the ``local`` one (``box``).
+        llm: The ``[ai.llm]`` section.
+    """
     context.search_ref = "v1.4.0"
     ai = AiSettings.model_validate(
         {
             "mode": mode,
-            "providers": {
-                "corp": {
-                    "kind": "openai-compatible",
-                    "base_url": context.endpoint.v1,
-                    "headers": HEADERS,
-                },
-                "box": {"kind": "local"},
-            },
+            "providers": {**providers, "box": {"kind": "local"}},
             "embedding": {"model": f"box:{STAND_IN}", "dimensions": DIMENSIONS},
-            "llm": {"model": "corp:writer"},
+            "llm": llm,
             "budgets": {"daily_tokens": DAILY_TOKENS},
         }
     )
@@ -125,6 +141,8 @@ def step_hyde_instance(context: Context, mode: str) -> None:
     )
     context.container = container
     context.hyde = True
+    stack = ExitStack()
+    context.add_cleanup(stack.close)
     context.client = stack.enter_context(
         TestClient(
             create_app(container),
@@ -132,6 +150,19 @@ def step_hyde_instance(context: Context, mode: str) -> None:
             cookies={SESSION_COOKIE: DEMO_COOKIE},
         )
     )
+
+
+@given(
+    'an embedding model and an LLM are configured, and the operator chose retrieval mode "{mode}"'
+)
+def step_hyde_instance(context: Context, mode: str) -> None:
+    stack = ExitStack()
+    context.add_cleanup(stack.close)
+    context.endpoint = stack.enter_context(gateway())
+    providers = {
+        "corp": {"kind": "openai-compatible", "base_url": context.endpoint.v1, "headers": HEADERS}
+    }
+    serve_with_llm(context, mode=mode, providers=providers, llm={"model": "corp:writer"})
 
 
 def use_up_the_daily_budget(context: Context) -> None:

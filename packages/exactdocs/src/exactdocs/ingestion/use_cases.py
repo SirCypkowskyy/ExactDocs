@@ -10,6 +10,7 @@ import uuid
 import weakref
 from collections.abc import Awaitable, Callable, Collection, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import partial
@@ -45,6 +46,7 @@ from exactdocs.ingestion.constants import (
     MAX_LISTED_REFS,
     MAX_PREVIEW_FILES,
     MAX_WANTED_IMAGES,
+    OUTSIDE_IMAGES_BATCH,
     PARSER_VERSION,
     PERMANENT_IMPORT_FAILURES,
     PUSH_JOB,
@@ -66,6 +68,7 @@ from exactdocs.ingestion.dtos import (
     AppliedSources,
     ApplySourcesCommand,
     AutoSyncOut,
+    CancelJobCommand,
     CheckedRepository,
     CheckRepositoryCommand,
     ChunkingIn,
@@ -126,6 +129,8 @@ from exactdocs.ingestion.errors import (
     InvalidContext7Error,
     InvalidSourcesError,
     InvalidWebhookSignatureError,
+    JobCancelledError,
+    JobFinishedError,
     JobNotFoundError,
     LibraryAccessDeniedError,
     LibraryCreationDeniedError,
@@ -137,6 +142,7 @@ from exactdocs.ingestion.errors import (
     PushQueuedError,
     RefDeletedError,
     RepositoryAuthRequiredError,
+    RepositoryTooLargeError,
     RepositoryUnreachableError,
     ReprocessFailedError,
     StoredTextOutdatedError,
@@ -283,6 +289,38 @@ from exactdocs_kernel import (
 log = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _CancelCheck:
+    """Tells a running job, between its steps, whether someone cancelled it."""
+
+    jobs: JobRepository
+    """Where the job is stored."""
+    job_id: JobId
+    """The running job."""
+
+    async def __call__(self) -> None:
+        """Raise when someone asked to cancel the job.
+
+        Raises:
+            JobCancelledError: The job is to stop here, at a step boundary.
+        """
+        job = await self.jobs.get(self.job_id)
+        if job is not None and job.cancel_requested:
+            raise JobCancelledError(self.job_id)
+
+
+async def _stop_if_cancelled() -> None:
+    """Raise ``JobCancelledError`` when the job running in this task was cancelled."""
+    check = _running_job.get()
+    if check is not None:
+        await check()
+
+
+# The cancellation check of the job running in this task (set by ``_run``): the steps of its
+# handler call it before each step, however deep they are built. ``None`` outside a job.
+_running_job: ContextVar[_CancelCheck | None] = ContextVar("exactdocs_running_job", default=None)
+
+
 def _credential(sent: CredentialIn | None, repository: RepositoryUrl) -> Credential | None:
     """Convert what a client sent and refuse one the repository's transport cannot carry.
 
@@ -397,7 +435,73 @@ class GetJobUseCase:
         job = await self.jobs.get(JobId(query.job_id))
         if job is None or not await self.access.allows(job.library, Access.READ):
             raise JobNotFoundError(query.job_id)
-        return JobSummary.from_model(job)
+        return JobSummary.from_model(
+            job, cancellable=job.id in await _cancellable(self.access, [job])
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CancelJobUseCase:
+    """Implements ``ports.driving.CancelJob``."""
+
+    jobs: JobRepository
+    """Where jobs are stored."""
+    clock: Clock
+    """Tells the time."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
+
+    async def __call__(self, command: CancelJobCommand) -> JobSummary:
+        """Cancel a queued job at once, or ask a running one to stop at its next step.
+
+        The request is one atomic write (``JobRepository.cancel``): a job that ends meanwhile
+        is reported as it ended. Nothing else is stopped: the embedding an import would have
+        queued, say, is a job of its own.
+
+        Args:
+            command: The job's ID and who cancels it.
+
+        Returns:
+            The job: ``cancelled``, or ``running`` with ``cancelled_at`` while it stops.
+
+        Raises:
+            JobNotFoundError: No job has that ID, or its library is hidden from the caller.
+            JobFinishedError: The job has ended already (also when it was cancelled before).
+        """
+        job = await self.jobs.get(JobId(command.job_id))
+        if job is None or not await self.access.allows(job.library, Access.READ):
+            raise JobNotFoundError(command.job_id)
+        await _require(self.access, job.library, Access.CONTRIBUTE)
+        now = self.clock.now()
+        job.cancelling(command.by, now)  # refuses a job that has ended
+        after = await self.jobs.cancel(job.id, by=command.by, now=now)
+        if after is None:
+            raise JobNotFoundError(command.job_id)
+        if after.finished and after.state is not JobState.CANCELLED:  # it ended meanwhile
+            raise JobFinishedError(after.id, after.state)
+        return JobSummary.from_model(after)
+
+
+async def _cancellable(access: AccessPolicy, jobs: Sequence[Job]) -> set[str]:
+    """Return the IDs of the jobs the caller may cancel now.
+
+    Only unfinished jobs nobody cancelled yet count, and the library roles are asked once per
+    library among them.
+
+    Args:
+        access: Library roles.
+        jobs: The jobs.
+
+    Returns:
+        The IDs of those the caller may cancel.
+    """
+    waiting = [job for job in jobs if not job.finished and not job.cancel_requested]
+    allowed = {
+        library
+        for library in {job.library for job in waiting}
+        if await access.allows(library, Access.CONTRIBUTE)
+    }
+    return {job.id for job in waiting if job.library in allowed}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -461,7 +565,8 @@ class ListLibraryJobsUseCase:
         page = list(jobs[: query.limit])
         more = len(jobs) > query.limit
         return JobList.from_page(
-            Page(items=page, next_cursor=encode_cursor(page[-1].id) if more else None)
+            Page(items=page, next_cursor=encode_cursor(page[-1].id) if more else None),
+            cancellable=await _cancellable(self.access, page),
         )
 
 
@@ -484,8 +589,10 @@ class ListLatestJobsUseCase:
         # Only imports are syncs; a collection job has no version and is no state of a library.
         latest = [job for job in await self.jobs.list_latest() if job.kind in IMPORT_KINDS]
         readable = await self.access.readable([job.library for job in latest])
+        shown = [job for job in latest if job.library.casefold() in readable]
+        cancellable = await _cancellable(self.access, shown)
         return LatestJobs(
-            jobs=[LatestJob.from_model(job) for job in latest if job.library.casefold() in readable]
+            jobs=[LatestJob.from_model(job, cancellable=job.id in cancellable) for job in shown]
         )
 
 
@@ -505,7 +612,8 @@ class RecoverJobsUseCase:
     async def __call__(self, *, resuming: Collection[str] = ()) -> None:
         """Run the hook of every job left ``running``, then queue it again to run from scratch.
 
-        A kind without a hook has nothing to clean up. A hook that raises fails its job instead
+        A job someone had asked to cancel ends ``cancelled`` after its hook instead. A kind
+        without a hook has nothing to clean up. A hook that raises fails its job instead
         of keeping the app from starting, because re-running over unclean state would be worse.
         A job in ``resuming`` is the runner's to resume (from its last durable step) and is
         left alone. Every other queued job is then submitted to the runner, oldest first: also
@@ -534,7 +642,10 @@ class RecoverJobsUseCase:
                     )
                 )
             else:
-                await self.jobs.save(job.requeued())
+                if job.cancel_requested:  # it was stopping when the process ended
+                    await self.jobs.save(job.cancelled(self.clock.now()))
+                else:
+                    await self.jobs.save(job.requeued())
         await _submit_queued(self.jobs, self.runner, resuming)
 
 
@@ -583,7 +694,8 @@ class RunJobUseCase:
 
         A job found ``running`` was interrupted: its kind's recovery hook undoes what the
         interrupted step left half done (a hook that raises fails the job), then the job starts
-        over, its handler replaying the durable steps it had completed.
+        over, its handler replaying the durable steps it had completed; one that someone had
+        asked to cancel ends ``cancelled`` there instead. A ``cancelled`` job never starts.
 
         Args:
             job_id: The job's ID.
@@ -602,6 +714,9 @@ class RunJobUseCase:
                 await self.jobs.save(
                     job.failed(failure, self.clock.now(), code=failure_code(error))
                 )
+                return
+            if job.cancel_requested:  # cancelled, then interrupted: it does not start again
+                await self.jobs.save(job.cancelled(self.clock.now()))
                 return
             job = job.requeued()  # its progress is rebuilt as the steps are replayed
         started = job.started(self.clock.now())
@@ -638,6 +753,10 @@ async def _run(
 ) -> None:
     """Run a started job's handler and store how it ended (raising only if that store fails).
 
+    The handler's steps stop it, between two of them, once someone cancelled the job: it is
+    then stored ``cancelled``, with what it had done. A handler that ended before its next step
+    boundary ends as it would have (the cancellation came too late).
+
     Args:
         jobs: Where jobs are stored.
         clock: Tells the time.
@@ -646,27 +765,58 @@ async def _run(
     """
     progress = _Progress(jobs=jobs, job=job)
     handler = handlers.get(job.kind)
-    code = UNEXPECTED_ERROR
+    running = _running_job.set(_CancelCheck(jobs=jobs, job_id=job.id))
     try:
-        if handler is None:
-            failure = f"no handler is registered for job kind {job.kind!r}"
-        else:
-            await handler(job, progress)
-            failure = None
-    except Exception as error:
-        log.exception("job %s (%s) failed", job.id, job.kind)
-        failure, code = _describe(error), failure_code(error)
+        ended = await _attempt(handler, job, progress)
+    finally:
+        _running_job.reset(running)
     now = clock.now()
-    final = (
-        progress.job.succeeded(now)
-        if failure is None
-        else progress.job.failed(failure, now, code=code)
-    )
+    if ended is None:
+        final = progress.job.cancelled(now)
+    elif ended.failure is None:
+        final = progress.job.succeeded(now)
+    else:
+        final = progress.job.failed(ended.failure, now, code=ended.code)
     try:
         await jobs.save(final)
     except Exception:
         log.exception("could not store the end of job %s (%s)", job.id, job.kind)
         raise
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Ended:
+    """How a job's handler ended, when it was not cancelled."""
+
+    failure: str | None = None
+    """Why it failed, for users; ``None`` when it succeeded."""
+    code: str = UNEXPECTED_ERROR
+    """The stable code of ``failure``."""
+
+
+async def _attempt(handler: JobHandler | None, job: Job, progress: JobProgress) -> _Ended | None:
+    """Run the handler; return how it ended, or ``None`` when it stopped because it was cancelled.
+
+    Args:
+        handler: What runs the job's kind; ``None`` when none is registered.
+        job: The started job.
+        progress: Where it reports.
+
+    Returns:
+        How it ended; ``None`` for a job that stopped at a step boundary, cancelled.
+    """
+    if handler is None:
+        return _Ended(failure=f"no handler is registered for job kind {job.kind!r}")
+    try:
+        await _stop_if_cancelled()  # cancelled while it was being started
+        await handler(job, progress)
+    except JobCancelledError:
+        log.info("job %s (%s) stopped: it was cancelled", job.id, job.kind)
+        return None
+    except Exception as error:
+        log.exception("job %s (%s) failed", job.id, job.kind)
+        return _Ended(failure=_describe(error), code=failure_code(error))
+    return _Ended()
 
 
 @dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- job counters
@@ -1162,6 +1312,28 @@ class AddVersionUseCase:
         return AddedVersion.of(library, resolved, job)
 
 
+def _cancelled_tips(
+    newest: Mapping[str, Job], tips: Mapping[tuple[RefKind, str], str]
+) -> dict[str, Job]:
+    """Return the branches whose newest job is a sync a person cancelled at the tip they name now.
+
+    Args:
+        newest: The newest job of each version, by ref.
+        tips: The commit of each advertised branch and tag.
+
+    Returns:
+        Those cancelled jobs, by ref.
+    """
+    return {
+        ref: job
+        for ref, job in newest.items()
+        if job.state is JobState.CANCELLED
+        and job.kind in IMPORT_KINDS
+        and job.commit_sha is not None
+        and tips.get((RefKind.BRANCH, ref)) == job.commit_sha
+    }
+
+
 def _busy_refs(jobs: Sequence[Job]) -> dict[str, Job]:
     """Return the library's unfinished import jobs by ref.
 
@@ -1198,13 +1370,19 @@ class SyncLibraryUseCase:
     """Decides what the caller may do with the library."""
 
     async def __call__(
-        self, command: SyncLibraryCommand, *, refs: RemoteRefs | None = None
+        self,
+        command: SyncLibraryCommand,
+        *,
+        refs: RemoteRefs | None = None,
+        scheduled: bool = False,
     ) -> SyncedLibrary:
         """Ask the remote where each branch and tag is now, queue an import for moved branches.
 
         ``refs`` is what the remote advertised a moment ago (the scheduled check listed it for
         the tags): the remote is not asked again. ``command.refs`` limits the sync to the
-        versions of those refs (a push names the branch it moved).
+        versions of those refs (a push names the branch it moved). A ``scheduled`` sync leaves a
+        branch alone (``cancelled``) whose newest sync a person cancelled at the same tip: only
+        a new commit, or a sync by hand, queues it again.
 
         The import is the one of adding a version: pinned to the new commit, it fetches it,
         reuses the chunks of every unchanged blob and activates the new manifest in place of the
@@ -1222,6 +1400,7 @@ class SyncLibraryUseCase:
         Args:
             command: The library.
             refs: The refs the remote advertised; ``None`` lists them now.
+            scheduled: The scheduled check asks (not a person).
 
         Returns:
             What happened to each version.
@@ -1263,6 +1442,8 @@ class SyncLibraryUseCase:
                 raise SyncFailedError(error, recorded, code) from raised
             tips = {(t.kind, t.name): t.commit_sha for t in ref_tips(refs)}
         # The busy check is repeated, atomically, by ``enqueue_job`` (the repository).
+        if scheduled:  # a sync a person cancelled is not re-queued at the same tip
+            busy = {**_cancelled_tips(newest, tips), **busy}
         synced = [await self._sync(library, v, tips, busy, newest) for v in versions]
         importing = [v for v in synced if v.status is SyncStatus.IMPORTING]
         if importing and not any(v.status is SyncStatus.QUEUED for v in synced):
@@ -1328,7 +1509,10 @@ class SyncLibraryUseCase:
         if current.kind not in CHECKED_KINDS:
             return outcome(SyncStatus.PINNED, current.commit_sha)
         if current.ref in busy:
-            return outcome(SyncStatus.IMPORTING, current.commit_sha, busy[current.ref].id)
+            held = busy[current.ref]  # importing, or a sync a person cancelled at this tip
+            cancelled = held.state is JobState.CANCELLED
+            status = SyncStatus.CANCELLED if cancelled else SyncStatus.IMPORTING
+            return outcome(status, current.commit_sha, held.id)
         last = newest.get(current.ref)
         tip = tips.get((current.kind, current.ref))
         if tip is None:
@@ -1463,10 +1647,13 @@ class SyncLibraryUseCase:
 
 
 class _NoCheckpoints:
-    """The default ``Checkpoints``: every step runs, nothing survives a crash."""
+    """The default ``Checkpoints``: every step runs, nothing survives a crash.
+
+    A cancelled job stops before its next step, as with ``StopOnCancel``.
+    """
 
     async def step[T](self, name: str, run: Callable[[], Awaitable[T]], /) -> T:
-        """Run the step; nothing is recorded.
+        """Run the step, unless the job was cancelled; nothing is recorded.
 
         Args:
             name: The step's name.
@@ -1476,7 +1663,36 @@ class _NoCheckpoints:
             What ``run`` returned.
         """
         del name
+        await _stop_if_cancelled()
         return await run()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StopOnCancel:
+    """Implements ``ports.driven.Checkpoints``: ``inner``'s steps, the job stopping between them.
+
+    Before each step it reads whether someone cancelled the job running in this task; if so it
+    raises ``JobCancelledError`` instead of starting the step. Every step that ran is complete
+    (a version activated, a batch of vectors stored), so the job stops with nothing half done,
+    and ``RunJob`` records it ``cancelled``. Not for steps run inside another durable step (a
+    re-import within a ``reprocess``'s version step): those finish with their step.
+    """
+
+    inner: Checkpoints
+    """The durable steps (DBOS's), or steps that only run."""
+
+    async def step[T](self, name: str, run: Callable[[], Awaitable[T]], /) -> T:
+        """Run the step through ``inner``, unless the job was cancelled.
+
+        Args:
+            name: The step's name.
+            run: Runs the step.
+
+        Returns:
+            What ``run`` returned, now or on the run that completed the step.
+        """
+        await _stop_if_cancelled()
+        return await self.inner.step(name, run)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1632,6 +1848,8 @@ def _job_changes() -> dict[JobKind, SettingsChange]:
 def _unhealed(jobs: Sequence[Job]) -> SettingsChange | None:
     """Return the widest re-processing that failed and was not redone since (newest first).
 
+    A cancelled one counts as failed: it stopped with some versions not re-processed.
+
     A failed job is redone by any later job of the same or a greater reach that succeeded, or
     is still queued or running (it reads the settings when it runs): a failed ``reprocess``
     stays unhealed after a ``retag`` or a ``rechunk``, which do not re-import.
@@ -1648,7 +1866,7 @@ def _unhealed(jobs: Sequence[Job]) -> SettingsChange | None:
         change = _job_changes().get(job.kind)
         if change is None:
             continue
-        if job.state is JobState.FAILED:
+        if job.state in {JobState.FAILED, JobState.CANCELLED}:
             if change.reach > covered and (worst is None or change.reach > worst.reach):
                 worst = change
         else:
@@ -2857,20 +3075,41 @@ class ImportVersionUseCase:
         outside = _ImageBudget(
             per_image=taken.per_image, total=taken.total, count=taken.count, used=taken.used
         )
-        if taken.absent and job.commit_sha and job.version:
-            async with self.gateway.fetch_files(
-                source.url,
-                job.commit_sha,
-                taken.absent,
-                max_bytes=self.max_images_bytes,
-                refs=_full_refs(job.ref_kind or RefKind.COMMIT, job.version),
-                credential=credential,
-            ) as folder:
-                outside.absent = await asyncio.to_thread(
-                    _read_images, folder, taken.absent, outside
-                )
-        else:
+        if not (taken.absent and job.commit_sha and job.version):
             outside.absent = list(taken.absent)
+            return outside
+        refs = _full_refs(job.ref_kind or RefKind.COMMIT, job.version)
+        size = OUTSIDE_IMAGES_BATCH
+        pending = [taken.absent[i : i + size] for i in range(0, len(taken.absent), size)]
+        while pending:
+            batch = pending.pop(0)
+            left = outside.total - outside.used
+            if outside.count >= MAX_IMAGES or left <= 0:
+                reason = "the version's image budget is used up"
+                outside.skipped.extend(
+                    Skip(code=ProblemCode.IMAGE_BUDGET, reason=reason, path=p) for p in batch
+                )
+                continue
+            try:
+                async with self.gateway.fetch_files(
+                    source.url,
+                    job.commit_sha,
+                    batch,
+                    max_bytes=left + outside.per_image,
+                    refs=refs,
+                    credential=credential,
+                ) as folder:
+                    outside.absent += await asyncio.to_thread(_read_images, folder, batch, outside)
+            except RepositoryTooLargeError:
+                # Referenced files are not all images: halve the batch to find the big ones.
+                if len(batch) > 1:
+                    half = len(batch) // 2
+                    pending[:0] = [batch[:half], batch[half:]]
+                else:
+                    reason = "larger than what is left of the version's image budget"
+                    outside.skipped.append(
+                        Skip(code=ProblemCode.TOO_LARGE, reason=reason, path=batch[0])
+                    )
         return outside
 
     async def _articles(
@@ -4451,7 +4690,9 @@ class RunScheduledChecksUseCase:
             try:
                 # The refs listed for the tags; without them (none, or the remote failed) the
                 # sync asks itself, and records a failure on the versions' jobs.
-                await self.sync_library(SyncLibraryCommand(library=library), refs=refs)
+                await self.sync_library(
+                    SyncLibraryCommand(library=library), refs=refs, scheduled=True
+                )
             except VersionImportingError:
                 pass  # the branch is being imported already
             except DomainError as raised:  # also recorded on the versions' jobs
@@ -4549,7 +4790,8 @@ def _failed_tags(
     """Return (ref, commit) of the refs that are no version and are not to be imported now.
 
     A failure the same commit would meet again (``PERMANENT_IMPORT_FAILURES``) holds the tag
-    back until it moves. An ``unexpected`` one (a bug, perhaps at that commit) backs off: after
+    back until it moves, and so does an import a person cancelled (importing the tag by hand
+    still works). An ``unexpected`` one (a bug, perhaps at that commit) backs off: after
     the n-th in a row at the same commit, the tag waits 2**(n-1) - 1 more check intervals, at
     most ``UNEXPECTED_BACKOFF_CAP``. Any other failure (an unreachable repository, a refused
     credential...) is tried at the next check.
@@ -4571,7 +4813,12 @@ def _failed_tags(
     held: set[tuple[str, str]] = set()
     for ref, tried in imports.items():
         last = tried[0]
-        if ref in have or last.state is not JobState.FAILED or not last.commit_sha:
+        if ref in have or not last.commit_sha:
+            continue
+        if last.state is JobState.CANCELLED:  # a person stopped it: not again at this commit
+            held.add((ref, last.commit_sha))
+            continue
+        if last.state is not JobState.FAILED:
             continue
         backing_off = (
             last.error_code == UNEXPECTED_ERROR
@@ -4612,7 +4859,10 @@ class EmbeddingQueue:
     """Queues ``embed`` jobs for the versions the embedding model has not fully embedded.
 
     Only a *queued* job counts as one already: a running one may be embedding with a model
-    that changed meanwhile, and stops without covering the version for the new one.
+    that changed meanwhile, and stops without covering the version for the new one. A version
+    whose newest ``embed`` job a person cancelled is left alone unless ``retry_cancelled``: the
+    start and the nightly upkeep must not undo the cancellation, an import or a changed model
+    (new chunks to embed, or a new space) queue it again.
     """
 
     jobs: JobRepository
@@ -4624,12 +4874,19 @@ class EmbeddingQueue:
     embedder: VersionEmbedder
     """Names the versions not fully embedded."""
 
-    async def __call__(self, library: str | None, *, besides: tuple[str, str] | None = None) -> int:
+    async def __call__(
+        self,
+        library: str | None,
+        *,
+        besides: tuple[str, str] | None = None,
+        retry_cancelled: bool = False,
+    ) -> int:
         """Queue one ``embed`` job per version not fully embedded, unless one is queued already.
 
         Args:
             library: Only this library's versions; ``None``: every library's.
             besides: A (library, version) to leave out: the job that is embedding it.
+            retry_cancelled: Also the versions whose newest ``embed`` job was cancelled.
 
         Returns:
             How many jobs were queued.
@@ -4640,11 +4897,9 @@ class EmbeddingQueue:
             if (version.library, version.ref) == besides:
                 continue
             if version.library not in waiting:
-                waiting[version.library] = {
-                    job.version
-                    for job in await self.jobs.list_unfinished_for_library(version.library)
-                    if job.kind == EMBED_JOB and job.state is JobState.QUEUED
-                }
+                waiting[version.library] = await self._skipped(
+                    version.library, retry_cancelled=retry_cancelled
+                )
             if version.ref in waiting[version.library]:
                 continue
             job = Job.queued(
@@ -4659,6 +4914,29 @@ class EmbeddingQueue:
             waiting[version.library].add(version.ref)
             queued += 1
         return queued
+
+    async def _skipped(self, library: str, *, retry_cancelled: bool) -> set[str | None]:
+        """Return the library's versions not to queue: one waits, or a person cancelled it.
+
+        Args:
+            library: The library ID.
+            retry_cancelled: Queue the cancelled ones again.
+
+        Returns:
+            Their refs.
+        """
+        skipped = {
+            job.version
+            for job in await self.jobs.list_unfinished_for_library(library)
+            if job.kind == EMBED_JOB and job.state is JobState.QUEUED
+        }
+        if not retry_cancelled:
+            skipped |= {
+                job.version
+                for job in await self.jobs.list_newest_of_kind(library, EMBED_JOB)
+                if job.state is JobState.CANCELLED
+            }
+        return skipped
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -4679,7 +4957,8 @@ class QueueEmbeddingUseCase:
         """
         if self.queue is None:
             return QueuedEmbedding(queued=0)
-        return QueuedEmbedding(queued=await self.queue(command.library))
+        queued = await self.queue(command.library, retry_cancelled=command.retry_cancelled)
+        return QueuedEmbedding(queued=queued)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -4705,7 +4984,8 @@ class EmbedAfterJob:
         """
         await self.inner(job, progress)
         try:
-            await self.queue(job.library)
+            # What it stored is new: a version whose embedding was cancelled is queued again.
+            await self.queue(job.library, retry_cancelled=True)
         except Exception:
             log.exception("could not queue the embedding of %s after job %s", job.library, job.id)
 
@@ -4747,7 +5027,7 @@ class EmbedVersionUseCase:
         if plan.created:
             await steps.step(
                 "queue the other versions",
-                partial(self.queue, None, besides=(library, ref)),
+                partial(self.queue, None, besides=(library, ref), retry_cancelled=True),
             )
         await progress.report(done=0, total=plan.missing)
         embedded, reused, number = 0, 0, 0

@@ -138,6 +138,7 @@ from exactdocs.ingestion.constants._use_cases import (
     MAX_LISTED_REFS,
     MAX_PREVIEW_FILES,
     MAX_WANTED_IMAGES,
+    OUTSIDE_IMAGES_BATCH,
     SAVE_EVERY_FILES,
     SAVE_EVERY_SECONDS,
 )
@@ -238,6 +239,7 @@ __all__ = [
     "MIN_INTERVAL_MINUTES",
     "ONE",
     "OPENSSH_MAGIC",
+    "OUTSIDE_IMAGES_BATCH",
     "PARSER_VERSION",
     "PEELED",
     "PERMANENT_IMPORT_FAILURES",

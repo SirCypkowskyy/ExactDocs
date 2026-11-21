@@ -169,13 +169,19 @@ class RepositoryTooLargeError(ValidationError):
 
     code = "repository_too_large"
 
-    def __init__(self, limit: int) -> None:
-        """Name the size limit that was passed.
+    def __init__(self, limit: int, *, files: bool = False) -> None:
+        """Name the limit that was hit: a number of bytes, or of files.
 
         Args:
-            limit: The most bytes accepted; the message names it in MiB.
+            limit: The most bytes (or files, with ``files``) accepted.
+            files: Whether ``limit`` counts files, not bytes.
         """
-        super().__init__(f"the selected files are larger than {limit // 2**20} MiB")
+        if files:
+            super().__init__(f"the fetch holds more than {limit} files")
+        elif limit >= 2**20:
+            super().__init__(f"the selected files are larger than {limit // 2**20} MiB")
+        else:
+            super().__init__(f"the selected files are larger than {limit} bytes")
 
 
 class TreeTooLargeError(ValidationError):
@@ -328,6 +334,39 @@ class JobNotFoundError(NotFoundError):
             job_id: The job ID as given.
         """
         super().__init__(f"job {job_id!r} does not exist")
+        self.job_id = job_id
+
+
+class JobFinishedError(ConflictError):
+    """A job that has ended (succeeded, failed or cancelled) cannot be cancelled."""
+
+    code = "job_finished"
+
+    def __init__(self, job_id: str, state: str) -> None:
+        """Name the job and the state it ended in.
+
+        Args:
+            job_id: The job ID.
+            state: The state it is in: ``succeeded``, ``failed`` or ``cancelled``.
+        """
+        super().__init__(
+            f"job {job_id!r} is {state}: only a queued or running job can be cancelled"
+        )
+        self.job_id, self.job_state = job_id, str(state)
+
+
+class JobCancelledError(DomainError):
+    """Raised inside a running job at its next step boundary once someone cancelled it."""
+
+    code = "job_cancelled"
+
+    def __init__(self, job_id: str) -> None:
+        """Name the job that stops.
+
+        Args:
+            job_id: The job ID.
+        """
+        super().__init__(f"job {job_id!r} was cancelled")
         self.job_id = job_id
 
 

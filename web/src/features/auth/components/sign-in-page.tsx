@@ -60,7 +60,7 @@ export function SignInPage({
     <AuthLayout title="Sign in" intro="Sign in to this ExactDocs server.">
       <form onSubmit={submit} noValidate>
         <FormAlert id={FORM_ALERT_ID} message={problem.message} link={problem.link} />
-        <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-4">
           <Field
             id="username"
             label="Username"
@@ -81,14 +81,14 @@ export function SignInPage({
         </div>
       </form>
       {providers.length > 0 && (
-        <section aria-labelledby="providers-heading" className="mt-8">
+        <section aria-labelledby="providers-heading" className="mt-6">
           <h2
             id="providers-heading"
-            className="flex items-center gap-3 text-sm text-muted-foreground before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border"
+            className="flex items-center gap-3 text-small text-muted-foreground before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border"
           >
             or
           </h2>
-          <ul className="mt-5 flex flex-col gap-3">
+          <ul className="mt-4 flex flex-col gap-2">
             {providers.map((provider) => (
               <li key={provider.name}>
                 <a

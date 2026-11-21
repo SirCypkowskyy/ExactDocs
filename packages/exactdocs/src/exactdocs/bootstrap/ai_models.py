@@ -49,8 +49,10 @@ from exactdocs.retrieval.models import (
     ProviderKind,
     ProviderProfile,
     SpendWindow,
+    ThinkingLevel,
 )
 from exactdocs.retrieval.ports.driven import Embeddings, Reranker, SecretBox
+from exactdocs_kernel import SealedTextUnreadableError
 
 logger = logging.getLogger(__name__)
 
@@ -234,17 +236,48 @@ class PydanticAiModels:
                 await endpoint.client.aclose()
         self._locks.pop(name, None)
 
-    async def chat_model(self, profile: ProviderProfile, model: str) -> object:
-        """Build a pydantic-ai chat model.
+    async def chat_model(
+        self, profile: ProviderProfile, model: str, *, thinking: ThinkingLevel | None = None
+    ) -> object:
+        """Build a pydantic-ai chat model, with its thinking level as the provider's setting.
+
+        Args:
+            profile: The profile.
+            model: The model name.
+            thinking: The role's level; left out when the model cannot take one.
+
+        Returns:
+            The model.
+        """
+        sdk = await self._sdk(profile)
+        return await sdk.chat_model(await self.endpoint(profile), model, thinking)
+
+    async def thinking_unsupported(self, profile: ProviderProfile, model: str) -> str | None:
+        """Say why a chat model cannot take a thinking level, from pydantic-ai's model profile.
+
+        The model is built (no call is made): its profile is the one its calls use. A model that
+        cannot be built here (a missing SDK, a key file or credentials it cannot read now) is not
+        refused: its calls say why they fail.
 
         Args:
             profile: The profile.
             model: The model name.
 
         Returns:
-            The model.
+            A fixed text, or ``None`` when it can or that cannot be known now.
         """
-        return await (await self._sdk(profile)).chat_model(await self.endpoint(profile), model)
+        try:
+            sdk = await self._sdk(profile)
+        except ProviderUnsupportedError:
+            return None
+        try:
+            built = await sdk.bare_chat_model(await self.endpoint(profile), model)
+        except (ProviderUnsupportedError, SealedTextUnreadableError, *sdk.call_errors()) as error:
+            logger.debug(
+                "thinking support of %s:%s unknown: %s", profile.name, model, type(error).__name__
+            )
+            return None
+        return sdk.thinking_unsupported(profile.kind, built)
 
     async def embedder(self, profile: ProviderProfile, model: str) -> object:
         """Build a pydantic-ai embedder.
@@ -272,13 +305,22 @@ class PydanticAiModels:
         built: Reranker = sdk.reranker(await self.endpoint(profile), model)
         return built
 
-    async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
+    async def check(
+        self,
+        profile: ProviderProfile,
+        model: str,
+        role: ModelRole,
+        *,
+        thinking: ThinkingLevel | None = None,
+    ) -> ModelCheck:
         """Make one minimal call as ``role`` uses the model, and time it.
 
         Args:
             profile: The profile.
             model: The model name.
             role: A chat turn (``llm``, ``judge``), an embedding or a rerank.
+            thinking: A chat role's thinking level, sent as its calls send it, so the latency
+                reflects it.
 
         Returns:
             The outcome; a failure says why, with any key masked.
@@ -289,7 +331,7 @@ class PydanticAiModels:
         except ProviderUnsupportedError as error:
             return self._failed(profile, model, role, started, str(error))
         try:
-            served, dimensions = await self._call(sdk, profile, model, role)
+            served, dimensions = await self._call(sdk, profile, model, role, thinking)
         except sdk.call_errors() as error:  # a check reports a failed call, it never raises
             return self._failed(profile, model, role, started, f"{type(error).__name__}: {error}")
         except ProviderUnsupportedError as error:
@@ -305,7 +347,12 @@ class PydanticAiModels:
         )
 
     async def _call(
-        self, sdk: ModuleType, profile: ProviderProfile, model: str, role: ModelRole
+        self,
+        sdk: ModuleType,
+        profile: ProviderProfile,
+        model: str,
+        role: ModelRole,
+        thinking: ThinkingLevel | None,
     ) -> tuple[str, int | None]:
         """Make the one call a role's check makes.
 
@@ -314,6 +361,7 @@ class PydanticAiModels:
             profile: The profile.
             model: The model name.
             role: The role.
+            thinking: A chat role's thinking level.
 
         Returns:
             The model that answered, and an embedding's vector size.
@@ -326,7 +374,8 @@ class PydanticAiModels:
                 reranker = await self.reranker(profile, model)
                 return await sdk.check_rerank(reranker, model, CHECK_TEXT), None
             case ModelRole.LLM | ModelRole.JUDGE:
-                return await sdk.check_chat(await self.chat_model(profile, model)), None
+                chat = await self.chat_model(profile, model, thinking=thinking)
+                return await sdk.check_chat(chat), None
 
     def _failed(
         self, profile: ProviderProfile, model: str, role: ModelRole, started: float, reason: str
@@ -410,17 +459,32 @@ class AiModels:
         """
         return self._of(profile).unsupported(profile)
 
-    async def chat_model(self, profile: ProviderProfile, model: str) -> object:
+    async def chat_model(
+        self, profile: ProviderProfile, model: str, *, thinking: ThinkingLevel | None = None
+    ) -> object:
         """Build a chat model.
+
+        Args:
+            profile: The profile.
+            model: The model name.
+            thinking: Its thinking level.
+
+        Returns:
+            The model.
+        """
+        return await self._of(profile).chat_model(profile, model, thinking=thinking)
+
+    async def thinking_unsupported(self, profile: ProviderProfile, model: str) -> str | None:
+        """Say why a chat model cannot take a thinking level, when that is known.
 
         Args:
             profile: The profile.
             model: The model name.
 
         Returns:
-            The model.
+            A fixed text, or ``None``.
         """
-        return await self._of(profile).chat_model(profile, model)
+        return await self._of(profile).thinking_unsupported(profile, model)
 
     async def embedder(self, profile: ProviderProfile, model: str) -> object:
         """Build an embedder.
@@ -455,18 +519,26 @@ class AiModels:
         await self.remote.release(name)
         await self.local.release(name)
 
-    async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
+    async def check(
+        self,
+        profile: ProviderProfile,
+        model: str,
+        role: ModelRole,
+        *,
+        thinking: ThinkingLevel | None = None,
+    ) -> ModelCheck:
         """Make one minimal call as ``role`` uses the model.
 
         Args:
             profile: The profile.
             model: The model name.
             role: The role.
+            thinking: A chat role's thinking level.
 
         Returns:
             The outcome.
         """
-        return await self._of(profile).check(profile, model, role)
+        return await self._of(profile).check(profile, model, role, thinking=thinking)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -569,6 +641,8 @@ def configured_ai(ai: AiSettings) -> ConfiguredAi:
             reranker=_role(ai.reranker.model),
             llm=_role(ai.llm.model),
             judge=_role(ai.judge.model),
+            llm_thinking=ai.llm.thinking,
+            judge_thinking=ai.judge.thinking,
         ),
         budgets=budgets(ai.budgets),
         prices={

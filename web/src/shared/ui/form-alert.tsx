@@ -1,4 +1,4 @@
-import { Info } from "lucide-react";
+import { CircleAlert, Info } from "lucide-react";
 
 interface FormAlertProps {
   id: string;
@@ -19,16 +19,18 @@ export function FormAlert({ id, message, link, tone = "error" }: FormAlertProps)
     <div
       id={id}
       role="alert"
-      className={`grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none ${open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
+      className={`grid transition-[grid-template-rows] duration-(--dur) ease-(--ease-out) motion-reduce:transition-none ${open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
     >
       <div className="overflow-hidden">
         {open && (
           <p
-            className={`mb-5 flex items-start gap-2 rounded-md px-3 py-2.5 text-sm font-medium ${tone === "info" ? "bg-accent text-foreground" : "bg-destructive/10 text-destructive"}`}
+            className={`mb-5 flex items-start gap-2 rounded-md px-3 py-2.5 text-body font-medium ${tone === "info" ? "bg-route-soft text-foreground" : "bg-destructive-soft text-destructive-ink"}`}
           >
             {tone === "info" ? (
-              <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
-            ) : null}
+              <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
+            ) : (
+              <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+            )}
             <span>
               {message}
               {link && (

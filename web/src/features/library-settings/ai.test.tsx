@@ -45,6 +45,8 @@ const HYBRID: LibraryRetrieval = {
   llm: null,
   judge: null,
   reranker: null,
+  llm_thinking: null,
+  judge_thinking: null,
   rerank_top_n: null,
   effective_rerank_top_n: 32,
   rerank_with: null,
@@ -95,7 +97,16 @@ const ROLES = [
     profile_exists: true,
   },
   { role: "reranker", model: null, source: null, profile_exists: false },
-  { role: "llm", model: "corp:gpt-4.1-mini", source: "instance", profile_exists: true },
+  {
+    role: "llm",
+    model: "corp:gpt-4.1-mini",
+    source: "instance",
+    profile_exists: true,
+    thinking: "low",
+    own_thinking: "low",
+    thinking_configured: true,
+    thinking_unsupported: null,
+  },
   { role: "judge", model: null, source: null, profile_exists: false },
 ];
 
@@ -257,6 +268,60 @@ describe("library AI settings", () => {
     expect(calls.find((c) => c.method === "PUT")?.body).toMatchObject({
       budgets: { daily_usd: null, monthly_usd: 50 },
     });
+  });
+});
+
+describe("thinking levels", () => {
+  it("sets the library's own judge thinking level, says what it costs and what applies without", async () => {
+    const calls = serve(HYBRID);
+    renderPage();
+    const ai = await section();
+    await ai.findByTestId("effective-mode");
+
+    const llm = ai.getByLabelText("LLM thinking");
+    await waitFor(() =>
+      expect(within(llm).getAllByRole("option")[0]).toHaveTextContent("The instance's level (Low)"),
+    );
+    expect(
+      within(llm)
+        .getAllByRole("option")
+        .slice(1)
+        .map((o) => o.textContent),
+    ).toEqual(["Minimal", "Low", "Medium", "High", "Extra high"]);
+    expect(ai.getAllByText(/Thinking tokens are billed as output/)).toHaveLength(2);
+    expect(within(ai.getByLabelText("Judge thinking")).getAllByRole("option")[0]).toHaveTextContent(
+      "The instance's level",
+    );
+
+    await userEvent.selectOptions(ai.getByLabelText("Judge thinking"), "minimal");
+    await userEvent.click(ai.getByRole("button", { name: "Save AI settings" }));
+
+    await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    expect(calls.find((c) => c.method === "PUT")?.body).toMatchObject({
+      llm_thinking: null,
+      judge_thinking: "minimal",
+    });
+    expect(await ai.findByText("Saved.")).toBeInTheDocument();
+    expect(ai.getByLabelText("Judge thinking")).toHaveValue("minimal");
+  });
+
+  it("shows the server's refusal of a level the model cannot take", async () => {
+    serve(HYBRID, () => ({
+      status: 422,
+      body: {
+        error: "thinking_unsupported",
+        detail: "the llm role's model 'corp:gpt-4.1' cannot take a thinking level",
+        fields: [],
+      },
+    }));
+    renderPage();
+    const ai = await section();
+    await ai.findByTestId("effective-mode");
+
+    await userEvent.selectOptions(ai.getByLabelText("LLM thinking"), "high");
+    await userEvent.click(ai.getByRole("button", { name: "Save AI settings" }));
+
+    expect(await ai.findByText(/cannot take a thinking level/)).toBeInTheDocument();
   });
 });
 
@@ -498,6 +563,8 @@ describe("retrieval model", () => {
       llm: null,
       judge: null,
       reranker: "tei:bge:v2",
+      llm_thinking: null,
+      judge_thinking: null,
       rerank_top_n: 8,
       rerank_with: null,
       repo_guidance: "off",
@@ -539,6 +606,7 @@ describe("retrieval model", () => {
     });
     expect(explainRetrievalSave(e("budget_above_instance")).message).toBe("the words");
     expect(explainRetrievalSave(e("provider_unsupported")).message).toBe("the words");
+    expect(explainRetrievalSave(e("thinking_unsupported")).message).toBe("the words");
     expect(explainRetrievalSave(new TypeError("offline")).message).toMatch(/Can't reach/);
   });
 });

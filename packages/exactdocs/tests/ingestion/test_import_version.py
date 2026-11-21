@@ -43,6 +43,7 @@ from exactdocs.ingestion.errors import (
     NoArticlesError,
     NotAGitRepositoryError,
     RepositoryAuthRequiredError,
+    RepositoryTooLargeError,
     RepositoryUnreachableError,
 )
 from exactdocs.ingestion.models import (
@@ -112,6 +113,7 @@ class Checkout:
     tmp: Path | None = None
     after_write: Callable[[Path], None] = lambda _: None
     open: bool = False  # inside ``fetch``
+    bounded: bool = False  # ``fetch_files`` raises when its files add up to more than max_bytes
 
     @asynccontextmanager
     async def fetch(
@@ -155,7 +157,9 @@ class Checkout:
         del repository, commit_sha, refs, credential
         self.extra.append((list(paths), max_bytes))
         assert self.tmp is not None
-        folder = self.tmp / "second"
+        if self.bounded and sum(len(self.elsewhere.get(n, b"")) for n in paths) > max_bytes:
+            raise RepositoryTooLargeError(max_bytes)  # what the real gateway's watchdog does
+        folder = self.tmp / f"second{len(self.extra)}"  # one per call
         folder.mkdir()
         for name in paths:
             if name in self.elsewhere:
@@ -1613,7 +1617,7 @@ async def test_referenced_images_are_imported_from_both_checkouts(tmp_path: Path
         ("docs/guide/logo.svg", "image/svg+xml", git_blob_sha(SVG), SVG),
         ("docs/img/flow.png", "image/png", git_blob_sha(PNG), PNG),
     ]
-    assert world.gateway.extra == [(["docs/img/flow.png"], 2**30)]
+    assert world.gateway.extra == [(["docs/img/flow.png"], 2**30 - len(SVG) + 2**20)]
     assert world.progress.problems == []
 
 
@@ -1697,6 +1701,31 @@ async def test_the_version_keeps_images_up_to_its_budget_and_skips_the_rest(
     assert [(p, c) for p, c, _ in world.progress.problems] == [("docs/c.png", "image_budget")]
 
 
+async def test_outside_images_too_big_for_the_budget_are_skipped_not_fatal(
+    tmp_path: Path,
+) -> None:
+    """Entra: thousands of referenced images outside the selection must not fail the import."""
+    names = [f"docs/media/{n:03}.png" for n in range(120)]
+    page = " ".join(f"![]({n.removeprefix('docs/')})" for n in ["docs/media/huge.png", *names])
+    huge = PNG + b"h" * 5000
+    world = build_world(
+        tmp_path,
+        {"docs/a.md": page.encode()},
+        elsewhere=dict.fromkeys(names, PNG) | {"docs/media/huge.png": huge},
+        max_image_bytes=64,
+        max_images_bytes=10 * len(PNG),
+    )
+    world.gateway.bounded = True
+
+    await world.run(make_job(), world.progress)
+
+    assert len(world.catalog.stored[0].images) == 10
+    problems = {p: c for p, c, _ in world.progress.problems}
+    assert problems["docs/media/huge.png"] == "too_large"
+    assert problems["docs/media/010.png"] == "image_budget"
+    assert len(world.gateway.extra) > 1  # fetched in batches, the big batch halved
+
+
 async def test_a_symlinked_image_is_not_followed(tmp_path: Path) -> None:
     outside = tmp_path / "secret.png"
     outside.write_bytes(PNG)
@@ -1747,8 +1776,7 @@ async def test_images_looked_for_are_capped_per_version(tmp_path: Path) -> None:
 
     await world.run(make_job(), world.progress)
 
-    (extra, _) = world.gateway.extra[0]
-    assert len(extra) == cap
+    assert sum(len(paths) for paths, _ in world.gateway.extra) == cap
     assert [c for _, c, _ in world.progress.problems].count("truncated") == 1
 
 

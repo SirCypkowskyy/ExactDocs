@@ -173,6 +173,7 @@ from exactdocs.retrieval.adapters.driven.sqlite import (
     SqliteHypothesisCache,
     SqliteLibraryModes,
     SqliteProviderProfiles,
+    SqliteRoleThinkingLevels,
     SqliteSpendLedger,
 )
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
@@ -349,10 +350,12 @@ async def _warm_ai(retrieval: RetrievalModule, local: LocalModels, local_roles: 
     otherwise import them (seconds) inside its reranker timeout. With no such profile nothing is
     loaded (RUN-02). A failed load never stops the start (``PydanticAiModels.warm``). The models
     the instance roles name on ``local`` profiles are loaded too (fastembed, once per process);
-    a role a library sets on a local profile loads its model at its first call.
+    a role a library sets on a local profile loads its model at its first call. An instance
+    role's thinking level its model cannot take is logged as a warning (#421): its calls leave
+    it out.
 
     Args:
-        retrieval: Lists the provider profiles (reading them imports no SDK).
+        retrieval: Lists the provider profiles (reading them imports no SDK), and the roles.
         local: Loads the local models.
         local_roles: The instance roles on local profiles whose model was pulled.
     """
@@ -360,6 +363,15 @@ async def _warm_ai(retrieval: RetrievalModule, local: LocalModels, local_roles: 
     if any(p.kind is not ProviderKind.LOCAL for p in profiles):
         await PydanticAiModels().warm()
     await local.warm(local_roles)
+    for role in (await retrieval.list_roles()).roles:
+        if role.thinking is not None and role.thinking_unsupported is not None:
+            logger.warning(
+                "AI role %s (%s) cannot take thinking level %s (%s): its calls leave it out",
+                role.role.value,
+                role.model,
+                role.thinking.value,
+                role.thinking_unsupported,
+            )
 
 
 def _secret_box(settings: Settings, purpose: bytes) -> FernetSecretBox:
@@ -675,6 +687,7 @@ def _build_read_side(
         roles=model_roles,
         configured_profiles=ai.profiles,
         stored_profiles=SqliteProviderProfiles(engine=engine),
+        thinking_levels=SqliteRoleThinkingLevels(engine=engine),
         instance_roles=ai.roles,
         models=model_factory
         or AiModels(remote=PydanticAiModels(keys=ai.keys, box=ai_box), local=local),
