@@ -153,7 +153,7 @@ class Checkout:
         assert self.tmp is not None
         if self.bounded and sum(len(self.elsewhere.get(n, b"")) for n in paths) > max_bytes:
             raise RepositoryTooLargeError(max_bytes)  # what the real gateway's watchdog does
-        folder = self.tmp / "second"
+        folder = self.tmp / f"second{len(self.extra)}"  # one per call
         folder.mkdir()
         for name in paths:
             if name in self.elsewhere:
@@ -1609,7 +1609,7 @@ async def test_referenced_images_are_imported_from_both_checkouts(tmp_path: Path
         ("docs/guide/logo.svg", "image/svg+xml", git_blob_sha(SVG), SVG),
         ("docs/img/flow.png", "image/png", git_blob_sha(PNG), PNG),
     ]
-    assert world.gateway.extra == [(["docs/img/flow.png"], 2**30 + 2**20)]
+    assert world.gateway.extra == [(["docs/img/flow.png"], 2**30 - len(SVG) + 2**20)]
     assert world.progress.problems == []
 
 
@@ -1698,7 +1698,7 @@ async def test_outside_images_too_big_for_the_budget_are_skipped_not_fatal(
 ) -> None:
     """Entra: thousands of referenced images outside the selection must not fail the import."""
     names = [f"docs/media/{n:03}.png" for n in range(120)]
-    page = " ".join(f"![]({n.removeprefix('docs/')})" for n in [*names, "docs/media/huge.png"])
+    page = " ".join(f"![]({n.removeprefix('docs/')})" for n in ["docs/media/huge.png", *names])
     huge = PNG + b"h" * 5000
     world = build_world(
         tmp_path,
@@ -1714,7 +1714,7 @@ async def test_outside_images_too_big_for_the_budget_are_skipped_not_fatal(
     assert len(world.catalog.stored[0].images) == 10
     problems = {p: c for p, c, _ in world.progress.problems}
     assert problems["docs/media/huge.png"] == "too_large"
-    assert problems["docs/media/119.png"] == "image_budget"
+    assert problems["docs/media/010.png"] == "image_budget"
     assert len(world.gateway.extra) > 1  # fetched in batches, the big batch halved
 
 
@@ -1768,8 +1768,7 @@ async def test_images_looked_for_are_capped_per_version(tmp_path: Path) -> None:
 
     await world.run(make_job(), world.progress)
 
-    (extra, _) = world.gateway.extra[0]
-    assert len(extra) == cap
+    assert sum(len(paths) for paths, _ in world.gateway.extra) == cap
     assert [c for _, c, _ in world.progress.problems].count("truncated") == 1
 
 
