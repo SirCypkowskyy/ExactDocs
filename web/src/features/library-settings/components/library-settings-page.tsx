@@ -56,7 +56,7 @@ export function LibrarySettingsPage({ owner, repo, library, jobs }: Props) {
       <h1
         ref={heading}
         tabIndex={-1}
-        className="mt-1 font-serif text-4xl font-semibold tracking-tight outline-none [overflow-wrap:anywhere]"
+        className="mt-1 text-4xl font-semibold tracking-tight outline-none [overflow-wrap:anywhere]"
       >
         {name}
       </h1>

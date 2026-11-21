@@ -10,10 +10,10 @@ import {
 } from "@/shared/lib/refs";
 import { useRepositoryRefs } from "@/shared/lib/use-repository-refs";
 import { Input } from "./input";
+import { select } from "./recipes";
 
 const FILTER_FROM = 15;
-const selectClass =
-  "h-11 w-full cursor-pointer appearance-none rounded-md border border-input bg-secondary pr-10 pl-3 text-base outline-none transition-[border-color,box-shadow] duration-150 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/60 aria-invalid:border-destructive aria-invalid:ring-destructive/25";
+const selectClass = select;
 
 interface Props {
   url: string;

@@ -27,6 +27,29 @@ export const aiProvidersQueryOptions = () =>
       (await getJson<ProviderList>("/v1/ai/providers", { signal })).providers,
   });
 
+export type ThinkingLevel = components["schemas"]["ThinkingLevel"];
+
+/** The thinking levels of the `llm` and `judge` roles, least first (#421). */
+export const THINKING_LEVELS: readonly ThinkingLevel[] = [
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+];
+
+export const THINKING_LABEL: Record<ThinkingLevel, string> = {
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+};
+
+/** What a thinking level costs, said where it is chosen. */
+export const THINKING_HINT =
+  "How much the model thinks before it answers. Thinking tokens are billed as output, and several providers default to a high level: HyDE, the judge and agentic search rarely need more than Low.";
+
 /** The instance's model roles (`embedding`, `reranker`, `llm`, `judge`), as configured. */
 export const aiRolesQueryOptions = () =>
   queryOptions({

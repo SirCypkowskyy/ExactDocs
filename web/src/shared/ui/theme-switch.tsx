@@ -50,7 +50,7 @@ export function ThemeSwitch({ className }: { className?: string }) {
                   <OptionIcon aria-hidden="true" className="size-4 text-muted-foreground" />
                   <span className="flex-1">{LABELS[option]}</span>
                   <DropdownMenu.ItemIndicator>
-                    <Check aria-hidden="true" className="size-4 text-mark" />
+                    <Check aria-hidden="true" className="size-4 text-route" />
                   </DropdownMenu.ItemIndicator>
                 </DropdownMenu.RadioItem>
               );

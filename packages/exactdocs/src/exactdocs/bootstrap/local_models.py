@@ -46,7 +46,7 @@ from exactdocs.retrieval.adapters.driven.local_models import (
     TextEmbeddingModel,
 )
 from exactdocs.retrieval.errors import EmbeddingFailedError, ProviderUnsupportedError, RerankerError
-from exactdocs.retrieval.models import ModelCheck, ModelRole, ProviderProfile
+from exactdocs.retrieval.models import ModelCheck, ModelRole, ProviderProfile, ThinkingLevel
 
 logger = logging.getLogger(__name__)
 
@@ -308,15 +308,31 @@ class LocalModels:
         )
         return loaded
 
-    async def chat_model(self, profile: ProviderProfile, model: str) -> NoReturn:
+    async def chat_model(
+        self, profile: ProviderProfile, model: str, *, thinking: ThinkingLevel | None = None
+    ) -> NoReturn:
         """Refuse: a local profile runs no chat model (``ProviderUnsupportedError``).
 
         Args:
             profile: The profile.
             model: The model.
+            thinking: The level (unused).
         """
-        del model
+        del model, thinking
         self._refuse(profile, "a local profile runs no chat model: use the ollama kind for one")
+
+    async def thinking_unsupported(self, profile: ProviderProfile, model: str) -> str | None:
+        """Say nothing: a local profile runs no chat model, which its calls say themselves.
+
+        Args:
+            profile: The profile.
+            model: The model.
+
+        Returns:
+            ``None``.
+        """
+        del profile, model
+        return None
 
     async def embedder(self, profile: ProviderProfile, model: str) -> object:
         """Load an embedding model (once) and hand it over with its thread pool.
@@ -381,17 +397,26 @@ class LocalModels:
             except ProviderUnsupportedError as error:
                 logger.warning("Local %s model %s not loaded: %s", role.value, model, error)
 
-    async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
+    async def check(
+        self,
+        profile: ProviderProfile,
+        model: str,
+        role: ModelRole,
+        *,
+        thinking: ThinkingLevel | None = None,
+    ) -> ModelCheck:
         """Load the model and make one call as ``role`` uses it, and time it.
 
         Args:
             profile: The profile.
             model: The model's name.
             role: ``embedding`` or ``reranker`` (a chat role fails).
+            thinking: A chat role's level (unused: no chat model runs here).
 
         Returns:
             The outcome.
         """
+        del thinking
         started = time.perf_counter()
         try:
             dimensions = await self._call_once(profile, model, role)

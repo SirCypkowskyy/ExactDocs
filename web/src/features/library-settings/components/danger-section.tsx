@@ -50,7 +50,7 @@ export function DangerSection({
     >
       <h2
         id="danger-heading"
-        className="font-serif text-xl font-semibold tracking-tight text-destructive [scroll-margin-top:1.5rem]"
+        className="text-xl font-semibold tracking-tight text-destructive [scroll-margin-top:1.5rem]"
       >
         Remove library
       </h2>

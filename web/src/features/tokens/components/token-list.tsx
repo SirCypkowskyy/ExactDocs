@@ -1,7 +1,8 @@
+import { UI_LOCALE } from "@/shared/lib/time";
 import { Button } from "@/shared/ui/button";
 import { isExpired, type Token } from "../model/token";
 
-const date = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+const date = new Intl.DateTimeFormat(UI_LOCALE, { dateStyle: "medium" });
 const when = (iso: string) => date.format(new Date(iso));
 
 // Name | Expires | Last used | Revoke. Below `md` the two dates stack under the name instead.

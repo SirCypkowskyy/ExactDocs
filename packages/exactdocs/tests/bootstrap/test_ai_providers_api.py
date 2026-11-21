@@ -72,6 +72,8 @@ def _settings(fake: FakeGateway, **roles: str) -> Settings:
 async def test_the_provider_routes_need_a_signed_in_admin() -> None:
     async with _client(Container.build(Settings()), sign_in=False) as client:
         assert (await client.get(PROVIDERS)).status_code == 401
+        thinking = {"thinking": "low"}
+        assert (await client.put("/api/v1/ai/roles/llm", json=thinking)).status_code == 401
         assert (
             await client.post(PROVIDERS, json={"name": "x", "kind": "openai"})
         ).status_code == 401
@@ -277,6 +279,29 @@ async def test_a_library_can_turn_ai_off_and_choose_its_own_llm(fake: FakeGatewa
     assert off.json()["effective_mode"] == "bm25"
     assert embedding.status_code == 422  # instance-wide only: not a field here
     assert (unknown.status_code, unknown.json()["error"]) == (404, "unknown_provider")
+
+
+async def test_an_instance_roles_thinking_level_is_set_over_rest_and_used_by_the_check(
+    fake: FakeGateway,
+) -> None:
+    container = Container.build(_settings(fake, llm="corp:writer"))
+    async with _client(container) as client:
+        reranker = await client.put("/api/v1/ai/roles/reranker", json={"thinking": "low"})
+        bogus = await client.put("/api/v1/ai/roles/llm", json={"thinking": "max"})
+        saved = await client.put("/api/v1/ai/roles/llm", json={"thinking": "low"})
+        shown = (await client.get("/api/v1/ai/roles")).json()["roles"]
+        await client.post(f"{PROVIDERS}/corp/check")
+        cleared = await client.put("/api/v1/ai/roles/llm", json={"thinking": None})
+
+    assert (reranker.status_code, reranker.json()["error"]) == (422, "role_takes_no_thinking")
+    assert bogus.status_code == 422
+    assert saved.status_code == 200, saved.text
+    assert (saved.json()["thinking"], saved.json()["thinking_configured"]) == ("low", False)
+    llm, judge = (next(r for r in shown if r["role"] == name) for name in ("llm", "judge"))
+    assert (llm["thinking"], judge["thinking"]) == ("low", "low")  # the judge is the LLM
+    calls = [s.body for s in fake.seen if s.path.endswith("/chat/completions")]
+    assert [c["reasoning_effort"] for c in calls] == ["low", "low"], calls
+    assert cleared.json()["thinking"] is None
 
 
 # ---------------------------------------------------------------- configuration

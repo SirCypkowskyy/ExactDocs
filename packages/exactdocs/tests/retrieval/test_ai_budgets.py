@@ -71,6 +71,7 @@ from exactdocs.retrieval.models import (
     SpendEntry,
     SpendKey,
     SpendWindow,
+    ThinkingLevel,
     spend_entries,
 )
 from exactdocs.retrieval.module import RetrievalModule
@@ -311,7 +312,23 @@ class EmbedderFactory:
     def unsupported(self, profile: ProviderProfile) -> str | None:
         del profile
 
-    async def chat_model(self, profile: ProviderProfile, model: str) -> object:
+    async def thinking_unsupported(self, profile: ProviderProfile, model: str) -> str | None:
+        """Know of no model that cannot think.
+
+        Args:
+            profile: The profile.
+            model: The model.
+
+        Returns:
+            ``None``.
+        """
+        del profile, model
+        return None
+
+    async def chat_model(
+        self, profile: ProviderProfile, model: str, *, thinking: ThinkingLevel | None = None
+    ) -> object:
+        del thinking
         del profile, model
         return object()
 
@@ -323,7 +340,15 @@ class EmbedderFactory:
         del profile, model
         return self.counting
 
-    async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
+    async def check(
+        self,
+        profile: ProviderProfile,
+        model: str,
+        role: ModelRole,
+        *,
+        thinking: ThinkingLevel | None = None,
+    ) -> ModelCheck:
+        del thinking
         raise AssertionError((profile, model, role))
 
     async def release(self, name: str) -> None:

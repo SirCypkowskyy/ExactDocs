@@ -13,6 +13,7 @@ import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 from anthropic import AsyncAnthropicVertex
@@ -41,6 +42,7 @@ from exactdocs.bootstrap.constants import (
     AI_SDK_MODULE,
     AZURE_OPENAI_HOST,
     BEDROCK_HOST,
+    CHECK_MAX_TOKENS,
     FOUNDRY_HOST,
     VERTEX_HOST,
 )
@@ -55,6 +57,7 @@ from exactdocs.retrieval.models import (
     ProfileOrigin,
     ProviderKind,
     ProviderProfile,
+    ThinkingLevel,
 )
 from exactdocs_kernel import SealedTextUnreadableError
 from fake_llm import DIMENSIONS, FakeGateway, gateway
@@ -929,3 +932,188 @@ def test_one_call_is_never_a_loop(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(ValidationError, match="max_repeated_calls"):
         Settings()
+
+
+# ---------------------------------------------------------------- thinking level (#421)
+# Each provider gets the level as its own control, built by pydantic-ai: the request the fake
+# gateway records is the one the provider would get (no network).
+
+LOW = ThinkingLevel.LOW
+
+
+async def _thinking_body(
+    fake: FakeGateway, kind: ProviderKind, model: str, suffix: str, level: ThinkingLevel | None
+) -> dict[str, Any]:
+    profile = ProviderProfile(
+        name="p", kind=kind, base_url=fake.url + suffix, key=KeySource.ENVIRONMENT
+    )
+    await PydanticAiModels(keys={"p": "k"}).check(profile, model, ModelRole.LLM, thinking=level)
+    (seen,) = fake.seen
+    return seen.body
+
+
+async def test_vertex_gemini_4_gets_googles_thinking_level(
+    official: FakeGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def credentials(profile: ProviderProfile) -> Credentials:
+        del profile
+        return Credentials(token="vertex-token")
+
+    monkeypatch.setattr(ai_sdk, "_google_credentials", credentials)
+    profile = ProviderProfile(
+        name="gcp",
+        kind=ProviderKind.GOOGLE_VERTEX,
+        origin=ProfileOrigin.CONFIGURATION,
+        project="acme-ml",
+        location="global",
+        adc=True,
+    )
+
+    check = await PydanticAiModels().check(
+        profile, "gemini-4-hydrogen", ModelRole.LLM, thinking=LOW
+    )
+
+    assert check.ok, check.error
+    (seen,) = official.seen
+    assert seen.path.endswith("/models/gemini-4-hydrogen:generateContent"), seen.path
+    config = seen.body["generationConfig"]["thinkingConfig"]
+    assert config["thinking_level"] == "LOW", seen.body
+    assert "thinking_budget" not in config
+
+
+async def test_gemini_2_5_gets_a_thinking_budget(fake: FakeGateway) -> None:
+    body = await _thinking_body(fake, ProviderKind.GOOGLE, "gemini-2.5-flash", "/", LOW)
+
+    assert body["generationConfig"]["thinkingConfig"]["thinking_budget"] == 2048, body
+
+
+async def test_claude_with_adaptive_thinking_gets_its_effort(fake: FakeGateway) -> None:
+    body = await _thinking_body(fake, ProviderKind.ANTHROPIC, "claude-sonnet-5-5", "", LOW)
+
+    assert body["thinking"] == {"type": "adaptive"}, body
+    assert body["output_config"] == {"effort": "low"}, body
+
+
+async def test_older_claude_gets_a_budget_with_room_above_the_answers_cap(
+    fake: FakeGateway,
+) -> None:
+    body = await _thinking_body(fake, ProviderKind.ANTHROPIC, "claude-haiku-4-5", "", LOW)
+
+    assert body["thinking"] == {"type": "enabled", "budget_tokens": 2048}, body
+    assert body["max_tokens"] == CHECK_MAX_TOKENS + 2048, "the budget counts toward max_tokens"
+
+
+async def test_openai_reasoning_models_get_their_reasoning_effort(fake: FakeGateway) -> None:
+    body = await _thinking_body(fake, ProviderKind.OPENAI, "gpt-5", "/v1", LOW)
+
+    assert body["reasoning"]["effort"] == "low", body
+
+
+async def test_azure_deployments_get_reasoning_effort(fake: FakeGateway) -> None:
+    profile = ProviderProfile(
+        name="az",
+        kind=ProviderKind.AZURE,
+        base_url=fake.url,
+        api_version="2024-10-21",
+        key=KeySource.ENVIRONMENT,
+    )
+
+    await PydanticAiModels(keys={"az": "k"}).check(
+        profile, "corp-reasoner", ModelRole.LLM, thinking=ThinkingLevel.XHIGH
+    )
+
+    (seen,) = fake.seen
+    assert seen.body["reasoning_effort"] == "xhigh", seen.body
+
+
+@pytest.mark.parametrize(
+    "kind", [ProviderKind.OPENAI_COMPATIBLE, ProviderKind.OLLAMA, ProviderKind.VLLM]
+)
+async def test_openai_compatible_kinds_get_reasoning_effort(
+    fake: FakeGateway, kind: ProviderKind
+) -> None:
+    body = await _thinking_body(fake, kind, "corp-model", "/v1", ThinkingLevel.MINIMAL)
+
+    assert body["reasoning_effort"] == "minimal", body
+
+
+async def test_openrouter_gets_its_reasoning_effort(fake: FakeGateway) -> None:
+    body = await _thinking_body(fake, ProviderKind.OPENROUTER, "acme/model", "/v1", LOW)
+
+    assert body["reasoning"]["effort"] == "low", body
+
+
+@pytest.mark.parametrize(
+    ("kind", "model", "suffix"),
+    [
+        (ProviderKind.GOOGLE, "gemini-4-hydrogen", "/"),
+        (ProviderKind.ANTHROPIC, "claude-sonnet-5-5", ""),
+        (ProviderKind.OPENAI_COMPATIBLE, "corp-model", "/v1"),
+    ],
+)
+async def test_no_level_sends_no_thinking_setting(
+    fake: FakeGateway, kind: ProviderKind, model: str, suffix: str
+) -> None:
+    body = await _thinking_body(fake, kind, model, suffix, None)
+
+    assert not {"thinking", "output_config", "reasoning", "reasoning_effort"} & body.keys()
+    assert "thinkingConfig" not in body.get("generationConfig", {}), body
+
+
+@pytest.mark.parametrize(
+    ("kind", "model", "suffix"),
+    [(ProviderKind.GOOGLE, "gemini-2.0-flash", "/"), (ProviderKind.OPENAI, "gpt-4.1", "/v1")],
+)
+async def test_a_model_known_not_to_think_is_named_and_called_without_a_level(
+    fake: FakeGateway, kind: ProviderKind, model: str, suffix: str
+) -> None:
+    profile = ProviderProfile(
+        name="p", kind=kind, base_url=fake.url + suffix, key=KeySource.ENVIRONMENT
+    )
+    models = PydanticAiModels(keys={"p": "k"})
+
+    reason = await models.thinking_unsupported(profile, model)
+    body = await _thinking_body(fake, kind, model, suffix, ThinkingLevel.HIGH)
+
+    assert reason == f"{kind.value} serves it without a thinking or reasoning setting"
+    assert not {"reasoning", "reasoning_effort"} & body.keys()
+    assert "thinkingConfig" not in body.get("generationConfig", {}), body
+
+
+async def test_thinking_support_is_unknown_behind_an_openai_compatible_endpoint() -> None:
+    profile = ProviderProfile(
+        name="gw", kind=ProviderKind.VLLM, base_url="https://llm.example.com/v1"
+    )
+
+    assert await PydanticAiModels().thinking_unsupported(profile, "any-model") is None
+
+
+def test_the_thinking_level_is_read_from_the_environment_in_any_case(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EXACTDOCS_AI__LLM__MODEL", "gcp:gemini-4-hydrogen")
+    monkeypatch.setenv("EXACTDOCS_AI__LLM__THINKING", "Low")
+    monkeypatch.setenv("EXACTDOCS_AI__JUDGE__THINKING", "")
+
+    ai = Settings().ai
+    roles = configured_ai(ai).roles
+
+    assert (ai.llm.thinking, ai.judge.thinking) == (ThinkingLevel.LOW, None)
+    assert (roles.llm_thinking, roles.judge_thinking) == (ThinkingLevel.LOW, None)
+
+
+def test_an_unknown_thinking_level_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EXACTDOCS_AI__JUDGE__THINKING", "max")
+
+    with pytest.raises(ValidationError, match=r"judge.thinking"):
+        Settings()
+
+
+def test_the_thinking_level_is_read_from_the_settings_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "exactdocs.toml"
+    config.write_text('[ai.judge]\nmodel = "p:m"\nthinking = "minimal"\n', encoding="utf-8")
+    monkeypatch.setenv("EXACTDOCS_CONFIG_FILE", str(config))
+
+    assert Settings().ai.judge.thinking is ThinkingLevel.MINIMAL
