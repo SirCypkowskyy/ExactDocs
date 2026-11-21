@@ -158,6 +158,7 @@ from exactdocs.ingestion.ports.driven import (
     RepositoryTree,
 )
 from exactdocs.retrieval import RetrievalModule
+from exactdocs.retrieval.adapters.driven.ai_answerer import PydanticAiAnswerer
 from exactdocs.retrieval.adapters.driven.ai_explorer import PydanticAiExplorer
 from exactdocs.retrieval.adapters.driven.ai_hyde import PydanticAiHypotheticalAnswers
 from exactdocs.retrieval.adapters.driven.ai_judge import PydanticAiCandidateJudge
@@ -718,6 +719,7 @@ def _build_read_side(
         embedding_dimensions=settings.ai.embedding.dimensions,
         embedding_batch_size=settings.ai.embedding.batch_size,
         explorer=PydanticAiExplorer(),
+        answerer=PydanticAiAnswerer(),
         version_articles=CatalogVersionArticles(
             list_articles=catalog.list_articles, get_article=catalog.get_article
         ),

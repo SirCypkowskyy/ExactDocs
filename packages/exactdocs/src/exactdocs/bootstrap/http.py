@@ -309,6 +309,8 @@ def create_app(container: Container) -> FastAPI:
             article_outline=container.retrieval.article_outline,
             resolve_library_id=container.retrieval.resolve_library_id,
             query_docs=container.retrieval.query_docs,
+            answer_question=container.retrieval.answer_question,
+            get_answer_availability=container.retrieval.get_answer_availability,
             caller=caller_id,
         )
     )

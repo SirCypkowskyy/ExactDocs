@@ -178,6 +178,23 @@ def model_text(text: str, limit: int) -> str:
     return clean if len(clean) <= limit else clean[: limit - 3] + "..."
 
 
+def model_markdown(text: str, limit: int) -> str:
+    """Make a model-written Markdown answer safe to show: no control characters but line breaks.
+
+    Args:
+        text: What the model wrote.
+        limit: The most characters kept.
+
+    Returns:
+        The text with every control or format character removed but line feeds and tabs
+        (carriage returns too), cut to ``limit`` characters (``...`` at the end when it was cut).
+    """
+    kept = "".join(
+        c for c in text if c in "\n\t" or not unicodedata.category(c).startswith("C")
+    ).strip()
+    return kept if len(kept) <= limit else kept[: limit - 3] + "..."
+
+
 def _is_mark(char: str) -> bool:
     """Tell whether a character is a combining mark.
 
@@ -3246,14 +3263,22 @@ class AiCaller:
     """The library searched or embedded."""
     user: str | None = None
     """The account (an API token's or a session's); ``None`` for a stdio MCP process."""
+    also: tuple[str, ...] = ()
+    """Further libraries the call reads and counts to (an agentic answer over several, #428):
+    each is charged the whole call, so each library's budget bounds it."""
 
     def scopes(self) -> tuple[tuple[str, str], ...]:
         """Name the ledger scopes an LLM or a rerank call counts to.
 
         Returns:
-            (kind, ID) of the instance, the library and, with an account, the user.
+            (kind, ID) of the instance, the library (and each of ``also``) and, with an account,
+            the user.
         """
-        scopes = [(SPEND_SCOPE_INSTANCE, SPEND_INSTANCE_ID), (SPEND_SCOPE_LIBRARY, self.library)]
+        libraries = dict.fromkeys([self.library, *self.also])
+        scopes = [
+            (SPEND_SCOPE_INSTANCE, SPEND_INSTANCE_ID),
+            *((SPEND_SCOPE_LIBRARY, library) for library in libraries),
+        ]
         if self.user is not None:
             scopes.append((SPEND_SCOPE_USER, self.user))
         return tuple(scopes)
@@ -3873,6 +3898,51 @@ class GuidanceFiles:
             total += len(text)
             kept.append(InstructionFile(path=found.path, content=text))
         return cls(files=tuple(kept), trusted=trusted) if kept else None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AnswerCitation:
+    """A source the answering agent cites (#428), as it wrote it: untrusted until checked."""
+
+    library: str
+    """The library, as the model wrote it; checked against the question's scope."""
+    chunk_id: str
+    """The chunk ID, as the model wrote it; checked against that library's version."""
+    quote: str | None
+    """A passage it says it copied from the chunk; kept only when the chunk holds it verbatim."""
+    reason: str
+    """Why the chunk is a source, in its words."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AnswerUsage:
+    """What one agentic answer used: model requests, tokens and tool calls."""
+
+    requests: int = 0
+    """Model requests made."""
+    input_tokens: int = 0
+    """Tokens sent, as the provider reported them."""
+    output_tokens: int = 0
+    """Tokens received, as the provider reported them."""
+    tool_calls: int = 0
+    """Tool calls made: ``run_code`` and every read inside it."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AnswerDraft:
+    """What the answering agent returned: its answer and citations, or why its run stopped."""
+
+    answer: str = ""
+    """Its Markdown answer, model output; empty when the run stopped."""
+    citations: tuple[AnswerCitation, ...] = ()
+    """The sources it cites, best first, less those its output guardrail rejected."""
+    usage: AnswerUsage = field(default_factory=AnswerUsage)
+    """What the run used, also when it stopped."""
+    stopped: FallbackReason | None = None
+    """Why the run ended without an answer (``agent_limit_reached``, ``llm_budget_reached``,
+    ``agent_loop_detected``, ``agent_failed``); ``None`` when it answered."""
+    rejected: int = 0
+    """How many citations the output guardrail rejected (outside the scope, or made up)."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

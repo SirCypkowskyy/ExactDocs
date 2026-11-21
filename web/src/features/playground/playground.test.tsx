@@ -54,7 +54,12 @@ const result = (mode: string, hits: unknown[], over: Record<string, unknown> = {
   ...over,
 });
 
-function serve(answer: (url: URL) => Response) {
+interface Agent {
+  availability: Record<string, unknown>;
+  stream: () => Response;
+}
+
+function serve(answer: (url: URL) => Response, agent?: Agent) {
   const fetchMock = vi.fn(async (input: string) => {
     const url = new URL(input, "http://localhost");
     if (url.pathname.endsWith("/v1/libraries")) {
@@ -64,6 +69,8 @@ function serve(answer: (url: URL) => Response) {
       });
     }
     if (url.pathname.endsWith("/v1/search")) return answer(url);
+    if (agent && url.pathname.endsWith("/v1/answer")) return Response.json(agent.availability);
+    if (agent && url.pathname.endsWith("/v1/answer/stream")) return agent.stream();
     return new Response("{}", { status: 404 });
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -180,6 +187,153 @@ describe("search playground", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/Unavailable: .*embedding role/);
     expect(await screen.findByText(/BM25 answered instead/)).toBeInTheDocument();
+  });
+});
+
+const events = (...parts: [string, unknown][]) =>
+  new Response(
+    new ReadableStream({
+      start(controller) {
+        const encoder = new TextEncoder();
+        for (const [name, data] of parts) {
+          controller.enqueue(
+            encoder.encode(`event: ${name}
+data: ${JSON.stringify(data)}
+
+`),
+          );
+        }
+        controller.close();
+      },
+    }),
+    { headers: { "Content-Type": "text/event-stream" } },
+  );
+
+const usage = {
+  requests: 2,
+  input_tokens: 1200,
+  output_tokens: 80,
+  tool_calls: 3,
+  max_tool_calls: 20,
+  cost_usd: 0.0123,
+};
+
+const source = {
+  library: "/acme/payments",
+  version: "v1",
+  commit_sha: SHA,
+  chunk_id: "c-1",
+  article_path: "docs/retry.md",
+  heading_path: ["Guide", "Retry policy"],
+  anchor: "retry-policy",
+  source_url: null,
+  quote: "RetryPolicy decides how often a failed call runs again.",
+  reason: "It defines the policy.",
+};
+
+const answered = (over: Record<string, unknown> = {}) => ({
+  notice: "",
+  answer: "Use RetryPolicy.",
+  sources: [source],
+  libraries: [],
+  libraries_without_ai: [],
+  libraries_omitted: 0,
+  fallback_reason: null,
+  usage,
+  ...over,
+});
+
+describe("agent answer in the playground", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the agent disabled with the reason when no llm role is configured", async () => {
+    serve(() => Response.json(result("bm25", [])), {
+      availability: { available: false, reason: "no llm role is configured", max_tool_calls: 20 },
+      stream: () => events(),
+    });
+    renderPage();
+
+    const option = await screen.findByRole("option", { name: "Agent answer (unavailable)" });
+    expect(option).toBeDisabled();
+    expect(screen.getByText(/no llm role is configured/)).toBeInTheDocument();
+  });
+
+  it("asks the agent over the chosen libraries and shows progress, answer, sources and spend", async () => {
+    const fetchMock = serve(() => Response.json(result("bm25", [])), {
+      availability: { available: true, reason: null, max_tool_calls: 20 },
+      stream: () =>
+        events(
+          ["progress", { tool_calls: 1, max_tool_calls: 20 }],
+          ["progress", { tool_calls: 3, max_tool_calls: 20 }],
+          ["answer", answered()],
+        ),
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("/acme/payments"));
+    await user.type(screen.getByLabelText("Query"), "retry failed calls");
+    await user.selectOptions(
+      screen.getByLabelText("Mode"),
+      await screen.findByRole("option", { name: "Agent answer (an LLM reads and answers)" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Ask the agent" }));
+
+    expect(await screen.findByText("Use RetryPolicy.")).toBeInTheDocument();
+    expect(screen.getByText(/3 of 20 tool calls/)).toBeInTheDocument();
+    expect(screen.getByText("1,200 in / 80 out tokens", { exact: false })).toBeInTheDocument();
+    const sources = screen.getByRole("list", { name: "Sources" });
+    expect(within(sources).getByRole("link")).toHaveAttribute(
+      "href",
+      "/libraries/acme/payments?version=v1&path=docs%2Fretry.md#retry-policy",
+    );
+    expect(within(sources).getByText(/RetryPolicy decides/)).toBeInTheDocument();
+    const calls = fetchMock.mock.calls as unknown as [string, RequestInit | undefined][];
+    const call = calls.find(([input]) => input.endsWith("/v1/answer/stream"));
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({
+      question: "retry failed calls",
+      libraries: ["/acme/payments"],
+    });
+  });
+
+  it("says why the agent did not answer, with what it read", async () => {
+    serve(() => Response.json(result("bm25", [])), {
+      availability: { available: true, reason: null, max_tool_calls: 20 },
+      stream: () =>
+        events(["answer", answered({ answer: "", fallback_reason: "agent_limit_reached" })]),
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(await screen.findByLabelText("Query"), "retry");
+    await user.selectOptions(
+      screen.getByLabelText("Mode"),
+      await screen.findByRole("option", { name: "Agent answer (an LLM reads and answers)" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Ask the agent" }));
+
+    expect(await screen.findByText(/No answer: .*tool calls or time/)).toBeInTheDocument();
+    expect(screen.getByText("Read before it stopped")).toBeInTheDocument();
+  });
+
+  it("shows an error event", async () => {
+    serve(() => Response.json(result("bm25", [])), {
+      availability: { available: true, reason: null, max_tool_calls: 20 },
+      stream: () => events(["error", { error: "version_not_indexed", detail: "no such library" }]),
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(await screen.findByLabelText("Query"), "retry");
+    await user.selectOptions(
+      screen.getByLabelText("Mode"),
+      await screen.findByRole("option", { name: "Agent answer (an LLM reads and answers)" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Ask the agent" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("no such library");
   });
 });
 

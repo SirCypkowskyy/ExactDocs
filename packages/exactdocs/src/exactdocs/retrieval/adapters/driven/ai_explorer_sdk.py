@@ -9,11 +9,11 @@ one version searched: no tool argument names a library or a version.
 A run is bounded by ``UsageLimits`` (tool calls, ``run_code`` included, requests and tokens),
 Code Mode's ``max_tool_calls`` per snippet, Monty's resource limits, and the harness
 ``SpendLimits`` over the spend ledger (#95). Passing any of them ends the run: a Monty limit that
-Code Mode would hand back to the model as a retry ends it too (``_RunEnders``). So does a read that
+Code Mode would hand back to the model as a retry ends it too (``RunEnders``). So does a read that
 fails on the host: its error is recorded by class and the sandbox sees only ``READ_FAILED``, so no
 SQL, DSN or path reaches the model, a result or a span.
 
-Guardrails (#99). The harness 0.60.0 has no loop detection, so ``_RunEnders`` is ours: the same
+Guardrails (#99). The harness 0.60.0 has no loop detection, so ``RunEnders`` is ours: the same
 call (tool name and a hash of its arguments, ``run_code`` or a read inside it) made
 ``max_repeated_calls`` times (3 by default) ends the run (``agent_loop_detected``); a read call
 that repeats, and every read after it, sees only ``REPEATED_CALL``. The harness
@@ -33,7 +33,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import TypedDict
+from typing import Any, TypedDict
 
 import pydantic_monty
 from pydantic import BaseModel, ConfigDict, Field
@@ -83,6 +83,7 @@ from exactdocs.retrieval.models import (
     AgentRun,
     FallbackReason,
     GuidanceFiles,
+    Outline,
     OutlineNode,
 )
 from exactdocs.retrieval.ports.driven import DocsBrowser, SpendLedger
@@ -166,15 +167,16 @@ class SearchHitItem(TypedDict):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class Reads:
+class Reads[B]:
     """The agent's ``deps``: the caller's scope (the browser) and what the run has done so far.
 
-    The browser is bound to the version searched and the search's tag filter; being the deps, it
+    The browser is bound to the caller's scope (the explorer's: the version searched and the
+    search's tag filter; the answering agent's: the question's libraries); being the deps, it
     never appears in a tool's arguments, so the model cannot name another scope.
     """
 
-    browser: DocsBrowser
-    """The read tools, bound to the version searched and the caller's tag filter."""
+    browser: B
+    """The read tools, bound to the caller's scope."""
     max_repeated_calls: int
     """The same call made this many times is a loop: the run ends."""
     failures: list[str] = field(default_factory=list)
@@ -185,6 +187,8 @@ class Reads:
     """The tool of each call that looped; any ends the run (``agent_loop_detected``)."""
     rejected: list[int] = field(default_factory=list)
     """How many picks of each answer the output guardrail rejected."""
+    progress: Callable[[int], None] | None = None
+    """Hears the number of calls made so far after each call (a progress stream)."""
 
 
 class _ReadFailedError(RuntimeError):
@@ -203,7 +207,7 @@ class _RepeatedCallError(RuntimeError):
         super().__init__(REPEATED_CALL)
 
 
-class _HostFailureError(Exception):
+class HostFailureError(Exception):
     """A read failed on the host (the database, the catalog): the run ends."""
 
 
@@ -211,8 +215,8 @@ class _LoopDetectedError(Exception):
     """The agent made the same call ``max_repeated_calls`` times: the run ends."""
 
 
-async def _attempt[T](
-    ctx: RunContext[Reads], read: Callable[[DocsBrowser], Awaitable[T]]
+async def attempt[T, B](
+    ctx: RunContext[Reads[B]], read: Callable[[B], Awaitable[T]]
 ) -> tuple[T] | None:
     """Run one read on the browser; a host error is recorded by class only.
 
@@ -234,11 +238,11 @@ async def _attempt[T](
     return (outcome,)
 
 
-async def _guarded[T](ctx: RunContext[Reads], read: Callable[[DocsBrowser], Awaitable[T]]) -> T:
+async def guarded[T, B](ctx: RunContext[Reads[B]], read: Callable[[B], Awaitable[T]]) -> T:
     """Run one read; a host error is recorded by class and replaced by a fixed one.
 
     The host's message (SQL, a DSN, a path) never reaches the sandbox, the model or a span;
-    ``_RunEnders`` ends the run once the snippet returns.
+    ``RunEnders`` ends the run once the snippet returns.
 
     Args:
         ctx: The run.
@@ -250,12 +254,12 @@ async def _guarded[T](ctx: RunContext[Reads], read: Callable[[DocsBrowser], Awai
     Raises:
         _ReadFailedError: The read raised anything.
     """
-    if (got := await _attempt(ctx, read)) is None:
+    if (got := await attempt(ctx, read)) is None:
         raise _ReadFailedError
     return got[0]
 
 
-async def list_articles(ctx: RunContext[Reads], prefix: str = "") -> list[ArticleItem]:
+async def list_articles(ctx: RunContext[Reads[DocsBrowser]], prefix: str = "") -> list[ArticleItem]:
     """List the articles of the documentation, by path.
 
     Args:
@@ -265,7 +269,7 @@ async def list_articles(ctx: RunContext[Reads], prefix: str = "") -> list[Articl
     Returns:
         The articles (at most 200).
     """
-    found = await _guarded(ctx, lambda browser: browser.list_articles(prefix))
+    found = await guarded(ctx, lambda browser: browser.list_articles(prefix))
     return [ArticleItem(path=a.path, title=a.title) for a in found]
 
 
@@ -288,7 +292,7 @@ def _headings(nodes: Sequence[OutlineNode], parents: tuple[str, ...]) -> list[Ou
     return flat
 
 
-async def article_outline(ctx: RunContext[Reads], path: str) -> ArticleOutlineResult:
+async def article_outline(ctx: RunContext[Reads[DocsBrowser]], path: str) -> ArticleOutlineResult:
     """Read the headings of one article, each with the chunk that holds it (no body text).
 
     Args:
@@ -298,17 +302,29 @@ async def article_outline(ctx: RunContext[Reads], path: str) -> ArticleOutlineRe
     Returns:
         The headings in document order.
     """
-    found = await _guarded(ctx, lambda browser: browser.article_outline(path))
+    found = await guarded(ctx, lambda browser: browser.article_outline(path))
     if found is None:
         return ArticleOutlineResult(path=path, found=False, headings=[])
+    return ArticleOutlineResult(path=path, found=True, headings=outline_headings(found))
+
+
+def outline_headings(found: Outline) -> list[OutlineHeading]:
+    """Flatten an article's outline for the agent: the preamble first, then every heading.
+
+    Args:
+        found: The outline.
+
+    Returns:
+        Each heading with its path and chunk, in document order.
+    """
     headings = _headings(found.sections, ())
     if found.preamble is not None:
         preamble = OutlineHeading(heading_path=[], chunk_id=str(found.preamble.chunk_id))
         headings.insert(0, preamble)
-    return ArticleOutlineResult(path=path, found=True, headings=headings)
+    return headings
 
 
-async def read_article(ctx: RunContext[Reads], path: str) -> ArticleRead:
+async def read_article(ctx: RunContext[Reads[DocsBrowser]], path: str) -> ArticleRead:
     """Read one article's Markdown (long articles are cut; prefer outlines and chunks).
 
     Args:
@@ -318,13 +334,13 @@ async def read_article(ctx: RunContext[Reads], path: str) -> ArticleRead:
     Returns:
         The article's text.
     """
-    found = await _guarded(ctx, lambda browser: browser.read_article(path))
+    found = await guarded(ctx, lambda browser: browser.read_article(path))
     if found is None:
         return ArticleRead(path=path, found=False, content="", truncated=False)
     return ArticleRead(path=path, found=True, content=found.content, truncated=found.truncated)
 
 
-async def read_chunk(ctx: RunContext[Reads], chunk_id: str) -> ChunkRead:
+async def read_chunk(ctx: RunContext[Reads[DocsBrowser]], chunk_id: str) -> ChunkRead:
     """Read one chunk (a section of an article) by its ID.
 
     Args:
@@ -334,7 +350,7 @@ async def read_chunk(ctx: RunContext[Reads], chunk_id: str) -> ChunkRead:
     Returns:
         The chunk's text and where it is.
     """
-    found = await _guarded(ctx, lambda browser: browser.read_chunk(chunk_id))
+    found = await guarded(ctx, lambda browser: browser.read_chunk(chunk_id))
     if found is None:
         return ChunkRead(
             chunk_id=chunk_id,
@@ -357,7 +373,9 @@ async def read_chunk(ctx: RunContext[Reads], chunk_id: str) -> ChunkRead:
     )
 
 
-async def search_docs(ctx: RunContext[Reads], query: str, limit: int = 10) -> list[SearchHitItem]:
+async def search_docs(
+    ctx: RunContext[Reads[DocsBrowser]], query: str, limit: int = 10
+) -> list[SearchHitItem]:
     """Search the documentation with keywords (BM25); identifiers and exact words work best.
 
     Args:
@@ -369,7 +387,7 @@ async def search_docs(ctx: RunContext[Reads], query: str, limit: int = 10) -> li
         The best hits, best first.
     """
     wanted = min(limit, AGENT_SEARCH_LIMIT)
-    found = await _guarded(ctx, lambda browser: browser.search_docs(query, wanted))
+    found = await guarded(ctx, lambda browser: browser.search_docs(query, wanted))
     return [
         SearchHitItem(
             chunk_id=str(hit.chunk_id),
@@ -451,7 +469,7 @@ def _call_key(call: ToolCallPart, args: ValidatedToolArgs) -> str:
     return f"{call.tool_name}:{hashlib.sha256(canonical.encode()).hexdigest()}"
 
 
-def _looping(ctx: RunContext[Reads], call: ToolCallPart, args: ValidatedToolArgs) -> bool:
+def _looping(ctx: RunContext[Reads[Any]], call: ToolCallPart, args: ValidatedToolArgs) -> bool:
     """Count a call; say whether the run is looping (this call or one before it repeated).
 
     Args:
@@ -464,12 +482,14 @@ def _looping(ctx: RunContext[Reads], call: ToolCallPart, args: ValidatedToolArgs
     """
     key = _call_key(call, args)
     made = ctx.deps.calls[key] = ctx.deps.calls.get(key, 0) + 1
+    if ctx.deps.progress is not None:
+        ctx.deps.progress(sum(ctx.deps.calls.values()))
     if made >= ctx.deps.max_repeated_calls:
         ctx.deps.loops.append(call.tool_name)
     return bool(ctx.deps.loops)
 
 
-class _RunEnders(AbstractCapability[Reads]):
+class RunEnders[B](AbstractCapability[Reads[B]]):
     """Ends the run on a loop, a tripped Monty limit or a failed read, instead of a model retry.
 
     A loop is checked at every call: the same tool with the same arguments (by hash) for the
@@ -481,7 +501,7 @@ class _RunEnders(AbstractCapability[Reads]):
 
     async def wrap_tool_execute(
         self,
-        ctx: RunContext[Reads],
+        ctx: RunContext[Reads[B]],
         *,
         call: ToolCallPart,
         tool_def: ToolDefinition,
@@ -501,7 +521,7 @@ class _RunEnders(AbstractCapability[Reads]):
             What the tool returned.
 
         Raises:
-            _LoopDetectedError: This ``run_code`` call looped (``_end_if_stopped`` ends the run
+            _LoopDetectedError: This ``run_code`` call looped (``end_if_stopped`` ends the run
                 for a failed or looping read of the snippet).
             _RepeatedCallError: This read call looped, or one before it did (to the sandbox).
             _SandboxLimitError: The snippet tripped a resource limit.
@@ -518,31 +538,31 @@ class _RunEnders(AbstractCapability[Reads]):
         try:
             result = await handler(args)
         except ToolRetryError as error:
-            _end_if_stopped(ctx)
+            end_if_stopped(ctx)
             if _tripped(error):
                 raise _SandboxLimitError from error
             raise
-        _end_if_stopped(ctx)
+        end_if_stopped(ctx)
         return result
 
 
-def _end_if_stopped(ctx: RunContext[Reads]) -> None:
+def end_if_stopped(ctx: RunContext[Reads[Any]]) -> None:
     """End the run once a ``run_code`` call is over, if a read failed or looped meanwhile.
 
     Args:
         ctx: The run.
 
     Raises:
-        _HostFailureError: A read of the snippet failed on the host.
+        HostFailureError: A read of the snippet failed on the host.
         _LoopDetectedError: A read of the snippet looped.
     """
     if ctx.deps.failures:
-        raise _HostFailureError from None
+        raise HostFailureError from None
     if ctx.deps.loops:
         raise _LoopDetectedError from None
 
 
-async def _admitted_only(ctx: RunContext[Reads], output: object) -> GuardrailResult:
+async def _admitted_only(ctx: RunContext[Reads[DocsBrowser]], output: object) -> GuardrailResult:
     """The output guardrail: keep only the picks the caller may be answered with.
 
     Args:
@@ -554,14 +574,14 @@ async def _admitted_only(ctx: RunContext[Reads], output: object) -> GuardrailRes
         ``block`` for anything but an answer (the run then fails: ``agent_failed``).
 
     Raises:
-        _HostFailureError: The check failed on the host.
+        HostFailureError: The check failed on the host.
     """
     if not isinstance(output, _Answer):
         return GuardrailResult.block()
     picks = output.picks
-    got = await _attempt(ctx, lambda browser: browser.admit([p.chunk_id for p in picks]))
+    got = await attempt(ctx, lambda browser: browser.admit([p.chunk_id for p in picks]))
     if got is None:
-        raise _HostFailureError
+        raise HostFailureError
     admitted = set(got[0])
     kept = [p for p in picks if p.chunk_id in admitted]
     if len(kept) == len(picks):
@@ -570,7 +590,49 @@ async def _admitted_only(ctx: RunContext[Reads], output: object) -> GuardrailRes
     return GuardrailResult.replace(_Answer(picks=kept))
 
 
-def _instrumented(model: object) -> InstrumentedModel:
+def stopping_errors() -> tuple[type[Exception], ...]:
+    """Name what ends a run without an answer (``stop_reason`` names why).
+
+    Returns:
+        The exception classes.
+    """
+    return (
+        SpendLimitExceeded,
+        UsageLimitExceeded,
+        HostFailureError,
+        _LoopDetectedError,
+        _SandboxLimitError,
+        UnexpectedModelBehavior,
+        AgentRunError,
+    )
+
+
+def stop_reason(error: BaseException, reads: Reads[Any]) -> tuple[FallbackReason, str]:
+    """Say why a run ended without an answer.
+
+    Args:
+        error: What the run raised (one of ``stopping_errors()``).
+        reads: The run's state.
+
+    Returns:
+        The reason, and a detail to log (classes and tool names only, never text).
+    """
+    match error:
+        case SpendLimitExceeded():  # a UsageLimitExceeded too: matched first
+            return FallbackReason.LLM_BUDGET_REACHED, "spend limit"
+        case UsageLimitExceeded():
+            return FallbackReason.AGENT_LIMIT_REACHED, "usage limit"
+        case HostFailureError():
+            return FallbackReason.AGENT_FAILED, ",".join(dict.fromkeys(reads.failures))
+        case _LoopDetectedError():
+            return FallbackReason.AGENT_LOOP_DETECTED, ",".join(dict.fromkeys(reads.loops))
+        case _SandboxLimitError():
+            return FallbackReason.AGENT_LIMIT_REACHED, "sandbox limit"
+        case _:
+            return FallbackReason.AGENT_FAILED, type(error).__name__
+
+
+def instrumented(model: object) -> InstrumentedModel:
     """Narrow the factory's handle to a pydantic-ai model instrumented without content.
 
     Args:
@@ -608,17 +670,18 @@ def _guidance_words(guidance: GuidanceFiles | None) -> str:
     return EXPLORER_GUIDANCE + (EXPLORER_TRUSTED_GUIDANCE if guidance.trusted else "")
 
 
-def _code_mode(bounds: AgentBounds) -> CodeMode[Reads]:
+def code_mode[B](bounds: AgentBounds, tools: Sequence[str]) -> CodeMode[Reads[B]]:
     """Put the read tools behind ``run_code``, within Monty's resource limits.
 
     Args:
         bounds: The run's limits.
+        tools: The names of the read tools.
 
     Returns:
         The capability.
     """
     return CodeMode(
-        tools=list(EXPLORER_TOOLS),
+        tools=list(tools),
         max_tool_calls=bounds.max_tool_calls,
         resource_limits={
             "max_duration_secs": bounds.sandbox_seconds,
@@ -663,46 +726,31 @@ async def explore(
         tool_calls_limit=bounds.max_tool_calls,
     )
     guidance = run.guidance
-    chat = _instrumented(model)
+    chat = instrumented(model)
     if guidance:  # it streams: a stream that reports no usage is counted by its characters
         chat = InstrumentedModel(UsageFloor(chat.wrapped), chat.instrumentation_settings)
     agent = Agent(
         chat,
         name="exactdocs-explorer",
-        deps_type=Reads,
+        deps_type=Reads[DocsBrowser],
         output_type=_Answer,
         instructions=EXPLORER_INSTRUCTIONS + _guidance_words(guidance),
         tools=read_tools(),
         capabilities=[
-            _code_mode(bounds),
+            code_mode(bounds, EXPLORER_TOOLS),
             limits.spend,
-            _RunEnders(),
+            RunEnders[DocsBrowser](),
             *(guidance_capabilities(guidance) if guidance else ()),
-            OutputGuardrail[Reads](guard=_admitted_only),
+            OutputGuardrail[Reads[DocsBrowser]](guard=_admitted_only),
         ],
     )
-    reads = Reads(browser=browser, max_repeated_calls=bounds.max_repeated_calls)
+    reads = Reads[DocsBrowser](browser=browser, max_repeated_calls=bounds.max_repeated_calls)
     # Repo guidance (RET-08): only this version's files, in a read-only workspace of their own.
     workspace = guidance_workspace(guidance) if guidance else None
     try:
         result = await agent.run(run.question, deps=reads, usage_limits=usage, workspace=workspace)
-    except SpendLimitExceeded as error:  # a UsageLimitExceeded too: checked first
-        reason, detail = FallbackReason.LLM_BUDGET_REACHED, "spend limit"
-        raise AgentStoppedError(reason.value, detail) from error
-    except UsageLimitExceeded as error:
-        reason, detail = FallbackReason.AGENT_LIMIT_REACHED, "usage limit"
-        raise AgentStoppedError(reason.value, detail) from error
-    except _HostFailureError as error:
-        reason, detail = FallbackReason.AGENT_FAILED, ",".join(dict.fromkeys(reads.failures))
-        raise AgentStoppedError(reason.value, detail) from error
-    except _LoopDetectedError as error:
-        reason, detail = FallbackReason.AGENT_LOOP_DETECTED, ",".join(dict.fromkeys(reads.loops))
-        raise AgentStoppedError(reason.value, detail) from error
-    except _SandboxLimitError as error:
-        reason, detail = FallbackReason.AGENT_LIMIT_REACHED, "sandbox limit"
-        raise AgentStoppedError(reason.value, detail) from error
-    except (UnexpectedModelBehavior, AgentRunError) as error:
-        reason, detail = FallbackReason.AGENT_FAILED, type(error).__name__
+    except stopping_errors() as error:
+        reason, detail = stop_reason(error, reads)
         raise AgentStoppedError(reason.value, detail) from error
     if reads.rejected:  # the count only: a chunk ID or a path is not logged
         logger.warning(
