@@ -1,0 +1,201 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { Suspense } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { TestRouter } from "@/shared/lib/test-router";
+import { PlaygroundPage } from "./index";
+import { fallbackSentence, rankLabels, searchableLibraries } from "./model/playground";
+
+const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+
+const summary = (id: string, default_version: string | null = "v1") => ({
+  id,
+  title: id,
+  description: "",
+  default_version,
+});
+
+const hit = (library: string, over: Record<string, unknown> = {}) => ({
+  chunk_id: `c-${library}`,
+  article_path: "docs/retry.md",
+  heading_path: ["Guide", "Retry policy"],
+  anchor: "retry-policy",
+  position: 0,
+  total: 1,
+  prev_chunk_id: null,
+  next_chunk_id: null,
+  commit_sha: SHA,
+  source_url: null,
+  tags: [],
+  score: 0.5,
+  snippet: "RetryPolicy decides how often a failed call runs again.",
+  highlights: [],
+  justification: null,
+  explored_path: [],
+  library,
+  version: "v1",
+  bm25_rank: null,
+  vector_rank: null,
+  ...over,
+});
+
+const result = (mode: string, hits: unknown[], over: Record<string, unknown> = {}) => ({
+  notice: "",
+  retrieval_mode: mode,
+  reranked: false,
+  coverage: { candidates: hits.length, reranked: 0, complete: true },
+  fallback_reason: null,
+  libraries_searched: 2,
+  libraries_omitted: 0,
+  libraries_without_vectors: [],
+  libraries: [],
+  results: hits,
+  ...over,
+});
+
+function serve(answer: (url: URL) => Response) {
+  const fetchMock = vi.fn(async (input: string) => {
+    const url = new URL(input, "http://localhost");
+    if (url.pathname.endsWith("/v1/libraries")) {
+      return Response.json({
+        libraries: [summary("/acme/payments"), summary("/acme/billing"), summary("/x/empty", null)],
+        next_cursor: null,
+      });
+    }
+    if (url.pathname.endsWith("/v1/search")) return answer(url);
+    return new Response("{}", { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+function renderPage() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <Suspense fallback="loading">
+        <TestRouter
+          pages={{ "/": PlaygroundPage, "/libraries/$owner/$repo": () => <p>Reader</p> }}
+        />
+      </Suspense>
+    </QueryClientProvider>,
+  );
+}
+
+const searches = (fetchMock: ReturnType<typeof serve>) =>
+  fetchMock.mock.calls
+    .map(([input]) => new URL(input, "http://localhost"))
+    .filter((u) => u.pathname.endsWith("/v1/search"));
+
+describe("search playground", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("searches the chosen libraries in the chosen mode and shows each result's ranks", async () => {
+    const fetchMock = serve((url) =>
+      Response.json(
+        result(url.searchParams.get("mode") ?? "bm25", [
+          hit("/acme/payments", { bm25_rank: 1, vector_rank: 3 }),
+          hit("/acme/billing", { vector_rank: 1 }),
+        ]),
+      ),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("/acme/payments"));
+    await user.click(screen.getByLabelText("/acme/billing"));
+    expect(screen.queryByLabelText("/x/empty")).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText("Query"), "retry failed calls");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    const list = await screen.findByRole("list", { name: "Hybrid (BM25 + vectors) results" });
+    const items = within(list).getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+    expect(within(items[0] as HTMLElement).getByText("BM25 #1")).toBeInTheDocument();
+    expect(within(items[0] as HTMLElement).getByText("vector #3")).toBeInTheDocument();
+    expect(within(items[1] as HTMLElement).getByText("vector #1")).toBeInTheDocument();
+    expect(within(items[0] as HTMLElement).getByRole("link")).toHaveAttribute(
+      "href",
+      "/libraries/acme/payments?version=v1&path=docs%2Fretry.md#retry-policy",
+    );
+    const [sent] = searches(fetchMock);
+    expect(sent?.searchParams.get("mode")).toBe("hybrid");
+    expect(sent?.searchParams.get("library")).toBe("/acme/payments,/acme/billing");
+    expect(sent?.searchParams.get("q")).toBe("retry failed calls");
+  });
+
+  it("compares two modes side by side for the same query, over all libraries", async () => {
+    const fetchMock = serve((url) =>
+      Response.json(result(url.searchParams.get("mode") ?? "bm25", [hit("/acme/payments")])),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(await screen.findByLabelText("Query"), "retry");
+    await user.click(screen.getByLabelText("Compare two modes side by side"));
+    await user.selectOptions(screen.getByLabelText("Mode"), "vector");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(
+      await screen.findByRole("list", { name: "Vector (embeddings) results" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("list", { name: "BM25 (keywords) results" }),
+    ).toBeInTheDocument();
+    const sent = searches(fetchMock);
+    expect(sent.map((u) => u.searchParams.get("mode")).sort()).toEqual(["bm25", "vector"]);
+    expect(sent.every((u) => !u.searchParams.has("library"))).toBe(true);
+  });
+
+  it("says why a mode is unavailable, and why BM25 answered instead", async () => {
+    serve((url) =>
+      url.searchParams.get("mode") === "vector"
+        ? Response.json(
+            {
+              error: "mode_unavailable",
+              detail: "the mode 'vector' needs the embedding role, not configured",
+              fields: [],
+              close_matches: [],
+              library_id: null,
+            },
+            { status: 422 },
+          )
+        : Response.json(
+            result("bm25", [hit("/acme/payments", { bm25_rank: 1 })], {
+              fallback_reason: "embedding_in_progress",
+            }),
+          ),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(await screen.findByLabelText("Query"), "retry");
+    await user.click(screen.getByLabelText("Compare two modes side by side"));
+    await user.selectOptions(screen.getByLabelText("Mode"), "vector");
+    await user.selectOptions(screen.getByLabelText("Compare with"), "hybrid");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Unavailable: .*embedding role/);
+    expect(await screen.findByText(/BM25 answered instead/)).toBeInTheDocument();
+  });
+});
+
+describe("playground model", () => {
+  it("names the ranks a result holds", () => {
+    expect(rankLabels({ bm25_rank: 2, vector_rank: null })).toEqual(["BM25 #2"]);
+    expect(rankLabels({ bm25_rank: null, vector_rank: 1 })).toEqual(["vector #1"]);
+    expect(rankLabels({ bm25_rank: null, vector_rank: null })).toEqual([]);
+  });
+
+  it("offers only libraries with a default version, by ID", () => {
+    const libraries = [summary("/b/b"), summary("/a/a"), summary("/c/c", null)];
+    expect(searchableLibraries(libraries as never)).toEqual(["/a/a", "/b/b"]);
+  });
+
+  it("explains a fallback in a sentence", () => {
+    expect(fallbackSentence("embedding_unavailable")).toMatch(/embedding model failed/);
+  });
+});
