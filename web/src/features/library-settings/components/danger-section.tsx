@@ -79,7 +79,7 @@ export function DangerSection({
         onOpenChange={setOpen}
         title={
           <>
-            Remove <span className="font-mono text-[0.9em]">{library.id}</span>?
+            Remove <span className="font-mono">{library.id}</span>?
           </>
         }
         loss={

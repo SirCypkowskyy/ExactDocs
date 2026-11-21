@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/utils";
+import { Skeleton } from "@/shared/ui/skeleton";
 import { parseTags, sameTag, toggleTag, visibleTags } from "../lib/tags";
 
 interface TagChipsProps {
@@ -44,8 +45,10 @@ export function TagChips({
       <legend className="sr-only">Filter by tag</legend>
       <div
         className={cn(
-          "mb-1.5 flex items-center justify-between gap-2 text-sm font-medium text-muted-foreground",
+          "mb-1.5 flex items-center justify-between gap-2 text-body font-medium text-muted-foreground",
           fixedRow && "h-11 lg:h-7",
+          // On a phone the chips explain themselves; the label row only stays for what trails it.
+          !(fixedRow || trailing) && "max-lg:hidden",
         )}
       >
         <span aria-hidden="true">Filter by tag</span>
@@ -54,13 +57,7 @@ export function TagChips({
       {/* Padding inside the scroller keeps the focus and pressed rings from being clipped. */}
       <div className="-mx-4 -my-0.5 flex gap-1.5 overflow-x-auto px-4 py-0.5 sm:-mx-6 sm:px-6 lg:mx-0 lg:flex-wrap lg:overflow-visible lg:px-0">
         {loading
-          ? SKELETON.map((w) => (
-              <span
-                key={w}
-                aria-hidden="true"
-                className={`h-11 shrink-0 rounded-md bg-muted-foreground/[0.14] motion-safe:animate-pulse lg:h-8 ${w}`}
-              />
-            ))
+          ? SKELETON.map((w) => <Skeleton key={w} className={`h-11 shrink-0 lg:h-8 ${w}`} />)
           : shown.map((tag) => {
               const on = selected.some((t) => sameTag(t, tag));
               const count = counts.get(tag.toLowerCase());
@@ -71,9 +68,9 @@ export function TagChips({
                   aria-pressed={on}
                   onClick={() => onChange(toggleTag(selected, tag))}
                   className={cn(
-                    "inline-flex h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-3 text-sm outline-none transition-[background-color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.97] lg:h-8 lg:px-2.5",
+                    "inline-flex h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-3 text-body outline-none transition-[background-color,transform] duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.97] lg:h-8 lg:px-2.5",
                     on
-                      ? "bg-route text-primary-foreground"
+                      ? "bg-route text-route-foreground"
                       : "bg-secondary text-secondary-foreground [@media(hover:hover)]:hover:bg-accent",
                   )}
                 >
@@ -82,8 +79,8 @@ export function TagChips({
                     <span
                       aria-hidden="true"
                       className={cn(
-                        "text-xs tabular-nums",
-                        on ? "text-primary-foreground/75" : "text-muted-foreground",
+                        "text-small tabular-nums",
+                        on ? "text-route-foreground/75" : "text-muted-foreground",
                       )}
                     >
                       {count}
@@ -94,7 +91,7 @@ export function TagChips({
             })}
       </div>
       {truncated && (
-        <p className="mt-1.5 text-xs text-muted-foreground">Showing the most used tags only.</p>
+        <p className="mt-1.5 text-small text-muted-foreground">Showing the most used tags only.</p>
       )}
     </fieldset>
   );

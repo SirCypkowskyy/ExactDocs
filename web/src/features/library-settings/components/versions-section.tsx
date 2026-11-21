@@ -13,7 +13,6 @@ import {
 import { type RefChoice, refToSend } from "@/shared/lib/refs";
 import { absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
-import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import { CredentialField } from "@/shared/ui/credential-field";
 import { FormAlert } from "@/shared/ui/form-alert";
@@ -313,8 +312,6 @@ export function VersionsSection(props: Props) {
   const { owner, repo, library, activity, onStart } = props;
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
-  // The card stays mounted while its row collapses, so it does not vanish before the space does.
-  const [mounted, setMounted] = useState(false);
   const [removing, setRemoving] = useState<SettingsVersion>();
   const [notice, setNotice] = useState("");
   const [problem, setProblem] = useState<Problem>();
@@ -360,8 +357,6 @@ export function VersionsSection(props: Props) {
 
   function closeAdd() {
     setAdding(false);
-    // `transitionend` unmounts the card; without a transition (reduced motion) nothing fires it.
-    setTimeout(() => setMounted(false), 300);
     // The button sits outside the card, so it is on screen in the commit that closes it.
     focusAfterRender(() => addButton.current);
   }
@@ -383,7 +378,6 @@ export function VersionsSection(props: Props) {
           onClick={() => {
             setNotice("");
             if (adding) return closeAdd();
-            setMounted(true);
             setAdding(true);
           }}
         >
@@ -391,23 +385,12 @@ export function VersionsSection(props: Props) {
         </Button>
       </div>
 
-      <div
-        id="add-version"
-        onTransitionEnd={(e) => {
-          if (e.target === e.currentTarget && !adding) setMounted(false);
-        }}
-        className={cn(
-          "grid transition-[grid-template-rows] duration-(--dur) ease-(--ease-out) motion-reduce:transition-none",
-          adding ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+      <div id="add-version">
+        {adding && (
+          <div className="reveal mb-4 rounded-lg bg-raised p-4 sm:p-5">
+            <AddVersionForm {...props} onClose={closeAdd} />
+          </div>
         )}
-      >
-        <div className="overflow-hidden" inert={!adding}>
-          {mounted && (
-            <div className="mb-4 rounded-lg bg-raised p-4 sm:p-5">
-              <AddVersionForm {...props} onClose={closeAdd} />
-            </div>
-          )}
-        </div>
       </div>
 
       <p role="status" className="min-h-5 text-body">
@@ -453,7 +436,7 @@ export function VersionsSection(props: Props) {
         }}
         title={
           <>
-            Remove <span className="font-mono text-[0.9em]">{removing?.ref ?? "version"}</span>?
+            Remove <span className="font-mono">{removing?.ref ?? "version"}</span>?
           </>
         }
         loss="Its articles disappear from browse, search and agents now."

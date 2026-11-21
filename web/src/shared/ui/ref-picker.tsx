@@ -11,6 +11,7 @@ import {
 import { useRepositoryRefs } from "@/shared/lib/use-repository-refs";
 import { Input } from "./input";
 import { select } from "./recipes";
+import { Skeleton } from "./skeleton";
 
 const FILTER_FROM = 15;
 const selectClass = select;
@@ -97,7 +98,7 @@ function Select({
               if (e.target.value.trim() && hits.length === 1 && hits[0]) onChoice(hits[0]);
             }}
           />
-          <p role="status" className="mt-1 min-h-5 text-sm text-muted-foreground tabular-nums">
+          <p role="status" className="mt-1 min-h-5 text-body text-muted-foreground tabular-nums">
             {query.trim() &&
               `${branches.length + tags.length} of ${refs.branches.length + refs.tags.length} match`}
           </p>
@@ -152,7 +153,7 @@ function Select({
         />
       </div>
       {none && (
-        <p className="mt-2 text-sm text-muted-foreground">
+        <p className="mt-2 text-body text-muted-foreground">
           Nothing matches “{query.trim()}”. Pick “Another ref or commit…” to type it.
         </p>
       )}
@@ -170,9 +171,9 @@ function Unavailable({
   fetching: boolean;
   onRetry: () => unknown;
 }) {
-  if (why) return <p className="text-sm text-muted-foreground">{why}</p>;
+  if (why) return <p className="text-body text-muted-foreground">{why}</p>;
   return (
-    <p className="text-sm text-muted-foreground">
+    <p className="text-body text-muted-foreground">
       Couldn't load branches and tags. Type a version below, or leave it empty for the default
       branch.{" "}
       <button
@@ -218,7 +219,7 @@ export function RefPicker({
   const message = error ? (
     <p
       id="ref-error"
-      className="fade-in flex items-start gap-1.5 text-sm font-medium text-destructive"
+      className="fade-in flex items-start gap-1.5 text-body font-medium text-destructive"
     >
       <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
       <span>{error}</span>
@@ -226,15 +227,10 @@ export function RefPicker({
   ) : null;
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={data ? "ref" : "ref-typed"} className="text-sm font-medium">
+      <label htmlFor={data ? "ref" : "ref-typed"} className="text-body font-medium">
         Version to import
       </label>
-      {isPending && (
-        <div
-          aria-hidden="true"
-          className="h-11 rounded-md bg-muted-foreground/10 motion-safe:animate-pulse"
-        />
-      )}
+      {isPending && <Skeleton className="h-11" />}
       {isPending && (
         <p className="sr-only" role="status">
           Loading branches and tags
@@ -268,15 +264,15 @@ export function RefPicker({
           aria-invalid={error ? true : undefined}
           aria-describedby={["ref-hint", error && "ref-error"].filter(Boolean).join(" ")}
           onChange={(e) => onTyped(e.target.value)}
-          className="mt-1 font-mono text-[15px]"
+          className="mt-1 font-mono"
         />
       )}
       <p
         id="ref-hint"
         className={
           data?.truncated
-            ? "flex items-start gap-1.5 text-sm text-foreground"
-            : "text-sm text-muted-foreground"
+            ? "flex items-start gap-1.5 text-body text-foreground"
+            : "text-body text-muted-foreground"
         }
       >
         {data?.truncated ? (

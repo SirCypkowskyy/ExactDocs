@@ -37,7 +37,7 @@ function Hit({ hit, ctx }: { hit: SearchHit; ctx: SearchContext }) {
         className="rounded-md outline-none after:absolute after:inset-0 after:rounded-md after:content-[''] focus-visible:after:ring-2 focus-visible:after:ring-ring"
       >
         <Crumbs hit={hit} />
-        <span className="mt-0.5 block font-mono text-[12px] text-muted-foreground [overflow-wrap:anywhere]">
+        <span className="mt-0.5 block font-mono text-small text-muted-foreground [overflow-wrap:anywhere]">
           {hit.article_path}
         </span>
       </Link>

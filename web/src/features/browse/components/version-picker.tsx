@@ -139,7 +139,7 @@ export function VersionPicker({
           <Station current isDefault={shownVersion.is_default} />
           <span
             className={cn(
-              "truncate font-mono text-[13px] font-semibold",
+              "truncate font-mono text-mono font-semibold",
               waitingFor !== null && "text-muted-foreground",
             )}
           >
@@ -150,7 +150,7 @@ export function VersionPicker({
           )}
         </span>
         <span className="flex shrink-0 items-center gap-2">
-          <span className="font-mono text-[12px] text-muted-foreground max-lg:hidden">
+          <span className="font-mono text-small text-muted-foreground max-lg:hidden">
             {shortSha(shownVersion.commit_sha)}
           </span>
           {waitingFor === null ? (
@@ -166,7 +166,7 @@ export function VersionPicker({
           sideOffset={6}
           collisionPadding={12}
           onKeyDown={onKeyDown}
-          className="z-50 w-[min(22rem,calc(100vw-1.5rem))] origin-(--radix-popover-content-transform-origin) rounded-lg border border-border bg-popover text-popover-foreground shadow-lg outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-safe:data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:duration-(--dur) data-[state=closed]:duration-(--dur-fast)"
+          className="z-50 w-[min(22rem,calc(100vw-1.5rem))] origin-(--radix-popover-content-transform-origin) rounded-lg border border-border bg-popover text-popover-foreground shadow-lg outline-none transition-none data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-safe:data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:duration-(--dur) data-[state=open]:ease-(--ease-out) data-[state=closed]:duration-(--dur-fast)"
         >
           {versions.length >= FILTER_FROM && (
             <div className="border-b border-rule p-2">
@@ -219,7 +219,7 @@ export function VersionPicker({
                   >
                     <Station current={isCurrent} isDefault={v.is_default} />
                     <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                      <span className="truncate font-mono text-[13px] font-medium">{v.ref}</span>
+                      <span className="truncate font-mono text-mono font-medium">{v.ref}</span>
                       {v.is_default && (
                         <span className="text-small text-muted-foreground">{defaultLabel}</span>
                       )}
@@ -231,7 +231,7 @@ export function VersionPicker({
                       // The rename lookup for this version is still on its way.
                       <Spinner className="text-muted-foreground" />
                     )}
-                    <span className="font-mono text-[12px] text-muted-foreground tabular-nums">
+                    <span className="font-mono text-small text-muted-foreground tabular-nums">
                       {shortSha(v.commit_sha)}
                     </span>
                   </Link>

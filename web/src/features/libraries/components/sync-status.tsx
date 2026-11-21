@@ -4,6 +4,7 @@ import { Check, ChevronRight, CircleAlert } from "lucide-react";
 import { useState } from "react";
 import { absoluteTime, absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 import { cn } from "@/shared/lib/utils";
+import { Skeleton } from "@/shared/ui/skeleton";
 import { jobQueryOptions, librariesKeys } from "../api/libraries-query";
 import { reimportVersion } from "../api/reimport";
 import type { SyncState } from "../hooks/use-libraries";
@@ -24,7 +25,7 @@ function SkippedFiles({ job, open }: { job: LatestJob; open: boolean }) {
       <ul className="mt-1 space-y-1">
         {(all ? problems : problems.slice(0, SKIPPED_SHOWN)).map((p) => (
           <li key={p.path} className="[overflow-wrap:anywhere]">
-            <span className="font-mono text-[13px]">{p.path}</span>
+            <span className="font-mono text-mono">{p.path}</span>
             <span className="text-muted-foreground"> {p.reason}</span>
           </li>
         ))}
@@ -93,7 +94,7 @@ export function FailureDetail({ job, open }: { job: LatestJob; open: boolean }) 
   return (
     <div className="mt-3 rounded-md bg-secondary px-3 py-3 text-body">
       <p className="text-muted-foreground">
-        <span className="font-mono text-[13px]">{job.version ?? "Sync"}</span> failed{" "}
+        <span className="font-mono text-mono">{job.version ?? "Sync"}</span> failed{" "}
         <time dateTime={finished} title={absoluteTimeWithZone(finished)}>
           {absoluteTime(finished)}
         </time>
@@ -121,10 +122,7 @@ function Unknown({ sync }: { sync: Extract<SyncState, { status: string }> }) {
   if (sync.status === "pending") {
     return (
       <>
-        <span
-          aria-hidden="true"
-          className="h-4 w-20 rounded bg-muted-foreground/10 motion-safe:animate-pulse"
-        />
+        <Skeleton className="h-4 w-20" />
         <span className="sr-only">Checking sync status</span>
       </>
     );
@@ -163,8 +161,8 @@ function Running({ job }: { job: LatestJob }) {
       >
         <div
           className={cn(
-            "h-full origin-left bg-route transition-transform duration-(--dur-slow) ease-(--ease-out)",
-            !known && "w-1/3 motion-safe:animate-pulse",
+            "h-full origin-left bg-route transition-transform duration-(--dur-slow) ease-(--ease-out) motion-reduce:transition-none",
+            !known && "sweep w-1/3",
           )}
           style={
             known ? { transform: `scaleX(${job.done / job.total})`, width: "100%" } : undefined
@@ -205,7 +203,7 @@ function Failed({ job, failures, now, open, onToggle, panel }: FailedProps) {
         <ChevronRight
           aria-hidden="true"
           className={cn(
-            "size-4 shrink-0 text-muted-foreground transition-transform duration-(--dur-fast) ease-out",
+            "size-4 shrink-0 text-muted-foreground transition-transform duration-(--dur-fast) ease-(--ease-out) motion-reduce:transition-none",
             open && "rotate-90",
           )}
         />

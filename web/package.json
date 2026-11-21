@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "pnpm typecheck && vite build && node scripts/check-dist.mjs",
+    "build": "pnpm typecheck && vite build && node scripts/check-dist.mjs && node scripts/bundle-size.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b",
     "gen:api": "openapi-typescript openapi.json --immutable -o src/shared/lib/api-schema.d.ts",
