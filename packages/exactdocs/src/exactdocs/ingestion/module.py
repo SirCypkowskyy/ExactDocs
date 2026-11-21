@@ -65,6 +65,7 @@ from exactdocs.ingestion.ports.driven import (
     LibrarySettingsStore,
     LibrarySources,
     ManualTagStore,
+    MarkupConverter,
     NewLibraries,
     RecoveryHook,
     Removals,
@@ -92,6 +93,7 @@ from exactdocs.ingestion.ports.driving import (
     GetJob,
     GetLibraryAccess,
     GetWebhook,
+    ListJobs,
     ListLatestJobs,
     ListLibraryJobs,
     ListRepositoryRefs,
@@ -134,6 +136,7 @@ from exactdocs.ingestion.use_cases import (
     GetLibraryAccessUseCase,
     GetWebhookUseCase,
     ImportVersionUseCase,
+    ListJobsUseCase,
     ListLatestJobsUseCase,
     ListLibraryJobsUseCase,
     ListRepositoryRefsUseCase,
@@ -614,6 +617,8 @@ class IngestionModule:
     """Says whether a library's webhook is on."""
     list_latest_jobs: ListLatestJobs
     """Lists the newest job of every (library, version)."""
+    list_jobs: ListJobs
+    """Lists a page of the jobs of every readable library."""
     list_library_jobs: ListLibraryJobs
     """Lists a page of a library's jobs."""
     list_repository_refs: ListRepositoryRefs
@@ -881,6 +886,7 @@ class IngestionModule:
             ),
             get_webhook=GetWebhookUseCase(sources=sources, webhooks=webhooks or _NoWebhooks()),
             list_latest_jobs=ListLatestJobsUseCase(jobs=jobs, access=access),
+            list_jobs=ListJobsUseCase(jobs=jobs, access=access),
             list_library_jobs=ListLibraryJobsUseCase(jobs=jobs, access=access),
             list_repository_refs=ListRepositoryRefsUseCase(remote=remote),
             plan_sources=PlanSourcesUseCase(
@@ -968,6 +974,7 @@ def import_job(
     batch_files: int = DEFAULT_IMPORT_BATCH_FILES,
     guidance: GuidancePolicy | None = None,
     files: RepositoryFiles | None = None,
+    converter: MarkupConverter | None = None,
 ) -> tuple[Mapping[JobKind, JobHandler], Mapping[JobKind, RecoveryHook]]:
     """Return the ``handlers`` and ``recovery_hooks`` that make the module import versions.
 
@@ -979,7 +986,8 @@ def import_job(
     ``checkpoints`` makes the import's steps durable (one per ``batch_files`` files parsed and
     chunked); without it an interrupted import starts over. ``guidance`` says which libraries
     keep their ``AGENTS.md`` / ``CLAUDE.md`` files with each version (RET-08), read with
-    ``files``; without both none do.
+    ``files``; without both none do. ``converter`` writes reStructuredText articles as Markdown;
+    without it they are skipped.
 
     Args:
         gateway: Fetches a commit's files.
@@ -1001,6 +1009,7 @@ def import_job(
         batch_files: Files parsed and chunked per durable step.
         guidance: Which libraries keep their instruction files.
         files: Reads the instruction files.
+        converter: Writes reStructuredText articles as Markdown.
 
     Returns:
         The handlers and the recovery hooks, by job kind.
@@ -1022,6 +1031,7 @@ def import_job(
         tag_locks=tag_locks,
         guidance=guidance,
         files=files,
+        converter=converter,
     )
     # A cancelled job stops before its next step; each step leaves nothing half done.
     importer = replace(importer, checkpoints=StopOnCancel(inner=checkpoints or _InlineSteps()))

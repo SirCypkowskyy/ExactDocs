@@ -25,10 +25,15 @@ import { useSession } from "../hooks/use-session";
  * that holds the page. The band never scrolls away on the sheet's account; the sheet is the work.
  */
 
-type NavItem = { to: "/" | "/search" | "/ai" | "/users"; label: string; admin?: boolean };
+type NavItem = {
+  to: "/" | "/search" | "/playground" | "/ai" | "/users";
+  label: string;
+  admin?: boolean;
+};
 const NAV: NavItem[] = [
   { to: "/", label: "Libraries" },
   { to: "/search", label: "Search" },
+  { to: "/playground", label: "Playground" },
   // AI providers and accounts are for operators (admins); the API refuses anyone else.
   { to: "/ai", label: "AI", admin: true },
   { to: "/users", label: "Users", admin: true },

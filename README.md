@@ -31,6 +31,10 @@ version. ExactDocs gives them your docs, at the version you use:
   `v1.4`.
 - Results are the original Markdown, verbatim, with its path, heading, commit SHA and a link to
   the file on your git host. Nothing is paraphrased.
+- Sphinx documentation in reStructuredText (`.rst`, as SQLAlchemy, behave or CPython write it)
+  imports like Markdown: headings, code blocks with their language, tables, admonitions,
+  `include` / `literalinclude` and cross-references. It is parsed with docutils; nothing is built
+  or executed.
 - It is light by default. The standard image bundles no model: it is a fast BM25 server on SQLite.
   Embeddings, rerankers and LLMs are optional, either hosted or running locally on the CPU.
 - It is context7-compatible. The MCP tools and library IDs are the same, so switching is a URL

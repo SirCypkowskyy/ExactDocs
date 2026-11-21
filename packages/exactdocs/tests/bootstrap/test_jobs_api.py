@@ -58,7 +58,7 @@ async def test_a_library_without_jobs_has_an_empty_list(client: httpx.AsyncClien
     response = await client.get("/api/v1/libraries/acme/payments/jobs")
 
     assert response.status_code == 200
-    assert response.json() == {"jobs": [], "next_cursor": None}
+    assert response.json() == {"jobs": [], "next_cursor": None, "total": 0}
 
 
 async def test_a_library_lists_its_jobs_newest_first_in_pages(

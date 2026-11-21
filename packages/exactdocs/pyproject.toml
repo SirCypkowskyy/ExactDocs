@@ -72,6 +72,9 @@ dependencies = [
     "alembic>=1.16",
     "cyclopts>=4",
     "dbos>=3.3,<4",
+    # reStructuredText (Sphinx) articles (#435): parsed, never built; no Sphinx, no network.
+    # Exact pin: the converter maps its node classes and directive API.
+    "docutils==0.23",
     "fastapi>=0.120",
     "fastmcp>=4",
     "httpx2>=2",

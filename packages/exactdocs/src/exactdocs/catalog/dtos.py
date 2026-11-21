@@ -2,7 +2,7 @@
 
 import unicodedata
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
@@ -16,7 +16,9 @@ from pydantic import (
 
 from exactdocs.catalog.constants import (
     _PINNED,
+    ARTICLE_SORT_FIELDS,
     DEFAULT_GRACE_SECONDS,
+    LIBRARY_SORT_FIELDS,
     MAX_DESCRIPTION,
     MAX_INSTRUCTION_FILE_CHARS,
     MAX_INSTRUCTION_FILES,
@@ -28,6 +30,7 @@ from exactdocs.catalog.constants import (
     MAX_TITLE,
     SIMILARITY_DESCRIPTION,
     TAG_LIST_DESCRIPTION,
+    VERSION_SORT_FIELDS,
 )
 from exactdocs.catalog.models import (
     GarbageCollected,
@@ -306,7 +309,114 @@ class ListLibrariesQuery(_Dto):
     limit: Limit = DEFAULT_LIMIT
     """How many libraries per page."""
     cursor: str | None = None
-    """Opaque: only ever a `next_cursor`; absent for the first page."""
+    """Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
+    `sort` and filters of the request that returned it."""
+    sort: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description=(
+            f"Sort by one of {', '.join(LIBRARY_SORT_FIELDS)}; prefix `-` for descending. "
+            "Default: `id`. An unknown field is a 422."
+        ),
+    )
+    """The sort field; its schema description names ``LIBRARY_SORT_FIELDS``."""
+    q: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description="Only libraries whose ID, title or description contains this text (any case).",
+    )
+    """Text filter on the ID, title and description."""
+    has_versions: bool | None = None
+    """`true`: only libraries with an imported version; `false`: only those without one."""
+    ai_enabled: bool | None = None
+    """`true`: only libraries that may use AI providers; `false`: only those with AI turned off."""
+    updated_after: datetime | None = None
+    """Only libraries whose latest import is at or after this time (ISO 8601)."""
+    updated_before: datetime | None = None
+    """Only libraries whose latest import is before this time (ISO 8601)."""
+
+    @field_validator("updated_after", "updated_before")
+    @classmethod
+    def _utc(cls, value: datetime | None) -> datetime | None:
+        """Read a time without an offset as UTC.
+
+        Args:
+            value: The time as sent.
+
+        Returns:
+            The time with an offset, or ``None``.
+        """
+        return value if value is None or value.tzinfo else value.replace(tzinfo=UTC)
+
+
+class VersionListQuery(_Dto):
+    """How a library's versions are filtered, sorted and paged."""
+
+    q: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description="Only versions whose ref or commit SHA contains this text (any case).",
+    )
+    """Text filter on the ref and the commit SHA."""
+    kind: list[RefKind] | None = Field(
+        default=None, description="Only versions of one of these kinds; repeat for several."
+    )
+    """Only versions of one of these kinds (`tag`, `branch`, `commit`)."""
+    origin: list[VersionOrigin] | None = Field(
+        default=None, description="Only versions with one of these origins; repeat for several."
+    )
+    """Only versions with one of these origins (`manual`, `auto`)."""
+    imported_after: datetime | None = None
+    """Only versions last imported at or after this time (ISO 8601; no offset means UTC)."""
+    imported_before: datetime | None = None
+    """Only versions last imported before this time (ISO 8601; no offset means UTC)."""
+    sort: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description=(
+            f"Sort by one of {', '.join(VERSION_SORT_FIELDS)}; prefix `-` for descending. "
+            "Default: `ref`. An unknown field is a 422."
+        ),
+    )
+    """The sort field; its schema description names ``VERSION_SORT_FIELDS``."""
+    limit: Limit = DEFAULT_LIMIT
+    """How many versions per page."""
+    cursor: str | None = None
+    """Opaque: only ever a `next_cursor`; it only works with the `sort` and filters of the
+    request that returned it."""
+
+    @field_validator("imported_after", "imported_before")
+    @classmethod
+    def _utc(cls, value: datetime | None) -> datetime | None:
+        """Read a time without an offset as UTC.
+
+        Args:
+            value: The time as sent.
+
+        Returns:
+            The time with an offset, or ``None``.
+        """
+        return value if value is None or value.tzinfo else value.replace(tzinfo=UTC)
+
+
+class ListVersionsQuery(VersionListQuery):
+    """One page of a library's versions."""
+
+    id: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
+
+
+class VersionList(_Dto):
+    """A page of a library's versions."""
+
+    library: str
+    """Library ID, `/owner/repo`."""
+    versions: list[VersionOut]
+    """The versions of this page, in the requested order (by ref by default)."""
+    next_cursor: str | None
+    """Pass as `cursor` to get the next page; null on the last page."""
+    total: int
+    """How many of the library's versions match the filters, across every page."""
 
 
 class LibraryList(_Dto):
@@ -321,6 +431,8 @@ class LibraryList(_Dto):
     """The libraries of this page."""
     next_cursor: str | None
     """Pass as `cursor` to get the next page; null on the last page."""
+    total: int
+    """How many libraries match the filters and are visible to the caller, across every page."""
 
     @classmethod
     def from_page(cls, page: Page[Library]) -> Self:
@@ -335,6 +447,7 @@ class LibraryList(_Dto):
         return cls(
             libraries=[LibrarySummary.from_model(lib) for lib in page.items],
             next_cursor=page.next_cursor,
+            total=len(page.items) if page.total is None else page.total,
         )
 
 
@@ -612,10 +725,26 @@ class ListArticlesQuery(_Dto):
     """
     tag_filter: TagFilter = Field(default_factory=TagFilter)
     """Applied before paging."""
+    q: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description="Only articles whose path or title contains this text (any case).",
+    )
+    """Text filter on the path and title, applied before paging."""
+    sort: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description=(
+            f"Sort by one of {', '.join(ARTICLE_SORT_FIELDS)}; prefix `-` for descending. "
+            "Default: `path`. An unknown field is a 422."
+        ),
+    )
+    """The sort field; its schema description names ``ARTICLE_SORT_FIELDS``."""
     limit: Limit = DEFAULT_LIMIT
     """How many articles per page."""
     cursor: str | None = Field(default=None)
-    """Opaque: only ever a `next_cursor`."""
+    """Opaque: only ever a `next_cursor`. It only works with the `sort` and filters of the
+    request that returned it."""
 
     @field_validator("ref", mode="before")
     @classmethod
@@ -693,9 +822,11 @@ class ArticleList(_Dto):
     manifest_id: str
     """ID of the manifest that serves the version."""
     articles: list[ArticleSummary]
-    """The articles of this page, sorted by path."""
+    """The articles of this page, in the requested order (by path by default)."""
     next_cursor: str | None
     """Pass as `cursor` to get the next page; null on the last page."""
+    total: int
+    """How many articles match the filters (`path_prefix`, `tags`, `q`), across every page."""
 
 
 class ListTagsQuery(_Dto):

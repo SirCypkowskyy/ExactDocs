@@ -202,7 +202,7 @@ export function explainAddError(
       return {
         field: "paths",
         message:
-          "No Markdown files match these paths. Widen them, or clear them to take every .md and .mdx file.",
+          "No Markdown files match these paths. Widen them, or clear them to take every .md, .mdx and .rst file.",
       };
     default:
       return error.status === 422

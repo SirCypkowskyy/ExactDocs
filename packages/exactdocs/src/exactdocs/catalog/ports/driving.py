@@ -37,6 +37,7 @@ from exactdocs.catalog.dtos import (
     ListLibrariesQuery,
     ListRenamesQuery,
     ListTagsQuery,
+    ListVersionsQuery,
     ManifestStates,
     ManualTagsOut,
     PinDefaultVersionCommand,
@@ -59,6 +60,7 @@ from exactdocs.catalog.dtos import (
     StoreManifestCommand,
     TagList,
     UpdateLibraryCommand,
+    VersionList,
     VersionTags,
 )
 
@@ -66,11 +68,19 @@ from exactdocs.catalog.dtos import (
 class ListLibraries(Protocol):
     """List a page of libraries and their indexed versions."""
 
-    async def __call__(self, query: ListLibrariesQuery) -> LibraryList:
+    async def __call__(
+        self,
+        query: ListLibrariesQuery,
+        *,
+        only: frozenset[str] | None = None,
+        without: frozenset[str] = frozenset(),
+    ) -> LibraryList:
         """Run the use case.
 
         Args:
             query: The page size and the cursor of the previous page.
+            only: Case-folded library IDs; when given, no other library is listed.
+            without: Case-folded library IDs that are not listed.
 
         Returns:
             The page of libraries, sorted by ID, with the next cursor.
@@ -149,6 +159,21 @@ class ActivateManifest(Protocol):
 
         Returns:
             The manifest and the version it now serves.
+        """
+        ...
+
+
+class ListVersions(Protocol):
+    """List the versions of a library, filtered, sorted and paged."""
+
+    async def __call__(self, query: ListVersionsQuery) -> VersionList:
+        """Run the use case.
+
+        Args:
+            query: The library, the filters, the sort and the page.
+
+        Returns:
+            The page of versions, with the next cursor and the total.
         """
         ...
 

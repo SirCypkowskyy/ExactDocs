@@ -5,6 +5,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from itertools import batched
+from typing import Any
 
 from pydantic import TypeAdapter
 from sqlalchemy import (
@@ -26,6 +27,7 @@ from sqlalchemy import (
     column,
     delete,
     exists,
+    func,
     insert,
     literal,
     or_,
@@ -79,6 +81,7 @@ from exactdocs.catalog.models import (
     VersionOrigin,
     VersionRef,
 )
+from exactdocs_kernel import Sort, SortValue, like_pattern
 
 # The catalog's tables, prefixed `catalog_`. The schema itself is created by an Alembic revision
 # in `exactdocs.bootstrap`; this is only the adapter's query-side description of it.
@@ -1462,6 +1465,112 @@ async def _insert_versions(connection: AsyncConnection, library: Library) -> Non
                 for v in library.versions
             ],
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteEntrySearch:
+    """Implements ``ports.driven.EntrySearch`` with SQLAlchemy Core on SQLite or PostgreSQL."""
+
+    engine: AsyncEngine
+    """The database holding the catalog's tables."""
+
+    def _filtered(
+        self, manifest_id: ManifestId, prefix: str, tags: TagSelection, text: str | None
+    ) -> Select[Any]:
+        """Build the query for a manifest's entries that pass the directory, tag and text filters.
+
+        Args:
+            manifest_id: The manifest.
+            prefix: Only paths inside this directory; empty: every path.
+            tags: Only entries that pass this filter.
+            text: Only entries whose path or title contains this text, any case.
+
+        Returns:
+            The query, selecting whole entries, without order or limit.
+        """
+        query = select(manifest_entries).where(manifest_entries.c.manifest_id == manifest_id)
+        path = manifest_entries.c.path
+        if prefix:
+            query = query.where(
+                or_(path == prefix, and_(path >= f"{prefix}/", path < f"{prefix}0"))
+            )
+        if tags.tags:
+            query = query.where(_tag_condition(tags, self.engine.dialect.name))
+        if text:
+            pattern = like_pattern(text)
+            query = query.where(
+                or_(
+                    func.lower(path).like(pattern, escape="\\"),
+                    func.lower(manifest_entries.c.title).like(pattern, escape="\\"),
+                )
+            )
+        return query
+
+    async def search(
+        self,
+        manifest_id: ManifestId,
+        *,
+        prefix: str,
+        tags: TagSelection,
+        text: str | None,
+        sort: Sort,
+        after: tuple[SortValue, str] | None,
+        limit: int,
+    ) -> Sequence[ManifestEntry]:
+        """Return up to ``limit`` filtered entries in ``sort`` order, after the ``after`` key.
+
+        A keyset query: ``(sort value, path)`` compares as a row, in the sort's direction.
+        Titles sort lower-cased and, on PostgreSQL, by code point, as Python compares str.
+
+        Args:
+            manifest_id: The manifest.
+            prefix: Only paths inside this directory; empty: every path.
+            tags: Only entries that pass this filter.
+            text: Only entries whose path or title contains this text, any case.
+            sort: The order.
+            after: The sort value and path of the last entry of the previous page.
+            limit: The most entries returned.
+
+        Returns:
+            The entries in order.
+        """
+        path = manifest_entries.c.path
+        column: Any = {
+            "path": path,
+            "title": func.lower(manifest_entries.c.title),
+            "size": manifest_entries.c.size,
+        }[sort.field]
+        if sort.field == "title" and self.engine.dialect.name == "postgresql":
+            column = column.collate("C")
+        query = self._filtered(manifest_id, prefix, tags, text)
+        if after is not None:
+            row = tuple_(column, path)
+            bound = tuple_(*after)
+            query = query.where(row < bound if sort.descending else row > bound)
+        order = (column.desc(), path.desc()) if sort.descending else (column, path)
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(query.order_by(*order).limit(limit))).all()
+        return tuple(_entry(row) for row in rows)
+
+    async def count(
+        self, manifest_id: ManifestId, *, prefix: str, tags: TagSelection, text: str | None
+    ) -> int:
+        """Count the entries that ``search`` pages over.
+
+        Args:
+            manifest_id: The manifest.
+            prefix: Only paths inside this directory; empty: every path.
+            tags: Only entries that pass this filter.
+            text: Only entries whose path or title contains this text, any case.
+
+        Returns:
+            How many entries match.
+        """
+        query = select(func.count()).select_from(
+            self._filtered(manifest_id, prefix, tags, text).subquery()
+        )
+        async with self.engine.connect() as connection:
+            return (await connection.execute(query)).scalar_one()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

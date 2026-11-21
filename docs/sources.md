@@ -49,6 +49,12 @@ or an API token; anyone else gets 403 (CLI exit code 5).
   rules are compared as sets after the server's normalization: reordering them or spelling a tag
   in other letter case is no change. A declared empty `include_paths` means every file: the
   repository's `context7.json` does not fill it in.
+- Supported formats: Markdown (`.md`, `.mdx`) and reStructuredText (`.rst`, the Sphinx source of
+  `doc/build/` or `docs/`). A `.txt` file is read as reStructuredText, but only when an
+  `include_paths` entry names `.txt` (`doc/**/*.txt`), so a folder never brings in
+  `requirements.txt`. Both formats in one library are imported into the same version. Files that
+  reStructuredText `include` / `literalinclude` must be inside the selected paths to be read;
+  one that is not is listed as a `markup` problem and the article is imported without it.
 - `auto_sync` takes the fields of `PUT /libraries/{owner}/{repo}/auto-sync` as a whole set (what
   it leaves out takes its default), or `false` to turn the check off. `auto` versions belong to
   the check and are never listed.

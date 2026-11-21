@@ -23,6 +23,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
     NoCopier,
     NoStoredTags,
 )
+from exactdocs.ingestion.adapters.driven.restructuredtext import RestructuredTextConverter
 from exactdocs.ingestion.constants import (
     IMPORT_JOB,
     MAX_INSTRUCTION_DIRS,
@@ -73,7 +74,12 @@ from exactdocs.ingestion.models import (
     parse_article,
 )
 from exactdocs.ingestion.module import TagLocks, import_job
-from exactdocs.ingestion.ports import GuidancePolicy, RenameSource, RepositoryFiles
+from exactdocs.ingestion.ports import (
+    GuidancePolicy,
+    MarkupConverter,
+    RenameSource,
+    RepositoryFiles,
+)
 from exactdocs.ingestion.use_cases import (
     ImportVersionUseCase,
     RunNextJobUseCase,
@@ -402,6 +408,7 @@ def build_world(
     stored: Stored | None = None,
     guidance: GuidancePolicy | None = None,
     reader: RepositoryFiles | None = None,
+    converter: MarkupConverter | None = None,
 ) -> World:
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -426,6 +433,7 @@ def build_world(
         copier=NoCopier(),
         guidance=guidance,
         files=reader,
+        converter=converter,
     )
     run = handlers[kind]
     return World(run, gateway, catalog, chunks, chunker, Progress())  # ty: ignore[invalid-argument-type]
@@ -2083,3 +2091,132 @@ def test_candidates_are_the_root_and_the_selected_folders_shallowest_first_and_b
     assert found[:4] == ["AGENTS.md", "CLAUDE.md", "docs/AGENTS.md", "docs/CLAUDE.md"]
     assert len(found) == 2 * MAX_INSTRUCTION_DIRS
     assert not [p for p in found if ".git" in p]
+
+
+SPHINX = Path(__file__).parents[1] / "fixtures" / "sphinx-docs"
+"""The fixture Sphinx documentation (README.md there)."""
+
+
+def _sphinx_files() -> dict[str, bytes]:
+    return {
+        path.relative_to(SPHINX).as_posix(): path.read_bytes()
+        for path in SPHINX.joinpath("doc").rglob("*")
+        if path.is_file()
+    }
+
+
+def _rst_world(
+    tmp_path: Path,
+    files: Mapping[str, bytes],
+    *,
+    selection: PathSelection | None = None,
+    max_import_bytes: int = 2**30,
+) -> World:
+    return build_world(
+        tmp_path,
+        files,
+        selection=selection or PathSelection.of(["docs/", "doc/build/"]),
+        max_import_bytes=max_import_bytes,
+        converter=RestructuredTextConverter(),
+    )
+
+
+async def test_markdown_and_restructuredtext_are_imported_into_the_same_version(
+    tmp_path: Path,
+) -> None:
+    world = _rst_world(tmp_path, {"docs/auth.md": AUTH.encode(), **_sphinx_files()})
+
+    await world.run(make_job(), world.progress)
+
+    articles = {a.path: a for a in world.catalog.stored[0].articles}
+    assert set(articles) == {
+        "docs/auth.md",
+        "doc/build/index.rst",
+        "doc/build/tutorial.rst",
+        "doc/build/orm/session.rst",
+        "doc/build/orm/_inc/connection_note.rst",
+        "doc/build/orm/_inc/pool_sizes.rst",
+    }  # no .txt (no path names it), no conf.py, no example .py
+    session = articles["doc/build/orm/session.rst"]
+    assert session.title == "Using a Store"
+    assert session.content.startswith("# Using a Store\n")
+    assert "The pool keeps at most `pool_size` connections open." in session.content
+    assert "def open_and_add(order):" in session.content
+    paths = {c.heading_path for c in session.chunks}
+    assert ("Using a Store", "Opening a Store", "Retry policies", "Flush order") in paths
+    assert "python+sql" in {lang for c in session.chunks for lang in c.code_languages}
+    assert articles["doc/build/tutorial.rst"].title == "Tutorial"
+    assert articles["docs/auth.md"].title == "Auth"
+
+
+async def test_markup_problems_are_listed_per_file_and_the_article_is_imported(
+    tmp_path: Path,
+) -> None:
+    world = _rst_world(tmp_path, _sphinx_files())
+
+    await world.run(make_job(), world.progress)
+
+    problems = {path: (code, reason) for path, code, reason in world.progress.problems}
+    code, reason = problems["doc/build/orm/session.rst"]
+    assert code == ProblemCode.MARKUP
+    assert "tab-set" in reason
+    assert "paramref" in reason
+    assert "outside/missing.rst: not among the imported files" in reason
+    assert "doc/build/index.rst" not in problems
+    assert not ProblemCode.MARKUP.is_skip
+    assert "doc/build/orm/session.rst" in {a.path for a in world.catalog.stored[0].articles}
+
+
+async def test_a_txt_file_is_an_article_only_when_a_path_names_txt(tmp_path: Path) -> None:
+    world = _rst_world(tmp_path, _sphinx_files(), selection=PathSelection.of(["doc/build/*.txt"]))
+
+    await world.run(make_job(), world.progress)
+
+    (article,) = world.catalog.stored[0].articles
+    assert (article.path, article.title) == ("doc/build/changelog.txt", "Changelog")
+
+
+async def test_a_converted_article_is_keyed_by_its_includes_not_its_blob(tmp_path: Path) -> None:
+    page = b"Page\n====\n\n.. include:: part.rst\n"
+    (tmp_path / "1").mkdir()
+    (tmp_path / "2").mkdir()
+    first = _rst_world(tmp_path / "1", {"docs/page.rst": page, "docs/part.rst": b"One.\n"})
+    second = _rst_world(tmp_path / "2", {"docs/page.rst": page, "docs/part.rst": b"Two.\n"})
+
+    for world in (first, second):
+        await world.run(make_job(), world.progress)
+
+    keys = [
+        next(a for a in w.catalog.stored[0].articles if a.path == "docs/page.rst").blob_sha
+        for w in (first, second)
+    ]
+    assert keys[0] != keys[1]
+    assert keys[0] != git_blob_sha(page)
+    assert all(len(key) == 64 for key in keys)
+
+
+async def test_includes_count_toward_the_import_byte_budget(tmp_path: Path) -> None:
+    page = b"Page\n====\n\n" + b".. include:: part.rst\n\n" * 3
+    part = b"x" * 400 + b"\n"
+    world = _rst_world(
+        tmp_path,
+        {"docs/page.rst": page, "docs/part.rst": part},
+        selection=PathSelection.of(["docs/page.rst"]),
+        max_import_bytes=len(page) + 2 * len(part),
+    )
+
+    with pytest.raises(ImportTooLargeError):
+        await world.run(make_job(), world.progress)
+
+
+async def test_without_a_converter_restructuredtext_is_skipped_with_a_reason(
+    tmp_path: Path,
+) -> None:
+    world = build_world(tmp_path, {"docs/a.rst": b"A\n=\n", "docs/b.md": b"# B\n"})
+
+    await world.run(make_job(), world.progress)
+
+    assert [a.path for a in world.catalog.stored[0].articles] == ["docs/b.md"]
+    assert [(p, c) for p, c, _ in world.progress.problems] == [
+        ("docs/a.rst", ProblemCode.UNREADABLE)
+    ]

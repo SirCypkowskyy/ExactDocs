@@ -910,6 +910,16 @@ class SqliteLibraryModes:
             rows = (await connection.execute(query)).all()
         return {row.library: _stored_budgets(row) for row in rows}
 
+    async def ai_disabled(self) -> frozenset[str]:
+        """Read which libraries have AI turned off, in one query.
+
+        Returns:
+            The case-folded IDs of the libraries whose AI is off.
+        """
+        query = select(library_settings.c.library).where(library_settings.c.ai_enabled == 0)
+        async with self.engine.connect() as connection:
+            return frozenset((await connection.execute(query)).scalars())
+
     async def forget(self, library: str) -> None:
         """Delete the library's row.
 

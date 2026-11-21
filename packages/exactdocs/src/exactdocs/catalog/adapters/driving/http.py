@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
-from exactdocs.catalog.constants import _ASSET_HEADERS, _SVG
+from exactdocs.catalog.constants import _ASSET_HEADERS, _SVG, ARTICLE_SORT_FIELDS
 from exactdocs.catalog.dtos import (
     Article,
     ArticleList,
@@ -19,6 +19,7 @@ from exactdocs.catalog.dtos import (
     ListArticlesQuery,
     ListLibrariesQuery,
     ListTagsQuery,
+    ListVersionsQuery,
     PinDefaultVersionCommand,
     RenameAnswer,
     RenameDirection,
@@ -28,6 +29,8 @@ from exactdocs.catalog.dtos import (
     TagFilter,
     TagList,
     UpdateLibraryCommand,
+    VersionList,
+    VersionListQuery,
 )
 from exactdocs.catalog.models import TagMatch
 from exactdocs.catalog.ports.driving import (
@@ -37,12 +40,13 @@ from exactdocs.catalog.ports.driving import (
     ListArticles,
     ListLibraries,
     ListTags,
+    ListVersions,
     PinDefaultVersion,
     ResolveRenamedPath,
     ResolveVersion,
     UpdateLibrary,
 )
-from exactdocs_kernel import DEFAULT_LIMIT, MAX_PATH, MAX_TAG_LENGTH, MAX_TAGS
+from exactdocs_kernel import DEFAULT_LIMIT, MAX_NAME, MAX_PATH, MAX_TAG_LENGTH, MAX_TAGS
 
 
 def build_router(
@@ -50,6 +54,7 @@ def build_router(
     list_libraries: ListLibraries,
     get_library: GetLibrary,
     resolve_version: ResolveVersion,
+    list_versions: ListVersions,
     list_articles: ListArticles,
     list_tags: ListTags,
     get_article: GetArticle,
@@ -64,6 +69,7 @@ def build_router(
         list_libraries: Lists the libraries, a page at a time.
         get_library: Reads one library.
         resolve_version: Resolves a library ID with a ref.
+        list_versions: Lists a library's versions.
         list_articles: Lists a version's articles.
         list_tags: Lists a version's tags.
         get_article: Reads one article.
@@ -78,16 +84,20 @@ def build_router(
     router = APIRouter(prefix="/libraries", tags=["catalog"])
     router.include_router(_asset_router(get_asset))
     router.include_router(_default_router(pin_default_version))
+    router.include_router(_versions_router(list_versions))
 
     @router.get("")
     async def list_all(query: Annotated[ListLibrariesQuery, Query()]) -> LibraryList:
-        """List the libraries, sorted by ID, a page at a time.
+        """List the libraries the caller may read, a page at a time; sort by ID unless told.
+
+        Filter with `q`, `has_versions`, `ai_enabled`, `updated_after` and `updated_before`;
+        `total` counts every match (never a library hidden from the caller).
 
         Args:
-            query: The page size and the cursor of the previous page.
+            query: The filters, the sort, the page size and the cursor of the previous page.
 
         Returns:
-            The page, with its next cursor.
+            The page, with its next cursor and the total.
         """
         return await list_libraries(query)
 
@@ -170,6 +180,23 @@ def build_router(
         tags_match: Annotated[
             TagMatch, Query(description="`any` (default): one of the tags; `all`: every tag.")
         ] = TagMatch.ANY,
+        q: Annotated[
+            str | None,
+            Query(
+                max_length=MAX_NAME,
+                description="Only articles whose path or title contains this text (any case).",
+            ),
+        ] = None,
+        sort: Annotated[
+            str | None,
+            Query(
+                max_length=MAX_NAME,
+                description=(
+                    f"Sort by one of {', '.join(ARTICLE_SORT_FIELDS)}; prefix `-` for "
+                    "descending. Default: `path`. An unknown field is a 422."
+                ),
+            ),
+        ] = None,
         limit: Limit = DEFAULT_LIMIT,
         cursor: str | None = None,
     ) -> ArticleList:
@@ -182,6 +209,8 @@ def build_router(
             path_prefix: Only paths inside this directory.
             tags: Only articles with these tags.
             tags_match: `any` or `all` of the tags.
+            q: Text the path or title contains.
+            sort: The sort field, `-` for descending.
             limit: How many articles per page.
             cursor: The previous page's `next_cursor`.
 
@@ -196,6 +225,8 @@ def build_router(
                 tags=[t for value in tags or [] for t in value.split(",") if t.strip()],
                 match=tags_match,
             ),
+            q=q,
+            sort=sort,
             limit=limit,
             cursor=cursor,
         )
@@ -301,6 +332,41 @@ def build_router(
             )
         )
         return RenameAnswer(renamed=found)
+
+    return router
+
+
+def _versions_router(list_versions: ListVersions) -> APIRouter:
+    """Build the route that lists a library's versions.
+
+    Args:
+        list_versions: Lists a library's versions.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["catalog"])
+
+    @router.get("/{owner}/{repo}/versions")
+    async def list_all_versions(
+        owner: str, repo: str, query: Annotated[VersionListQuery, Query()]
+    ) -> VersionList:
+        """List a library's versions, sorted by ref unless told, a page at a time.
+
+        Filter with `q`, `kind`, `origin`, `imported_after` and `imported_before`; `total` counts
+        every match.
+
+        Args:
+            owner: The library ID's owner.
+            repo: The library ID's repository.
+            query: The filters, the sort, the page size and the cursor of the previous page.
+
+        Returns:
+            The page, its next cursor and the total.
+        """
+        return await list_versions(
+            ListVersionsQuery(id=f"/{owner}/{repo}", **query.model_dump(exclude_unset=True))
+        )
 
     return router
 

@@ -7,10 +7,18 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Self
 
-from exactdocs.catalog.models import Access, ManifestId, ManifestInstruction
+from exactdocs.catalog.constants import SCAN_PAGE
+from exactdocs.catalog.models import (
+    Access,
+    ManifestEntry,
+    ManifestId,
+    ManifestInstruction,
+    TagSelection,
+)
 from exactdocs.catalog.ports.driven import (
     AccessPolicy,
     ArticleTitleFinder,
+    EntrySearch,
     ImportedTagWriter,
     InstructionFileReader,
     LibraryRepository,
@@ -42,6 +50,7 @@ from exactdocs.catalog.ports.driving import (
     ListLibraries,
     ListRenames,
     ListTags,
+    ListVersions,
     PinDefaultVersion,
     RemoveLibrary,
     RemoveVersion,
@@ -78,6 +87,7 @@ from exactdocs.catalog.use_cases import (
     ListLibrariesUseCase,
     ListRenamesUseCase,
     ListTagsUseCase,
+    ListVersionsUseCase,
     ManualTagger,
     PinDefaultVersionUseCase,
     RemoveLibraryUseCase,
@@ -91,7 +101,7 @@ from exactdocs.catalog.use_cases import (
     StoreManifestUseCase,
     UpdateLibraryUseCase,
 )
-from exactdocs_kernel import Clock, SystemClock
+from exactdocs_kernel import Clock, Sort, SortValue, SystemClock, is_after
 
 
 class _NoInstructions:
@@ -166,6 +176,106 @@ class _EveryoneMayDoAnything:
         del library
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _ScannedEntries:
+    """The default ``entry_search`` of ``build``: reads every entry and sorts them in memory."""
+
+    manifests: ManifestRepository
+    """Where the entries are read from."""
+
+    async def _all(
+        self, manifest_id: ManifestId, prefix: str, tags: TagSelection, text: str | None
+    ) -> list[ManifestEntry]:
+        """Read the entries that pass the filters.
+
+        Args:
+            manifest_id: The manifest.
+            prefix: Only paths inside this directory; empty: every path.
+            tags: Only entries that pass this filter.
+            text: Only entries whose path or title contains this text, any case.
+
+        Returns:
+            The entries, sorted by path.
+        """
+        found: list[ManifestEntry] = []
+        after: str | None = None
+        needle = text.lower() if text else None
+        while page := await self.manifests.list_entries(
+            manifest_id, prefix=prefix, tags=tags, after=after, limit=SCAN_PAGE
+        ):
+            found += [
+                e
+                for e in page
+                if needle is None or needle in e.path.lower() or needle in e.title.lower()
+            ]
+            after = page[-1].path
+        return found
+
+    async def search(
+        self,
+        manifest_id: ManifestId,
+        *,
+        prefix: str,
+        tags: TagSelection,
+        text: str | None,
+        sort: Sort,
+        after: tuple[SortValue, str] | None,
+        limit: int,
+    ) -> Sequence[ManifestEntry]:
+        """Return up to ``limit`` filtered entries in ``sort`` order, after the ``after`` key.
+
+        Args:
+            manifest_id: The manifest.
+            prefix: Only paths inside this directory; empty: every path.
+            tags: Only entries that pass this filter.
+            text: Only entries whose path or title contains this text, any case.
+            sort: The order.
+            after: The sort value and path of the last entry of the previous page.
+            limit: The most entries returned.
+
+        Returns:
+            The entries in order.
+        """
+
+        def value(entry: ManifestEntry) -> SortValue:
+            """Return the entry's value of the sort field.
+
+            Args:
+                entry: The entry.
+
+            Returns:
+                Its path, lower-cased title or size.
+            """
+            return {"path": entry.path, "title": entry.title.lower(), "size": entry.size}[
+                sort.field
+            ]
+
+        ordered = sorted(
+            await self._all(manifest_id, prefix, tags, text),
+            key=lambda e: (value(e), e.path),
+            reverse=sort.descending,
+        )
+        if after is not None:
+            ordered = [e for e in ordered if is_after((value(e), e.path), after, sort=sort)]
+        return ordered[:limit]
+
+    async def count(
+        self, manifest_id: ManifestId, *, prefix: str, tags: TagSelection, text: str | None
+    ) -> int:
+        """Count the entries that ``search`` pages over.
+
+        Args:
+            manifest_id: The manifest.
+            prefix: Only paths inside this directory; empty: every path.
+            tags: Only entries that pass this filter.
+            text: Only entries whose path or title contains this text, any case.
+
+        Returns:
+            How many entries match.
+        """
+        return len(await self._all(manifest_id, prefix, tags, text))
+
+
 class _NoTitles:
     """The default ``article_titles`` of ``build``: no title is known."""
 
@@ -207,6 +317,8 @@ class CatalogModule:
     """Store a version's articles as a pending manifest; nothing changes for readers yet."""
     activate_manifest: ActivateManifest
     """Make a pending manifest what its version serves, all at once."""
+    list_versions: ListVersions
+    """Lists a library's versions, filtered and sorted."""
     list_articles: ListArticles
     """List the articles of a version (default version without a ref), sorted by path."""
     list_tags: ListTags
@@ -269,6 +381,7 @@ class CatalogModule:
         article_titles: ArticleTitleFinder | None = None,
         instruction_files: InstructionFileReader | None = None,
         access: AccessPolicy | None = None,
+        entry_search: EntrySearch | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -289,6 +402,8 @@ class CatalogModule:
             article_titles: Looks article titles up by path; none are known without it.
             instruction_files: Reads the instruction files kept with a manifest; none without it.
             access: Library roles: what the caller may do with a library; everything without it.
+            entry_search: Filters, sorts and pages entries in the store; without it every entry is
+                read through ``manifests`` and sorted in memory (for tests).
 
         Returns:
             The module, every driving port wired.
@@ -319,8 +434,12 @@ class CatalogModule:
             activate_manifest=ActivateManifestUseCase(
                 repository=repository, manifests=manifests, clock=clock
             ),
+            list_versions=ListVersionsUseCase(repository=repository, access=access),
             list_articles=ListArticlesUseCase(
-                repository=repository, manifests=manifests, access=access
+                repository=repository,
+                manifests=manifests,
+                entries=entry_search or _ScannedEntries(manifests=manifests),
+                access=access,
             ),
             list_tags=ListTagsUseCase(repository=repository, manifests=manifests, access=access),
             get_article=GetArticleUseCase(
