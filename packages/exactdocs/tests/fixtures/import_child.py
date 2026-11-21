@@ -8,6 +8,9 @@ it as JSON with the version's article paths. Every file the chunker cuts is appe
 chunk log; with ``kill after N``, the process kills itself (SIGKILL: no clean-up of any kind)
 before cutting file N + 1.
 
+With ``IMPORT_CHILD_CANCEL_AT=N`` in the environment the job is cancelled (``cancel_job``, as
+``POST /jobs/{id}/cancel`` does) while file N is cut; the JSON then also carries who cancelled it.
+
 Tests use ``big_repository`` and ``run`` (pytest and behave alike).
 """
 
@@ -16,15 +19,22 @@ import json
 import os
 import signal
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.dtos import CreateLibraryCommand, HostKind, ListArticlesQuery
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
-from exactdocs.ingestion.dtos import EnqueueJobCommand, GetJobQuery, ListLibraryJobsQuery
+from exactdocs.ingestion.dtos import (
+    CancelJobCommand,
+    EnqueueJobCommand,
+    GetJobQuery,
+    ListLibraryJobsQuery,
+)
 from exactdocs.ingestion.models import ArticleChunk, ParsedArticle
+from exactdocs_kernel import NotFoundError
 from fixture_repo import git
 
 LIBRARY = "/acme/big-docs"
@@ -70,9 +80,10 @@ async def run(*args: str) -> tuple[int, str, str]:
     return process.returncode, out.decode(), err.decode()
 
 
-def _count_chunks(log: Path, kill_after: int | None) -> None:
+def _count_chunks(log: Path, kill_after: int | None, cancel: list[Callable[[], None]]) -> None:
     cut = MarkdownChunker.chunk
     seen = 0
+    cancel_at = int(os.environ.get("IMPORT_CHILD_CANCEL_AT", "0"))
 
     def chunk(self: MarkdownChunker, article: ParsedArticle) -> Sequence[ArticleChunk]:
         nonlocal seen
@@ -81,6 +92,8 @@ def _count_chunks(log: Path, kill_after: int | None) -> None:
             os.kill(os.getpid(), signal.SIGKILL)
         with log.open("a", encoding="utf-8") as out:
             out.write(f"{article.path}\n")
+        if cancel and seen == cancel_at:
+            cancel[0]()  # from the thread that cuts, so the loop is free to answer
         return cut(self, article)
 
     MarkdownChunker.chunk = chunk
@@ -99,7 +112,7 @@ async def _articles(container: Container) -> list[str]:
         cursor = page.next_cursor
 
 
-async def main(data_dir: Path, url: str, commit: str) -> None:
+async def main(data_dir: Path, url: str, commit: str, cancel: list[Callable[[], None]]) -> None:
     container = Container.build(Settings(data_dir=data_dir, import_batch_files=BATCH))
     async with container.running():
         if commit != "-":
@@ -113,20 +126,36 @@ async def main(data_dir: Path, url: str, commit: str) -> None:
                     include_paths=["docs/"],
                 )
             )
-            await container.ingestion.enqueue_job(
+            queued = await container.ingestion.enqueue_job(
                 EnqueueJobCommand(kind="import", library=LIBRARY, version="main", commit_sha=commit)
             )
+            if os.environ.get("IMPORT_CHILD_CANCEL_AT"):
+                loop = asyncio.get_running_loop()
+                command = CancelJobCommand(job_id=queued.id, by="alice")
+
+                def cancel_now() -> None:
+                    asyncio.run_coroutine_threadsafe(
+                        container.ingestion.cancel_job(command), loop
+                    ).result(30)
+
+                cancel.append(cancel_now)
         [job] = (
             await container.ingestion.list_library_jobs(ListLibraryJobsQuery(library=LIBRARY))
         ).jobs
         while job.state in {"queued", "running"}:
             await asyncio.sleep(0.05)
             job = await container.ingestion.get_job(GetJobQuery(job_id=job.id))
-        result = {"state": job.state, "done": job.done, "total": job.total}
-        sys.stdout.write(json.dumps(result | {"articles": await _articles(container)}))
+        result: dict[str, Any] = {"state": job.state, "done": job.done, "total": job.total}
+        result["cancelled_by"] = job.cancelled_by
+        try:
+            result["articles"] = await _articles(container)
+        except NotFoundError:  # the version was never published
+            result["articles"] = None
+        sys.stdout.write(json.dumps(result))
 
 
 if __name__ == "__main__":
     folder, repository, sha, chunk_log, *kill = sys.argv[1:]
-    _count_chunks(Path(chunk_log), int(kill[0]) if kill else None)
-    asyncio.run(main(Path(folder), repository, sha))
+    cancel_job: list[Callable[[], None]] = []
+    _count_chunks(Path(chunk_log), int(kill[0]) if kill else None, cancel_job)
+    asyncio.run(main(Path(folder), repository, sha, cancel_job))

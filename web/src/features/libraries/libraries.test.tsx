@@ -299,6 +299,54 @@ describe("libraries slice", () => {
     expect(screen.getByRole("status")).toHaveTextContent("1 importing");
   });
 
+  describe("cancelling a job from the list (#432)", () => {
+    const live = (over: Record<string, unknown>) =>
+      job({
+        state: "running",
+        done: 12,
+        total: 40,
+        finished_at: null,
+        cancelled_at: null,
+        cancellable: true,
+        ...over,
+      });
+
+    it.each(["running", "queued"])("cancels a %s job after a confirmation", async (state) => {
+      const latest = serve([library()], [live({ state })]);
+      const calls: string[] = [];
+      vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          calls.push(url);
+          return Response.json(live({ state, cancelled_at: "2026-11-01T10:00:05Z" }));
+        }
+        return latest(url);
+      });
+      renderPage();
+
+      await userEvent.click(await screen.findByRole("button", { name: /cancel the sync/i }));
+      expect(calls).toEqual([]);
+      await userEvent.click(screen.getByRole("button", { name: "Yes, cancel" }));
+
+      expect(calls).toEqual(["/api/v1/jobs/j1/cancel"]);
+      expect(await screen.findByText(/Cancelling after the current step/)).toBeInTheDocument();
+    });
+
+    it("hides the button from a caller without the role", async () => {
+      serve([library()], [live({ cancellable: false })]);
+      renderPage();
+
+      expect(await screen.findByText("Importing 12 of 40")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /cancel/i })).not.toBeInTheDocument();
+    });
+
+    it("says who cancelled a sync", async () => {
+      serve([library()], [job({ state: "cancelled", cancelled_by: "admin", cancellable: false })]);
+      renderPage();
+
+      expect(await screen.findByText("Sync cancelled by admin")).toBeInTheDocument();
+    });
+  });
+
   it("keeps the list when only the job status is unavailable", async () => {
     const fetchMock = vi.fn(async (url: string) =>
       url.endsWith("/v1/libraries")

@@ -1,24 +1,27 @@
 """Cancelling a job (#432): who may, which jobs, and what a cancelled job becomes."""
 
 from datetime import UTC, datetime
+from typing import Any, cast
 
 import pytest
 
 from cancelling import WHO, Canceller, run_job
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
-from exactdocs.ingestion.constants import IMPORT_JOB
+from exactdocs.ingestion.constants import COLLECT_JOB, IMPORT_JOB, PUSH_JOB
 from exactdocs.ingestion.dtos import CancelJobCommand, GetJobQuery, ListLibraryJobsQuery
 from exactdocs.ingestion.errors import (
     JobFinishedError,
     JobNotFoundError,
     LibraryAccessDeniedError,
 )
-from exactdocs.ingestion.models import Job, JobId, JobState
+from exactdocs.ingestion.models import Job, JobId, JobKind, JobState, RefKind
 from exactdocs.ingestion.ports.driven import JobProgress
 from exactdocs.ingestion.use_cases import (
     CancelJobUseCase,
+    CollectGarbageUseCase,
     GetJobUseCase,
     ListLibraryJobsUseCase,
+    PushJobUseCase,
     RecoverJobsUseCase,
     RunJobUseCase,
     StopOnCancel,
@@ -182,3 +185,77 @@ async def test_a_job_interrupted_while_it_was_being_cancelled_ends_cancelled() -
         stored = await jobs.get(JobId(job_id))
         assert stored is not None
         assert stored.state is JobState.CANCELLED
+
+
+# ----------------------------------------------------- push and collect have no step to stop at
+
+
+class _Cancelling:
+    """What a push or a collection calls out to; the job is cancelled while it runs."""
+
+    def __init__(self, cancel: Canceller) -> None:
+        self.cancel = cancel
+        self.calls = 0
+
+    async def __call__(self, command: object) -> None:  # SyncLibrary
+        del command
+        self.calls += 1
+        await self.cancel()
+
+    async def collect(self, *, grace_seconds: int) -> None:  # Collector
+        del grace_seconds
+        self.calls += 1
+        await self.cancel()
+
+
+def _handler(kind: JobKind, work: _Cancelling):
+    if kind == PUSH_JOB:
+        return PushJobUseCase(
+            sync_library=cast("Any", work),
+            sources=cast("Any", None),
+            remote=cast("Any", None),
+            vault=cast("Any", None),
+            schedules=cast("Any", None),
+            auto_imports=cast("Any", None),
+        )
+    return CollectGarbageUseCase(collectors=[cast("Any", work)])
+
+
+def _of_kind(kind: JobKind) -> Job:
+    pushed = kind == PUSH_JOB
+    return Job.queued(
+        job_id=JobId("j1"),
+        kind=kind,
+        library=LIB,
+        version="main" if pushed else None,
+        ref_kind=RefKind.BRANCH if pushed else None,
+        now=T0,
+    )
+
+
+@pytest.mark.parametrize("kind", [PUSH_JOB, COLLECT_JOB])
+async def test_a_queued_push_or_collection_is_cancelled_and_never_runs(kind: JobKind) -> None:
+    jobs = InMemoryJobRepository()
+    await jobs.add(_of_kind(kind))
+    work = _Cancelling(Canceller(jobs, job_id="j1"))
+
+    await cancel_use_case(jobs)(CancelJobCommand(job_id="j1", by=WHO))
+    run = RunJobUseCase(
+        jobs=jobs, clock=SystemClock(), handlers={kind: _handler(kind, work)}, hooks={}
+    )
+    await run("j1")
+
+    stored = await jobs.get(JobId("j1"))
+    assert stored is not None
+    assert (stored.state, stored.cancelled_by, work.calls) == (JobState.CANCELLED, WHO, 0)
+
+
+@pytest.mark.parametrize("kind", [PUSH_JOB, COLLECT_JOB])
+async def test_a_running_push_or_collection_finishes_and_says_who_asked(kind: JobKind) -> None:
+    jobs = InMemoryJobRepository()
+    work = _Cancelling(Canceller(jobs, job_id="j1"))
+
+    ended = await run_job(jobs, _of_kind(kind), _handler(kind, work))
+
+    assert work.calls == 1  # it ran to its end: it has no step boundary to stop at
+    assert (ended.state, ended.cancelled_by) == (JobState.SUCCEEDED, WHO)
