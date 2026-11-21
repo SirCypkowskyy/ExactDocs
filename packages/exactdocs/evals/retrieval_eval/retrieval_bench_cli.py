@@ -32,11 +32,11 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.local_models import model_folder, read_marker
 from exactdocs.bootstrap.settings import (
     AiSettings,
+    ChatRoleSettings,
     EmbeddingRoleSettings,
     JudgeSettings,
     ProviderSettings,
     RerankerSettings,
-    RoleSettings,
     Settings,
 )
 from exactdocs.retrieval.dtos import GetLibraryRetrievalQuery
@@ -215,7 +215,7 @@ def ai_for(config: BenchConfig, models: Models) -> AiSettings | str:
     """
     hosted = models.hosted
     providers = dict(hosted.providers)
-    embedding, llm = EmbeddingRoleSettings(), RoleSettings()
+    embedding, llm = EmbeddingRoleSettings(), ChatRoleSettings()
     reranker, judge = RerankerSettings(), JudgeSettings()
     needs: list[str] = []
     local: list[str] = []

@@ -46,6 +46,7 @@ from exactdocs.retrieval.ports.driven import (
     ProviderProfiles,
     RenamedPaths,
     RetrievalPipeline,
+    RoleThinkingLevels,
     SearchableVersions,
     SearchIndex,
     SearchIndexMaintenance,
@@ -90,6 +91,7 @@ from exactdocs.retrieval.ports.driving import (
     SearchAllLibraries,
     SearchDocs,
     SetLibraryRetrieval,
+    SetRoleThinking,
 )
 from exactdocs.retrieval.use_cases import (
     AgentAnswerCaching,
@@ -126,6 +128,7 @@ from exactdocs.retrieval.use_cases import (
     NoModelFactory,
     NoSpendLedger,
     NoStoredProfiles,
+    NoStoredThinking,
     OpenEmbeddingSpaceUseCase,
     PlanEmbeddingUseCase,
     PriceBook,
@@ -143,6 +146,7 @@ from exactdocs.retrieval.use_cases import (
     SearchAllLibrariesUseCase,
     SearchDocsUseCase,
     SetLibraryRetrievalUseCase,
+    SetRoleThinkingUseCase,
     UnrecordedAgentReads,
     UntracedSearches,
 )
@@ -234,6 +238,8 @@ class RetrievalModule:
     """One minimal call per instance role (``exactdocs ai check``)."""
     list_roles: ListRoles
     """The instance's roles."""
+    set_role_thinking: SetRoleThinking
+    """Sets an instance role's thinking level over the REST API (#421)."""
     open_embedding_space: OpenEmbeddingSpace
     """Finds the embedding space of a model, or creates one when the model changed."""
     plan_embedding: PlanEmbedding
@@ -268,6 +274,7 @@ class RetrievalModule:
         roles: ModelRoles | None = None,
         configured_profiles: Sequence[ProviderProfile] = (),
         stored_profiles: ProviderProfiles | None = None,
+        thinking_levels: RoleThinkingLevels | None = None,
         instance_roles: InstanceRoles | None = None,
         models: ModelFactory | None = None,
         secret_box: SecretBox | None = None,
@@ -330,6 +337,8 @@ class RetrievalModule:
             configured_profiles: The provider profiles of the environment and the configuration
                 file, read-only.
             stored_profiles: The provider profiles stored over the REST API; none without it.
+            thinking_levels: The roles' thinking levels stored over the REST API; none
+                without it.
             instance_roles: The instance's model roles.
             models: Builds callable models; nothing can be called without it.
             secret_box: Seals keys sent over the REST API; they are refused without it.
@@ -393,6 +402,7 @@ class RetrievalModule:
             library_modes=library_modes,
             factory=models or NoModelFactory(),
             box=secret_box,
+            thinking_levels=thinking_levels or NoStoredThinking(),
         )
         ai_spend = AiSpend(
             ledger=spend or NoSpendLedger(),
@@ -575,6 +585,7 @@ class RetrievalModule:
             check_provider=CheckProviderUseCase(providers=providers),
             check_roles=CheckRolesUseCase(providers=providers),
             list_roles=ListRolesUseCase(providers=providers),
+            set_role_thinking=SetRoleThinkingUseCase(providers=providers),
             open_embedding_space=OpenEmbeddingSpaceUseCase(vectors=vectors, clock=clock),
             plan_embedding=PlanEmbeddingUseCase(runs=runs, versions=searchable),
             embed_batch=EmbedBatchUseCase(runs=runs),

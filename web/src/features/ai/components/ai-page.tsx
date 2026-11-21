@@ -7,11 +7,21 @@ import {
   aiProvidersQueryOptions,
   aiRolesQueryOptions,
   ROLE_LABEL,
+  THINKING_HINT,
+  THINKING_LABEL,
+  THINKING_LEVELS,
+  type ThinkingLevel,
 } from "@/shared/lib/ai-queries";
 import { absoluteTime, absoluteTimeWithZone } from "@/shared/lib/time";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { Button } from "@/shared/ui/button";
-import { aiUsageQueryOptions, checkProvider, embeddingProgressQueryOptions } from "../api/ai";
+import { SelectField } from "@/shared/ui/select-field";
+import {
+  aiUsageQueryOptions,
+  checkProvider,
+  embeddingProgressQueryOptions,
+  setRoleThinking,
+} from "../api/ai";
 import {
   type Budget,
   budgetWords,
@@ -134,10 +144,50 @@ function RoleList({ roles }: { roles: readonly AiRole[] }) {
             ) : (
               <span className="text-muted-foreground">Not set</span>
             )}
+            {(r.role === "llm" || r.role === "judge") && <RoleThinking role={r} name={r.role} />}
           </dd>
         </div>
       ))}
     </dl>
+  );
+}
+
+/** The thinking level of the `llm` or `judge` role: set here, unless the configuration sets it. */
+function RoleThinking({ role, name }: { role: AiRole; name: "llm" | "judge" }) {
+  const queryClient = useQueryClient();
+  const save = useMutation({
+    mutationFn: (thinking: ThinkingLevel | null) => setRoleThinking(name, thinking),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: aiRolesQueryOptions().queryKey }),
+  });
+  const own = role.own_thinking ?? "";
+  const inherited = role.thinking && !role.own_thinking ? THINKING_LABEL[role.thinking] : null;
+  const hint = role.thinking_configured
+    ? `Set in the configuration (EXACTDOCS_AI__${name.toUpperCase()}__THINKING).`
+    : THINKING_HINT;
+  const warning = role.thinking_unsupported
+    ? `Its model takes no thinking level, so its calls leave it out: ${role.thinking_unsupported}.`
+    : undefined;
+  return (
+    <div className="mt-2 max-w-sm">
+      <SelectField
+        id={`thinking-${name}`}
+        label={`${ROLE_LABEL[name]} thinking`}
+        value={own}
+        disabled={role.thinking_configured || save.isPending}
+        hint={hint}
+        error={save.isError ? explainAiError(save.error) : warning}
+        onChange={(e) => save.mutate((e.target.value || null) as ThinkingLevel | null)}
+      >
+        <option value="">
+          {inherited ? `The LLM's level (${inherited})` : "The provider's default"}
+        </option>
+        {THINKING_LEVELS.map((level) => (
+          <option key={level} value={level}>
+            {THINKING_LABEL[level]}
+          </option>
+        ))}
+      </SelectField>
+    </div>
   );
 }
 

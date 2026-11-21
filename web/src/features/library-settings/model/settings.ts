@@ -132,6 +132,7 @@ export function explainRetrievalSave(error: unknown): Problem {
     case "provider_unsupported":
     case "invalid_model":
     case "budget_above_instance":
+    case "thinking_unsupported":
       return { message: error.message };
     case "not_found":
       return { message: GONE };

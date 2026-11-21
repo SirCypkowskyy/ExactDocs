@@ -884,6 +884,35 @@ class ModelRole(StrEnum):
     JUDGE = "judge"
     """An LLM that grades candidates (#96); the ``llm`` role when it is not set."""
 
+    @property
+    def thinks(self) -> bool:
+        """Say whether the role's model takes a thinking level (#421).
+
+        Returns:
+            True for the chat roles, ``llm`` and ``judge``.
+        """
+        return self in {ModelRole.LLM, ModelRole.JUDGE}
+
+
+class ThinkingLevel(StrEnum):
+    """How much a chat model thinks before it answers (#421); unset: the provider's default.
+
+    Each provider gets its own control for the level: Google's thinking level (Gemini 3 and
+    later) or budget (Gemini 2.5), Claude's effort or budget, OpenAI's ``reasoning_effort``.
+    Thinking tokens are billed as output, and several providers default to a high level.
+    """
+
+    MINIMAL = "minimal"
+    """As little as the model allows (models without it get their lowest level)."""
+    LOW = "low"
+    """Little: enough for HyDE, a judge's ratings and a few tool calls."""
+    MEDIUM = "medium"
+    """Moderate."""
+    HIGH = "high"
+    """Much."""
+    XHIGH = "xhigh"
+    """More than high (models without it get their highest level)."""
+
 
 class RerankWith(StrEnum):
     """What reorders a search's best candidates when both are configured (#96)."""
@@ -2369,6 +2398,28 @@ class InstanceRoles:
     """HyDE and the agentic explorer."""
     judge: ModelRef | None = None
     """The LLM judge; the ``llm`` role when unset."""
+    llm_thinking: ThinkingLevel | None = None
+    """The ``llm`` role's thinking level; ``None``: the provider's default."""
+    judge_thinking: ThinkingLevel | None = None
+    """The ``judge`` role's thinking level; ``None``: the ``llm`` role's when the judge is the
+    LLM, else the provider's default."""
+
+    def thinking(self, role: ModelRole) -> ThinkingLevel | None:
+        """Read the thinking level set for ``role`` itself (no default).
+
+        Args:
+            role: The role.
+
+        Returns:
+            Its level; always ``None`` for a role that does not think.
+        """
+        match role:
+            case ModelRole.LLM:
+                return self.llm_thinking
+            case ModelRole.JUDGE:
+                return self.judge_thinking
+            case _:
+                return None
 
     def explicit(self, role: ModelRole) -> ModelRef | None:
         """Read the model set for ``role`` itself (no default).
@@ -2418,6 +2469,11 @@ class LibraryAi:
     """Its own judge instead of the instance's."""
     reranker: ModelRef | None = None
     """Its own reranker instead of the instance's."""
+    llm_thinking: ThinkingLevel | None = None
+    """Its own thinking level for the ``llm`` role (its own model or the instance's);
+    ``None``: the instance's."""
+    judge_thinking: ThinkingLevel | None = None
+    """Its own thinking level for the ``judge`` role; ``None``: the instance's."""
     rerank_top_n: int | None = None
     """How many of its best candidates the reranker reorders; ``None``: the instance's."""
     rerank_with: RerankWith | None = None
@@ -2470,6 +2526,23 @@ class LibraryAi:
             case ModelRole.JUDGE:
                 return self.judge
 
+    def thinking(self, role: ModelRole) -> ThinkingLevel | None:
+        """Read the library's own thinking level for ``role``.
+
+        Args:
+            role: The role.
+
+        Returns:
+            Its level; always ``None`` for a role that does not think.
+        """
+        match role:
+            case ModelRole.LLM:
+                return self.llm_thinking
+            case ModelRole.JUDGE:
+                return self.judge_thinking
+            case _:
+                return None
+
     @property
     def is_default(self) -> bool:
         """Say whether the library overrides nothing.
@@ -2480,6 +2553,8 @@ class LibraryAi:
         return (
             self.enabled
             and not (self.llm or self.judge or self.reranker)
+            and self.llm_thinking is None
+            and self.judge_thinking is None
             and self.rerank_top_n is None
             and self.rerank_with is None
             and not self.budgets
@@ -2516,10 +2591,16 @@ class RoleBinding:
     """Its model."""
     source: RoleSource
     """Instance, library override, or the judge's ``llm`` default."""
+    thinking: ThinkingLevel | None = None
+    """Its thinking level (#421); ``None``: the provider's default."""
 
 
 def bind_role(role: ModelRole, instance: InstanceRoles, library: LibraryAi) -> RoleBinding | None:
     """Resolve the model a role uses: the library's, else the instance's (the judge: else ``llm``).
+
+    The thinking level resolves the same way, on its own: the library's level for the role, else
+    the instance's; a judge that is the ``llm`` role with no level of its own thinks as the
+    ``llm`` role does.
 
     Args:
         role: The role.
@@ -2531,12 +2612,15 @@ def bind_role(role: ModelRole, instance: InstanceRoles, library: LibraryAi) -> R
     """
     if not library.enabled:
         return None
+    thinking = library.thinking(role) or instance.thinking(role)
     if (own := library.override(role)) is not None:
-        return RoleBinding(role=role, ref=own, source=RoleSource.LIBRARY)
+        return RoleBinding(role=role, ref=own, source=RoleSource.LIBRARY, thinking=thinking)
     if (set_ := instance.explicit(role)) is not None:
-        return RoleBinding(role=role, ref=set_, source=RoleSource.INSTANCE)
+        return RoleBinding(role=role, ref=set_, source=RoleSource.INSTANCE, thinking=thinking)
     if role is ModelRole.JUDGE and (llm := bind_role(ModelRole.LLM, instance, library)):
-        return RoleBinding(role=role, ref=llm.ref, source=RoleSource.LLM)
+        return RoleBinding(
+            role=role, ref=llm.ref, source=RoleSource.LLM, thinking=thinking or llm.thinking
+        )
     return None
 
 
