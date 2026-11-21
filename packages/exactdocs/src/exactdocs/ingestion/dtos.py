@@ -1,7 +1,8 @@
 """Data crossing the ingestion boundary (into and out of driving ports). Immutable, validated."""
 
-from collections.abc import Sequence
-from datetime import datetime
+import unicodedata
+from collections.abc import Collection, Sequence
+from datetime import UTC, datetime
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
@@ -13,12 +14,15 @@ from exactdocs.ingestion.constants import (
     DEFAULT_KEEP_LAST,
     ERROR_CODE,
     FULL_SHA,
+    JOB_SORT_FIELDS,
     MAX_CHUNK_CHARS,
     MAX_HEADING_LEVEL,
     MAX_INTERVAL_MINUTES,
     MAX_KEEP_LAST,
+    MAX_SOURCE_DESCRIPTION,
     MAX_SOURCE_REF,
     MAX_SOURCE_REFS,
+    MAX_SOURCE_TITLE,
     MAX_SOURCES,
     MAX_TAG_PATTERN,
     MAX_TAG_RULES,
@@ -60,7 +64,15 @@ from exactdocs.ingestion.models import (
     VersionOrigin,
     Webhook,
 )
-from exactdocs_kernel import DEFAULT_LIMIT, MAX_LIMIT, MAX_PATH, MAX_TAG_INPUT, MAX_TAGS, Page
+from exactdocs_kernel import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    MAX_NAME,
+    MAX_PATH,
+    MAX_TAG_INPUT,
+    MAX_TAGS,
+    Page,
+)
 
 
 class _Dto(BaseModel):
@@ -103,8 +115,8 @@ class JobSummary(_Dto):
     id: str
     """The job ID, for `/jobs/{id}`."""
     kind: str
-    """What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect` or
-    `embed`.
+    """What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect`,
+    `embed` or `push`.
     """
     library: str
     """The library ID, `/owner/repo`."""
@@ -113,7 +125,10 @@ class JobSummary(_Dto):
     commit_sha: str | None
     """The commit `version` was pinned to, if any."""
     state: JobState
-    """`queued` and `running` jobs are unfinished; `succeeded` and `failed` ones are done."""
+    """`queued` and `running` jobs are unfinished; `succeeded`, `failed` and `cancelled` ones are
+    done. A running job someone cancelled stays `running` (with `cancelled_at` set) until it
+    stops at its next step boundary.
+    """
     done: int
     """How much of `total` is done."""
     total: int
@@ -125,7 +140,9 @@ class JobSummary(_Dto):
     chunked: int
     """Chunk sets cut by an import: one per distinct new file content."""
     reused: int
-    """Articles whose chunk set an earlier import had stored (files, not blobs)."""
+    """Articles whose chunk set an earlier import had stored (files, not blobs). For `embed`, the
+    chunks another job embedded while this one ran (files shared with another library); they
+    count in `done` too, so a succeeded `embed` job has `done` = `total`."""
     parsed: int = Field(default=0)
     """Articles an import parsed."""
     taken: int = Field(default=0)
@@ -145,13 +162,22 @@ class JobSummary(_Dto):
     """When the job last started running; null while it waits."""
     finished_at: datetime | None
     """When the job ended; null while it is unfinished."""
+    cancelled_by: str | None = None
+    """The user name of who cancelled the job; null unless someone did."""
+    cancelled_at: datetime | None = None
+    """When someone asked to cancel the job; null unless someone did."""
+    cancellable: bool = False
+    """Whether the caller may cancel the job now: it is queued or running, nobody cancelled it
+    yet, and the caller has the `contributor` role on its library (operators always have).
+    """
 
     @classmethod
-    def from_model(cls, job: Job) -> Self:
+    def from_model(cls, job: Job, *, cancellable: bool = False) -> Self:
         """Map a domain entity to its boundary representation.
 
         Args:
             job: The job.
+            cancellable: Whether the caller may cancel it now.
 
         Returns:
             The job at the boundary, with its problems.
@@ -176,29 +202,39 @@ class JobSummary(_Dto):
             created_at=job.created_at,
             started_at=job.started_at,
             finished_at=job.finished_at,
+            cancelled_by=job.cancelled_by,
+            cancelled_at=job.cancelled_at,
+            cancellable=cancellable,
         )
 
 
 class JobList(_Dto):
-    """A page of the jobs of one library, newest first."""
+    """A page of jobs, newest first unless sorted otherwise."""
 
     jobs: list[JobSummary]
-    """The jobs, highest ID (newest) first."""
+    """The jobs in the requested order (highest ID, so newest, first by default)."""
     next_cursor: str | None
     """Pass as `cursor` to get the next page; null on the last page."""
+    total: int
+    """How many jobs match the filters, across every page; never counts a hidden library."""
 
     @classmethod
-    def from_page(cls, page: Page[Job]) -> Self:
+    def from_page(cls, page: Page[Job], *, cancellable: Collection[str] = ()) -> Self:
         """Map a page of domain entities.
 
         Args:
             page: The jobs and the cursor of the next page.
+            cancellable: The IDs of the jobs the caller may cancel now.
 
         Returns:
             The page at the boundary.
         """
         return cls(
-            jobs=[JobSummary.from_model(job) for job in page.items], next_cursor=page.next_cursor
+            jobs=[
+                JobSummary.from_model(job, cancellable=job.id in cancellable) for job in page.items
+            ],
+            next_cursor=page.next_cursor,
+            total=len(page.items) if page.total is None else page.total,
         )
 
 
@@ -208,15 +244,18 @@ class LatestJob(_Dto):
     id: str
     """The job ID, for `/jobs/{id}`."""
     kind: str
-    """What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect` or
-    `embed`.
+    """What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect`,
+    `embed` or `push`.
     """
     library: str
     """The library ID, `/owner/repo`."""
     version: str | None
     """The ref of the version the job is for; null for a job of the whole library."""
     state: JobState
-    """`queued` and `running` jobs are unfinished; `succeeded` and `failed` ones are done."""
+    """`queued` and `running` jobs are unfinished; `succeeded`, `failed` and `cancelled` ones are
+    done. A running job someone cancelled stays `running` (with `cancelled_at` set) until it
+    stops at its next step boundary.
+    """
     done: int
     """How much of `total` is done."""
     total: int
@@ -235,13 +274,22 @@ class LatestJob(_Dto):
     """When the job last started running; null while it waits."""
     finished_at: datetime | None
     """When the job ended; null while it is unfinished."""
+    cancelled_by: str | None = None
+    """The user name of who cancelled the job; null unless someone did."""
+    cancelled_at: datetime | None = None
+    """When someone asked to cancel the job; null unless someone did."""
+    cancellable: bool = False
+    """Whether the caller may cancel the job now: it is queued or running, nobody cancelled it
+    yet, and the caller has the `contributor` role on its library (operators always have).
+    """
 
     @classmethod
-    def from_model(cls, job: Job) -> Self:
+    def from_model(cls, job: Job, *, cancellable: bool = False) -> Self:
         """Map a domain entity, keeping the count of skipped files, not the files.
 
         Args:
             job: The job.
+            cancellable: Whether the caller may cancel it now.
 
         Returns:
             The job at the boundary, without its problems.
@@ -260,6 +308,9 @@ class LatestJob(_Dto):
             created_at=job.created_at,
             started_at=job.started_at,
             finished_at=job.finished_at,
+            cancelled_by=job.cancelled_by,
+            cancelled_at=job.cancelled_at,
+            cancellable=cancellable,
         )
 
 
@@ -294,15 +345,85 @@ class GetJobQuery(_Dto):
     """The job ID."""
 
 
-class ListLibraryJobsQuery(_Dto):
-    """One page of a library's jobs: ``limit`` items after the ``cursor`` of the previous page."""
+class CancelJobCommand(_Dto):
+    """Cancel a queued or running job."""
 
-    library: str = Field(min_length=1)
-    """The library ID, `/owner/repo`."""
+    job_id: str = Field(min_length=1)
+    """The job ID."""
+    by: str | None = Field(default=None)
+    """The user name of who cancels it; null for the instance itself."""
+
+
+class JobListQuery(_Dto):
+    """How a list of jobs is filtered, sorted and paged; every filter that is set must match."""
+
+    state: list[JobState] | None = Field(
+        default=None,
+        description="Only jobs in one of these states; repeat the parameter for several.",
+    )
+    """Only jobs in one of these states."""
+    kind: list[str] | None = Field(
+        default=None,
+        description="Only jobs of one of these kinds (`import`, `embed`, ...); repeatable.",
+    )
+    """Only jobs of one of these kinds."""
+    version: str | None = Field(
+        default=None, max_length=MAX_NAME, description="Only jobs for this exact ref."
+    )
+    """Only jobs for this exact ref."""
+    q: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description="Only jobs whose library, version or error contains this text (any case).",
+    )
+    """Text filter on the library, the version and the error."""
+    created_after: datetime | None = None
+    """Only jobs queued at or after this time (ISO 8601; no offset means UTC)."""
+    created_before: datetime | None = None
+    """Only jobs queued before this time (ISO 8601; no offset means UTC)."""
+    sort: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description=(
+            f"Sort by one of {', '.join(JOB_SORT_FIELDS)}; prefix `-` for descending. "
+            "Default: `-id` (newest first). An unknown field is a 422."
+        ),
+    )
+    """The sort field; its schema description names ``JOB_SORT_FIELDS``."""
     limit: Annotated[int, Field(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT
     """How many jobs the page holds at most."""
     cursor: str | None = None
-    """The `next_cursor` of the previous page; null for the first page."""
+    """The `next_cursor` of the previous page, which only works with the same `sort` and filters;
+    null for the first page."""
+
+    @field_validator("created_after", "created_before")
+    @classmethod
+    def _utc(cls, value: datetime | None) -> datetime | None:
+        """Read a time without an offset as UTC.
+
+        Args:
+            value: The time as sent.
+
+        Returns:
+            The time with an offset, or ``None``.
+        """
+        return value if value is None or value.tzinfo else value.replace(tzinfo=UTC)
+
+
+class ListLibraryJobsQuery(JobListQuery):
+    """One page of a library's jobs, filtered and sorted."""
+
+    library: str = Field(min_length=1)
+    """The library ID, `/owner/repo`."""
+
+
+class ListJobsQuery(JobListQuery):
+    """One page of the jobs of every library the caller may read, filtered and sorted."""
+
+    library: str | None = Field(
+        default=None, min_length=1, description="Only jobs of this library, `/owner/repo`."
+    )
+    """Only jobs of this library."""
 
 
 class GetLibraryAccessQuery(_Dto):
@@ -408,7 +529,8 @@ class AddLibraryCommand(_Dto):
     ref: str | None = Field(default=None, min_length=1, max_length=255)
     """A tag, a branch or a full or short commit SHA; omitted: the default branch."""
     include_paths: list[str] = Field(default_factory=list)
-    """Folders, files or globs to import; empty: every `.md`/`.mdx` file."""
+    """Folders, files or globs to import; empty: every `.md`/`.mdx`/`.rst` file (`.txt` only
+    when a path names it)."""
     exclude_paths: list[str] = Field(default_factory=list)
     """Folders, files or globs to leave out; they win."""
     tag_rules: list[TagRuleIn] = Field(default_factory=list, max_length=MAX_TAG_RULES)
@@ -421,7 +543,7 @@ class AddLibraryCommand(_Dto):
     """
     context7_paths: bool | None = Field(default=None)
     """Without paths, take those of the repository's root `context7.json` (null or true); false:
-    no paths mean every `.md`/`.mdx` file.
+    no paths mean every `.md`/`.mdx`/`.rst` file.
     """
 
 
@@ -1006,6 +1128,10 @@ class QueueEmbeddingCommand(_Dto):
 
     library: str | None = Field(default=None, min_length=1)
     """Only this library's versions; every library's when null."""
+    retry_cancelled: bool = Field(default=False)
+    """Also the versions whose newest embedding a person cancelled: a person asks again. The
+    start and the nightly upkeep leave those alone.
+    """
 
 
 class QueuedEmbedding(_Dto):
@@ -1046,6 +1172,20 @@ def _source_ref(ref: str) -> str:
     return ref
 
 
+def _clean_text(text: str) -> str:
+    r"""Drop control and format characters (zero-width, bidi, tags, escapes); keep \n and \t.
+
+    Args:
+        text: Text a user typed.
+
+    Returns:
+        The text without those characters.
+    """
+    return "".join(
+        c for c in text if c in "\n\t" or unicodedata.category(c) not in {"Cc", "Cf", "Co", "Cs"}
+    )
+
+
 class SourceLibrary(_Dto):
     """One library of a sources file. A setting left out is not managed: never compared or changed.
 
@@ -1071,7 +1211,7 @@ class SourceLibrary(_Dto):
     is created.
     """
     include_paths: list[str] | None = Field(default=None)
-    """Folders, files or globs to import; empty: every `.md`/`.mdx` file (the repository's
+    """Folders, files or globs to import; empty: every `.md`/`.mdx`/`.rst` file (the repository's
     `context7.json` does not fill in a managed empty list). Left out: not managed.
     """
     exclude_paths: list[str] | None = Field(default=None)
@@ -1084,6 +1224,55 @@ class SourceLibrary(_Dto):
     """The scheduled check, as a whole (what it leaves out takes its default); `false` turns it
     off. Left out: not managed.
     """
+    title: str | None = Field(default=None, min_length=1, max_length=MAX_SOURCE_TITLE)
+    """The library's title, on one line; stored like an edit by hand, so a later import keeps it.
+    Left out: not managed, and the repository's README names the library.
+    """
+    description: str | None = Field(default=None, max_length=MAX_SOURCE_DESCRIPTION)
+    """The library's description (empty: none); stored like an edit by hand, so a later import
+    keeps it. Left out: not managed, and the repository's README describes the library.
+    """
+
+    @field_validator("title")
+    @classmethod
+    def _single_line(cls, title: str | None) -> str | None:
+        """Refuse a title on several lines; drop invisible characters and collapse spaces.
+
+        The same cleaning ``PATCH /libraries/{owner}/{repo}`` does, so what is declared is what
+        is stored and a plan never shows the same title again.
+
+        Args:
+            title: The title as declared; ``None`` when left out.
+
+        Returns:
+            The cleaned title, or ``None``.
+
+        Raises:
+            ValueError: The title has a line break, or no visible text.
+        """
+        if title is None:
+            return None
+        if any(unicodedata.category(c) in {"Zl", "Zp"} or c in "\n\r\v\f\x85" for c in title):
+            message = "the title must be a single line"
+            raise ValueError(message)
+        title = " ".join(_clean_text(title).split())
+        if not title:
+            message = "the title must have visible text"
+            raise ValueError(message)
+        return title
+
+    @field_validator("description")
+    @classmethod
+    def _plain(cls, description: str | None) -> str | None:
+        """Drop invisible characters and surrounding whitespace from the description.
+
+        Args:
+            description: The description as declared; ``None`` when left out.
+
+        Returns:
+            The cleaned description, or ``None``.
+        """
+        return None if description is None else _clean_text(description).strip()
 
     @field_validator("refs")
     @classmethod
@@ -1206,6 +1395,15 @@ class ChunkingChange(_Dto):
     """As declared."""
 
 
+class TextChange(_Dto):
+    """A managed title or description as stored and as declared."""
+
+    before: str
+    """As stored."""
+    after: str
+    """As declared, cleaned the way an edit by hand is."""
+
+
 class AutoSyncChange(_Dto):
     """The managed scheduled check as it is and as declared; null is off."""
 
@@ -1228,6 +1426,10 @@ class LibraryUpdateOut(_Dto):
     """The tag rules, when they change."""
     chunking: ChunkingChange | None
     """The chunking, when it changes."""
+    title: TextChange | None
+    """The title, when it changes."""
+    description: TextChange | None
+    """The description, when it changes."""
     refs_to_add: list[str]
     """Declared refs that are neither versions nor being imported: each queues an import."""
     auto_sync: AutoSyncChange | None
@@ -1286,6 +1488,12 @@ class LibraryUpdateOut(_Dto):
                 before=ChunkingIn.of(source.chunking), after=ChunkingIn.of(declared.chunking)
             )
             if SourcesField.CHUNKING in changed and declared.chunking is not None
+            else None,
+            title=TextChange(before=source.title, after=declared.title or "")
+            if SourcesField.TITLE in changed
+            else None,
+            description=TextChange(before=source.description, after=declared.description or "")
+            if SourcesField.DESCRIPTION in changed
             else None,
             refs_to_add=list(update.refs_to_add),
             auto_sync=AutoSyncChange(
@@ -1352,6 +1560,8 @@ def declared_out(declared: DeclaredLibrary) -> SourceLibrary:
         tag_rules=None if declared.tag_rules is None else _rules_out(declared.tag_rules),
         chunking=None if declared.chunking is None else ChunkingIn.of(declared.chunking),
         auto_sync=schedule,
+        title=declared.title,
+        description=declared.description,
     )
 
 

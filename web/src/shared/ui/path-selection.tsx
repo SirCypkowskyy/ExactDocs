@@ -9,10 +9,10 @@ import {
 import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
 import { Button } from "./button";
 import { Input } from "./input";
+import { control } from "./recipes";
 
-const textarea =
-  "min-h-24 w-full scroll-mt-6 rounded-md border border-input bg-secondary px-3 py-2.5 font-mono text-[15px] leading-6 outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-muted-foreground/80 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/60 aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/25";
-const errorText = "fade-in text-sm font-medium text-destructive";
+const textarea = `${control} min-h-24 scroll-mt-6 px-3 py-2 font-mono leading-6`;
+const errorText = "fade-in text-small font-medium text-destructive";
 
 interface PathsProps {
   include: string;
@@ -80,8 +80,8 @@ export function PathFields({ include, exclude, error, onInclude, onExclude }: Pa
         <PathError id="paths-error" message={shared} />
         <p id="paths-hint" className="text-sm text-muted-foreground">
           One per line, relative to the repository root: a folder (<code>docs/</code>), a file or a
-          glob (<code>**/*.mdx</code>). Empty means every Markdown file. Leaving a path out always
-          wins.
+          glob (<code>**/*.mdx</code>). Empty means every Markdown and reStructuredText (.rst) file.
+          A .txt file needs a path that names .txt. Leaving a path out always wins.
         </p>
       </div>
     </div>

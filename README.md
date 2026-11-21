@@ -31,6 +31,10 @@ version. ExactDocs gives them your docs, at the version you use:
   `v1.4`.
 - Results are the original Markdown, verbatim, with its path, heading, commit SHA and a link to
   the file on your git host. Nothing is paraphrased.
+- Sphinx documentation in reStructuredText (`.rst`, as SQLAlchemy, behave or CPython write it)
+  imports like Markdown: headings, code blocks with their language, tables, admonitions,
+  `include` / `literalinclude` and cross-references. It is parsed with docutils; nothing is built
+  or executed.
 - It is light by default. The standard image bundles no model: it is a fast BM25 server on SQLite.
   Embeddings, rerankers and LLMs are optional, either hosted or running locally on the CPU.
 - It is context7-compatible. The MCP tools and library IDs are the same, so switching is a URL
@@ -77,6 +81,10 @@ uvx exactdocs serve
 [Getting started](docs/getting-started.md) walks through the
 same steps over REST, and covers the command line, private repositories, the sources file,
 webhooks, user accounts and sign-in through an identity provider.
+
+> [!NOTE]
+> Web hosts that cannot paste a token (Claude, ChatGPT) connect with OAuth through one of your
+> sign-in providers: set `EXACTDOCS_MCP_OAUTH_PROVIDER` ([MCP](docs/mcp.md#oauth-for-web-hosts)).
 
 > [!TIP]
 > For a local agent that only reads, `uvx exactdocs serve --stdio` needs no token, no port and no
@@ -129,7 +137,9 @@ benchmark numbers. See [Search and AI models](docs/search.md).
 - Libraries declared in an `exactdocs.sources.yaml` that you review like code: `sources plan`
   shows the diff, `sources apply` makes it.
 - Local accounts managed by an admin, and sign-in through any OpenID Connect provider (Keycloak,
-  Entra ID, Okta, Google, ADFS), with access and roles that follow the provider's groups.
+  Entra ID, Okta, Google, ADFS), OAuth2-only providers, or GitHub/GitHub Enterprise, with access
+  and roles that follow verified groups and organization/team membership. See
+  [GitHub setup](docs/configuration.md#github-and-github-enterprise-sign-in).
 - Branch versions kept fresh by hand, on a schedule or by a webhook from GitHub, GitLab or
   Bitbucket; new tags imported automatically if you want.
 - `context7.json` support, custom chunking, tags from front matter, path rules or by hand, images
@@ -267,7 +277,7 @@ Read [docs/architecture.md](docs/architecture.md) (modular monolith, ports and a
 - [x] Webhooks that sync a library on push
 - [x] Sign-in through OIDC with groups from the identity provider
 - [x] Libraries declared in an `exactdocs.sources.yaml` and applied with a dry-run diff
-- [ ] Sign-in through OAuth2-only providers and GitHub, with organization and team checks
+- [x] Sign-in through OAuth2-only providers and GitHub, with organization and team checks
 - [ ] Sharing libraries with viewer, contributor, admin and creator roles, enforced in the UI, REST and MCP
 - [ ] MCP Apps: articles and results rendered as UI in hosts that support them (Claude, ChatGPT)
 

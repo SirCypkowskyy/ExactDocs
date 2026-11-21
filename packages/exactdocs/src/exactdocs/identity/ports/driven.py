@@ -1,19 +1,23 @@
 """Driven (secondary) ports: what identity needs from infrastructure."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import Literal, Protocol
 
 from exactdocs.identity.models import (
+    AccessClaims,
     Account,
     AccountId,
     ApiToken,
+    ExternalClaims,
     ExternalGrant,
     ExternalIdentity,
     FailedSignIns,
+    LibraryGrant,
     Role,
     Session,
     SignInAttempt,
+    SubjectKind,
     Username,
 )
 
@@ -400,6 +404,20 @@ class SignInProvider(Protocol):
         """
         ...
 
+    async def verify_id_token(self, id_token: str) -> ExternalClaims:
+        """Validate an ID token this provider issued to ExactDocs and return its claims.
+
+        The checks are those of ``exchange`` except the ``nonce`` (the token comes from the MCP
+        OAuth proxy's own sign-in, long after the browser's attempt).
+
+        Args:
+            id_token: The ID token, as the provider issued it.
+
+        Returns:
+            Who the token is about, and their groups.
+        """
+        ...
+
     async def refresh(self, refresh_token: str, *, subject: str) -> ExternalGrant:
         """Use a refresh token to read the person's claims again.
 
@@ -409,6 +427,29 @@ class SignInProvider(Protocol):
 
         Returns:
             The current claims and the refresh token to keep (a rotated one, or the same).
+        """
+        ...
+
+
+class AccessAssertionVerifier(Protocol):
+    """Checks the application token Cloudflare Access puts on each request it lets through.
+
+    The adapter accepts a token only with a valid signature by a key of the team's certs, the
+    configured issuer (the team domain) and one of the configured audiences, and valid times.
+    It raises ``AccessAssertionRefusedError`` for a token that does not check out and
+    ``ProviderUnavailableError`` when the team's certs cannot be fetched. It never logs or raises
+    with a token.
+    """
+
+    async def verify(self, assertion: str) -> AccessClaims:
+        """Validate an Access application token and return who it is about.
+
+        Args:
+            assertion: The compact JWT, from the ``Cf-Access-Jwt-Assertion`` header or the
+                ``CF_Authorization`` cookie.
+
+        Returns:
+            The person or service token the token names.
         """
         ...
 
@@ -602,5 +643,97 @@ class ExternalIdentityRepository(Protocol):
 
         Returns:
             For each linked account: its provider's name and its groups, sorted.
+        """
+        ...
+
+    async def groups_of(self, account_id: AccountId) -> frozenset[str]:
+        """Return the groups of one account (empty for a local account).
+
+        Args:
+            account_id: The account.
+
+        Returns:
+            Its groups, as ExactDocs stores them.
+        """
+        ...
+
+
+class LibraryGrantRepository(Protocol):
+    """Who holds which role on which library."""
+
+    async def matching(
+        self, libraries: Collection[str], *, account_id: AccountId, groups: frozenset[str]
+    ) -> list[LibraryGrant]:
+        """Return the grants on these libraries that apply to an account or one of its groups.
+
+        Args:
+            libraries: Library IDs, lower-case.
+            account_id: The account.
+            groups: The account's groups.
+
+        Returns:
+            The grants to the account itself and to each of its groups.
+        """
+        ...
+
+    async def for_library(self, library: str) -> list[LibraryGrant]:
+        """Return every grant on a library.
+
+        Args:
+            library: The library ID, lower-case.
+
+        Returns:
+            The grants, users first, each kind by subject.
+        """
+        ...
+
+    async def get(self, library: str, kind: SubjectKind, subject: str) -> LibraryGrant | None:
+        """Return the grant of one user or group on a library, or ``None``.
+
+        Args:
+            library: The library ID, lower-case.
+            kind: Whether ``subject`` is an account ID or a group name.
+            subject: The account ID or the group name.
+
+        Returns:
+            The grant, or ``None``.
+        """
+        ...
+
+    async def put(self, grant: LibraryGrant) -> None:
+        """Store a grant, replacing the role the subject had on the library.
+
+        Args:
+            grant: The grant.
+        """
+        ...
+
+    async def remove(self, library: str, kind: SubjectKind, subject: str) -> bool:
+        """Delete one grant.
+
+        Args:
+            library: The library ID, lower-case.
+            kind: Whether ``subject`` is an account ID or a group name.
+            subject: The account ID or the group name.
+
+        Returns:
+            ``False`` when there was no such grant.
+        """
+        ...
+
+    async def claim(self, library: str, account_id: AccountId) -> None:
+        """Replace every grant on a library by the creator's, in one step.
+
+        Args:
+            library: The library ID, lower-case.
+            account_id: The creator.
+        """
+        ...
+
+    async def clear(self, library: str) -> None:
+        """Delete every grant on a library.
+
+        Args:
+            library: The library ID, lower-case.
         """
         ...

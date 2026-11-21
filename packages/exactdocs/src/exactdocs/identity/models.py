@@ -4,7 +4,7 @@ import hashlib
 import ipaddress
 import re
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -16,6 +16,8 @@ from exactdocs.identity.constants import (
     _MAX_DOUBLINGS,
     _NAT64,
     ABSOLUTE_TIMEOUT,
+    ACCESS_LOGOUT_PATH,
+    ACCESS_PROVIDER,
     FIRST_WAIT,
     FORGET_FAILURES_AFTER,
     FREE_FAILURES,
@@ -201,12 +203,19 @@ class ApiToken:
     last_used_at: datetime | None = None
     """When the token last authenticated a request; ``None`` if never used."""
 
+    library_ids: frozenset[str] | None = None
+    """Optional library selection; ``None`` allows every library the account can access."""
+
     def __post_init__(self) -> None:
         """Check the name.
 
         Raises:
             InvalidTokenNameError: The name is blank or too long.
         """
+        if self.library_ids is not None:
+            object.__setattr__(
+                self, "library_ids", frozenset(v.casefold() for v in self.library_ids)
+            )
         if not self.name.strip() or len(self.name) > MAX_TOKEN_NAME_LENGTH:
             raise InvalidTokenNameError(MAX_TOKEN_NAME_LENGTH)
 
@@ -602,3 +611,192 @@ def username_candidates(claims: ExternalClaims, provider: str) -> list[Username]
         if RESERVED_IN_USERNAME not in username.value and username not in candidates:
             candidates.append(username)
     return candidates
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AccessClaims:
+    """Who Cloudflare Access says is calling, already checked by the verifier.
+
+    A person has ``email`` and ``subject`` (Access's ``sub``, stable for the person within the
+    team); a service token has ``common_name`` (its client ID) and an empty ``subject``.
+    """
+
+    issuer: str
+    """The team domain that signed the token (its ``iss``)."""
+    subject: str
+    """The person's identifier at the team (``sub``); empty for a service token."""
+    email: str | None = None
+    """The person's email address; ``None`` for a service token."""
+    common_name: str | None = None
+    """The service token's client ID; ``None`` for a person."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AccessPolicy:
+    """Who Cloudflare Access may sign in, and as which account.
+
+    People are linked to an account by (team domain, Access ``sub``); a first visit creates the
+    account only with ``auto_create_users``. ``admin_emails`` decides their role at every visit.
+    A service token acts as the existing account its client ID is mapped to, and nothing else.
+    """
+
+    team_domain: str
+    """``https://<team>.cloudflareaccess.com``: the tokens' issuer, without a trailing slash."""
+    admin_emails: frozenset[str] = frozenset()
+    """Emails (case-folded) whose accounts are ``admin``; everyone else Access creates is
+    ``user``."""
+    auto_create_users: bool = True
+    """Create the account of a person's first visit; when off, only people linked already get in.
+    """
+    service_tokens: Mapping[str, Username] = field(default_factory=dict)
+    """Service token client ID (``common_name``) to the username of the account it acts as."""
+
+    def __post_init__(self) -> None:
+        """Normalize the team domain and the admin emails.
+
+        Raises:
+            ValueError: The team domain is not an ``https://`` origin.
+        """
+        domain = self.team_domain.rstrip("/")
+        parts = urlsplit(domain)
+        if parts.scheme != "https" or not parts.hostname or parts.path:
+            message = (
+                "the Cloudflare Access team domain must be like https://<team>.cloudflareaccess.com"
+            )
+            raise ValueError(message)
+        object.__setattr__(self, "team_domain", domain)
+        object.__setattr__(
+            self, "admin_emails", frozenset(email.strip().casefold() for email in self.admin_emails)
+        )
+
+    @property
+    def provider(self) -> str:
+        """The provider name Access accounts are linked under.
+
+        Returns:
+            ``cloudflare-access``.
+        """
+        return ACCESS_PROVIDER
+
+    @property
+    def sign_out_url(self) -> str:
+        """Where the browser goes to sign out of Access (and so of ExactDocs).
+
+        Returns:
+            The team's logout URL.
+        """
+        return f"{self.team_domain}{ACCESS_LOGOUT_PATH}"
+
+    def role_for(self, email: str) -> Role:
+        """Return the role of the person with this email.
+
+        Args:
+            email: The person's email.
+
+        Returns:
+            ``admin`` when listed in ``admin_emails``, else ``user``.
+        """
+        return Role.ADMIN if email.strip().casefold() in self.admin_emails else Role.USER
+
+
+def access_username_candidates(email: str) -> list[Username]:
+    """Return the usernames a person's first Cloudflare Access visit may take, in order.
+
+    The whole email, then its local part, then ``<local part>@cloudflare-access``; a name that is
+    not a valid username or holds ``RESERVED_IN_USERNAME`` is skipped.
+
+    Args:
+        email: The person's email.
+
+    Returns:
+        The candidates, best first.
+    """
+    local = email.partition("@")[0]
+    candidates: list[Username] = []
+    for name in (email, local, f"{local}@{ACCESS_PROVIDER}"):
+        try:
+            username = Username(name)
+        except InvalidUsernameError:
+            continue
+        if RESERVED_IN_USERNAME not in username.value and username not in candidates:
+            candidates.append(username)
+    return candidates
+
+
+class LibraryRole(StrEnum):
+    """What an account may do with one library (``viewer < contributor < admin < creator``).
+
+    ``viewer`` searches and reads. ``contributor`` also imports content (versions, syncs, tags).
+    ``admin`` also configures the library (paths, tag rules, chunking, retrieval, schedule) and
+    removes versions. ``creator`` also removes the library and grants the ``admin`` role. An
+    account's effective role on a library is the highest one it is granted, directly or through
+    a group.
+    """
+
+    VIEWER = "viewer"
+    CONTRIBUTOR = "contributor"
+    ADMIN = "admin"
+    CREATOR = "creator"
+
+    @property
+    def rank(self) -> int:
+        """Order the roles: a higher rank may do everything a lower one may.
+
+        Returns:
+            0 for ``viewer`` up to 3 for ``creator``.
+        """
+        return list(LibraryRole).index(self)
+
+    def allows(self, needed: LibraryRole) -> bool:
+        """Tell whether this role may do what ``needed`` allows.
+
+        Args:
+            needed: The lowest role that may do it.
+
+        Returns:
+            ``True`` when this role is ``needed`` or higher.
+        """
+        return self.rank >= needed.rank
+
+
+class SubjectKind(StrEnum):
+    """Whom a library grant is for."""
+
+    USER = "user"
+    GROUP = "group"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LibraryGrant:
+    """A role on one library, given to one account or to every member of one group."""
+
+    library: str
+    """The library ID (``/owner/repo``), lower-case."""
+    kind: SubjectKind
+    """Whether ``subject`` is an account ID or a group name."""
+    subject: str
+    """The account ID, or the group's name as ExactDocs stores it (``group_prefix`` included)."""
+    role: LibraryRole
+    """The role given."""
+
+
+def effective_role(grants: Iterable[LibraryGrant]) -> LibraryRole | None:
+    """Return the highest role of the grants.
+
+    Args:
+        grants: The grants that apply to one account on one library.
+
+    Returns:
+        The highest role, or ``None`` without a grant.
+    """
+    return max((grant.role for grant in grants), key=lambda role: role.rank, default=None)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LibraryCreationPolicy:
+    """An operator's instance-wide creation allowlist; empty permits operators only."""
+
+    users: frozenset[str] = frozenset()
+    """Exact stable account IDs, including verified unlinked provider:subject IDs."""
+    groups: frozenset[str] = frozenset()
+    """Exact mapped group names, including any provider prefix."""

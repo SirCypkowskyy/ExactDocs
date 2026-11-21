@@ -102,6 +102,8 @@ async def test_a_library_without_a_setting_uses_the_best_mode(plain: httpx.Async
         "ai_enabled": True,
         "llm": None,
         "judge": None,
+        "llm_thinking": None,
+        "judge_thinking": None,
         "reranker": None,
         "rerank_top_n": None,
         "effective_rerank_top_n": 32,
@@ -188,7 +190,7 @@ async def test_a_stored_mode_is_kept_and_shown_with_the_instance_mode(
         "bm25",
         "hybrid",
     )
-    assert shown["available_modes"] == ["bm25", "hybrid"]
+    assert shown["available_modes"] == ["bm25", "vector", "hybrid"]
 
     cleared = await with_embeddings.put(SETTING, json={"mode": None})
     assert (cleared.json()["mode"], cleared.json()["effective_mode"]) == (None, "bm25")

@@ -33,7 +33,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 
 from exactdocs.retrieval.errors import ProviderUnsupportedError
-from exactdocs.retrieval.models import ModelCheck, ModelRole, ProviderProfile
+from exactdocs.retrieval.models import ModelCheck, ModelRole, ProviderProfile, ThinkingLevel
 from exactdocs.retrieval.ports.driven import Reranker
 
 RUN_CODE = "run_code"
@@ -453,7 +453,22 @@ class ScriptedModels:
         del profile
         return None
 
-    async def chat_model(self, profile: ProviderProfile, model: str) -> object:
+    async def thinking_unsupported(self, profile: ProviderProfile, model: str) -> str | None:
+        """Know of no model that cannot think.
+
+        Args:
+            profile: The profile.
+            model: The model.
+
+        Returns:
+            ``None``.
+        """
+        del profile, model
+        return None
+
+    async def chat_model(
+        self, profile: ProviderProfile, model: str, *, thinking: ThinkingLevel | None = None
+    ) -> object:
         """Hand out the scripted model.
 
         Args:
@@ -463,6 +478,7 @@ class ScriptedModels:
         Returns:
             The ``FunctionModel``.
         """
+        del thinking
         self.chat_models.append(f"{profile.name}:{model}")
         return self.model
 
@@ -498,7 +514,14 @@ class ScriptedModels:
         """
         del name
 
-    async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
+    async def check(
+        self,
+        profile: ProviderProfile,
+        model: str,
+        role: ModelRole,
+        *,
+        thinking: ThinkingLevel | None = None,
+    ) -> ModelCheck:
         """Report the stand-in as working.
 
         Args:
@@ -509,6 +532,7 @@ class ScriptedModels:
         Returns:
             A passed check.
         """
+        del thinking
         return ModelCheck(role=role, profile=profile.name, model=model, ok=True)
 
 
@@ -528,3 +552,57 @@ def scripted_ai(mode: str | None = "agentic", agentic: dict[str, Any] | None = N
         "llm": {"model": "corp:explorer"},
         "agentic": agentic or {},
     }
+
+
+ANSWER_BROWSE = """\
+hits = await search_docs(query={query!r}, limit={limit})
+first = await read_chunk(library=hits[0]["library"], chunk_id=hits[0]["chunk_id"]) if hits else None
+hits
+"""
+"""What ``answering``'s agent runs: a search across its libraries and one chunk read."""
+
+
+def answering(
+    *, sources: int = 2, extra: Sequence[dict[str, str]] = (), quote: bool = True
+) -> FunctionModel:
+    """An agent that searches its libraries, reads a chunk, then answers citing the best hits.
+
+    Args:
+        sources: How many hits it cites.
+        extra: Citations it adds (``library`` and ``chunk_id``), as if it made them up or took
+            them from a library outside its scope; the guardrail must drop them.
+        quote: Quote the start of each hit's snippet (verbatim) in its citation.
+
+    Returns:
+        The model.
+    """
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        """Search first, then answer.
+
+        Args:
+            messages: The run so far.
+            info: The agent's tools.
+
+        Returns:
+            The next response.
+        """
+        results = code_results(messages)
+        if not results:
+            return run_code(ANSWER_BROWSE.format(query=question(messages), limit=max(sources, 5)))
+        hits = results[-1] if isinstance(results[-1], list) else []
+        cited = [
+            {
+                "library": hit["library"],
+                "chunk_id": hit["chunk_id"],
+                "quote": hit["snippet"][:40].strip() if quote else None,
+                "reason": f"Its section {' > '.join(hit['heading_path'])} says how.",
+            }
+            for hit in hits[:sources]
+        ]
+        cited += [{**c, "quote": None, "reason": "A guess."} for c in extra]
+        text = "Use **RetryPolicy**.\n\nIt retries failed calls." if hits else "Not documented."
+        output = info.output_tools[0].name
+        return ModelResponse(parts=[ToolCallPart(output, {"answer": text, "sources": cited})])
+
+    return FunctionModel(script, model_name="scripted-answerer")

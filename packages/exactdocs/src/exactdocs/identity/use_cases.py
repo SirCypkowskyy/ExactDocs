@@ -4,7 +4,7 @@ import hmac
 import logging
 import math
 import secrets
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Literal
@@ -14,6 +14,8 @@ from pydantic import SecretStr
 
 from exactdocs.identity.constants import (
     ABSOLUTE_TIMEOUT,
+    ACCESS_LINK_LIFETIME,
+    ACCESS_LINK_REFRESH,
     CODE_VERIFIER_BYTES,
     IDLE_TIMEOUT,
     MAX_TOKENS_PER_ACCOUNT,
@@ -29,17 +31,29 @@ from exactdocs.identity.constants import (
 )
 from exactdocs.identity.dtos import (
     AccountSummary,
+    ApiTokenIdentity,
     AuthenticateQuery,
+    ClaimLibraryCommand,
     CreateFirstAdminCommand,
     CreateTokenCommand,
     CreateUserCommand,
+    DropLibraryGrantsCommand,
     ExternalSignInResult,
     ExternalSignInStart,
+    ExternalTokenIdentity,
     FinishExternalSignInCommand,
+    GrantLibraryRoleCommand,
+    LibraryCreationQuery,
+    LibraryGrants,
+    LibraryGrantSummary,
+    LibraryRoles,
+    LibraryRolesQuery,
+    ListLibraryGrantsQuery,
     LoginForTokenCommand,
     PasswordReset,
     ResetPasswordCommand,
     RevalidationReport,
+    RevokeLibraryRoleCommand,
     SessionGrant,
     SessionState,
     SetupState,
@@ -54,15 +68,18 @@ from exactdocs.identity.dtos import (
     UserSummary,
 )
 from exactdocs.identity.errors import (
+    AccessAssertionRefusedError,
     AccountDisabledError,
     AlreadySetUpError,
     ExternalAccountError,
     ExternalSignInFailedError,
     InvalidCredentialsError,
+    InvalidGrantError,
     InvalidTokenError,
     InvalidTokenExpiryError,
     InvalidUsernameError,
     LastOperatorError,
+    LibraryRoleRequiredError,
     NotAllowedError,
     NotSetUpError,
     NotSignedInError,
@@ -73,32 +90,43 @@ from exactdocs.identity.errors import (
     SignInThrottledError,
     TooManyTokensError,
     UnknownAccountError,
+    UnknownGrantError,
     UnknownSignInProviderError,
     UnknownTokenError,
     UsernameTakenError,
     UsernameUnavailableError,
 )
 from exactdocs.identity.models import (
+    AccessClaims,
+    AccessPolicy,
     Account,
     AccountId,
     ApiToken,
     ExternalGrant,
     ExternalIdentity,
+    LibraryCreationPolicy,
+    LibraryGrant,
+    LibraryRole,
     Role,
     Session,
     SignInAttempt,
     SignInPolicy,
+    SubjectKind,
     Username,
+    access_username_candidates,
     address_key,
+    effective_role,
     hash_token,
     known_sign_in_key,
     safe_return_to,
     username_candidates,
 )
 from exactdocs.identity.ports.driven import (
+    AccessAssertionVerifier,
     AccountRepository,
     ExternalIdentityRepository,
     FailedSignInLog,
+    LibraryGrantRepository,
     PasswordHasher,
     SecretBox,
     SessionRepository,
@@ -106,7 +134,12 @@ from exactdocs.identity.ports.driven import (
     SignInProvider,
     TokenRepository,
 )
-from exactdocs.identity.ports.driving import Authenticate, CreateToken, IdentifyCaller
+from exactdocs.identity.ports.driving import (
+    Authenticate,
+    CreateToken,
+    IdentifyAccessCaller,
+    IdentifyCaller,
+)
 from exactdocs_kernel import Clock, SealedTextUnreadableError
 
 
@@ -423,7 +456,11 @@ class IdentifyCallerUseCase:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GetSessionStateUseCase:
-    """Implements ``ports.driving.GetSessionState``."""
+    """Implements ``ports.driving.GetSessionState``.
+
+    A live session cookie wins; without one, a Cloudflare Access token signs its owner in (when
+    Access is configured), and the state says so, with where to sign out of Access.
+    """
 
     accounts: AccountRepository
     """Where accounts are stored."""
@@ -431,12 +468,19 @@ class GetSessionStateUseCase:
     """Resolves the session token."""
     policies: Mapping[str, SignInPolicy] = field(default_factory=dict)
     """The configured identity providers, offered on the sign-in page."""
+    identify_access: IdentifyAccessCaller | None = None
+    """Resolves a Cloudflare Access token; ``None`` while Access is not configured."""
+    access_sign_out_url: str | None = None
+    """Where the browser signs out of Cloudflare Access."""
 
-    async def __call__(self, token: str | None) -> SessionState:
+    async def __call__(
+        self, token: str | None, access_assertion: str | None = None
+    ) -> SessionState:
         """Report the setup, signed-out or signed-in state for the token.
 
         Args:
             token: The session token, or ``None`` when the request carried none.
+            access_assertion: The Cloudflare Access token, used when no session signs anyone in.
 
         Returns:
             The setup and sign-in state, with the identity providers one may sign in with.
@@ -447,8 +491,198 @@ class GetSessionStateUseCase:
         try:
             account = await self.identify_caller(token)
         except NotSignedInError:
-            return SessionState(state="signed_out", providers=providers)
-        return SessionState(state="signed_in", account=account, providers=providers)
+            pass
+        else:
+            return SessionState(
+                state="signed_in", account=account, providers=providers, source="session"
+            )
+        if self.identify_access is not None and access_assertion:
+            try:
+                account = await self.identify_access(access_assertion)
+            except NotSignedInError:
+                pass
+            else:
+                return SessionState(
+                    state="signed_in",
+                    account=account,
+                    providers=providers,
+                    source="cloudflare_access",
+                    sign_out_url=self.access_sign_out_url,
+                )
+        return SessionState(state="signed_out", providers=providers)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IdentifyAccessCallerUseCase:
+    """Implements ``ports.driving.IdentifyAccessCaller``.
+
+    The verifier checks the token (signature by the team's keys, issuer, audience, times). A
+    person reaches the account linked to (team domain, Access ``sub``); a first visit creates it
+    when ``auto_create_users`` is on, never taking over an existing account by name. The role
+    follows ``admin_emails`` at every visit. A service token acts as the existing account its
+    client ID is mapped to. Every refusal is logged without the token and answers
+    ``NotSignedInError``, so the request falls back to the other credentials (or none).
+
+    A visit writes the account's link only when it is older than ``ACCESS_LINK_REFRESH`` or the
+    role changed: its ``access_until`` (``ACCESS_LINK_LIFETIME`` ahead) keeps the account's
+    sessions and API tokens working that long after its owner last came through Access.
+    """
+
+    verifier: AccessAssertionVerifier | None
+    """Checks the token; ``None`` while Cloudflare Access is not configured (all refused)."""
+    policy: AccessPolicy | None
+    """Who Access signs in, and as which account."""
+    accounts: AccountRepository
+    """Where accounts are stored."""
+    externals: ExternalIdentityRepository
+    """The links of external identities to accounts."""
+    clock: Clock
+    """The current time."""
+
+    async def __call__(self, assertion: str | None) -> AccountSummary:
+        """Return the account the Access token signs in, or raise ``NotSignedInError``.
+
+        Args:
+            assertion: The Access application token, or ``None`` when the request carried none.
+
+        Returns:
+            The account, with its role as of now.
+
+        Raises:
+            NotSignedInError: Access is not configured, the token is missing or refused, or it
+                names nobody with a usable account.
+        """
+        if not assertion or self.verifier is None or self.policy is None:
+            raise NotSignedInError
+        try:
+            claims = await self.verifier.verify(assertion)
+        except AccessAssertionRefusedError, ProviderUnavailableError:
+            raise NotSignedInError from None
+        if claims.common_name:
+            account = await self._service_account(self.policy, claims.common_name)
+        else:
+            account = await self._person(self.policy, claims)
+        if account is None:
+            raise NotSignedInError
+        return AccountSummary.from_model(account)
+
+    async def _service_account(self, policy: AccessPolicy, client_id: str) -> Account | None:
+        """Return the account a service token is mapped to, if it may be used.
+
+        Args:
+            policy: The Access policy.
+            client_id: The service token's client ID (``common_name``).
+
+        Returns:
+            The account; ``None`` when the token is not mapped, or its account is missing,
+            disabled or an external account whose access ended.
+        """
+        username = policy.service_tokens.get(client_id)
+        if username is None:
+            logger.info(
+                "Cloudflare Access: service token %r is not mapped to an account", client_id
+            )
+            return None
+        account = await self.accounts.get(username)
+        if account is None:
+            logger.warning(
+                "Cloudflare Access: service token %r is mapped to %r, which does not exist",
+                client_id,
+                username.value,
+            )
+            return None
+        if account.is_disabled or await _external_access_ended(
+            self.externals, account, self.clock.now()
+        ):
+            logger.info("Cloudflare Access: the account of service token %r is disabled", client_id)
+            return None
+        return account
+
+    async def _person(self, policy: AccessPolicy, claims: AccessClaims) -> Account | None:
+        """Return the account of the person the token names, creating it on a first visit.
+
+        Args:
+            policy: The Access policy.
+            claims: The checked claims.
+
+        Returns:
+            The account, with its role as of now; ``None`` when the token names no person, the
+            account is disabled or gone, or a first visit may not (or cannot) create one.
+        """
+        if not claims.subject or not claims.email:
+            logger.info("Cloudflare Access: a token names neither a person nor a service token")
+            return None
+        now = self.clock.now()
+        role = policy.role_for(claims.email)
+        link = await self.externals.get(policy.team_domain, claims.subject)
+        if link is None:
+            if not policy.auto_create_users:
+                logger.info(
+                    "Cloudflare Access: no account is linked to this person and "
+                    "auto_create_users is off"
+                )
+                return None
+            return await self._create_account(policy, claims, role, now)
+        account = await self.accounts.get_by_id(link.account_id)
+        if account is None or account.is_disabled:
+            logger.info("Cloudflare Access: the linked account is disabled or gone")
+            return None
+        if account.role != role or now - link.checked_at >= ACCESS_LINK_REFRESH:
+            until = now + ACCESS_LINK_LIFETIME
+            await self.externals.record_check(
+                replace(
+                    link, signed_in_at=now, checked_at=now, next_check_at=until, access_until=until
+                ),
+                role=role,
+                groups=frozenset(),
+            )
+        return replace(account, role=role)
+
+    async def _create_account(
+        self, policy: AccessPolicy, claims: AccessClaims, role: Role, now: datetime
+    ) -> Account | None:
+        """Create the account of a person's first visit, linked to their Access identity.
+
+        Args:
+            policy: The Access policy.
+            claims: The checked claims (a person's).
+            role: The new account's role.
+            now: The current time.
+
+        Returns:
+            The new account (or the one a concurrent first visit linked); ``None`` when every
+            username it could take is taken.
+        """
+        email = claims.email or ""
+        until = now + ACCESS_LINK_LIFETIME
+        identity = ExternalIdentity(
+            issuer=policy.team_domain,
+            subject=claims.subject,
+            account_id=AccountId(""),
+            provider=policy.provider,
+            signed_in_at=now,
+            checked_at=now,
+            next_check_at=until,
+            access_until=until,
+        )
+        for username in access_username_candidates(email):
+            account = Account(
+                id=AccountId(uuid7().hex),
+                username=username,
+                password_hash=None,
+                role=role,
+                created_at=now,
+            )
+            outcome = await self.externals.create_linked_account(
+                account, replace(identity, account_id=account.id), frozenset()
+            )
+            if outcome == "created":
+                logger.info("Cloudflare Access: created account %r", username.value)
+                return account
+            if outcome == "already_linked":
+                return await self._person(policy, claims)
+        logger.warning("Cloudflare Access: no free username for a person's first visit")
+        return None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -758,6 +992,7 @@ class CreateTokenUseCase:
             prefix=secret[:PREFIX_SHOWN],
             created_at=now,
             expires_at=command.expires_at,
+            library_ids=command.library_ids,
         )
         await self.tokens.add(token)
         return TokenGrant(**TokenSummary.from_model(token).model_dump(), token=secret)
@@ -787,7 +1022,10 @@ class LoginForTokenUseCase:
         query = AuthenticateQuery(username=command.username, password=command.password)
         account = await self.authenticate(query, client=client)
         return await self.create_token(
-            account, CreateTokenCommand(name=command.name, expires_at=command.expires_at)
+            account,
+            CreateTokenCommand(
+                name=command.name, expires_at=command.expires_at, library_ids=command.library_ids
+            ),
         )
 
 
@@ -850,7 +1088,7 @@ class IdentifyTokenUseCase:
     clock: Clock
     """The current time."""
 
-    async def __call__(self, token: str) -> AccountSummary:
+    async def __call__(self, token: str) -> ApiTokenIdentity:
         """Return the account the token acts as, or raise ``InvalidTokenError``.
 
         Args:
@@ -883,7 +1121,11 @@ class IdentifyTokenUseCase:
                 await self.tokens.touch(token_hash, now)
             except Exception:  # ruff: ignore[blind-except] - bookkeeping must not break a valid token
                 logger.warning("could not record API token use")
-        return AccountSummary.from_model(account)
+        return ApiTokenIdentity(
+            **AccountSummary.from_model(account).model_dump(),
+            token_id=found.id,
+            library_ids=found.library_ids,
+        )
 
 
 def _configured(
@@ -906,6 +1148,67 @@ def _configured(
     if provider is None or policy is None:
         raise UnknownSignInProviderError
     return provider, policy
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IdentifyExternalTokenUseCase:
+    """Implements ``ports.driving.IdentifyExternalToken``.
+
+    The provider's adapter validates the ID token; the provider's policy then decides, as at a
+    web sign-in, whether the person is admitted and with which role. A person linked to an
+    account acts as it (a disabled one is refused); anyone else acts as ``<provider>:<subject>``.
+    Nothing is created or changed: the MCP host's token is checked at every request, so a
+    disabled account loses access at the next call; the groups come from the ID token, so a group
+    change shows once the token expires and the host renews it.
+    """
+
+    providers: Mapping[str, SignInProvider]
+    """The configured identity providers, by name."""
+    policies: Mapping[str, SignInPolicy]
+    """Their policies, by name."""
+    accounts: AccountRepository
+    """Where accounts are stored."""
+    externals: ExternalIdentityRepository
+    """The links of external identities to accounts."""
+
+    async def __call__(self, provider: str, token: str) -> ExternalTokenIdentity:
+        """Validate the token and return who it acts as.
+
+        Args:
+            provider: The provider's name.
+            token: The ID token.
+
+        Returns:
+            The caller and signed groups, with the role the policy gives those groups.
+
+        Raises:
+            AccountDisabledError: The linked account is disabled.
+            ExternalSignInFailedError: The identity links an account that no longer exists.
+            NotAllowedError: The provider puts the person in no allowed group.
+        """
+        adapter, policy = _configured(self.providers, self.policies, provider)
+        claims = await adapter.verify_id_token(token)
+        link = await self.externals.get(claims.issuer, claims.subject)
+        account = None if link is None else await self.accounts.get_by_id(link.account_id)
+        if link is not None and account is None:
+            raise ExternalSignInFailedError
+        if account is not None and account.is_disabled:
+            raise AccountDisabledError
+        if not policy.admits(claims.groups):
+            logger.info("MCP OAuth through %s refused: not in an allowed group", policy.name)
+            raise NotAllowedError
+        role = policy.role_for(claims.groups).value
+        if account is not None:
+            caller = AccountSummary(id=account.id, username=account.username.value, role=role)
+        else:
+            candidates = username_candidates(claims, policy.name)
+            username = candidates[0].value if candidates else claims.subject
+            caller = AccountSummary(
+                id=f"{policy.name}:{claims.subject}", username=username, role=role
+            )
+        return ExternalTokenIdentity(
+            account=caller, groups=policy.stored_groups(claims.groups), linked=link is not None
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1303,3 +1606,336 @@ class RevalidateExternalAccountsUseCase:
         await self.externals.revoke(link.account_id, self.clock.now())
         await self.sessions.delete_for_account(link.account_id)
         return "revoked"
+
+
+async def _library_roles(
+    *,
+    accounts: AccountRepository,
+    externals: ExternalIdentityRepository,
+    grants: LibraryGrantRepository,
+    account_id: str,
+    libraries: Collection[str],
+    external_identity: ExternalTokenIdentity | None = None,
+) -> dict[str, LibraryRole]:
+    """Work out an account's effective role on each library: the highest one it holds.
+
+    An operator is ``creator`` of every library, so a library whose creator is gone, or that
+    no grant was ever made on, can still be managed. OAuth requests use only their verified
+    token's policy role and mapped groups, without writing them over stored web-account state.
+    Disabled accounts, missing linked accounts and unknown ordinary callers hold no roles.
+
+    Args:
+        accounts: Where accounts are stored.
+        externals: The links of external accounts, for their groups.
+        grants: Who holds which role on which library.
+        account_id: The account.
+        libraries: Library IDs; compared lower-case.
+        external_identity: The verified caller and groups of this OAuth request, if any.
+
+    Returns:
+        The role on each library the account has one on, by lower-case library ID.
+    """
+    wanted = {library.casefold() for library in libraries}
+    account = await accounts.get_by_id(AccountId(account_id))
+    if external_identity is not None:
+        if external_identity.account.id != account_id:
+            return {}
+        if account is None and external_identity.linked:
+            return {}
+        if account is not None and account.is_disabled:
+            return {}
+        operator = external_identity.account.role == Role.ADMIN.value
+        groups = external_identity.groups
+    else:
+        if account is None or account.is_disabled:
+            return {}
+        operator = account.is_operator
+        groups = await externals.groups_of(account.id)
+    if operator:
+        return dict.fromkeys(wanted, LibraryRole.CREATOR)
+    held: dict[str, list[LibraryGrant]] = {}
+    for grant in await grants.matching(wanted, account_id=AccountId(account_id), groups=groups):
+        held.setdefault(grant.library, []).append(grant)
+    return {library: role for library, found in held.items() if (role := effective_role(found))}
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ResolveLibraryRolesUseCase:
+    """Implements ``ports.driving.ResolveLibraryRoles``."""
+
+    accounts: AccountRepository
+    """Where accounts are stored."""
+    externals: ExternalIdentityRepository
+    """The links of external accounts, for their groups."""
+    grants: LibraryGrantRepository
+    """Who holds which role on which library."""
+
+    async def __call__(self, query: LibraryRolesQuery) -> LibraryRoles:
+        """Return the account's effective role on each library it has one on.
+
+        Args:
+            query: The account and the libraries.
+
+        Returns:
+            Library ID to role.
+        """
+        roles = await _library_roles(
+            accounts=self.accounts,
+            externals=self.externals,
+            grants=self.grants,
+            account_id=query.account_id,
+            libraries=query.libraries,
+            external_identity=query.external_identity,
+        )
+        return LibraryRoles(roles={library: role.value for library, role in roles.items()})
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ClaimLibraryUseCase:
+    """Implements ``ports.driving.ClaimLibrary``."""
+
+    grants: LibraryGrantRepository
+    """Who holds which role on which library."""
+
+    async def __call__(self, command: ClaimLibraryCommand) -> None:
+        """Make the account the library's creator; grants left on the same ID are dropped.
+
+        Args:
+            command: The account and the library.
+        """
+        await self.grants.claim(command.library.casefold(), AccountId(command.account_id))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DropLibraryGrantsUseCase:
+    """Implements ``ports.driving.DropLibraryGrants``."""
+
+    grants: LibraryGrantRepository
+    """Who holds which role on which library."""
+
+    async def __call__(self, command: DropLibraryGrantsCommand) -> None:
+        """Drop every grant on the library.
+
+        Args:
+            command: The library.
+        """
+        await self.grants.clear(command.library.casefold())
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Sharing:
+    """What the three sharing use cases have in common: who may share, and how grants read."""
+
+    accounts: AccountRepository
+    """Where accounts are stored."""
+    externals: ExternalIdentityRepository
+    """The links of external accounts, for their groups."""
+    grants: LibraryGrantRepository
+    """Who holds which role on which library."""
+
+    async def caller_role(self, caller_id: str, library: str) -> LibraryRole:
+        """Return the caller's role on the library, if it may share it at all.
+
+        Args:
+            caller_id: The account that shares.
+            library: The library ID, lower-case.
+
+        Returns:
+            The role (``admin`` or ``creator``).
+
+        Raises:
+            LibraryRoleRequiredError: The caller is not an ``admin`` of the library.
+        """
+        roles = await _library_roles(
+            accounts=self.accounts,
+            externals=self.externals,
+            grants=self.grants,
+            account_id=caller_id,
+            libraries=[library],
+        )
+        role = roles.get(library)
+        if role is None or not role.allows(LibraryRole.ADMIN):
+            raise LibraryRoleRequiredError(LibraryRole.ADMIN.value)
+        return role
+
+    async def subject_id(self, kind: SubjectKind, subject: str) -> str:
+        """Return what a grant stores for a username or a group name.
+
+        Args:
+            kind: Whether ``subject`` is a username or a group name.
+            subject: The username or group name as the caller gave it.
+
+        Returns:
+            The account's ID, or the group name.
+
+        Raises:
+            UnknownAccountError: No account has the username.
+        """
+        if kind is SubjectKind.GROUP:
+            return subject
+        account = await self.accounts.get(Username(subject))
+        if account is None:
+            raise UnknownAccountError
+        return account.id
+
+    async def listing(self, library: str) -> LibraryGrants:
+        """List the library's grants, users by their names.
+
+        Args:
+            library: The library ID, lower-case.
+
+        Returns:
+            The grants.
+        """
+        shown = []
+        for grant in await self.grants.for_library(library):
+            subject = grant.subject
+            if grant.kind is SubjectKind.USER:
+                account = await self.accounts.get_by_id(AccountId(subject))
+                subject = account.username.value if account else subject
+            shown.append(LibraryGrantSummary.from_model(grant, subject=subject))
+        return LibraryGrants(grants=shown)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GrantLibraryRoleUseCase:
+    """Implements ``ports.driving.GrantLibraryRole``."""
+
+    sharing: Sharing
+    """Who may share, and how grants read."""
+
+    async def __call__(self, command: GrantLibraryRoleCommand) -> LibraryGrants:
+        """Give the user or group the role, if the caller may.
+
+        Args:
+            command: The caller, the library, whom to give a role and which.
+
+        Returns:
+            The library's grants now.
+
+        Raises:
+            LibraryRoleRequiredError: The caller is no ``admin`` of the library, or not its
+                ``creator`` while the grant gives or changes an ``admin``'s role.
+            InvalidGrantError: The subject is the library's creator.
+        """
+        library = command.library.casefold()
+        caller = await self.sharing.caller_role(command.caller_id, library)
+        kind = SubjectKind(command.kind)
+        subject = await self.sharing.subject_id(kind, command.subject)
+        held = await self.sharing.grants.get(library, kind, subject)
+        if held is not None and held.role is LibraryRole.CREATOR:
+            msg = "the creator's role is not changed here"
+            raise InvalidGrantError(msg)
+        wanted = LibraryRole(command.role)
+        touches_admin = wanted is LibraryRole.ADMIN or (
+            held is not None and held.role is LibraryRole.ADMIN
+        )
+        if touches_admin and not caller.allows(LibraryRole.CREATOR):
+            raise LibraryRoleRequiredError(LibraryRole.CREATOR.value)
+        await self.sharing.grants.put(
+            LibraryGrant(library=library, kind=kind, subject=subject, role=wanted)
+        )
+        return await self.sharing.listing(library)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RevokeLibraryRoleUseCase:
+    """Implements ``ports.driving.RevokeLibraryRole``."""
+
+    sharing: Sharing
+    """Who may share, and how grants read."""
+
+    async def __call__(self, command: RevokeLibraryRoleCommand) -> LibraryGrants:
+        """Take the role away, if the caller may.
+
+        Args:
+            command: The caller, the library and whose role goes.
+
+        Returns:
+            The library's grants now.
+
+        Raises:
+            LibraryRoleRequiredError: The caller is no ``admin`` of the library, or not its
+                ``creator`` while the role is an ``admin``'s.
+            UnknownGrantError: There is no such grant.
+            InvalidGrantError: The grant is the creator's.
+        """
+        library = command.library.casefold()
+        caller = await self.sharing.caller_role(command.caller_id, library)
+        kind = SubjectKind(command.kind)
+        subject = await self.sharing.subject_id(kind, command.subject)
+        held = await self.sharing.grants.get(library, kind, subject)
+        if held is None:
+            raise UnknownGrantError
+        if held.role is LibraryRole.CREATOR:
+            msg = "the creator's role is not taken away here"
+            raise InvalidGrantError(msg)
+        if held.role is LibraryRole.ADMIN and not caller.allows(LibraryRole.CREATOR):
+            raise LibraryRoleRequiredError(LibraryRole.CREATOR.value)
+        await self.sharing.grants.remove(library, kind, subject)
+        return await self.sharing.listing(library)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ListLibraryGrantsUseCase:
+    """Implements ``ports.driving.ListLibraryGrants``."""
+
+    sharing: Sharing
+    """Who may share, and how grants read."""
+
+    async def __call__(self, query: ListLibraryGrantsQuery) -> LibraryGrants:
+        """List the library's grants, if the caller is an admin of it.
+
+        Args:
+            query: The caller and the library.
+
+        Returns:
+            The grants.
+        """
+        library = query.library.casefold()
+        await self.sharing.caller_role(query.caller_id, library)
+        return await self.sharing.listing(library)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CanCreateLibraryUseCase:
+    """Implements ``ports.driving.CanCreateLibrary`` using current trusted identity state."""
+
+    accounts: AccountRepository
+    """Where accounts are stored."""
+    externals: ExternalIdentityRepository
+    """Current stored provider groups for ordinary credentials."""
+    policy: LibraryCreationPolicy | None = None
+    """None preserves creation by every authenticated caller; empty allows operators only."""
+
+    async def __call__(self, query: LibraryCreationQuery) -> bool:
+        """Resolve permission without accepting display names or stale OAuth groups.
+
+        Args:
+            query: The stable caller and optional verified OAuth principal.
+
+        Returns:
+            Whether the valid caller is an operator or matches the creation policy.
+        """
+        account = await self.accounts.get_by_id(AccountId(query.account_id))
+        principal = query.external_identity
+        if principal is not None:
+            if principal.account.id != query.account_id:
+                return False
+            if account is None and principal.linked:
+                return False
+            if account is not None and account.is_disabled:
+                return False
+            operator = principal.account.role == Role.ADMIN.value
+            groups = principal.groups
+        else:
+            if account is None or account.is_disabled:
+                return False
+            operator = account.is_operator
+            groups = await self.externals.groups_of(account.id)
+        return (
+            operator
+            or self.policy is None
+            or query.account_id in self.policy.users
+            or bool(self.policy.groups.intersection(groups))
+        )

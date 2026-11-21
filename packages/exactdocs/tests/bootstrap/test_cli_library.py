@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shlex
+import sys
 from collections.abc import AsyncIterator, Coroutine
 from pathlib import Path
 from unittest.mock import patch
@@ -18,6 +19,7 @@ from exactdocs.bootstrap import cli
 from exactdocs.bootstrap.cli_library import (
     ImportFailedError,
     UsageError,
+    apply_sources,
     exit_code,
     list_libraries,
     read_secret,
@@ -811,3 +813,154 @@ def test_a_commit_ref_is_not_followed_by_its_own_short_sha(
     assert _exit(["add", "https://x.io/a/b", "--ref", sha, "--dry-run"]) == 0
     first = capsys.readouterr().out.splitlines()[0]
     assert first.startswith(f"Dry run of {sha} (commit): ")
+
+
+@pytest.mark.parametrize("library_ids", [None, [], ["/acme/docs", "/acme/api"]])
+async def test_token_creation_preserves_the_optional_library_selection(
+    transport: httpx2.ASGITransport,
+    capsys: pytest.CaptureFixture[str],
+    library_ids: list[str] | None,
+) -> None:
+    async with ApiClient("http://localhost", transport=transport) as api:
+        await api.sign_in("ada", HORSE)
+        await token_create(api, "selected", None, as_json=True, library_ids=library_ids)
+        created = json.loads(capsys.readouterr().out)
+        await api.sign_out()
+    assert created["library_ids"] == (None if library_ids is None else sorted(library_ids))
+
+
+def test_token_create_accepts_repeated_library_options(server: Recorder) -> None:
+    server.routes = {
+        ("POST", "/api/v1/session"): [httpx2.Response(201, json=SESSION)],
+        ("POST", "/api/v1/tokens"): [
+            httpx2.Response(201, json={"id": "id", "name": "ci", "token": "secret"})
+        ],
+        ("DELETE", "/api/v1/session"): [httpx2.Response(204)],
+    }
+    assert (
+        _exit(
+            [
+                "token",
+                "create",
+                "ci",
+                "--library",
+                "/acme/docs",
+                "--library",
+                "/acme/api",
+                "--username",
+                "ada",
+                "--password-stdin",
+                "--json",
+            ],
+            HORSE + "\n",
+        )
+        == 0
+    )
+    assert json.loads(server.requests[1].content)["library_ids"] == ["/acme/docs", "/acme/api"]
+
+
+# #423: a table printed its header and all its rows on one line.
+
+_LIBRARY = {
+    "id": "/acme/docs",
+    "title": "Acme docs",
+    "version_count": 1,
+    "refs": [{"ref": "v1", "is_default": True}],
+}
+_TABLE_ANSWERS = {
+    "/api/v1/libraries": {
+        "libraries": [_LIBRARY, _LIBRARY | {"id": "/acme/api", "title": "Acme API"}],
+        "next_cursor": None,
+    },
+    "/api/v1/libraries/acme/docs/sync": {
+        "library_id": "/acme/docs",
+        "versions": [
+            {"ref": ref, "ref_kind": "tag", "status": "up_to_date", "commit_sha": "a" * 40}
+            for ref in ("v1", "v2")
+        ],
+    },
+    "/api/v1/tokens": {
+        "tokens": [
+            {"id": i, "name": i, "prefix": "edt_", "expires_at": None, "last_used_at": None}
+            for i in ("t1", "t2")
+        ]
+    },
+    "/api/v1/sources/apply": {
+        "plan": {"create": [], "update": [], "unchanged": [], "undeclared": [], "errors": [],
+                 "changes": 2},
+        "results": [
+            {"library_id": i, "action": "created", "jobs": ["j"], "error": None}
+            for i in ("/acme/docs", "/acme/api")
+        ],
+        "failed": 0,
+    },
+}  # fmt: skip
+_HEADERS = {
+    "libraries": "LIBRARY     VERSIONS (* default)  TITLE",
+    "sync": "REF  KIND  STATUS      COMMIT",
+    "token list": "ID  NAME  PREFIX   EXPIRES  LAST USED",
+    "sources apply": "LIBRARY     ACTION   JOBS",
+}
+
+
+@pytest.mark.parametrize("command", list(_HEADERS))
+async def test_every_table_prints_one_line_per_row(
+    command: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sources = tmp_path / "exactdocs.sources.yaml"
+    sources.write_text("version: 1\nlibraries: []\n", encoding="utf-8")
+    transport = httpx2.MockTransport(
+        lambda request: httpx2.Response(200, json=_TABLE_ANSWERS[request.url.path])
+    )
+    async with ApiClient("http://localhost", "t", transport=transport) as api:
+        match command:
+            case "libraries":
+                await list_libraries(api)
+            case "sync":
+                await sync_library(api, "/acme/docs")
+            case "token list":
+                await token_list(api, as_json=False)
+            case _:
+                await apply_sources(api, str(sources), prune=False, as_json=False)
+
+    lines = capsys.readouterr().out.splitlines()
+    assert _HEADERS[command] in lines, lines
+    assert len(lines[lines.index(_HEADERS[command]) :]) == 3, lines  # the header, two rows
+
+
+async def test_a_table_piped_to_another_program_keeps_one_line_per_row(tmp_path: Path) -> None:
+    # The real console script with its stdout a pipe, as under `docker exec` without -t.
+    answer = json.dumps(_TABLE_ANSWERS["/api/v1/libraries"]).encode()
+
+    async def serve(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(
+            b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nconnection: close\r\n"
+            + f"content-length: {len(answer)}\r\n\r\n".encode()
+            + answer
+        )
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(serve, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    env = os.environ | {"EXACTDOCS_CLIENT_CONFIG": str(tmp_path / "config.json")}
+    script = "from exactdocs.bootstrap.cli import main; main()"
+    try:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, "-c", script, "libraries",
+            "--url", f"http://127.0.0.1:{port}", "--token", "t",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env,
+        )  # fmt: skip
+        async with asyncio.timeout(60):
+            out, err = await process.communicate()
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert process.returncode == 0, err
+    assert out.decode().splitlines() == [
+        "LIBRARY     VERSIONS (* default)  TITLE",
+        "/acme/docs  v1*                   Acme docs",
+        "/acme/api   v1*                   Acme API",
+    ]

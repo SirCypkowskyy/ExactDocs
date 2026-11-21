@@ -41,6 +41,10 @@ class ClientError(Exception):
     """Something the user can fix; ``str(error)`` is the whole message, safe to print."""
 
 
+class ClientTimeoutError(ClientError):
+    """The server did not answer in time; it may still be doing what it was asked."""
+
+
 def config_path(env: Mapping[str, str] = os.environ) -> Path:
     """Return the credentials file: ``EXACTDOCS_CLIENT_CONFIG`` or the user config dir's file.
 
@@ -383,25 +387,42 @@ class ApiClient:
         """
         await self._http.aclose()
 
-    async def _send(self, method: str, path: str, **kwargs: Any) -> httpx2.Response:  # ruff: ignore[any-type]
+    async def _send(
+        self,
+        method: str,
+        path: str,
+        *,
+        read_timeout: float | None = None,
+        **kwargs: Any,  # ruff: ignore[any-type]
+    ) -> httpx2.Response:
         """Send one request to ``/api/v1<path>``.
 
         Args:
             method: The HTTP method.
             path: The path under ``/api/v1``.
+            read_timeout: Seconds to wait for the answer once the request is sent, for a call
+                whose work grows with its input; ``TIMEOUT_SECONDS`` when None. Connecting
+                and sending keep ``TIMEOUT_SECONDS``.
             **kwargs: Passed on to ``httpx2.AsyncClient.request``.
 
         Returns:
             The response, whatever its status.
 
         Raises:
-            ClientError: The server timed out, cannot be reached, or redirected the request.
+            ClientTimeoutError: The server did not answer in time.
+            ClientError: The server cannot be reached, or redirected the request.
         """
+        waits = TIMEOUT_SECONDS if read_timeout is None else read_timeout
         try:
-            response = await self._http.request(method, f"/api/v1{path}", **kwargs)
+            response = await self._http.request(
+                method,
+                f"/api/v1{path}",
+                timeout=httpx2.Timeout(TIMEOUT_SECONDS, read=waits),
+                **kwargs,
+            )
         except httpx2.TimeoutException:
-            message = f"{self.url} did not answer within {TIMEOUT_SECONDS:g} seconds"
-            raise ClientError(message) from None
+            message = f"{self.url} did not answer within {waits:g} seconds"
+            raise ClientTimeoutError(message) from None
         except httpx2.TransportError as exc:
             message = f"cannot reach {self.url} ({exc.__class__.__name__}); is the server running?"
             raise ClientError(message) from None
@@ -437,7 +458,14 @@ class ApiClient:
         message = f"{self.url} answered HTTP {response.status_code}; is it an ExactDocs server?"
         return ClientError(message)
 
-    async def request(self, method: str, path: str, **kwargs: Any) -> Any:  # ruff: ignore[any-type]
+    async def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        read_timeout: float | None = None,
+        **kwargs: Any,  # ruff: ignore[any-type]
+    ) -> Any:  # ruff: ignore[any-type]
         """Call ``/api/v1<path>``; return the decoded JSON body (``None`` for 204).
 
         An error answer raises ``ApiError`` (``ClientError`` when it is not the API's error
@@ -446,12 +474,13 @@ class ApiClient:
         Args:
             method: The HTTP method.
             path: The path under ``/api/v1``.
+            read_timeout: Seconds to wait for the answer; ``TIMEOUT_SECONDS`` when None.
             **kwargs: Passed on to ``httpx2.AsyncClient.request`` (e.g. ``json``, ``params``).
 
         Returns:
             The decoded JSON body, or ``None`` for 204.
         """
-        response = await self._send(method, path, **kwargs)
+        response = await self._send(method, path, read_timeout=read_timeout, **kwargs)
         if response.status_code == httpx2.codes.NO_CONTENT:
             return None
         try:
@@ -491,7 +520,13 @@ class ApiClient:
         raise self._error(response, body)
 
     async def login(
-        self, username: str, password: str, name: str, expires_at: datetime | None = None
+        self,
+        username: str,
+        password: str,
+        name: str,
+        expires_at: datetime | None = None,
+        *,
+        library_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """Exchange credentials for a new named API token (``POST /tokens/login``).
 
@@ -500,11 +535,14 @@ class ApiClient:
             password: Its password.
             name: The new token's name.
             expires_at: When the token expires; never when ``None``.
+            library_ids: Selected libraries; ``None`` leaves user access unrestricted.
 
         Returns:
             The decoded ``TokenGrant``, with the secret.
         """
-        body = {"username": username, "password": password, "name": name}
+        body: dict[str, Any] = {"username": username, "password": password, "name": name}
+        if library_ids is not None:
+            body["library_ids"] = library_ids
         if expires_at is not None:
             body["expires_at"] = expires_at.isoformat()
         return await self.request("POST", "/tokens/login", json=body)

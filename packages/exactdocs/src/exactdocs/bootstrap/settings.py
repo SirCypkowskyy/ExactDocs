@@ -30,6 +30,8 @@ from exactdocs.bootstrap.constants import (
 )
 from exactdocs.identity.adapters.driven.oidc import secure_url
 from exactdocs.identity.constants import PROVIDER_NAME_PATTERN
+from exactdocs.identity.errors import InvalidUsernameError
+from exactdocs.identity.models import Username
 from exactdocs.retrieval.constants import (
     DEFAULT_AGENT_CACHE_TTL_DAYS,
     DEFAULT_AGENT_REPEATED_CALLS,
@@ -62,7 +64,13 @@ from exactdocs.retrieval.constants import (
     MIN_AGENT_REPEATED_CALLS,
     SANDBOX_NOT_BELOW_TIMEOUT,
 )
-from exactdocs.retrieval.models import AnthropicPlatform, AzureAuth, RerankWith, RetrievalMode
+from exactdocs.retrieval.models import (
+    AnthropicPlatform,
+    AzureAuth,
+    RerankWith,
+    RetrievalMode,
+    ThinkingLevel,
+)
 
 
 class ProviderSettings(BaseModel):
@@ -148,6 +156,36 @@ class RoleSettings(BaseModel):
     """`<profile>:<model>`, e.g. `corp:gpt-4.1-mini`."""
 
 
+class ChatRoleSettings(RoleSettings):
+    """A chat role, ``llm`` or ``judge``: its model and its thinking level (#421)."""
+
+    thinking: ThinkingLevel | None = None
+    """`EXACTDOCS_AI__LLM__THINKING`, `EXACTDOCS_AI__JUDGE__THINKING`: how much the model thinks
+    before it answers: `minimal`, `low`, `medium`, `high` or `xhigh`, sent as the provider's own
+    setting (Google's thinking level or budget, Claude's effort or budget, OpenAI's
+    `reasoning_effort`). Thinking tokens are billed as output and several providers default to
+    a high level; HyDE, the judge and the agentic mode rarely need more than `low`. Unset: the
+    provider's default (a judge that is the LLM thinks as the LLM does). A model that cannot take
+    a level gets none, with a warning at start. Set here, it cannot be changed over the REST
+    API."""
+
+    @field_validator("thinking", mode="before")
+    @classmethod
+    def _thinking_any_case(cls, value: object) -> object:
+        """Read the level in any letter case; blank counts as unset.
+
+        Args:
+            value: The raw setting.
+
+        Returns:
+            The level in lower case, or ``None``.
+        """
+        if isinstance(value, str):
+            level = value.strip().lower()
+            return level or None
+        return value
+
+
 class RerankerSettings(RoleSettings):
     """The reranker role: ``EXACTDOCS_AI__RERANKER__<FIELD>`` or ``[ai.reranker]`` (RET-02)."""
 
@@ -162,7 +200,7 @@ class RerankerSettings(RoleSettings):
     `fallback_reason` `reranker_timeout` or `reranker_failed`)."""
 
 
-class JudgeSettings(RoleSettings):
+class JudgeSettings(ChatRoleSettings):
     """The judge role: ``EXACTDOCS_AI__JUDGE__<FIELD>`` or ``[ai.judge]`` (#96)."""
 
     timeout: float = Field(default=DEFAULT_JUDGE_TIMEOUT, gt=0, le=MAX_JUDGE_TIMEOUT)
@@ -346,8 +384,9 @@ class AiSettings(BaseModel):
 
     mode: RetrievalMode | None = None
     """`EXACTDOCS_AI__MODE`: the retrieval mode of every search that names none, for libraries
-    without their own: `bm25`, `hybrid`, `hybrid_hyde` or `agentic`. Unset (or `auto`): the best
-    default mode the configured models allow: BM25 until the eval suite makes another mode a
+    without their own: `bm25`, `vector`, `hybrid`, `hybrid_hyde` or `agentic`. Unset (or
+    `auto`): the best default mode the configured models allow: BM25 until the eval suite makes
+    another mode a
     default (docs/evals.md). A mode whose model is not configured falls back to
     the best one, and the results say so (`fallback_reason` `mode_unavailable`).
     """
@@ -358,10 +397,11 @@ class AiSettings(BaseModel):
     """The embedding role, instance-wide only (`EXACTDOCS_AI__EMBEDDING__MODEL`)."""
     reranker: RerankerSettings = Field(default_factory=RerankerSettings)
     """The reranker role (`EXACTDOCS_AI__RERANKER__MODEL`, `__TOP_N`, `__TIMEOUT`)."""
-    llm: RoleSettings = Field(default_factory=RoleSettings)
-    """The LLM role (`EXACTDOCS_AI__LLM__MODEL`)."""
+    llm: ChatRoleSettings = Field(default_factory=ChatRoleSettings)
+    """The LLM role (`EXACTDOCS_AI__LLM__MODEL`, `__THINKING`)."""
     judge: JudgeSettings = Field(default_factory=JudgeSettings)
-    """The judge role (`EXACTDOCS_AI__JUDGE__MODEL`, `__TIMEOUT`); the LLM role when unset."""
+    """The judge role (`EXACTDOCS_AI__JUDGE__MODEL`, `__TIMEOUT`, `__THINKING`); the LLM role
+    when unset."""
     rerank_with: RerankWith = RerankWith.CROSS_ENCODER
     """`EXACTDOCS_AI__RERANK_WITH`: what reranks the searches of libraries without their own
     choice: `cross_encoder` (the `reranker` role, the default: cheaper) or `judge` (the `judge`
@@ -407,14 +447,32 @@ class SignInProviderSettings(BaseModel):
 
     model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
 
-    kind: Literal["oidc"]
+    kind: Literal["oidc", "oauth2", "github"]
     """`oidc`: OpenID Connect with discovery, authorization code + PKCE S256 (Keycloak, Entra ID,
-    Okta, Google, ADFS). `oauth2` and `github` follow (#383)."""
+    Okta, Google, ADFS). `oauth2`: explicit endpoints/userinfo. `github`: OAuth App/membership."""
     display_name: str | None = None
     """What the sign-in button says (`Sign in with <display_name>`); default: the name."""
-    issuer: str
+    issuer: str = ""
     """The issuer URL, exactly as its discovery document's `issuer` says (HTTPS; plain HTTP only
     to a loopback host, for development)."""
+    authorization_url: str | None = None
+    """OAuth2 authorization endpoint (required for oauth2)."""
+    token_url: str | None = None
+    """OAuth2 token endpoint (required for oauth2)."""
+    userinfo_url: str | None = None
+    """OAuth2 authenticated userinfo endpoint (required for oauth2)."""
+    subject_claim: str = "sub"
+    """Stable OAuth2 subject claim, optionally a dotted path."""
+    client_auth_method: Literal["client_secret_basic", "client_secret_post"] = "client_secret_basic"
+    """OAuth2 token endpoint client authentication method."""
+    base_url: str = "https://github.com"
+    """GitHub web origin; GitHub Enterprise Server and *.ghe.com are supported."""
+    api_url: str | None = None
+    """Optional GitHub API URL override."""
+    allowed_orgs: list[str] = Field(default_factory=list)
+    """GitHub organizations; memberships must be active."""
+    allowed_teams: list[str] = Field(default_factory=list)
+    """GitHub teams in org/slug form; at least one is required when configured."""
     client_id: str = Field(min_length=1)
     """The client ID registered at the issuer."""
     client_secret: SecretStr | None = None
@@ -424,8 +482,8 @@ class SignInProviderSettings(BaseModel):
     scopes: list[str] = Field(
         default_factory=lambda: ["openid", "profile", "email", "offline_access"]
     )
-    """The scopes asked for; `openid` is required, `offline_access` asks for the refresh token
-    the revalidation needs."""
+    """Requested scopes: OIDC requires `openid`; OAuth2 adds `offline_access` for refresh tokens.
+    GitHub always uses `read:user read:org`."""
     username_claim: str = "preferred_username"
     """The claim naming a new account (ADFS: `upn` or `unique_name`); when absent, the local part
     of the email. Only read when the account is created."""
@@ -462,6 +520,52 @@ class SignInProviderSettings(BaseModel):
         """
         return None if isinstance(value, str) and not value.strip() else value
 
+    @model_validator(mode="before")
+    @classmethod
+    def _provider_defaults(cls, value: object) -> object:
+        """Supply protocol-specific scopes and the OAuth2 default linking issuer.
+
+        Args:
+            value: Raw provider settings.
+
+        Returns:
+            Settings with protocol defaults, leaving explicit values intact.
+        """
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        kind = data.get("kind")
+        if kind == "github":
+            data["scopes"] = ["read:user", "read:org"]
+        elif kind == "oauth2":
+            scopes = data.get("scopes", [])
+            if isinstance(scopes, list) and "offline_access" not in scopes:
+                data["scopes"] = [*scopes, "offline_access"]
+            if not data.get("issuer") and isinstance(data.get("token_url"), str):
+                parts = urlsplit(data["token_url"])
+                data["issuer"] = f"{parts.scheme}://{parts.netloc}"
+        return data
+
+    def _github_consistent(self) -> None:
+        """Validate GitHub endpoints and configured organization/team path components.
+
+        Raises:
+            ValueError: An endpoint is insecure or a membership filter is malformed.
+        """
+        if not secure_url(self.base_url) or (
+            self.api_url is not None and not secure_url(self.api_url)
+        ):
+            message = "GitHub base_url and api_url must be secure URLs"
+            raise ValueError(message)
+        for org in self.allowed_orgs:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", org):
+                message = "allowed_orgs must contain organization names"
+                raise ValueError(message)
+        for team in self.allowed_teams:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_-]*", team):
+                message = "allowed_teams must contain org/team-slug names"
+                raise ValueError(message)
+
     @model_validator(mode="after")
     def _consistent(self) -> Self:
         """Refuse a provider that would sign in nobody on purpose, or insecurely.
@@ -474,19 +578,171 @@ class SignInProviderSettings(BaseModel):
                 both secret settings are given, or nobody is admitted without
                 `allow_any_user`.
         """
-        if not secure_url(self.issuer):
+        if self.kind == "github":
+            self._github_consistent()
+        if self.kind == "oauth2":
+            endpoints = (self.authorization_url, self.token_url, self.userinfo_url)
+            if not all(isinstance(url, str) and secure_url(url) for url in endpoints):
+                message = "oauth2 requires secure authorization_url, token_url and userinfo_url"
+                raise ValueError(message)
+        if self.kind != "github" and not secure_url(self.issuer):
             message = "issuer must be an https:// URL (http:// only to a loopback host)"
             raise ValueError(message)
-        if "openid" not in self.scopes:
+        if self.kind == "oidc" and "openid" not in self.scopes:
             message = "scopes must include openid"
             raise ValueError(message)
         if self.client_secret is not None and self.client_secret_file is not None:
             message = "set client_secret or client_secret_file, not both"
             raise ValueError(message)
-        if not self.allowed_groups and not self.allow_any_user:
+        if (
+            not self.allowed_groups
+            and not self.allow_any_user
+            and not (self.kind == "github" and (self.allowed_orgs or self.allowed_teams))
+        ):
             message = "set allowed_groups, or allow_any_user = true to admit everyone"
             raise ValueError(message)
         return self
+
+
+class LibraryCreationSettings(BaseModel):
+    """Operator-managed library creation permission; supplying an empty table restricts users."""
+
+    model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
+
+    users: frozenset[str] = frozenset()
+    """Exact stable account IDs, never usernames."""
+    groups: frozenset[str] = frozenset()
+    """Exact mapped provider groups, including their configured prefixes."""
+
+
+class CloudflareAccessSettings(BaseModel):
+    """Sign people and MCP clients in by their Cloudflare Access identity.
+
+    ``[auth.cloudflare_access]`` in the TOML file, or ``EXACTDOCS_AUTH__CLOUDFLARE_ACCESS__<FIELD>``
+    in the environment, where lists and tables are JSON (``..._AUDIENCE='["<aud tag>"]'``,
+    ``..._SERVICE_TOKENS='{"<client id>": "ci-bot"}'``). Off unless the section exists. The
+    origin must then be reachable only through Access (a Cloudflare Tunnel), never directly.
+    """
+
+    model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
+
+    team_domain: str
+    """`https://<team>.cloudflareaccess.com`: the tokens' issuer; its keys are read from
+    `<team_domain>/cdn-cgi/access/certs`."""
+    audience: list[str] = Field(min_length=1)
+    """The Access application's Application Audience (AUD) tag(s); a token must name one."""
+    admin_emails: list[str] = Field(default_factory=list)
+    """Emails whose accounts are `admin` (compared case-insensitively), at every visit; everyone
+    else Access signs in is `user`."""
+    auto_create_users: bool = True
+    """Create an account at a person's first visit; when false, only people already linked get in.
+    """
+    service_tokens: dict[str, str] = Field(default_factory=dict)
+    """Service token client ID (`<id>.access`) to the username of an existing account it acts
+    as. A service token not listed here signs nobody in."""
+
+    @field_validator("team_domain")
+    @classmethod
+    def _team_domain(cls, value: str) -> str:
+        """Require an HTTPS origin (no path), without its trailing slash.
+
+        Args:
+            value: The raw team domain.
+
+        Returns:
+            The team domain, without a trailing slash.
+
+        Raises:
+            ValueError: It is not ``https://<host>``.
+        """
+        domain = value.strip().rstrip("/")
+        parts = urlsplit(domain)
+        if parts.scheme != "https" or not parts.hostname or parts.path or parts.query:
+            message = "team_domain must be like https://<team>.cloudflareaccess.com"
+            raise ValueError(message)
+        return domain
+
+    @field_validator("audience", mode="before")
+    @classmethod
+    def _one_audience(cls, value: object) -> object:
+        """Accept a single tag as a list of one.
+
+        Args:
+            value: The raw audience.
+
+        Returns:
+            A list for a text value, otherwise the value unchanged.
+        """
+        return [value] if isinstance(value, str) else value
+
+    @field_validator("audience")
+    @classmethod
+    def _audience(cls, value: list[str]) -> list[str]:
+        """Refuse blank tags.
+
+        Args:
+            value: The tags.
+
+        Returns:
+            The tags, trimmed.
+
+        Raises:
+            ValueError: A tag is blank.
+        """
+        tags = [tag.strip() for tag in value]
+        if not all(tags):
+            message = "audience tags may not be blank"
+            raise ValueError(message)
+        return tags
+
+    @field_validator("admin_emails")
+    @classmethod
+    def _emails(cls, value: list[str]) -> list[str]:
+        """Refuse what is not an email address.
+
+        Args:
+            value: The emails.
+
+        Returns:
+            The emails, trimmed.
+
+        Raises:
+            ValueError: One has no local part, no ``@`` or no domain.
+        """
+        emails = [email.strip() for email in value]
+        for email in emails:
+            local, at, domain = email.partition("@")
+            if not (local and at and domain):
+                message = f"admin_emails: {email!r} is not an email address"
+                raise ValueError(message)
+        return emails
+
+    @field_validator("service_tokens")
+    @classmethod
+    def _service_tokens(cls, value: dict[str, str]) -> dict[str, str]:
+        """Refuse a blank client ID or a username no account could have.
+
+        Args:
+            value: The client IDs and usernames.
+
+        Returns:
+            The mapping, client IDs trimmed.
+
+        Raises:
+            ValueError: A client ID is blank, or a username is not valid.
+        """
+        tokens: dict[str, str] = {}
+        for client_id, username in value.items():
+            if not client_id.strip():
+                message = "service_tokens: a client ID is blank"
+                raise ValueError(message)
+            try:
+                Username(username)
+            except InvalidUsernameError:
+                message = f"service_tokens: {username!r} is not a valid username"
+                raise ValueError(message) from None
+            tokens[client_id.strip()] = username
+        return tokens
 
 
 class AuthSettings(BaseModel):
@@ -494,11 +750,16 @@ class AuthSettings(BaseModel):
 
     model_config = ConfigDict(use_attribute_docstrings=True, frozen=True)
 
+    library_creation: LibraryCreationSettings | None = None
+    """None preserves existing creation access; an empty section permits operators only."""
     providers: dict[str, SignInProviderSettings] = Field(default_factory=dict)
     """Named identity providers (`[auth.providers.<name>]`); names are lower-case `[a-z0-9-]`.
     Configured or not decides whether external sign-in is offered; password sign-in stays."""
     revalidate_poll_seconds: float = Field(default=300, gt=0)
     """How often the server looks for external identities whose memberships are due a check."""
+    cloudflare_access: CloudflareAccessSettings | None = None
+    """Sign in by the Cloudflare Access identity of each request (`[auth.cloudflare_access]`);
+    off when unset."""
 
     @field_validator("providers")
     @classmethod
@@ -655,6 +916,13 @@ class Settings(BaseSettings):
     """Sign-in through identity providers (`[auth.providers.<name>]` in the
     `EXACTDOCS_CONFIG_FILE` TOML file, or `EXACTDOCS_AUTH__PROVIDERS__<NAME>__<FIELD>`)."""
 
+    mcp_oauth_provider: str | None = None
+    """The sign-in provider (a name under `[auth.providers]`) MCP hosts that cannot paste an API
+    token (Claude, ChatGPT) sign in through with OAuth (`EXACTDOCS_MCP_OAUTH_PROVIDER`). One only:
+    an MCP client discovers a single authorization server. API tokens keep working. Its
+    `client_id` also needs `<public_url>/auth/callback` among the redirect URIs registered at
+    the provider; the groups must be in the ID token."""
+
     @classmethod
     def settings_customise_sources(
         cls,
@@ -794,6 +1062,45 @@ class Settings(BaseSettings):
                 "EXACTDOCS_PUBLIC_URL is required once a sign-in provider is configured: it "
                 "gives the redirect URI <public_url>/api/v1/auth/<name>/callback"
             )
+            raise ValueError(message)
+        return self
+
+    @field_validator("mcp_oauth_provider", mode="before")
+    @classmethod
+    def _blank_mcp_oauth_provider_is_unset(cls, value: object) -> object:
+        """Treat a blank value as unset.
+
+        Args:
+            value: The raw setting.
+
+        Returns:
+            ``None`` for blank text, otherwise the value unchanged.
+        """
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @model_validator(mode="after")
+    def _mcp_oauth_provider_is_configured(self) -> Self:
+        """Require the MCP OAuth provider to be a configured sign-in provider with a secret.
+
+        Returns:
+            The settings, unchanged.
+
+        Raises:
+            ValueError: The name is not under ``auth.providers``, or that provider has no
+                client secret (the proxy derives its token signing key from it).
+        """
+        name = self.mcp_oauth_provider
+        if name is None:
+            return self
+        provider = self.auth.providers.get(name)
+        if provider is None:
+            message = (
+                f"EXACTDOCS_MCP_OAUTH_PROVIDER={name!r} is not a configured sign-in provider "
+                f"(configured: {', '.join(sorted(self.auth.providers)) or 'none'})"
+            )
+            raise ValueError(message)
+        if provider.client_secret is None and provider.client_secret_file is None:
+            message = f"sign-in provider {name!r} needs a client secret to serve MCP OAuth"
             raise ValueError(message)
         return self
 

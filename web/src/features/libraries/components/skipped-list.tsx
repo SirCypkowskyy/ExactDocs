@@ -11,7 +11,7 @@ function Group({ group }: { group: SkipGroup }) {
   const rest = group.files.length - SHOWN;
   return (
     <li>
-      <h4 className="text-sm font-semibold">
+      <h4 className="text-body font-semibold">
         {group.label}{" "}
         <span className="font-normal text-muted-foreground tabular-nums">
           ({group.files.length})
@@ -19,7 +19,7 @@ function Group({ group }: { group: SkipGroup }) {
       </h4>
       <ul className="mt-1.5 space-y-1">
         {files.map((f) => (
-          <li key={`${f.code}:${f.path}`} className="text-sm [overflow-wrap:anywhere]">
+          <li key={`${f.code}:${f.path}`} className="text-body [overflow-wrap:anywhere]">
             <span className="font-mono text-[13px]">{f.path}</span>
             {!group.known && (
               <span className="text-muted-foreground max-sm:mt-0.5 max-sm:block sm:ml-2">
@@ -33,7 +33,7 @@ function Group({ group }: { group: SkipGroup }) {
         <button
           type="button"
           onClick={() => setAll(true)}
-          className="mt-1 min-h-11 rounded text-sm text-muted-foreground underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+          className="mt-1 min-h-11 rounded text-body text-muted-foreground underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
         >
           Show {rest} more
         </button>
@@ -46,7 +46,7 @@ function Skipped({ summary }: { summary: ProblemSummary }) {
   const { skipGroups, skipped, truncated } = summary;
   return (
     <>
-      <p className="mt-1 text-sm text-muted-foreground">
+      <p className="mt-1 text-body text-muted-foreground">
         These were left out of the version. The rest was imported.
       </p>
       <ul className="mt-4 space-y-5">
@@ -55,7 +55,7 @@ function Skipped({ summary }: { summary: ProblemSummary }) {
         ))}
       </ul>
       {truncated && (
-        <p className="mt-4 text-sm text-muted-foreground">
+        <p className="mt-4 text-body text-muted-foreground">
           Showing the first {skipped} skipped files. More were skipped for the same kinds of
           reasons.
         </p>
@@ -84,7 +84,7 @@ export function SkippedList({ summary }: { summary: ProblemSummary }) {
           <details aria-labelledby="skipped-title">
             <summary
               id="skipped-title"
-              className="min-h-11 cursor-pointer text-lg font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="min-h-11 cursor-pointer text-section font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {title}
             </summary>
@@ -92,7 +92,7 @@ export function SkippedList({ summary }: { summary: ProblemSummary }) {
           </details>
         ) : (
           <section aria-labelledby="skipped-title">
-            <h3 id="skipped-title" className="text-lg font-semibold">
+            <h3 id="skipped-title" className="text-section font-semibold">
               {title}
             </h3>
             <Skipped summary={summary} />
@@ -100,13 +100,13 @@ export function SkippedList({ summary }: { summary: ProblemSummary }) {
         ))}
       {notes.length > 0 && (
         <section aria-labelledby="notes-title">
-          <h3 id="notes-title" className="text-lg font-semibold">
+          <h3 id="notes-title" className="text-section font-semibold">
             Imported with a note{" "}
             <span className="font-normal text-muted-foreground tabular-nums">({notes.length})</span>
           </h3>
           <ul className="mt-3 space-y-2">
             {notes.map((n) => (
-              <li key={`${n.code}:${n.path}`} className="text-sm [overflow-wrap:anywhere]">
+              <li key={`${n.code}:${n.path}`} className="text-body [overflow-wrap:anywhere]">
                 <span className="font-mono text-[13px]">{n.path}</span>
                 <span className="mt-0.5 block text-muted-foreground">{n.reason}</span>
               </li>

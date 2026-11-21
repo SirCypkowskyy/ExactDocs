@@ -1,9 +1,14 @@
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type ReactNode, useId } from "react";
+import { Search } from "lucide-react";
+import { useId } from "react";
 import { HttpError } from "@/shared/lib/http";
 import { normalizeQuery } from "@/shared/lib/search-query";
 import { cn } from "@/shared/lib/utils";
+import { Button, buttonVariants } from "@/shared/ui/button";
+import { EmptyState, Page, PageHeader } from "@/shared/ui/page";
+import { kbd } from "@/shared/ui/recipes";
+import { Commit, LibraryBullet } from "@/shared/ui/route";
 import { globalSearchQueryOptions } from "../api/global-search-queries";
 import {
   countLine,
@@ -14,18 +19,18 @@ import {
   totalMatches,
 } from "../model/global";
 import { GLOBAL_RESULTS_ID, GlobalSearchBox } from "./global-search-box";
-import { Crumbs, retry, Skeleton, Snippet } from "./hit-parts";
+import { Crumbs, Skeleton, Snippet } from "./hit-parts";
 import { focusGlobalInput, onArrows } from "./keyboard";
 
 /** Chips shown before "+N more"; the selected library always stays visible. */
 const VISIBLE_FACETS = 8;
 
 const chip =
-  "inline-flex h-11 max-w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-3 text-sm outline-none transition-[background-color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] lg:h-8";
+  "inline-flex h-11 max-w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-3 text-body outline-none transition-[background-color,transform] duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] lg:h-9 lg:w-full lg:justify-between";
 
 const chipTone = (selected: boolean) =>
   selected
-    ? "bg-mark text-primary-foreground"
+    ? "bg-route text-route-foreground"
     : "bg-secondary text-secondary-foreground [@media(hover:hover)]:hover:bg-accent";
 
 /** `owner/repo` with the owner softer and the repo firm; the owner gives way first when it is long. */
@@ -50,7 +55,7 @@ function FacetLink({
 }) {
   const selected = library === f.library;
   return (
-    <li className="min-w-0 max-w-full">
+    <li className="max-w-full min-w-0 lg:w-full">
       <Link
         to="/search"
         search={{ q, library: f.library }}
@@ -59,7 +64,10 @@ function FacetLink({
         aria-current={selected ? "page" : undefined}
         className={cn(chip, chipTone(selected))}
       >
-        <LibraryName id={f.library} />
+        <span className="flex min-w-0 items-center gap-2">
+          <LibraryBullet id={f.library} size="sm" />
+          <LibraryName id={f.library} />
+        </span>
         <span aria-hidden="true" className="shrink-0 tabular-nums opacity-80">
           {f.matches}
         </span>
@@ -68,6 +76,7 @@ function FacetLink({
   );
 }
 
+/** Libraries with matches: chips above the hits on a phone, a column beside them from `lg`. */
 function Facets({ data, q, library }: { data: GlobalResults; q: string; library?: string }) {
   const total = data.libraries.reduce((sum, f) => sum + f.matches, 0);
   const shown = data.libraries.filter((f, i) => i < VISIBLE_FACETS || f.library === library);
@@ -75,8 +84,8 @@ function Facets({ data, q, library }: { data: GlobalResults; q: string; library?
   const rest = data.libraries.filter((f) => !shownIds.has(f.library));
   return (
     <nav aria-label="Libraries with matches" className="space-y-2">
-      <ul className="flex flex-wrap gap-x-2 gap-y-2">
-        <li>
+      <ul className="flex flex-wrap gap-x-2 gap-y-2 lg:flex-col lg:gap-y-1">
+        <li className="lg:w-full">
           <Link
             to="/search"
             search={{ q }}
@@ -84,7 +93,7 @@ function Facets({ data, q, library }: { data: GlobalResults; q: string; library?
             aria-current={library ? undefined : "page"}
             className={cn(chip, chipTone(!library))}
           >
-            All libraries{" "}
+            <span>All libraries</span>
             <span aria-hidden="true" className="tabular-nums opacity-80">
               {total}
             </span>
@@ -96,10 +105,10 @@ function Facets({ data, q, library }: { data: GlobalResults; q: string; library?
       </ul>
       {rest.length > 0 && (
         <details>
-          <summary className="inline-flex h-11 cursor-pointer items-center rounded-md px-1 text-sm text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring lg:h-8 [@media(hover:hover)]:hover:text-foreground">
+          <summary className="inline-flex h-11 cursor-pointer items-center rounded-md px-1 text-body text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring lg:h-9 [@media(hover:hover)]:hover:text-foreground">
             +{rest.length} more libraries
           </summary>
-          <ul className="mt-1 flex flex-wrap gap-x-2 gap-y-2">
+          <ul className="mt-1 flex flex-wrap gap-x-2 gap-y-2 lg:flex-col lg:gap-y-1">
             {rest.map((f) => (
               <FacetLink key={f.library} f={f} q={q} {...(library && { library })} />
             ))}
@@ -110,17 +119,39 @@ function Facets({ data, q, library }: { data: GlobalResults; q: string; library?
   );
 }
 
+interface Group {
+  library: string;
+  version: string;
+  commit: string;
+  hits: GlobalHit[];
+}
+
+/** Hits per library, in the order each library first appears (best hit first). */
+function groupByLibrary(hits: readonly GlobalHit[]): Group[] {
+  const groups = new Map<string, Group>();
+  for (const hit of hits) {
+    const key = `${hit.library}@${hit.version}`;
+    const group = groups.get(key);
+    if (group) group.hits.push(hit);
+    else
+      groups.set(key, {
+        library: hit.library,
+        version: hit.version,
+        commit: hit.commit_sha,
+        hits: [hit],
+      });
+  }
+  return [...groups.values()];
+}
+
+/** "1 library", "3 libraries". */
+const librariesNoun = (n: number) => `${n} ${n === 1 ? "library" : "libraries"}`;
+
 function Hit({ hit }: { hit: GlobalHit }) {
   const { owner, repo } = splitLibrary(hit.library);
   return (
-    <li className="relative px-2 py-3 transition-colors duration-150 [@media(hover:hover)]:hover:bg-accent/70">
-      <p className="mb-0.5 text-[13px] font-medium text-foreground/80 [overflow-wrap:anywhere]">
-        {owner}/{repo}{" "}
-        <span className="font-mono text-xs font-normal text-muted-foreground">
-          <span className="sr-only">version </span>
-          {hit.version}
-        </span>
-      </p>
+    // The whole row is the target (the title link stretches over it).
+    <li className="row-in relative rounded-lg px-3 py-4 transition-colors duration-(--dur-fast) [@media(hover:hover)]:hover:bg-raised">
       <Link
         data-result=""
         to="/libraries/$owner/$repo"
@@ -130,11 +161,52 @@ function Hit({ hit }: { hit: GlobalHit }) {
         className="rounded-md outline-none after:absolute after:inset-0 after:rounded-md after:content-[''] focus-visible:after:ring-2 focus-visible:after:ring-ring"
       >
         <Crumbs hit={hit} />
-        <span className="mt-0.5 block font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
+        <span className="mt-0.5 block font-mono text-small text-muted-foreground [overflow-wrap:anywhere]">
           {hit.article_path}
         </span>
       </Link>
       <Snippet hit={hit} />
+    </li>
+  );
+}
+
+/** One library's hits under its route: library, version, commit. */
+function HitGroup({ group }: { group: Group }) {
+  const { owner, repo } = splitLibrary(group.library);
+  return (
+    <li>
+      <h2 className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-body font-medium">
+        <LibraryBullet id={group.library} size="sm" />
+        <Link
+          to="/libraries/$owner/$repo"
+          params={{ owner, repo }}
+          search={{ version: group.version }}
+          className="min-w-0 truncate rounded-sm outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {owner}/{repo}
+        </Link>
+        <span
+          aria-hidden="true"
+          className="route-draw h-0.5 w-4 flex-none rounded-full bg-route/60"
+        />
+        <span className="font-mono text-small">
+          <span className="sr-only">version </span>
+          {group.version}
+        </span>
+        <span
+          aria-hidden="true"
+          className="route-draw h-0.5 w-4 flex-none rounded-full bg-route/60"
+        />
+        <span>
+          <span className="sr-only">commit </span>
+          <Commit sha={group.commit} />
+        </span>
+      </h2>
+      <ul className="-mx-3 mt-2 divide-y divide-rule">
+        {group.hits.map((hit) => (
+          <Hit key={`${hit.library}:${hit.chunk_id}`} hit={hit} />
+        ))}
+      </ul>
     </li>
   );
 }
@@ -144,13 +216,13 @@ function Notes({ data, library }: { data: GlobalResults; library: string | undef
   return (
     <>
       {!data.coverage.complete && (
-        <p className="mt-4 text-sm text-muted-foreground">
+        <p className="mt-6 text-body text-muted-foreground">
           Showing the best {data.results.length}. More sections match:{" "}
           {library ? "use a more specific word." : "use a library above or a more specific word."}
         </p>
       )}
       {data.libraries_omitted > 0 && (
-        <p className="mt-2 text-sm text-muted-foreground">
+        <p className="mt-2 text-body text-muted-foreground">
           Searched {data.libraries_searched} of {all} libraries; the other {data.libraries_omitted}{" "}
           are not searched here.{" "}
           <Link to="/" className="underline underline-offset-2 hover:text-foreground">
@@ -163,7 +235,8 @@ function Notes({ data, library }: { data: GlobalResults; library: string | undef
   );
 }
 
-function Empty({
+/** Nothing found, or a library that cannot be searched: says why and how to widen. */
+function NoResults({
   q,
   library,
   unavailable = false,
@@ -173,31 +246,34 @@ function Empty({
   unavailable?: boolean;
 }) {
   return (
-    <div className="max-w-xl">
-      <h2 className="font-serif text-2xl font-semibold tracking-tight">
-        {unavailable
-          ? "Library not available"
-          : library
-            ? `No results in ${library}`
-            : "No results"}
-      </h2>
-      <p className="mt-2 text-muted-foreground">
-        {unavailable ? (
-          <>
-            <span className="font-mono text-foreground [overflow-wrap:anywhere]">{library}</span>{" "}
-            can't be searched: it was removed, or it has no imported version.
-          </>
-        ) : (
-          <>
-            Nothing {library ? "there" : "in any library's default version"} matches{" "}
-            <span className="font-medium text-foreground [overflow-wrap:anywhere]">“{q}”</span>. Try
-            fewer or different words.
-            {!library && " To search another version, open the library and use its search box."}
-          </>
-        )}
-      </p>
+    <div className="flex max-w-2xl flex-col items-start gap-3 rounded-lg border border-dashed border-input px-5 py-6">
+      <Search aria-hidden="true" className="size-5 text-muted-foreground" />
+      <div>
+        <h2 className="text-section font-semibold">
+          {unavailable
+            ? "Library not available"
+            : library
+              ? `No results in ${library}`
+              : "No results"}
+        </h2>
+        <p className="mt-1 max-w-[60ch] text-body text-muted-foreground">
+          {unavailable ? (
+            <>
+              <span className="font-mono text-foreground [overflow-wrap:anywhere]">{library}</span>{" "}
+              can't be searched: it was removed, or it has no imported version.
+            </>
+          ) : (
+            <>
+              Nothing {library ? "there" : "in any library's default version"} matches{" "}
+              <span className="font-medium text-foreground [overflow-wrap:anywhere]">“{q}”</span>.
+              Try fewer or different words, or check the spelling.
+              {!library && " To search another version, open the library and use its search box."}
+            </>
+          )}
+        </p>
+      </div>
       {library && (
-        <Link to="/search" search={{ q }} className={cn(retry, "mt-4")}>
+        <Link to="/search" search={{ q }} className={buttonVariants({ variant: "outline" })}>
           Search all libraries
         </Link>
       )}
@@ -207,7 +283,77 @@ function Empty({
 
 type GlobalQuery = UseQueryResult<GlobalResults>;
 
-/** What sits under the title: the prompt, the skeleton, the error, the empty state or the hits. */
+/** Before a query: what the box searches and what to type into it. */
+function Prompt() {
+  return (
+    <EmptyState
+      icon={<Search aria-hidden="true" />}
+      title="Search every library at once"
+      className="max-w-2xl"
+    >
+      Type an API name, a config key or an error message, for example{" "}
+      <span className="font-mono text-foreground">retry policy</span> or{" "}
+      <span className="font-mono text-foreground">401 unauthorized</span>. Results come from each
+      library's default version, with its commit.
+      <span className="mt-2 hidden lg:block">
+        Press <kbd className={kbd}>/</kbd> from any page to start typing.
+      </span>
+    </EmptyState>
+  );
+}
+
+function Failed({ onRetry, pending }: { onRetry: () => void; pending: boolean }) {
+  return (
+    <div role="alert" className="max-w-xl rounded-lg border border-rule px-5 py-5">
+      <h2 className="text-section font-semibold">Search failed</h2>
+      <p className="mt-2 text-body text-muted-foreground">
+        Couldn't search. Check your connection or try again.
+      </p>
+      <Button variant="outline" size="sm" className="mt-3" pending={pending} onClick={onRetry}>
+        Try again
+      </Button>
+    </div>
+  );
+}
+
+function Results({
+  data,
+  library,
+  stale,
+}: {
+  data: GlobalResults;
+  library: string | undefined;
+  stale: boolean;
+}) {
+  const groups = groupByLibrary(data.results);
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: arrow keys move between the links inside
+    <div onKeyDown={onArrows(focusGlobalInput)}>
+      <p aria-hidden="true" className="mb-4 flex h-5 items-center text-body text-muted-foreground">
+        <span className="font-medium text-foreground">
+          {countLine(data.results.length, totalMatches(data, library), data.coverage.complete)}
+        </span>
+        &nbsp;in {librariesNoun(groups.length)}
+        <span className="ml-3 hidden text-small lg:inline">
+          <kbd className={kbd}>↓</kbd> to move through results
+        </span>
+      </p>
+      <ol
+        className={cn(
+          "space-y-8 transition-opacity duration-(--dur)",
+          stale && "opacity-60 delay-150",
+        )}
+      >
+        {groups.map((group) => (
+          <HitGroup key={`${group.library}@${group.version}`} group={group} />
+        ))}
+      </ol>
+      <Notes data={data} library={library} />
+    </div>
+  );
+}
+
+/** What sits under the box: the prompt, the skeleton, the error, the empty state or the hits. */
 function Body({
   q,
   library,
@@ -223,73 +369,36 @@ function Body({
   const refused =
     result.error instanceof HttpError && result.error.status >= 400 && result.error.status < 500;
 
-  let body: ReactNode = <Skeleton chips />;
-  if (q === undefined) {
-    body = (
-      <p className="max-w-xl text-muted-foreground">
-        Searches the default version of every library.{" "}
-        <span className="hidden lg:inline">
-          Press <kbd className="rounded bg-secondary px-1.5 font-mono text-xs">/</kbd> to start
-          typing.
-        </span>
-      </p>
-    );
-  } else if (result.isError && !stale) {
-    body =
-      refused && library ? (
-        <Empty q={q} library={library} unavailable />
-      ) : (
-        <div role="alert" className="max-w-xl">
-          <h2 className="font-serif text-2xl font-semibold tracking-tight">Search failed</h2>
-          <p className="mt-2 text-muted-foreground">
-            Couldn't search. Check your connection or try again.
-          </p>
-          <button type="button" className={cn(retry, "mt-3")} onClick={() => void result.refetch()}>
-            Try again
-          </button>
-        </div>
-      );
-  } else if (data) {
-    body = (
-      <div className="space-y-5">
-        {data.libraries.length > 0 && <Facets data={data} q={q} {...(library && { library })} />}
-        {data.results.length > 0 ? (
-          // biome-ignore lint/a11y/noStaticElementInteractions: arrow keys move between the links inside
-          <div onKeyDown={onArrows(focusGlobalInput)}>
-            <p aria-hidden="true" className="mb-2 flex items-center text-sm">
-              <span className="font-medium">
-                {countLine(
-                  data.results.length,
-                  totalMatches(data, library),
-                  data.coverage.complete,
-                )}
-              </span>
-              <span className="ml-3 hidden text-xs text-muted-foreground lg:inline">
-                <kbd className="font-mono">↓</kbd> to move through results
-              </span>
-            </p>
-            <ul
-              className={cn(
-                "-mx-2 divide-y divide-border transition-opacity duration-150",
-                stale && "opacity-60 delay-150",
-              )}
-            >
-              {data.results.map((hit) => (
-                <Hit key={`${hit.library}:${hit.chunk_id}`} hit={hit} />
-              ))}
-            </ul>
-            <Notes data={data} library={library} />
-          </div>
-        ) : (
-          settled && <Empty q={q} library={library} />
-        )}
-      </div>
+  if (q === undefined) return <Prompt />;
+  if (result.isError && !stale) {
+    return refused && library ? (
+      <NoResults q={q} library={library} unavailable />
+    ) : (
+      <Failed onRetry={() => void result.refetch()} pending={result.isFetching} />
     );
   }
-  return body;
+  if (!data) return <Skeleton chips />;
+
+  const hits = data.results.length > 0;
+  return (
+    <div className="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)] lg:items-start lg:gap-10">
+      {data.libraries.length > 0 && (
+        <div className="lg:sticky lg:top-20">
+          <Facets data={data} q={q} {...(library && { library })} />
+        </div>
+      )}
+      <div className={cn("min-w-0 max-w-[72ch]", data.libraries.length === 0 && "lg:col-span-2")}>
+        {hits ? (
+          <Results data={data} library={library} stale={stale} />
+        ) : (
+          settled && <NoResults q={q} library={library} />
+        )}
+      </div>
+    </div>
+  );
 }
 
-/** Results of the global search: hits from every library, a library facet with counts. */
+/** Results of the global search: hits from every library, grouped per library, with counts. */
 export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; library?: string }) {
   const heading = useId();
   const q = normalizeQuery(raw);
@@ -301,32 +410,36 @@ export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; l
   const data = result.data;
   const settled = data !== undefined && !result.isPlaceholderData;
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6 sm:py-10">
-      {/* A phone's header holds only an icon; the box sits here, focused while there is no query
-          (Back from an article to its results must not bring the keyboard up again). */}
-      <GlobalSearchBox place="page" autoFocus={q === undefined} className="mb-6 sm:hidden" />
+    <Page>
+      <PageHeader
+        title={
+          q ? (
+            <>
+              Search: <span className="[overflow-wrap:anywhere]">{q}</span>
+            </>
+          ) : (
+            "Search all libraries"
+          )
+        }
+        description="Searches the default version of every library."
+      />
+      {/* The band's box steps aside on this page (the CSS in GlobalSearchBox): this is the one field.
+          Focused while there is no query (Back from an article must not bring the keyboard up). */}
+      <GlobalSearchBox place="page" prominent autoFocus={q === undefined} className="mb-8" />
       <section
         id={GLOBAL_RESULTS_ID}
         aria-labelledby={heading}
         aria-busy={result.isFetching}
         className="min-w-0"
       >
-        <h1 id={heading} className="font-serif text-3xl font-semibold tracking-tight">
-          {q ? (
-            <>
-              Search: <span className="[overflow-wrap:anywhere]">{q}</span>
-            </>
-          ) : (
-            "Search all libraries"
-          )}
-        </h1>
+        <h2 id={heading} className="sr-only">
+          Search results
+        </h2>
         <p role="status" className="sr-only">
           {settled && q ? statusLine(data.results.length, q, library, data.coverage.complete) : ""}
         </p>
-        <div className="mt-5">
-          <Body q={q} library={library} result={result} />
-        </div>
+        <Body q={q} library={library} result={result} />
       </section>
-    </main>
+    </Page>
   );
 }

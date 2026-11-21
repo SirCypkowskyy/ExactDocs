@@ -56,6 +56,7 @@ from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.ports import ChunkRepository
 from exactdocs.retrieval.use_cases import ReadChunkUseCase
 from exactdocs_kernel import NOTICE
+from library_access import FakeAccess
 
 T0 = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 PAYMENTS = "/acme/payments"
@@ -980,6 +981,7 @@ async def test_an_id_held_by_two_versions_is_refused_not_guessed(world: World) -
         versions=world.catalog,
         manifests=world.catalog,
         chunks=TwoVersions(),  # ty: ignore[invalid-argument-type]
+        access=FakeAccess(role="viewer"),
     )
     with pytest.raises(ChunkNotFoundError):
         await use_case(ReadChunkQuery(chunk_id=chunk_id))
@@ -1157,3 +1159,20 @@ async def test_a_set_stored_without_heading_records_is_reused_as_it_is_by_one_wi
         GetChunkSetsQuery(config_hash=CONFIG, blob_shas=["blob"])
     )
     assert sets.chunks["blob"][0].headings is None
+
+
+async def test_a_hidden_chunk_id_matches_a_missing_chunk_without_revealing_its_library(
+    world: World,
+) -> None:
+    indexed = await world.index("hidden", "main", {"a.md": "secret"}, status=ManifestStatus.ACTIVE)
+    chunk_id = indexed.chunk_ids["a.md"][0]
+    read = ReadChunkUseCase(
+        versions=world.catalog,
+        manifests=world.catalog,
+        chunks=world.chunks,
+        access=FakeAccess(role=None),
+    )
+    for identifier in (chunk_id, "missing"):
+        with pytest.raises(ChunkNotFoundError) as caught:
+            await read(ReadChunkQuery(chunk_id=identifier))
+        assert "/acme/payments" not in str(caught.value)

@@ -61,6 +61,14 @@ PROVIDER_NAME_PATTERN: Final[str] = r"^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$"
 """A sign-in provider's name: lower-case letters, digits and inner hyphens, at most 32 characters.
 It appears in URLs (``/api/v1/auth/<name>/...``) and in the ``<username>@<name>`` fallback."""
 
+ACCESS_PROVIDER: Final[str] = "cloudflare-access"
+"""The provider name an account created by Cloudflare Access is linked under (the users page shows
+it, and ``<email>@cloudflare-access`` is its fallback username)."""
+ACCESS_CERTS_PATH: Final[str] = "/cdn-cgi/access/certs"
+"""Where a Cloudflare Access team publishes the keys its application tokens are signed with."""
+ACCESS_LOGOUT_PATH: Final[str] = "/cdn-cgi/access/logout"
+"""Where a browser signs out of Cloudflare Access (its session cookie for the team is cleared)."""
+
 # ---------------------------------------------------------------- dtos
 MIN_PASSWORD_LENGTH: Final[int] = 12
 """Shortest password an account may have, in characters."""
@@ -114,6 +122,14 @@ not cost a database write each time, and it is tiny next to the 7-day idle timeo
 idle expiry is accurate to this interval, not to the second.
 """
 
+ACCESS_LINK_REFRESH: Final[timedelta] = timedelta(hours=1)
+"""A Cloudflare Access visit writes its account's link (``access_until``, the role from
+``admin_emails``) only when the link was written longer ago than this, or the role changed: a
+request should not cost a database write each time."""
+ACCESS_LINK_LIFETIME: Final[timedelta] = timedelta(days=30)
+"""An account created by Cloudflare Access keeps using its sessions and API tokens this long after
+its owner last came through Access; Access itself keeps a removed person away from the origin."""
+
 # ---------------------------------------------------------------- adapters.driven.argon2id
 MAX_CONCURRENT_HASHES: Final[int] = 4
 """Password hashes computed at once; the rest wait, so sign-in attempts cannot exhaust memory."""
@@ -157,6 +173,21 @@ _UNAUTHORIZED: Final[int] = 401
 _SUCCESS: Final[range] = range(200, 300)
 """Statuses of a usable answer."""
 
+# ---------------------------------------------------------------- adapters.driven.cloudflare_access
+ACCESS_ALGORITHMS: Final[tuple[str, ...]] = ("RS256",)
+"""Cloudflare Access signs its application tokens with RS256 only; nothing else is accepted."""
+ACCESS_TOKEN_LEEWAY: Final[timedelta] = timedelta(seconds=60)
+"""Clock skew allowed on an Access token's ``exp``, ``iat`` and ``nbf``."""
+ACCESS_CERTS_REFETCH_INTERVAL: Final[timedelta] = timedelta(minutes=1)
+"""A token signed by a key the cached certs do not hold fetches them again (Cloudflare rotates its
+keys), at most this often: made-up ``kid`` values cannot flood the team domain."""
+ACCESS_TIMEOUT: Final[float] = 10.0
+"""Seconds one fetch of the team's certs may take."""
+MAX_ACCESS_CERTS_BYTES: Final[int] = 256 * 2**10
+"""The team's certs above this size are refused unread to the end."""
+MAX_ACCESS_TOKEN_LENGTH: Final[int] = 16 * 2**10
+"""An assertion longer than this is refused without being parsed."""
+
 # ---------------------------------------------------------------- adapters.driven.sqlite
 MAX_CONCURRENT_SIGN_IN_TURNS: Final[int] = 4
 """Sign-in throttle transactions one process runs at once, well below the database pool's size: the
@@ -183,6 +214,11 @@ read-then-write atomic across processes; the second is ``hashtext`` of the throt
 # ---------------------------------------------------------------- adapters.driving.http
 SESSION_COOKIE: Final[str] = "exactdocs_session"
 """Name of the web session cookie."""
+ACCESS_ASSERTION_HEADER: Final[str] = "cf-access-jwt-assertion"
+"""The header Cloudflare Access adds to every request it lets through: the signed application token.
+"""
+ACCESS_COOKIE: Final[str] = "CF_Authorization"
+"""The cookie Cloudflare Access sets in the browser, holding the same application token."""
 SIGN_IN_COOKIE: Final[str] = "exactdocs_sign_in"
 """Name of the cookie that binds an external sign-in attempt to the browser that started it."""
 SIGN_IN_COOKIE_PATH: Final[str] = "/api/v1/auth"
@@ -243,3 +279,12 @@ class CookieAttributes(TypedDict):
 
 COOKIE_ATTRS: Final[CookieAttributes] = {"path": COOKIE_PATH, "httponly": True, "samesite": "lax"}
 """Shared by ``set_cookie`` and ``delete_cookie``: a deletion only works if the attributes match."""
+
+GITHUB_MAX_TEAM_PAGES: Final[int] = 100
+"""Maximum GitHub team pages per check; reaching an unfinished bound fails closed."""
+
+OAUTH_CLIENT_BASIC: Final[str] = "client_secret_basic"
+"""OAuth client authentication using the HTTP Basic header."""
+
+OAUTH_CLIENT_POST: Final[str] = "client_secret_post"
+"""OAuth client authentication using token form fields (GitHub OAuth Apps)."""

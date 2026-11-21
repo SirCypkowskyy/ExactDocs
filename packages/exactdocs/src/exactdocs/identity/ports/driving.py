@@ -4,17 +4,28 @@ from typing import Protocol
 
 from exactdocs.identity.dtos import (
     AccountSummary,
+    ApiTokenIdentity,
     AuthenticateQuery,
+    ClaimLibraryCommand,
     CreateFirstAdminCommand,
     CreateTokenCommand,
     CreateUserCommand,
+    DropLibraryGrantsCommand,
     ExternalSignInResult,
     ExternalSignInStart,
+    ExternalTokenIdentity,
     FinishExternalSignInCommand,
+    GrantLibraryRoleCommand,
+    LibraryCreationQuery,
+    LibraryGrants,
+    LibraryRoles,
+    LibraryRolesQuery,
+    ListLibraryGrantsQuery,
     LoginForTokenCommand,
     PasswordReset,
     ResetPasswordCommand,
     RevalidationReport,
+    RevokeLibraryRoleCommand,
     SessionGrant,
     SessionState,
     SetupState,
@@ -126,14 +137,35 @@ class IdentifyCaller(Protocol):
         ...
 
 
+class IdentifyAccessCaller(Protocol):
+    """Who a Cloudflare Access token signs in; raises ``NotSignedInError`` when nobody.
+
+    Off (``NotSignedInError`` for every token) unless Cloudflare Access is configured.
+    """
+
+    async def __call__(self, assertion: str | None) -> AccountSummary:
+        """Run the use case.
+
+        Args:
+            assertion: The Access application token, or ``None`` when the request carried none.
+
+        Returns:
+            The account the token's person or service token is linked to.
+        """
+        ...
+
+
 class GetSessionState(Protocol):
     """Tell whether setup is due, nobody is signed in, or the token's owner is."""
 
-    async def __call__(self, token: str | None) -> SessionState:
+    async def __call__(
+        self, token: str | None, access_assertion: str | None = None
+    ) -> SessionState:
         """Run the use case.
 
         Args:
             token: The session token, or ``None`` when the request carried none.
+            access_assertion: The Cloudflare Access token, used when no session signs anyone in.
 
         Returns:
             The setup and sign-in state.
@@ -272,7 +304,7 @@ class RevokeToken(Protocol):
 class IdentifyToken(Protocol):
     """Who an API token acts as; raises ``InvalidTokenError`` when it is no good."""
 
-    async def __call__(self, token: str) -> AccountSummary:
+    async def __call__(self, token: str) -> ApiTokenIdentity:
         """Run the use case.
 
         Args:
@@ -280,6 +312,28 @@ class IdentifyToken(Protocol):
 
         Returns:
             The account the token acts as.
+        """
+        ...
+
+
+class IdentifyExternalToken(Protocol):
+    """Who an ID token of a sign-in provider acts as (MCP's OAuth); nothing is stored.
+
+    Raises ``UnknownSignInProviderError`` for a name that is not configured,
+    ``ExternalSignInFailedError`` for a token the provider does not vouch for,
+    ``NotAllowedError`` for a person in no allowed group and ``AccountDisabledError``.
+    """
+
+    async def __call__(self, provider: str, token: str) -> ExternalTokenIdentity:
+        """Run the use case.
+
+        Args:
+            provider: The provider's name.
+            token: The ID token.
+
+        Returns:
+            The linked account, or, for a person who never signed in to the web UI, a caller
+            named ``<provider>:<subject>`` that no account backs, and their verified groups.
         """
         ...
 
@@ -334,5 +388,117 @@ class RevalidateExternalAccounts(Protocol):
 
         Returns:
             How many were extended, revoked and left as they were.
+        """
+        ...
+
+
+class ResolveLibraryRoles(Protocol):
+    """Tell what an account may do with libraries: the highest role granted to it or its groups.
+
+    An instance operator (role ``admin``) is ``creator`` of every library; a disabled or unknown
+    account has no role.
+    """
+
+    async def __call__(self, query: LibraryRolesQuery) -> LibraryRoles:
+        """Run the use case.
+
+        Args:
+            query: The account and the libraries.
+
+        Returns:
+            Its role on each library it has one on.
+        """
+        ...
+
+
+class ClaimLibrary(Protocol):
+    """Make an account the creator of a new library, dropping any grant left on its ID."""
+
+    async def __call__(self, command: ClaimLibraryCommand) -> None:
+        """Run the use case.
+
+        Args:
+            command: The account and the library.
+        """
+        ...
+
+
+class DropLibraryGrants(Protocol):
+    """Drop every grant on a library that was removed."""
+
+    async def __call__(self, command: DropLibraryGrantsCommand) -> None:
+        """Run the use case.
+
+        Args:
+            command: The library.
+        """
+        ...
+
+
+class GrantLibraryRole(Protocol):
+    """Give a user or a group a role on a library.
+
+    Needs the ``admin`` role on it, and the ``creator`` role to give ``admin`` or to change an
+    ``admin``'s role (``LibraryRoleRequiredError``). ``UnknownAccountError`` for a username
+    nobody has.
+    """
+
+    async def __call__(self, command: GrantLibraryRoleCommand) -> LibraryGrants:
+        """Run the use case.
+
+        Args:
+            command: The caller, the library, whom to give a role and which.
+
+        Returns:
+            The library's grants now.
+        """
+        ...
+
+
+class RevokeLibraryRole(Protocol):
+    """Take a role away from a user or a group; the creator's role stays.
+
+    Needs the ``admin`` role, and the ``creator`` role to take an ``admin``'s. Raises
+    ``UnknownGrantError`` when there is no such grant.
+    """
+
+    async def __call__(self, command: RevokeLibraryRoleCommand) -> LibraryGrants:
+        """Run the use case.
+
+        Args:
+            command: The caller, the library and whose role goes.
+
+        Returns:
+            The library's grants now.
+        """
+        ...
+
+
+class ListLibraryGrants(Protocol):
+    """List who holds a role on a library; needs the ``admin`` role on it."""
+
+    async def __call__(self, query: ListLibraryGrantsQuery) -> LibraryGrants:
+        """Run the use case.
+
+        Args:
+            query: The caller and the library.
+
+        Returns:
+            The grants.
+        """
+        ...
+
+
+class CanCreateLibrary(Protocol):
+    """Resolve the instance-wide library creation permission."""
+
+    async def __call__(self, query: LibraryCreationQuery) -> bool:
+        """Resolve the permission from current authenticated identity state.
+
+        Args:
+            query: The caller and optional verified OAuth identity.
+
+        Returns:
+            Whether the caller may create a library.
         """
         ...

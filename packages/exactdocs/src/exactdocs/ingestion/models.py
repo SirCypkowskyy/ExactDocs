@@ -12,12 +12,13 @@ import ipaddress
 import json
 import math
 import re
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from enum import StrEnum
 from fnmatch import fnmatchcase
 from functools import lru_cache
+from html.parser import HTMLParser
 from itertools import pairwise, starmap
 from operator import itemgetter
 from pathlib import PurePosixPath
@@ -38,6 +39,7 @@ from exactdocs.ingestion.constants import (
     DEFAULT_INTERVAL_MINUTES,
     DEFAULT_KEEP_LAST,
     DEFAULT_MAX_SECTION_CHARS,
+    EXPLICIT_SUFFIXES,
     FLAT_HOSTS,
     GITHUB_SIGNATURE_HEADER,
     GLOB_CHARS,
@@ -70,6 +72,7 @@ from exactdocs.ingestion.constants import (
     PEELED,
     README_DESCRIPTION_MAX,
     README_TITLE_MAX,
+    RESTRUCTUREDTEXT_SUFFIXES,
     SIGNATURE_SCHEME,
     SOURCE_MISMATCH,
     TAGS,
@@ -78,10 +81,12 @@ from exactdocs.ingestion.constants import (
 from exactdocs.ingestion.constants._models import (
     _ALWAYS_INVISIBLE,
     _BAD_REF_CHARS,
+    _BADGE_SOURCES,
     _FRONT_MATTER,
     _GIT_SUFFIX,
     _HOST,
     _ID_SEGMENTS,
+    _LOGO_WORDS,
     _LOOPBACK,
     _MAX_BRANCH,
     _MAX_IMAGE_DEPTH,
@@ -95,6 +100,8 @@ from exactdocs.ingestion.constants._models import (
     _NO_ALIASES,
     _NUMERIC_REF,
     _ORDER_WIDTH,
+    _README_LABEL,
+    _README_NAV_CHARS,
     _SCHEME,
     _SCHEMES,
     _SCP_LIKE,
@@ -117,6 +124,7 @@ from exactdocs.ingestion.errors import (
     InvalidRepositoryUrlError,
     InvalidTagError,
     InvalidWebhookPayloadError,
+    JobFinishedError,
     MissingDeliveryIdError,
     PatternProblem,
     TagProblem,
@@ -492,24 +500,106 @@ def _title(declared: object, body: str, path: str) -> str:
     return PurePosixPath(path).stem
 
 
+def is_restructuredtext(path: str) -> bool:
+    """Tell whether an article is reStructuredText (``.rst``, ``.txt``), not Markdown.
+
+    Args:
+        path: The article's repository path.
+
+    Returns:
+        True for a reStructuredText article.
+    """
+    return path.lower().endswith(RESTRUCTUREDTEXT_SUFFIXES)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IncludeRefused:
+    """A file a reStructuredText include names that is not read, and why."""
+
+    reason: str
+    """Why, in words for users (``not in the imported files``, ``too large``...)."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ConvertedArticle:
+    """A reStructuredText article written as Markdown (``MarkupConverter``)."""
+
+    body: str
+    """The Markdown the chunker cuts and the reader shows."""
+    problems: tuple[str, ...] = ()
+    """What was not converted (unknown directives and roles, unread includes); imported anyway."""
+
+
+def converted_article(path: str, converted: ConvertedArticle) -> ParsedArticle:
+    """Make the article of a converted reStructuredText file: its title is its first H1.
+
+    It has no front matter, tags or description; its problems are the conversion's.
+
+    Args:
+        path: The file's repository path.
+        converted: What the converter gave.
+
+    Returns:
+        The article.
+    """
+    body = strip_invisible(converted.body)
+    return ParsedArticle(
+        path=path,
+        title=_title(None, body, path),
+        body=body,
+        problems=converted.problems,
+        images=image_paths(path, body),
+    )
+
+
+def converted_key(path: str, source: str, read: Sequence[tuple[str, str]], converter: str) -> str:
+    """Key a converted article by everything its Markdown depends on, as a blob SHA would.
+
+    A reStructuredText article's text depends on its path (relative links) and on every file
+    its includes read, not only on its own bytes, and must never share a key with a Markdown
+    file of the same bytes: chunk sets and stored contents are found by this key.
+
+    Args:
+        path: The article's repository path.
+        source: Its text.
+        read: ``(path, text)`` of every file the conversion read, in order.
+        converter: The converter's version (``MarkupConverter.version``).
+
+    Returns:
+        A 64-character hex SHA-256, shaped like a SHA-256 git object ID.
+    """
+    digest = hashlib.sha256(b"exactdocs restructuredtext\0")
+    for part in (converter, path, source, *(f"{p}\0{t}" for p, t in read)):
+        digest.update(part.encode(errors="surrogatepass"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ReadmeSummary:
     """What a root README says about its library; ``None`` where it says nothing usable."""
 
     title: str | None = None
-    """The first heading's text."""
+    """The first H1's text (or its image's ``alt``), else the ``alt`` of a logo opening the file."""
     description: str | None = None
-    """The first paragraph's text."""
+    """The first paragraph's text after where the title was found."""
 
 
 def readme_summary(source: str) -> ReadmeSummary:
-    """Take the first heading and the first paragraph after it from untrusted README text.
+    """Take the title and the first paragraph after it from untrusted README text.
+
+    The title is the first H1, Markdown or HTML: its text, or its image's ``alt`` when it is a
+    logo. Without one it is the ``alt`` of the image the file opens with (before any heading or
+    text, and not a badge), as in READMEs that start with a centered logo. A lower heading is a
+    section, never the title: without both the title is ``None`` (the caller falls back to the
+    repository name).
 
     Run through ``parse_article`` first, so invisible characters and front matter are gone. Only
     plain text is kept (no markup, images or HTML), whitespace is collapsed and the values are
     cut to ``README_TITLE_MAX`` / ``README_DESCRIPTION_MAX``. Paragraphs inside lists or quotes,
-    and paragraphs with no text (badges, images), are skipped. Without a heading the first
-    paragraph of the file is used.
+    paragraphs with no text (badges, images) and nav lines (links, alone or after short labels
+    such as ``Documentation:``) are skipped. Without a title the first paragraph of the file is
+    used.
 
     Args:
         source: The README's text.
@@ -518,11 +608,9 @@ def readme_summary(source: str) -> ReadmeSummary:
         The title and the description found.
     """
     tokens = _readme_markdown.parse(parse_article("README.md", source).body)
-    title, start = None, 0
-    for index, token in enumerate(tokens):
-        if token.type == "heading_open" and (text := _inline_text(tokens[index + 1])):
-            title, start = text[:README_TITLE_MAX].rstrip(), index
-            break
+    title, start = _readme_title(tokens)
+    if title is not None:
+        title = title[:README_TITLE_MAX].rstrip()
     description = None
     for index in range(start, len(tokens)):
         if (
@@ -535,10 +623,196 @@ def readme_summary(source: str) -> ReadmeSummary:
     return ReadmeSummary(title=title, description=description)
 
 
+type _HeadEvent = tuple[str, str, str]
+"""``("h1", title, "")``, ``("img", alt, src)`` or ``("text", "", "")``, in document order."""
+
+
+class _HtmlHead(HTMLParser):
+    """Turn README HTML into ``_HeadEvent``s: each ``<h1>``, image and piece of visible text."""
+
+    def __init__(self) -> None:
+        """Start with no events, outside any ``<h1>``; character references are decoded."""
+        super().__init__(convert_charrefs=True)
+        self.events: list[_HeadEvent] = []
+        self._h1: list[str] | None = None  # the text of the open <h1>
+        self._h1_alt = ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Open an ``<h1>``, or note an image: inside an ``<h1>`` its ``alt`` names the heading.
+
+        Args:
+            tag: The tag's name, lowercased.
+            attrs: Its attributes.
+        """
+        values = {name: value or "" for name, value in attrs}
+        if tag == "h1":
+            self._h1, self._h1_alt = [], ""
+        elif tag == "img" and self._h1 is not None:
+            self._h1_alt = self._h1_alt or values.get("alt", "")
+        elif tag == "img":
+            self.events.append(("img", values.get("alt", ""), values.get("src", "")))
+
+    def handle_endtag(self, tag: str) -> None:
+        """Close an ``<h1>``: its text, else its image's ``alt``; empty, it is plain text.
+
+        Args:
+            tag: The tag's name, lowercased.
+        """
+        if tag == "h1" and self._h1 is not None:
+            text = " ".join("".join(self._h1).split()) or _logo_name(self._h1_alt)
+            self.events.append(("h1", text, "") if text else ("text", "", ""))
+            self._h1 = None
+
+    def handle_data(self, data: str) -> None:
+        """Collect the text of the open ``<h1>``, or note visible text.
+
+        Args:
+            data: Text between tags.
+        """
+        if self._h1 is not None:
+            self._h1.append(data)
+        elif data.strip():
+            self.events.append(("text", "", ""))
+
+
+def _html_events(html: str) -> list[_HeadEvent]:
+    """Parse a piece of README HTML; an ``<h1>`` left open still counts.
+
+    Args:
+        html: An HTML block or inline tag.
+
+    Returns:
+        Its events, in order.
+    """
+    parser = _HtmlHead()
+    parser.feed(html)
+    parser.close()
+    parser.handle_endtag("h1")
+    return parser.events
+
+
+def _head_events(tokens: Sequence[Token]) -> Iterator[tuple[int, _HeadEvent]]:
+    """Walk a README's blocks as the events that decide its title, each with its token index.
+
+    Args:
+        tokens: The parsed README.
+
+    Yields:
+        The index of the block and one of its events.
+    """
+    for index, token in enumerate(tokens):
+        match token.type:
+            case "heading_open" if token.tag == "h1":
+                inline = tokens[index + 1]
+                text = _inline_text(inline) or _logo_name(_image_alt(inline))
+                yield index, ("h1", text, "") if text else ("text", "", "")
+            case "heading_open" | "fence" | "code_block":
+                yield index, ("text", "", "")
+            case "html_block":
+                for event in _html_events(token.content):
+                    yield index, event
+            case "inline" if tokens[index - 1].type == "paragraph_open":
+                for event in _inline_events(token):
+                    yield index - 1, event
+            case _:
+                pass
+
+
+def _inline_events(inline: Token) -> Iterator[_HeadEvent]:
+    """The events of a paragraph's text: its images, inline HTML and visible text.
+
+    Args:
+        inline: The paragraph's inline token.
+
+    Yields:
+        Its events, in order.
+    """
+    for child in inline.children or []:
+        match child.type:
+            case "image":
+                yield "img", child.content, str(child.attrs.get("src", ""))
+            case "html_inline":
+                yield from _html_events(child.content)
+            case "text" | "code_inline" if child.content.strip():
+                yield "text", "", ""
+            case _:
+                pass
+
+
+def _readme_title(tokens: Sequence[Token]) -> tuple[str | None, int]:
+    """Find a README's title: its first H1, else the logo it opens with.
+
+    Args:
+        tokens: The parsed README.
+
+    Returns:
+        The title (``None`` if there is none) and the index of the block it came from (0 then).
+    """
+    logo: tuple[str, int] | None = None
+    first_image, text_seen = True, False
+    for index, (kind, value, source) in _head_events(tokens):
+        match kind:
+            case "h1":
+                return value, index
+            case "img":
+                if first_image and not text_seen and not _is_badge(source):
+                    name = _logo_name(value)
+                    logo = (name, index) if name else None
+                first_image = False
+            case _:
+                text_seen = True
+    return logo if logo is not None else (None, 0)
+
+
+def _image_alt(inline: Token) -> str:
+    """The ``alt`` of the first image of an inline token, Markdown or an HTML ``<img>``.
+
+    Args:
+        inline: An inline token, such as a heading's.
+
+    Returns:
+        The ``alt`` text; empty when there is no image.
+    """
+    for child in inline.children or []:
+        if child.type == "image":
+            return child.content
+        if child.type == "html_inline":
+            for kind, alt, _ in _html_events(child.content):
+                if kind == "img":
+                    return alt
+    return ""
+
+
+def _logo_name(alt: str) -> str:
+    """The project name an image's ``alt`` gives: without "logo" or "banner", collapsed.
+
+    Args:
+        alt: The image's ``alt`` text.
+
+    Returns:
+        The name; empty when nothing is left.
+    """
+    return " ".join(_LOGO_WORDS.sub(" ", alt).split()).strip(" -|:")
+
+
+def _is_badge(source: str) -> bool:
+    """Tell a badge image (CI status, package version) by its source.
+
+    Args:
+        source: The image's ``src``.
+
+    Returns:
+        True for a badge.
+    """
+    lowered = source.lower()
+    return any(part in lowered for part in _BADGE_SOURCES)
+
+
 def _inline_text(inline: Token, *, skip_link_only: bool = False) -> str:
     """Join the visible text of an inline token, collapsing whitespace.
 
-    With ``skip_link_only`` a line that is nothing but links (a nav bar) gives ``""``.
+    With ``skip_link_only`` text that is nothing but links (a nav bar), each line alone or after
+    a short label (``Documentation: <link>``), gives ``""``.
 
     Args:
         inline: An inline token.
@@ -547,22 +821,26 @@ def _inline_text(inline: Token, *, skip_link_only: bool = False) -> str:
     Returns:
         The text, whitespace collapsed.
     """
-    words, outside, in_link = [], [], False
+    words, outside, in_link, links = [], [], False, False
     for child in inline.children or []:
         match child.type:
             case "link_open":
-                in_link = True
+                in_link = links = True
             case "link_close":
                 in_link = False
             case "softbreak" | "hardbreak":
                 words.append(" ")
-                outside.append(" ")
+                outside.append("\n")
             case "text" | "code_inline":
                 words.append(child.content)
                 if not in_link:
                     outside.append(child.content)
-    if skip_link_only and not "".join(outside).strip(" |-*\u00b7\u2022"):
-        return ""
+    if skip_link_only:
+        rest = "".join(outside)
+        if links:
+            rest = _README_LABEL.sub("", rest)
+        if not rest.strip(_README_NAV_CHARS):
+            return ""
     return " ".join("".join(words).split())
 
 
@@ -588,6 +866,28 @@ class JobState(StrEnum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+    """A person cancelled it: before it started, or it stopped at its next step boundary."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class JobFilter:
+    """Which jobs a list is about; every field that is set must match."""
+
+    libraries: frozenset[str] | None = None
+    """Only jobs of these libraries, as spelled in the job; ``None``: any library."""
+    states: frozenset[JobState] = frozenset()
+    """Only jobs in one of these states; empty: any state."""
+    kinds: frozenset[str] = frozenset()
+    """Only jobs of one of these kinds; empty: any kind."""
+    version: str | None = None
+    """Only jobs for this exact ref."""
+    text: str | None = None
+    """Only jobs whose version, library or error contains this text, any case."""
+    created_after: datetime | None = None
+    """Only jobs queued at or after this time."""
+    created_before: datetime | None = None
+    """Only jobs queued before this time."""
 
 
 class ProblemCode(StrEnum):
@@ -599,6 +899,8 @@ class ProblemCode(StrEnum):
     NOT_A_FILE = "not_a_file"
     UNREADABLE = "unreadable"
     BAD_FILE_NAME = "bad_file_name"
+    UNPARSABLE = "unparsable"
+    """The file was read but could not be parsed or cut into chunks; the rest was imported."""
     FRONT_MATTER = "front_matter"
     """The article was imported, but its front matter is malformed or partly ignored."""
     NOT_AN_IMAGE = "not_an_image"
@@ -613,12 +915,16 @@ class ProblemCode(StrEnum):
     """The root ``context7.json`` cannot be used and was ignored; the import went on without it."""
     INSTRUCTION_FILES = "instruction_files"
     """The instruction files (repo guidance) could not be read; the version has none."""
+    MARKUP = "markup"
+    """The article was imported, but some of its markup was not converted: an unknown
+    reStructuredText directive or role (kept as text), or an include that could not be read."""
 
     @property
     def is_skip(self) -> bool:
         """Whether the file was left out of the version (as opposed to imported with a note)."""
         return self not in {
             ProblemCode.FRONT_MATTER,
+            ProblemCode.MARKUP,
             ProblemCode.TRUNCATED,
             ProblemCode.CONTEXT7,
             ProblemCode.INSTRUCTION_FILES,
@@ -658,7 +964,8 @@ class Job:
     """A long task for one library (optionally one version) and how far it got.
 
     ``total`` is 0 until the job knows its size. ``chunked`` and ``reused`` count the articles an
-    import cut into chunks and those whose chunks an earlier import had already stored;
+    import cut into chunks and those whose chunks an earlier import had already stored (for an
+    ``embed`` job, ``reused`` counts the chunks another job embedded meanwhile, within ``done``);
     ``parsed`` and ``taken`` the articles it parsed and those it took as an earlier import had
     stored them.
     ``commit_sha`` is the commit the job's ``version`` was pinned to when it was queued,
@@ -691,7 +998,7 @@ class Job:
     chunked: int = 0
     """Articles an import cut into chunks."""
     reused: int = 0
-    """Articles whose chunks an earlier import had stored."""
+    """Articles whose chunks an earlier import had stored; for ``embed``, chunks found embedded."""
     parsed: int = 0
     """Articles an import parsed."""
     taken: int = 0
@@ -708,6 +1015,20 @@ class Job:
     """When the job last started running."""
     finished_at: datetime | None = None
     """When the job ended."""
+    cancelled_by: str | None = None
+    """Who asked to cancel it (their user name); ``None`` unless someone did."""
+    cancelled_at: datetime | None = None
+    """When someone asked to cancel it; a running job stops at its next step boundary."""
+
+    @property
+    def cancel_requested(self) -> bool:
+        """Whether someone asked to cancel the job (it may still be running until its next step)."""
+        return self.cancelled_at is not None
+
+    @property
+    def finished(self) -> bool:
+        """Whether the job has ended: ``succeeded``, ``failed`` or ``cancelled``."""
+        return self.state not in {JobState.QUEUED, JobState.RUNNING}
 
     @classmethod
     def queued(
@@ -870,6 +1191,39 @@ class Job:
             The failed job.
         """
         return replace(self, state=JobState.FAILED, error=error, error_code=code, finished_at=now)
+
+    def cancelling(self, by: str | None, now: datetime) -> Self:
+        """Ask to cancel the job: a queued one is cancelled at once, a running one is flagged.
+
+        Asking again while a running job is being cancelled changes nothing.
+
+        Args:
+            by: Who asks (their user name); ``None`` for the instance itself.
+            now: The time of the request.
+
+        Returns:
+            The job, ``cancelled`` if it was queued, else flagged with who and when.
+
+        Raises:
+            JobFinishedError: The job has ended already.
+        """
+        if self.finished:
+            raise JobFinishedError(self.id, self.state)
+        if self.cancel_requested:
+            return self
+        flagged = replace(self, cancelled_by=by, cancelled_at=now)
+        return flagged.cancelled(now) if self.state is JobState.QUEUED else flagged
+
+    def cancelled(self, now: datetime) -> Self:
+        """Mark the job as stopped because someone cancelled it.
+
+        Args:
+            now: The time it ended.
+
+        Returns:
+            The cancelled job; what it did so far is kept.
+        """
+        return replace(self, state=JobState.CANCELLED, finished_at=now)
 
     def requeued(self) -> Self:
         """Run again from the beginning, as if never started.
@@ -1715,18 +2069,20 @@ def _clean_pattern(raw: str) -> str:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PathSelection:
-    """Which repository files are articles: ``include`` minus ``exclude``, only ``.md``/``.mdx``.
+    """Which repository files are articles: ``include`` minus ``exclude``, only articles' suffixes.
 
+    Articles are ``.md``/``.mdx`` (Markdown) and ``.rst`` (reStructuredText) files, and ``.txt``
+    files (read as reStructuredText) that an include pattern naming ``.txt`` selects (#435).
     Patterns are repo-relative with ``/`` (an absolute path, ``..`` or a backslash is refused) and
-    **case-sensitive**: ``Docs/`` does not match ``docs/``. Only the ``.md``/``.mdx`` suffix is
+    **case-sensitive**: ``Docs/`` does not match ``docs/``. Only the suffix is
     case-insensitive. ``docs/`` is a folder and all below it, ``docs`` a file or a folder, ``*``
     and ``?`` stay within one name, ``**`` as a whole name crosses folders, ``{a,b}`` is a choice
     (not nestable; ``{}`` matches nothing; a lone ``}`` is a plain character). No ``include``
-    means every ``.md``/``.mdx`` file. An exclusion always wins.
+    means every ``.md``/``.mdx``/``.rst`` file. An exclusion always wins.
     """
 
     include: tuple[str, ...] = ()
-    """Patterns of what to import; empty: every ``.md``/``.mdx`` file."""
+    """Patterns of what to import; empty: every ``.md``/``.mdx``/``.rst`` file."""
     exclude: tuple[str, ...] = ()
     """Patterns of what to leave out; they win over ``include``."""
 
@@ -1758,13 +2114,21 @@ class PathSelection:
             path: A repository path.
 
         Returns:
-            True for a ``.md``/``.mdx`` file the patterns select.
+            True for an article file the patterns select (``.txt``: only a pattern naming it).
         """
-        if not path.lower().endswith(ARTICLE_SUFFIXES):
+        lowered = path.lower()
+        if not lowered.endswith(ARTICLE_SUFFIXES):
             return False
         if any(_matches(_glob(p), path) for p in self.exclude):
             return False
-        return not self.include or any(_matches(_glob(p), path) for p in self.include)
+        explicit = lowered.endswith(EXPLICIT_SUFFIXES)
+        if not self.include:
+            return not explicit
+        return any(
+            _matches(_glob(p), path)
+            for p in self.include
+            if not explicit or any(s in p.lower() for s in EXPLICIT_SUFFIXES)
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2264,6 +2628,10 @@ class ImportSource:
     """Tags given to articles by path."""
     chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
     """How articles are cut into chunks."""
+    title: str = ""
+    """The library's title as stored (a sources file compares its declared title with it)."""
+    description: str = ""
+    """The library's description as stored."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2763,6 +3131,8 @@ class SyncStatus(StrEnum):
     """A tag or a commit never moves: it is not synced."""
     FAILED = "failed"
     """The branch is gone upstream: the version keeps what it served; the failure is on a job."""
+    CANCELLED = "cancelled"
+    """The scheduled check left the branch alone: a person cancelled its sync to this same tip."""
 
 
 # ---------------------------------------------------------------- the scheduled check (SYNC-02)
@@ -2970,7 +3340,7 @@ class EmbedPlan:
     manifest_id: str | None
     """The version's manifest when the job started."""
     missing: int
-    """Chunks without a vector then."""
+    """Chunks without a vector then, each once: the job's ``total``."""
     created: bool
     """The job created the space (the model changed): every other version needs embedding too."""
     skipped: str | None
@@ -2985,6 +3355,10 @@ class EmbeddedBatch:
     """Vectors stored."""
     finished: bool
     """Nothing of the version is left to embed, or nothing more may be sent."""
+    left: int | None = None
+    """Chunks of the plan's ``missing`` still without a vector after the batch; ``None`` when not
+    counted (the job stopped early). What is neither embedded by the job nor left was embedded
+    meanwhile by another job sharing chunks with it (identical files in another library)."""
 
 
 # ---------------------------------------------------------------- the sources file (TEAM-02)
@@ -3023,6 +3397,11 @@ class DeclaredLibrary:
     """The tag rules; ``None``: not managed."""
     chunking: ChunkingConfig | None = None
     """The chunking; ``None``: not managed."""
+    title: str | None = None
+    """The library's title, kept like an edit by hand; ``None``: not managed."""
+    description: str | None = None
+    """The library's description, kept like an edit by hand; ``None``: not managed. Empty is a
+    declared "no description"."""
     manages_auto_sync: bool = False
     """Whether the scheduled check is managed."""
     auto_sync: AutoSync | None = None
@@ -3057,6 +3436,13 @@ class SourcesField(StrEnum):
     EXCLUDE_PATHS = "exclude_paths"
     TAG_RULES = "tag_rules"
     CHUNKING = "chunking"
+    TITLE = "title"
+    DESCRIPTION = "description"
+
+    @property
+    def is_text(self) -> bool:
+        """Whether this is the library's text, stored apart from its import settings."""
+        return self in {SourcesField.TITLE, SourcesField.DESCRIPTION}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -3100,6 +3486,16 @@ class LibraryUpdate:
         """The tag rules to store: the declared ones, else the stored ones."""
         declared = self.declared.tag_rules
         return self.current.source.tag_rules if declared is None else declared
+
+    @property
+    def settings_changed(self) -> bool:
+        """Whether an import setting (paths, tag rules, chunking) differs."""
+        return any(not name.is_text for name in self.changed)
+
+    @property
+    def text_changed(self) -> bool:
+        """Whether the title or the description differs."""
+        return any(name.is_text for name in self.changed)
 
     @property
     def writes(self) -> bool:
@@ -3219,6 +3615,10 @@ def _changed_fields(declared: DeclaredLibrary, source: ImportSource) -> tuple[So
     ]
     if declared.chunking is not None and declared.chunking != source.chunking:
         changed.append(SourcesField.CHUNKING)
+    if declared.title is not None and declared.title != source.title:
+        changed.append(SourcesField.TITLE)
+    if declared.description is not None and declared.description != source.description:
+        changed.append(SourcesField.DESCRIPTION)
     return tuple(changed)
 
 
@@ -3647,3 +4047,16 @@ def route_push(
             and auto_sync.matches(ref.name)
         )
     )
+
+
+class Access(StrEnum):
+    """The library role a caller needs for an action; the values are the role names."""
+
+    READ = "viewer"
+    """Search and read."""
+    CONTRIBUTE = "contributor"
+    """Import content: add versions, sync, tag articles."""
+    ADMINISTER = "admin"
+    """Configure the library and remove versions."""
+    OWN = "creator"
+    """Remove the library."""

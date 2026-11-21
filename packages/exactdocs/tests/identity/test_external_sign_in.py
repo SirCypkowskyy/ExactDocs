@@ -19,6 +19,7 @@ from exactdocs.identity.adapters.driven.memory import (
     InMemoryAccountRepository,
     InMemoryExternalIdentityRepository,
     InMemoryFailedSignInLog,
+    InMemoryLibraryGrantRepository,
     InMemorySessionRepository,
     InMemorySignInAttemptRepository,
     InMemoryTokenRepository,
@@ -26,6 +27,7 @@ from exactdocs.identity.adapters.driven.memory import (
 from exactdocs.identity.adapters.driven.sqlite import (
     SqliteAccountRepository,
     SqliteExternalIdentityRepository,
+    SqliteLibraryGrantRepository,
     SqliteSessionRepository,
     SqliteSignInAttemptRepository,
     SqliteTokenRepository,
@@ -119,6 +121,8 @@ class FakeProvider:
     """Runs once inside the next refresh, before it answers (what happens meanwhile)."""
     started: list[dict[str, str]] = field(default_factory=list)
     exchanged: list[dict[str, str]] = field(default_factory=list)
+    id_tokens: dict[str, ExternalClaims] = field(default_factory=dict)
+    """ID tokens the provider issued, by token (what MCP's OAuth hands over)."""
 
     def add(self, subject: str, username: str | None, *groups: str, email: str | None = None):
         self.people[subject] = ExternalClaims(
@@ -140,6 +144,11 @@ class FakeProvider:
         return ExternalGrant(
             claims=self.people[self.next_subject], refresh_token=self.refresh_token
         )
+
+    async def verify_id_token(self, id_token: str) -> ExternalClaims:
+        if (claims := self.id_tokens.get(id_token)) is None:
+            raise ExternalSignInFailedError
+        return claims
 
     async def refresh(self, refresh_token: str, *, subject: str) -> ExternalGrant:
         if (meanwhile := self.during_refresh) is not None:
@@ -202,6 +211,7 @@ def build(
         hasher=hasher,
         failures=InMemoryFailedSignInLog(),
         externals=externals(links) if externals else links,
+        library_grants=InMemoryLibraryGrantRepository(),
         attempts=attempts,
         box=FakeBox(),
         clock=clock,
@@ -877,6 +887,7 @@ async def stored(request: pytest.FixtureRequest) -> AsyncIterator[StoredWorld]:
             sessions=InMemorySessionRepository(),
             tokens=InMemoryTokenRepository(),
             externals=InMemoryExternalIdentityRepository(accounts=accounts),
+            library_grants=InMemoryLibraryGrantRepository(),
             attempts=InMemorySignInAttemptRepository(),
         )
         return
@@ -890,6 +901,7 @@ async def stored(request: pytest.FixtureRequest) -> AsyncIterator[StoredWorld]:
             sessions=SqliteSessionRepository(engine=engine),
             tokens=SqliteTokenRepository(engine=engine),
             externals=SqliteExternalIdentityRepository(engine=engine),
+            library_grants=SqliteLibraryGrantRepository(engine=engine),
             attempts=SqliteSignInAttemptRepository(engine=engine),
         )
 
@@ -944,3 +956,99 @@ async def test_a_sign_in_during_a_refresh_is_not_overwritten(stored: StoredWorld
     assert link.signed_in_at == stored.clock.at
     groups = await stored.externals.groups_by_account()
     assert groups[AccountId(account.id)] == ("corp", ["ops"])
+
+
+# ---------------------------------------------------------------- MCP OAuth: identify an ID token
+
+
+async def test_an_id_token_of_an_allowed_person_acts_as_their_linked_account() -> None:
+    world = build(policy(allow_any_user=False, allowed_groups=frozenset({"docs"})))
+    world.provider.add("u-1", "alice", "docs")
+    account = await sign_in(world, "u-1")
+    world.provider.id_tokens["tok"] = world.provider.people["u-1"]
+
+    caller = await world.identity.identify_external_token("corp", "tok")
+
+    assert caller.account == account
+    assert caller.groups == frozenset({"docs"})
+    assert caller.linked is True
+
+
+async def test_an_unlinked_person_is_identified_without_creating_an_account() -> None:
+    world = build()
+    world.provider.add("u-9", "dora", "exactdocs-admins")
+    world.provider.id_tokens["tok"] = world.provider.people["u-9"]
+
+    caller = await world.identity.identify_external_token("corp", "tok")
+
+    assert (caller.account.id, caller.account.username, caller.account.role) == (
+        "corp:u-9",
+        "dora",
+        "admin",
+    )
+    assert caller.groups == frozenset({"exactdocs-admins"})
+    assert caller.linked is False
+    assert await world.accounts.any_exists() is False
+
+
+async def test_a_person_outside_the_allowed_groups_is_refused() -> None:
+    world = build(policy(allow_any_user=False, allowed_groups=frozenset({"docs"})))
+    world.provider.add("u-2", "bob", "other")
+    world.provider.id_tokens["tok"] = world.provider.people["u-2"]
+
+    with pytest.raises(NotAllowedError):
+        await world.identity.identify_external_token("corp", "tok")
+
+
+async def test_a_disabled_account_is_refused() -> None:
+    world = build()
+    world.provider.add("u-1", "alice")
+    account = await sign_in(world, "u-1")
+    await world.identity.set_user_disabled(SetUserDisabledCommand(id=account.id, disabled=True))
+    world.provider.id_tokens["tok"] = world.provider.people["u-1"]
+
+    with pytest.raises(AccountDisabledError):
+        await world.identity.identify_external_token("corp", "tok")
+
+
+async def test_a_token_the_provider_does_not_vouch_for_is_refused() -> None:
+    world = build()
+
+    with pytest.raises(ExternalSignInFailedError):
+        await world.identity.identify_external_token("corp", "forged")
+
+
+async def test_an_unknown_provider_is_refused_for_a_token_too() -> None:
+    with pytest.raises(UnknownSignInProviderError):
+        await build().identity.identify_external_token("nope", "tok")
+
+
+async def test_an_oauth_token_cannot_revive_a_dangling_account_link() -> None:
+    world = build()
+    world.provider.add("u-1", "alice", "exactdocs-admins")
+    await sign_in(world, "u-1")
+    world.accounts.accounts.clear()
+    world.provider.id_tokens["tok"] = world.provider.people["u-1"]
+    with pytest.raises(ExternalSignInFailedError):
+        await world.identity.identify_external_token("corp", "tok")
+
+
+async def test_oauth_groups_use_the_same_provider_prefix_as_web_groups() -> None:
+    world = build(policy(group_prefix="corp:"))
+    world.provider.add("u-1", "alice", "docs")
+    world.provider.id_tokens["tok"] = world.provider.people["u-1"]
+    caller = await world.identity.identify_external_token("corp", "tok")
+    assert caller.groups == frozenset({"corp:docs"})
+
+
+async def test_oauth_uses_signed_groups_without_overwriting_web_memberships() -> None:
+    world = build()
+    world.provider.add("u-1", "alice", "docs")
+    account = await sign_in(world, "u-1")
+    before = await world.externals.get(ISSUER, "u-1")
+    world.provider.add("u-1", "alice", "readers")
+    world.provider.id_tokens["tok"] = world.provider.people["u-1"]
+    caller = await world.identity.identify_external_token("corp", "tok")
+    assert caller.groups == frozenset({"readers"})
+    assert await world.externals.groups_of(AccountId(account.id)) == frozenset({"docs"})
+    assert await world.externals.get(ISSUER, "u-1") == before

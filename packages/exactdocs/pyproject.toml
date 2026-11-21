@@ -26,12 +26,12 @@ classifiers = [
 ai = [
     "pydantic-ai-slim[openai,anthropic,google]==2.60.0",
     "pydantic-ai-harness==0.60.0",
-    "pydantic-monty==1.5.0",
+    "pydantic-monty==1.6.0",
     "sqlite-vec==0.1.9",
     "pgvector==0.5.1",
     # Azure OpenAI and Claude on Azure AI Foundry with Entra ID (`auth = "entra"`): the sync token
     # provider only (`azure.identity.aio` would need aiohttp).
-    "azure-identity==1.26.0",
+    "azure-identity==1.27.0",
 ]
 # Local models (docs/decisions/ai-retrieval.md, *Local and offline models*): an embedding model and
 # a cross-encoder in this process, on CPU, without torch. Imported only once a role names a
@@ -72,6 +72,9 @@ dependencies = [
     "alembic>=1.16",
     "cyclopts>=4",
     "dbos>=3.3,<4",
+    # reStructuredText (Sphinx) articles (#435): parsed, never built; no Sphinx, no network.
+    # Exact pin: the converter maps its node classes and directive API.
+    "docutils==0.23",
     "fastapi>=0.120",
     "fastmcp>=4",
     "httpx2>=2",

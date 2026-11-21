@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, Info } from "lucide-react";
 import { type FormEvent, useState } from "react";
+import { toast } from "sonner";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import { Field, TextareaField } from "@/shared/ui/field";
@@ -16,6 +17,7 @@ import {
   type SettingsLibrary,
   validateDetails,
 } from "../model/settings";
+import { useReportDirty } from "./dirty";
 
 interface Props {
   owner: string;
@@ -42,12 +44,14 @@ export function DetailsForm({ owner, repo, library, activity, onStart }: Props) 
   const draft = { title, description };
   const patch = changedFields(library, draft);
   const unchanged = Object.keys(patch).length === 0;
+  useReportDirty("details", !unchanged);
 
   const save = useMutation({
     mutationFn: () => saveDetails(owner, repo, patch),
     onSuccess: () => {
       setSaved(true);
       setProblem(undefined);
+      toast.success("Saved the library details");
       refreshLibraries(queryClient);
     },
     onError: (error) => {
@@ -83,7 +87,7 @@ export function DetailsForm({ owner, repo, library, activity, onStart }: Props) 
   };
 
   return (
-    <form onSubmit={submit} noValidate className="mt-4">
+    <form onSubmit={submit} noValidate>
       <FormAlert id="details-alert" message={problem?.message} link={problem?.link} />
       <div className="flex flex-col gap-5">
         <Field
@@ -106,13 +110,13 @@ export function DetailsForm({ owner, repo, library, activity, onStart }: Props) 
         {/* Said when it matters: once something is edited. */}
         <div
           className={cn(
-            "grid transition-[grid-template-rows] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
+            "grid transition-[grid-template-rows] duration-(--dur) ease-(--ease-out) motion-reduce:transition-none",
             unchanged ? "grid-rows-[0fr]" : "grid-rows-[1fr]",
           )}
         >
           <div className="overflow-hidden" inert={unchanged}>
-            <p className="flex items-start gap-2 text-sm text-muted-foreground">
-              <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
+            <p className="flex items-start gap-2 text-body text-muted-foreground">
+              <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
               <span>
                 Edited fields are kept when the library is re-imported. Fields you leave alone keep
                 following the repository's README.
@@ -123,16 +127,16 @@ export function DetailsForm({ owner, repo, library, activity, onStart }: Props) 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <Button
             type="submit"
+            pending={save.isPending}
             aria-disabled={save.isPending || unchanged}
-            aria-busy={save.isPending}
             className="min-w-32 aria-disabled:cursor-default"
           >
             {save.isPending ? "Saving" : "Save changes"}
           </Button>
-          <p role="status" className="min-h-5 text-sm">
+          <p role="status" className="min-h-5 text-body">
             {saved && unchanged && activity.by === "details" && (
               <span className="fade-in inline-flex items-center gap-1.5">
-                <Check aria-hidden="true" className="size-4 text-mark" />
+                <Check aria-hidden="true" className="size-4 text-route" />
                 Saved.
               </span>
             )}

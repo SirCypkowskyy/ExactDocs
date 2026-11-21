@@ -99,9 +99,9 @@ describe("libraries slice", () => {
     const fetchMock = serve([library()], [job()]);
     renderPage();
 
-    const row = (await screen.findByRole("heading", { name: "/acme/payments" })).closest("li");
+    const row = (await screen.findByRole("heading", { name: "Payments" })).closest("li");
     if (!row) throw new Error("no row");
-    expect(within(row).getByRole("link", { name: "/acme/payments" })).toHaveAttribute(
+    expect(within(row).getByRole("link", { name: "Payments" })).toHaveAttribute(
       "href",
       "/libraries/acme/payments",
     );
@@ -131,7 +131,7 @@ describe("libraries slice", () => {
     serve([library({ default_pinned: true })], [job()]);
     renderPage();
 
-    const row = (await screen.findByRole("heading", { name: "/acme/payments" })).closest("li");
+    const row = (await screen.findByRole("heading", { name: "Payments" })).closest("li");
     if (!row) throw new Error("no row");
     const [first] = within(within(row).getByRole("list", { name: "Versions" })).getAllByRole(
       "listitem",
@@ -310,7 +310,7 @@ describe("libraries slice", () => {
 
     expect(await screen.findByText(/Couldn't load sync status/)).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
-    expect(screen.getByRole("heading", { name: "/acme/payments" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Payments" })).toBeInTheDocument();
   });
 
   it("teaches how to add a library when there are none", async () => {

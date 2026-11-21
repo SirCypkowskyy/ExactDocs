@@ -4,6 +4,11 @@ import re
 from datetime import timedelta
 from typing import Final, Literal, NewType
 
+from exactdocs.ingestion.constants._restructuredtext import (
+    MARKDOWN_SUFFIXES,
+    RESTRUCTUREDTEXT_SUFFIXES,
+)
+
 type ChunkerName = Literal["markdown"]
 """The chunkers ExactDocs has."""
 PARSER_VERSION: Final[int] = 3
@@ -78,6 +83,16 @@ README_TITLE_MAX: Final[int] = 120
 """Longest library title taken from a README, in characters."""
 README_DESCRIPTION_MAX: Final[int] = 500
 """Longest library description taken from a README, in characters."""
+_README_LABEL: Final[re.Pattern[str]] = re.compile(
+    r"^\s*[\w-]+(?:\s+[\w-]+){0,2}\s*:", re.MULTILINE
+)
+"""A short label opening a README line (``Documentation:``): with the links after it, a nav line."""
+_README_NAV_CHARS: Final[str] = " \n|-*.,;:·•"
+"""What may sit between the links of a README nav line."""
+_LOGO_WORDS: Final[re.Pattern[str]] = re.compile(r"\b(?:logo|banner)\b", re.IGNORECASE)
+"""Words an image ``alt`` adds to the project's name (``Acme logo``)."""
+_BADGE_SOURCES: Final[tuple[str, ...]] = ("badge", "shields.io", "badgen.net")
+"""An image whose source holds one of these is a badge, not a logo."""
 DEFAULT_GRACE_SECONDS: Final[int] = 7 * 24 * 3600
 """How long a replaced manifest is kept so that its chunk IDs can still be recognized as stale."""
 PERMANENT_IMPORT_FAILURES: Final[frozenset[str]] = frozenset({"no_articles", "import_too_large"})
@@ -135,8 +150,9 @@ stays within hosted embedding models' input (8,191 tokens for OpenAI's). It is i
 so changing it cuts every library again at its next import or re-chunk."""
 _SHA_PREFIX: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{7,64}")
 """An abbreviated or full commit SHA."""
-ARTICLE_SUFFIXES: Final[tuple[str, ...]] = (".md", ".mdx")
-"""File suffixes of articles: everything else in a repository is ignored."""
+ARTICLE_SUFFIXES: Final[tuple[str, ...]] = (*MARKDOWN_SUFFIXES, *RESTRUCTUREDTEXT_SUFFIXES)
+"""File suffixes of articles (Markdown, reStructuredText): everything else in a repository is
+ignored."""
 _MAX_PATTERNS: Final[int] = 64
 """Path patterns a library's settings may hold."""
 _MAX_PATTERN: Final[int] = 256
@@ -270,6 +286,9 @@ byte: SQLite uses a partial index only for a query that spells its condition exa
 index's, so a condition that differs (another state, another order) silently stops the index
 being used.
 """
+JOB_SORT_FIELDS: Final[tuple[str, ...]] = ("id", "created_at", "state", "kind", "library")
+"""What the jobs lists can be sorted by (columns that are never null); `-id` is the default, which
+is newest first."""
 ABOVE_EVERY_JOB_ID: Final[str] = "\U0010ffff"
 """The first page's cursor in the SQL job repository: the last Unicode code point sorts after
 every job ID (a UUID string), by code point in Python and SQLite and byte-wise in PostgreSQL's

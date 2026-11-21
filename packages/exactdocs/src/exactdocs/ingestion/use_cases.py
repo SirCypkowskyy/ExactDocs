@@ -10,6 +10,7 @@ import uuid
 import weakref
 from collections.abc import Awaitable, Callable, Collection, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import partial
@@ -36,14 +37,17 @@ from exactdocs.ingestion.constants import (
     IMPORT_JOB,
     IMPORT_KINDS,
     INSTRUCTIONS_NOT_READ,
+    JOB_SORT_FIELDS,
     KNOWN_BATCH,
     LIBRARY_KINDS,
     MAX_CONTROL_RATIO,
     MAX_IMAGES,
+    MAX_INCLUDES,
     MAX_INSTRUCTION_FILE_BYTES,
     MAX_LISTED_REFS,
     MAX_PREVIEW_FILES,
     MAX_WANTED_IMAGES,
+    OUTSIDE_IMAGES_BATCH,
     PARSER_VERSION,
     PERMANENT_IMPORT_FAILURES,
     PUSH_JOB,
@@ -65,6 +69,7 @@ from exactdocs.ingestion.dtos import (
     AppliedSources,
     ApplySourcesCommand,
     AutoSyncOut,
+    CancelJobCommand,
     CheckedRepository,
     CheckRepositoryCommand,
     ChunkingIn,
@@ -76,11 +81,13 @@ from exactdocs.ingestion.dtos import (
     GetJobQuery,
     GetLibraryAccessQuery,
     JobList,
+    JobListQuery,
     JobSummary,
     LatestJob,
     LatestJobs,
     LibraryAccess,
     LibraryOutcome,
+    ListJobsQuery,
     ListLibraryJobsQuery,
     ListRepositoryRefsQuery,
     PlanSourcesCommand,
@@ -125,7 +132,11 @@ from exactdocs.ingestion.errors import (
     InvalidContext7Error,
     InvalidSourcesError,
     InvalidWebhookSignatureError,
+    JobCancelledError,
+    JobFinishedError,
     JobNotFoundError,
+    LibraryAccessDeniedError,
+    LibraryCreationDeniedError,
     LibraryIdTakenError,
     NoArticlesError,
     NotAGitRepositoryError,
@@ -134,6 +145,7 @@ from exactdocs.ingestion.errors import (
     PushQueuedError,
     RefDeletedError,
     RepositoryAuthRequiredError,
+    RepositoryTooLargeError,
     RepositoryUnreachableError,
     ReprocessFailedError,
     StoredTextOutdatedError,
@@ -147,6 +159,7 @@ from exactdocs.ingestion.errors import (
     WebhookSecretUnreadableError,
 )
 from exactdocs.ingestion.models import (
+    Access,
     ArticleChunk,
     AutoSync,
     ChunkingConfig,
@@ -166,8 +179,10 @@ from exactdocs.ingestion.models import (
     ImportedRef,
     ImportedVersion,
     ImportSource,
+    IncludeRefused,
     InstructionPolicy,
     Job,
+    JobFilter,
     JobId,
     JobState,
     LibraryUpdate,
@@ -184,6 +199,7 @@ from exactdocs.ingestion.models import (
     RepositoryUrl,
     ResolvedRef,
     SettingsChange,
+    SourcesField,
     SourcesPlan,
     StoredArticleTags,
     SyncErrorCode,
@@ -195,9 +211,12 @@ from exactdocs.ingestion.models import (
     WebhookProvider,
     check_credential_fits,
     compose_renames,
+    converted_article,
+    converted_key,
     git_blob_sha,
     imported_tags,
     instruction_candidates,
+    is_restructuredtext,
     is_unordered,
     parse_article,
     parse_context7,
@@ -214,6 +233,7 @@ from exactdocs.ingestion.models import (
     webhook_provider,
 )
 from exactdocs.ingestion.ports.driven import (
+    AccessPolicy,
     AutoSyncStore,
     Checkpoints,
     Chunker,
@@ -233,7 +253,9 @@ from exactdocs.ingestion.ports.driven import (
     LibraryLocks,
     LibrarySettingsStore,
     LibrarySources,
+    LibraryTexts,
     ManualTagStore,
+    MarkupConverter,
     NewLibraries,
     RecoveryHook,
     Removals,
@@ -266,11 +288,44 @@ from exactdocs_kernel import (
     NotFoundError,
     Page,
     ValidationError,
-    decode_cursor,
-    encode_cursor,
+    decode_sort_cursor,
+    encode_sort_cursor,
+    parse_sort,
 )
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _CancelCheck:
+    """Tells a running job, between its steps, whether someone cancelled it."""
+
+    jobs: JobRepository
+    """Where the job is stored."""
+    job_id: JobId
+    """The running job."""
+
+    async def __call__(self) -> None:
+        """Raise when someone asked to cancel the job.
+
+        Raises:
+            JobCancelledError: The job is to stop here, at a step boundary.
+        """
+        job = await self.jobs.get(self.job_id)
+        if job is not None and job.cancel_requested:
+            raise JobCancelledError(self.job_id)
+
+
+async def _stop_if_cancelled() -> None:
+    """Raise ``JobCancelledError`` when the job running in this task was cancelled."""
+    check = _running_job.get()
+    if check is not None:
+        await check()
+
+
+# The cancellation check of the job running in this task (set by ``_run``): the steps of its
+# handler call it before each step, however deep they are built. ``None`` outside a job.
+_running_job: ContextVar[_CancelCheck | None] = ContextVar("exactdocs_running_job", default=None)
 
 
 def _credential(sent: CredentialIn | None, repository: RepositoryUrl) -> Credential | None:
@@ -291,6 +346,24 @@ def _credential(sent: CredentialIn | None, repository: RepositoryUrl) -> Credent
 
 
 """Branches and tags listed each; a repository with more is cut and flagged ``truncated``."""
+
+
+async def _require(access: AccessPolicy, library: str, needed: Access) -> None:
+    """Refuse unless the caller holds the role ``needed`` on the library.
+
+    Args:
+        access: Library roles.
+        library: The library ID, any case.
+        needed: The role the action needs.
+
+    Raises:
+        UnknownLibraryError: The library is hidden from this caller.
+        LibraryAccessDeniedError: The caller's role on the library is lower.
+    """
+    if not await access.allows(library, Access.READ):
+        raise UnknownLibraryError(library)
+    if needed is not Access.READ and not await access.allows(library, needed):
+        raise LibraryAccessDeniedError(library, needed.value)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -351,6 +424,8 @@ class GetJobUseCase:
 
     jobs: JobRepository
     """Where jobs are stored."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: GetJobQuery) -> JobSummary:
         """Fetch one job by its ID.
@@ -365,9 +440,75 @@ class GetJobUseCase:
             JobNotFoundError: No job has that ID.
         """
         job = await self.jobs.get(JobId(query.job_id))
-        if job is None:
+        if job is None or not await self.access.allows(job.library, Access.READ):
             raise JobNotFoundError(query.job_id)
-        return JobSummary.from_model(job)
+        return JobSummary.from_model(
+            job, cancellable=job.id in await _cancellable(self.access, [job])
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CancelJobUseCase:
+    """Implements ``ports.driving.CancelJob``."""
+
+    jobs: JobRepository
+    """Where jobs are stored."""
+    clock: Clock
+    """Tells the time."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
+
+    async def __call__(self, command: CancelJobCommand) -> JobSummary:
+        """Cancel a queued job at once, or ask a running one to stop at its next step.
+
+        The request is one atomic write (``JobRepository.cancel``): a job that ends meanwhile
+        is reported as it ended. Nothing else is stopped: the embedding an import would have
+        queued, say, is a job of its own.
+
+        Args:
+            command: The job's ID and who cancels it.
+
+        Returns:
+            The job: ``cancelled``, or ``running`` with ``cancelled_at`` while it stops.
+
+        Raises:
+            JobNotFoundError: No job has that ID, or its library is hidden from the caller.
+            JobFinishedError: The job has ended already (also when it was cancelled before).
+        """
+        job = await self.jobs.get(JobId(command.job_id))
+        if job is None or not await self.access.allows(job.library, Access.READ):
+            raise JobNotFoundError(command.job_id)
+        await _require(self.access, job.library, Access.CONTRIBUTE)
+        now = self.clock.now()
+        job.cancelling(command.by, now)  # refuses a job that has ended
+        after = await self.jobs.cancel(job.id, by=command.by, now=now)
+        if after is None:
+            raise JobNotFoundError(command.job_id)
+        if after.finished and after.state is not JobState.CANCELLED:  # it ended meanwhile
+            raise JobFinishedError(after.id, after.state)
+        return JobSummary.from_model(after)
+
+
+async def _cancellable(access: AccessPolicy, jobs: Sequence[Job]) -> set[str]:
+    """Return the IDs of the jobs the caller may cancel now.
+
+    Only unfinished jobs nobody cancelled yet count, and the library roles are asked once per
+    library among them.
+
+    Args:
+        access: Library roles.
+        jobs: The jobs.
+
+    Returns:
+        The IDs of those the caller may cancel.
+    """
+    waiting = [job for job in jobs if not job.finished and not job.cancel_requested]
+    allowed = {
+        library
+        for library in {job.library for job in waiting}
+        if await access.allows(library, Access.CONTRIBUTE)
+    }
+    return {job.id for job in waiting if job.library in allowed}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -378,6 +519,8 @@ class GetLibraryAccessUseCase:
     """Where credentials are kept."""
     library_ids: LibraryIds
     """Tells which libraries exist."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: GetLibraryAccessQuery) -> LibraryAccess:
         """Report a library with a stored credential as private; ``UnknownLibraryError`` if none.
@@ -394,10 +537,86 @@ class GetLibraryAccessUseCase:
         Raises:
             UnknownLibraryError: No library has that ID.
         """
+        await _require(self.access, query.library, Access.READ)
         library = query.library.lower()
         if not await self.library_ids.is_taken(ProposedId(library)):
             raise UnknownLibraryError(query.library)
         return LibraryAccess(private=await self.vault.has(library))
+
+
+async def _job_page(
+    jobs: JobRepository,
+    access: AccessPolicy,
+    query: JobListQuery,
+    libraries: frozenset[str] | None,
+) -> JobList:
+    """Read the page of jobs a query asks for, inside ``libraries``.
+
+    Args:
+        jobs: Where jobs are stored.
+        access: Decides which of the jobs the caller may cancel.
+        query: The filters, the sort, the page size and the cursor.
+        libraries: The libraries as spelled in their jobs that the caller may read; ``None`` when
+            the caller's reach was not narrowed.
+
+    Returns:
+        The page, its next cursor and the count of every match.
+    """
+    sort = parse_sort(query.sort, allowed=JOB_SORT_FIELDS, default="-id")
+    after = (
+        decode_sort_cursor(query.cursor, sort, key_field="id") if query.cursor is not None else None
+    )
+    job_filter = JobFilter(
+        libraries=libraries,
+        states=frozenset(query.state or ()),
+        kinds=frozenset(query.kind or ()),
+        version=query.version,
+        text=query.q,
+        created_after=query.created_after,
+        created_before=query.created_before,
+    )
+    found = await jobs.search(
+        job_filter,
+        sort=sort,
+        after=after,
+        limit=query.limit + 1,  # one more than asked tells whether another page follows
+    )
+    page = list(found[: query.limit])
+    more = len(found) > query.limit
+    last = page[-1] if more else None
+    return JobList.from_page(
+        Page(
+            items=page,
+            next_cursor=(
+                None
+                if last is None
+                else encode_sort_cursor(
+                    sort, key_field="id", value=_job_value(last, sort.field), key=last.id
+                )
+            ),
+            total=await jobs.count(job_filter),
+        ),
+        cancellable=await _cancellable(access, page),
+    )
+
+
+def _job_value(job: Job, field: str) -> str:
+    """Return a job's value of a sort field, as the store compares it.
+
+    Args:
+        job: The job.
+        field: One of ``JOB_SORT_FIELDS``.
+
+    Returns:
+        The ID, the creation time as stored (UTC, microseconds), the state, the kind or the library.
+    """
+    return {
+        "id": job.id,
+        "created_at": job.created_at.isoformat(timespec="microseconds"),
+        "state": job.state.value,
+        "kind": job.kind,
+        "library": job.library,
+    }[field]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -406,26 +625,53 @@ class ListLibraryJobsUseCase:
 
     jobs: JobRepository
     """Where jobs are stored."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: ListLibraryJobsQuery) -> JobList:
-        """List a page of the library's jobs, newest first; only that page is read.
+        """List a page of the library's jobs, filtered and sorted (newest first by default).
 
         Args:
-            query: The library, the page size and the cursor.
+            query: The library, the filters, the sort, the page size and the cursor.
 
         Returns:
-            The page, and the cursor of the next one when there is one.
+            The page, the cursor of the next one when there is one, and the count of every match.
         """
-        before = decode_cursor(query.cursor) if query.cursor is not None else None
-        jobs = await self.jobs.list_page_for_library(
-            query.library,
-            before=before,
-            limit=query.limit + 1,  # one more than asked tells whether another page follows
-        )
-        page = list(jobs[: query.limit])
-        more = len(jobs) > query.limit
-        return JobList.from_page(
-            Page(items=page, next_cursor=encode_cursor(page[-1].id) if more else None)
+        await _require(self.access, query.library, Access.READ)
+        return await _job_page(self.jobs, self.access, query, frozenset({query.library}))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ListJobsUseCase:
+    """Implements ``ports.driving.ListJobs``."""
+
+    jobs: JobRepository
+    """Where jobs are stored."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
+
+    async def __call__(self, query: ListJobsQuery) -> JobList:
+        """List a page of the jobs of the libraries the caller may read.
+
+        Permissions apply first: the jobs of a hidden library are in no page and in no count.
+
+        Args:
+            query: The filters, the sort, the page size and the cursor.
+
+        Returns:
+            The page, the cursor of the next one when there is one, and the count of every match.
+        """
+        stored = [
+            library
+            for library in await self.jobs.libraries()
+            if query.library is None or library.casefold() == query.library.casefold()
+        ]
+        readable = await self.access.readable(stored)
+        return await _job_page(
+            self.jobs,
+            self.access,
+            query,
+            frozenset(library for library in stored if library.casefold() in readable),
         )
 
 
@@ -435,6 +681,8 @@ class ListLatestJobsUseCase:
 
     jobs: JobRepository
     """Where jobs are stored."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self) -> LatestJobs:
         """List the newest job of every (library, version), without their skipped files.
@@ -444,9 +692,12 @@ class ListLatestJobsUseCase:
         """
         # ponytail: not paged; one row per imported version, fine until thousands exist.
         # Only imports are syncs; a collection job has no version and is no state of a library.
-        latest = await self.jobs.list_latest()
+        latest = [job for job in await self.jobs.list_latest() if job.kind in IMPORT_KINDS]
+        readable = await self.access.readable([job.library for job in latest])
+        shown = [job for job in latest if job.library.casefold() in readable]
+        cancellable = await _cancellable(self.access, shown)
         return LatestJobs(
-            jobs=[LatestJob.from_model(job) for job in latest if job.kind in IMPORT_KINDS]
+            jobs=[LatestJob.from_model(job, cancellable=job.id in cancellable) for job in shown]
         )
 
 
@@ -466,7 +717,8 @@ class RecoverJobsUseCase:
     async def __call__(self, *, resuming: Collection[str] = ()) -> None:
         """Run the hook of every job left ``running``, then queue it again to run from scratch.
 
-        A kind without a hook has nothing to clean up. A hook that raises fails its job instead
+        A job someone had asked to cancel ends ``cancelled`` after its hook instead. A kind
+        without a hook has nothing to clean up. A hook that raises fails its job instead
         of keeping the app from starting, because re-running over unclean state would be worse.
         A job in ``resuming`` is the runner's to resume (from its last durable step) and is
         left alone. Every other queued job is then submitted to the runner, oldest first: also
@@ -495,7 +747,10 @@ class RecoverJobsUseCase:
                     )
                 )
             else:
-                await self.jobs.save(job.requeued())
+                if job.cancel_requested:  # it was stopping when the process ended
+                    await self.jobs.save(job.cancelled(self.clock.now()))
+                else:
+                    await self.jobs.save(job.requeued())
         await _submit_queued(self.jobs, self.runner, resuming)
 
 
@@ -544,7 +799,8 @@ class RunJobUseCase:
 
         A job found ``running`` was interrupted: its kind's recovery hook undoes what the
         interrupted step left half done (a hook that raises fails the job), then the job starts
-        over, its handler replaying the durable steps it had completed.
+        over, its handler replaying the durable steps it had completed; one that someone had
+        asked to cancel ends ``cancelled`` there instead. A ``cancelled`` job never starts.
 
         Args:
             job_id: The job's ID.
@@ -563,6 +819,9 @@ class RunJobUseCase:
                 await self.jobs.save(
                     job.failed(failure, self.clock.now(), code=failure_code(error))
                 )
+                return
+            if job.cancel_requested:  # cancelled, then interrupted: it does not start again
+                await self.jobs.save(job.cancelled(self.clock.now()))
                 return
             job = job.requeued()  # its progress is rebuilt as the steps are replayed
         started = job.started(self.clock.now())
@@ -599,6 +858,10 @@ async def _run(
 ) -> None:
     """Run a started job's handler and store how it ended (raising only if that store fails).
 
+    The handler's steps stop it, between two of them, once someone cancelled the job: it is
+    then stored ``cancelled``, with what it had done. A handler that ended before its next step
+    boundary ends as it would have (the cancellation came too late).
+
     Args:
         jobs: Where jobs are stored.
         clock: Tells the time.
@@ -607,27 +870,58 @@ async def _run(
     """
     progress = _Progress(jobs=jobs, job=job)
     handler = handlers.get(job.kind)
-    code = UNEXPECTED_ERROR
+    running = _running_job.set(_CancelCheck(jobs=jobs, job_id=job.id))
     try:
-        if handler is None:
-            failure = f"no handler is registered for job kind {job.kind!r}"
-        else:
-            await handler(job, progress)
-            failure = None
-    except Exception as error:
-        log.exception("job %s (%s) failed", job.id, job.kind)
-        failure, code = _describe(error), failure_code(error)
+        ended = await _attempt(handler, job, progress)
+    finally:
+        _running_job.reset(running)
     now = clock.now()
-    final = (
-        progress.job.succeeded(now)
-        if failure is None
-        else progress.job.failed(failure, now, code=code)
-    )
+    if ended is None:
+        final = progress.job.cancelled(now)
+    elif ended.failure is None:
+        final = progress.job.succeeded(now)
+    else:
+        final = progress.job.failed(ended.failure, now, code=ended.code)
     try:
         await jobs.save(final)
     except Exception:
         log.exception("could not store the end of job %s (%s)", job.id, job.kind)
         raise
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Ended:
+    """How a job's handler ended, when it was not cancelled."""
+
+    failure: str | None = None
+    """Why it failed, for users; ``None`` when it succeeded."""
+    code: str = UNEXPECTED_ERROR
+    """The stable code of ``failure``."""
+
+
+async def _attempt(handler: JobHandler | None, job: Job, progress: JobProgress) -> _Ended | None:
+    """Run the handler; return how it ended, or ``None`` when it stopped because it was cancelled.
+
+    Args:
+        handler: What runs the job's kind; ``None`` when none is registered.
+        job: The started job.
+        progress: Where it reports.
+
+    Returns:
+        How it ended; ``None`` for a job that stopped at a step boundary, cancelled.
+    """
+    if handler is None:
+        return _Ended(failure=f"no handler is registered for job kind {job.kind!r}")
+    try:
+        await _stop_if_cancelled()  # cancelled while it was being started
+        await handler(job, progress)
+    except JobCancelledError:
+        log.info("job %s (%s) stopped: it was cancelled", job.id, job.kind)
+        return None
+    except Exception as error:
+        log.exception("job %s (%s) failed", job.id, job.kind)
+        return _Ended(failure=_describe(error), code=failure_code(error))
+    return _Ended()
 
 
 @dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- job counters
@@ -936,6 +1230,8 @@ class AddLibraryUseCase:
     """Lists a repository's refs."""
     library_ids: LibraryIds
     """Tells which library IDs are taken."""
+    access: AccessPolicy
+    """Resolves instance-wide library creation permission."""
     libraries: NewLibraries
     """Where new libraries go."""
     enqueue_job: EnqueueJob
@@ -968,8 +1264,11 @@ class AddLibraryUseCase:
 
         Raises:
             LibraryIdTakenError: A library already has the ID.
+            LibraryCreationDeniedError: The caller lacks instance creation permission.
         """
         repository = RepositoryUrl.parse(command.url)
+        if not await self.access.can_create(command.library_id or repository.library_id):
+            raise LibraryCreationDeniedError
         credential = _credential(command.credential, repository)
         selection = PathSelection.of(command.include_paths, command.exclude_paths)
         tag_rules = TagRule.many([(r.pattern, r.tag) for r in command.tag_rules])
@@ -1069,6 +1368,8 @@ class AddVersionUseCase:
     """Queues the import."""
     vault: CredentialVault
     """Where the credential is kept."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: AddVersionCommand) -> AddedVersion:
         """Pin the ref like ``AddLibrary`` does and queue the import with the library's settings.
@@ -1092,6 +1393,7 @@ class AddVersionUseCase:
             CommitImportedError: The commit is already a version under another ref.
             VersionImportingError: An import of the ref is queued or running.
         """
+        await _require(self.access, command.library, Access.CONTRIBUTE)
         library = command.library
         source = await self.sources.get(library)
         existing = {v.ref: v for v in await self.sources.imported_versions(library)}
@@ -1113,6 +1415,28 @@ class AddVersionUseCase:
             await self.vault.save(library, scope, sent)
         job = await _enqueue_import(self.enqueue_job, library, resolved)
         return AddedVersion.of(library, resolved, job)
+
+
+def _cancelled_tips(
+    newest: Mapping[str, Job], tips: Mapping[tuple[RefKind, str], str]
+) -> dict[str, Job]:
+    """Return the branches whose newest job is a sync a person cancelled at the tip they name now.
+
+    Args:
+        newest: The newest job of each version, by ref.
+        tips: The commit of each advertised branch and tag.
+
+    Returns:
+        Those cancelled jobs, by ref.
+    """
+    return {
+        ref: job
+        for ref, job in newest.items()
+        if job.state is JobState.CANCELLED
+        and job.kind in IMPORT_KINDS
+        and job.commit_sha is not None
+        and tips.get((RefKind.BRANCH, ref)) == job.commit_sha
+    }
 
 
 def _busy_refs(jobs: Sequence[Job]) -> dict[str, Job]:
@@ -1147,15 +1471,23 @@ class SyncLibraryUseCase:
     """Queues the imports."""
     vault: CredentialVault
     """Where the library's credential is kept."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(
-        self, command: SyncLibraryCommand, *, refs: RemoteRefs | None = None
+        self,
+        command: SyncLibraryCommand,
+        *,
+        refs: RemoteRefs | None = None,
+        scheduled: bool = False,
     ) -> SyncedLibrary:
         """Ask the remote where each branch and tag is now, queue an import for moved branches.
 
         ``refs`` is what the remote advertised a moment ago (the scheduled check listed it for
         the tags): the remote is not asked again. ``command.refs`` limits the sync to the
-        versions of those refs (a push names the branch it moved).
+        versions of those refs (a push names the branch it moved). A ``scheduled`` sync leaves a
+        branch alone (``cancelled``) whose newest sync a person cancelled at the same tip: only
+        a new commit, or a sync by hand, queues it again.
 
         The import is the one of adding a version: pinned to the new commit, it fetches it,
         reuses the chunks of every unchanged blob and activates the new manifest in place of the
@@ -1173,6 +1505,7 @@ class SyncLibraryUseCase:
         Args:
             command: The library.
             refs: The refs the remote advertised; ``None`` lists them now.
+            scheduled: The scheduled check asks (not a person).
 
         Returns:
             What happened to each version.
@@ -1181,6 +1514,7 @@ class SyncLibraryUseCase:
             SyncFailedError: The remote could not be read; the failed jobs record it.
             VersionImportingError: A branch's import is running and nothing could be queued.
         """
+        await _require(self.access, command.library, Access.CONTRIBUTE)
         library = command.library
         source = await self.sources.get(library)
         versions = await self.sources.imported_versions(library)
@@ -1213,6 +1547,8 @@ class SyncLibraryUseCase:
                 raise SyncFailedError(error, recorded, code) from raised
             tips = {(t.kind, t.name): t.commit_sha for t in ref_tips(refs)}
         # The busy check is repeated, atomically, by ``enqueue_job`` (the repository).
+        if scheduled:  # a sync a person cancelled is not re-queued at the same tip
+            busy = {**_cancelled_tips(newest, tips), **busy}
         synced = [await self._sync(library, v, tips, busy, newest) for v in versions]
         importing = [v for v in synced if v.status is SyncStatus.IMPORTING]
         if importing and not any(v.status is SyncStatus.QUEUED for v in synced):
@@ -1278,7 +1614,10 @@ class SyncLibraryUseCase:
         if current.kind not in CHECKED_KINDS:
             return outcome(SyncStatus.PINNED, current.commit_sha)
         if current.ref in busy:
-            return outcome(SyncStatus.IMPORTING, current.commit_sha, busy[current.ref].id)
+            held = busy[current.ref]  # importing, or a sync a person cancelled at this tip
+            cancelled = held.state is JobState.CANCELLED
+            status = SyncStatus.CANCELLED if cancelled else SyncStatus.IMPORTING
+            return outcome(status, current.commit_sha, held.id)
         last = newest.get(current.ref)
         tip = tips.get((current.kind, current.ref))
         if tip is None:
@@ -1413,10 +1752,13 @@ class SyncLibraryUseCase:
 
 
 class _NoCheckpoints:
-    """The default ``Checkpoints``: every step runs, nothing survives a crash."""
+    """The default ``Checkpoints``: every step runs, nothing survives a crash.
+
+    A cancelled job stops before its next step, as with ``StopOnCancel``.
+    """
 
     async def step[T](self, name: str, run: Callable[[], Awaitable[T]], /) -> T:
-        """Run the step; nothing is recorded.
+        """Run the step, unless the job was cancelled; nothing is recorded.
 
         Args:
             name: The step's name.
@@ -1426,7 +1768,36 @@ class _NoCheckpoints:
             What ``run`` returned.
         """
         del name
+        await _stop_if_cancelled()
         return await run()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StopOnCancel:
+    """Implements ``ports.driven.Checkpoints``: ``inner``'s steps, the job stopping between them.
+
+    Before each step it reads whether someone cancelled the job running in this task; if so it
+    raises ``JobCancelledError`` instead of starting the step. Every step that ran is complete
+    (a version activated, a batch of vectors stored), so the job stops with nothing half done,
+    and ``RunJob`` records it ``cancelled``. Not for steps run inside another durable step (a
+    re-import within a ``reprocess``'s version step): those finish with their step.
+    """
+
+    inner: Checkpoints
+    """The durable steps (DBOS's), or steps that only run."""
+
+    async def step[T](self, name: str, run: Callable[[], Awaitable[T]], /) -> T:
+        """Run the step through ``inner``, unless the job was cancelled.
+
+        Args:
+            name: The step's name.
+            run: Runs the step.
+
+        Returns:
+            What ``run`` returned, now or on the run that completed the step.
+        """
+        await _stop_if_cancelled()
+        return await self.inner.step(name, run)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1443,6 +1814,8 @@ class ReimportVersionUseCase:
     """Queues the import."""
     vault: CredentialVault
     """Where the library's credential is kept."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: ReimportVersionCommand) -> ReimportedVersion:
         """Ask the remote where the tag is now and queue its import there, as a sync would a branch.
@@ -1469,6 +1842,7 @@ class ReimportVersionUseCase:
             RefDeletedError: The tag is gone upstream.
             TagNotMovedError: The tag still names the commit the version serves.
         """
+        await _require(self.access, command.library, Access.CONTRIBUTE)
         library = command.library
         source = await self.sources.get(library)  # an unknown library is not found
         versions = {v.ref: v for v in await self.sources.imported_versions(library)}
@@ -1579,6 +1953,8 @@ def _job_changes() -> dict[JobKind, SettingsChange]:
 def _unhealed(jobs: Sequence[Job]) -> SettingsChange | None:
     """Return the widest re-processing that failed and was not redone since (newest first).
 
+    A cancelled one counts as failed: it stopped with some versions not re-processed.
+
     A failed job is redone by any later job of the same or a greater reach that succeeded, or
     is still queued or running (it reads the settings when it runs): a failed ``reprocess``
     stays unhealed after a ``retag`` or a ``rechunk``, which do not re-import.
@@ -1595,7 +1971,7 @@ def _unhealed(jobs: Sequence[Job]) -> SettingsChange | None:
         change = _job_changes().get(job.kind)
         if change is None:
             continue
-        if job.state is JobState.FAILED:
+        if job.state in {JobState.FAILED, JobState.CANCELLED}:
             if change.reach > covered and (worst is None or change.reach > worst.reach):
                 worst = change
         else:
@@ -1630,6 +2006,8 @@ class UpdateLibrarySettingsUseCase:
     """Queues the re-processing job."""
     locks: LibraryLocks = field(default_factory=TagLocks)
     """Its own per-library locks (not the tag locks): edits of one library take turns."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: UpdateLibrarySettingsCommand) -> UpdatedLibrarySettings:
         """Validate, store, then queue the one job that re-processes every version.
@@ -1652,6 +2030,7 @@ class UpdateLibrarySettingsUseCase:
         Returns:
             The settings as stored, the change, the job and the versions it re-processes.
         """
+        await _require(self.access, command.library, Access.ADMINISTER)
         library = command.library.lower()
         selection = PathSelection.of(command.include_paths, command.exclude_paths)
         tag_rules = TagRule.many([(r.pattern, r.tag) for r in command.tag_rules])
@@ -2237,7 +2616,9 @@ class RechunkLibraryUseCase:
             for a in copied.articles
         }
         tagged = await self.tags.set_imported_tags(copied.manifest_id, wanted)
-        cut = await asyncio.to_thread(_cut, chunker, unknown)
+        cut, failed = await asyncio.to_thread(_cut, chunker, unknown)
+        if failed:  # a re-import lists the file and serves the rest
+            return False
         every = found | cut
         version = ImportedVersion(
             library=library,
@@ -2334,6 +2715,8 @@ class ImportVersionUseCase:
     """Says whether the library keeps its instruction files (RET-08); without it none are kept."""
     files: RepositoryFiles | None = None
     """Reads the instruction files (RET-08); without it none are kept."""
+    converter: MarkupConverter | None = None
+    """Writes reStructuredText articles as Markdown (#435); without it they are skipped."""
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
         """Run the import, skipping the steps a run before a crash completed; raising fails it.
@@ -2797,20 +3180,41 @@ class ImportVersionUseCase:
         outside = _ImageBudget(
             per_image=taken.per_image, total=taken.total, count=taken.count, used=taken.used
         )
-        if taken.absent and job.commit_sha and job.version:
-            async with self.gateway.fetch_files(
-                source.url,
-                job.commit_sha,
-                taken.absent,
-                max_bytes=self.max_images_bytes,
-                refs=_full_refs(job.ref_kind or RefKind.COMMIT, job.version),
-                credential=credential,
-            ) as folder:
-                outside.absent = await asyncio.to_thread(
-                    _read_images, folder, taken.absent, outside
-                )
-        else:
+        if not (taken.absent and job.commit_sha and job.version):
             outside.absent = list(taken.absent)
+            return outside
+        refs = _full_refs(job.ref_kind or RefKind.COMMIT, job.version)
+        size = OUTSIDE_IMAGES_BATCH
+        pending = [taken.absent[i : i + size] for i in range(0, len(taken.absent), size)]
+        while pending:
+            batch = pending.pop(0)
+            left = outside.total - outside.used
+            if outside.count >= MAX_IMAGES or left <= 0:
+                reason = "the version's image budget is used up"
+                outside.skipped.extend(
+                    Skip(code=ProblemCode.IMAGE_BUDGET, reason=reason, path=p) for p in batch
+                )
+                continue
+            try:
+                async with self.gateway.fetch_files(
+                    source.url,
+                    job.commit_sha,
+                    batch,
+                    max_bytes=left + outside.per_image,
+                    refs=refs,
+                    credential=credential,
+                ) as folder:
+                    outside.absent += await asyncio.to_thread(_read_images, folder, batch, outside)
+            except RepositoryTooLargeError:
+                # Referenced files are not all images: halve the batch to find the big ones.
+                if len(batch) > 1:
+                    half = len(batch) // 2
+                    pending[:0] = [batch[:half], batch[half:]]
+                else:
+                    reason = "larger than what is left of the version's image budget"
+                    outside.skipped.append(
+                        Skip(code=ProblemCode.TOO_LARGE, reason=reason, path=batch[0])
+                    )
         return outside
 
     async def _articles(
@@ -2903,21 +3307,15 @@ class ImportVersionUseCase:
         Returns:
             The batch's articles, problems and counts.
         """
-        read, used = await self._read(await checkout.folder(), given, progress)
-        files = [(path, sha) for path, sha, _ in (r for r in read if not isinstance(r, Skip))]
+        folder = await checkout.folder()
+        read, used = await self._converted(folder, *await self._read(folder, given, progress))
+        files = [
+            (path, sha)
+            for path, sha, _ in (r for r in read if not isinstance(r, Skip))
+            if not is_restructuredtext(path)  # its key is not its blob: it is converted again
+        ]
         found = await self._stored(given.library, given.ref, files)
-        loaded: list[tuple[str, str, ParsedArticle]] = []
-        problems: list[tuple[str, ProblemCode, str]] = []
-        for path, result in zip(given.paths, read, strict=True):
-            shown = path.encode(errors="replace").decode()
-            if isinstance(result, Skip):
-                problems.append((shown, result.code, result.reason))
-                continue
-            _, blob_sha, text = result
-            parsed = found.get((path, blob_sha)) or parse_article(path, text)
-            loaded.append((path, blob_sha, parsed))
-            # The article is imported; the note is listed.
-            problems.extend((shown, ProblemCode.FRONT_MATTER, note) for note in parsed.problems)
+        loaded, problems = _parse(given.paths, read, found)
         known = given.known
         asked = [sha for sha in dict.fromkeys(sha for _, sha, _ in loaded) if sha not in known]
         chunked: dict[str, tuple[ArticleChunk, ...]] = {}
@@ -2927,7 +3325,13 @@ class ImportVersionUseCase:
         for _, blob_sha, parsed in loaded:
             if blob_sha not in known and blob_sha not in chunked:
                 unknown.setdefault(blob_sha, parsed)
-        cut = await asyncio.to_thread(_cut, given.chunker, unknown)
+        cut, failed = await asyncio.to_thread(_cut, given.chunker, unknown)
+        problems.extend(  # every path of a blob the chunker failed on is left out
+            (_shown(path), ProblemCode.UNPARSABLE, failed[sha])
+            for path, sha, _ in loaded
+            if sha in failed
+        )
+        loaded = [file for file in loaded if file[1] not in failed]
         every = {**known, **chunked, **cut}
         tags = {
             path: imported_tags(path, parsed.tags, given.source.tag_rules)
@@ -2988,6 +3392,44 @@ class ImportVersionUseCase:
                 await progress.report(done=given.first + offset, total=given.total)
         return read, used
 
+    async def _converted(
+        self, folder: Path, read: list[tuple[str, str, str] | Skip], used: int
+    ) -> tuple[list[tuple[str, str, str | ParsedArticle] | Skip], int]:
+        """Convert the reStructuredText files read into articles, keyed by what they depend on.
+
+        The files their includes read count toward ``max_import_bytes`` too. Without a converter
+        such a file is skipped.
+
+        Args:
+            folder: The checkout's folder.
+            read: Each file's ``(path, blob SHA, text)`` or skip.
+            used: The bytes of text used so far.
+
+        Returns:
+            The same list, a converted file as ``(path, key, article)``, and the bytes used.
+
+        Raises:
+            ImportTooLargeError: The text adds up to more than ``max_import_bytes``.
+        """
+        result: list[tuple[str, str, str | ParsedArticle] | Skip] = []
+        for item in read:
+            if isinstance(item, Skip) or not is_restructuredtext(item[0]):
+                result.append(item)
+                continue
+            path, _, text = item
+            if self.converter is None:
+                reason = "reStructuredText is not converted here"
+                result.append(Skip(code=ProblemCode.UNREADABLE, reason=reason))
+                continue
+            files = _CheckoutFiles(folder=folder, limit=self.max_article_bytes)
+            converted = await asyncio.to_thread(self.converter.convert, path, text, files)
+            used += files.used
+            if used > self.max_import_bytes:
+                raise ImportTooLargeError(self.max_import_bytes)
+            key = converted_key(path, text, files.read_files, self.converter.version)
+            result.append((path, key, converted_article(path, converted)))
+        return result, used
+
     async def _stored(
         self, library: str, ref: str, files: Sequence[tuple[str, str]]
     ) -> dict[tuple[str, str], ParsedArticle]:
@@ -3026,19 +3468,132 @@ async def _same[T](value: T) -> T:
     return value
 
 
+def _parse(
+    paths: Sequence[str],
+    read: Sequence[tuple[str, str, str | ParsedArticle] | Skip],
+    found: Mapping[tuple[str, str], ParsedArticle],
+) -> tuple[list[tuple[str, str, ParsedArticle]], list[tuple[str, ProblemCode, str]]]:
+    """Parse the files read, unless an earlier import stored them; list every file's problems.
+
+    A file skipped while reading, or that cannot be parsed, is left out with a problem; an
+    article imported with notes on its front matter is listed with them. A converted
+    (reStructuredText) file is taken as it is, its notes listed as markup problems.
+
+    Args:
+        paths: The batch's files.
+        read: Each file's ``(path, blob SHA or key, text or converted article)`` or why it was
+            skipped, in ``paths`` order.
+        found: What earlier imports stored, by ``(path, blob SHA)``.
+
+    Returns:
+        ``(path, blob SHA, article)`` of each article, and ``(path, code, reason)`` of each
+        problem.
+    """
+    loaded: list[tuple[str, str, ParsedArticle]] = []
+    problems: list[tuple[str, ProblemCode, str]] = []
+    for path, result in zip(paths, read, strict=True):
+        shown = _shown(path)
+        if isinstance(result, Skip):
+            problems.append((shown, result.code, result.reason))
+            continue
+        _, blob_sha, text = result
+        code = ProblemCode.FRONT_MATTER
+        if isinstance(text, ParsedArticle):
+            parsed, code = text, ProblemCode.MARKUP
+        else:
+            parsed = found.get((path, blob_sha)) or _one_file(
+                shown, partial(parse_article, path, text)
+            )
+        if isinstance(parsed, _Unparsable):  # the version imports without it
+            problems.append((shown, ProblemCode.UNPARSABLE, parsed.reason))
+            continue
+        loaded.append((path, blob_sha, parsed))
+        # The article is imported; the note is listed.
+        problems.extend((shown, code, note) for note in parsed.problems)
+    return loaded, problems
+
+
+def _shown(path: str) -> str:
+    """A path as a job lists it: a name that is not valid UTF-8 gets replacement characters.
+
+    Args:
+        path: The file's path, maybe with surrogate escapes.
+
+    Returns:
+        A printable path.
+    """
+    return path.encode(errors="replace").decode()
+
+
 def _cut(
     chunker: Chunker, articles: Mapping[str, ParsedArticle]
-) -> dict[str, tuple[ArticleChunk, ...]]:
+) -> tuple[dict[str, tuple[ArticleChunk, ...]], dict[str, str]]:
     """Cut articles into chunks (CPU-bound: call it in a thread).
+
+    An article the chunker fails on is that file's problem, not the version's: it is left out
+    and the others are cut (#430).
 
     Args:
         chunker: The configured chunker.
         articles: The articles to cut, by blob SHA.
 
     Returns:
-        Their chunks, by blob SHA.
+        Their chunks, by blob SHA; and why each article the chunker failed on was left out.
     """
-    return {sha: tuple(chunker.chunk(a)) for sha, a in articles.items()}
+    chunks: dict[str, tuple[ArticleChunk, ...]] = {}
+    failed: dict[str, str] = {}
+    for sha, article in articles.items():
+        cut = _one_file(article.path, partial(_chunks_of, chunker, article))
+        if isinstance(cut, _Unparsable):
+            failed[sha] = cut.reason
+        else:
+            chunks[sha] = cut
+    return chunks, failed
+
+
+def _chunks_of(chunker: Chunker, article: ParsedArticle) -> tuple[ArticleChunk, ...]:
+    """Cut one article.
+
+    Args:
+        chunker: The configured chunker.
+        article: The article.
+
+    Returns:
+        Its chunks.
+    """
+    return tuple(chunker.chunk(article))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Unparsable:
+    """Why one file could not be parsed or chunked."""
+
+    reason: str
+    """The job problem's reason: the error's type only, never the file's text."""
+
+
+def _one_file[T](path: str, work: Callable[[], T]) -> T | _Unparsable:
+    """Parse or chunk one file; an error there is that file's problem, not the version's (#430).
+
+    Running out of memory is not about one file: it is raised, and fails the import.
+
+    Args:
+        path: The file's repository path, for the log.
+        work: The parse or the cut.
+
+    Returns:
+        What ``work`` returned, or why it failed.
+
+    Raises:
+        MemoryError: ``work`` ran out of memory.
+    """
+    try:
+        return work()
+    except MemoryError:
+        raise
+    except Exception as error:  # one file's problem: listed on the job, the rest is imported
+        log.warning("parsing or chunking %s failed", path, exc_info=True)
+        return _Unparsable(reason=f"could not be parsed or chunked: {type(error).__name__}")
 
 
 async def _activate(
@@ -3597,6 +4152,67 @@ class Skip:
     """The file's repository path, once known."""
 
 
+@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- counts what it read
+class _CheckoutFiles:
+    """Implements ``IncludedFiles`` over the checkout: the files one article's includes read.
+
+    Each file is read as an article is (a plain file, decoded the same way, at most ``limit``
+    bytes); together they may take at most ``limit`` bytes and ``MAX_INCLUDES`` files. A file
+    outside the checkout (the selected paths) is not fetched.
+    """
+
+    folder: Path
+    """The checkout's folder."""
+    limit: int
+    """The most bytes one file, and all of them together, may have."""
+    read_files: list[tuple[str, str]] = field(default_factory=list)
+    """``(path, text)`` of every file read, in order."""
+    used: int = 0
+    """Bytes read."""
+
+    def read(self, path: str) -> str | IncludeRefused:
+        """Return a file's text, or why it is not read; see the ``IncludedFiles`` port.
+
+        Args:
+            path: A repository path.
+
+        Returns:
+            The text, or the refusal.
+        """
+        refused = self._refused(path)
+        loaded = _load(self.folder, path, self.limit) if refused is None else None
+        if isinstance(loaded, Skip):
+            refused = loaded.reason
+        elif loaded is not None and self.used + loaded[2] > self.limit:
+            refused = f"includes add up to more than {self.limit} bytes"
+        if refused is not None or not isinstance(loaded, tuple):
+            return IncludeRefused(reason=refused or "unreadable")
+        _, text, size = loaded
+        self.used += size
+        self.read_files.append((path, text))
+        return text
+
+    def _refused(self, path: str) -> str | None:
+        """Say why a file is not even looked at: too many included already, absent, a link.
+
+        Args:
+            path: A repository path.
+
+        Returns:
+            The reason, or None when it may be read.
+        """
+        if len(self.read_files) >= MAX_INCLUDES:
+            return f"more than {MAX_INCLUDES} files included"
+        try:
+            if _through_a_link(self.folder, path):
+                return "not a regular file"
+            if not (self.folder / path).is_file():
+                return "not among the imported files"
+        except OSError:
+            return "unreadable"
+        return None
+
+
 def _load(folder: Path, path: str, limit: int) -> tuple[str, str, int] | Skip:
     """Read and decode one file, or say why it is skipped.
 
@@ -3790,6 +4406,8 @@ class TagArticleUseCase:
     """Where the chunks' tags are refreshed."""
     locks: LibraryLocks
     """The library's tag lock, shared with the importer."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: TagArticleCommand) -> TaggedArticle:
         """Store the tags, then copy every touched article's tags onto its chunks.
@@ -3800,6 +4418,7 @@ class TagArticleUseCase:
         Returns:
             The path with its manual tags now.
         """
+        await _require(self.access, command.library, Access.CONTRIBUTE)
         async with self.locks.of(command.library):
             tagged = await self.tags.set_tags(command.library, command.path, command.tags)
             for manifest_id, articles in tagged.retagged.items():
@@ -3819,6 +4438,8 @@ class RemoveVersionUseCase:
     """Where the version's chunks are removed."""
     enqueue_job: EnqueueJob
     """Queues the collection."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: RemoveVersionCommand) -> RemovalResult:
         """Refuse during an import of the version, remove it from the catalog, then clean up.
@@ -3829,6 +4450,7 @@ class RemoveVersionUseCase:
         Returns:
             What was removed, the default version now and the collection job.
         """
+        await _require(self.access, command.library, Access.ADMINISTER)
         library = command.library.lower()  # library IDs are stored lower-case
         await _refuse_while_importing(self.jobs, library, command.ref)
         removed = await self.removals.remove_version(library, command.ref)
@@ -3864,6 +4486,8 @@ class RemoveLibraryUseCase:
     """Where the library's webhook secret is forgotten."""
     deliveries: WebhookDeliveries
     """Where the library's webhook deliveries are forgotten."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: RemoveLibraryCommand) -> RemovalResult:
         """Refuse during any import of the library, remove it from the catalog, then clean up.
@@ -3874,6 +4498,7 @@ class RemoveLibraryUseCase:
         Returns:
             What was removed and the collection job.
         """
+        await _require(self.access, command.library, Access.OWN)
         library = command.library.lower()
         await _refuse_while_importing(self.jobs, library, None)
         removed = await self.removals.remove_library(library)
@@ -3935,6 +4560,8 @@ class GetAutoSyncUseCase:
     """Tells which libraries exist."""
     schedules: AutoSyncStore
     """Where schedules are kept."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: GetAutoSyncQuery) -> AutoSyncOut:
         """Return the library's schedule; ``enabled`` false when it has none.
@@ -3945,6 +4572,7 @@ class GetAutoSyncUseCase:
         Returns:
             The schedule.
         """
+        await _require(self.access, query.library, Access.READ)
         library = query.library.lower()
         await self.sources.get(library)  # an unknown library is not found
         found = await self.schedules.get(library)
@@ -3961,6 +4589,8 @@ class SetAutoSyncUseCase:
     """Where schedules are kept."""
     switch: ScheduleSwitch
     """Turns the tick on."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: SetAutoSyncCommand) -> AutoSyncOut:
         """Store the schedule; the library is due at once, so the next tick checks it.
@@ -3971,6 +4601,7 @@ class SetAutoSyncUseCase:
         Returns:
             The schedule as stored.
         """
+        await _require(self.access, command.library, Access.ADMINISTER)
         library = command.library.lower()
         await self.sources.get(library)
         auto_sync = AutoSync(
@@ -3996,6 +4627,8 @@ class DisableAutoSyncUseCase:
     """Where schedules are kept."""
     switch: ScheduleSwitch
     """Turns the tick off once no library has a schedule."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: DisableAutoSyncCommand) -> AutoSyncOut:
         """Forget the schedule; every version stays. The last one off stops the tick.
@@ -4006,6 +4639,7 @@ class DisableAutoSyncUseCase:
         Returns:
             The schedule, now off.
         """
+        await _require(self.access, command.library, Access.ADMINISTER)
         library = command.library.lower()
         await self.sources.get(library)
         await self.schedules.delete(library)
@@ -4161,7 +4795,9 @@ class RunScheduledChecksUseCase:
             try:
                 # The refs listed for the tags; without them (none, or the remote failed) the
                 # sync asks itself, and records a failure on the versions' jobs.
-                await self.sync_library(SyncLibraryCommand(library=library), refs=refs)
+                await self.sync_library(
+                    SyncLibraryCommand(library=library), refs=refs, scheduled=True
+                )
             except VersionImportingError:
                 pass  # the branch is being imported already
             except DomainError as raised:  # also recorded on the versions' jobs
@@ -4259,7 +4895,8 @@ def _failed_tags(
     """Return (ref, commit) of the refs that are no version and are not to be imported now.
 
     A failure the same commit would meet again (``PERMANENT_IMPORT_FAILURES``) holds the tag
-    back until it moves. An ``unexpected`` one (a bug, perhaps at that commit) backs off: after
+    back until it moves, and so does an import a person cancelled (importing the tag by hand
+    still works). An ``unexpected`` one (a bug, perhaps at that commit) backs off: after
     the n-th in a row at the same commit, the tag waits 2**(n-1) - 1 more check intervals, at
     most ``UNEXPECTED_BACKOFF_CAP``. Any other failure (an unreachable repository, a refused
     credential...) is tried at the next check.
@@ -4281,7 +4918,12 @@ def _failed_tags(
     held: set[tuple[str, str]] = set()
     for ref, tried in imports.items():
         last = tried[0]
-        if ref in have or last.state is not JobState.FAILED or not last.commit_sha:
+        if ref in have or not last.commit_sha:
+            continue
+        if last.state is JobState.CANCELLED:  # a person stopped it: not again at this commit
+            held.add((ref, last.commit_sha))
+            continue
+        if last.state is not JobState.FAILED:
             continue
         backing_off = (
             last.error_code == UNEXPECTED_ERROR
@@ -4322,7 +4964,10 @@ class EmbeddingQueue:
     """Queues ``embed`` jobs for the versions the embedding model has not fully embedded.
 
     Only a *queued* job counts as one already: a running one may be embedding with a model
-    that changed meanwhile, and stops without covering the version for the new one.
+    that changed meanwhile, and stops without covering the version for the new one. A version
+    whose newest ``embed`` job a person cancelled is left alone unless ``retry_cancelled``: the
+    start and the nightly upkeep must not undo the cancellation, an import or a changed model
+    (new chunks to embed, or a new space) queue it again.
     """
 
     jobs: JobRepository
@@ -4334,12 +4979,19 @@ class EmbeddingQueue:
     embedder: VersionEmbedder
     """Names the versions not fully embedded."""
 
-    async def __call__(self, library: str | None, *, besides: tuple[str, str] | None = None) -> int:
+    async def __call__(
+        self,
+        library: str | None,
+        *,
+        besides: tuple[str, str] | None = None,
+        retry_cancelled: bool = False,
+    ) -> int:
         """Queue one ``embed`` job per version not fully embedded, unless one is queued already.
 
         Args:
             library: Only this library's versions; ``None``: every library's.
             besides: A (library, version) to leave out: the job that is embedding it.
+            retry_cancelled: Also the versions whose newest ``embed`` job was cancelled.
 
         Returns:
             How many jobs were queued.
@@ -4350,11 +5002,9 @@ class EmbeddingQueue:
             if (version.library, version.ref) == besides:
                 continue
             if version.library not in waiting:
-                waiting[version.library] = {
-                    job.version
-                    for job in await self.jobs.list_unfinished_for_library(version.library)
-                    if job.kind == EMBED_JOB and job.state is JobState.QUEUED
-                }
+                waiting[version.library] = await self._skipped(
+                    version.library, retry_cancelled=retry_cancelled
+                )
             if version.ref in waiting[version.library]:
                 continue
             job = Job.queued(
@@ -4369,6 +5019,29 @@ class EmbeddingQueue:
             waiting[version.library].add(version.ref)
             queued += 1
         return queued
+
+    async def _skipped(self, library: str, *, retry_cancelled: bool) -> set[str | None]:
+        """Return the library's versions not to queue: one waits, or a person cancelled it.
+
+        Args:
+            library: The library ID.
+            retry_cancelled: Queue the cancelled ones again.
+
+        Returns:
+            Their refs.
+        """
+        skipped = {
+            job.version
+            for job in await self.jobs.list_unfinished_for_library(library)
+            if job.kind == EMBED_JOB and job.state is JobState.QUEUED
+        }
+        if not retry_cancelled:
+            skipped |= {
+                job.version
+                for job in await self.jobs.list_newest_of_kind(library, EMBED_JOB)
+                if job.state is JobState.CANCELLED
+            }
+        return skipped
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -4389,7 +5062,8 @@ class QueueEmbeddingUseCase:
         """
         if self.queue is None:
             return QueuedEmbedding(queued=0)
-        return QueuedEmbedding(queued=await self.queue(command.library))
+        queued = await self.queue(command.library, retry_cancelled=command.retry_cancelled)
+        return QueuedEmbedding(queued=queued)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -4415,7 +5089,8 @@ class EmbedAfterJob:
         """
         await self.inner(job, progress)
         try:
-            await self.queue(job.library)
+            # What it stored is new: a version whose embedding was cancelled is queued again.
+            await self.queue(job.library, retry_cancelled=True)
         except Exception:
             log.exception("could not queue the embedding of %s after job %s", job.library, job.id)
 
@@ -4457,16 +5132,24 @@ class EmbedVersionUseCase:
         if plan.created:
             await steps.step(
                 "queue the other versions",
-                partial(self.queue, None, besides=(library, ref)),
+                partial(self.queue, None, besides=(library, ref), retry_cancelled=True),
             )
         await progress.report(done=0, total=plan.missing)
-        done, number = 0, 0
+        embedded, reused, number = 0, 0, 0
         while True:
             number += 1
             batch: EmbeddedBatch = await steps.step(
                 f"embed batch {number}", partial(self._batch, library, ref, plan)
             )
-            done += batch.embedded
+            embedded += batch.embedded
+            done = embedded + reused
+            if batch.left is not None:
+                # What the job did not embed and is not left was embedded by a job sharing
+                # chunks with it: done all the same, and counted as reused (#431).
+                done = max(embedded, plan.missing - batch.left)
+                if done - embedded > reused:
+                    reused = done - embedded
+                    await progress.chunking(chunked=0, reused=reused)
             await progress.report(done=done, total=max(done, plan.missing))
             if batch.finished:
                 break
@@ -4529,6 +5212,8 @@ def _declared_entry(index: int, entry: SourceLibrary) -> DeclaredLibrary:
             if entry.tag_rules is None
             else TagRule.many([(r.pattern, r.tag) for r in entry.tag_rules]),
             chunking=_chunking_of(entry.chunking),
+            title=entry.title,
+            description=entry.description,
             manages_auto_sync=schedule is not None,
             auto_sync=AutoSync(library=library_id, **schedule.model_dump()) if schedule else None,
         )
@@ -4639,6 +5324,8 @@ class ApplySourcesUseCase:
     """Removes an undeclared version (``prune``)."""
     remove_library: RemoveLibrary
     """Removes an undeclared library (``prune``)."""
+    texts: LibraryTexts
+    """Stores a declared title and description the way an edit by hand is stored."""
 
     async def __call__(self, command: ApplySourcesCommand) -> AppliedSources:
         """Plan again, then create, update and (only with ``prune``) remove, library by library.
@@ -4746,6 +5433,10 @@ class ApplySourcesUseCase:
         )
         applying.wrote = True
         applying.jobs.append(added.job_id)
+        if declared.title is not None or declared.description is not None:
+            await self.texts.save(
+                added.library_id, title=declared.title, description=declared.description
+            )
         await self._add_refs(added.library_id, others, applying)
         if declared.auto_sync is not None:
             await self._schedule(added.library_id, declared.auto_sync)
@@ -4761,7 +5452,16 @@ class ApplySourcesUseCase:
             applying: Collects the jobs.
         """
         library, declared = update.library_id, update.declared
-        if update.changed:
+        if update.text_changed:
+            await self.texts.save(
+                library,
+                title=declared.title if SourcesField.TITLE in update.changed else None,
+                description=declared.description
+                if SourcesField.DESCRIPTION in update.changed
+                else None,
+            )
+            applying.wrote = True
+        if update.settings_changed:
             selection = update.selection
             stored = await self.update_library_settings(
                 UpdateLibrarySettingsCommand(

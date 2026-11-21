@@ -1,7 +1,7 @@
 """REST adapter for identity: setup, sessions, "who is the caller", tokens and the users page."""
 
 from collections.abc import Awaitable, Callable
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -11,6 +11,8 @@ from pydantic import SecretStr
 
 from exactdocs.identity.constants import (
     _THROTTLED,
+    ACCESS_ASSERTION_HEADER,
+    ACCESS_COOKIE,
     COOKIE_ATTRS,
     CREATE_TOKEN_DESCRIPTION,
     LOGIN_FOR_TOKEN_DESCRIPTION,
@@ -27,10 +29,15 @@ from exactdocs.identity.dtos import (
     CreateTokenCommand,
     CreateUserCommand,
     FinishExternalSignInCommand,
+    GrantLibraryRoleCommand,
+    LibraryGrantRequest,
+    LibraryGrants,
+    ListLibraryGrantsQuery,
     LoginForTokenCommand,
     NewPassword,
     PasswordReset,
     ResetPasswordCommand,
+    RevokeLibraryRoleCommand,
     SessionState,
     SetUserDisabledCommand,
     StartExternalSignInCommand,
@@ -42,6 +49,7 @@ from exactdocs.identity.dtos import (
 from exactdocs.identity.errors import (
     InvalidTokenError,
     NotAnOperatorError,
+    NotSignedInError,
     UnknownSignInProviderError,
 )
 from exactdocs.identity.models import Role
@@ -51,12 +59,16 @@ from exactdocs.identity.ports.driving import (
     CreateUser,
     FinishExternalSignIn,
     GetSessionState,
+    GrantLibraryRole,
+    IdentifyAccessCaller,
     IdentifyCaller,
     IdentifyToken,
+    ListLibraryGrants,
     ListTokens,
     ListUsers,
     LoginForToken,
     ResetPassword,
+    RevokeLibraryRole,
     RevokeToken,
     SetUserDisabled,
     SignIn,
@@ -100,51 +112,89 @@ def client_address(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
-def build_session_caller(*, identify_caller: IdentifyCaller) -> CurrentCaller:
-    """Return the dependency that accepts the session cookie only (401 otherwise).
+def access_assertion(request: Request) -> str | None:
+    """Return the request's Cloudflare Access token: its header, else its cookie.
+
+    Only a configured Access verifier trusts it (``IdentifyAccessCaller``); anyone can send one.
+
+    Args:
+        request: The HTTP request.
+
+    Returns:
+        The token, or ``None`` when the request carries none.
+    """
+    return request.headers.get(ACCESS_ASSERTION_HEADER) or request.cookies.get(ACCESS_COOKIE)
+
+
+def build_session_caller(
+    *, identify_caller: IdentifyCaller, identify_access: IdentifyAccessCaller | None = None
+) -> CurrentCaller:
+    """Return the dependency that accepts a browser's sign-in only (401 otherwise).
+
+    The session cookie; without a live one, the Cloudflare Access token of the request (a
+    person who passed Access is signed in by it, with no session of ExactDocs).
 
     Args:
         identify_caller: The driving port that resolves a session token.
+        identify_access: The driving port that resolves a Cloudflare Access token.
 
     Returns:
         The dependency.
     """
 
     async def session_caller(
+        request: Request,
         session_token: Annotated[str | None, Depends(_session_cookie)] = None,
     ) -> AccountSummary:
-        """Resolve the request's session cookie to its account.
+        """Resolve the request's session cookie, or else its Access token, to its account.
 
         Args:
+            request: The HTTP request, for its Cloudflare Access token.
             session_token: The session cookie, if the request carried one.
 
         Returns:
             The signed-in account.
+
+        Raises:
+            NotSignedInError: Neither signs anyone in.
         """
-        return await identify_caller(session_token)
+        try:
+            return await identify_caller(session_token)
+        except NotSignedInError:
+            assertion = access_assertion(request)
+            if identify_access is None or not assertion:
+                raise
+            return await identify_access(assertion)
 
     return session_caller
 
 
 def build_current_caller(
-    *, identify_caller: IdentifyCaller, identify_token: IdentifyToken
+    *,
+    identify_caller: IdentifyCaller,
+    identify_token: IdentifyToken,
+    identify_access: IdentifyAccessCaller | None = None,
 ) -> CurrentCaller:
     """Return the FastAPI dependency that answers "who is calling?" (401 when nobody is).
 
     Depend on it to require a caller (``Depends(current_caller)``); a route that needs the
     account takes ``caller: Annotated[AccountSummary, Depends(current_caller)]``. It is the one
     place that learns how a request proves who it is: an API token in ``Authorization: Bearer``,
-    or else the session cookie. A bearer token that is wrong is refused outright, never
-    quietly replaced by a cookie that happens to be there.
+    or else the session cookie, or else the Cloudflare Access token. A bearer token that is wrong
+    is refused outright, never quietly replaced by a cookie or an Access token that happens to be
+    there.
 
     Args:
         identify_caller: The driving port that resolves a session token.
         identify_token: The driving port that resolves an API token.
+        identify_access: The driving port that resolves a Cloudflare Access token.
 
     Returns:
         The dependency.
     """
-    session_caller = build_session_caller(identify_caller=identify_caller)
+    session_caller = build_session_caller(
+        identify_caller=identify_caller, identify_access=identify_access
+    )
 
     async def current_caller(
         request: Request,
@@ -170,7 +220,7 @@ def build_current_caller(
             if scheme.lower() != "bearer":
                 raise InvalidTokenError
             return await identify_token(credentials.strip())
-        return await session_caller(session_token)
+        return await session_caller(request, session_token)
 
     return current_caller
 
@@ -429,14 +479,16 @@ def build_router(
         """Tell whether setup is due, nobody is signed in, or who is.
 
         Args:
-            request: The HTTP request, for its session cookie.
+            request: The HTTP request, for its session cookie and its Cloudflare Access token.
             response: The HTTP response, to forbid caching it.
 
         Returns:
             The setup and sign-in state.
         """
         response.headers["Cache-Control"] = "no-store"
-        return await get_session_state(request.cookies.get(SESSION_COOKIE))
+        return await get_session_state(
+            request.cookies.get(SESSION_COOKIE), access_assertion(request)
+        )
 
     @router.post(
         "/tokens/login",
@@ -485,7 +537,7 @@ def build_router(
             **COOKIE_ATTRS,
         )
         response.headers["Cache-Control"] = "no-store"
-        return SessionState(state="signed_in", account=grant.account)
+        return SessionState(state="signed_in", account=grant.account, source="session")
 
     @router.delete("/session", status_code=204)
     async def delete_session(request: Request, response: Response) -> None:
@@ -682,3 +734,101 @@ def _no_store(response: RedirectResponse) -> RedirectResponse:
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
     return response
+
+
+def build_grants_router(
+    *,
+    list_grants: ListLibraryGrants,
+    grant_role: GrantLibraryRole,
+    revoke_role: RevokeLibraryRole,
+    caller: CurrentCaller,
+    require_library: Callable[[str], Awaitable[None]],
+) -> APIRouter:
+    """Expose ``/libraries/{owner}/{repo}/grants``: who holds which role on a library.
+
+    Every route needs the ``admin`` role on the library (an instance operator holds it on all of
+    them). Giving or taking the ``admin`` role needs the ``creator`` role. A session or an API
+    token may call them: a token acts as its account.
+
+    Args:
+        list_grants: The driving port that lists the grants.
+        grant_role: The driving port that gives a role.
+        revoke_role: The driving port that takes a role away.
+        caller: The dependency that names the calling account.
+        require_library: Verifies live catalog presence and credential read access.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["identity"], dependencies=[Depends(caller)])
+    account = Annotated[AccountSummary, Depends(caller)]
+
+    @router.get("/libraries/{owner}/{repo}/grants", name="list_library_grants")
+    async def get_grants(owner: str, repo: str, who: account) -> LibraryGrants:
+        """List who holds a role on the library: users first, then groups. Library admins only.
+
+        Args:
+            owner: The library's owner segment.
+            repo: The library's repository segment.
+            who: The caller.
+
+        Returns:
+            The grants.
+        """
+        await require_library(f"/{owner}/{repo}")
+        return await list_grants(
+            ListLibraryGrantsQuery(caller_id=who.id, library=f"/{owner}/{repo}")
+        )
+
+    @router.put("/libraries/{owner}/{repo}/grants", name="grant_library_role")
+    async def put_grant(
+        owner: str, repo: str, request: LibraryGrantRequest, who: account
+    ) -> LibraryGrants:
+        """Give a user or a group a role on the library, replacing the role they had.
+
+        Needs the `admin` role on the library, and `creator` to give or change `admin`. A
+        group is named as stored (with the provider's prefix). The creator's role is never
+        changed here.
+
+        Args:
+            owner: The library's owner segment.
+            repo: The library's repository segment.
+            request: Whom to give a role, and which.
+            who: The caller.
+
+        Returns:
+            The library's grants now.
+        """
+        await require_library(f"/{owner}/{repo}")
+        return await grant_role(
+            GrantLibraryRoleCommand(
+                caller_id=who.id, library=f"/{owner}/{repo}", **request.model_dump()
+            )
+        )
+
+    @router.delete(
+        "/libraries/{owner}/{repo}/grants/{kind}/{subject:path}", name="revoke_library_role"
+    )
+    async def delete_grant(
+        owner: str, repo: str, kind: Literal["user", "group"], subject: str, who: account
+    ) -> LibraryGrants:
+        """Take a role away from a user or a group. Needs `admin`, and `creator` for an admin's.
+
+        Args:
+            owner: The library's owner segment.
+            repo: The library's repository segment.
+            kind: `user` or `group`.
+            subject: The username or the group's name.
+            who: The caller.
+
+        Returns:
+            The library's grants now.
+        """
+        await require_library(f"/{owner}/{repo}")
+        return await revoke_role(
+            RevokeLibraryRoleCommand(
+                caller_id=who.id, library=f"/{owner}/{repo}", kind=kind, subject=subject
+            )
+        )
+
+    return router

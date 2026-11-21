@@ -15,6 +15,7 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AppIndexRouteImport } from './routes/_app.index'
 import { Route as AppAccountRouteImport } from './routes/_app.account'
 import { Route as AppAiRouteImport } from './routes/_app.ai'
+import { Route as AppPlaygroundRouteImport } from './routes/_app.playground'
 import { Route as AppSearchRouteImport } from './routes/_app.search'
 import { Route as AppUsersRouteImport } from './routes/_app.users'
 import { Route as AppLibrariesNewRouteImport } from './routes/_app.libraries.new'
@@ -50,6 +51,11 @@ const AppAiRoute = AppAiRouteImport.update({
   path: '/ai',
   getParentRoute: () => AppRoute,
 } as any)
+const AppPlaygroundRoute = AppPlaygroundRouteImport.update({
+  id: '/playground',
+  path: '/playground',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppSearchRoute = AppSearchRouteImport.update({
   id: '/search',
   path: '/search',
@@ -83,6 +89,7 @@ export interface FileRoutesByFullPath {
   '/sign-in': typeof SignInRoute
   '/account': typeof AppAccountRoute
   '/ai': typeof AppAiRoute
+  '/playground': typeof AppPlaygroundRoute
   '/search': typeof AppSearchRoute
   '/users': typeof AppUsersRoute
   '/libraries/new': typeof AppLibrariesNewRoute
@@ -94,6 +101,7 @@ export interface FileRoutesByTo {
   '/sign-in': typeof SignInRoute
   '/account': typeof AppAccountRoute
   '/ai': typeof AppAiRoute
+  '/playground': typeof AppPlaygroundRoute
   '/search': typeof AppSearchRoute
   '/users': typeof AppUsersRoute
   '/': typeof AppIndexRoute
@@ -108,6 +116,7 @@ export interface FileRoutesById {
   '/sign-in': typeof SignInRoute
   '/_app/account': typeof AppAccountRoute
   '/_app/ai': typeof AppAiRoute
+  '/_app/playground': typeof AppPlaygroundRoute
   '/_app/search': typeof AppSearchRoute
   '/_app/users': typeof AppUsersRoute
   '/_app/': typeof AppIndexRoute
@@ -123,6 +132,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/account'
     | '/ai'
+    | '/playground'
     | '/search'
     | '/users'
     | '/libraries/new'
@@ -134,6 +144,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/account'
     | '/ai'
+    | '/playground'
     | '/search'
     | '/users'
     | '/'
@@ -147,6 +158,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/_app/account'
     | '/_app/ai'
+    | '/_app/playground'
     | '/_app/search'
     | '/_app/users'
     | '/_app/'
@@ -205,6 +217,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAiRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/playground': {
+      id: '/_app/playground'
+      path: '/playground'
+      fullPath: '/playground'
+      preLoaderRoute: typeof AppPlaygroundRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/search': {
       id: '/_app/search'
       path: '/search'
@@ -246,6 +265,7 @@ declare module '@tanstack/react-router' {
 interface AppRouteChildren {
   AppAccountRoute: typeof AppAccountRoute
   AppAiRoute: typeof AppAiRoute
+  AppPlaygroundRoute: typeof AppPlaygroundRoute
   AppSearchRoute: typeof AppSearchRoute
   AppUsersRoute: typeof AppUsersRoute
   AppIndexRoute: typeof AppIndexRoute
@@ -257,6 +277,7 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppAccountRoute: AppAccountRoute,
   AppAiRoute: AppAiRoute,
+  AppPlaygroundRoute: AppPlaygroundRoute,
   AppSearchRoute: AppSearchRoute,
   AppUsersRoute: AppUsersRoute,
   AppIndexRoute: AppIndexRoute,

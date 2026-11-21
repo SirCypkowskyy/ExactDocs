@@ -4,7 +4,7 @@ It does not pick adapters itself; the composition root (``exactdocs.bootstrap``)
 together with the job kinds it supports. ``import_job`` builds the import's handler and hook.
 """
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from types import MappingProxyType
@@ -31,6 +31,7 @@ from exactdocs.ingestion.constants import (
 )
 from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.ingestion.models import (
+    Access,
     AutoSync,
     ChunkingConfig,
     Credential,
@@ -44,6 +45,7 @@ from exactdocs.ingestion.models import (
     WebhookDelivery,
 )
 from exactdocs.ingestion.ports.driven import (
+    AccessPolicy,
     AutoSyncStore,
     Checkpoints,
     Chunker,
@@ -62,7 +64,9 @@ from exactdocs.ingestion.ports.driven import (
     LibraryLocks,
     LibrarySettingsStore,
     LibrarySources,
+    LibraryTexts,
     ManualTagStore,
+    MarkupConverter,
     NewLibraries,
     RecoveryHook,
     Removals,
@@ -81,6 +85,7 @@ from exactdocs.ingestion.ports.driving import (
     AddLibrary,
     AddVersion,
     ApplySources,
+    CancelJob,
     CheckRepository,
     DisableAutoSync,
     DisableWebhook,
@@ -89,6 +94,7 @@ from exactdocs.ingestion.ports.driving import (
     GetJob,
     GetLibraryAccess,
     GetWebhook,
+    ListJobs,
     ListLatestJobs,
     ListLibraryJobs,
     ListRepositoryRefs,
@@ -116,6 +122,7 @@ from exactdocs.ingestion.use_cases import (
     AddVersionUseCase,
     ApplySourcesUseCase,
     AutoImports,
+    CancelJobUseCase,
     CheckRepositoryUseCase,
     CollectGarbageUseCase,
     DisableAutoSyncUseCase,
@@ -130,6 +137,7 @@ from exactdocs.ingestion.use_cases import (
     GetLibraryAccessUseCase,
     GetWebhookUseCase,
     ImportVersionUseCase,
+    ListJobsUseCase,
     ListLatestJobsUseCase,
     ListLibraryJobsUseCase,
     ListRepositoryRefsUseCase,
@@ -151,6 +159,7 @@ from exactdocs.ingestion.use_cases import (
     SetAutoSyncUseCase,
     SetWebhookUseCase,
     SourcesReader,
+    StopOnCancel,
     SubmitQueuedJobsUseCase,
     SwitchScheduleUseCase,
     SyncLibraryUseCase,
@@ -159,6 +168,49 @@ from exactdocs.ingestion.use_cases import (
     UpdateLibrarySettingsUseCase,
 )
 from exactdocs_kernel import Clock, NotFoundError
+
+
+class _EveryoneMayDoAnything:
+    """The default ``access`` of ``build``: no roles, as in a local process the owner runs."""
+
+    async def can_create(self, library: str | None = None) -> bool:
+        """Allow creation by internal callers.
+
+        Args:
+            library: The proposed ID, if known.
+
+        Returns:
+            Always True.
+        """
+        del library
+        return True
+
+    async def allows(self, library: str, access: Access) -> bool:
+        """Allow everything.
+
+        Args:
+            library: The library.
+            access: The role the action needs.
+
+        Returns:
+            Always ``True``.
+        """
+        del library, access
+        return True
+
+    async def readable(self, libraries: Collection[str]) -> frozenset[str]:
+        """Allow reading every library.
+
+        Args:
+            libraries: Library IDs.
+
+        Returns:
+            All of them, lower-case.
+        """
+        return frozenset(library.casefold() for library in libraries)
+
+
+_open_access = _EveryoneMayDoAnything()
 
 
 class _NoLibrarySources:
@@ -241,6 +293,25 @@ class _NoSettings:
             NotFoundError: Always.
         """
         del selection, tag_rules, chunking
+        message = f"library {library!r} not found"
+        raise NotFoundError(message)
+
+
+class _NoTexts:
+    """The default ``texts`` of ``build``: no library is known, so none can be edited."""
+
+    async def save(self, library: str, *, title: str | None, description: str | None) -> None:
+        """Refuse: no library is known.
+
+        Args:
+            library: The library ID.
+            title: The new title.
+            description: The new description.
+
+        Raises:
+            NotFoundError: Always.
+        """
+        del title, description
         message = f"library {library!r} not found"
         raise NotFoundError(message)
 
@@ -546,6 +617,8 @@ class IngestionModule:
     """Pins another ref of a library and queues its import."""
     apply_sources: ApplySources
     """Applies a sources file library by library."""
+    cancel_job: CancelJob
+    """Cancels a queued or running job."""
     check_repository: CheckRepository
     """Validates a git URL and proposes a library ID, saving nothing."""
     disable_auto_sync: DisableAutoSync
@@ -564,6 +637,8 @@ class IngestionModule:
     """Says whether a library's webhook is on."""
     list_latest_jobs: ListLatestJobs
     """Lists the newest job of every (library, version)."""
+    list_jobs: ListJobs
+    """Lists a page of the jobs of every readable library."""
     list_library_jobs: ListLibraryJobs
     """Lists a page of a library's jobs."""
     list_repository_refs: ListRepositoryRefs
@@ -614,6 +689,7 @@ class IngestionModule:
         remote: GitRemote,
         tree: RepositoryTree | None = None,
         library_ids: LibraryIds,
+        creation_library_ids: LibraryIds | None = None,
         libraries: NewLibraries,
         sources: LibrarySources | None = None,
         removals: Removals,
@@ -628,12 +704,14 @@ class IngestionModule:
         auto_syncs: AutoSyncStore | None = None,
         schedule_switch: ScheduleSwitch | None = None,
         settings: LibrarySettingsStore | None = None,
+        texts: LibraryTexts | None = None,
         embedder: VersionEmbedder | None = None,
         checkpoints: Checkpoints | None = None,
         known_libraries: KnownLibraries | None = None,
         webhooks: WebhookSecrets | None = None,
         webhook_deliveries: WebhookDeliveries | None = None,
         wrap_handler: Callable[[JobKind, JobHandler], JobHandler] | None = None,
+        access: AccessPolicy = _open_access,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -662,6 +740,7 @@ class IngestionModule:
             remote: Lists a repository's refs.
             tree: Lists a commit's files and reads its root files; None: no git for previews.
             library_ids: Tells which library IDs are taken.
+            creation_library_ids: Creation-authorized ID probe; defaults to library_ids.
             libraries: Where new libraries go.
             sources: Where a library's articles come from; None: no library is known.
             removals: Removes versions and libraries from the catalog.
@@ -676,12 +755,14 @@ class IngestionModule:
             auto_syncs: Where the scheduled checks are kept.
             schedule_switch: Turns the tick on or off.
             settings: Where edited settings are stored; None: no library can be edited.
+            texts: Where a library's title and description are stored; None: none can be.
             embedder: Embeds versions; None: no ``embed`` job.
             checkpoints: Makes the ``embed`` job's batches durable steps.
             known_libraries: Lists the libraries, for a sources file; None: none is known.
             webhooks: Where webhook secrets are kept; None: no library can have one.
             webhook_deliveries: Where deliveries are remembered; None: none is.
             wrap_handler: Wraps the ``push`` handler, given its kind; None: it runs as built.
+            access: Library roles: what the caller may do with a library; everything without it.
 
         Returns:
             The module.
@@ -711,7 +792,10 @@ class IngestionModule:
                     for kind, handler in kinds.items()
                 },
                 EMBED_JOB: EmbedVersionUseCase(
-                    embedder=embedder, queue=embedding, checkpoints=checkpoints or _InlineSteps()
+                    embedder=embedder,
+                    queue=embedding,
+                    # A cancelled job stops before its next batch; the batches done are kept.
+                    checkpoints=StopOnCancel(inner=checkpoints or _InlineSteps()),
                 ),
             }
         enqueue_job = EnqueueJobUseCase(jobs=jobs, clock=clock, handlers=kinds, runner=runner)
@@ -720,7 +804,7 @@ class IngestionModule:
         schedules = auto_syncs or _NoAutoSyncs()
         switch = schedule_switch or _NoSwitch()
         remove_version = RemoveVersionUseCase(
-            jobs=jobs, removals=removals, index=index, enqueue_job=enqueue_job
+            jobs=jobs, removals=removals, index=index, enqueue_job=enqueue_job, access=access
         )
         sync_library = SyncLibraryUseCase(
             remote=remote,
@@ -729,10 +813,12 @@ class IngestionModule:
             clock=clock,
             enqueue_job=enqueue_job,
             vault=vault,
+            access=access,
         )
         add_library = AddLibraryUseCase(
+            access=access,
             remote=remote,
-            library_ids=library_ids,
+            library_ids=creation_library_ids or library_ids,
             libraries=libraries,
             enqueue_job=enqueue_job,
             vault=vault,
@@ -744,6 +830,7 @@ class IngestionModule:
             jobs=jobs,
             enqueue_job=enqueue_job,
             vault=vault,
+            access=access,
         )
         remove_library = RemoveLibraryUseCase(
             jobs=jobs,
@@ -755,6 +842,7 @@ class IngestionModule:
             switch=switch,
             webhooks=webhooks or _NoWebhooks(),
             deliveries=webhook_deliveries or _NoDeliveries(),
+            access=access,
         )
         update_library_settings = UpdateLibrarySettingsUseCase(
             sources=sources,
@@ -762,6 +850,7 @@ class IngestionModule:
             jobs=jobs,
             enqueue_job=enqueue_job,
             locks=settings_locks or TagLocks(),
+            access=access,
         )
         kinds[PUSH_JOB] = _wrapped(
             PUSH_JOB,
@@ -795,28 +884,33 @@ class IngestionModule:
                 add_version=add_version,
                 update_library_settings=update_library_settings,
                 set_auto_sync=SetAutoSyncUseCase(
-                    sources=sources, schedules=schedules, switch=switch
+                    sources=sources, schedules=schedules, switch=switch, access=access
                 ),
                 disable_auto_sync=DisableAutoSyncUseCase(
-                    sources=sources, schedules=schedules, switch=switch
+                    sources=sources, schedules=schedules, switch=switch, access=access
                 ),
                 remove_version=remove_version,
                 remove_library=remove_library,
+                texts=texts or _NoTexts(),
             ),
+            cancel_job=CancelJobUseCase(jobs=jobs, clock=clock, access=access),
             check_repository=CheckRepositoryUseCase(remote=remote, library_ids=library_ids),
             disable_auto_sync=DisableAutoSyncUseCase(
-                sources=sources, schedules=schedules, switch=switch
+                sources=sources, schedules=schedules, switch=switch, access=access
             ),
             disable_webhook=DisableWebhookUseCase(
                 sources=sources, webhooks=webhooks or _NoWebhooks()
             ),
             enqueue_job=enqueue_job,
-            get_auto_sync=GetAutoSyncUseCase(sources=sources, schedules=schedules),
-            get_job=GetJobUseCase(jobs=jobs),
-            get_library_access=GetLibraryAccessUseCase(vault=vault, library_ids=library_ids),
+            get_auto_sync=GetAutoSyncUseCase(sources=sources, schedules=schedules, access=access),
+            get_job=GetJobUseCase(jobs=jobs, access=access),
+            get_library_access=GetLibraryAccessUseCase(
+                vault=vault, library_ids=library_ids, access=access
+            ),
             get_webhook=GetWebhookUseCase(sources=sources, webhooks=webhooks or _NoWebhooks()),
-            list_latest_jobs=ListLatestJobsUseCase(jobs=jobs),
-            list_library_jobs=ListLibraryJobsUseCase(jobs=jobs),
+            list_latest_jobs=ListLatestJobsUseCase(jobs=jobs, access=access),
+            list_jobs=ListJobsUseCase(jobs=jobs, access=access),
+            list_library_jobs=ListLibraryJobsUseCase(jobs=jobs, access=access),
             list_repository_refs=ListRepositoryRefsUseCase(remote=remote),
             plan_sources=PlanSourcesUseCase(
                 reader=SourcesReader(
@@ -845,6 +939,7 @@ class IngestionModule:
                 jobs=jobs,
                 enqueue_job=enqueue_job,
                 vault=vault,
+                access=access,
             ),
             remove_library=remove_library,
             remove_version=remove_version,
@@ -862,7 +957,9 @@ class IngestionModule:
                 remove_version=remove_version,
                 switch=switch,
             ),
-            set_auto_sync=SetAutoSyncUseCase(sources=sources, schedules=schedules, switch=switch),
+            set_auto_sync=SetAutoSyncUseCase(
+                sources=sources, schedules=schedules, switch=switch, access=access
+            ),
             set_webhook=SetWebhookUseCase(
                 sources=sources, webhooks=webhooks or _NoWebhooks(), clock=clock
             ),
@@ -870,7 +967,10 @@ class IngestionModule:
             switch_schedule=SwitchScheduleUseCase(schedules=schedules, switch=switch),
             sync_library=sync_library,
             tag_article=TagArticleUseCase(
-                tags=manual_tags or _NoManualTags(), index=index, locks=tag_locks or TagLocks()
+                tags=manual_tags or _NoManualTags(),
+                index=index,
+                locks=tag_locks or TagLocks(),
+                access=access,
             ),
             update_library_settings=update_library_settings,
         )
@@ -897,6 +997,7 @@ def import_job(
     batch_files: int = DEFAULT_IMPORT_BATCH_FILES,
     guidance: GuidancePolicy | None = None,
     files: RepositoryFiles | None = None,
+    converter: MarkupConverter | None = None,
 ) -> tuple[Mapping[JobKind, JobHandler], Mapping[JobKind, RecoveryHook]]:
     """Return the ``handlers`` and ``recovery_hooks`` that make the module import versions.
 
@@ -908,7 +1009,8 @@ def import_job(
     ``checkpoints`` makes the import's steps durable (one per ``batch_files`` files parsed and
     chunked); without it an interrupted import starts over. ``guidance`` says which libraries
     keep their ``AGENTS.md`` / ``CLAUDE.md`` files with each version (RET-08), read with
-    ``files``; without both none do.
+    ``files``; without both none do. ``converter`` writes reStructuredText articles as Markdown;
+    without it they are skipped.
 
     Args:
         gateway: Fetches a commit's files.
@@ -930,6 +1032,7 @@ def import_job(
         batch_files: Files parsed and chunked per durable step.
         guidance: Which libraries keep their instruction files.
         files: Reads the instruction files.
+        converter: Writes reStructuredText articles as Markdown.
 
     Returns:
         The handlers and the recovery hooks, by job kind.
@@ -951,9 +1054,10 @@ def import_job(
         tag_locks=tag_locks,
         guidance=guidance,
         files=files,
+        converter=converter,
     )
-    if checkpoints is not None:
-        importer = replace(importer, checkpoints=checkpoints)
+    # A cancelled job stops before its next step; each step leaves nothing half done.
+    importer = replace(importer, checkpoints=StopOnCancel(inner=checkpoints or _InlineSteps()))
     refresher = replace(importer, refresh=True)
     hook = DiscardInterruptedImportUseCase(versions=versions, index=index)
     steps = importer.checkpoints

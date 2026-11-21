@@ -8,11 +8,13 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Self
 
-from exactdocs.identity.models import SignInPolicy
+from exactdocs.identity.models import AccessPolicy, LibraryCreationPolicy, SignInPolicy
 from exactdocs.identity.ports.driven import (
+    AccessAssertionVerifier,
     AccountRepository,
     ExternalIdentityRepository,
     FailedSignInLog,
+    LibraryGrantRepository,
     PasswordHasher,
     SecretBox,
     SessionRepository,
@@ -22,19 +24,28 @@ from exactdocs.identity.ports.driven import (
 )
 from exactdocs.identity.ports.driving import (
     Authenticate,
+    CanCreateLibrary,
+    ClaimLibrary,
     CreateFirstAdmin,
     CreateToken,
     CreateUser,
+    DropLibraryGrants,
     FinishExternalSignIn,
     GetSessionState,
     GetSetupState,
+    GrantLibraryRole,
+    IdentifyAccessCaller,
     IdentifyCaller,
+    IdentifyExternalToken,
     IdentifyToken,
+    ListLibraryGrants,
     ListTokens,
     ListUsers,
     LoginForToken,
     ResetPassword,
+    ResolveLibraryRoles,
     RevalidateExternalAccounts,
+    RevokeLibraryRole,
     RevokeToken,
     SetUserDisabled,
     SignIn,
@@ -43,21 +54,31 @@ from exactdocs.identity.ports.driving import (
 )
 from exactdocs.identity.use_cases import (
     AuthenticateUseCase,
+    CanCreateLibraryUseCase,
+    ClaimLibraryUseCase,
     CreateFirstAdminUseCase,
     CreateTokenUseCase,
     CreateUserUseCase,
+    DropLibraryGrantsUseCase,
     FinishExternalSignInUseCase,
     GetSessionStateUseCase,
     GetSetupStateUseCase,
+    GrantLibraryRoleUseCase,
+    IdentifyAccessCallerUseCase,
     IdentifyCallerUseCase,
+    IdentifyExternalTokenUseCase,
     IdentifyTokenUseCase,
+    ListLibraryGrantsUseCase,
     ListTokensUseCase,
     ListUsersUseCase,
     LoginForTokenUseCase,
     ResetPasswordUseCase,
+    ResolveLibraryRolesUseCase,
     RevalidateExternalAccountsUseCase,
+    RevokeLibraryRoleUseCase,
     RevokeTokenUseCase,
     SetUserDisabledUseCase,
+    Sharing,
     SignInUseCase,
     SignOutUseCase,
     StartExternalSignInUseCase,
@@ -81,6 +102,8 @@ class IdentityModule:
     """End a browser session."""
     identify_caller: IdentifyCaller
     """Resolve a session token to its account."""
+    identify_access_caller: IdentifyAccessCaller
+    """Resolve a Cloudflare Access token to its account (refuses every token when not set up)."""
     get_session_state: GetSessionState
     """Tell the UI whether setup is due and who is signed in."""
     reset_password: ResetPassword
@@ -101,12 +124,28 @@ class IdentityModule:
     """Revoke one of the caller's API tokens."""
     identify_token: IdentifyToken
     """Resolve an API token to its account."""
+    identify_external_token: IdentifyExternalToken
+    """Resolve an ID token of a sign-in provider (MCP's OAuth) to who it acts as."""
     start_external_sign_in: StartExternalSignIn
     """Start a sign-in through a configured identity provider."""
     finish_external_sign_in: FinishExternalSignIn
     """Finish an external sign-in (the provider's callback) and start a session."""
     revalidate_external_accounts: RevalidateExternalAccounts
     """Check again the memberships of the external identities that are due."""
+    can_create_library: CanCreateLibrary
+    """Resolve the instance-wide creation permission."""
+    resolve_library_roles: ResolveLibraryRoles
+    """Tell what an account may do with libraries (the highest role it or its groups hold)."""
+    claim_library: ClaimLibrary
+    """Make an account the creator of a new library."""
+    drop_library_grants: DropLibraryGrants
+    """Drop every grant on a removed library."""
+    grant_library_role: GrantLibraryRole
+    """Give a user or a group a role on a library (library admins; creators for admins)."""
+    revoke_library_role: RevokeLibraryRole
+    """Take a role away from a user or a group."""
+    list_library_grants: ListLibraryGrants
+    """List who holds a role on a library (library admins)."""
 
     @classmethod
     def build(
@@ -118,15 +157,20 @@ class IdentityModule:
         hasher: PasswordHasher,
         failures: FailedSignInLog,
         externals: ExternalIdentityRepository,
+        library_grants: LibraryGrantRepository,
         attempts: SignInAttemptRepository,
         box: SecretBox,
         clock: Clock,
         providers: Mapping[str, SignInProvider] = MappingProxyType({}),
         policies: Mapping[str, SignInPolicy] = MappingProxyType({}),
+        library_creation: LibraryCreationPolicy | None = None,
+        access_verifier: AccessAssertionVerifier | None = None,
+        access_policy: AccessPolicy | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
         Args:
+            library_creation: Optional instance-wide creation allowlist.
             repository: Where accounts are stored.
             sessions: Where browser sessions are stored.
             tokens: Where API tokens are stored.
@@ -134,20 +178,27 @@ class IdentityModule:
             failures: The log of failed sign-ins, for the throttle.
             externals: The links of external identities to accounts (kept even when no
                 provider is configured: their accounts must still lose access).
+            library_grants: Who holds which role on which library.
             attempts: Where started external sign-ins wait for their callback.
             box: Seals the refresh tokens of external identities.
             clock: The current time.
             providers: The configured identity providers, by name.
             policies: Their policies, by the same names.
+            access_verifier: Checks Cloudflare Access tokens; ``None`` when Access is off.
+            access_policy: Who Cloudflare Access signs in; given with ``access_verifier``.
 
         Returns:
             The module, its driving ports wired.
 
         Raises:
-            ValueError: ``providers`` and ``policies`` do not name the same providers.
+            ValueError: ``providers`` and ``policies`` do not name the same providers, or only
+                one of ``access_verifier`` and ``access_policy`` is given.
         """
         if providers.keys() != policies.keys() or any(n != p.name for n, p in policies.items()):
             message = "every sign-in provider needs its policy, under the same name"
+            raise ValueError(message)
+        if (access_verifier is None) != (access_policy is None):
+            message = "Cloudflare Access needs both its verifier and its policy"
             raise ValueError(message)
         authenticate = AuthenticateUseCase(
             repository=repository, hasher=hasher, failures=failures, clock=clock
@@ -155,7 +206,15 @@ class IdentityModule:
         identify_caller = IdentifyCallerUseCase(
             sessions=sessions, accounts=repository, externals=externals, clock=clock
         )
+        identify_access_caller = IdentifyAccessCallerUseCase(
+            verifier=access_verifier,
+            policy=access_policy,
+            accounts=repository,
+            externals=externals,
+            clock=clock,
+        )
         create_token = CreateTokenUseCase(tokens=tokens, clock=clock)
+        sharing = Sharing(accounts=repository, externals=externals, grants=library_grants)
         return cls(
             get_setup_state=GetSetupStateUseCase(repository=repository),
             create_first_admin=CreateFirstAdminUseCase(
@@ -165,8 +224,13 @@ class IdentityModule:
             sign_in=SignInUseCase(authenticate=authenticate, sessions=sessions, clock=clock),
             sign_out=SignOutUseCase(sessions=sessions),
             identify_caller=identify_caller,
+            identify_access_caller=identify_access_caller,
             get_session_state=GetSessionStateUseCase(
-                accounts=repository, identify_caller=identify_caller, policies=policies
+                accounts=repository,
+                identify_caller=identify_caller,
+                policies=policies,
+                identify_access=None if access_policy is None else identify_access_caller,
+                access_sign_out_url=None if access_policy is None else access_policy.sign_out_url,
             ),
             reset_password=ResetPasswordUseCase(
                 accounts=repository,
@@ -195,6 +259,9 @@ class IdentityModule:
             identify_token=IdentifyTokenUseCase(
                 tokens=tokens, accounts=repository, externals=externals, clock=clock
             ),
+            identify_external_token=IdentifyExternalTokenUseCase(
+                providers=providers, policies=policies, accounts=repository, externals=externals
+            ),
             start_external_sign_in=StartExternalSignInUseCase(
                 providers=providers, policies=policies, attempts=attempts, clock=clock
             ),
@@ -217,4 +284,15 @@ class IdentityModule:
                 box=box,
                 clock=clock,
             ),
+            can_create_library=CanCreateLibraryUseCase(
+                accounts=repository, externals=externals, policy=library_creation
+            ),
+            resolve_library_roles=ResolveLibraryRolesUseCase(
+                accounts=repository, externals=externals, grants=library_grants
+            ),
+            claim_library=ClaimLibraryUseCase(grants=library_grants),
+            drop_library_grants=DropLibraryGrantsUseCase(grants=library_grants),
+            grant_library_role=GrantLibraryRoleUseCase(sharing=sharing),
+            revoke_library_role=RevokeLibraryRoleUseCase(sharing=sharing),
+            list_library_grants=ListLibraryGrantsUseCase(sharing=sharing),
         )

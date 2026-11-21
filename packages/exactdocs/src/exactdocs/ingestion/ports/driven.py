@@ -1,17 +1,20 @@
 """Driven (secondary) ports of ingestion: what it needs from git, storage and other domains."""
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
+from exactdocs.ingestion.constants import JobKind
 from exactdocs.ingestion.models import (
+    Access,
     ArticleChunk,
     ArticleTags,
     AutoSync,
     ChunkingConfig,
     Collected,
+    ConvertedArticle,
     CopiedVersion,
     Credential,
     EmbeddedBatch,
@@ -22,8 +25,10 @@ from exactdocs.ingestion.models import (
     ImportedTags,
     ImportedVersion,
     ImportSource,
+    IncludeRefused,
     InstructionPolicy,
     Job,
+    JobFilter,
     JobId,
     KnownLibrary,
     NewLibrary,
@@ -42,6 +47,7 @@ from exactdocs.ingestion.models import (
     Webhook,
     WebhookDelivery,
 )
+from exactdocs_kernel import Sort, SortValue
 
 
 class JobRepository(Protocol):
@@ -61,10 +67,31 @@ class JobRepository(Protocol):
         ...
 
     async def save(self, job: Job) -> None:
-        """Replace the stored job that has the same ID.
+        """Replace the stored job that has the same ID, unless it is ``cancelled``.
+
+        The cancellation fields (``cancelled_by``, ``cancelled_at``) are not written: only
+        ``cancel`` sets them, so a running job's progress never wipes a cancellation out.
 
         Args:
             job: The job as it is now.
+        """
+        ...
+
+    async def cancel(self, job_id: JobId, *, by: str | None, now: datetime) -> Job | None:
+        """Atomically ask to cancel a queued or running job, once.
+
+        A ``queued`` job becomes ``cancelled`` (``finished_at``, ``cancelled_by`` and
+        ``cancelled_at`` set); a ``running`` one only gets ``cancelled_by`` and ``cancelled_at``
+        and stops at its next step boundary. A finished job, or one already asked, is left as
+        it is. ``save`` never changes these two fields, nor a ``cancelled`` job at all.
+
+        Args:
+            job_id: The job's ID.
+            by: Who cancels it (a user name); ``None`` for the instance itself.
+            now: The time of the request.
+
+        Returns:
+            The job as it is after the request, or ``None`` when no job has this ID.
         """
         ...
 
@@ -104,6 +131,18 @@ class JobRepository(Protocol):
         """
         ...
 
+    async def list_newest_of_kind(self, library: str, kind: JobKind) -> Sequence[Job]:
+        """Return the newest job of ``kind`` of each version of the library, without the others.
+
+        Args:
+            library: The library ID.
+            kind: The job kind.
+
+        Returns:
+            One job per version (the newest), in no particular order.
+        """
+        ...
+
     async def list_page_for_library(
         self, library: str, *, before: str | None, limit: int
     ) -> Sequence[Job]:
@@ -117,6 +156,49 @@ class JobRepository(Protocol):
 
         Returns:
             Up to ``limit`` jobs, with their problems, highest ID first.
+        """
+        ...
+
+    async def search(
+        self,
+        job_filter: JobFilter,
+        *,
+        sort: Sort,
+        after: tuple[SortValue, str] | None,
+        limit: int,
+    ) -> Sequence[Job]:
+        """Return up to ``limit`` of the jobs that pass the filter, in ``sort`` order.
+
+        A keyset page: ``(sort value, job ID)`` after ``after``, in the sort's direction; the ID
+        breaks ties. ``sort.field`` is ``id``, ``created_at``, ``state``, ``kind`` or ``library``.
+
+        Args:
+            job_filter: Which jobs.
+            sort: The order.
+            after: The sort value and ID of the last job of the previous page; ``None`` starts.
+            limit: At most this many jobs.
+
+        Returns:
+            The jobs in order, with their problems.
+        """
+        ...
+
+    async def count(self, job_filter: JobFilter) -> int:
+        """Count the jobs that pass the filter.
+
+        Args:
+            job_filter: Which jobs.
+
+        Returns:
+            How many there are.
+        """
+        ...
+
+    async def libraries(self) -> Sequence[str]:
+        """Return every library that has a job, as spelled in the jobs.
+
+        Returns:
+            The distinct library IDs, in no particular order.
         """
         ...
 
@@ -431,7 +513,7 @@ class RenameSource(Protocol):
         refs: Sequence[str] = (),
         credential: Credential | None = None,
     ) -> Sequence[GitRename]:
-        """Return the ``.md`` / ``.mdx`` files (any letter case) git sees as renamed.
+        """Return the article files (``.md``, ``.mdx``, ``.rst``, ``.txt``) git sees as renamed.
 
         Only the two commits' trees are fetched (no history, no blobs); git then asks for the
         few blobs that renames with edits need to be told apart. Everything is bounded: one
@@ -572,6 +654,48 @@ class Chunker(Protocol):
         ...
 
 
+class IncludedFiles(Protocol):
+    """Reads the repository files a reStructuredText article includes, within import limits."""
+
+    def read(self, path: str) -> str | IncludeRefused:
+        """Return a file's text, or why it is not read.
+
+        A file outside the fetched files, not a plain file, too large, not text, or over the
+        article's budget of includes is refused. Synchronous: it runs in the converter's thread.
+
+        Args:
+            path: A repository path (resolved, inside the repository).
+
+        Returns:
+            The text, or the refusal.
+        """
+        ...
+
+
+class MarkupConverter(Protocol):
+    """Writes an article in another markup (reStructuredText) as the Markdown the chunker takes."""
+
+    @property
+    def version(self) -> str:
+        """The converter's identity: in a converted article's key, so a new one converts again."""
+        ...
+
+    def convert(self, path: str, source: str, files: IncludedFiles) -> ConvertedArticle:
+        """Convert one file; never raises for what the file holds (a problem says what was lost).
+
+        CPU-bound and synchronous: the import use case calls it through ``asyncio.to_thread``.
+
+        Args:
+            path: The article's repository path.
+            source: Its text.
+            files: Reads the files its includes name.
+
+        Returns:
+            The Markdown body and the problems.
+        """
+        ...
+
+
 class NewLibraries(Protocol):
     """Where ingestion puts a library it was asked to add (the catalog, in its own words)."""
 
@@ -668,6 +792,22 @@ class LibrarySettingsStore(Protocol):
             selection: The paths to import.
             tag_rules: Tags given to articles by path.
             chunking: How articles are cut into chunks.
+        """
+        ...
+
+
+class LibraryTexts(Protocol):
+    """Where a library's title and description are kept (the catalog, in ingestion's words)."""
+
+    async def save(self, library: str, *, title: str | None, description: str | None) -> None:
+        """Store a title and/or description the way an edit by hand is, so imports keep them.
+
+        Raises ``NotFoundError`` for an unknown library. A ``None`` leaves that field as it is.
+
+        Args:
+            library: The library ID.
+            title: The new title, cleaned; ``None``: unchanged.
+            description: The new description, cleaned (empty: none); ``None``: unchanged.
         """
         ...
 
@@ -1275,5 +1415,43 @@ class WebhookDeliveries(Protocol):
 
         Args:
             library: The library ID.
+        """
+        ...
+
+
+class AccessPolicy(Protocol):
+    """Library roles: what the caller may do with a library (a bridge to identity)."""
+
+    async def can_create(self, library: str | None = None) -> bool:
+        """Tell whether the caller has the instance-wide library creation permission.
+
+        Args:
+            library: Proposed ID when known; None before one is available.
+
+        Returns:
+            Whether creation is permitted.
+        """
+        ...
+
+    async def allows(self, library: str, access: Access) -> bool:
+        """Tell whether the caller may do what ``access`` stands for with the library.
+
+        Args:
+            library: The library ID (``/owner/repo``), any case.
+            access: The role the action needs.
+
+        Returns:
+            ``True`` when the caller's effective role on the library is that or higher.
+        """
+        ...
+
+    async def readable(self, libraries: Collection[str]) -> frozenset[str]:
+        """Return the libraries the caller may read.
+
+        Args:
+            libraries: Library IDs.
+
+        Returns:
+            The lower-case IDs among them the caller may read.
         """
         ...

@@ -104,6 +104,8 @@ RESOURCE_PAGE_SIZE: Final[int] = 50
 """Items per resources/list page; clients must not rely on it."""
 RESOURCE_LIST_TTL: Final[float] = 30.0
 """Seconds one built list is reused, so paging builds it once."""
+MAX_RESOURCE_SNAPSHOTS: Final[int] = 64
+"""Callers whose resource list is kept at once; the oldest built is dropped past it."""
 LIST_LIBRARIES_LIMIT: Final[int] = 20
 """Each library brings its versions: keep the default page small."""
 
@@ -116,3 +118,13 @@ SIMILARITY_DESCRIPTION: Final[str] = (
 """OpenAPI description of a rename's ``similarity``, built from ``MAX_SIMILARITY``."""
 MAX_RENAME_HOPS: Final[int] = 100
 """Versions a path is followed across at most, from one version to another; farther is no move."""
+
+# ---------------------------------------------------------------- lists
+LIBRARY_SORT_FIELDS: Final[tuple[str, ...]] = ("id", "title", "last_imported_at", "version_count")
+"""What the libraries list can be sorted by; `id` is the default."""
+VERSION_SORT_FIELDS: Final[tuple[str, ...]] = ("ref", "kind", "imported_at", "origin")
+"""What a library's versions can be sorted by; `ref` is the default."""
+SCAN_PAGE: Final[int] = 1000
+"""Entries the in-memory fallback of the articles list reads at a time."""
+ARTICLE_SORT_FIELDS: Final[tuple[str, ...]] = ("path", "title", "size")
+"""What a version's articles can be sorted by; `path` is the default."""

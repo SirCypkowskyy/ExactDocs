@@ -287,6 +287,20 @@ class ProviderUnavailableError(BusyError):
         super().__init__("the identity provider cannot be reached; try again later", retry_after=30)
 
 
+class AccessAssertionRefusedError(UnauthenticatedError):
+    """A Cloudflare Access token that proves nothing: its signature, issuer, audience or times.
+
+    Deliberately not told apart: the verifier logs the reason (never the token), and the request
+    is treated as if it carried no token.
+    """
+
+    code = "access_assertion_refused"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__("the Cloudflare Access token was refused")
+
+
 class ProviderAccessRevokedError(UnauthenticatedError):
     """The identity provider refused the stored refresh token: the grant was revoked or expired."""
 
@@ -305,3 +319,55 @@ class ExternalAccountError(ConflictError):
     def __init__(self) -> None:
         """Create the error with its fixed message."""
         super().__init__("this account signs in through an identity provider and has no password")
+
+
+class LibraryRoleRequiredError(ForbiddenError):
+    """The caller's role on the library is too low for what they asked."""
+
+    def __init__(self, needed: str) -> None:
+        """Say which role is missing.
+
+        Args:
+            needed: The lowest library role that may do it.
+        """
+        super().__init__(f"this needs the {needed} role on the library")
+
+
+class InvalidGrantError(ValidationError):
+    """A library grant asks for something the sharing routes do not do."""
+
+    code = "invalid_grant"
+
+    def __init__(self, reason: str) -> None:
+        """Say what is wrong.
+
+        Args:
+            reason: What is wrong with the grant.
+        """
+        super().__init__(reason)
+
+
+class UnknownGrantError(NotFoundError):
+    """The library has no grant for this user or group."""
+
+    code = "unknown_grant"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__("the library has no such grant")
+
+
+class GithubAccessDeniedError(ProviderAccessRevokedError):
+    """GitHub refused organization/team admission or requires administrator action."""
+
+    code = "github_access_denied"
+
+    def __init__(self, reason: str, *, refusal_code: str = "github_access_denied") -> None:
+        """Create a safe refusal containing only configured organization names.
+
+        Args:
+            reason: The fixed refusal message with the configured organization, if applicable.
+            refusal_code: A known browser refusal code, optionally suffixed with a safe org.
+        """
+        self.code = refusal_code
+        UnauthenticatedError.__init__(self, reason)

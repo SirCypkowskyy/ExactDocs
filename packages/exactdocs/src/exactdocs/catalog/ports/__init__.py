@@ -1,4 +1,6 @@
 from exactdocs.catalog.ports.driven import (
+    AccessPolicy,
+    EntrySearch,
     ImportedTagWriter,
     InstructionFileReader,
     LibraryRepository,
@@ -21,6 +23,7 @@ from exactdocs.catalog.ports.driving import (
     ListLibraries,
     ListRenames,
     ListTags,
+    ListVersions,
     RemoveLibrary,
     RemoveVersion,
     ResolveRenamedPath,
@@ -29,9 +32,11 @@ from exactdocs.catalog.ports.driving import (
 )
 
 __all__ = [
+    "AccessPolicy",
     "ActivateManifest",
     "CollectGarbage",
     "DiscardPendingManifests",
+    "EntrySearch",
     "GetActiveManifest",
     "GetArticle",
     "GetAsset",
@@ -46,6 +51,7 @@ __all__ = [
     "ListLibraries",
     "ListRenames",
     "ListTags",
+    "ListVersions",
     "ManifestCopier",
     "ManifestRepository",
     "RemoveLibrary",

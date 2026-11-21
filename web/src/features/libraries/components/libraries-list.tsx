@@ -1,5 +1,10 @@
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, LibraryBig } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
+import { cn } from "@/shared/lib/utils";
+import { Button } from "@/shared/ui/button";
+import { EmptyState } from "@/shared/ui/page";
+import { codeWell } from "@/shared/ui/recipes";
 import { type SyncState, useNow } from "../hooks/use-libraries";
 import type { Library } from "../model/library";
 import { AddLibraryLink } from "./add-library-link";
@@ -12,59 +17,55 @@ interface LibrariesListProps {
 
 const COMMAND = "exactdocs add https://github.com/acme/payments --path docs/";
 
-function EmptyState() {
+function FirstRun() {
   const [copied, setCopied] = useState(false);
   const copy = () => {
     void navigator.clipboard?.writeText(COMMAND).then(() => {
       setCopied(true);
+      toast.success("Command copied");
       setTimeout(() => setCopied(false), 2000);
     });
   };
   return (
-    <div className="max-w-xl">
-      <p>No libraries yet. Add one from a git repository.</p>
-      <div className="mt-4">
-        <AddLibraryLink />
+    <EmptyState
+      icon={<LibraryBig aria-hidden="true" />}
+      title="No libraries yet"
+      action={<AddLibraryLink />}
+      className="max-w-2xl"
+    >
+      <p>
+        Add a git repository and choose its Markdown docs. Agents and people then read them at the
+        exact version you import.
+      </p>
+      <p className="mt-4">Or index one from the command line:</p>
+      <div className="mt-2 flex items-start gap-1">
+        <pre className={cn(codeWell, "min-w-0 flex-1 whitespace-pre-wrap")}>
+          <code>{COMMAND}</code>
+        </pre>
+        <Button variant="ghost" size="icon" onClick={copy} aria-label="Copy command">
+          {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+        </Button>
       </div>
-      <p className="mt-8 text-sm text-muted-foreground">Or index one from the command line:</p>
-      <pre className="mt-2 whitespace-pre-wrap rounded-md bg-secondary px-4 py-3 font-mono text-[13px] [overflow-wrap:anywhere]">
-        <code>{COMMAND}</code>
-      </pre>
-      <button
-        type="button"
-        onClick={copy}
-        className="mt-2 inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground outline-none transition-colors duration-150 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] md:min-h-8"
-      >
-        {copied ? (
-          <Check aria-hidden="true" className="size-4" />
-        ) : (
-          <Copy aria-hidden="true" className="size-4" />
-        )}
-        Copy command
-      </button>
-      <span role="status" className="sr-only">
-        {copied ? "Copied" : ""}
-      </span>
-    </div>
+    </EmptyState>
   );
 }
 
 export function LibrariesList({ libraries, syncs }: LibrariesListProps) {
   const now = useNow();
-  if (libraries.length === 0) return <EmptyState />;
+  if (libraries.length === 0) return <FirstRun />;
   return (
     <div>
       {/* Column titles for sighted users; each cell below says what it is in its own text. */}
       <div
         aria-hidden="true"
-        className={`hidden border-b border-border pb-2 text-[13px] text-muted-foreground ${columns}`}
+        className={`hidden border-b border-rule pb-2 pl-[3.25rem] text-small text-muted-foreground ${columns}`}
       >
         <span>Library</span>
         <span>Versions</span>
         <span>Last imported</span>
         <span>Sync</span>
       </div>
-      <ul aria-label="Libraries" className="divide-y divide-border">
+      <ul aria-label="Libraries" className="divide-y divide-rule">
         {libraries.map((library) => (
           <LibraryRow
             key={library.id}

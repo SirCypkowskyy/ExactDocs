@@ -1,14 +1,17 @@
 """``exactdocs sources plan|apply``: reading the YAML, the diff, ``--json`` and exit codes."""
 
+import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 import httpx2
 import pytest
 from pydantic import SecretStr
 
-from exactdocs.bootstrap import cli
+from exactdocs.bootstrap import cli, cli_library
+from exactdocs.bootstrap import client as client_module
 from exactdocs.bootstrap.cli_library import (
     SourcesFailedError,
     UsageError,
@@ -17,7 +20,7 @@ from exactdocs.bootstrap.cli_library import (
     plan_sources,
     read_sources,
 )
-from exactdocs.bootstrap.client import ApiClient, ApiError
+from exactdocs.bootstrap.client import ApiClient, ApiError, ClientError
 from exactdocs.bootstrap.constants import (
     EXIT_AUTH,
     EXIT_FAILED,
@@ -194,3 +197,115 @@ def test_the_commands_are_remote_and_parse() -> None:
     assert not {"sources plan", "sources apply"} & LOCAL_COMMANDS
     for line in ("sources plan f.yaml --json", "sources apply f.yaml --prune --json"):
         cli.app.parse_args(line.split(), exit_on_error=False)
+
+
+def _applied(libraries: list[str]) -> dict[str, object]:
+    """The server's answer to applying a file that creates ``libraries``."""
+    return {
+        "plan": {
+            "create": [{"id": library, "refs": ["main"]} for library in libraries],
+            "update": [],
+            "unchanged": [],
+            "undeclared": [],
+            "errors": [],
+            "changes": len(libraries),
+        },
+        "results": [
+            {"library_id": library, "action": "created", "jobs": ["j1"], "error": None}
+            for library in libraries
+        ],
+        "failed": 0,
+    }
+
+
+@asynccontextmanager
+async def _slow_server(delay: float, answer: object) -> AsyncGenerator[str]:
+    """A real HTTP server on loopback that takes ``delay`` seconds to answer any request."""
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        head = await reader.readuntil(b"\r\n\r\n")
+        lengths = [
+            int(line.split(b":", 1)[1])
+            for line in head.split(b"\r\n")
+            if line.lower().startswith(b"content-length:")
+        ]
+        await reader.readexactly(lengths[0] if lengths else 0)
+        await asyncio.sleep(delay)
+        body = json.dumps(answer).encode()
+        writer.write(
+            b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n"
+            + f"content-length: {len(body)}\r\nconnection: close\r\n\r\n".encode()
+            + body
+        )
+        with suppress(ConnectionError):
+            await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+def _many(tmp_path: Path, count: int) -> tuple[str, list[str]]:
+    entries = "".join(
+        f"  - url: https://github.com/owner/repo-{n}\n    refs: [main]\n" for n in range(count)
+    )
+    path = _write(tmp_path, f"version: 1\nlibraries:\n{entries}")
+    return path, [f"/owner/repo-{n}" for n in range(count)]
+
+
+def _budget(monkeypatch: pytest.MonkeyPatch, seconds: float) -> None:
+    """Shrink one request's timeout and the per-library allowance to ``seconds`` each."""
+    monkeypatch.setattr(client_module, "TIMEOUT_SECONDS", seconds)
+    monkeypatch.setattr(cli_library, "TIMEOUT_SECONDS", seconds)
+    monkeypatch.setattr(cli_library, "SOURCES_SECONDS_PER_LIBRARY", seconds)
+
+
+async def test_apply_waits_as_long_as_the_file_needs_not_one_requests_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #422: the server creates the libraries one by one and answers when all are done; a client
+    # that gives up after one request's timeout reports a failure for work that succeeded.
+    _budget(monkeypatch, 0.2)
+    path, libraries = _many(tmp_path, 5)  # 0.2 + 5 x 0.2 = 1.2 s
+
+    async with _slow_server(0.6, _applied(libraries)) as url, ApiClient(url, token="t") as api:
+        await apply_sources(api, path, prune=False, as_json=True)
+
+    applied = json.loads(capsys.readouterr().out)
+    assert [r["action"] for r in applied["results"]] == ["created"] * 5
+
+
+async def test_plan_waits_as_long_as_the_file_needs_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _budget(monkeypatch, 0.2)
+    path, libraries = _many(tmp_path, 5)
+
+    async with (
+        _slow_server(0.6, _applied(libraries)["plan"]) as url,
+        ApiClient(url, token="t") as api,
+    ):
+        await plan_sources(api, path, prune=False, as_json=True)
+
+    assert len(json.loads(capsys.readouterr().out)["create"]) == 5
+
+
+async def test_an_apply_that_outlasts_its_budget_says_the_server_may_still_be_applying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _budget(monkeypatch, 0.1)
+    path, libraries = _many(tmp_path, 1)  # 0.1 + 1 x 0.1 = 0.2 s
+
+    async with _slow_server(1.0, _applied(libraries)) as url, ApiClient(url, token="t") as api:
+        with pytest.raises(ClientError) as timed_out:
+            await apply_sources(api, path, prune=False, as_json=False)
+
+    message = str(timed_out.value)
+    assert "within 0.2 seconds" in message
+    assert "exactdocs sources plan" in message
+    assert exit_code(timed_out.value) == EXIT_FAILED

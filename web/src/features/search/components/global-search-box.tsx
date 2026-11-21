@@ -3,6 +3,7 @@ import { Search, X } from "lucide-react";
 import { type KeyboardEvent, useEffect, useEffectEvent, useRef, useState } from "react";
 import { MAX_QUERY, normalizeQuery } from "@/shared/lib/search-query";
 import { cn } from "@/shared/lib/utils";
+import { control, controlHeight, kbd } from "@/shared/ui/recipes";
 import { hasVersionBox } from "./keyboard";
 
 const GLOBAL_INPUT_ID = "global-search-input";
@@ -18,6 +19,8 @@ interface Props {
   place?: "header" | "page";
   /** Focus the box on mount. */
   autoFocus?: boolean;
+  /** A taller field with a larger hint: the search page's own box. */
+  prominent?: boolean;
   className?: string;
 }
 
@@ -26,7 +29,12 @@ interface Props {
  * `?q=` after a pause. `/` focuses it unless the page has its own per-version box, Escape clears
  * it, ArrowDown moves into the results.
  */
-export function GlobalSearchBox({ place = "header", autoFocus = false, className }: Props) {
+export function GlobalSearchBox({
+  place = "header",
+  autoFocus = false,
+  prominent = false,
+  className,
+}: Props) {
   const navigate = useNavigate();
   const onSearch = useLocation({ select: (l) => l.pathname === "/search" });
   const urlQ = useLocation({
@@ -90,7 +98,15 @@ export function GlobalSearchBox({ place = "header", autoFocus = false, className
   }
 
   return (
-    <search aria-label="All libraries" className={cn("min-w-0 flex-1 lg:max-w-md", className)}>
+    <search
+      aria-label="All libraries"
+      className={cn(
+        "min-w-0 flex-1",
+        // The page's own box replaces the band's on /search: one field, not two.
+        place === "header" && "[body:has(#global-search-input-page)_&]:hidden",
+        className,
+      )}
+    >
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -103,7 +119,10 @@ export function GlobalSearchBox({ place = "header", autoFocus = false, className
         <div className="relative">
           <Search
             aria-hidden="true"
-            className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+            className={cn(
+              "pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground",
+              prominent ? "size-5" : "size-4",
+            )}
           />
           <input
             ref={input}
@@ -121,11 +140,21 @@ export function GlobalSearchBox({ place = "header", autoFocus = false, className
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={onKeyDown}
-            className="h-11 w-full min-w-0 rounded-md bg-card pr-16 pl-9 text-base outline-none ring-1 ring-inset ring-input transition-shadow duration-150 [appearance:none] placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring sm:h-9 sm:text-sm [&::-webkit-search-cancel-button]:hidden"
+            className={cn(
+              control,
+              controlHeight,
+              "min-w-0 pr-16 pl-9 [appearance:none] [&::-webkit-search-cancel-button]:hidden",
+              prominent && "h-12 pl-11 text-section [@media(pointer:fine)]:h-12",
+            )}
           />
           {draft === "" ? (
             // Hidden while the page has its own box: that one answers `/`, not this.
-            <kbd className="pointer-events-none absolute top-1/2 right-3 hidden h-5 min-w-5 -translate-y-1/2 items-center justify-center rounded bg-secondary px-1 font-mono text-xs text-muted-foreground lg:inline-flex [body:has(#search-input)_&]:hidden">
+            <kbd
+              className={cn(
+                kbd,
+                "pointer-events-none absolute top-1/2 right-3 hidden -translate-y-1/2 sm:inline-flex [body:has(#search-input)_&]:hidden",
+              )}
+            >
               /
             </kbd>
           ) : (
@@ -137,7 +166,10 @@ export function GlobalSearchBox({ place = "header", autoFocus = false, className
                 go("", false);
                 input.current?.focus();
               }}
-              className="absolute top-0 right-0 inline-flex size-11 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-transform duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.95] sm:size-9 [@media(hover:hover)]:hover:text-foreground"
+              className={cn(
+                "absolute top-0 right-0 inline-flex size-11 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-transform duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.95] sm:size-9 [@media(hover:hover)]:hover:text-foreground",
+                prominent && "sm:top-1.5 sm:right-1",
+              )}
             >
               <X aria-hidden="true" className="size-4" />
             </button>

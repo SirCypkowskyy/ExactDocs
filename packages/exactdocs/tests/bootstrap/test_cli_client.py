@@ -304,3 +304,12 @@ def test_proxy_variables_are_ignored_for_loopback_only() -> None:
     assert ApiClient("http://localhost:3000")._http.trust_env is False  # ruff: ignore[private-member-access]
     assert ApiClient("http://[::1]:3000")._http.trust_env is False  # ruff: ignore[private-member-access]
     assert ApiClient("https://docs.example.com")._http.trust_env is True  # ruff: ignore[private-member-access]
+
+
+@pytest.mark.parametrize("library_ids", [None, [], ["/acme/docs", "/acme/api"]])
+async def test_login_preserves_the_optional_token_library_selection(
+    transport: httpx2.ASGITransport, library_ids: list[str] | None
+) -> None:
+    async with ApiClient("http://localhost", transport=transport) as api:
+        grant = await api.login("ada", HORSE, "selected", library_ids=library_ids)
+    assert grant["library_ids"] == (None if library_ids is None else sorted(library_ids))

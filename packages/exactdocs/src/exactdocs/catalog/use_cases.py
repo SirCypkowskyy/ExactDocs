@@ -3,16 +3,19 @@
 import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import timedelta
+from datetime import UTC, timedelta
 from uuid import uuid4
 
 from exactdocs.catalog.constants import (
+    ARTICLE_SORT_FIELDS,
+    LIBRARY_SORT_FIELDS,
     MAX_RENAME_HOPS,
     MAX_RENAMES,
     MAX_SIMILARITY,
     MAX_SUGGESTION_SCAN,
     MAX_TAG_FACETS,
     TAG_SOURCE_PAGE,
+    VERSION_SORT_FIELDS,
 )
 from exactdocs.catalog.dtos import (
     ActivatedManifest,
@@ -55,6 +58,7 @@ from exactdocs.catalog.dtos import (
     ListLibrariesQuery,
     ListRenamesQuery,
     ListTagsQuery,
+    ListVersionsQuery,
     ManifestStates,
     ManualTagsOut,
     PinDefaultVersionCommand,
@@ -80,6 +84,8 @@ from exactdocs.catalog.dtos import (
     TagCount,
     TagList,
     UpdateLibraryCommand,
+    VersionList,
+    VersionOut,
     VersionTags,
 )
 from exactdocs.catalog.errors import (
@@ -87,12 +93,15 @@ from exactdocs.catalog.errors import (
     AssetNotFoundError,
     ConflictingContentError,
     ConflictingImageError,
+    LibraryAccessDeniedError,
+    LibraryCreationDeniedError,
     LibraryNotEmptyError,
     LibraryNotFoundError,
     ManifestNotFoundError,
     VersionNotFoundError,
 )
 from exactdocs.catalog.models import (
+    Access,
     ChunkingConfig,
     ContentKey,
     HostKind,
@@ -118,7 +127,9 @@ from exactdocs.catalog.models import (
     close_paths,
 )
 from exactdocs.catalog.ports.driven import (
+    AccessPolicy,
     ArticleTitleFinder,
+    EntrySearch,
     ImportedTagWriter,
     InstructionFileReader,
     LibraryRepository,
@@ -126,7 +137,14 @@ from exactdocs.catalog.ports.driven import (
     ManifestRepository,
     StoredArticleFinder,
 )
-from exactdocs_kernel import Clock, decode_cursor, encode_cursor, paginate, section_link
+from exactdocs_kernel import (
+    Clock,
+    decode_sort_cursor,
+    encode_sort_cursor,
+    parse_sort,
+    section_link,
+    sorted_page,
+)
 
 
 async def _find_version(
@@ -155,27 +173,179 @@ async def _find_version(
     return library, version
 
 
+async def _require(access: AccessPolicy, library: str, needed: Access) -> None:
+    """Refuse unless the caller holds the role ``needed`` on the library.
+
+    Args:
+        access: Library roles.
+        library: The library ID, any case.
+        needed: The role the action needs.
+
+    Raises:
+        LibraryNotFoundError: The library is hidden from this caller.
+        LibraryAccessDeniedError: The caller's role on the library is lower.
+    """
+    if not await access.allows(library, Access.READ):
+        raise LibraryNotFoundError(library)
+    if needed is not Access.READ and not await access.allows(library, needed):
+        raise LibraryAccessDeniedError(library, needed.value)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ListLibrariesUseCase:
     """Implements ``ports.driving.ListLibraries``."""
 
     repository: LibraryRepository
     """Stores the libraries, their versions, settings and manual tags."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
-    async def __call__(self, query: ListLibrariesQuery) -> LibraryList:
-        """List a page of libraries, sorted by ID.
+    async def __call__(
+        self,
+        query: ListLibrariesQuery,
+        *,
+        only: frozenset[str] | None = None,
+        without: frozenset[str] = frozenset(),
+    ) -> LibraryList:
+        """List a page of the libraries the caller may read, filtered and sorted.
+
+        Permissions apply first: a hidden library is in no page and in no count.
 
         Args:
-            query: The page size and the cursor of the previous page.
+            query: The filters, the sort, the page size and the cursor of the previous page.
+            only: Case-folded library IDs; when given, no other library is listed.
+            without: Case-folded library IDs that are not listed. The caller resolves what
+                the catalog does not know (the AI switch, say) into these two sets.
 
         Returns:
-            The page of libraries, sorted by ID, with the next cursor.
+            The page of libraries with the next cursor and the count of every match.
         """
-        libraries = sorted(await self.repository.list_all(), key=lambda lib: lib.id.value)
-        page = paginate(
-            libraries, key=lambda lib: lib.id.value, limit=query.limit, cursor=query.cursor
+        sort = parse_sort(query.sort, allowed=LIBRARY_SORT_FIELDS, default="id")
+        every = await self.repository.list_all()
+        readable = await self.access.readable([lib.id.value for lib in every])
+        libraries = [lib for lib in every if lib.id.value in readable]
+        libraries = [
+            lib
+            for lib in libraries
+            if lib.id.value.lower() not in without
+            and (only is None or lib.id.value.lower() in only)
+        ]
+        libraries = [lib for lib in libraries if _library_matches(lib, query)]
+        page = sorted_page(
+            libraries,
+            sort=sort,
+            key_field="id",
+            values={
+                "id": lambda lib: lib.id.value,
+                "title": lambda lib: lib.title.lower(),
+                "last_imported_at": _last_imported,
+                "version_count": lambda lib: len(lib.versions),
+            },
+            key=lambda lib: lib.id.value,
+            limit=query.limit,
+            cursor=query.cursor,
         )
         return LibraryList.from_page(page)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ListVersionsUseCase:
+    """Implements ``ports.driving.ListVersions``."""
+
+    repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
+
+    async def __call__(self, query: ListVersionsQuery) -> VersionList:
+        """List a page of a library's versions, filtered and sorted.
+
+        Args:
+            query: The library, the filters, the sort and the page.
+
+        Returns:
+            The page, the next cursor and the count of every match.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog.
+        """
+        await _require(self.access, query.id, Access.READ)
+        sort = parse_sort(query.sort, allowed=VERSION_SORT_FIELDS, default="ref")
+        library = await self.repository.get(LibraryId(query.id))
+        if library is None:
+            raise LibraryNotFoundError(query.id)
+        default = library.default_version()
+        needle = query.q.lower() if query.q else None
+        kinds, origins = set(query.kind or ()), set(query.origin or ())
+        found = [
+            v
+            for v in library.versions
+            if (needle is None or needle in str(v.ref).lower() or needle in v.commit_sha.lower())
+            and (not kinds or v.kind in kinds)
+            and (not origins or v.origin in origins)
+            and (query.imported_after is None or v.imported_at >= query.imported_after)
+            and (query.imported_before is None or v.imported_at < query.imported_before)
+        ]
+        page = sorted_page(
+            found,
+            sort=sort,
+            key_field="ref",
+            values={
+                "ref": lambda v: str(v.ref),
+                "kind": lambda v: v.kind.value,
+                "imported_at": lambda v: v.imported_at.astimezone(UTC).isoformat(),
+                "origin": lambda v: v.origin.value,
+            },
+            key=lambda v: str(v.ref),
+            limit=query.limit,
+            cursor=query.cursor,
+        )
+        return VersionList(
+            library=str(library.id),
+            versions=[VersionOut.from_model(v, is_default=v == default) for v in page.items],
+            next_cursor=page.next_cursor,
+            total=len(found),
+        )
+
+
+def _last_imported(library: Library) -> str:
+    """Return when a library was last imported as sortable text.
+
+    Args:
+        library: The library.
+
+    Returns:
+        An ISO 8601 UTC timestamp; empty while no version is imported (it sorts first).
+    """
+    latest = max((v.imported_at for v in library.versions), default=None)
+    return "" if latest is None else latest.astimezone(UTC).isoformat()
+
+
+def _library_matches(library: Library, query: ListLibrariesQuery) -> bool:
+    """Tell whether a library passes the list's text, version and date filters.
+
+    Args:
+        library: The library.
+        query: The filters.
+
+    Returns:
+        Whether it matches every filter that is set.
+    """
+    if query.q:
+        needle = query.q.lower()
+        if not any(
+            needle in text.lower()
+            for text in (library.id.value, library.title, library.description)
+        ):
+            return False
+    if query.has_versions is not None and bool(library.versions) is not query.has_versions:
+        return False
+    latest = max((v.imported_at for v in library.versions), default=None)
+    if query.updated_after is not None and (latest is None or latest < query.updated_after):
+        return False
+    return not (
+        query.updated_before is not None and (latest is None or latest >= query.updated_before)
+    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -184,6 +354,8 @@ class CreateLibraryUseCase:
 
     repository: LibraryRepository
     """Stores the libraries, their versions, settings and manual tags."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: CreateLibraryCommand) -> LibraryDetail:
         """Store a new library without versions; the repository refuses a taken ID.
@@ -193,7 +365,12 @@ class CreateLibraryUseCase:
 
         Returns:
             The new library, without versions.
+
+        Raises:
+            LibraryCreationDeniedError: The caller lacks instance creation permission.
         """
+        if not await self.access.can_create(command.id):
+            raise LibraryCreationDeniedError
         library = Library(
             id=LibraryId(command.id),
             title=command.title,
@@ -215,6 +392,7 @@ class CreateLibraryUseCase:
             ),
         )
         await self.repository.add(library)
+        await self.access.claim(library.id.value)
         return LibraryDetail.from_model(library)
 
 
@@ -224,6 +402,8 @@ class UpdateLibraryUseCase:
 
     repository: LibraryRepository
     """Stores the libraries, their versions, settings and manual tags."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: UpdateLibraryCommand) -> LibraryDetail:
         """Change the given fields and remember that a user chose them.
@@ -237,6 +417,7 @@ class UpdateLibraryUseCase:
         Raises:
             LibraryNotFoundError: The library is not in the catalog, or was removed meanwhile.
         """
+        await _require(self.access, command.id, Access.ADMINISTER)
         library = await self.repository.get(LibraryId(command.id))
         if library is None:
             raise LibraryNotFoundError(command.id)
@@ -255,6 +436,8 @@ class SetLibrarySettingsUseCase:
 
     repository: LibraryRepository
     """Stores the libraries, their versions, settings and manual tags."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: SetLibrarySettingsCommand) -> LibraryDetail:
         """Replace paths and tag rules; the chunking too unless it is left out.
@@ -268,6 +451,7 @@ class SetLibrarySettingsUseCase:
         Raises:
             LibraryNotFoundError: The library is not in the catalog, or was removed meanwhile.
         """
+        await _require(self.access, command.id, Access.ADMINISTER)
         library = await self.repository.get(LibraryId(command.id))
         if library is None:
             raise LibraryNotFoundError(command.id)
@@ -299,6 +483,8 @@ class PinDefaultVersionUseCase:
 
     repository: LibraryRepository
     """Stores the libraries, their versions, settings and manual tags."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: PinDefaultVersionCommand) -> LibraryDetail:
         """Pin the version the ref names (stored by its exact ref), or unpin without a ref.
@@ -313,6 +499,7 @@ class PinDefaultVersionUseCase:
             LibraryNotFoundError: The library is not in the catalog, or was removed meanwhile.
             VersionNotFoundError: The ref names no imported version, or it was removed meanwhile.
         """
+        await _require(self.access, command.library, Access.ADMINISTER)
         library_id = LibraryId(command.library)
         library = await self.repository.get(library_id)
         if library is None:
@@ -377,6 +564,8 @@ class DiscardLibraryUseCase:
 
     repository: LibraryRepository
     """Stores the libraries, their versions, settings and manual tags."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: DiscardLibraryCommand) -> None:
         """Remove the library if it exists and has no versions.
@@ -393,6 +582,7 @@ class DiscardLibraryUseCase:
         if library.versions:
             raise LibraryNotEmptyError(str(library.id))
         await self.repository.delete(library.id)
+        await self.access.forget(library.id.value)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -401,6 +591,8 @@ class GetLibraryUseCase:
 
     repository: LibraryRepository
     """Stores the libraries, their versions, settings and manual tags."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: GetLibraryQuery) -> LibraryDetail:
         """Fetch one library by ID.
@@ -414,6 +606,7 @@ class GetLibraryUseCase:
         Raises:
             LibraryNotFoundError: The library is not in the catalog.
         """
+        await _require(self.access, query.id, Access.READ)
         library = await self.repository.get(LibraryId(query.id))
         if library is None:
             raise LibraryNotFoundError(query.id)
@@ -426,6 +619,8 @@ class ResolveVersionUseCase:
 
     repository: LibraryRepository
     """Stores the libraries, their versions, settings and manual tags."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: ResolveVersionQuery) -> ResolvedVersion:
         """Resolve `/owner/repo[/ref]` to exactly one version.
@@ -436,6 +631,7 @@ class ResolveVersionUseCase:
         Returns:
             The version it names, with its library.
         """
+        await _require(self.access, ParsedId.parse(query.id).library.value, Access.READ)
         target = ParsedId.parse(query.id)
         library, version = await _find_version(self.repository, target.library, target.ref)
         return ResolvedVersion.from_library(library, version)
@@ -939,6 +1135,10 @@ class ListArticlesUseCase:
     """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
     """Stores the manifests with their articles, images and renames."""
+    entries: EntrySearch
+    """Filters, sorts and pages a manifest's entries."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: ListArticlesQuery) -> ArticleList:
         """List a page of the active manifest's articles inside a directory, sorted by path.
@@ -955,28 +1155,62 @@ class ListArticlesUseCase:
         Raises:
             ArticleNotFoundError: The version has no active manifest.
         """
+        await _require(self.access, query.library, Access.READ)
         ref = VersionRef(query.ref) if query.ref else None
         library, version = await _find_version(self.repository, LibraryId(query.library), ref)
         manifest = await self.manifests.get_active(library.id, version.ref)
         if manifest is None:
             raise ArticleNotFoundError(str(library.id), str(version.ref), None)
-        after = decode_cursor(query.cursor) if query.cursor is not None else None
-        entries = await self.manifests.list_entries(
+        sort = parse_sort(query.sort, allowed=ARTICLE_SORT_FIELDS, default="path")
+        after = (
+            decode_sort_cursor(query.cursor, sort, key_field="path")
+            if query.cursor is not None
+            else None
+        )
+        prefix = query.path_prefix.strip("/")
+        tags = query.tag_filter.selection()
+        entries = await self.entries.search(
             manifest.id,
-            prefix=query.path_prefix.strip("/"),
-            tags=query.tag_filter.selection(),
+            prefix=prefix,
+            tags=tags,
+            text=query.q,
+            sort=sort,
             after=after,
             limit=query.limit + 1,  # one more than asked tells whether another page follows
         )
         page = entries[: query.limit]
+        more = len(entries) > query.limit
         return ArticleList(
             library=str(library.id),
             ref=str(version.ref),
             commit_sha=manifest.commit_sha,
             manifest_id=manifest.id,
             articles=[ArticleSummary.from_model(e) for e in page],
-            next_cursor=encode_cursor(page[-1].path) if len(entries) > query.limit else None,
+            next_cursor=(
+                encode_sort_cursor(
+                    sort,
+                    key_field="path",
+                    value=_entry_value(page[-1], sort.field),
+                    key=page[-1].path,
+                )
+                if more
+                else None
+            ),
+            total=await self.entries.count(manifest.id, prefix=prefix, tags=tags, text=query.q),
         )
+
+
+def _entry_value(entry: ManifestEntry, field: str) -> str | int:
+    """Return an entry's value of a sort field, as the store compares it.
+
+    Args:
+        entry: The article's entry.
+        field: `path`, `title` or `size`.
+
+    Returns:
+        The path, the lower-cased title or the size.
+    """
+    return {"path": entry.path, "title": entry.title.lower(), "size": entry.size}[field]
 
 
 async def _renames_manifest(
@@ -1061,6 +1295,8 @@ class ResolveRenamedPathUseCase:
     """Stores the manifests with their articles, images and renames."""
     titles: ArticleTitleFinder
     """Confirms the path a chain ends at is an article of the version asked for."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: ResolveRenamedPathQuery) -> RenamedPath | None:
         """Look the path up in the renames stored with the version's active manifest.
@@ -1073,6 +1309,7 @@ class ResolveRenamedPathUseCase:
         Returns:
             The move, or ``None`` when git saw none.
         """
+        await _require(self.access, query.library, Access.READ)
         library, ref, manifest = await _renames_manifest(
             self.repository, self.manifests, query.library, query.ref
         )
@@ -1151,6 +1388,8 @@ class ListRenamesUseCase:
     """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
     """Stores the manifests with their articles, images and renames."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: ListRenamesQuery) -> RenameList:
         """List the renames stored with the version's active manifest.
@@ -1161,6 +1400,7 @@ class ListRenamesUseCase:
         Returns:
             Its renames, by old path.
         """
+        await _require(self.access, query.library, Access.READ)
         library, ref, manifest = await _renames_manifest(
             self.repository, self.manifests, query.library, query.ref
         )
@@ -1176,6 +1416,8 @@ class GetArticleUseCase:
     """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
     """Stores the manifests with their articles, images and renames."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: GetArticleQuery) -> Article:
         """Read one article of the version's active manifest.
@@ -1189,6 +1431,7 @@ class GetArticleUseCase:
         Raises:
             ArticleNotFoundError: The version has no such article; the error names close matches.
         """
+        await _require(self.access, query.library, Access.READ)
         ref = VersionRef(query.ref) if query.ref else None
         library, version = await _find_version(self.repository, LibraryId(query.library), ref)
         stored = await self.manifests.get_article(library.id, version.ref, query.path)
@@ -1232,6 +1475,8 @@ class GetAssetUseCase:
     """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
     """Stores the manifests with their articles, images and renames."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: GetAssetQuery) -> Asset:
         """Read one image of the version's active manifest.
@@ -1245,6 +1490,7 @@ class GetAssetUseCase:
         Raises:
             AssetNotFoundError: The version has no image at this path.
         """
+        await _require(self.access, query.library, Access.READ)
         ref = VersionRef(query.ref) if query.ref else None
         library, version = await _find_version(self.repository, LibraryId(query.library), ref)
         known = bool(query.known_blob_shas)
@@ -1270,6 +1516,8 @@ class ListTagsUseCase:
     """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
     """Stores the manifests with their articles, images and renames."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: ListTagsQuery) -> TagList:
         """Count the tags of the version's active manifest.
@@ -1283,6 +1531,7 @@ class ListTagsUseCase:
         Raises:
             ArticleNotFoundError: The version has no active manifest.
         """
+        await _require(self.access, query.library, Access.READ)
         ref = VersionRef(query.ref) if query.ref else None
         library, version = await _find_version(self.repository, LibraryId(query.library), ref)
         manifest = await self.manifests.get_active(library.id, version.ref)
@@ -1490,6 +1739,8 @@ class RemoveVersionUseCase:
     """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
     """Stores the manifests with their articles, images and renames."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: RemoveVersionCommand) -> Removal:
         """Delete the version and its manifests; report which version is the default now.
@@ -1504,6 +1755,7 @@ class RemoveVersionUseCase:
             LibraryNotFoundError: The library is not in the catalog.
             VersionNotFoundError: The library has no version of exactly this ref.
         """
+        await _require(self.access, command.library, Access.ADMINISTER)
         library_id, ref = LibraryId(command.library), VersionRef(command.ref)
         library = await self.repository.get(library_id)
         if library is None:
@@ -1531,6 +1783,8 @@ class RemoveLibraryUseCase:
     """Stores the libraries, their versions, settings and manual tags."""
     manifests: ManifestRepository
     """Stores the manifests with their articles, images and renames."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: RemoveLibraryCommand) -> Removal:
         """Delete the library with its versions and manifests.
@@ -1544,10 +1798,12 @@ class RemoveLibraryUseCase:
         Raises:
             LibraryNotFoundError: The library is not in the catalog.
         """
+        await _require(self.access, command.library, Access.OWN)
         library = await self.repository.get(LibraryId(command.library))
         if library is None:
             raise LibraryNotFoundError(command.library)
         removed = await self.manifests.remove_library(library.id)
+        await self.access.forget(library.id.value)
         return Removal(
             library=str(library.id), ref=None, manifest_ids=list(removed), default_ref=None
         )
@@ -1612,3 +1868,29 @@ class CopyManifestUseCase:
                 for a in articles
             ],
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IsLibraryIdTakenUseCase:
+    """Implements ``ports.driving.IsLibraryIdTaken`` for authorized creators."""
+
+    repository: LibraryRepository
+    """The catalog's libraries."""
+    access: AccessPolicy
+    """Instance creation permission."""
+
+    async def __call__(self, query: GetLibraryQuery) -> bool:
+        """Check an ID without granting the caller read access to its existing library.
+
+        Args:
+            query: The proposed ID.
+
+        Returns:
+            Whether the ID is occupied.
+
+        Raises:
+            LibraryCreationDeniedError: The caller lacks creation permission.
+        """
+        if not await self.access.can_create(query.id):
+            raise LibraryCreationDeniedError
+        return await self.repository.get(LibraryId(query.id)) is not None

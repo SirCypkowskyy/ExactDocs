@@ -15,6 +15,7 @@ from exactdocs.retrieval.constants import (
     AGENT_STAGE,
     AGENT_STEP_ARGUMENT_CHARS,
     AGENTIC_ANSWER_CACHE,
+    ANSWER_STAGE,
     BM25_SIMILARITY,
     CHARS_PER_TOKEN,
     DEFAULT_AGENT_CACHE_THRESHOLD,
@@ -27,8 +28,11 @@ from exactdocs.retrieval.constants import (
     HYDE_ANSWER_CACHE,
     HYDE_CACHE_TTL_DAYS,
     HYDE_TIMEOUT,
+    MAX_ANSWER_CHARS,
+    MAX_ANSWER_LIBRARIES,
     MAX_EXPLORED_STEPS,
     MAX_JUSTIFICATION_CHARS,
+    MAX_QUOTE_CHARS,
     MAX_RESOLVED,
     MAX_SEARCHED_LIBRARIES,
     NO_VECTOR_STORE,
@@ -37,20 +41,30 @@ from exactdocs.retrieval.constants import (
     QUERY_DOCS_CANDIDATES,
     QUERY_EMBEDDING_TIMEOUT,
     QUERY_HITS_CAP,
+    READ_BEFORE_STOP,
     RRF_DEPTH,
     RULE_FRAMING_CHARS,
     RULES_FRAMING_CHARS,
     RULES_SHARE,
+    SEARCH_ALL,
     SEARCH_DOCS,
     SECTION_FRAMING_CHARS,
     SPEND_INSTANCE_ID,
     SPEND_SCOPE_EMBEDDING,
     SPEND_SCOPE_INSTANCE,
     SPEND_SCOPE_LIBRARY,
+    SPEND_SCOPE_USER,
+    TOKENS_PER_MILLION,
     UNKNOWN_MANIFEST_GRACE,
 )
 from exactdocs.retrieval.dtos import (
     AiUsageOut,
+    AnswerAvailabilityOut,
+    AnswerLibraryOut,
+    AnswerQuery,
+    AnswerResult,
+    AnswerSourceOut,
+    AnswerUsageOut,
     ArticleOutlineOut,
     ArticleOutlineQuery,
     BudgetOut,
@@ -111,6 +125,7 @@ from exactdocs.retrieval.dtos import (
     SearchResultOut,
     SetChunkOut,
     SetLibraryRetrievalCommand,
+    SetRoleThinkingCommand,
     SpentOut,
     UnembeddedVersionsOut,
     UnembeddedVersionsQuery,
@@ -128,6 +143,7 @@ from exactdocs.retrieval.errors import (
     InvalidJudgmentError,
     InvalidProviderError,
     InvalidVectorError,
+    LibraryAccessDeniedError,
     LlmBudgetReachedError,
     LlmFailedError,
     MovedSection,
@@ -138,8 +154,12 @@ from exactdocs.retrieval.errors import (
     ProviderUnsupportedError,
     RerankerError,
     RetiredEmbeddingSpaceError,
+    RoleConfiguredError,
+    RoleTakesNoThinkingError,
     SecretKeyRequiredError,
     StaleChunkError,
+    ThinkingUnsupportedError,
+    UnavailableModeError,
     UnknownEmbeddingSpaceError,
     UnknownLibraryError,
     UnknownProviderError,
@@ -148,6 +168,7 @@ from exactdocs.retrieval.errors import (
     VersionNotIndexedError,
 )
 from exactdocs.retrieval.models import (
+    Access,
     AgentBounds,
     AgentCacheLookup,
     AgentCacheScope,
@@ -155,6 +176,9 @@ from exactdocs.retrieval.models import (
     AgentRead,
     AgentRun,
     AiCaller,
+    AnswerCitation,
+    AnswerDraft,
+    AnswerUsage,
     ArticleEntry,
     ArticleText,
     BudgetLimit,
@@ -186,6 +210,7 @@ from exactdocs.retrieval.models import (
     LibraryAi,
     LlmStep,
     ManifestChunk,
+    ManifestHit,
     ManifestPaths,
     ManifestStatus,
     ModeChoice,
@@ -219,7 +244,9 @@ from exactdocs.retrieval.models import (
     StoredChunk,
     TagFilter,
     TagMatch,
+    ThinkingLevel,
     VectorCoverage,
+    VectorHit,
     article_chunk_rows,
     bind_role,
     caller_audience,
@@ -227,10 +254,12 @@ from exactdocs.retrieval.models import (
     embedding_spend,
     embedding_text,
     estimated_usd,
+    fuse_across_manifests,
     judge_window,
     judged_scores,
     language_first,
     leading_hit,
+    model_markdown,
     model_text,
     name_match,
     outline,
@@ -239,12 +268,16 @@ from exactdocs.retrieval.models import (
     reciprocal_rank_fusion,
     reorder,
     search_terms,
+    source_link,
     spend_entries,
 )
 from exactdocs.retrieval.ports.driven import (
+    AccessPolicy,
     ActiveManifests,
     AgentAnswerCache,
     AgentReads,
+    Answerer,
+    AnswerProgress,
     ArticleSuggestions,
     ArticleTitles,
     CallRates,
@@ -266,6 +299,7 @@ from exactdocs.retrieval.ports.driven import (
     RenamedPaths,
     Reranker,
     RetrievalPipeline,
+    RoleThinkingLevels,
     SearchableVersions,
     SearchIndex,
     SearchIndexMaintenance,
@@ -317,6 +351,24 @@ async def _confirmed_removals(
         if not survivors:
             break
     return [m.manifest_id for m in survivors]
+
+
+async def _require(access: AccessPolicy, library: str, needed: Access) -> None:
+    """Refuse unless the caller holds the role ``needed`` on the library.
+
+    Args:
+        access: Library roles.
+        library: The library ID, any case.
+        needed: The role the action needs.
+
+    Raises:
+        UnknownLibraryError: The library is hidden from this caller.
+        LibraryAccessDeniedError: The caller's role on the library is lower.
+    """
+    if not await access.allows(library, Access.READ):
+        raise UnknownLibraryError(library)
+    if needed is not Access.READ and not await access.allows(library, needed):
+        raise LibraryAccessDeniedError(library, needed.value)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1591,7 +1643,8 @@ class Reranking:
             clock=spend.clock.now if spend is not None else SystemClock().now,
         )
         try:
-            model = await self.providers.factory.chat_model(profile, ref.model)
+            thinking = await self.providers.thinking_of(ModelRole.JUDGE, ai)
+            model = await self.providers.factory.chat_model(profile, ref.model, thinking=thinking)
             verdict = await self.judge.judge(model, query, candidates, step=step)
             return judged_scores(candidates, verdict.ratings)
         except LlmBudgetReachedError:
@@ -1783,6 +1836,8 @@ class SearchDocsUseCase:
     """Reads the hits' chunks."""
     tracer: SearchTracer = field(default_factory=UntracedSearches)
     """Observes the search and its stages (traces); records nothing by default."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(
         self, query: SearchDocsQuery, *, caller: str | None = None
@@ -1796,6 +1851,7 @@ class SearchDocsUseCase:
         Returns:
             The results of the one version searched.
         """
+        await _require(self.access, query.library, Access.READ)
         # Built only to refuse a whitespace-only query (EmptySearchTextError).
         text = SearchText(value=query.query)
         choice = await self.modes.choose(asked=query.mode, library=query.library)
@@ -1888,9 +1944,67 @@ class SearchDocsUseCase:
         )
 
 
+def _cross_library_embedding_scopes(caller: str | None) -> tuple[tuple[str, str], ...]:
+    """Name the ledger scopes the query embedding of a search across libraries counts to.
+
+    It is made once for every library searched, so it counts to no one library: to the embedding
+    budget, the instance and the caller.
+
+    Args:
+        caller: The account searching; ``None`` for a stdio MCP process.
+
+    Returns:
+        (kind, ID) of each scope.
+    """
+    scopes = [(SPEND_SCOPE_EMBEDDING, SPEND_INSTANCE_ID), (SPEND_SCOPE_INSTANCE, SPEND_INSTANCE_ID)]
+    if caller is not None:
+        scopes.append((SPEND_SCOPE_USER, caller))
+    return tuple(scopes)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Ranked:
+    """A chunk a search across libraries keeps, before its row is read."""
+
+    manifest_id: str
+    """The manifest (so the library version) it was found in."""
+    chunk_id: ChunkId
+    """The chunk."""
+    score: float
+    """Its score in the mode that answered."""
+    bm25_rank: int | None = None
+    """Its 1-based rank in the BM25 ranking, if it is there."""
+    vector_rank: int | None = None
+    """Its 1-based rank in the vector ranking, if it is there."""
+    hit: SearchHit | None = None
+    """BM25's hit, with its marked snippet; ``None`` when only the vectors found it."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Nearest:
+    """The vector ranking of a search across libraries, or why there is none."""
+
+    hits: tuple[tuple[str, VectorHit], ...] = ()
+    """``(manifest, hit)``, nearest first across the manifests searched."""
+    reason: FallbackReason | None = None
+    """Why the vectors could not be used; ``None`` when they were."""
+    without: tuple[str, ...] = ()
+    """Libraries left out of the vector ranking: AI is off for them, or their version is not
+    embedded with the configured model yet."""
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SearchAllLibrariesUseCase:
-    """Implements ``ports.driving.SearchAllLibraries``."""
+    """Implements ``ports.driving.SearchAllLibraries`` (#428: ``bm25``, ``vector``, ``hybrid``).
+
+    BM25 ranks the chunks of every searched default version together in one full-text query. The
+    vector modes embed the query once with the instance's embedding model and rank the chunks of
+    every searched version its space covers by their distance to it, nearest first across the
+    versions (one space, so the distances compare); ``hybrid`` fuses both rankings with reciprocal
+    rank fusion. A library with AI off, or whose version the model has not embedded yet, is left
+    out of the vector ranking and named in ``libraries_without_vectors``. When the vectors cannot
+    be used at all, BM25 answers with the reason, as in a search of one version.
+    """
 
     defaults: DefaultVersions
     """Every library's default version."""
@@ -1902,104 +2016,437 @@ class SearchAllLibrariesUseCase:
     """Reads the hits' chunks."""
     tracer: SearchTracer = field(default_factory=UntracedSearches)
     """Observes the search and its stages (traces); records nothing by default."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
+    modes: RetrievalModes | None = None
+    """The vector store and the embedding model the vector modes search with; without them only
+    ``bm25`` runs."""
 
-    async def __call__(self, query: SearchAllQuery) -> SearchAllResult:
-        """Rank the chunks of all default versions together; count the matches per library.
+    async def __call__(
+        self, query: SearchAllQuery, *, caller: str | None = None
+    ) -> SearchAllResult:
+        """Rank the chunks of the chosen default versions together; count the matches per library.
 
-        There is no ``mode`` (BM25 only until E11), unlike ``search_docs``. With ``library`` set
-        every library is still resolved: the counts stay global, which a facet needs.
+        With libraries chosen, every library is still resolved: the counts stay global, which a
+        facet needs.
 
         Args:
-            query: The query, the filters and the limit.
+            query: The query, the mode, the libraries, the filters and the limit.
+            caller: The account searching (a paid query embedding counts to it); ``None`` for a
+                stdio MCP process.
 
         Returns:
             The results across libraries and the matches per library.
         """
         text = SearchText(value=query.query)
-        mode = RetrievalMode.BM25.value
+        mode = await self._mode(query.mode)
+        libraries = ",".join(query.chosen) or None
         with self.tracer.span(
-            "search_all_libraries", mode=mode, query=text.value, library=query.library
-        ):
-            return await self._search(query, text, mode)
+            SEARCH_ALL, mode=mode.value, query=text.value, library=libraries
+        ) as whole:
+            result = await self._search(query, text, mode, caller)
+            whole.answered_by(result.retrieval_mode.value)
+            return result
 
-    async def _search(self, query: SearchAllQuery, text: SearchText, mode: str) -> SearchAllResult:
+    def _hybrid(self) -> HybridPipeline | None:
+        """Find the pipeline whose vector store and query embedding the vector modes use.
+
+        Returns:
+            The ``hybrid`` pipeline, or ``None`` when this build has none (no vector store).
+        """
+        found = None if self.modes is None else self.modes.pipelines.get(RetrievalMode.HYBRID)
+        return found if isinstance(found, HybridPipeline) else None
+
+    async def _mode(self, asked: str | None) -> RetrievalMode:
+        """Check the mode a call asked for; ``bm25`` when it names none.
+
+        Args:
+            asked: The mode as the caller wrote it, if any.
+
+        Returns:
+            The mode.
+
+        Raises:
+            UnavailableModeError: The mode is unknown, cannot search across libraries
+                (``hybrid_hyde``, ``agentic``), or cannot run now (no embedding model, or the
+                vector store cannot load).
+        """
+        if asked is None:
+            return RetrievalMode.BM25
+        hybrid = self._hybrid()
+        configured = None if hybrid is None else await hybrid.runs.configured()
+        store = hybrid is not None and await hybrid.vectors.available()
+        vectors = configured is not None and store
+        across = [RetrievalMode.BM25, RetrievalMode.VECTOR, RetrievalMode.HYBRID]
+        available = [m.value for m in across if vectors or not m.needs_vectors]
+        try:
+            mode = RetrievalMode(asked.strip().lower())
+        except ValueError:
+            raise UnavailableModeError(asked, available, []) from None
+        if mode.value in available:
+            return mode
+        if mode in across:
+            missing = [ModelRole.EMBEDDING.value] if configured is None else []
+            raise UnavailableModeError(asked, available, missing, vector_store=store)
+        raise UnavailableModeError(asked, available, [])
+
+    async def _scope(
+        self, query: SearchAllQuery, mode: RetrievalMode
+    ) -> tuple[dict[str, SearchableVersion], dict[str, SearchableVersion], int]:
+        """Resolve the default versions searched and counted.
+
+        Args:
+            query: The search as asked.
+            mode: The mode it runs in.
+
+        Returns:
+            The versions ranked (the chosen libraries', or every readable one's), the versions
+            counted (every readable one's, the chosen ones included), by manifest, and how many
+            readable libraries were left out because there are too many.
+        """
+        with self.tracer.span(f"{SEARCH_ALL}.versions", mode=mode.value):
+            return await _default_versions(
+                self.defaults, self.versions, self.access, query.chosen, MAX_SEARCHED_LIBRARIES
+            )
+
+    async def _nearest(
+        self,
+        scope: Mapping[str, SearchableVersion],
+        text: str,
+        tag_filter: TagFilter,
+        depth: int,
+        *,
+        mode: RetrievalMode,
+        caller: str | None,
+    ) -> _Nearest:
+        """Embed the query once and rank the covered versions' chunks by their vectors.
+
+        Args:
+            scope: The versions searched, by manifest.
+            text: The query.
+            tag_filter: Which chunks may be returned.
+            depth: How many chunks at most.
+            mode: The mode searching, which labels the embedding's span.
+            caller: The account searching.
+
+        Returns:
+            The nearest chunks across the versions, or why the vectors cannot be used, and the
+            libraries left out.
+        """
+        hybrid = self._hybrid()
+        if hybrid is None:
+            return _Nearest(reason=FallbackReason.VECTOR_STORE_UNAVAILABLE)
+        configured = await hybrid.runs.configured()
+        if configured is None:
+            return _Nearest(reason=FallbackReason.EMBEDDING_UNAVAILABLE)
+        space = await hybrid.runs.space(configured.target)
+        covered, left_out = await _covered(hybrid.runs, space, scope)
+        if space is None or not covered:
+            return _Nearest(reason=FallbackReason.EMBEDDING_IN_PROGRESS, without=left_out)
+        scopes = _cross_library_embedding_scopes(caller)
+        vector = await hybrid.query_vector(space, text, mode=mode, scopes=scopes, search=SEARCH_ALL)
+        if isinstance(vector, FallbackReason):
+            return _Nearest(reason=vector, without=left_out)
+        found = await _nearest_in(hybrid.vectors, space.id, covered, vector, tag_filter, depth)
+        if isinstance(found, FallbackReason):
+            return _Nearest(reason=found, without=left_out)
+        found.sort(key=lambda p: (p[1].distance, scope[p[0]].library, p[1].chunk_id))
+        return _Nearest(hits=tuple(found[:depth]), without=left_out)
+
+    async def _search(
+        self, query: SearchAllQuery, text: SearchText, mode: RetrievalMode, caller: str | None
+    ) -> SearchAllResult:
         """Resolve the default versions, rank and count, then load the shown chunks.
 
         Args:
             query: The search as asked.
             text: Its validated query text.
-            mode: The retrieval mode it runs in.
+            mode: The mode asked for.
+            caller: The account searching.
 
         Returns:
             The results across the libraries, with a facet per library.
-
-        Raises:
-            VersionNotIndexedError: ``library`` has no readable default version.
         """
         tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
-        with self.tracer.span("search_all_libraries.versions", mode=mode):
-            every = await self.defaults.all()
-        searched = {v.manifest_id: v for v in every[:MAX_SEARCHED_LIBRARIES]}
-        omitted = len(every) - len(searched)
-        scope = searched
-        if query.library is not None:
-            with self.tracer.span("search_all_libraries.versions", mode=mode):
-                only = await self.versions.find(query.library, None)
-            if only is None:
-                raise VersionNotIndexedError(query.library, "(default version)")
-            if only.manifest_id not in searched:  # beyond the cap: searched, so no longer omitted
-                searched[only.manifest_id] = only
-                omitted -= 1
-            scope = {only.manifest_id: only}
-        # One more than asked for tells whether the answer was cut short.
-        with self.tracer.span("search_all_libraries.rank", mode=mode):
+        scope, searched, omitted = await self._scope(query, mode)
+        near = _Nearest()
+        if mode.needs_vectors:
+            depth = query.limit + 1 if mode is RetrievalMode.VECTOR else RRF_DEPTH
+            with self.tracer.span(f"{SEARCH_ALL}.vectors", mode=mode.value):
+                near = await self._nearest(
+                    scope, text.value, tag_filter, depth, mode=mode, caller=caller
+                )
+        answered = RetrievalMode.BM25 if near.reason is not None else mode
+        # One more than is kept tells whether the answer was cut short.
+        bm25_depth = (
+            max(RRF_DEPTH, query.limit) if answered is RetrievalMode.HYBRID else query.limit
+        ) + 1
+        with self.tracer.span(f"{SEARCH_ALL}.rank", mode=answered.value):
             found_hits, counts = await asyncio.gather(
-                self.search.search_many(list(scope), text.value, tag_filter, query.limit + 1),
+                self._bm25(answered, scope, text.value, tag_filter, bm25_depth),
                 self.search.count_many(list(searched), text.value, tag_filter),
             )
-        shown = found_hits[: query.limit]
-        wanted: dict[str, list[ChunkId]] = {}
-        for found_hit in shown:
-            wanted.setdefault(found_hit.manifest_id, []).append(found_hit.hit.chunk_id)
-        with self.tracer.span("search_all_libraries.chunks", mode=mode):
-            stored = await self.chunks.get_across(wanted)
-        # A chunk gone since the search (the manifest was collected) leaves no result.
-        results = [
-            LibrarySearchResultOut.of(
-                searched[found_hit.manifest_id],
-                stored[found_hit.manifest_id, found_hit.hit.chunk_id],
-                found_hit.hit,
-            )
-            for found_hit in shown
-            if (found_hit.manifest_id, found_hit.hit.chunk_id) in stored
-        ]
-        vanished = len(shown) - len(results)
-        facets = sorted(
-            (
-                LibraryFacetOut(
-                    library=searched[m].library,
-                    version=searched[m].version,
-                    commit_sha=searched[m].commit_sha,
-                    matches=n,
-                )
-                for m, n in counts.items()
-                if m in searched and n > 0
-            ),
-            key=lambda f: (-f.matches, f.library),
-        )
+        ranked, candidates, complete = _ranked_across(answered, found_hits, near, query.limit)
+        results = await self._results(ranked, scope, text.value, answered)
+        vanished = len(ranked) - len(results)
         return SearchAllResult(
-            retrieval_mode=RetrievalMode.BM25,
+            retrieval_mode=answered,
             reranked=False,
-            coverage=CoverageOut(
-                candidates=len(found_hits) - vanished,
-                reranked=0,
-                complete=len(found_hits) <= query.limit,
-            ),
+            coverage=CoverageOut(candidates=candidates - vanished, reranked=0, complete=complete),
+            fallback_reason=near.reason,
             libraries_searched=len(searched),
             libraries_omitted=omitted,
-            libraries=facets,
+            libraries_without_vectors=list(near.without),
+            libraries=_facets(counts, searched),
             results=results,
         )
+
+    async def _bm25(
+        self,
+        mode: RetrievalMode,
+        scope: Mapping[str, SearchableVersion],
+        text: str,
+        tag_filter: TagFilter,
+        depth: int,
+    ) -> Sequence[ManifestHit]:
+        """Rank the scope's chunks with BM25, unless the mode answering has no BM25 ranking.
+
+        Args:
+            mode: The mode answering.
+            scope: The versions searched, by manifest.
+            text: The query.
+            tag_filter: Which chunks may be returned.
+            depth: How many hits at most.
+
+        Returns:
+            The hits, best first; none for ``vector``.
+        """
+        if mode is RetrievalMode.VECTOR:
+            return ()
+        return await self.search.search_many(list(scope), text, tag_filter, depth)
+
+    async def _results(
+        self,
+        ranked: Sequence[_Ranked],
+        scope: Mapping[str, SearchableVersion],
+        text: str,
+        mode: RetrievalMode,
+    ) -> list[LibrarySearchResultOut]:
+        """Read the kept chunks and build their results.
+
+        Args:
+            ranked: The chunks kept, best first.
+            scope: The versions searched, by manifest.
+            text: The query, whose terms mark the snippets of chunks only the vectors found.
+            mode: The mode answering.
+
+        Returns:
+            The results; a chunk gone since the search (its manifest was collected) leaves none.
+        """
+        wanted: dict[str, list[ChunkId]] = {}
+        for entry in ranked:
+            wanted.setdefault(entry.manifest_id, []).append(entry.chunk_id)
+        with self.tracer.span(f"{SEARCH_ALL}.chunks", mode=mode.value):
+            stored = await self.chunks.get_across(wanted)
+        terms = search_terms(text)
+        results = []
+        for entry in ranked:
+            chunk = stored.get((entry.manifest_id, entry.chunk_id))
+            if chunk is None:
+                continue
+            hit = entry.hit or leading_hit(entry.chunk_id, entry.score, chunk.chunk.content, terms)
+            hit = replace(
+                hit, score=entry.score, bm25_rank=entry.bm25_rank, vector_rank=entry.vector_rank
+            )
+            results.append(LibrarySearchResultOut.of(scope[entry.manifest_id], chunk, hit))
+        return results
+
+
+async def _default_versions(
+    defaults: DefaultVersions,
+    versions: SearchableVersions,
+    access: AccessPolicy,
+    chosen: Sequence[str],
+    cap: int,
+) -> tuple[dict[str, SearchableVersion], dict[str, SearchableVersion], int]:
+    """Resolve the default versions a search or an answer across libraries reads.
+
+    Args:
+        defaults: Every library's default version.
+        versions: Resolves a chosen library to its default version.
+        access: What the caller may read (library roles and the API token's scope).
+        chosen: The libraries chosen; none for every readable one.
+        cap: The most readable libraries taken when none is chosen.
+
+    Returns:
+        The versions read (the chosen libraries', or the first ``cap`` readable ones), every
+        readable version (the first ``cap``, and the chosen ones), by manifest, and how many
+        readable libraries were left out of the latter.
+
+    Raises:
+        VersionNotIndexedError: A chosen library has no default version the caller may read.
+    """
+    every = await defaults.all()
+    allowed = await access.readable([v.library for v in every])
+    readable = [v for v in every if v.library.casefold() in allowed]
+    searched = {v.manifest_id: v for v in readable[:cap]}
+    omitted = len(readable) - len(searched)
+    if not chosen:
+        return searched, searched, omitted
+    scope: dict[str, SearchableVersion] = {}
+    for library in chosen:
+        only = await versions.find(library, None)
+        if only is None or only.library.casefold() not in allowed:
+            raise VersionNotIndexedError(library, "(default version)")
+        if only.manifest_id not in searched:  # beyond the cap: read, so no longer omitted
+            searched[only.manifest_id] = only
+            omitted -= 1
+        scope[only.manifest_id] = only
+    return scope, searched, omitted
+
+
+def _facets(
+    counts: Mapping[str, int], searched: Mapping[str, SearchableVersion]
+) -> list[LibraryFacetOut]:
+    """Count the matches of each searched library, most first.
+
+    Args:
+        counts: BM25 matches by manifest.
+        searched: The versions counted, by manifest.
+
+    Returns:
+        A facet per library with at least one match.
+    """
+    return sorted(
+        (
+            LibraryFacetOut(
+                library=searched[m].library,
+                version=searched[m].version,
+                commit_sha=searched[m].commit_sha,
+                matches=n,
+            )
+            for m, n in counts.items()
+            if m in searched and n > 0
+        ),
+        key=lambda f: (-f.matches, f.library),
+    )
+
+
+async def _nearest_in(
+    vectors: VectorIndex,
+    space: EmbeddingSpaceId,
+    manifests: Sequence[str],
+    vector: Sequence[float],
+    tag_filter: TagFilter,
+    depth: int,
+) -> list[tuple[str, VectorHit]] | FallbackReason:
+    """Find each manifest's chunks nearest to a query vector.
+
+    Args:
+        vectors: The vector store.
+        space: The space searched.
+        manifests: The manifests searched.
+        vector: The query's vector.
+        tag_filter: Which chunks may be returned.
+        depth: How many chunks of each manifest at most.
+
+    Returns:
+        ``(manifest, hit)`` of every chunk found, in no particular order, or why the store could
+        not search.
+    """
+    try:
+        return [
+            (manifest, hit)
+            for manifest in manifests
+            for hit in await vectors.nearest(space, manifest, vector, tag_filter, depth)
+        ]
+    except UnknownEmbeddingSpaceError, RetiredEmbeddingSpaceError:
+        return FallbackReason.EMBEDDING_IN_PROGRESS  # retired by a switch of models meanwhile
+    except VectorStoreUnavailableError:
+        return FallbackReason.VECTOR_STORE_UNAVAILABLE
+    except VectorDimensionError, InvalidVectorError:
+        return FallbackReason.EMBEDDING_UNAVAILABLE
+
+
+async def _covered(
+    runs: EmbeddingRuns, space: EmbeddingSpace | None, scope: Mapping[str, SearchableVersion]
+) -> tuple[list[str], tuple[str, ...]]:
+    """Split the versions searched into those the vectors can rank and the libraries left out.
+
+    Args:
+        runs: The embedding model and which versions its space covers.
+        space: The configured model's space, if it has one.
+        scope: The versions searched, by manifest.
+
+    Returns:
+        The manifests with AI on that the space covers, and the libraries of the others, sorted.
+    """
+    covered: list[str] = []
+    without: list[str] = []
+    for manifest, version in scope.items():
+        ai = await runs.providers.library_modes.ai_of(version.library)
+        if ai.enabled and space is not None and await runs.covers(space, manifest):
+            covered.append(manifest)
+        else:
+            without.append(version.library)
+    return covered, tuple(sorted(without))
+
+
+def _ranked_across(
+    mode: RetrievalMode, found: Sequence[ManifestHit], near: _Nearest, limit: int
+) -> tuple[list[_Ranked], int, bool]:
+    """Keep the best ``limit`` chunks of a search across libraries, in the mode answering.
+
+    Args:
+        mode: The mode answering.
+        found: BM25's hits, best first (none for ``vector``); one more than kept when cut short.
+        near: The vector ranking (for ``vector`` and ``hybrid``).
+        limit: How many to keep.
+
+    Returns:
+        The kept chunks, best first; how many candidates were looked at; and whether nothing
+        more matched.
+    """
+    match mode:
+        case RetrievalMode.VECTOR:
+            kept = [
+                _Ranked(
+                    manifest_id=m, chunk_id=h.chunk_id, score=1.0 - h.distance, vector_rank=rank
+                )
+                for rank, (m, h) in enumerate(near.hits[:limit], start=1)
+            ]
+            return kept, len(near.hits), len(near.hits) <= limit
+        case RetrievalMode.HYBRID:
+            by_key = {(f.manifest_id, f.hit.chunk_id): f.hit for f in found}
+            fused = fuse_across_manifests(
+                [(f.manifest_id, f.hit.chunk_id) for f in found[:RRF_DEPTH]],
+                [(m, h.chunk_id) for m, h in near.hits],
+            )
+            kept = [
+                _Ranked(
+                    manifest_id=f.manifest_id,
+                    chunk_id=f.chunk_id,
+                    score=f.score,
+                    bm25_rank=f.bm25_rank,
+                    vector_rank=f.vector_rank,
+                    hit=by_key.get((f.manifest_id, f.chunk_id)),
+                )
+                for f in fused[:limit]
+            ]
+            cut = len(found) > RRF_DEPTH or len(near.hits) >= RRF_DEPTH
+            return kept, len(fused), not cut and len(fused) <= limit
+        case _:
+            kept = [
+                _Ranked(
+                    manifest_id=f.manifest_id,
+                    chunk_id=f.hit.chunk_id,
+                    score=f.hit.score,
+                    bm25_rank=rank,
+                    hit=f.hit,
+                )
+                for rank, f in enumerate(found[:limit], start=1)
+            ]
+            return kept, len(found), len(found) <= limit
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2110,6 +2557,8 @@ class ReadChunkUseCase:
     """Reads the chunk and the manifests that hold it."""
     renames: RenamedPaths | None = None
     """Where a stale chunk's article went; without it only the old path is tried."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: ReadChunkQuery) -> ChunkOut:
         """Serve the chunk from its version's active manifest, or say why it cannot be served.
@@ -2131,6 +2580,8 @@ class ReadChunkUseCase:
         if len({m.version_id for m in holders}) != 1:
             raise ChunkNotFoundError(query.chunk_id)
         first = holders[0]
+        if not await self.access.allows(first.library, Access.READ):
+            raise ChunkNotFoundError(query.chunk_id)
         ref = first.version_id.removeprefix(f"{first.library}/")
         version = await self.versions.find(first.library, ref)
         ids = {m.manifest_id for m in holders}
@@ -2206,6 +2657,8 @@ class ArticleOutlineUseCase:
     """The article's chunk rows in that version's active manifest."""
     suggestions: ArticleSuggestions | None = None
     """Close paths for a miss, as ``read_article`` lists them; none without it."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: ArticleOutlineQuery) -> ArticleOutlineOut:
         """Build the outline from the article's chunk rows in the version's active manifest.
@@ -2220,6 +2673,7 @@ class ArticleOutlineUseCase:
             VersionNotIndexedError: The version is not imported or has no active manifest.
             ArticleNotFoundError: The version has no article at this path.
         """
+        await _require(self.access, query.library, Access.READ)
         version = await self.versions.find(query.library, query.ref)
         if version is None:
             raise VersionNotIndexedError(query.library, query.ref or "(default version)")
@@ -2612,6 +3066,8 @@ class ResolveLibraryIdUseCase:
     """Counts each default version's articles and chunks."""
     tracer: SearchTracer = field(default_factory=UntracedSearches)
     """Observes the search and its stages (traces); records nothing by default."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: ResolveLibraryIdQuery) -> ResolveLibraryIdResult:
         """Match the name, then let the default versions' hits for ``query`` re-rank the matches.
@@ -2649,6 +3105,8 @@ class ResolveLibraryIdUseCase:
             ]
             # Pre-order by name only, so the cut keeps the best names; hits re-rank within it.
             named.sort(key=lambda m: (m[1], m[0].id))
+            allowed = await self.access.readable([lib.id for lib, _ in named])
+            named = [(lib, found) for lib, found in named if lib.id.casefold() in allowed]
             readable = await self._readable(named)
         with self.tracer.span("resolve_library_id.rank", mode=mode):
             hits = await asyncio.gather(
@@ -2780,6 +3238,8 @@ class QueryDocsUseCase:
     """Size budget of an answer, in estimated tokens."""
     tracer: SearchTracer = field(default_factory=UntracedSearches)
     """Observes the search and its stages (traces); records nothing by default."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(
         self, query: QueryDocsQuery, *, caller: str | None = None
@@ -2804,6 +3264,7 @@ class QueryDocsUseCase:
         _, owner, repo, *rest = query.library_id.split("/", 3)
         ref = rest[0] if rest else None
         library = f"/{owner}/{repo}"
+        await _require(self.access, library, Access.READ)
         # context7's tool has no mode argument: the library's mode, else the instance's (C7-02).
         choice = await self.modes.choose(asked=None, library=library)
         with self.tracer.span(
@@ -2928,6 +3389,8 @@ async def _library_retrieval(
         llm=_ref_text(ai.llm),
         judge=_ref_text(ai.judge),
         reranker=_ref_text(ai.reranker),
+        llm_thinking=ai.llm_thinking,
+        judge_thinking=ai.judge_thinking,
         rerank_top_n=ai.rerank_top_n,
         effective_rerank_top_n=modes.rerank_top_n(ai),
         rerank_with=ai.rerank_with,
@@ -2949,6 +3412,8 @@ class GetLibraryRetrievalUseCase:
     """Spells the library ID as the catalog does."""
     modes: RetrievalModes
     """The instance's modes and the libraries' settings."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, query: GetLibraryRetrievalQuery) -> LibraryRetrievalOut:
         """Read the library's mode and the one its searches use now.
@@ -2962,6 +3427,7 @@ class GetLibraryRetrievalUseCase:
         Raises:
             UnknownLibraryError: There is no such library.
         """
+        await _require(self.access, query.library, Access.READ)
         library = await self.libraries.canonical_id(query.library)
         if library is None:
             raise UnknownLibraryError(query.library)
@@ -2982,9 +3448,14 @@ class SetLibraryRetrievalUseCase:
     """The profiles an override may name."""
     answers: AgentAnswerCache = field(default_factory=NoAgentAnswerCache)
     """The agentic answer cache: a library's answers go when its settings are saved."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
 
     async def __call__(self, command: SetLibraryRetrievalCommand) -> LibraryRetrievalOut:
         """Validate the settings against what can run with them, then store them.
+
+        A thinking level of the library's own that its model cannot take is refused too
+        (``ThinkingUnsupportedError``, from ``AiProviders.refuse_unsupported_thinking``).
 
         Args:
             command: The library, its mode and its AI overrides.
@@ -2997,6 +3468,7 @@ class SetLibraryRetrievalUseCase:
             UnknownProviderError: An override names a profile that does not exist.
             ProviderUnsupportedError: An override names a profile this installation cannot call.
         """
+        await _require(self.access, command.library, Access.ADMINISTER)
         library = await self.libraries.canonical_id(command.library)
         if library is None:
             raise UnknownLibraryError(command.library)
@@ -3005,6 +3477,8 @@ class SetLibraryRetrievalUseCase:
             llm=_parse_ref(command.llm),
             judge=_parse_ref(command.judge),
             reranker=_parse_ref(command.reranker),
+            llm_thinking=command.llm_thinking,
+            judge_thinking=command.judge_thinking,
             rerank_top_n=command.rerank_top_n,
             rerank_with=command.rerank_with,
             budgets=command.budgets.limits(),
@@ -3019,6 +3493,10 @@ class SetLibraryRetrievalUseCase:
                 raise UnknownProviderError(name)
             if (reason := self.providers.factory.unsupported(profile)) is not None:
                 raise ProviderUnsupportedError(name, reason)
+        # Only the library's own levels are refused here: the instance's were checked when set.
+        await self.providers.refuse_unsupported_thinking(
+            _without_thinking(self.providers.roles), ai
+        )
         mode = None
         if command.mode is not None:
             mode = (await self.modes.registry(library, ai)).check(command.mode)
@@ -3068,6 +3546,28 @@ def _parse_ref(text: str | None) -> ModelRef | None:
         The reference, or ``None``.
     """
     return None if text is None else ModelRef.parse(text)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NoStoredThinking:
+    """Implements ``ports.driven.RoleThinkingLevels`` for a process that stores none."""
+
+    async def levels(self) -> Mapping[ModelRole, ThinkingLevel]:
+        """Read nothing.
+
+        Returns:
+            No level.
+        """
+        return {}
+
+    async def save(self, role: ModelRole, level: ThinkingLevel | None) -> None:
+        """Store nothing: such a process serves no REST API.
+
+        Args:
+            role: The role.
+            level: The level.
+        """
+        del role, level
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -3135,17 +3635,34 @@ class NoModelFactory:
         del profile
         return "this process calls no AI model"
 
-    async def chat_model(self, profile: ProviderProfile, model: str) -> object:
+    async def chat_model(
+        self, profile: ProviderProfile, model: str, *, thinking: ThinkingLevel | None = None
+    ) -> object:
         """Refuse.
+
+        Args:
+            profile: The profile.
+            model: The model.
+            thinking: The level (unused).
+
+        Returns:
+            Nothing: it raises ``ProviderUnsupportedError``.
+        """
+        del thinking
+        return self._refuse(profile, model)
+
+    async def thinking_unsupported(self, profile: ProviderProfile, model: str) -> str | None:
+        """Know nothing about any model.
 
         Args:
             profile: The profile.
             model: The model.
 
         Returns:
-            Nothing: it raises ``ProviderUnsupportedError``.
+            ``None``: that cannot be known here.
         """
-        return self._refuse(profile, model)
+        del profile, model
+        return None
 
     async def embedder(self, profile: ProviderProfile, model: str) -> object:
         """Refuse.
@@ -3192,17 +3709,26 @@ class NoModelFactory:
         del model
         raise ProviderUnsupportedError(profile.name, "this process calls no AI model")
 
-    async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
+    async def check(
+        self,
+        profile: ProviderProfile,
+        model: str,
+        role: ModelRole,
+        *,
+        thinking: ThinkingLevel | None = None,
+    ) -> ModelCheck:
         """Report that nothing can be called.
 
         Args:
             profile: The profile.
             model: The model.
             role: The role.
+            thinking: The level (unused).
 
         Returns:
             A failed check.
         """
+        del thinking
         return ModelCheck(
             role=role,
             profile=profile.name,
@@ -3233,6 +3759,78 @@ class AiProviders:
     """Turns a profile into a callable model."""
     box: SecretBox | None = None
     """Seals keys sent over the REST API; ``None``: they cannot be stored."""
+    thinking_levels: RoleThinkingLevels = field(default_factory=NoStoredThinking)
+    """The roles' thinking levels set over the REST API (#421); a configured level wins."""
+
+    async def instance_roles(self) -> InstanceRoles:
+        """The instance's roles with the thinking levels stored over the REST API.
+
+        A level set in the environment or the configuration file wins over a stored one.
+
+        Returns:
+            The roles.
+        """
+        stored = await self.thinking_levels.levels()
+        return replace(
+            self.roles,
+            llm_thinking=self.roles.llm_thinking or stored.get(ModelRole.LLM),
+            judge_thinking=self.roles.judge_thinking or stored.get(ModelRole.JUDGE),
+        )
+
+    async def bindings(self) -> list[RoleBinding]:
+        """Resolve the instance's roles outside any library, with their thinking levels.
+
+        Returns:
+            One binding per role that is set (the judge may default to the LLM).
+        """
+        roles, defaults = await self.instance_roles(), LibraryAi()
+        return [b for r in ModelRole if (b := bind_role(r, roles, defaults)) is not None]
+
+    async def thinking_of(self, role: ModelRole, ai: LibraryAi) -> ThinkingLevel | None:
+        """Resolve the thinking level a role's calls send for a library.
+
+        Args:
+            role: The role.
+            ai: The library's overrides (the defaults outside any library).
+
+        Returns:
+            The level, or ``None`` for the provider's default.
+        """
+        binding = bind_role(role, await self.instance_roles(), ai)
+        return None if binding is None else binding.thinking
+
+    async def thinking_problem(self, binding: RoleBinding) -> str | None:
+        """Say why a binding's model cannot take its thinking level, when that is known.
+
+        Args:
+            binding: The role, its model and its level.
+
+        Returns:
+            Why not, or ``None`` when it can, has no level, or that cannot be known.
+        """
+        if binding.thinking is None:
+            return None
+        profile = await self.profile(binding.ref.profile)
+        if profile is None or self.factory.unsupported(profile) is not None:
+            return None
+        return await self.factory.thinking_unsupported(profile, binding.ref.model)
+
+    async def refuse_unsupported_thinking(self, roles: InstanceRoles, ai: LibraryAi) -> None:
+        """Refuse thinking levels the models they apply to cannot take.
+
+        Args:
+            roles: The instance's roles, with only the levels being saved.
+            ai: The library's overrides, as they are about to be.
+
+        Raises:
+            ThinkingUnsupportedError: A role's model cannot take its level.
+        """
+        for role in (ModelRole.LLM, ModelRole.JUDGE):
+            binding = bind_role(role, roles, ai)
+            if binding is None or binding.thinking is None:
+                continue
+            if (reason := await self.thinking_problem(binding)) is not None:
+                raise ThinkingUnsupportedError(role.value, str(binding.ref), reason)
 
     def configured_profile(self, name: str) -> ProviderProfile | None:
         """Find a configured profile.
@@ -3353,7 +3951,8 @@ class AiProviders:
         Returns:
             An opaque handle, or ``None`` when the role does not resolve for the library.
         """
-        binding = bind_role(role, self.roles, await self.library_modes.ai_of(library))
+        roles = await self.instance_roles()
+        binding = bind_role(role, roles, await self.library_modes.ai_of(library))
         if binding is None:
             return None
         profile = await self.profile(binding.ref.profile)
@@ -3365,14 +3964,19 @@ class AiProviders:
             case ModelRole.RERANKER:
                 return await self.factory.reranker(profile, binding.ref.model)
             case ModelRole.LLM | ModelRole.JUDGE:
-                return await self.factory.chat_model(profile, binding.ref.model)
+                return await self.factory.chat_model(
+                    profile, binding.ref.model, thinking=binding.thinking
+                )
 
-    async def check(self, binding_role: ModelRole | None, ref: ModelRef) -> ModelCheck:
+    async def check(
+        self, binding_role: ModelRole | None, ref: ModelRef, thinking: ThinkingLevel | None = None
+    ) -> ModelCheck:
         """Make one minimal call, or say why it cannot be made.
 
         Args:
             binding_role: The role being checked; ``None`` when not a configured role.
             ref: The profile and model.
+            thinking: A chat role's thinking level, as its calls send it.
 
         Returns:
             The outcome.
@@ -3391,7 +3995,7 @@ class AiProviders:
             return ModelCheck(
                 role=binding_role, profile=ref.profile, model=ref.model, ok=False, error=reason
             )
-        return await self.factory.check(profile, ref.model, role)
+        return await self.factory.check(profile, ref.model, role, thinking=thinking)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -3619,12 +4223,10 @@ class CheckProviderUseCase:
             ref = ModelRef(profile=command.name, model=command.model)
             checks = [await self.providers.check(command.role, ref)]
         else:
-            bindings = [
-                b for b in self.providers.instance_bindings() if b.ref.profile == command.name
-            ]
+            bindings = [b for b in await self.providers.bindings() if b.ref.profile == command.name]
             if not bindings:
                 raise NothingToCheckError(command.name)
-            checks = [await self.providers.check(b.role, b.ref) for b in bindings]
+            checks = [await self.providers.check(b.role, b.ref, b.thinking) for b in bindings]
         return ModelChecksOut(checks=[ModelCheckOut.from_model(c) for c in checks])
 
 
@@ -3642,7 +4244,8 @@ class CheckRolesUseCase:
             One check per role that is set.
         """
         checks = [
-            await self.providers.check(b.role, b.ref) for b in self.providers.instance_bindings()
+            await self.providers.check(b.role, b.ref, b.thinking)
+            for b in await self.providers.bindings()
         ]
         return ModelChecksOut(checks=[ModelCheckOut.from_model(c) for c in checks])
 
@@ -3660,23 +4263,84 @@ class ListRolesUseCase:
         Returns:
             One entry per role, set or not.
         """
-        bound = {b.role: b for b in self.providers.instance_bindings()}
-        roles = []
-        for role in ModelRole:
-            binding = bound.get(role)
-            exists = (
-                binding is not None
-                and await self.providers.profile(binding.ref.profile) is not None
-            )
-            roles.append(
-                RoleOut(
-                    role=role,
-                    model=None if binding is None else str(binding.ref),
-                    source=None if binding is None else binding.source,
-                    profile_exists=exists,
-                )
-            )
-        return RoleListOut(roles=roles)
+        roles = await self.providers.instance_roles()
+        return RoleListOut(
+            roles=[await _role_out(self.providers, roles, role) for role in ModelRole]
+        )
+
+
+async def _role_out(providers: AiProviders, roles: InstanceRoles, role: ModelRole) -> RoleOut:
+    """Describe one instance role: its model, its thinking level and whether it can take it.
+
+    Args:
+        providers: The instance's AI configuration.
+        roles: The instance's roles with their stored thinking levels.
+        role: The role.
+
+    Returns:
+        The role.
+    """
+    binding = bind_role(role, roles, LibraryAi())
+    exists = binding is not None and await providers.profile(binding.ref.profile) is not None
+    thinking = roles.thinking(role) if binding is None else binding.thinking
+    return RoleOut(
+        role=role,
+        model=None if binding is None else str(binding.ref),
+        source=None if binding is None else binding.source,
+        profile_exists=exists,
+        thinking=thinking,
+        own_thinking=roles.thinking(role),
+        thinking_configured=providers.roles.thinking(role) is not None,
+        thinking_unsupported=(
+            await providers.thinking_problem(binding) if binding is not None and exists else None
+        ),
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SetRoleThinkingUseCase:
+    """Implements ``ports.driving.SetRoleThinking``."""
+
+    providers: AiProviders
+    """The instance's AI configuration."""
+
+    async def __call__(self, command: SetRoleThinkingCommand) -> RoleOut:
+        """Check the level against the role's model, then store it.
+
+        Args:
+            command: The role and its level.
+
+        Returns:
+            The role as it is now.
+
+        Raises:
+            RoleTakesNoThinkingError: The role is not ``llm`` or ``judge``.
+            RoleConfiguredError: Its level is set in the environment or the configuration file.
+        """
+        role = command.role
+        if not role.thinks:
+            raise RoleTakesNoThinkingError(role.value)
+        if self.providers.roles.thinking(role) is not None:
+            raise RoleConfiguredError(role.value)
+        field_name = f"{role.value}_thinking"
+        roles = replace(await self.providers.instance_roles(), **{field_name: command.thinking})
+        if command.thinking is not None:  # only the level being set is checked
+            only = replace(_without_thinking(roles), **{field_name: command.thinking})
+            await self.providers.refuse_unsupported_thinking(only, LibraryAi())
+        await self.providers.thinking_levels.save(role, command.thinking)
+        return await _role_out(self.providers, roles, role)
+
+
+def _without_thinking(roles: InstanceRoles) -> InstanceRoles:
+    """Drop the instance's thinking levels, keeping its models.
+
+    Args:
+        roles: The roles.
+
+    Returns:
+        The same models with no level.
+    """
+    return replace(roles, llm_thinking=None, judge_thinking=None)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -4036,6 +4700,46 @@ class HybridPipeline:
             return _bm25_answer(found, request.limit, near)
         return await self._fused(request, found, near, mode)
 
+    async def nearest_only(self, request: PipelineRequest) -> PipelineAnswer:
+        """Rank the version's chunks by their vectors alone (``vector``): no BM25 half.
+
+        The score is the cosine similarity (1 minus the distance). When the vectors cannot be
+        used, BM25 answers with the reason, as ``fuse`` does.
+
+        Args:
+            request: What to search; ``space`` is the space to search.
+
+        Returns:
+            The nearest chunks, each with its vector rank, or BM25's with the reason.
+        """
+        near = await self._nearest_hits(
+            request, request.query, RetrievalMode.VECTOR, request.limit + 1
+        )
+        if isinstance(near, FallbackReason):
+            depth = request.limit + 1  # one more tells whether the answer was cut short
+            found = await self.search.search(
+                request.version.manifest_id, request.query, request.tag_filter, depth
+            )
+            return _bm25_answer(found, request.limit, near)
+        kept = near[: request.limit]
+        stored = await self.chunks.get_many(request.version.manifest_id, [h.chunk_id for h in kept])
+        terms = search_terms(request.query)
+        hits = [
+            replace(
+                leading_hit(h.chunk_id, 1.0 - h.distance, stored[h.chunk_id].chunk.content, terms),
+                vector_rank=rank,
+            )
+            for rank, h in enumerate(kept, start=1)
+            if h.chunk_id in stored
+        ]
+        return PipelineAnswer(
+            mode=RetrievalMode.VECTOR,
+            hits=tuple(hits),
+            candidates=len(near),
+            reranked=0,
+            complete=len(near) <= request.limit,
+        )
+
     async def _nearest(
         self, request: PipelineRequest, embed: str, mode: RetrievalMode
     ) -> list[ChunkId] | FallbackReason:
@@ -4049,6 +4753,24 @@ class HybridPipeline:
         Returns:
             The best ``RRF_DEPTH`` chunks, nearest first, or why the vectors cannot be used.
         """
+        near = await self._nearest_hits(request, embed, mode, RRF_DEPTH)
+        return near if isinstance(near, FallbackReason) else [h.chunk_id for h in near]
+
+    async def _nearest_hits(
+        self, request: PipelineRequest, embed: str, mode: RetrievalMode, depth: int
+    ) -> Sequence[VectorHit] | FallbackReason:
+        """Embed ``embed`` and find the version's chunks whose vectors are nearest to it.
+
+        Args:
+            request: The search; its ``space`` is the one searched.
+            embed: The text embedded: the query, or HyDE's hypothetical answer.
+            mode: The mode searching, which labels the embedding's span.
+            depth: How many chunks at most.
+
+        Returns:
+            The nearest chunks with their distances, nearest first, or why the vectors cannot be
+            used.
+        """
         space = request.space
         if space is None:  # no embedding model resolved when the gate looked
             return FallbackReason.EMBEDDING_UNAVAILABLE
@@ -4057,7 +4779,7 @@ class HybridPipeline:
             return vector
         try:
             near = await self.vectors.nearest(
-                space.id, request.version.manifest_id, vector, request.tag_filter, RRF_DEPTH
+                space.id, request.version.manifest_id, vector, request.tag_filter, depth
             )
         except UnknownEmbeddingSpaceError, RetiredEmbeddingSpaceError:
             return FallbackReason.EMBEDDING_IN_PROGRESS  # retired by a switch of models meanwhile
@@ -4065,7 +4787,7 @@ class HybridPipeline:
             return FallbackReason.VECTOR_STORE_UNAVAILABLE
         except VectorDimensionError, InvalidVectorError:
             return FallbackReason.EMBEDDING_UNAVAILABLE  # the model answered an unusable vector
-        return [h.chunk_id for h in near]
+        return near
 
     async def _query_vector(
         self, request: PipelineRequest, space: EmbeddingSpace, embed: str, mode: RetrievalMode
@@ -4083,18 +4805,44 @@ class HybridPipeline:
         """
         if not (await self.runs.providers.library_modes.ai_of(request.version.library)).enabled:
             return FallbackReason.MODE_UNAVAILABLE  # AI off: the query is never sent
+        return await self.query_vector(
+            space, embed, mode=mode, scopes=_query_embedding_scopes(request), search=request.search
+        )
+
+    async def query_vector(
+        self,
+        space: EmbeddingSpace,
+        embed: str,
+        *,
+        mode: RetrievalMode,
+        scopes: Sequence[tuple[str, str]],
+        search: str,
+    ) -> tuple[float, ...] | FallbackReason:
+        """Embed a text with the configured model, which must be the one that made ``space``.
+
+        Checked against the budgets of ``scopes`` first (a paid model only), and recorded to them.
+
+        Args:
+            space: The space the vector will search.
+            embed: The text embedded: the query, or HyDE's hypothetical answer.
+            mode: The mode searching, which labels the embedding's span.
+            scopes: (kind, ID) of each ledger scope the embedding counts to.
+            search: The search it runs in, which names the span.
+
+        Returns:
+            The vector, or why there is none.
+        """
         configured = await self.runs.configured()
         if configured is None:
             return FallbackReason.EMBEDDING_UNAVAILABLE
         if not configured.target.matches(space.spec):
             return FallbackReason.EMBEDDING_IN_PROGRESS  # the model changed since the gate
-        scopes = _query_embedding_scopes(request)
         spend = self.runs.spend
         paid = configured.target.profile_kind not in FREE_PROFILE_KINDS
         if spend is not None and paid and await spend.reached(scopes) is not None:
             return FallbackReason.LLM_BUDGET_REACHED  # as a paid rerank over budget (#95)
         try:
-            embedded = await self._embedded(request, configured, embed, mode)
+            embedded = await self._embedded(search, configured, embed, mode)
         except EmbeddingFailedError, ProviderUnsupportedError, TimeoutError:
             return FallbackReason.EMBEDDING_UNAVAILABLE
         if spend is not None:  # the one record of this call: the use case records no embedding
@@ -4112,12 +4860,12 @@ class HybridPipeline:
         )
 
     async def _embedded(
-        self, request: PipelineRequest, configured: _Configured, embed: str, mode: RetrievalMode
+        self, search: str, configured: _Configured, embed: str, mode: RetrievalMode
     ) -> EmbeddedTexts:
         """Embed the query, in its span; ``TimeoutError`` after ``timeout`` seconds.
 
         Args:
-            request: The search.
+            search: The search it runs in, which names the span.
             configured: The embedding role, which made the space searched.
             embed: The text embedded: the query, or HyDE's hypothetical answer.
             mode: The mode searching, which labels the span.
@@ -4132,7 +4880,7 @@ class HybridPipeline:
                 no ``Exception``, so cancelling a search still propagates.
             ProviderUnsupportedError: This process cannot call the model.
         """
-        stage = f"{request.search}.embed_query"
+        stage = f"{search}.embed_query"
         with self.tracer.span(stage, mode=mode.value):
             async with asyncio.timeout(self.timeout):
                 try:
@@ -4180,9 +4928,12 @@ class HybridPipeline:
         hits = []
         for rank in kept:
             if (bm25 := by_id.get(rank.chunk_id)) is not None:
-                hits.append(replace(bm25, score=rank.score))
+                hit = replace(bm25, score=rank.score)
             elif (chunk := stored.get(rank.chunk_id)) is not None:
-                hits.append(leading_hit(rank.chunk_id, rank.score, chunk.chunk.content, terms))
+                hit = leading_hit(rank.chunk_id, rank.score, chunk.chunk.content, terms)
+            else:
+                continue
+            hits.append(replace(hit, bm25_rank=rank.bm25_rank, vector_rank=rank.vector_rank))
         cut = len(found) > RRF_DEPTH or len(near) >= RRF_DEPTH
         return PipelineAnswer(
             mode=mode,
@@ -4191,6 +4942,31 @@ class HybridPipeline:
             reranked=0,
             complete=not cut and len(fused) <= request.limit,
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class VectorPipeline:
+    """Implements ``ports.driven.RetrievalPipeline`` for ``vector`` (#428): the vectors alone.
+
+    The version's chunks nearest to the query's embedding, in the space the gate checked covers
+    the version, with no BM25 half: a way to see what the embedding model finds on its own. It
+    is never a default. When the vectors cannot be used, BM25 answers with the reason, exactly as
+    ``hybrid`` does (it shares its query embedding and its fallbacks).
+    """
+
+    hybrid: HybridPipeline
+    """Embeds the query and searches the vector store."""
+
+    async def run(self, request: PipelineRequest) -> PipelineAnswer:
+        """Rank the version's chunks by their vectors.
+
+        Args:
+            request: What to search; ``space`` is the space to search.
+
+        Returns:
+            The nearest chunks, or BM25's with the reason the vectors were not used.
+        """
+        return await self.hybrid.nearest_only(request)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -4417,6 +5193,17 @@ class VersionBrowser:
         self.seen.update(h.chunk_id for h, _ in pairs)
         return pairs
 
+    def searched(self, query: str, found: Sequence[StoredChunk]) -> None:
+        """Record a BM25 search made over several versions, this one included (an answer's).
+
+        Args:
+            query: The words searched for.
+            found: The chunks of this version it returned.
+        """
+        self._step("search_docs", query, [c.row.article_path for c in found])
+        self._trace("search_docs", [(c.version_id, c.manifest_id) for c in found])
+        self.seen.update(c.row.chunk_id for c in found)
+
     async def admit(self, chunk_ids: Sequence[str]) -> Sequence[str]:
         """Keep the chunk IDs the pinned version holds and the tag filter keeps.
 
@@ -4429,6 +5216,600 @@ class VersionBrowser:
         wanted = list(dict.fromkeys(ChunkId(c) for c in chunk_ids))
         stored = await self.chunks.get_many(self.version.manifest_id, wanted) if wanted else {}
         return [c for c in wanted if c in stored and self.tag_filter.keeps(stored[c].row.tags)]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LibrariesScope:
+    """Implements ``ports.driven.LibrariesBrowser``: the answering agent's reads (#428).
+
+    One ``VersionBrowser`` per library of the question's scope, each pinned to that library's
+    default version and the call's tag filter, so every read keeps the rules of an agentic search
+    of one version (and records the same trace). A library is named by the model, so it is looked
+    up in the scope (any letter case); one outside it reads as not found. ``read`` remembers the
+    chunks the agent read, in order: the sources of an answer whose run stopped.
+    """
+
+    browsers: Mapping[str, VersionBrowser]
+    """A browser per library of the scope, by case-folded library ID, in the order chosen."""
+    search: SearchIndex
+    """The BM25 index, searched over every library of the scope at once."""
+    chunks: ChunkRepository
+    """The chunks of the scope's versions."""
+    tag_filter: TagFilter = field(default_factory=TagFilter)
+    """The call's tag filter."""
+    read: list[tuple[str, ChunkId]] = field(default_factory=list)
+    """``(library, chunk)`` of every chunk the agent read, in order."""
+
+    def _browser(self, library: str) -> VersionBrowser | None:
+        """Find the browser of a library the model named.
+
+        Args:
+            library: The library ID as the model wrote it.
+
+        Returns:
+            Its browser, or ``None`` when the library is not in the scope.
+        """
+        return self.browsers.get(library.strip().casefold())
+
+    def spelled(self, library: str) -> str | None:
+        """Spell a library the model named as the scope does.
+
+        Args:
+            library: The library ID as the model wrote it.
+
+        Returns:
+            The scope's spelling, or ``None`` when the library is not in the scope.
+        """
+        browser = self._browser(library)
+        return None if browser is None else browser.version.library
+
+    def libraries(self) -> Sequence[tuple[str, str]]:
+        """Name the libraries of the scope.
+
+        Returns:
+            ``(library, version)`` of each, in the order chosen.
+        """
+        return [(b.version.library, b.version.version) for b in self.browsers.values()]
+
+    async def search_docs(
+        self, query: str, library: str | None, limit: int
+    ) -> Sequence[tuple[str, SearchHit, StoredChunk]]:
+        """Search the scope (or one library of it) with BM25, within the tag filter.
+
+        Args:
+            query: The words to look for.
+            library: One library of the scope; ``None`` for all of them in one ranking.
+            limit: How many hits at most (1 to ``AGENT_SEARCH_LIMIT``).
+
+        Returns:
+            ``(library, hit, chunk)`` of the best hits, best first; nothing for a blank query or
+            a library outside the scope.
+        """
+        wanted = min(max(limit, 1), AGENT_SEARCH_LIMIT)
+        if library is not None:
+            browser = self._browser(library)
+            if browser is None:
+                return ()
+            found = await browser.search_docs(query, wanted)
+            return [(browser.version.library, hit, chunk) for hit, chunk in found]
+        if not query.strip():
+            return ()
+        by_manifest = {b.version.manifest_id: b for b in self.browsers.values()}
+        hits = await self.search.search_many(list(by_manifest), query, self.tag_filter, wanted)
+        wanted_chunks: dict[str, list[ChunkId]] = {}
+        for found_hit in hits:
+            wanted_chunks.setdefault(found_hit.manifest_id, []).append(found_hit.hit.chunk_id)
+        stored = await self.chunks.get_across(wanted_chunks)
+        found_all = [
+            (by_manifest[f.manifest_id], f.hit, stored[f.manifest_id, f.hit.chunk_id])
+            for f in hits
+            if (f.manifest_id, f.hit.chunk_id) in stored
+        ]
+        for browser in by_manifest.values():  # each library's explored path and trace
+            mine = [c for b, _, c in found_all if b is browser]
+            browser.searched(query, mine)
+        return [(b.version.library, hit, chunk) for b, hit, chunk in found_all]
+
+    async def list_articles(self, library: str, prefix: str = "") -> Sequence[ArticleEntry]:
+        """List a library's articles under a folder.
+
+        Args:
+            library: A library of the scope.
+            prefix: A folder; empty for every article.
+
+        Returns:
+            The articles; none for a library outside the scope.
+        """
+        browser = self._browser(library)
+        return () if browser is None else await browser.list_articles(prefix)
+
+    async def article_outline(self, library: str, path: str) -> Outline | None:
+        """Read an article's heading tree.
+
+        Args:
+            library: A library of the scope.
+            path: The article's path.
+
+        Returns:
+            The outline, or ``None`` when the library is outside the scope or has no such article.
+        """
+        browser = self._browser(library)
+        return None if browser is None else await browser.article_outline(path)
+
+    async def read_chunk(self, library: str, chunk_id: str) -> StoredChunk | None:
+        """Read one chunk, cut at ``AGENT_CHUNK_CHARS``.
+
+        Args:
+            library: A library of the scope.
+            chunk_id: Its ID.
+
+        Returns:
+            The chunk, or ``None`` when it is not in the scope.
+        """
+        browser = self._browser(library)
+        if browser is None:
+            return None
+        stored = await browser.read_chunk(chunk_id)
+        if stored is not None:
+            self.read.append((browser.version.library, stored.row.chunk_id))
+        return stored
+
+    async def admit(self, cited: Sequence[tuple[str, str]]) -> Sequence[tuple[str, str]]:
+        """Keep the ``(library, chunk ID)`` pairs the scope holds and the tag filter keeps.
+
+        Args:
+            cited: The agent's citations, as the model wrote them.
+
+        Returns:
+            The admitted pairs, in order, once each, each library as the scope spells it.
+        """
+        by_library: dict[str, list[str]] = {}
+        for library, chunk_id in cited:
+            if (browser := self._browser(library)) is not None:
+                by_library.setdefault(browser.version.library, []).append(chunk_id)
+        admitted: set[tuple[str, str]] = set()
+        for library, chunk_ids in by_library.items():
+            browser = self.browsers[library.casefold()]
+            admitted.update((library, c) for c in await browser.admit(chunk_ids))
+        kept: dict[tuple[str, str], None] = {}
+        for library, chunk_id in cited:
+            if (name := self.spelled(library)) is not None and (name, chunk_id) in admitted:
+                kept.setdefault((name, chunk_id))
+        return list(kept)
+
+
+def _tightest(owns: Sequence[Sequence[BudgetLimit]]) -> tuple[BudgetLimit, ...]:
+    """Merge several libraries' own budgets into the tightest of each window.
+
+    An answer over several libraries counts to each of them (``AiCaller.also``); the harness
+    checks one ``library`` ceiling for all of them, so it gets the tightest.
+
+    Args:
+        owns: Each library's own budgets.
+
+    Returns:
+        Per window, the lowest US dollar and token ceilings any of them sets.
+    """
+    merged: list[BudgetLimit] = []
+    for window in SpendWindow:
+        limits = [limit for own in owns for limit in own if limit.window is window]
+        if not limits:
+            continue
+        usd = [limit.usd_micros for limit in limits if limit.usd_micros is not None]
+        tokens = [limit.tokens for limit in limits if limit.tokens is not None]
+        merged.append(
+            replace(
+                limits[0],
+                usd_micros=min(usd) if usd else None,
+                tokens=min(tokens) if tokens else None,
+            )
+        )
+    return tuple(merged)
+
+
+def _quoted(quote: str | None, content: str) -> str | None:
+    """Keep a quote only when the chunk holds it verbatim.
+
+    Args:
+        quote: What the model says it quoted.
+        content: The chunk's text.
+
+    Returns:
+        The quote, made safe to show and cut at ``MAX_QUOTE_CHARS``; ``None`` when it is blank or
+        not in the chunk.
+    """
+    if quote is None or not (wanted := quote.strip()) or wanted not in content:
+        return None
+    return model_text(wanted, MAX_QUOTE_CHARS)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GetAnswerAvailabilityUseCase:
+    """Implements ``ports.driving.GetAnswerAvailability``."""
+
+    providers: AiProviders
+    """The instance's roles and profiles."""
+    answerer: Answerer | None = None
+    """Runs the agent; without it no answer can run."""
+    bounds: AgentBounds = field(default_factory=AgentBounds)
+    """The run's limits."""
+
+    async def __call__(self) -> AnswerAvailabilityOut:
+        """Say whether the instance's ``llm`` role resolves to a profile.
+
+        Returns:
+            Whether answers can run, why not, and the tool-call limit.
+        """
+        reason = None
+        if self.answerer is None:
+            reason = "this build cannot run the agent"
+        elif await self.providers.profile_for(ModelRole.LLM, "", LibraryAi()) is None:
+            reason = "no llm role is configured"
+        return AnswerAvailabilityOut(
+            available=reason is None, reason=reason, max_tool_calls=self.bounds.max_tool_calls
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AnswerQuestionUseCase:
+    """Implements ``ports.driving.AnswerQuestion`` (#428): an agent answers from chosen libraries.
+
+    The agent runs on the instance's ``llm`` role (a library's own ``llm`` applies to its own
+    searches only) in Code Mode, with the read tools of a ``LibrariesScope``: the default versions
+    of the libraries the caller chose and may read, with AI on, under the call's tag filter. It is
+    bounded as an agentic search: ``[ai.agentic]`` (tool calls, requests, tokens, the sandbox,
+    ``timeout``), the LLM search rate limit (once per answer), and the budgets of the instance, the
+    caller and every library read (each is charged the run; the tightest of their own budgets
+    applies). Every citation is checked again against its library's version and the tag filter,
+    and a quote is kept only when the chunk holds it verbatim. A run that stops returns no answer,
+    the reason, and the chunks the agent had read as sources.
+    """
+
+    defaults: DefaultVersions
+    """Every library's default version."""
+    versions: SearchableVersions
+    """Resolves a chosen library to its default version."""
+    access: AccessPolicy
+    """What the caller may read."""
+    providers: AiProviders
+    """Resolves and builds the ``llm`` role, and each library's AI settings."""
+    chunks: ChunkRepository
+    """The versions' chunks."""
+    search: SearchIndex
+    """The BM25 index, the agent's ``search_docs``."""
+    spend: AiSpend
+    """The ledger, the budgets, the rate limit and the price book."""
+    answerer: Answerer | None = None
+    """Runs the agent; without it no answer can run."""
+    articles: VersionArticles | None = None
+    """The versions' articles (``list_articles``)."""
+    bounds: AgentBounds = field(default_factory=AgentBounds)
+    """The run's limits."""
+    tracer: SearchTracer = field(default_factory=UntracedSearches)
+    """Times the run, without the question."""
+    reads: AgentReads = field(default_factory=UnrecordedAgentReads)
+    """The runs' trace: every read the agent made."""
+
+    async def __call__(
+        self,
+        query: AnswerQuery,
+        *,
+        caller: str | None = None,
+        progress: AnswerProgress | None = None,
+    ) -> AnswerResult:
+        """Answer the question from the chosen libraries.
+
+        Args:
+            query: The question, the libraries and the filters.
+            caller: The account asking.
+            progress: Hears each tool call.
+
+        Returns:
+            The answer and its sources, or why there is none, with what the run used.
+
+        Raises:
+            UnavailableModeError: No ``llm`` role resolves, or this build cannot run the agent.
+        """
+        text = SearchText(value=query.question)
+        found = await self.providers.profile_for(ModelRole.LLM, "", LibraryAi())
+        if self.answerer is None or found is None:
+            agentic = RetrievalMode.AGENTIC.value
+            raise UnavailableModeError(agentic, [], [ModelRole.LLM.value])
+        libraries = ",".join(query.chosen) or None
+        with self.tracer.span(
+            ANSWER_STAGE, mode=RetrievalMode.AGENTIC.value, query=text.value, library=libraries
+        ):
+            return await self._answer(query, text.value, found, caller, progress)
+
+    async def _answer(
+        self,
+        query: AnswerQuery,
+        question: str,
+        found: tuple[ModelRef, ProviderProfile],
+        caller: str | None,
+        progress: AnswerProgress | None,
+    ) -> AnswerResult:
+        """Resolve the scope, check the limits, run the agent and check its sources.
+
+        Args:
+            query: The question as asked.
+            question: Its validated text.
+            found: The ``llm`` role's model and profile.
+            caller: The account asking.
+            progress: Hears each tool call.
+
+        Returns:
+            The result.
+        """
+        scope, _, omitted = await _default_versions(
+            self.defaults, self.versions, self.access, query.chosen, MAX_ANSWER_LIBRARIES
+        )
+        enabled, without_ai, own = await self._with_ai(scope.values())
+        result = AnswerResult(
+            answer="",
+            sources=[],
+            libraries=[AnswerLibraryOut(library=v.library, version=v.version) for v in enabled],
+            libraries_without_ai=without_ai,
+            libraries_omitted=omitted,
+            usage=self._usage(AnswerUsage(), found),
+        )
+        if not enabled:  # nothing of a library with AI off is ever sent
+            return result.model_copy(update={"fallback_reason": FallbackReason.MODE_UNAVAILABLE})
+        keys = [v.library.casefold() for v in enabled]
+        who = AiCaller(library=keys[0], user=caller, also=tuple(keys[1:]))
+        if (reason := await self.spend.llm_step(who, own)) is not None:
+            return result.model_copy(update={"fallback_reason": reason})
+        browser = self._browser(enabled, TagFilter(tags=tuple(query.tags), match=query.tags_match))
+        ref, profile = found
+        run = AgentRun(
+            question=question,
+            limit=query.max_sources,
+            bounds=self.bounds,
+            budgets=self.spend.budgets.for_library(own),
+            # The harness keeps one budget per scope kind and window, so the run itself counts to
+            # the first library; the others are charged the same usage once it ends.
+            caller=replace(who, also=()),
+            price=self.spend.prices.price(ref, profile.kind.value),
+        )
+        draft = await self._run(found, browser, run, progress)
+        if who.also and (draft.usage.requests or draft.usage.input_tokens):
+            await self.spend.record(
+                [(SPEND_SCOPE_LIBRARY, library) for library in who.also],
+                ref=ref,
+                profile_kind=profile.kind.value,
+                input_tokens=draft.usage.input_tokens,
+                output_tokens=draft.usage.output_tokens,
+                requests=draft.usage.requests,
+            )
+        return result.model_copy(
+            update={
+                "answer": "" if draft.stopped else model_markdown(draft.answer, MAX_ANSWER_CHARS),
+                "sources": await self._sources(draft, browser, enabled, query.max_sources),
+                "fallback_reason": draft.stopped,
+                "usage": self._usage(draft.usage, found),
+            }
+        )
+
+    async def _with_ai(
+        self, versions: Collection[SearchableVersion]
+    ) -> tuple[list[SearchableVersion], list[str], tuple[BudgetLimit, ...]]:
+        """Keep the versions of libraries with AI on: nothing of the others is ever sent.
+
+        Args:
+            versions: The scope's versions.
+
+        Returns:
+            The versions kept, the libraries left out, and the tightest of the kept libraries'
+            own budgets.
+        """
+        enabled: list[SearchableVersion] = []
+        without_ai: list[str] = []
+        owns: list[tuple[BudgetLimit, ...]] = []
+        for version in versions:
+            ai = await self.providers.library_modes.ai_of(version.library)
+            if ai.enabled:
+                enabled.append(version)
+                owns.append(ai.budgets)
+            else:
+                without_ai.append(version.library)
+        return enabled, without_ai, _tightest(owns)
+
+    def _browser(
+        self, versions: Sequence[SearchableVersion], tag_filter: TagFilter
+    ) -> LibrariesScope:
+        """Build the agent's read tools over the scope.
+
+        Args:
+            versions: The versions it may read.
+            tag_filter: The call's tag filter.
+
+        Returns:
+            The browser.
+        """
+        return LibrariesScope(
+            browsers={
+                v.library.casefold(): VersionBrowser(
+                    version=v,
+                    chunks=self.chunks,
+                    search=self.search,
+                    articles=self.articles,
+                    tag_filter=tag_filter,
+                    reads=self.reads,
+                    searched_by=ANSWER_STAGE,
+                )
+                for v in versions
+            },
+            search=self.search,
+            chunks=self.chunks,
+            tag_filter=tag_filter,
+        )
+
+    async def _run(
+        self,
+        found: tuple[ModelRef, ProviderProfile],
+        browser: LibrariesScope,
+        run: AgentRun,
+        progress: AnswerProgress | None,
+    ) -> AnswerDraft:
+        """Build the model and run the agent within ``bounds.timeout``; never raise for it.
+
+        Args:
+            found: The ``llm`` role's model and profile.
+            browser: The read tools on the scope.
+            run: The question, the limits and who pays.
+            progress: Hears each tool call.
+
+        Returns:
+            The agent's draft; one with ``stopped`` set when it timed out or failed.
+        """
+        answerer = self.answerer
+        if answerer is None:  # checked by the caller; kept for the type checker
+            return AnswerDraft(stopped=FallbackReason.MODE_UNAVAILABLE)
+        try:
+            draft = await self._bounded(answerer, found, browser, run, progress)
+        except AgentStoppedError as stopped:
+            return AnswerDraft(stopped=FallbackReason(stopped.reason))
+        if draft.stopped is not None:
+            logger.warning("an agentic answer stopped: %s", draft.stopped.value)
+        if draft.rejected:  # the count only: a chunk ID or a library is not logged
+            logger.warning("the output guardrail rejected %d citation(s)", draft.rejected)
+        return draft
+
+    async def _bounded(
+        self,
+        answerer: Answerer,
+        found: tuple[ModelRef, ProviderProfile],
+        browser: LibrariesScope,
+        run: AgentRun,
+        progress: AnswerProgress | None,
+    ) -> AnswerDraft:
+        """Build the model and run the agent within ``bounds.timeout``.
+
+        Args:
+            answerer: Runs the agent.
+            found: The ``llm`` role's model and profile.
+            browser: The read tools on the scope.
+            run: The question, the limits and who pays.
+            progress: Hears each tool call.
+
+        Returns:
+            The agent's draft.
+
+        Raises:
+            AgentStoppedError: It timed out (``agent_limit_reached``) or failed
+                (``agent_failed``); only the error's class is logged.
+        """
+        ref, profile = found
+        try:
+            with self.tracer.span(
+                f"{ANSWER_STAGE}.{AGENT_STAGE}", mode=RetrievalMode.AGENTIC.value
+            ):
+                async with asyncio.timeout(self.bounds.timeout):
+                    model = await self.providers.factory.chat_model(profile, ref.model)
+                    return await answerer.answer(
+                        model,
+                        browser,
+                        run,
+                        ledger=self.spend.ledger,
+                        clock=self.spend.clock,
+                        progress=progress,
+                    )
+        except TimeoutError as error:
+            logger.warning("an agentic answer ran past its time limit")
+            reason = FallbackReason.AGENT_LIMIT_REACHED.value
+            raise AgentStoppedError(reason, "timeout") from error
+        except Exception as error:  # an answer never fails for its agent
+            # The class only: the message may echo a request, a key or the question.
+            kind_of = type(error).__name__
+            logger.warning("an agentic answer failed: %s", kind_of)
+            raise AgentStoppedError(FallbackReason.AGENT_FAILED.value, kind_of) from error
+
+    async def _sources(
+        self,
+        draft: AnswerDraft,
+        browser: LibrariesScope,
+        versions: Sequence[SearchableVersion],
+        limit: int,
+    ) -> list[AnswerSourceOut]:
+        """Check the citations against the scope again and build the sources.
+
+        Args:
+            draft: The agent's draft.
+            browser: The read tools, which know the scope and what the agent read.
+            versions: The versions of the scope.
+            limit: The most sources.
+
+        Returns:
+            The cited chunks the scope holds (or, when the run stopped, those it read), in order,
+            once each, at most ``limit``.
+        """
+        cited = (
+            [
+                AnswerCitation(library=lib, chunk_id=c, quote=None, reason=READ_BEFORE_STOP)
+                for lib, c in browser.read
+            ]
+            if draft.stopped is not None
+            else list(draft.citations)
+        )
+        admitted = await browser.admit([(c.library, c.chunk_id) for c in cited])
+        first: dict[tuple[str, str], AnswerCitation] = {}
+        for citation in cited:
+            if (library := browser.spelled(citation.library)) is not None:
+                first.setdefault((library, citation.chunk_id), citation)
+        by_library = {v.library: v for v in versions}
+        wanted: dict[str, list[ChunkId]] = {}
+        for library, chunk_id in admitted[:limit]:
+            wanted.setdefault(by_library[library].manifest_id, []).append(ChunkId(chunk_id))
+        stored = await self.chunks.get_across(wanted)
+        sources = []
+        for library, chunk_id in admitted[:limit]:
+            version = by_library[library]
+            chunk = stored.get((version.manifest_id, ChunkId(chunk_id)))
+            if chunk is None:
+                continue
+            citation = first[library, chunk_id]
+            sources.append(
+                AnswerSourceOut(
+                    library=version.library,
+                    version=version.version,
+                    commit_sha=version.commit_sha,
+                    chunk_id=chunk_id,
+                    article_path=chunk.row.article_path,
+                    heading_path=list(chunk.chunk.heading_path),
+                    anchor=chunk.chunk.anchor,
+                    source_url=source_link(version, chunk.row.article_path, chunk.chunk.anchor),
+                    quote=_quoted(citation.quote, chunk.chunk.content),
+                    reason=model_text(citation.reason, MAX_JUSTIFICATION_CHARS),
+                )
+            )
+        return sources
+
+    def _usage(self, usage: AnswerUsage, found: tuple[ModelRef, ProviderProfile]) -> AnswerUsageOut:
+        """Show what a run used, with its cost at the model's price.
+
+        Args:
+            usage: What it used.
+            found: The ``llm`` role's model and profile.
+
+        Returns:
+            The usage, priced when the model has a known price.
+        """
+        ref, profile = found
+        price = self.spend.prices.price(ref, profile.kind.value)
+        cost = None
+        if price is not None:
+            cost = (
+                usage.input_tokens * price.input_usd_per_million
+                + usage.output_tokens * price.output_usd_per_million
+            ) / TOKENS_PER_MILLION
+        return AnswerUsageOut(
+            requests=usage.requests,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            tool_calls=usage.tool_calls,
+            max_tool_calls=self.bounds.max_tool_calls,
+            cost_usd=cost,
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -5224,9 +6605,10 @@ class HydePipeline:
             clock=self.spend.clock.now,
         )
         try:
+            thinking = await self.providers.thinking_of(ModelRole.LLM, ai)
             with self.tracer.span(f"{request.search}.hyde", mode=RetrievalMode.HYBRID_HYDE.value):
                 async with asyncio.timeout(self.timeout):
-                    text = await self._written(request.query, ref, profile, step)
+                    text = await self._written(request.query, ref, profile, step, thinking)
         except LlmBudgetReachedError:
             return FallbackReason.LLM_BUDGET_REACHED
         except LlmFailedError, ProviderUnsupportedError, TimeoutError:
@@ -5237,7 +6619,12 @@ class HydePipeline:
         return text
 
     async def _written(
-        self, query: str, ref: ModelRef, profile: ProviderProfile, step: LlmStep
+        self,
+        query: str,
+        ref: ModelRef,
+        profile: ProviderProfile,
+        step: LlmStep,
+        thinking: ThinkingLevel | None,
     ) -> str:
         """Build the ``llm`` role's model and have it write the hypothetical answer.
 
@@ -5246,6 +6633,7 @@ class HydePipeline:
             ref: The role's model.
             profile: Its profile, as it is now.
             step: Who it counts to and the budgets it runs within.
+            thinking: The role's thinking level for the library.
 
         Returns:
             The answer, stripped.
@@ -5259,7 +6647,7 @@ class HydePipeline:
             ProviderUnsupportedError: This process cannot call the model.
         """
         try:
-            model = await self.providers.factory.chat_model(profile, ref.model)
+            model = await self.providers.factory.chat_model(profile, ref.model, thinking=thinking)
             written = await self.writer.write(model, query, step=step)
         except LlmBudgetReachedError, LlmFailedError, ProviderUnsupportedError:
             raise
@@ -5314,11 +6702,12 @@ class PlanEmbeddingUseCase:
                     dimensions = await (await self.runs.model(configured)).dimensions()
                 spec = configured.target.spec(dimensions)
                 space = await self.runs.store().create_space(spec, self.runs.clock.now())
-        coverage = await self.runs.store().coverage(space.id, version.manifest_id)
+        # Each chunk once, as the batches embed it: not the manifest's rows, one per path (#431).
+        missing = await self.runs.store().count_missing(space.id, version.manifest_id)
         return EmbeddingPlanOut(
             space_id=space.id,
             manifest_id=version.manifest_id,
-            missing=coverage.chunks - coverage.embedded,
+            missing=missing,
             created=created,
             skipped=None,
         )
@@ -5338,13 +6727,16 @@ def _skipped(reason: EmbeddingSkip) -> EmbeddingPlanOut:
     )
 
 
-def _done() -> EmbeddedBatchOut:
+def _done(left: int | None = None) -> EmbeddedBatchOut:
     """Say a batch embedded nothing and the job is done.
+
+    Args:
+        left: The chunks still without a vector; ``None`` when the job stops without counting.
 
     Returns:
         The batch.
     """
-    return EmbeddedBatchOut(embedded=0, input_tokens=0, finished=True)
+    return EmbeddedBatchOut(embedded=0, input_tokens=0, left=left, finished=True)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -5378,8 +6770,8 @@ class EmbedBatchUseCase:
         vectors = runs.store()
         keys = await vectors.missing(space.id, command.manifest_id, runs.batch_size)
         sources = await runs.chunks.embedding_sources(command.manifest_id, keys)
-        if not sources:
-            return _done()
+        if not sources:  # nothing left, or found embedded by a job sharing chunks with this one
+            return _done(await vectors.count_missing(space.id, command.manifest_id))
         ordered = sorted(sources)
         titles: Mapping[str, str] = {}
         if runs.titles is not None:  # the plan's manifest: the job's library runs one job at a time
@@ -5406,11 +6798,14 @@ class EmbedBatchUseCase:
             stored = await vectors.upsert(
                 space.id, dict(zip(ordered, embedded.vectors, strict=True))
             )
+            # Counted again rather than worked out: other jobs embed chunks shared with this one.
+            left = await vectors.count_missing(space.id, command.manifest_id)
         except RetiredEmbeddingSpaceError:
             return _done()
         return EmbeddedBatchOut(
             embedded=stored,
             input_tokens=embedded.input_tokens,
+            left=left,
             finished=len(keys) < runs.batch_size or stored == 0,
         )
 

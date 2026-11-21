@@ -93,3 +93,15 @@ export function explainAiError(error: unknown): string {
   if (error.status === 404 || error.status === 422) return error.message;
   return `Something went wrong on the server (${error.status}). Try again in a moment.`;
 }
+
+/** How much of a budget is used, as a whole percent: the tighter of its dollar and token ceilings. */
+export function budgetUsed(b: Budget): number {
+  if (b.reached) return 100;
+  const shares: number[] = [];
+  if (b.usd_limit) shares.push(1 - (b.usd_left ?? 0) / b.usd_limit);
+  if (b.tokens_limit) shares.push(1 - (b.tokens_left ?? 0) / b.tokens_limit);
+  return Math.round(Math.max(0, ...shares) * 100);
+}
+
+/** A budget is near its ceiling from this share of it on. */
+export const BUDGET_NEAR = 80;

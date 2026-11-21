@@ -1,4 +1,4 @@
-from collections.abc import AsyncGenerator, Iterable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Annotated, Any
@@ -12,6 +12,7 @@ from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from exactdocs import __version__
+from exactdocs.bootstrap.caller import bind_caller, reset_caller
 from exactdocs.bootstrap.constants import (
     _UNSAFE_METHODS,
     MCP_PATH,
@@ -24,13 +25,41 @@ from exactdocs.bootstrap.probes import ProbeAwareHostCheck, build_probes
 from exactdocs.bootstrap.rest import SetupGuard, add_error_handlers, error_responses, v1_openapi
 from exactdocs.bootstrap.telemetry import build_metrics_router, is_untraced, start_telemetry
 from exactdocs.catalog.adapters.driving import http as catalog_http
+from exactdocs.catalog.dtos import GetLibraryQuery
 from exactdocs.identity.adapters.driving import http as identity_http
+from exactdocs.identity.adapters.driving.mcp import AccessAssertionAsBearer
 from exactdocs.identity.constants import SESSION_COOKIE
-from exactdocs.identity.dtos import AccountSummary
+from exactdocs.identity.dtos import AccountSummary, ApiTokenIdentity
 from exactdocs.identity.models import Role
 from exactdocs.ingestion.adapters.driving import http as ingestion_http
 from exactdocs.retrieval.adapters.driving import http as retrieval_http
 from exactdocs_kernel import ForbiddenError
+
+
+def _username_of(
+    current_caller: identity_http.CurrentCaller,
+) -> Callable[..., Awaitable[str]]:
+    """Return a FastAPI dependency naming the user of the request (who cancelled a job).
+
+    Args:
+        current_caller: The dependency that names the calling account.
+
+    Returns:
+        The dependency; FastAPI runs ``current_caller`` once per request.
+    """
+
+    async def username(account: Annotated[AccountSummary, Depends(current_caller)]) -> str:
+        """Name the caller as people see it.
+
+        Args:
+            account: The caller.
+
+        Returns:
+            Its user name.
+        """
+        return account.username
+
+    return username
 
 
 def _include_session_routers(v1: APIRouter, container: Container) -> identity_http.CurrentCaller:
@@ -47,7 +76,8 @@ def _include_session_routers(v1: APIRouter, container: Container) -> identity_ht
         The dependency that requires a signed-in session, for other routes to use.
     """
     session_caller = identity_http.build_session_caller(
-        identify_caller=container.identity.identify_caller
+        identify_caller=container.identity.identify_caller,
+        identify_access=container.identity.identify_access_caller,
     )
     v1.include_router(
         identity_http.build_tokens_router(
@@ -67,6 +97,62 @@ def _include_session_routers(v1: APIRouter, container: Container) -> identity_ht
         )
     )
     return session_caller
+
+
+def _protected_router(
+    container: Container, current_caller: identity_http.CurrentCaller
+) -> APIRouter:
+    """Build the router of everything that needs a caller, with the library grants routes.
+
+    Every route of it names the caller to the library roles (``bind_caller``), so each use case
+    it reaches checks the role of whoever is calling.
+
+    Args:
+        container: The wired domains.
+        current_caller: The dependency that names the calling account (session or API token).
+
+    Returns:
+        The router; domain routers are added to it.
+    """
+
+    async def bind_account(
+        account: Annotated[AccountSummary, Depends(current_caller)],
+    ) -> AsyncIterator[None]:
+        """Tell the library roles whose request this is.
+
+        Args:
+            account: The caller (FastAPI runs ``current_caller`` once per request).
+
+        Yields:
+            Control to the protected request.
+        """
+        binding = bind_caller(
+            account.id, api_identity=account if isinstance(account, ApiTokenIdentity) else None
+        )
+        try:
+            yield
+        finally:
+            reset_caller(binding)
+
+    async def require_library(library: str) -> None:
+        """Check a sharing request's live read access before revealing its grants.
+
+        Args:
+            library: The requested library ID.
+        """
+        await container.catalog.get_library(GetLibraryQuery(id=library))
+
+    router = APIRouter(dependencies=[Depends(current_caller), Depends(bind_account)])
+    router.include_router(
+        identity_http.build_grants_router(
+            list_grants=container.identity.list_library_grants,
+            grant_role=container.identity.grant_library_role,
+            revoke_role=container.identity.revoke_library_role,
+            caller=current_caller,
+            require_library=require_library,
+        )
+    )
+    return router
 
 
 def create_app(container: Container) -> FastAPI:
@@ -176,8 +262,10 @@ def create_app(container: Container) -> FastAPI:
     current_caller = identity_http.build_current_caller(
         identify_caller=container.identity.identify_caller,
         identify_token=container.identity.identify_token,
+        identify_access=container.identity.identify_access_caller,
     )
-    protected = APIRouter(dependencies=[Depends(current_caller)])
+
+    protected = _protected_router(container, current_caller)
 
     async def caller_id(account: Annotated[AccountSummary, Depends(current_caller)]) -> str:
         """Name the account of the request (FastAPI runs ``current_caller`` once per request).
@@ -196,13 +284,14 @@ def create_app(container: Container) -> FastAPI:
         Args:
             request: The HTTP request, for its session cookie.
         """
-        await session_caller(request.cookies.get(SESSION_COOKIE))
+        await session_caller(request, request.cookies.get(SESSION_COOKIE))
 
     protected.include_router(
         catalog_http.build_router(
-            list_libraries=container.catalog.list_libraries,
+            list_libraries=container.list_libraries,
             get_library=container.catalog.get_library,
             resolve_version=container.catalog.resolve_version,
+            list_versions=container.catalog.list_versions,
             list_articles=container.catalog.list_articles,
             list_tags=container.catalog.list_tags,
             get_article=container.catalog.get_article,
@@ -220,6 +309,8 @@ def create_app(container: Container) -> FastAPI:
             article_outline=container.retrieval.article_outline,
             resolve_library_id=container.retrieval.resolve_library_id,
             query_docs=container.retrieval.query_docs,
+            answer_question=container.retrieval.answer_question,
+            get_answer_availability=container.retrieval.get_answer_availability,
             caller=caller_id,
         )
     )
@@ -229,7 +320,8 @@ def create_app(container: Container) -> FastAPI:
             set_library_retrieval=container.set_library_retrieval,
         )
     )
-    # Every signed-in account, operator or not, may do this until library roles exist (E12-05).
+    # Instance-wide settings and spend (provider keys and URLs, every library's budgets): for a
+    # signed-in operator only, as ``/users`` is. A library role is no reason to reach them.
     protected.include_router(
         retrieval_http.build_ai_router(
             list_providers=container.retrieval.list_providers,
@@ -238,16 +330,25 @@ def create_app(container: Container) -> FastAPI:
             delete_provider=container.retrieval.delete_provider,
             check_provider=container.retrieval.check_provider,
             list_roles=container.retrieval.list_roles,
+            set_role_thinking=container.retrieval.set_role_thinking,
             estimate_embedding=container.retrieval.estimate_embedding,
             get_embedding_progress=container.retrieval.get_embedding_progress,
             get_ai_usage=container.retrieval.get_ai_usage,
-        )
+        ),
+        dependencies=[
+            Depends(
+                identity_http.build_operator(
+                    caller=session_caller, action="manages the instance's AI settings"
+                )
+            )
+        ],
     )
     protected.include_router(
         ingestion_http.build_router(
             get_job=container.ingestion.get_job,
             get_library_access=container.ingestion.get_library_access,
             list_latest_jobs=container.ingestion.list_latest_jobs,
+            list_jobs=container.ingestion.list_jobs,
             list_library_jobs=container.ingestion.list_library_jobs,
             check_repository=container.ingestion.check_repository,
             list_repository_refs=container.ingestion.list_repository_refs,
@@ -267,6 +368,8 @@ def create_app(container: Container) -> FastAPI:
             require_operator=identity_http.build_operator(
                 caller=current_caller, action="applies a sources file"
             ),
+            cancel_job=container.ingestion.cancel_job,
+            caller_name=_username_of(current_caller),
         )
     )
     _include_sync_triggers(container, v1=v1, protected=protected, session_caller=session_caller)
@@ -282,7 +385,11 @@ def create_app(container: Container) -> FastAPI:
         """
         return v1_openapi(app)
 
-    _mount_mcp(app, mcp_app)
+    # Behind Cloudflare Access, its token is the bearer of an MCP request that sends none.
+    served = (
+        mcp_app if settings.auth.cloudflare_access is None else AccessAssertionAsBearer(app=mcp_app)
+    )
+    _mount_mcp(app, mcp_app, served)
     if WEB_DIST.is_dir():
         # SPA: `index.html` only for HTML navigation requests; API and assets keep real 404s.
         app.frontend("/", directory=WEB_DIST, fallback="index.html")
@@ -320,7 +427,7 @@ def _include_sync_triggers(
         Raises:
             ForbiddenError: The account is not an ``admin``.
         """
-        account = await session_caller(request.cookies.get(SESSION_COOKIE))
+        account = await session_caller(request, request.cookies.get(SESSION_COOKIE))
         if account.role != Role.ADMIN.value:
             message = "only an admin manages a library's webhook"
             raise ForbiddenError(message)
@@ -346,7 +453,7 @@ def _include_sync_triggers(
     )
 
 
-def _mount_mcp(app: FastAPI, mcp_app: Starlette) -> None:
+def _mount_mcp(app: FastAPI, mcp_app: Starlette, served: ASGIApp) -> None:
     """Serve every route of the MCP app as-is, keeping the MCP app's own middleware.
 
     That is the endpoint, and the OAuth/.well-known routes once auth is on; `/mcp/` is an alias
@@ -354,12 +461,13 @@ def _mount_mcp(app: FastAPI, mcp_app: Starlette) -> None:
 
     Args:
         app: The HTTP service.
-        mcp_app: FastMCP's Streamable HTTP app.
+        mcp_app: FastMCP's Streamable HTTP app, for its routes.
+        served: What serves them: the MCP app, maybe wrapped.
     """
     for path in _route_paths(mcp_app.routes):
-        app.router.routes.append(Route(path, endpoint=mcp_app))
+        app.router.routes.append(Route(path, endpoint=served))
     app.router.routes.append(
-        Route(f"{MCP_PATH}/", endpoint=_RewritePath(app=mcp_app, path=MCP_PATH))
+        Route(f"{MCP_PATH}/", endpoint=_RewritePath(app=served, path=MCP_PATH))
     )
 
 

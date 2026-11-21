@@ -2,7 +2,13 @@
 
 from collections.abc import Sequence
 
-from exactdocs_kernel import MAX_TAGS, ConflictError, NotFoundError, ValidationError
+from exactdocs_kernel import (
+    MAX_TAGS,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 
 
 class InvalidLibraryIdError(ValidationError):
@@ -401,3 +407,27 @@ class LibraryNotEmptyError(ConflictError):
             library_id: The library ID.
         """
         super().__init__(f"library {library_id!r} has imported versions")
+
+
+class LibraryAccessDeniedError(ForbiddenError):
+    """The caller's role on the library is too low for what they asked."""
+
+    def __init__(self, library_id: str, needed: str) -> None:
+        """Name the library and the role it takes.
+
+        Args:
+            library_id: The library asked about.
+            needed: The lowest library role that may do it.
+        """
+        super().__init__(f"library {library_id!r}: this needs the {needed} role")
+        self.library_id = library_id
+
+
+class LibraryCreationDeniedError(ForbiddenError):
+    """The caller lacks the instance-wide library creation permission."""
+
+    code = "library_creation_denied"
+
+    def __init__(self) -> None:
+        """Report missing instance creation permission."""
+        super().__init__("library creation is not permitted")

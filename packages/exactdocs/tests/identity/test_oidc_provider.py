@@ -117,6 +117,23 @@ async def test_a_sign_in_returns_the_validated_claims_and_the_refresh_token(setu
     assert "client_secret" not in form  # client_secret_basic, as advertised
 
 
+async def test_an_id_token_without_a_nonce_is_verified_for_the_mcp_proxy(setup: Setup) -> None:
+    user = setup.issuer.users["u-1"]
+
+    claims = await setup.provider.verify_id_token(setup.issuer.id_token(user, nonce=None))
+
+    assert (claims.issuer, claims.subject, claims.username) == (ISSUER, "u-1", "alice")
+    assert claims.groups == frozenset({"payments"})
+
+
+async def test_a_forged_id_token_is_refused_for_the_mcp_proxy(setup: Setup) -> None:
+    other = setup.issuer.users["u-1"]
+    setup.issuer.tamper = tamper_claims(aud="someone-else")
+
+    with pytest.raises(ExternalSignInFailedError):
+        await setup.provider.verify_id_token(setup.issuer.id_token(other, nonce=None))
+
+
 async def test_the_discovery_is_fetched_once_and_cached(setup: Setup) -> None:
     await sign_in(setup)
     await sign_in(setup)

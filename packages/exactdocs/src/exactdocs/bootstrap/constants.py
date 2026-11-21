@@ -89,6 +89,13 @@ MAX_TOKEN_NAME_LENGTH: Final[int] = (
 """The server's limit, so a long hostname is cut instead of refused."""
 TIMEOUT_SECONDS: Final[float] = 15.0
 """How long the CLI client waits for one HTTP answer."""
+SOURCES_SECONDS_PER_LIBRARY: Final[float] = 15.0
+"""What ``sources plan|apply`` add to ``TIMEOUT_SECONDS`` per declared library (#422).
+
+The server works through the file library by library (resolving refs, creating, queueing) and
+answers once at the end; about 1.5 s per new library was measured, and one git call on the server
+may take up to 15 s. A file with 300 libraries may so take up to about 75 minutes.
+"""
 FRIENDLY: Final[dict[str, str]] = {
     "invalid_credentials": "wrong username or password",
     "unauthenticated": "the server did not accept the token (invalid, expired or revoked); "
@@ -510,6 +517,12 @@ SECRETS_REFUSED_IN_FILE: Final[frozenset[str]] = frozenset(
     {"secret_key", "secret_key_previous", "metrics_token"}
 )
 """Top-level settings the configuration file may not hold: secrets come from the environment."""
+NAMED_MODEL_KINDS: Final[frozenset[str]] = frozenset(
+    {"anthropic", "google", "google-vertex", "openai"}
+)
+"""Provider kinds whose API serves the models pydantic-ai's profiles name (#421): a model they
+do not know to think takes no thinking level. Behind every other kind (an OpenAI-compatible
+endpoint) a model pydantic-ai does not know gets ``reasoning_effort`` all the same."""
 DEFAULT_BASE_URLS: Final[dict[str, str]] = {
     "openai": "https://api.openai.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
@@ -608,6 +621,8 @@ DEFAULT_LOCAL_RERANKER: Final[str] = "Xenova/ms-marco-MiniLM-L-6-v2"
 """The default local cross-encoder (91 MB)."""
 MODELS_SUBDIR: Final[str] = "models"
 """Where models live in the data directory unless ``EXACTDOCS_MODELS_DIR`` says otherwise."""
+MCP_OAUTH_SUBDIR: Final[str] = "mcp-oauth"
+"""Under the data directory: the MCP OAuth proxy's encrypted registrations and tokens."""
 MODEL_MARKER: Final[str] = "exactdocs-model.json"
 """Written last by ``exactdocs models pull`` in a model's folder: the model is complete."""
 MODEL_NAME: Final[re.Pattern[str]] = re.compile(

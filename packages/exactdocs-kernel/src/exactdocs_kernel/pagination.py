@@ -27,6 +27,8 @@ class Page[T]:
     """The items on this page, in list order."""
     next_cursor: str | None
     """Opaque cursor to pass back for the next page; ``None`` on the last page."""
+    total: int | None = None
+    """How many items match the list's filters, across every page; ``None`` when not counted."""
 
 
 def paginate[T](

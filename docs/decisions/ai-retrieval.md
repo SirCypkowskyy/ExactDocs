@@ -302,8 +302,8 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
   from `location` or `resource`, each a single DNS label), so a token of the machine's identity
   reaches only Google's, Azure's or AWS's endpoints. Extra headers may
   not carry credentials (`Authorization`, `*-key`, `*-token`, ...): keys go in the key field.
-- **Per-library overrides** (stored by retrieval, #102; edited by admins until library roles
-  exist, E12-05/06, then by the library's owner and admins): AI on or
+- **Per-library overrides** (stored by retrieval, #102; edited by the library's admins and
+  creator, and by operators, since library roles, E12-05): AI on or
   off (off: nothing of the library is ever sent to a provider), retrieval mode, the `llm`, `judge`
   and `reranker` profile and model, rerank `top_n`, agentic limits, and budgets no higher than the
   instance's. **Not** the embedding model: one space per instance keeps cross-library search
@@ -363,10 +363,9 @@ agent opens (the root's in its system instructions for a `trusted` library). Lib
 identities and tokens are never sent.
 
 **Repo guidance and trust (#101).** `trusted` puts repository text into the agent's system
-instructions, so who may set it matters. Until library roles exist, it has the gate of every
-other per-library AI setting: any signed-in account (and any API token that reaches the protected
-API). When E12-05 lands, setting `trusted` (and turning `notes` into `trusted`) must become
-admin-only; `notes` and `off` may stay with the library's owner.
+instructions, so who may set it matters. It has the gate of every other per-library AI setting
+(E12-05): the `admin` role on the library, which an API token has when its account does. So
+setting `trusted` is admin-only; `notes` and `off` are too, for now.
 
 ## Cost and budgets
 

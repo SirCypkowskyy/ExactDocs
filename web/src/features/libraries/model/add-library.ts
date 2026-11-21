@@ -202,7 +202,7 @@ export function explainAddError(
       return {
         field: "paths",
         message:
-          "No Markdown files match these paths. Widen them, or clear them to take every .md and .mdx file.",
+          "No Markdown files match these paths. Widen them, or clear them to take every .md, .mdx and .rst file.",
       };
     default:
       return error.status === 422
@@ -219,6 +219,7 @@ const SKIP_REASONS: Partial<Record<ProblemCode, string>> = {
   not_a_file: "Not regular files (symlinks)",
   unreadable: "Couldn't be read",
   bad_file_name: "File names that aren't valid UTF-8",
+  unparsable: "Couldn't be parsed or split into chunks",
 };
 
 const skipReason = (code: string) => SKIP_REASONS[code as ProblemCode];

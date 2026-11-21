@@ -1,10 +1,10 @@
 import copy
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Self, cast
 
-from exactdocs.ingestion.constants import ACTIVE_JOB_STATES, IMPORT_KINDS, PUSH_JOB
+from exactdocs.ingestion.constants import ACTIVE_JOB_STATES, IMPORT_KINDS, PUSH_JOB, JobKind
 from exactdocs.ingestion.errors import (
     CredentialsRequiredError,
     PushQueuedError,
@@ -21,6 +21,7 @@ from exactdocs.ingestion.models import (
     ImportedVersion,
     ImportSource,
     Job,
+    JobFilter,
     JobId,
     JobState,
     Removed,
@@ -28,7 +29,7 @@ from exactdocs.ingestion.models import (
     Webhook,
     WebhookDelivery,
 )
-from exactdocs_kernel import NotFoundError
+from exactdocs_kernel import NotFoundError, Sort, SortValue, is_after
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -74,12 +75,36 @@ class InMemoryJobRepository:
         self.jobs[job.id] = job
 
     async def save(self, job: Job) -> None:
-        """Replace the stored job that has the same ID.
+        """Replace the stored job that has the same ID, unless it is ``cancelled``.
+
+        The stored cancellation (who, when) is kept: only ``cancel`` sets it.
 
         Args:
             job: The job as it is now.
         """
+        stored = self.jobs.get(job.id)
+        if stored is not None and stored.state is JobState.CANCELLED:
+            return
+        if stored is not None:
+            job = replace(job, cancelled_by=stored.cancelled_by, cancelled_at=stored.cancelled_at)
         self.jobs[job.id] = job
+
+    async def cancel(self, job_id: JobId, *, by: str | None, now: datetime) -> Job | None:
+        """Ask to cancel a queued or running job, once; a finished one is left as it is.
+
+        Args:
+            job_id: The job's ID.
+            by: Who cancels it.
+            now: The time of the request.
+
+        Returns:
+            The job after the request, or ``None`` when there is none.
+        """
+        job = self.jobs.get(job_id)
+        if job is None or job.finished or job.cancel_requested:
+            return job
+        self.jobs[job_id] = job.cancelling(by, now)
+        return self.jobs[job_id]
 
     async def get(self, job_id: JobId) -> Job | None:
         """Return the job, or ``None``.
@@ -103,6 +128,24 @@ class InMemoryJobRepository:
         """
         mine = [job for job in self.jobs.values() if job.library == library]
         return sorted(mine, key=lambda job: job.id, reverse=True)
+
+    async def list_newest_of_kind(self, library: str, kind: JobKind) -> Sequence[Job]:
+        """Return the newest job of ``kind`` of each version of the library.
+
+        Args:
+            library: The library ID.
+            kind: The job kind.
+
+        Returns:
+            One job per version.
+        """
+        newest: dict[str | None, Job] = {}
+        for job in self.jobs.values():
+            if job.library == library and job.kind == kind:
+                known = newest.get(job.version)
+                if known is None or job.id > known.id:
+                    newest[job.version] = job
+        return list(newest.values())
 
     async def list_unfinished_for_library(self, library: str) -> Sequence[Job]:
         """Return the library's ``queued`` and ``running`` jobs, newest first.
@@ -139,6 +182,98 @@ class InMemoryJobRepository:
             if job.library == library and (before is None or job.id < before)
         ]
         return sorted(mine, key=lambda job: job.id, reverse=True)[:limit]
+
+    def _matching(self, job_filter: JobFilter) -> list[Job]:
+        """Return the jobs that pass the filter, in no particular order.
+
+        Args:
+            job_filter: Which jobs.
+
+        Returns:
+            The matching jobs.
+        """
+        needle = job_filter.text.lower() if job_filter.text else None
+        floor = job_filter.created_after
+        ceiling = job_filter.created_before
+        return [
+            job
+            for job in self.jobs.values()
+            if (job_filter.libraries is None or job.library in job_filter.libraries)
+            and (not job_filter.states or job.state in job_filter.states)
+            and (not job_filter.kinds or job.kind in job_filter.kinds)
+            and (job_filter.version is None or job.version == job_filter.version)
+            and (floor is None or job.created_at >= floor)
+            and (ceiling is None or job.created_at < ceiling)
+            and (
+                needle is None
+                or any(
+                    needle in (text or "").lower() for text in (job.version, job.library, job.error)
+                )
+            )
+        ]
+
+    async def search(
+        self,
+        job_filter: JobFilter,
+        *,
+        sort: Sort,
+        after: tuple[SortValue, str] | None,
+        limit: int,
+    ) -> Sequence[Job]:
+        """Return up to ``limit`` of the jobs that pass the filter, in ``sort`` order.
+
+        Args:
+            job_filter: Which jobs.
+            sort: The order.
+            after: The sort value and ID of the last job of the previous page.
+            limit: At most this many jobs.
+
+        Returns:
+            The jobs in order.
+        """
+
+        def value(job: Job) -> SortValue:
+            """Return the job's value of the sort field.
+
+            Args:
+                job: The job.
+
+            Returns:
+                The ID, the stored form of the creation time, the state, the kind or the library.
+            """
+            return {
+                "id": job.id,
+                "created_at": job.created_at.isoformat(timespec="microseconds"),
+                "state": job.state.value,
+                "kind": job.kind,
+                "library": job.library,
+            }[sort.field]
+
+        ordered = sorted(
+            self._matching(job_filter), key=lambda j: (value(j), j.id), reverse=sort.descending
+        )
+        if after is not None:
+            ordered = [j for j in ordered if is_after((value(j), j.id), after, sort=sort)]
+        return ordered[:limit]
+
+    async def count(self, job_filter: JobFilter) -> int:
+        """Count the jobs that pass the filter.
+
+        Args:
+            job_filter: Which jobs.
+
+        Returns:
+            How many there are.
+        """
+        return len(self._matching(job_filter))
+
+    async def libraries(self) -> Sequence[str]:
+        """Return every library that has a job, as spelled in the jobs.
+
+        Returns:
+            The distinct library IDs.
+        """
+        return sorted({job.library for job in self.jobs.values()})
 
     async def list_latest(self) -> Sequence[Job]:
         """Return the newest job of every (library, version), ordered by library and version.

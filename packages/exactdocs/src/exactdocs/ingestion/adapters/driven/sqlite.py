@@ -1,7 +1,7 @@
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import (
@@ -11,11 +11,14 @@ from sqlalchemy import (
     Integer,
     MetaData,
     Row,
+    Select,
     Table,
     Text,
+    case,
     delete,
     func,
     insert,
+    or_,
     select,
     text,
     tuple_,
@@ -49,6 +52,7 @@ from exactdocs.ingestion.models import (
     Credential,
     FileProblem,
     Job,
+    JobFilter,
     JobId,
     JobState,
     ProblemCode,
@@ -60,7 +64,7 @@ from exactdocs.ingestion.models import (
     load_credential,
 )
 from exactdocs.ingestion.ports.driven import SecretBox
-from exactdocs_kernel import SealedTextUnreadableError
+from exactdocs_kernel import SealedTextUnreadableError, Sort, SortValue, like_pattern
 
 # The ingestion's tables, prefixed `ingestion_`. The schema itself is created by an Alembic
 # revision in `exactdocs.bootstrap`; this is only the adapter's query-side description of it.
@@ -91,6 +95,9 @@ jobs = Table(
     Column("created_at", Text, nullable=False),
     Column("started_at", Text),
     Column("finished_at", Text),
+    # Who cancelled the job and when; only `cancel` writes them (never `save`).
+    Column("cancelled_by", Text),
+    Column("cancelled_at", Text),
     # A page of a library's jobs is a range of this index (see `list_page_for_library`).
     Index("ingestion_jobs_library_id", "library", "id"),
     Index("ingestion_jobs_state", "state"),
@@ -170,13 +177,59 @@ class SqliteJobRepository:
             raise
 
     async def save(self, job: Job) -> None:
-        """Replace the stored job that has the same ID.
+        """Replace the stored job that has the same ID, unless it is ``cancelled``.
+
+        The cancellation columns are not written: a running job's progress never wipes out a
+        cancellation stored meanwhile (only ``cancel`` writes them).
 
         Args:
             job: The job as it is now.
         """
+        values = {
+            k: v for k, v in _values(job).items() if k not in {"cancelled_by", "cancelled_at"}
+        }
+        saved = (
+            update(jobs)
+            .where(jobs.c.id == job.id, jobs.c.state != JobState.CANCELLED)
+            .values(**values)
+        )
         async with self.engine.begin() as connection:
-            await connection.execute(update(jobs).where(jobs.c.id == job.id).values(**_values(job)))
+            await connection.execute(saved)
+
+    async def cancel(self, job_id: JobId, *, by: str | None, now: datetime) -> Job | None:
+        """Ask to cancel a queued or running job in one UPDATE; a finished one is left alone.
+
+        The statement decides the race with the worker: a queued job becomes ``cancelled`` (its
+        ``CASE`` reads the row as it was), a running one is only flagged; a job that ended, or
+        that was asked already, matches nothing.
+
+        Args:
+            job_id: The job's ID.
+            by: Who cancels it.
+            now: The time of the request.
+
+        Returns:
+            The job after the request, or ``None`` when no row has this ID.
+        """
+        queued = jobs.c.state == JobState.QUEUED
+        asked = (
+            update(jobs)
+            .where(
+                jobs.c.id == job_id,
+                jobs.c.state.in_([JobState.QUEUED, JobState.RUNNING]),
+                jobs.c.cancelled_at.is_(None),
+            )
+            .values(
+                state=case((queued, JobState.CANCELLED.value), else_=jobs.c.state),
+                finished_at=case((queued, _text(now)), else_=jobs.c.finished_at),
+                cancelled_by=by,
+                cancelled_at=_text(now),
+            )
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(asked)
+            row = (await connection.execute(select(jobs).where(jobs.c.id == job_id))).first()
+        return _job(row) if row else None
 
     async def get(self, job_id: JobId) -> Job | None:
         """Return the job, or ``None``.
@@ -201,6 +254,28 @@ class SqliteJobRepository:
             Every job of the library.
         """
         query = select(jobs).where(jobs.c.library == library).order_by(jobs.c.id.desc())
+        async with self.engine.connect() as connection:
+            return [_job(row) for row in await connection.execute(query)]
+
+    async def list_newest_of_kind(self, library: str, kind: JobKind) -> Sequence[Job]:
+        """Return the newest job of ``kind`` of each version of the library, in one query.
+
+        Job IDs are time-ordered, so the greatest ID of each version is its newest job; only
+        those rows are read in full.
+
+        Args:
+            library: The library ID.
+            kind: The job kind.
+
+        Returns:
+            One job per version.
+        """
+        newest = (
+            select(func.max(jobs.c.id))
+            .where(jobs.c.library == library, jobs.c.kind == kind)
+            .group_by(jobs.c.version)
+        )
+        query = select(jobs).where(jobs.c.id.in_(newest))
         async with self.engine.connect() as connection:
             return [_job(row) for row in await connection.execute(query)]
 
@@ -263,6 +338,115 @@ class SqliteJobRepository:
         )
         async with self.engine.connect() as connection:
             return [_job(row) for row in await connection.execute(query)]
+
+    def _filtered(self, job_filter: JobFilter) -> Select[Any]:
+        """Build the query for the jobs that pass the filter, without order or limit.
+
+        Args:
+            job_filter: Which jobs.
+
+        Returns:
+            The query, selecting whole jobs.
+        """
+        query = select(jobs)
+        if job_filter.libraries is not None:
+            query = query.where(jobs.c.library.in_(sorted(job_filter.libraries)))
+        if job_filter.states:
+            query = query.where(jobs.c.state.in_(sorted(s.value for s in job_filter.states)))
+        if job_filter.kinds:
+            query = query.where(jobs.c.kind.in_(sorted(job_filter.kinds)))
+        if job_filter.version is not None:
+            query = query.where(jobs.c.version == job_filter.version)
+        if job_filter.created_after is not None:
+            query = query.where(jobs.c.created_at >= _utc_text(job_filter.created_after))
+        if job_filter.created_before is not None:
+            query = query.where(jobs.c.created_at < _utc_text(job_filter.created_before))
+        if job_filter.text:
+            pattern = like_pattern(job_filter.text)
+            query = query.where(
+                or_(
+                    func.lower(jobs.c.library).like(pattern, escape="\\"),
+                    func.lower(func.coalesce(jobs.c.version, "")).like(pattern, escape="\\"),
+                    func.lower(func.coalesce(jobs.c.error, "")).like(pattern, escape="\\"),
+                )
+            )
+        return query
+
+    async def search(
+        self,
+        job_filter: JobFilter,
+        *,
+        sort: Sort,
+        after: tuple[SortValue, str] | None,
+        limit: int,
+    ) -> Sequence[Job]:
+        """Return up to ``limit`` of the jobs that pass the filter, in ``sort`` order.
+
+        A keyset query: ``(sort value, id)`` compares as a row, in the sort's direction. Text
+        columns compare by code point on both databases (PostgreSQL's are collated ``C`` by the
+        migration), as Python compares str. A page of one library's jobs by ID keeps the range
+        scan of ``list_page_for_library`` (the library bounds the row comparison on both ends).
+
+        Args:
+            job_filter: Which jobs.
+            sort: The order.
+            after: The sort value and ID of the last job of the previous page.
+            limit: At most this many jobs.
+
+        Returns:
+            The jobs in order, with their problems.
+        """
+        column = jobs.c[sort.field]
+        query = self._filtered(job_filter)
+        order: tuple[Any, ...] = (
+            (column.desc(), jobs.c.id.desc()) if sort.descending else (column, jobs.c.id)
+        )
+        libraries = job_filter.libraries
+        if sort.field == "id" and libraries is not None and len(libraries) == 1:
+            (library,) = libraries
+            if sort.descending:
+                bound = ABOVE_EVERY_JOB_ID if after is None else after[1]
+                query = query.where(
+                    jobs.c.library >= library,
+                    tuple_(jobs.c.library, jobs.c.id) < tuple_(library, bound),
+                )
+                order = (jobs.c.library.desc(), jobs.c.id.desc())
+            else:
+                bound = "" if after is None else after[1]
+                query = query.where(
+                    jobs.c.library <= library,
+                    tuple_(jobs.c.library, jobs.c.id) > tuple_(library, bound),
+                )
+                order = (jobs.c.library, jobs.c.id)
+        elif after is not None:
+            row, bound = tuple_(column, jobs.c.id), tuple_(*after)
+            query = query.where(row < bound if sort.descending else row > bound)
+        async with self.engine.connect() as connection:
+            return [
+                _job(row) for row in await connection.execute(query.order_by(*order).limit(limit))
+            ]
+
+    async def count(self, job_filter: JobFilter) -> int:
+        """Count the jobs that pass the filter.
+
+        Args:
+            job_filter: Which jobs.
+
+        Returns:
+            How many there are.
+        """
+        query = select(func.count()).select_from(self._filtered(job_filter).subquery())
+        async with self.engine.connect() as connection:
+            return (await connection.execute(query)).scalar_one()
+
+    async def libraries(self) -> Sequence[str]:
+        """Return every library that has a job, as spelled in the jobs.
+
+        Returns:
+            The distinct library IDs.
+        """
+        async with self.engine.connect() as connection:
+            return list((await connection.execute(select(jobs.c.library).distinct())).scalars())
 
     async def list_latest(self) -> Sequence[Job]:
         """Return the newest job of every (library, version), ordered by library and version.
@@ -372,6 +556,18 @@ def _text(moment: datetime | None) -> str | None:
     return moment.isoformat(timespec="microseconds") if moment else None
 
 
+def _utc_text(moment: datetime) -> str:
+    """Spell a moment as the stored columns do, in UTC, so text order is time order.
+
+    Args:
+        moment: The moment (with an offset).
+
+    Returns:
+        ISO-8601 text with microseconds and a ``+00:00`` offset.
+    """
+    return moment.astimezone(UTC).isoformat(timespec="microseconds")
+
+
 def _moment(text: str | None) -> datetime | None:
     """Read a moment stored by ``_text``.
 
@@ -416,6 +612,8 @@ def _values(job: Job) -> Mapping[str, Any]:
         "created_at": _text(job.created_at),
         "started_at": _text(job.started_at),
         "finished_at": _text(job.finished_at),
+        "cancelled_by": job.cancelled_by,
+        "cancelled_at": _text(job.cancelled_at),
     }
 
 
@@ -495,6 +693,8 @@ def _job(row: Row) -> Job:
         created_at=created_at,
         started_at=_moment(row.started_at),
         finished_at=_moment(row.finished_at),
+        cancelled_by=row.cancelled_by,
+        cancelled_at=_moment(row.cancelled_at),
     )
 
 

@@ -10,9 +10,10 @@ from typing import Any
 
 import pytest
 from fastmcp import Client, FastMCP
+from fastmcp.server.auth import AccessToken
 from mcp.shared.exceptions import MCPError as McpError
 
-from exactdocs.bootstrap import cli
+from exactdocs.bootstrap import caller, cli
 from exactdocs.bootstrap.constants import RESOURCE_NOT_FOUND
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.mcp import build_mcp, build_stdio_mcp
@@ -33,6 +34,7 @@ from exactdocs.catalog.dtos import (
     StoreManifestCommand,
 )
 from exactdocs.catalog.models import LibraryId, RefKind, Version, VersionRef
+from exactdocs.identity.dtos import AccountSummary, ExternalTokenIdentity, GrantLibraryRoleCommand
 from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand
 from exactdocs.retrieval.models import chunk_id
 from exactdocs_kernel import NOTICE
@@ -647,3 +649,51 @@ async def test_resource_snapshot(container: Container) -> None:
     if os.environ.get("UPDATE_SNAPSHOTS") == "1":
         RESOURCE_SNAPSHOT.write_text(json.dumps(actual, indent=2, sort_keys=True) + "\n")
     assert actual == json.loads(RESOURCE_SNAPSHOT.read_text()), "run with UPDATE_SNAPSHOTS=1"
+
+
+@pytest.mark.parametrize("credential", ["api", "oauth_role", "oauth_groups"])
+async def test_resource_lists_do_not_reuse_broader_authority_for_a_narrower_oauth_token(
+    container: Container, monkeypatch: pytest.MonkeyPatch, credential: str
+) -> None:
+    monkeypatch.setattr("exactdocs.catalog.adapters.driving.mcp.RESOURCE_LIST_TTL", 60.0)
+    async with container.running():
+        account = (await container.identity.list_users()).users[0]
+        await publish(container, "v1.4.0", RefKind.TAG, ("guide/a.md", "Private", []))
+        await container.identity.grant_library_role(
+            GrantLibraryRoleCommand(
+                caller_id=account.id,
+                library="/acme/payments",
+                kind="group",
+                subject="docs",
+                role="viewer",
+            )
+        )
+        token = AccessToken(token="", client_id=account.id, scopes=[])
+        if credential != "api":
+            token.claims["external_identity"] = ExternalTokenIdentity(
+                account=AccountSummary(
+                    id=account.id,
+                    username="admin",
+                    role="admin" if credential == "oauth_role" else "user",
+                ),
+                groups=frozenset({"docs"}) if credential == "oauth_groups" else frozenset(),
+                linked=True,
+            )
+        monkeypatch.setattr(caller, "get_access_token", lambda: token)
+        async with Client(build_mcp(container)) as mcp:
+            broad = await mcp.list_resources()
+            assert any(str(resource.uri).startswith("exactdocs://") for resource in broad)
+            token = AccessToken(
+                token="",
+                client_id=account.id,
+                scopes=[],
+                claims={
+                    "external_identity": ExternalTokenIdentity(
+                        account=AccountSummary(id=account.id, username="ada", role="user"),
+                        groups=frozenset(),
+                        linked=True,
+                    )
+                },
+            )
+            narrow = await mcp.list_resources()
+            assert not any(str(resource.uri).startswith("exactdocs://") for resource in narrow)

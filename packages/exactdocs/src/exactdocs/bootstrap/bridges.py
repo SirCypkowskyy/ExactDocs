@@ -5,7 +5,7 @@ port in its own language, and a bridge here translates to the provider's public 
 """
 
 import asyncio
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 
 from pydantic import ValidationError as PydanticValidationError
@@ -69,6 +69,7 @@ from exactdocs.catalog.dtos import (
 )
 from exactdocs.catalog.errors import ArticleNotFoundError as CatalogArticleNotFoundError
 from exactdocs.catalog.errors import StoredContentOutdatedError
+from exactdocs.catalog.models import Access as CatalogAccess
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
     ApplyManualTags,
@@ -86,6 +87,7 @@ from exactdocs.catalog.ports.driving import (
     GetLibrary,
     GetManifestStates,
     GetVersionTags,
+    IsLibraryIdTaken,
     ListArticles,
     ListDefaultManifests,
     ListLibraries,
@@ -99,8 +101,23 @@ from exactdocs.catalog.ports.driving import (
     SetManualTags,
     StoreManifest,
 )
+from exactdocs.identity.dtos import (
+    ApiTokenIdentity,
+    ClaimLibraryCommand,
+    DropLibraryGrantsCommand,
+    ExternalTokenIdentity,
+    LibraryCreationQuery,
+    LibraryRolesQuery,
+)
+from exactdocs.identity.ports.driving import (
+    CanCreateLibrary,
+    ClaimLibrary,
+    DropLibraryGrants,
+    ResolveLibraryRoles,
+)
 from exactdocs.ingestion.constants import PARSER_VERSION
 from exactdocs.ingestion.errors import EmbeddingUnavailableError, StoredTextOutdatedError
+from exactdocs.ingestion.models import Access as IngestionAccess
 from exactdocs.ingestion.models import (
     ArticleChunk,
     ChunkHeading,
@@ -151,6 +168,7 @@ from exactdocs.retrieval.dtos import (
 )
 from exactdocs.retrieval.dtos import RepoGuidance as RetrievalRepoGuidance
 from exactdocs.retrieval.errors import EmbeddingFailedError
+from exactdocs.retrieval.models import Access as RetrievalAccess
 from exactdocs.retrieval.models import (
     ArticleEntry,
     CatalogLibrary,
@@ -178,7 +196,7 @@ from exactdocs.retrieval.ports.driving import (
     RemoveChunks,
     RetagArticles,
 )
-from exactdocs_kernel import MAX_LIMIT, NotFoundError, ValidationError
+from exactdocs_kernel import MAX_LIMIT, ForbiddenError, NotFoundError, ValidationError
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -325,7 +343,28 @@ class CatalogLibraryIds:
             await self.get_library(GetLibraryQuery(id=library_id))
         except NotFoundError:
             return False
+        except ForbiddenError:  # there, but the caller may not read it: still taken
+            return True
         return True
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CatalogCreationIds:
+    """Implements ``ingestion.ports.driven.LibraryIds`` with the catalog's creation probe."""
+
+    is_library_id_taken: IsLibraryIdTaken
+    """Creation-authorized availability check independent of library read access."""
+
+    async def is_taken(self, library_id: ProposedId) -> bool:
+        """Tell whether an authorized creator's proposed library ID is occupied.
+
+        Args:
+            library_id: The proposed library ID.
+
+        Returns:
+            Whether the catalog has the ID.
+        """
+        return await self.is_library_id_taken(GetLibraryQuery(id=library_id))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -547,6 +586,8 @@ class CatalogLibrarySources:
                 max_chars=chunking.max_chars,
                 chunker=chunking.chunker,
             ),
+            title=detail.title,
+            description=detail.description,
         )
 
     async def imported_versions(self, library: str) -> list[ImportedRef]:
@@ -855,7 +896,7 @@ class RetrievalVersionEmbedder:
             if error.transient:  # the job tries the batch again, after a wait
                 raise EmbeddingUnavailableError(str(error)) from error
             raise
-        return EmbeddedBatch(embedded=batch.embedded, finished=batch.finished)
+        return EmbeddedBatch(embedded=batch.embedded, finished=batch.finished, left=batch.left)
 
     async def finish(self, plan: EmbedPlan) -> None:
         """Switch to the plan's space once it covers every version.
@@ -1440,3 +1481,143 @@ class RetrievalGuidancePolicy:
         if found.repo_guidance is RetrievalRepoGuidance.OFF:
             return InstructionPolicy.DROP
         return InstructionPolicy.KEEP
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IdentityAccessPolicy:
+    """Implements the ``AccessPolicy`` ports of catalog, ingestion and retrieval with identity.
+
+    The caller is whoever ``caller`` names (the account of the request: its session or API token).
+    Nobody named means the work is the instance's own (the command line, a stdio MCP process, a
+    scheduled check, a job): it is not subject to library roles. Each domain's ``Access`` enum
+    takes the identity role's name as its value, so one class serves all three.
+    """
+
+    can_create_library: CanCreateLibrary
+    """Identity instance-wide creation permission."""
+    resolve_library_roles: ResolveLibraryRoles
+    """Identity's effective role of an account on libraries."""
+    claim_library: ClaimLibrary
+    """Identity's record of a library's creator."""
+    drop_library_grants: DropLibraryGrants
+    """Identity's drop of every grant on a removed library."""
+    caller: Callable[[], str | None]
+    """The account ID of the current request; ``None`` when no person made it."""
+    external_identity: Callable[[], ExternalTokenIdentity | None] | None = None
+    """The verified OAuth caller, when this request carries one."""
+
+    api_identity: Callable[[], ApiTokenIdentity | None] | None = None
+    """The verified API credential and its optional library selection."""
+
+    def _selected(self, library: str) -> bool:
+        """Check the current credential's library selection.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            Whether the credential includes the library; scopes never grant a user role.
+        """
+        identity = None if self.api_identity is None else self.api_identity()
+        return (
+            identity is None
+            or identity.library_ids is None
+            or library.casefold() in identity.library_ids
+        )
+
+    async def can_create(self, library: str | None = None) -> bool:
+        """Resolve creation permission for the caller, preserving internal process access.
+
+        Args:
+            library: Proposed ID when known; scoped credentials deny an unknown ID.
+
+        Returns:
+            True for internal work or an authorized authenticated creator.
+        """
+        identity = None if self.api_identity is None else self.api_identity()
+        if (
+            identity is not None
+            and identity.library_ids is not None
+            and (library is None or not self._selected(library))
+        ):
+            return False
+        account = self.caller()
+        if account is None:
+            return True
+        return await self.can_create_library(
+            LibraryCreationQuery(
+                account_id=account,
+                external_identity=None
+                if self.external_identity is None
+                else self.external_identity(),
+            )
+        )
+
+    async def allows(
+        self, library: str, access: CatalogAccess | IngestionAccess | RetrievalAccess
+    ) -> bool:
+        """Tell whether the caller's effective role on the library is ``access`` or higher.
+
+        Args:
+            library: The library ID, any case.
+            access: The role the action needs (a domain's ``Access``).
+
+        Returns:
+            ``True`` for work no person started, else whether the role is high enough.
+        """
+        if not self._selected(library):
+            return False
+        account = self.caller()
+        if account is None:
+            return True
+        found = await self.resolve_library_roles(
+            LibraryRolesQuery(
+                account_id=account,
+                libraries=[library],
+                external_identity=None
+                if self.external_identity is None
+                else self.external_identity(),
+            )
+        )
+        return found.allows(library, access.value)
+
+    async def readable(self, libraries: Collection[str]) -> frozenset[str]:
+        """Return the libraries the caller holds any role on.
+
+        Args:
+            libraries: Library IDs.
+
+        Returns:
+            The lower-case IDs among them the caller may read.
+        """
+        account = self.caller()
+        if account is None:
+            return frozenset(library.casefold() for library in libraries)
+        found = await self.resolve_library_roles(
+            LibraryRolesQuery(
+                account_id=account,
+                libraries=list(libraries),
+                external_identity=None
+                if self.external_identity is None
+                else self.external_identity(),
+            )
+        )
+        return frozenset(library for library in found.roles if self._selected(library))
+
+    async def claim(self, library: str) -> None:
+        """Make the caller, if there is one, the creator of the library just created.
+
+        Args:
+            library: The library ID.
+        """
+        account = self.caller()
+        if account is not None:
+            await self.claim_library(ClaimLibraryCommand(account_id=account, library=library))
+
+    async def forget(self, library: str) -> None:
+        """Drop every grant on a library that was removed.
+
+        Args:
+            library: The library ID.
+        """
+        await self.drop_library_grants(DropLibraryGrantsCommand(library=library))

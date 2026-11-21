@@ -132,6 +132,7 @@ export function explainRetrievalSave(error: unknown): Problem {
     case "provider_unsupported":
     case "invalid_model":
     case "budget_above_instance":
+    case "thinking_unsupported":
       return { message: error.message };
     case "not_found":
       return { message: GONE };
@@ -321,6 +322,7 @@ const STATUS_WORDS: Record<SyncedVersion["status"], string> = {
   importing: "Already importing",
   pinned: "Pinned",
   failed: "Failed",
+  cancelled: "Left alone: its sync was cancelled",
 };
 export const statusWords = (s: SyncedVersion["status"]) => STATUS_WORDS[s];
 

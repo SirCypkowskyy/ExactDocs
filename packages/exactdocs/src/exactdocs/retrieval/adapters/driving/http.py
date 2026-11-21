@@ -1,12 +1,14 @@
 """REST adapter for retrieval."""
 
-from collections.abc import Awaitable, Callable
+import asyncio
+import json
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Path, Query, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 from pydantic.alias_generators import to_camel
 
@@ -17,6 +19,7 @@ from exactdocs.retrieval.constants import (
     CHARS_PER_TOKEN,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_RETRIES,
+    MAX_CHOSEN_LIBRARIES,
     MAX_KEY,
     MAX_LIBRARY_ID,
     MAX_MODEL_NAME,
@@ -35,6 +38,9 @@ from exactdocs.retrieval.dtos import (
     MAX_NAME,
     MAX_PATH,
     AiUsageOut,
+    AnswerAvailabilityOut,
+    AnswerQuery,
+    AnswerResult,
     ArticleOutlineOut,
     ArticleOutlineQuery,
     CheckProviderCommand,
@@ -54,12 +60,14 @@ from exactdocs.retrieval.dtos import (
     ReadChunkQuery,
     ResolveLibraryIdQuery,
     RoleListOut,
+    RoleOut,
     SaveProviderCommand,
     SearchAllQuery,
     SearchAllResult,
     SearchDocsQuery,
     SearchDocsResult,
     SetLibraryRetrievalCommand,
+    SetRoleThinkingCommand,
 )
 from exactdocs.retrieval.models import (
     AnthropicPlatform,
@@ -68,13 +76,16 @@ from exactdocs.retrieval.models import (
     RepoGuidance,
     RerankWith,
     TagMatch,
+    ThinkingLevel,
 )
 from exactdocs.retrieval.ports.driving import (
+    AnswerQuestion,
     ArticleOutline,
     CheckProvider,
     DeleteProvider,
     EstimateEmbedding,
     GetAiUsage,
+    GetAnswerAvailability,
     GetEmbeddingProgress,
     GetLibraryRetrieval,
     GetProvider,
@@ -87,8 +98,9 @@ from exactdocs.retrieval.ports.driving import (
     SearchAllLibraries,
     SearchDocs,
     SetLibraryRetrieval,
+    SetRoleThinking,
 )
-from exactdocs_kernel import NOTICE
+from exactdocs_kernel import NOTICE, DomainError
 
 
 class LibraryRetrievalIn(BaseModel):
@@ -97,8 +109,9 @@ class LibraryRetrievalIn(BaseModel):
     model_config = ConfigDict(extra="forbid", use_attribute_docstrings=True)
 
     mode: str | None = Field(default=None, max_length=MAX_NAME)
-    """`bm25`, `hybrid`, `hybrid_hyde` or `agentic`; it must be available with the settings below
-    (422 `mode_unavailable` names the missing model role otherwise). Null: the instance's mode.
+    """`bm25`, `vector`, `hybrid`, `hybrid_hyde` or `agentic`; it must be available with the
+    settings below (422 `mode_unavailable` names the missing model role otherwise). Null: the
+    instance's mode.
     """
     ai_enabled: bool = True
     """False: nothing of the library is ever sent to an AI provider; its searches are BM25."""
@@ -110,6 +123,15 @@ class LibraryRetrievalIn(BaseModel):
     """The library's own reranker, `<profile>:<model>`; null: the instance's. The embedding model
     is instance-wide only and cannot be set here.
     """
+    llm_thinking: ThinkingLevel | None = None
+    """How much its `llm` role's model (its own or the instance's) thinks before it answers:
+    `minimal`, `low`, `medium`, `high` or `xhigh`. Thinking tokens are billed as output, and
+    several providers default to a high level; HyDE and the agentic mode rarely need more than
+    `low`. Null: the instance's level (`EXACTDOCS_AI__LLM__THINKING`). A level the model cannot
+    take is refused (422 `thinking_unsupported`, naming the role and the model)."""
+    judge_thinking: ThinkingLevel | None = None
+    """The same for its `judge` role; null: the instance's (the `llm` role's when the judge is
+    the LLM)."""
     rerank_top_n: int | None = Field(
         default=None, ge=1, le=MAX_RERANK_TOP_N, description=RERANK_TOP_N_DESCRIPTION
     )
@@ -192,6 +214,16 @@ class NewProviderIn(ProviderIn):
 
     name: str = Field(pattern=PROFILE_NAME_PATTERN)
     """Used in roles as `<name>:<model>`: lower case, digits, `_` and `-`."""
+
+
+class RoleThinkingIn(BaseModel):
+    """An instance role's thinking level, as the admin sets it."""
+
+    model_config = ConfigDict(extra="forbid", use_attribute_docstrings=True)
+
+    thinking: ThinkingLevel | None = None
+    """How much the role's model thinks before it answers: `minimal`, `low`, `medium`, `high` or
+    `xhigh`; null: the provider's default. Thinking tokens are billed as output."""
 
 
 class ProviderCheckIn(BaseModel):
@@ -340,6 +372,8 @@ def build_router(
     article_outline: ArticleOutline,
     resolve_library_id: ResolveLibraryId,
     query_docs: QueryDocs,
+    answer_question: AnswerQuestion,
+    get_answer_availability: GetAnswerAvailability,
     caller: Callable[..., Awaitable[str | None]],
 ) -> APIRouter:
     """Expose retrieval: search beside the catalog's ``/libraries`` routes, ``/chunks``, ``/c7``.
@@ -354,6 +388,8 @@ def build_router(
         article_outline: Builds an article's outline.
         resolve_library_id: Finds libraries by name.
         query_docs: Answers ``query-docs``.
+        answer_question: Runs the answering agent (``/answer``).
+        get_answer_availability: Says whether it can run.
         caller: The dependency naming the request's account.
 
     Returns:
@@ -362,6 +398,13 @@ def build_router(
     router = APIRouter(tags=["retrieval"])
     account = Annotated[str | None, Depends(caller)]
     router.include_router(_outline_router(article_outline))
+    router.include_router(
+        build_answer_router(
+            answer_question=answer_question,
+            get_answer_availability=get_answer_availability,
+            caller=caller,
+        )
+    )
 
     # The ref is `?ref=` (it may contain `/`); no ref means the default version.
     @router.get("/libraries/{owner}/{repo}/search")
@@ -385,7 +428,7 @@ def build_router(
             Query(
                 max_length=MAX_NAME,
                 description=(
-                    "`bm25`, `hybrid`, `hybrid_hyde` or `agentic`, if available (422 "
+                    "`bm25`, `vector`, `hybrid`, `hybrid_hyde` or `agentic`, if available (422 "
                     "`mode_unavailable` otherwise). Default: the library's mode, else the "
                     "instance's, else the best one configured."
                 ),
@@ -429,13 +472,20 @@ def build_router(
 
     @router.get("/search")
     async def search_all(
+        searcher: account,
         q: Annotated[
             str,
             Query(min_length=1, max_length=MAX_QUERY, description="Identifier, error or question."),
         ],
         library: Annotated[
-            str | None,
-            Query(max_length=MAX_NAME, description="`/owner/repo`: narrow the results to it."),
+            list[Annotated[str, Query(max_length=MAX_NAME)]] | None,
+            Query(
+                max_length=MAX_CHOSEN_LIBRARIES,
+                description=(
+                    "`/owner/repo` of a library to search; repeat or comma-separate for "
+                    "several. None: every library you may read."
+                ),
+            ),
         ] = None,
         tags: Annotated[
             list[Annotated[str, Query(max_length=MAX_TAG)]] | None,
@@ -443,15 +493,31 @@ def build_router(
         ] = None,
         tags_match: TagMatch = TagMatch.ANY,
         limit: Annotated[int, Query(ge=1, le=50)] = 10,
+        mode: Annotated[
+            str | None,
+            Query(
+                max_length=MAX_NAME,
+                description=(
+                    "`bm25` (default), `vector` or `hybrid`; the vector modes need an embedding "
+                    "model (422 `mode_unavailable` otherwise)."
+                ),
+            ),
+        ] = None,
     ) -> SearchAllResult:
-        """Search the default version of every library; `libraries` counts matches per library.
+        """Search the default version of every library, or of the chosen ones, in one ranking.
+
+        `libraries` counts the BM25 matches per library. Each result carries its `bm25_rank` and
+        `vector_rank`; `retrieval_mode` says which mode answered and `fallback_reason` why BM25
+        answered a vector search.
 
         Args:
             q: The query.
-            library: Only this library's results.
+            library: Only these libraries' results.
             tags: Only chunks of articles so tagged.
             tags_match: `any` or `all` of the tags.
             limit: How many results at most.
+            mode: The retrieval mode; `bm25` without one.
+            searcher: The account searching.
 
         Returns:
             The results across libraries.
@@ -461,11 +527,16 @@ def build_router(
         """
         try:
             query = SearchAllQuery(
-                query=q, library=library, tags=tags or [], tags_match=tags_match, limit=limit
+                query=q,
+                libraries=library or [],
+                tags=tags or [],
+                tags_match=tags_match,
+                limit=limit,
+                mode=mode,
             )
         except ValidationError as error:
             raise RequestValidationError(error.errors()) from error
-        return await search_all_libraries(query)
+        return await search_all_libraries(query, caller=searcher)
 
     @router.get("/chunks/{chunk_id}")
     async def get_chunk(chunk_id: Annotated[str, Path(max_length=MAX_NAME)]) -> ChunkOut:
@@ -578,6 +649,162 @@ def build_router(
         # The notice leads the body, as it leads the MCP result, and repeats in a header.
         return PlainTextResponse(
             f"{NOTICE}\n\n{format_docs(found)}", headers={NOTICE_HEADER: NOTICE}
+        )
+
+    return router
+
+
+type _Event = tuple[str, dict[str, Any]]
+"""A server-sent event: its name and its JSON data."""
+
+
+class _QueuedProgress:
+    """Implements ``ports.driven.AnswerProgress`` by queueing a ``progress`` event per call."""
+
+    def __init__(self, queue: asyncio.Queue[_Event]) -> None:
+        """Queue onto ``queue``.
+
+        Args:
+            queue: Where the events go.
+        """
+        self.queue = queue
+
+    def tool_call(self, made: int, limit: int) -> None:
+        """Queue a progress event.
+
+        Args:
+            made: Tool calls made so far.
+            limit: The most the run may make.
+        """
+        self.queue.put_nowait(("progress", {"tool_calls": made, "max_tool_calls": limit}))
+
+
+def _sse(event: _Event) -> str:
+    """Write one server-sent event.
+
+    Args:
+        event: Its name and data.
+
+    Returns:
+        The event's text, ``event:`` and ``data:`` lines and a blank line.
+    """
+    name, data = event
+    return f"event: {name}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n"
+
+
+async def _answer_events(
+    task: asyncio.Task[AnswerResult], queue: asyncio.Queue[_Event]
+) -> AsyncIterator[str]:
+    """Stream an answer's progress, then the answer (or the error), as server-sent events.
+
+    The run is cancelled when the client goes away.
+
+    Args:
+        task: The running answer.
+        queue: Its progress events.
+
+    Yields:
+        ``progress`` events, then one ``answer`` (the ``AnswerResult``) or ``error`` event.
+    """
+    try:
+        while True:
+            getter = asyncio.ensure_future(queue.get())
+            done, _ = await asyncio.wait({task, getter}, return_when=asyncio.FIRST_COMPLETED)
+            if getter not in done:
+                getter.cancel()
+                break
+            yield _sse(getter.result())
+        while not queue.empty():
+            yield _sse(queue.get_nowait())
+        try:
+            result = task.result()
+        except DomainError as error:
+            yield _sse(("error", {"error": error.code, "detail": str(error)}))
+            return
+        yield _sse(("answer", result.model_dump(mode="json")))
+    finally:
+        task.cancel()
+
+
+def build_answer_router(
+    *,
+    answer_question: AnswerQuestion,
+    get_answer_availability: GetAnswerAvailability,
+    caller: Callable[..., Awaitable[str | None]],
+) -> APIRouter:
+    """Expose agentic answers over chosen libraries (#428): ``/answer``.
+
+    Args:
+        answer_question: Runs the answering agent.
+        get_answer_availability: Says whether it can run.
+        caller: The dependency naming the request's account (its spend and rate limit).
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["retrieval"])
+    account = Annotated[str | None, Depends(caller)]
+
+    @router.get("/answer", name="get_answer_availability")
+    async def availability() -> AnswerAvailabilityOut:
+        """Say whether agentic answers can run now (an `llm` role is configured), and why not.
+
+        Returns:
+            Whether they can, why not, and the tool-call limit.
+        """
+        return await get_answer_availability()
+
+    @router.post("/answer", name="answer_question")
+    async def answer(body: AnswerQuery, asker: account) -> AnswerResult:
+        """Answer a question from the default versions of chosen libraries with an agent.
+
+        The agent reads only libraries you may read (and your API token's scope allows) with AI
+        on, within `[ai.agentic]`'s limits, the budgets and the LLM search rate limit. Every
+        source is checked against those libraries; `fallback_reason` says why there is no answer.
+        422 `mode_unavailable` without an `llm` role; 404 for a chosen library you cannot read.
+
+        Args:
+            body: The question, the libraries and the filters.
+            asker: The account asking.
+
+        Returns:
+            The answer, its sources and what the run used.
+        """
+        return await answer_question(body, caller=asker)
+
+    @router.post(
+        "/answer/stream",
+        name="answer_question_stream",
+        response_class=StreamingResponse,
+        responses={
+            200: {
+                "content": {"text/event-stream": {}},
+                "description": (
+                    "Server-sent events: `progress` (`{tool_calls, max_tool_calls}`) after each "
+                    "tool call, then one `answer` (an `AnswerResult`) or `error` "
+                    "(`{error, detail}`, the error shape of the API)."
+                ),
+            }
+        },
+    )
+    async def answer_stream(body: AnswerQuery, asker: account) -> StreamingResponse:
+        """Answer as `POST /answer` does, streaming the agent's progress (server-sent events).
+
+        Args:
+            body: The question, the libraries and the filters.
+            asker: The account asking.
+
+        Returns:
+            The event stream; closing it cancels the run.
+        """
+        queue: asyncio.Queue[_Event] = asyncio.Queue()
+        task = asyncio.create_task(
+            answer_question(body, caller=asker, progress=_QueuedProgress(queue))
+        )
+        return StreamingResponse(
+            _answer_events(task, queue),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
     return router
@@ -744,6 +971,7 @@ def build_ai_router(
     delete_provider: DeleteProvider,
     check_provider: CheckProvider,
     list_roles: ListRoles,
+    set_role_thinking: SetRoleThinking,
     estimate_embedding: EstimateEmbedding,
     get_embedding_progress: GetEmbeddingProgress,
     get_ai_usage: GetAiUsage,
@@ -757,6 +985,7 @@ def build_ai_router(
         delete_provider: Deletes one.
         check_provider: Makes one minimal call per role that uses one.
         list_roles: Shows the instance's roles.
+        set_role_thinking: Sets an instance role's thinking level.
         estimate_embedding: Estimates what embedding the versions not embedded yet costs.
         get_embedding_progress: Shows how far each embedding space has got.
         get_ai_usage: Shows spend and budget left per scope.
@@ -866,6 +1095,27 @@ def build_ai_router(
             One entry per role.
         """
         return await list_roles()
+
+    @router.put("/roles/{role}", name="set_role_thinking")
+    async def set_thinking(role: ModelRole, body: RoleThinkingIn) -> RoleOut:
+        """Set (or clear, with null) the thinking level of the `llm` or `judge` role.
+
+        The level is sent as the provider's own setting at the next call: Google's thinking level
+        or budget, Claude's effort or budget, OpenAI's `reasoning_effort`. A level set in the
+        environment or the configuration file (`EXACTDOCS_AI__<ROLE>__THINKING`) cannot be
+        changed here (409 `role_configured`); another role takes none (422
+        `role_takes_no_thinking`); a level the role's model cannot take is refused (422
+        `thinking_unsupported`, naming the role and the model).
+
+        Args:
+            role: `llm` or `judge`.
+            body: The level.
+
+        Returns:
+            The role as it is now.
+        """
+        command = _command(lambda: SetRoleThinkingCommand(role=role, thinking=body.thinking))
+        return await set_role_thinking(command)
 
     _embedding_routes(router, estimate_embedding, get_embedding_progress)
 

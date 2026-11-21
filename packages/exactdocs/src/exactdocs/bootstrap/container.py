@@ -25,6 +25,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogArticleSuggestions,
     CatalogArticleTitles,
     CatalogCollector,
+    CatalogCreationIds,
     CatalogDefaultVersions,
     CatalogImportedTags,
     CatalogInstructionFiles,
@@ -42,10 +43,16 @@ from exactdocs.bootstrap.bridges import (
     CatalogVersionArticles,
     CatalogVersionCopier,
     CatalogVersionPublisher,
+    IdentityAccessPolicy,
     RetrievalChunkIndex,
     RetrievalCollector,
     RetrievalGuidancePolicy,
     RetrievalVersionEmbedder,
+)
+from exactdocs.bootstrap.caller import (
+    current_account_id,
+    current_api_identity,
+    current_external_identity,
 )
 from exactdocs.bootstrap.cancellation import being_cancelled
 from exactdocs.bootstrap.constants import (
@@ -76,13 +83,17 @@ from exactdocs.bootstrap.database import (
 )
 from exactdocs.bootstrap.embedding import SaveProviderThenEmbed, requeue_daily
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
+from exactdocs.bootstrap.library_filters import ListLibrariesByAi
+from exactdocs.bootstrap.library_texts import CatalogLibraryTexts
 from exactdocs.bootstrap.local_models import LocalModels
+from exactdocs.bootstrap.open_access import OpenAccess
 from exactdocs.bootstrap.repo_guidance import SetRetrievalThenReprocess
 from exactdocs.bootstrap.search_engine import PostgresSearchChoice
 from exactdocs.bootstrap.secret_box import FernetSecretBox, derived_key, read_key_file
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.sign_in import (
     SignInStandIns,
+    cloudflare_access,
     revalidating,
     sign_in_client,
     sign_in_providers,
@@ -93,6 +104,7 @@ from exactdocs.bootstrap.workdirs import held, new_work_root, sweep_abandoned_wo
 from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driven.sqlite import (
     SqliteArticleTitles,
+    SqliteEntrySearch,
     SqliteImportedTags,
     SqliteInstructionFiles,
     SqliteLibraryRepository,
@@ -100,6 +112,7 @@ from exactdocs.catalog.adapters.driven.sqlite import (
     SqliteManifestRepository,
     SqliteStoredArticles,
 )
+from exactdocs.catalog.ports.driving import ListLibraries
 from exactdocs.identity import IdentityModule
 from exactdocs.identity.adapters.driven.argon2id import Argon2idPasswordHasher
 from exactdocs.identity.adapters.driven.memory import InMemoryFailedSignInLog
@@ -107,10 +120,12 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteAccountRepository,
     SqliteExternalIdentityRepository,
     SqliteFailedSignInLog,
+    SqliteLibraryGrantRepository,
     SqliteSessionRepository,
     SqliteSignInAttemptRepository,
     SqliteTokenRepository,
 )
+from exactdocs.identity.models import LibraryCreationPolicy
 from exactdocs.ingestion import IngestionModule, TagLocks, collect_job, import_job
 from exactdocs.ingestion.adapters.driven.dbos import (
     DbosCheckpoints,
@@ -121,6 +136,7 @@ from exactdocs.ingestion.adapters.driven.git_cli import GitCli, MissingGit, swee
 from exactdocs.ingestion.adapters.driven.known_hosts import seed_known_hosts
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.postgres import PostgresLibraryLocks
+from exactdocs.ingestion.adapters.driven.restructuredtext import RestructuredTextConverter
 from exactdocs.ingestion.adapters.driven.sqlite import (
     SqliteAutoSyncStore,
     SqliteCredentialVault,
@@ -142,6 +158,7 @@ from exactdocs.ingestion.ports.driven import (
     RepositoryTree,
 )
 from exactdocs.retrieval import RetrievalModule
+from exactdocs.retrieval.adapters.driven.ai_answerer import PydanticAiAnswerer
 from exactdocs.retrieval.adapters.driven.ai_explorer import PydanticAiExplorer
 from exactdocs.retrieval.adapters.driven.ai_hyde import PydanticAiHypotheticalAnswers
 from exactdocs.retrieval.adapters.driven.ai_judge import PydanticAiCandidateJudge
@@ -161,6 +178,7 @@ from exactdocs.retrieval.adapters.driven.sqlite import (
     SqliteHypothesisCache,
     SqliteLibraryModes,
     SqliteProviderProfiles,
+    SqliteRoleThinkingLevels,
     SqliteSpendLedger,
 )
 from exactdocs.retrieval.adapters.driven.sqlite_fts import SqliteSearchIndex
@@ -337,10 +355,12 @@ async def _warm_ai(retrieval: RetrievalModule, local: LocalModels, local_roles: 
     otherwise import them (seconds) inside its reranker timeout. With no such profile nothing is
     loaded (RUN-02). A failed load never stops the start (``PydanticAiModels.warm``). The models
     the instance roles name on ``local`` profiles are loaded too (fastembed, once per process);
-    a role a library sets on a local profile loads its model at its first call.
+    a role a library sets on a local profile loads its model at its first call. An instance
+    role's thinking level its model cannot take is logged as a warning (#421): its calls leave
+    it out.
 
     Args:
-        retrieval: Lists the provider profiles (reading them imports no SDK).
+        retrieval: Lists the provider profiles (reading them imports no SDK), and the roles.
         local: Loads the local models.
         local_roles: The instance roles on local profiles whose model was pulled.
     """
@@ -348,6 +368,15 @@ async def _warm_ai(retrieval: RetrievalModule, local: LocalModels, local_roles: 
     if any(p.kind is not ProviderKind.LOCAL for p in profiles):
         await PydanticAiModels().warm()
     await local.warm(local_roles)
+    for role in (await retrieval.list_roles()).roles:
+        if role.thinking is not None and role.thinking_unsupported is not None:
+            logger.warning(
+                "AI role %s (%s) cannot take thinking level %s (%s): its calls leave it out",
+                role.role.value,
+                role.model,
+                role.thinking.value,
+                role.thinking_unsupported,
+            )
 
 
 def _secret_box(settings: Settings, purpose: bytes) -> FernetSecretBox:
@@ -398,9 +427,15 @@ def _identity(settings: Settings, engine: AsyncEngine, stand_ins: SignInStandIns
         The module, and the providers' HTTP client.
     """
     clock = stand_ins.clock or SystemClock()
-    client = sign_in_client(stand_ins.transport) if settings.auth.providers else None
+    wanted = settings.auth.providers or settings.auth.cloudflare_access is not None
+    client = sign_in_client(stand_ins.transport) if wanted else None
     providers, policies = sign_in_providers(settings, client, clock) if client else ({}, {})
+    access = cloudflare_access(settings, client, clock) if client else None
+    creation = settings.auth.library_creation
     identity = IdentityModule.build(
+        library_creation=None
+        if creation is None
+        else LibraryCreationPolicy(users=creation.users, groups=creation.groups),
         repository=SqliteAccountRepository(engine=engine),
         sessions=SqliteSessionRepository(engine=engine),
         tokens=SqliteTokenRepository(engine=engine),
@@ -410,13 +445,36 @@ def _identity(settings: Settings, engine: AsyncEngine, stand_ins: SignInStandIns
         if is_postgres(engine)
         else InMemoryFailedSignInLog(),
         externals=SqliteExternalIdentityRepository(engine=engine),
+        library_grants=SqliteLibraryGrantRepository(engine=engine),
         attempts=SqliteSignInAttemptRepository(engine=engine),
         box=_secret_box(settings, SIGN_IN_TOKENS_PURPOSE),
         clock=clock,
         providers=providers,
         policies=policies,
+        access_verifier=None if access is None else access[0],
+        access_policy=None if access is None else access[1],
     )
     return _Identity(module=identity, client=client)
+
+
+def _access_policy(identity: IdentityModule) -> IdentityAccessPolicy:
+    """Build the library roles the catalog, ingestion and retrieval ask identity for.
+
+    Args:
+        identity: The identity domain.
+
+    Returns:
+        The policy; its caller is the account of the current request.
+    """
+    return IdentityAccessPolicy(
+        resolve_library_roles=identity.resolve_library_roles,
+        can_create_library=identity.can_create_library,
+        claim_library=identity.claim_library,
+        drop_library_grants=identity.drop_library_grants,
+        caller=current_account_id,
+        external_identity=current_external_identity,
+        api_identity=current_api_identity,
+    )
 
 
 def _hyde_cache_key(settings: Settings, *, create: bool) -> bytes | None:
@@ -552,6 +610,7 @@ def _build_read_side(
     spend_engine: AsyncEngine | None = None,
     clock: Clock | None = None,
     agent_reads: AgentReads | None = None,
+    access: IdentityAccessPolicy | OpenAccess | None = None,
 ) -> _ReadSide:
     """Build the catalog and retrieval modules: everything the read-only MCP tools use.
 
@@ -575,6 +634,8 @@ def _build_read_side(
         clock: Decides the spend windows (tests); the system clock by default.
         agent_reads: Records the agentic explorer's reads (the eval suite's trace check); by
             default span events when telemetry is on, else nothing.
+        access: The library roles of catalog and retrieval (``IdentityAccessPolicy``); none:
+            everyone may do everything (a process the owner runs).
 
     Returns:
         The two modules (``StartupError`` when the AI configuration is invalid), and on
@@ -582,6 +643,8 @@ def _build_read_side(
     """
     local = LocalModels(models_dir=settings.effective_models_dir)
     ai = _ai_configuration(settings, local, model_factory)
+    access = access or OpenAccess()
+    library_modes = SqliteLibraryModes(engine=engine)
     catalog = CatalogModule.build(
         repository=SqliteLibraryRepository(engine=engine),
         manifests=SqliteManifestRepository(engine=engine),
@@ -590,6 +653,8 @@ def _build_read_side(
         copier=SqliteManifestCopier(engine=engine),
         article_titles=SqliteArticleTitles(engine=engine),
         instruction_files=SqliteInstructionFiles(engine=engine),
+        access=access,
+        entry_search=SqliteEntrySearch(engine=engine),
     )
     choice = None
     search: SqliteSearchIndex | PostgresSearchChoice = SqliteSearchIndex(engine=engine)
@@ -625,10 +690,11 @@ def _build_read_side(
         search=search,
         maintenance=search,
         renames=CatalogRenamedPaths(resolve_renamed_path=catalog.resolve_renamed_path),
-        library_modes=SqliteLibraryModes(engine=engine),
+        library_modes=library_modes,
         roles=model_roles,
         configured_profiles=ai.profiles,
         stored_profiles=SqliteProviderProfiles(engine=engine),
+        thinking_levels=SqliteRoleThinkingLevels(engine=engine),
         instance_roles=ai.roles,
         models=model_factory
         or AiModels(remote=PydanticAiModels(keys=ai.keys, box=ai_box), local=local),
@@ -653,6 +719,7 @@ def _build_read_side(
         embedding_dimensions=settings.ai.embedding.dimensions,
         embedding_batch_size=settings.ai.embedding.batch_size,
         explorer=PydanticAiExplorer(),
+        answerer=PydanticAiAnswerer(),
         version_articles=CatalogVersionArticles(
             list_articles=catalog.list_articles, get_article=catalog.get_article
         ),
@@ -671,6 +738,7 @@ def _build_read_side(
         instruction_files=CatalogInstructionFiles(
             get_instruction_files=catalog.get_instruction_files
         ),
+        access=access,
     )
     return _ReadSide(
         catalog=catalog,
@@ -930,6 +998,8 @@ class Container:
     """The retrieval domain, wired."""
     job_worker: DbosJobWorker
     """Runs the queued jobs (imports, syncs, embeddings) in ``running(jobs=True)``."""
+    list_libraries: ListLibraries
+    """Catalog's ``list_libraries`` with the ``ai_enabled`` filter resolved from retrieval."""
     save_provider: SaveProvider
     """Retrieval's ``save_provider``, then the embedding queued when the embedding role's profile
     changed (REST ``/ai/providers``)."""
@@ -1014,9 +1084,11 @@ class Container:
         vault = SqliteCredentialVault(
             engine=engine, box=_secret_box(settings, CREDENTIALS_KEY_PURPOSE)
         )
+        identity = _identity(settings, engine, sign_in or SignInStandIns())
         read = _build_read_side(
             engine,
             settings,
+            access=_access_policy(identity.module),
             ai_box=_secret_box(settings, AI_KEYS_PURPOSE),
             hyde_key=_hyde_cache_key(settings, create=True),
             agent_cache_key=_agent_cache_key(settings, create=True),
@@ -1060,6 +1132,7 @@ class Container:
             max_images_bytes=settings.max_images_bytes,
             checkpoints=DbosCheckpoints(),
             batch_files=settings.import_batch_files,
+            converter=RestructuredTextConverter(),
             tag_locks=tag_locks,
             imported_tags=CatalogImportedTags(
                 get_version_tags=read.catalog.get_version_tags,
@@ -1077,6 +1150,9 @@ class Container:
             remote=remote,
             tree=tree,
             library_ids=CatalogLibraryIds(get_library=read.catalog.get_library),
+            creation_library_ids=CatalogCreationIds(
+                is_library_id_taken=read.catalog.is_library_id_taken
+            ),
             libraries=CatalogNewLibraries(
                 create_library=read.catalog.create_library,
                 discard_library=read.catalog.discard_library,
@@ -1109,6 +1185,7 @@ class Container:
             tag_locks=tag_locks,
             settings_locks=_library_locks(engine, "settings"),
             settings=CatalogLibrarySettings(set_library_settings=read.catalog.set_library_settings),
+            texts=CatalogLibraryTexts(update_library=read.catalog.update_library),
             runner=DbosJobQueue(),
             auto_syncs=SqliteAutoSyncStore(engine=engine),
             schedule_switch=DbosScheduleSwitch(SCHEDULE),
@@ -1125,8 +1202,8 @@ class Container:
             ),
             webhook_deliveries=SqliteWebhookDeliveries(engine=engine),
             wrap_handler=traced_job(settings),  # the `push` handler, built inside the module
+            access=_access_policy(identity.module),
         )
-        identity = _identity(settings, engine, sign_in or SignInStandIns())
         return cls(
             settings=settings,
             engine=engine,
@@ -1139,6 +1216,10 @@ class Container:
             identity=identity.module,
             ingestion=ingestion,
             retrieval=read.retrieval,
+            list_libraries=ListLibrariesByAi(
+                list_libraries=read.catalog.list_libraries,
+                settings=SqliteLibraryModes(engine=engine),
+            ),
             save_provider=SaveProviderThenEmbed(
                 save_provider=read.retrieval.save_provider,
                 queue_embedding=ingestion.queue_embedding,

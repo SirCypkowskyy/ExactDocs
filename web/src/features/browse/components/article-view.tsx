@@ -3,6 +3,11 @@ import { type HistoryState, Link, Navigate, useRouterState } from "@tanstack/rea
 import { ArrowUpRight, ChevronRight } from "lucide-react";
 import { Component, Fragment, lazy, type ReactNode, Suspense, useRef, useState } from "react";
 import { HttpError } from "@/shared/lib/http";
+import { cn } from "@/shared/lib/utils";
+import { Button, buttonVariants } from "@/shared/ui/button";
+import { trigger } from "@/shared/ui/recipes";
+import { VersionStation } from "@/shared/ui/route";
+import { Skeleton as Bar } from "@/shared/ui/skeleton";
 import {
   accessQueryOptions,
   articleQueryOptions,
@@ -19,6 +24,7 @@ import {
 } from "../model/browse";
 import { CopyButton } from "../render/copy-button";
 import { assetUrl, blobUrl, rawUrl } from "../render/urls";
+import { ContentsDisclosure, ContentsRail } from "./contents";
 import { TagEditor } from "./tag-editor";
 
 // The renderer (Markdown parser and all) is its own chunk: the tree and the overview do not wait for it.
@@ -39,12 +45,10 @@ interface ArticleViewProps {
 
 /** A proof link: one underline under the whole label, so "Commit" and the SHA read as one. */
 const external =
-  "group inline-flex min-h-11 items-center gap-1 rounded-md px-1 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring lg:min-h-8";
+  "group inline-flex min-h-11 items-center gap-1 rounded-md px-1 text-body font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring lg:min-h-7";
 const underline =
-  "underline decoration-mark/40 underline-offset-4 group-hover:decoration-mark group-focus-visible:decoration-mark";
-const action =
-  "inline-flex h-11 items-center rounded-md px-5 text-sm font-medium outline-none transition-[background-color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:scale-[0.97]";
-const secondary = `${action} bg-secondary text-secondary-foreground [@media(hover:hover)]:hover:bg-accent`;
+  "underline decoration-route/40 underline-offset-4 transition-[text-decoration-color] duration-(--dur-fast) group-hover:decoration-route group-focus-visible:decoration-route";
+const secondary = buttonVariants({ variant: "outline" });
 
 /** A repository path, allowed to break after each slash instead of in the middle of a word. */
 function PathText({ path }: { path: string }) {
@@ -94,9 +98,9 @@ export function CommitLinks({
           <span className="sr-only">(opens a new tab)</span>
         </a>
       ) : (
-        <p className="px-1 text-sm text-muted-foreground" title={version.commit_sha}>
-          Commit <code className="font-mono">{shortSha(version.commit_sha)}</code>
-          {" · no link, this host is not recognised"}
+        // A host ExactDocs has no link pattern for: the commit, without a link.
+        <p className="px-1 text-body text-muted-foreground" title={version.commit_sha}>
+          Commit <code className="font-mono text-foreground">{shortSha(version.commit_sha)}</code>
         </p>
       )}
     </div>
@@ -106,12 +110,16 @@ export function CommitLinks({
 // Same blocks as the loaded article, so the content lands where the placeholder was.
 function ArticleSkeleton() {
   return (
-    <div aria-hidden="true" className="max-w-3xl space-y-4 motion-safe:animate-pulse">
-      <span className="block h-4 w-2/3 max-w-sm rounded bg-muted-foreground/[0.14]" />
-      <span className="block h-8 w-1/2 rounded bg-muted-foreground/[0.14]" />
-      <span className="block h-5 w-40 rounded bg-muted-foreground/[0.14]" />
-      <span className="block h-8 w-72 max-w-full rounded bg-muted-foreground/[0.14]" />
-      <span className="mt-5 block h-64 rounded-lg bg-muted-foreground/[0.14]" />
+    <div aria-hidden="true" className="max-w-[72ch] space-y-3">
+      <Bar className="h-5 w-72 max-w-full" />
+      <Bar className="h-9 w-1/2" />
+      <Bar className="h-6 w-80 max-w-full" />
+      <div className="space-y-2.5 pt-6">
+        {["w-11/12", "w-full", "w-4/5", "w-full", "w-2/3"].map((w) => (
+          <Bar key={w} className={`h-4 ${w}`} />
+        ))}
+      </div>
+      <Bar className="mt-4 h-40 rounded-lg" />
     </div>
   );
 }
@@ -128,23 +136,22 @@ function NotInVersion({
   const newest = library.default_version;
   // A link to a file the import left out: the host has it at this commit.
   const onHost = blobUrl(library.host, library.source_url, version.commit_sha, path);
-  const link =
-    "flex h-11 items-center justify-between gap-2 rounded-md bg-secondary px-3 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(hover:hover)]:hover:bg-accent";
+  const link = cn(trigger, "font-mono");
   return (
-    <div className="fade-in max-w-3xl">
-      <h2 className="font-serif text-2xl font-semibold tracking-tight">
+    <div className="fade-in max-w-[72ch]">
+      <h2 className="text-title font-semibold">
         Not in <span className="font-mono text-[0.9em]">{version.ref}</span>
       </h2>
-      <p className="mt-2 text-pretty text-muted-foreground">
+      <p className="mt-2 text-body text-pretty text-muted-foreground">
         {version.ref} has no{" "}
-        <code className="font-mono text-sm text-foreground [overflow-wrap:anywhere]">
+        <code className="font-mono text-body text-foreground [overflow-wrap:anywhere]">
           <PathText path={path} />
         </code>
         . It may have been added later, moved or removed.
       </p>
       {suggestions.length > 0 && (
         <div className="mt-6">
-          <h3 className="text-sm font-medium">Close matches in {version.ref}</h3>
+          <h3 className="text-body font-medium">Close matches in {version.ref}</h3>
           <ul className="mt-2 space-y-1.5">
             {suggestions.map((s) => (
               <li key={s}>
@@ -202,9 +209,8 @@ function NotInVersion({
 }
 
 const toggle =
-  "inline-flex h-11 min-w-20 items-center justify-center rounded-[5px] px-3 text-sm font-medium outline-none transition-[background-color,color] duration-150 focus-visible:ring-2 focus-visible:ring-ring lg:h-8";
-const quiet =
-  "inline-flex h-11 cursor-pointer items-center rounded-md bg-secondary px-4 text-sm font-medium outline-none transition-[background-color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] lg:h-9 [@media(hover:hover)]:hover:bg-accent";
+  "inline-flex h-11 min-w-20 items-center justify-center rounded-[5px] px-3 text-body font-medium outline-none transition-[background-color,color] duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring lg:h-7";
+const quiet = buttonVariants({ variant: "outline" });
 
 type View = "rendered" | "source";
 
@@ -221,7 +227,7 @@ function ViewToggle({ view, onChange }: { view: View; onChange: (view: View) => 
           onClick={() => onChange(v)}
           className={`${toggle} cursor-pointer ${
             view === v
-              ? "bg-card text-foreground ring-1 ring-border"
+              ? "bg-background text-foreground shadow-xs ring-1 ring-border"
               : "text-muted-foreground [@media(hover:hover)]:hover:text-foreground"
           }`}
         >
@@ -235,9 +241,9 @@ function ViewToggle({ view, onChange }: { view: View; onChange: (view: View) => 
 /** Placeholder lines for the renderer's chunk; the article shell is already on screen. */
 function TextSkeleton() {
   return (
-    <div aria-hidden="true" className="space-y-3 motion-safe:animate-pulse">
+    <div aria-hidden="true" className="space-y-3">
       {["w-11/12", "w-full", "w-4/5", "w-2/3"].map((w) => (
-        <span key={w} className={`block h-4 rounded bg-muted-foreground/[0.14] ${w}`} />
+        <Bar key={w} className={`h-4 ${w}`} />
       ))}
     </div>
   );
@@ -295,9 +301,9 @@ function RenderedText({
       )}
       <RenderBoundary
         fallback={(retry) => (
-          <div role="alert" className="rounded-lg bg-secondary/60 p-4">
-            <p className="font-medium">Couldn't load the article renderer.</p>
-            <p className="mt-1 text-sm text-muted-foreground">
+          <div role="alert" className="rounded-lg bg-raised p-4">
+            <p className="text-body font-medium">Couldn't load the article renderer.</p>
+            <p className="mt-1 text-body text-muted-foreground">
               Your connection may have dropped, or ExactDocs was updated. The file itself is fine.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -367,8 +373,8 @@ function SourceView({
           </button>
         </p>
       )}
-      <div className="rounded-lg bg-secondary/60">
-        <div className="flex justify-end px-1.5 pt-0.5 text-[13px] text-muted-foreground">
+      <div className="rounded-lg bg-code">
+        <div className="flex justify-end px-1.5 pt-0.5 text-small text-muted-foreground">
           <CopyButton text={text} target={pre} what="file" />
         </div>
         <pre
@@ -404,44 +410,79 @@ function Body({
 }) {
   const large = article.content.length > LARGE;
   const [view, setView] = useState<View>(large ? "source" : "rendered");
+  const text = useRef<HTMLElement>(null);
+  const contents = {
+    article: text,
+    owner,
+    repo,
+    version: version.ref,
+    path: article.path,
+    tags,
+  };
   return (
-    <article className="min-w-0 max-w-3xl">
-      {movedFrom && (
-        <p className="mb-3 text-sm text-pretty text-muted-foreground">
-          Moved from{" "}
-          <code className="font-mono text-foreground [overflow-wrap:anywhere]">
-            <PathText path={movedFrom} />
-          </code>{" "}
-          in {version.ref}
-        </p>
+    <div className="min-w-0 xl:grid xl:grid-cols-[minmax(0,72ch)_13rem] xl:gap-x-12">
+      <article className="min-w-0 max-w-[72ch]">
+        {movedFrom && (
+          <p className="mb-3 text-body text-pretty text-muted-foreground">
+            Moved from{" "}
+            <code className="font-mono text-foreground [overflow-wrap:anywhere]">
+              <PathText path={movedFrom} />
+            </code>{" "}
+            in {version.ref}
+          </p>
+        )}
+        <header>
+          {/* The route: version, path, commit. */}
+          <p className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-body text-muted-foreground">
+            <VersionStation
+              version={version.ref}
+              isDefault={version.is_default}
+              className="text-foreground"
+            />
+            <span
+              aria-hidden="true"
+              className="route-draw h-0.5 w-3 flex-none rounded-full bg-route/50"
+            />
+            <span className="min-w-0 font-mono text-[13px] [overflow-wrap:anywhere]">
+              <PathText path={article.path} />
+            </span>
+          </p>
+          <h2 className="mt-2 text-[1.875rem] leading-[1.2] font-semibold tracking-[-0.015em] text-balance [overflow-wrap:anywhere]">
+            {article.title}
+          </h2>
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <CommitLinks library={library} version={version} fileUrl={article.source_url} />
+            <div className="ml-auto">
+              <ViewToggle view={view} onChange={setView} />
+            </div>
+          </div>
+          <div className="mt-3">
+            <TagEditor owner={owner} repo={repo} article={article} />
+          </div>
+          {view === "rendered" && <ContentsDisclosure {...contents} />}
+        </header>
+        {view === "rendered" ? (
+          <section ref={text} aria-label="Article text" className="mt-8 border-t border-rule pt-6">
+            <RenderedText
+              article={article}
+              owner={owner}
+              repo={repo}
+              library={library}
+              version={version}
+              tags={tags}
+              onSource={() => setView("source")}
+            />
+          </section>
+        ) : (
+          <SourceView text={article.content} large={large} onRender={() => setView("rendered")} />
+        )}
+      </article>
+      {view === "rendered" && (
+        <aside aria-label="Contents" className="hidden xl:block">
+          <ContentsRail {...contents} />
+        </aside>
       )}
-      <p className="font-mono text-[13px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
-        <PathText path={article.path} />
-      </p>
-      <h2 className="mt-1 font-serif text-2xl font-semibold tracking-tight text-balance [overflow-wrap:anywhere] sm:text-3xl">
-        {article.title}
-      </h2>
-      <TagEditor owner={owner} repo={repo} article={article} />
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <CommitLinks library={library} version={version} fileUrl={article.source_url} />
-        <ViewToggle view={view} onChange={setView} />
-      </div>
-      {view === "rendered" ? (
-        <section aria-label="Article text" className="mt-5">
-          <RenderedText
-            article={article}
-            owner={owner}
-            repo={repo}
-            library={library}
-            version={version}
-            tags={tags}
-            onSource={() => setView("source")}
-          />
-        </section>
-      ) : (
-        <SourceView text={article.content} large={large} onRender={() => setView("rendered")} />
-      )}
-    </article>
+    </div>
   );
 }
 
@@ -489,22 +530,16 @@ export function ArticleView(props: ArticleViewProps) {
       return <NotInVersion {...props} suggestions={error.closeMatches} />;
     }
     return (
-      <div role="alert" className="max-w-3xl">
-        <h2 className="font-serif text-2xl font-semibold tracking-tight">
-          Couldn't load this article
-        </h2>
-        <p className="mt-2 text-muted-foreground">
+      <div role="alert" className="max-w-[72ch]">
+        <h2 className="text-title font-semibold">Couldn't load this article</h2>
+        <p className="mt-2 text-body text-muted-foreground">
           {error instanceof HttpError && error.code
             ? error.message
             : "ExactDocs didn't answer. Check that it is running, then try again."}
         </p>
-        <button
-          type="button"
-          onClick={() => query.refetch()}
-          className={`${action} mt-4 cursor-pointer bg-primary text-primary-foreground hover:bg-primary/90`}
-        >
+        <Button className="mt-4" onClick={() => query.refetch()}>
           Try again
-        </button>
+        </Button>
       </div>
     );
   }

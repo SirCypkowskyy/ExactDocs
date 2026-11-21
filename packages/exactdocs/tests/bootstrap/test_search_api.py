@@ -226,3 +226,27 @@ async def test_rest_search_all_needs_a_cookie_or_a_bearer_and_checks_its_input(
     assert (await signed_in.get(url, params={"q": "x", "limit": 51})).status_code == 422
     assert (await signed_in.get(url, params={"q": "x", "library": "react"})).status_code == 422
     assert (await signed_in.get(url, params={"q": "x", "library": "/no/body"})).status_code == 404
+
+
+async def test_rest_search_all_takes_a_mode_and_several_libraries(
+    signed_in: httpx.AsyncClient,
+) -> None:
+    url = "/api/v1/search"
+    many = [f"/a/l{i}" for i in range(51)]
+
+    bm25 = await signed_in.get(url, params={"q": "x", "mode": "bm25"})
+    vector = await signed_in.get(url, params={"q": "x", "mode": "vector"})
+    several = await signed_in.get(url, params={"q": "x", "library": ["/no/body", "/acme/pay"]})
+    too_many = await signed_in.get(url, params={"q": "x", "library": many})
+
+    assert bm25.status_code == 200
+    assert (bm25.json()["retrieval_mode"], bm25.json()["fallback_reason"]) == ("bm25", None)
+    assert bm25.json()["libraries_without_vectors"] == []
+    # No embedding model here: the vector modes are not available, and the error says why.
+    assert vector.status_code == 422
+    assert vector.json()["error"] == "mode_unavailable"
+    assert "embedding" in vector.json()["detail"]
+    assert several.status_code == 404
+    assert too_many.status_code == 422
+    joined = await signed_in.get(url, params={"q": "x", "library": "/no/body,/acme/pay"})
+    assert joined.status_code == 404, "a comma separates libraries, as the web client sends them"

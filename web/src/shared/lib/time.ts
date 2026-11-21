@@ -1,15 +1,18 @@
-const relative = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-const sameYear = new Intl.DateTimeFormat(undefined, {
+/** The UI is written in English: dates and times are too, whatever the browser's locale. */
+export const UI_LOCALE = "en";
+
+const relative = new Intl.RelativeTimeFormat(UI_LOCALE, { numeric: "auto" });
+const sameYear = new Intl.DateTimeFormat(UI_LOCALE, {
   month: "short",
   day: "numeric",
   hour: "numeric",
   minute: "2-digit",
 });
-const otherYear = new Intl.DateTimeFormat(undefined, {
+const otherYear = new Intl.DateTimeFormat(UI_LOCALE, {
   dateStyle: "medium",
   timeStyle: "short",
 });
-const withZone = new Intl.DateTimeFormat(undefined, {
+const withZone = new Intl.DateTimeFormat(UI_LOCALE, {
   year: "numeric",
   month: "short",
   day: "numeric",

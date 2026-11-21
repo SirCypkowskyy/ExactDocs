@@ -13,7 +13,7 @@ interface SearchTagsProps {
 }
 
 const mode =
-  "h-11 cursor-pointer px-3 text-xs font-medium outline-none transition-colors duration-150 focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring lg:h-7";
+  "h-11 cursor-pointer px-3 text-small font-medium outline-none transition-colors duration-(--dur-fast) focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring lg:h-7";
 
 /** The tag filter of a search: the shared chips plus "Match any / Match all" once two tags are chosen. */
 export function SearchTags({ ctx, onTags, onMatch, tagCount }: SearchTagsProps) {
@@ -39,7 +39,7 @@ export function SearchTags({ ctx, onTags, onMatch, tagCount }: SearchTagsProps) 
                 className={cn(
                   mode,
                   ctx.match === m
-                    ? "bg-mark text-primary-foreground"
+                    ? "bg-route text-primary-foreground"
                     : "bg-secondary text-secondary-foreground [@media(hover:hover)]:hover:bg-accent",
                 )}
               >

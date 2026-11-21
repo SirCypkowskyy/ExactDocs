@@ -1,11 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AiRole } from "@/shared/lib/ai-queries";
 import { HttpError } from "@/shared/lib/http";
 import { AiPage } from "./index";
 import {
   type Budget,
+  budgetUsed,
   budgetWords,
   checkWords,
   explainAiError,
@@ -49,11 +51,35 @@ const PROVIDERS = [
     origin: "configuration",
   }),
 ];
-const ROLES = [
-  { role: "embedding", model: "corp:e5", source: "instance", profile_exists: true },
-  { role: "reranker", model: null, source: null, profile_exists: false },
-  { role: "llm", model: "corp:gpt-4.1-mini", source: "instance", profile_exists: true },
-  { role: "judge", model: "corp:gpt-4.1-mini", source: "llm", profile_exists: true },
+const role = (r: Partial<AiRole> & Pick<AiRole, "role">): AiRole => ({
+  model: null,
+  source: null,
+  profile_exists: false,
+  thinking: null,
+  own_thinking: null,
+  thinking_configured: false,
+  thinking_unsupported: null,
+  ...r,
+});
+const ROLES: readonly AiRole[] = [
+  role({ role: "embedding", model: "corp:e5", source: "instance", profile_exists: true }),
+  role({ role: "reranker" }),
+  role({
+    role: "llm",
+    model: "corp:gpt-4.1-mini",
+    source: "instance",
+    profile_exists: true,
+    thinking: "low",
+    own_thinking: "low",
+    thinking_configured: true,
+  }),
+  role({
+    role: "judge",
+    model: "corp:gpt-4.1-mini",
+    source: "llm",
+    profile_exists: true,
+    thinking: "low",
+  }),
 ];
 const EMBEDDING = {
   model: "corp:e5",
@@ -192,17 +218,25 @@ const CHECKS = {
 };
 
 function serve(overrides: Record<string, { status: number; body: unknown }> = {}) {
-  const calls: { method: string; url: string }[] = [];
+  const calls: { method: string; url: string; body?: unknown }[] = [];
+  let roles = ROLES;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";
-      calls.push({ method, url });
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ method, url, body });
       const path = url.replace(/^.*\/v1/, "");
       const over = overrides[path];
       if (over) return Response.json(over.body, { status: over.status });
       if (path === "/ai/providers") return Response.json({ providers: PROVIDERS });
-      if (path === "/ai/roles") return Response.json({ roles: ROLES });
+      if (path === "/ai/roles") return Response.json({ roles });
+      if (path === "/ai/roles/judge" && method === "PUT") {
+        roles = roles.map((r) =>
+          r.role === "judge" ? { ...r, own_thinking: body.thinking, thinking: body.thinking } : r,
+        );
+        return Response.json(roles.find((r) => r.role === "judge"));
+      }
       if (path === "/ai/embedding") return Response.json(EMBEDDING);
       if (path === "/ai/usage") return Response.json(USAGE);
       if (path === "/ai/providers/corp/check" && method === "POST") return Response.json(CHECKS);
@@ -254,16 +288,67 @@ describe("instance AI page", () => {
     expect(within(result).getByText(/401 Unauthorized/)).toBeVisible();
   });
 
+  it("sets the judge's thinking level, and shows a configured one as read-only", async () => {
+    const calls = serve();
+    renderPage();
+    const providers = await region("Providers and roles");
+
+    const llm = await providers.findByLabelText("LLM thinking");
+    expect(llm).toBeDisabled();
+    expect(llm).toHaveValue("low");
+    expect(
+      providers.getByText("Set in the configuration (EXACTDOCS_AI__LLM__THINKING)."),
+    ).toBeInTheDocument();
+    const judge = providers.getByLabelText("Judge thinking");
+    expect(judge).toBeEnabled();
+    expect(within(judge).getAllByRole("option")[0]).toHaveTextContent("The LLM's level (Low)");
+    expect(providers.getByText(/Thinking tokens are billed as output/)).toBeInTheDocument();
+
+    await userEvent.selectOptions(judge, "minimal");
+
+    await waitFor(() =>
+      expect(calls.find((c) => c.method === "PUT")).toMatchObject({
+        url: expect.stringMatching(/\/v1\/ai\/roles\/judge$/),
+        body: { thinking: "minimal" },
+      }),
+    );
+    await waitFor(() => expect(providers.getByLabelText("Judge thinking")).toHaveValue("minimal"));
+  });
+
+  it("says when a role's model cannot take its level", async () => {
+    serve({
+      "/ai/roles": {
+        status: 200,
+        body: {
+          roles: ROLES.map((r) =>
+            r.role === "llm" ? { ...r, thinking_unsupported: "openai serves it without one" } : r,
+          ),
+        },
+      },
+    });
+    renderPage();
+    const providers = await region("Providers and roles");
+
+    expect(
+      await providers.findByText(/Its model takes no thinking level, so its calls leave it out/),
+    ).toBeInTheDocument();
+  });
+
   it("shows embedding progress per space", async () => {
     serve();
     renderPage();
     const embedding = await region("Embedding");
 
     expect(await embedding.findByText("Space 2: e5")).toBeInTheDocument();
-    expect(embedding.getByLabelText("Space 2: e5 progress")).toHaveAttribute("value", "25");
+    expect(embedding.getByRole("progressbar", { name: "Space 2: e5 progress" })).toHaveAttribute(
+      "aria-valuenow",
+      "25",
+    );
     expect(embedding.getByText(/25%: 50 of 200 chunks, 1 of 4 versions/)).toBeInTheDocument();
-    expect(embedding.getByText(/Building · configured model/)).toBeInTheDocument();
-    expect(embedding.getByText(/Searched · retired once the new one is done/)).toBeInTheDocument();
+    expect(embedding.getByText("Building")).toBeInTheDocument();
+    expect(embedding.getByText(/^Configured model ·/)).toBeInTheDocument();
+    expect(embedding.getByText("Searched")).toBeInTheDocument();
+    expect(embedding.getByText(/^Retired once the new one is done ·/)).toBeInTheDocument();
   });
 
   it("shows spend and the budget left per scope, and which budget is reached", async () => {
@@ -333,6 +418,29 @@ describe("ai model", () => {
     expect(percent(200, 200)).toBe(100);
     expect(percent(0, 0)).toBe(100);
     expect(percent(1, 3)).toBe(33);
+  });
+
+  it("shows how much of a budget is used, and retries a part that failed", async () => {
+    serve({ "/ai/usage": { status: 500, body: {} } });
+    renderPage();
+    const usage = await region("Usage and budgets");
+    expect(await usage.findByRole("alert")).toHaveTextContent(/went wrong/);
+    expect(usage.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
+
+  it("measures a budget by its tighter ceiling", () => {
+    const day: Budget = {
+      window: "day",
+      window_start: "2026-11-11",
+      resets_at: "2026-11-12T00:00:00Z",
+      usd_limit: 10,
+      usd_left: 2,
+      tokens_limit: 1000,
+      tokens_left: 900,
+      reached: false,
+    };
+    expect(budgetUsed(day)).toBe(80);
+    expect(budgetUsed({ ...day, reached: true })).toBe(100);
   });
 
   it("puts budgets and checks into words", () => {

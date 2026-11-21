@@ -137,10 +137,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   last path segment, declared `{ref:path}`; a route that needs a ref and an article path takes
   `?ref=` and `?path=`, because servers decode `%2F` before routing.
 
-- **API tokens**: `POST /api/v1/tokens` (`{"name", "expires_at"?}`, timezone-aware, in the future)
+- **API tokens**: `POST /api/v1/tokens` (`{"name", "expires_at"?, "library_ids"?}`, timezone-aware, in the future)
   answers 201 with the token's fields and `token`, the secret `exd_...`, which no other call ever
   returns (`Cache-Control: no-store`). `GET /tokens` lists the caller's tokens (`id`, `name`,
-  `prefix`, `created_at`, `expires_at`, `last_used_at`; newest first) and `DELETE /tokens/{id}`
+  `prefix`, `created_at`, `expires_at`, `last_used_at`, `library_ids`; newest first) and `DELETE /tokens/{id}`
   revokes one at once (204; 404 `unknown_token` for another account's or a missing id). The
   secret is 256 random bits and only its SHA-256 is stored. An unknown, expired or revoked token is
   the same 401. `last_used_at` is written at most hourly, best effort (a failed write is logged
@@ -169,7 +169,26 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   An unknown id is 404 `unknown_account`. Every `/users` route needs the **session cookie** of an
   operator: an API token is 401 (a stolen token cannot create accounts), and a signed-in account
   that is not an `admin` gets 403 `forbidden`. Library roles (who may read or change a library)
-  are separate and not enforced yet (E12-05): every signed-in account may use every library.
+  are separate: see the *Library roles* bullet below.
+- **Library roles** (ACL-02): `viewer < contributor < admin < creator` on each library, granted
+  to users and to groups; an account's role is the highest it holds, and an operator (role
+  `admin`) is `creator` of every library. Every library route asks for one: `viewer` reads and
+  searches (`GET`s, search, outline, jobs, the schedule), `contributor` also imports (`POST
+  .../versions`, `.../versions/reimport`, `.../sync`, `PUT .../tags`), `admin` also configures
+  (`PATCH` and `PUT .../settings`, `.../default-version`, `.../retrieval`, `.../auto-sync`) and
+  removes versions, `creator` also deletes the library. Below it the answer is 403 `forbidden`,
+  the same over MCP (a tool error `forbidden: ...`). `GET /libraries`, the searches across
+  libraries and `resolve-library-id` list only libraries the caller holds a role on. The one
+  who adds a library is its creator.
+  `GET /libraries/{owner}/{repo}/grants` lists who holds a role (`{"grants": [{"kind", "subject",
+  "role"}]}`: users by username, then groups); `PUT` (`{"kind": "user"|"group", "subject",
+  "role": "viewer"|"contributor"|"admin"}`) gives or replaces a role and answers the grants;
+  `DELETE /libraries/{owner}/{repo}/grants/{user|group}/{subject}` takes one away. All three
+  need `admin` on the library, and `creator` to give, change or remove an `admin`; the
+  creator's own role is never changed there (422 `invalid_grant`). Group names are matched
+  exactly (letter case included) against the groups the identity provider reports. A username
+  nobody has is 404 `unknown_account`, a missing grant 404 `unknown_grant`. Libraries that existed
+  before roles have no creator: operators manage them and share them.
 - **Editing a library**: `PATCH /libraries/{owner}/{repo}` (`{"title"?, "description"?}`). An edited
   field is kept across re-imports instead of following the default version's `context7.json` or
   root README (LIB-07).
@@ -418,6 +437,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   (404 `unknown_provider` for a profile that does not exist, 422 `provider_unsupported` for one this
   installation cannot call (an extra or SDK is missing), 422 `invalid_model` when not written
   `<profile>:<model>`); there is no `embedding` override (one vector space per instance).
+  `llm_thinking` and `judge_thinking` (`minimal`, `low`, `medium`, `high`, `xhigh`; `null`: the
+  instance's) set how much the role's model thinks before it answers, its own or the instance's
+  ([Thinking level](search.md#thinking-level)); 422 `thinking_unsupported` names the role and the
+  model when the model is known to take no thinking setting.
   `rerank_top_n` (1 to 200) is how many of its best candidates the reranker reorders (`null`: the
   instance's `EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default).
   `rerank_with` chooses what reranks its searches: `cross_encoder` (the `reranker` role) or
@@ -463,6 +486,44 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   search: one that would run an LLM step answers in the best mode without one, with
   `fallback_reason` `llm_budget_reached` or `llm_rate_limited`, and a paid rerank over budget is
   skipped (`reranked: false`, `fallback_reason: llm_budget_reached`).
+- **Search across libraries** (#428): `GET /search?q=` ranks the default versions of every library
+  the caller may read (and the API token's library scope allows) in one ranking, or of the chosen
+  ones: `library` repeated or comma-separated (at most 50; an unknown or unreadable one is 404 `not_found`). `mode` is
+  `bm25` (the default), `vector` or `hybrid`; the vector modes need an embedding model (422
+  `mode_unavailable` names the `embedding` role otherwise) and `hybrid_hyde` or `agentic` are
+  refused. Each result names its `library` and `version`, and carries `bm25_rank` and
+  `vector_rank` (1-based; `null` where that ranking did not hold it). `vector` embeds the query
+  once and ranks the chunks of every searched version the configured model has embedded, nearest
+  first (`score` is the cosine similarity); `hybrid` fuses that ranking with the BM25 one (RRF,
+  `k` = 60, 50 of each). A library with AI off, or whose default version is not embedded with the
+  current model yet, is left out of the vector ranking and named in `libraries_without_vectors`.
+  When no searched version can be ranked by vectors, or the model fails, BM25 answers with
+  `retrieval_mode: bm25` and `fallback_reason` (`embedding_in_progress`, `embedding_unavailable`,
+  `vector_store_unavailable`, `llm_budget_reached`). The query embedding counts to the embedding
+  budget, the instance and the caller, never to a library. `libraries` counts BM25 matches per
+  library over every readable library whatever the mode. Nothing is reranked (`reranked: false`).
+- **Vector search** (#428): `mode=vector` on one version ranks its chunks by their vectors alone,
+  with no BM25 half, and falls back exactly as `hybrid` does. It is never a default.
+- **Agentic answer** (#428): `POST /answer` with `{"question": ..., "libraries": [...], "tags": [...],
+  "tags_match": "any", "max_sources": 8}` has an agent on the `llm` role read the default version
+  of every chosen library (none chosen: every library you may read, the first 20; `libraries_omitted`
+  counts the rest) and write an answer. It returns `answer` (Markdown, model output, at most 8000
+  characters) and `sources`: each with `library`, `version`, `commit_sha`, `chunk_id`,
+  `article_path`, `heading_path`, `anchor`, `source_url`, `quote` (a passage of the chunk, kept only when
+  the chunk holds it verbatim) and `reason` (the model's sentence); and `usage` (`requests`, tokens,
+  `tool_calls` out of `max_tool_calls`, `cost_usd`). Only libraries you may read (your role and your API
+  token's library scope) with AI on are read: a chosen one you may not read is 404
+  `version_not_indexed`, one with AI off is named in `libraries_without_ai` and nothing of it is sent
+  (when none remains: `fallback_reason: mode_unavailable`). A cited chunk outside the chosen libraries,
+  your permissions or the tags is dropped. The run is bounded by `[ai.agentic]` (tool calls, model
+  requests, tokens, time, loops) and counted to the instance, the caller and every library read (the
+  budgets) and once to the LLM search rate limit; a run that stops answers 200 with `answer: ""`, the
+  chunks it had read as `sources`, and `fallback_reason` `agent_limit_reached`, `agent_loop_detected`,
+  `agent_failed`, `llm_budget_reached` or `llm_rate_limited`. 422 `mode_unavailable` without an `llm`
+  role. `GET /answer` says whether it can run (`{"available", "reason", "max_tool_calls"}`).
+  `POST /answer/stream` is the same call as server-sent events: `progress` (`{"tool_calls",
+  "max_tool_calls"}`) after each tool call, then one `answer` (the body above) or `error` (`{"error",
+  "detail"}`); closing the stream cancels the run. The search playground uses it.
 - **Agentic search** (RET-04): `mode=agentic` (never a default) lets an agent on the `llm` role
   browse the version (outlines, articles, chunks and BM25, all of that version only) and pick the
   chunks that answer the question. Its results are the picks the version holds and the call's
@@ -502,8 +563,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 
 ### AI providers
 
-Admins only (every account is one until library roles exist). See [AI retrieval
-decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
+Every route under `/ai` is for a signed-in operator (role `admin`, like `/users`); any other
+account, whatever library roles it holds, gets 403 `forbidden`, and an API token 401. They show
+and change instance-wide settings (provider URLs and keys, spend and budgets of every library).
+See [AI retrieval decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
 
 - `GET /ai/providers`: every profile, the environment's and the TOML file's first
   (`origin: configuration`, `read_only: true`), then those stored here (`origin: api`). Never a
@@ -536,7 +599,16 @@ decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
   named.
 - `GET /ai/roles`: the instance roles (`embedding`, `reranker`, `llm`, `judge`), each with its
   `model` (`<profile>:<model>`), its `source` (`instance`, or `llm` for a judge that defaults to
-  the LLM) and whether its profile exists.
+  the LLM) and whether its profile exists. The `llm` and `judge` roles also have their `thinking`
+  level (the one their calls send; a judge that is the LLM thinks as the LLM), `own_thinking` (set
+  for the role itself), `thinking_configured` (set in the environment or the TOML file, so
+  read-only here) and `thinking_unsupported` (why its model cannot take the level, which its calls
+  then leave out). See [Thinking level](search.md#thinking-level).
+- `PUT /ai/roles/{role}` with `{"thinking": "low"}` (`null` clears it): the thinking level of the
+  `llm` or `judge` role, used from the next call; answers the role as `GET /ai/roles` shows it.
+  409 `role_configured` when `EXACTDOCS_AI__<ROLE>__THINKING` sets it, 422
+  `role_takes_no_thinking` for `embedding` and `reranker`, 422 `thinking_unsupported` (naming the
+  role and the model) when the role's model is known to take no thinking setting.
 - `GET /ai/embedding/estimate`: what embedding every version not embedded yet would send and cost,
   before it runs (`exactdocs ai estimate` over REST): `{"model", "space_id", "versions", "chunks",
   "characters", "estimated_tokens", "usd_per_million_tokens", "estimated_usd", "note"}`;
@@ -574,9 +646,28 @@ decisions](decisions/ai-retrieval.md) for the kinds and what each needs.
 ## Jobs, access and health
 
 - **Jobs**: `GET /jobs/{id}` is one job (kind `import`, `refresh`, `reprocess`, `rechunk`, `retag`,
-  `collect` or `embed`; state `queued`,
-  `running`, `succeeded` or `failed`; `done` / `total` files, or chunks for `embed`; `chunked` / `reused`; `parsed` / `taken`; problems).
-  An `embed` job embeds one version with the instance's embedding model; a failed one has
+  `collect`, `embed` or `push`; state `queued`,
+  `running`, `succeeded`, `failed` or `cancelled`; `done` / `total` files, or chunks for `embed`; `chunked` / `reused`; `parsed` / `taken`; problems;
+  `cancelled_by` / `cancelled_at`; `cancellable`, whether the caller may cancel it now).
+- **Cancelling a job**: `POST /jobs/{id}/cancel` needs the `contributor` role on the job's library
+  (operators always may; 403 `forbidden` otherwise). A `queued` job becomes `cancelled` at once and
+  never starts: its version stays as it was, or is never created for a first import. A `running`
+  job answers `running` with `cancelled_at` set and stops at its next step boundary, then ends
+  `cancelled` with what it finished kept: an import publishes nothing (its version is replaced in
+  one step or not at all), a `reprocess`, `rechunk` or `retag` keeps the versions it had finished,
+  an `embed` job sends no batch after the one in flight and keeps the vectors stored (their spend
+  is counted as usual). Asking again while it stops answers the same job; a job that ended answers
+  409 `job_finished` with its `job_state`. The cancellation is stored, so it survives a restart:
+  a job interrupted while it was stopping ends `cancelled` on the next start. The scheduled check
+  does not queue a cancelled auto import or branch sync again at the same commit (a new commit, or
+  a sync or import by hand, does), and the start and the nightly upkeep leave a version whose
+  embedding was cancelled alone; an import of the version, or a change of the embedding model,
+  queues it again, and it resumes from the chunks still missing vectors. CLI:
+  `exactdocs jobs cancel <id>`.
+  An `embed` job embeds one version with the instance's embedding model. Its `total` counts the
+  version's chunks without a vector, each once (identical files share their chunks, so they are
+  embedded once); chunks another job embedded while it ran (files shared with another library)
+  count in `done` and in `reused`, so a succeeded `embed` job ends with `done` = `total`. A failed one has
   `error_code` `embedding_failed` (its error names the model and the HTTP status, never a key) and
   is queued again at the next start, or `ai_budget_reached` when a budget its embedding counts to
   (embedding, instance or library) was used up before its next batch: it is queued again just
@@ -631,6 +722,7 @@ the list is capped.
 | `not_a_file` | true | not a regular file (for example a symlink) |
 | `unreadable` | true | the file could not be read |
 | `bad_file_name` | true | the file name is not valid UTF-8 |
+| `unparsable` | true | the file was read but could not be parsed or cut into chunks; the rest of the version is imported |
 | `front_matter` | false | the article was imported, its front matter is malformed or partly ignored |
 | `truncated` | false | marker with an empty `path`: more files were skipped than are listed |
 
@@ -660,7 +752,7 @@ New codes may be added: clients must treat an unknown `code` as a generic proble
   library is reused. Removing the last version keeps the library, without versions.
 - **Removal and imports**: an unknown library or version is 404. While an import of that version
   (of any version, for a library) is queued or running the call is refused with 409
-  `import_in_progress`; removal never cancels a job. The removed version's (or library's) job
+  `import_in_progress`; removal never cancels a job (cancel it first: `POST /jobs/{id}/cancel`). The removed version's (or library's) job
   history is deleted, so `/jobs/latest` shows no state for it. A re-sync of an existing version
   (E9-01) must be queued as a `refresh` job: it fails with 404 `not_found` at store time if the
   version was removed meanwhile, so a removal is never undone by a late sync. A first import is an
@@ -668,3 +760,17 @@ New codes may be added: clients must treat an unknown `code` as a generic proble
 - **Known limits**: chunk IDs of a removed version answer `not_found`; they are not kept as
   tombstones yet (E9-03 follow-up, the strict xfail in `test_chunk_store.py`). A library title
   derived from the default version's README (#33) is not re-derived by a removal.
+
+API token creation and password login accept optional `library_ids`: omit it or use `null`
+for all libraries the account can currently access, use `[]` for no libraries, or supply IDs
+such as `["/acme/docs"]` for a subset. IDs are case-insensitive. The selection never grants a
+role: removing the account's access immediately removes token access too. Hidden libraries and
+their articles, assets, chunks and jobs answer the same not-found errors as missing resources.
+The token dialog offers the same selection. CLI `login` and `token create` accept repeatable
+`--library /acme/docs`; omitting the option preserves the unrestricted default.
+
+Before rolling back to a version without library scopes, revoke every scoped API token,
+including tokens with an empty selection. The schema downgrade refuses to drop the scope
+column while any scoped token remains. Revoke them before starting an older server binary
+as well: older code can ignore the column and otherwise treat those credentials as unrestricted.
+Unrestricted legacy tokens are preserved by downgrade.

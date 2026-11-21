@@ -186,6 +186,17 @@ class OidcProvider:
             claims=self._external(claims), refresh_token=_text(body, "refresh_token")
         )
 
+    async def verify_id_token(self, id_token: str) -> ExternalClaims:
+        """Validate an ID token of this issuer (no nonce) and read its claims.
+
+        Args:
+            id_token: The ID token.
+
+        Returns:
+            The validated claims: subject, username, email and groups (from the token only).
+        """
+        return self._external(await self._validate(id_token, await self._discover(), nonce=None))
+
     async def refresh(self, refresh_token: str, *, subject: str) -> ExternalGrant:
         """Refresh the tokens and read the person's claims again.
 

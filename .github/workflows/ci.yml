@@ -185,7 +185,9 @@ jobs:
       - name: Wheel size budget, no model files, no ML dependencies
         run: |
           cid=$(docker create exactdocs:ci)
-          docker cp "$cid:/app/.venv/lib/python3.14/site-packages/exactdocs/_web" packages/exactdocs/src/exactdocs/_web
+          web_path=$(docker run --rm --entrypoint /app/.venv/bin/python exactdocs:ci \
+            -c 'import sysconfig; print(sysconfig.get_path("purelib") + "/exactdocs/_web")')
+          docker cp "$cid:$web_path" packages/exactdocs/src/exactdocs/_web
           docker rm "$cid" >/dev/null
           UV_DYNAMIC_VERSIONING_BYPASS=0.0.0.dev0 uv build --wheel --package exactdocs --out-dir "$RUNNER_TEMP/dist"
           python3 deploy/check_artifacts.py wheel "$RUNNER_TEMP"/dist/exactdocs-*.whl
@@ -514,10 +516,12 @@ jobs:
           UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache
         run: python3 deploy/upgrade_check.py --wheels "$RUNNER_TEMP/dist" --head "$ALEMBIC_HEAD"
       # The runners may have no browser: cache Playwright's (keyed by its version) and install the
-      # missing part only. System libraries need root; installed when sudo is passwordless.
+      # missing part only. Probe rendering before attempting bounded system library installation.
       - name: Playwright
         working-directory: e2e
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm install --frozen-lockfile
+          node --test probe-chromium.test.cjs
       - id: playwright
         run: echo "version=$(node -p "require('./e2e/node_modules/@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v6
@@ -526,10 +530,7 @@ jobs:
           key: playwright-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
       - name: Install Chromium
         working-directory: e2e
-        run: |
-          pnpm exec playwright install chromium
-          if sudo -n true 2>/dev/null; then pnpm exec playwright install-deps chromium
-          else echo "::warning::no passwordless sudo, system libraries for Chromium not installed"; fi
+        run: bash install-chromium.sh
       - name: Browser end-to-end test (server started with uvx from the wheel)
         env:
           UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache

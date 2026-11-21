@@ -1,10 +1,11 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/shared/ui/button";
 import { forgetLibrary, refreshLibraries, removeLibrary } from "../api/settings";
 import { explainRemove, isAlreadyGone, type SettingsLibrary } from "../model/settings";
-import { danger } from "./styles";
+import { SettingsSection } from "./settings-section";
 import { TypedConfirm } from "./typed-confirm";
 
 const LISTED = 5;
@@ -38,44 +39,40 @@ export function DangerSection({
       // Leave first: while this page is mounted, dropping the library's cache would refetch it.
       setOpen(false);
       await navigate({ to: "/" });
+      toast.success(`Removed ${library.id}`, {
+        description: "It is gone from browse, search and agents. The repository was not touched.",
+      });
       forgetLibrary(queryClient, owner, repo);
     },
     onError: () => refreshLibraries(queryClient),
   });
 
   return (
-    <section
-      aria-labelledby="danger-heading"
-      className="mt-16 rounded-lg border border-destructive/30 p-5"
+    <SettingsSection
+      id="danger"
+      title="Remove library"
+      description="Take the library out of ExactDocs. The repository itself is never touched."
     >
-      <h2
-        id="danger-heading"
-        className="font-serif text-xl font-semibold tracking-tight text-destructive [scroll-margin-top:1.5rem]"
-      >
-        Remove library
-      </h2>
-      <p className="mt-1.5 max-w-prose text-muted-foreground">
-        Take{" "}
-        <span className="font-mono text-[0.95em] text-foreground [overflow-wrap:anywhere]">
-          {library.id}
-        </span>{" "}
-        out of ExactDocs
-        {count > 0 && ` with its ${count === 1 ? "version" : `${count} versions`}`}. The repository
-        itself is never touched.
-      </p>
-      <div className="mt-5">
-        <Button
-          ref={button}
-          type="button"
-          onClick={() => {
-            remove.reset();
-            onStart();
-            setOpen(true);
-          }}
-          className={danger}
-        >
-          Remove library…
-        </Button>
+      <div className="rounded-lg border border-destructive/30 p-5">
+        <p className="text-body">
+          Remove <span className="font-mono text-small [overflow-wrap:anywhere]">{library.id}</span>
+          {count > 0 && ` and its ${count === 1 ? "version" : `${count} versions`}`} from browse,
+          search and agents. You can add it again later.
+        </p>
+        <div className="mt-4">
+          <Button
+            ref={button}
+            type="button"
+            variant="destructive"
+            onClick={() => {
+              remove.reset();
+              onStart();
+              setOpen(true);
+            }}
+          >
+            Remove library…
+          </Button>
+        </div>
       </div>
       <TypedConfirm
         open={open}
@@ -101,6 +98,6 @@ export function DangerSection({
           button.current?.focus();
         }}
       />
-    </section>
+    </SettingsSection>
   );
 }

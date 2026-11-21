@@ -3,7 +3,7 @@ import type * as React from "react";
 import { cn } from "@/shared/lib/utils";
 
 const overlay =
-  "fixed inset-0 z-50 bg-foreground/30 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:duration-200 data-[state=open]:ease-[cubic-bezier(0.23,1,0.32,1)] data-[state=closed]:duration-150";
+  "fixed inset-0 z-50 bg-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:duration-200 data-[state=open]:ease-[cubic-bezier(0.23,1,0.32,1)] data-[state=closed]:duration-150";
 
 // Centered (a modal is not anchored to a trigger); fast exit, slightly slower enter.
 const panel =
@@ -12,10 +12,7 @@ const panel =
 export const DialogRoot = Dialog.Root;
 export const DialogTrigger = Dialog.Trigger;
 export const DialogTitle = ({ className, ...p }: React.ComponentProps<typeof Dialog.Title>) => (
-  <Dialog.Title
-    className={cn("font-serif text-xl font-semibold tracking-tight", className)}
-    {...p}
-  />
+  <Dialog.Title className={cn("text-xl font-semibold tracking-tight", className)} {...p} />
 );
 export const DialogDescription = ({
   className,
@@ -40,10 +37,7 @@ export const ConfirmTitle = ({
   className,
   ...p
 }: React.ComponentProps<typeof AlertDialog.Title>) => (
-  <AlertDialog.Title
-    className={cn("font-serif text-xl font-semibold tracking-tight", className)}
-    {...p}
-  />
+  <AlertDialog.Title className={cn("text-xl font-semibold tracking-tight", className)} {...p} />
 );
 export const ConfirmDescription = ({
   className,

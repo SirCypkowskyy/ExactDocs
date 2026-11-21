@@ -94,8 +94,10 @@ async def test_the_secret_comes_back_from_post_only_and_is_stored_hashed(
         "created_at",
         "expires_at",
         "last_used_at",
+        "library_ids",
         "token",
     }
+    assert body["library_ids"] is None
     listed = (await admin.get("/api/v1/tokens")).json()
     assert [t["id"] for t in listed["tokens"]] == [body["id"]]
     assert body["token"] not in str(listed)

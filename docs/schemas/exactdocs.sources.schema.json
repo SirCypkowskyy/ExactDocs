@@ -144,7 +144,7 @@
             }
           ],
           "default": null,
-          "description": "Folders, files or globs to import; empty: every `.md`/`.mdx` file (the repository's\n`context7.json` does not fill in a managed empty list). Left out: not managed.",
+          "description": "Folders, files or globs to import; empty: every `.md`/`.mdx`/`.rst` file (the repository's\n`context7.json` does not fill in a managed empty list). Left out: not managed.",
           "title": "Include Paths"
         },
         "exclude_paths": {
@@ -208,6 +208,35 @@
           "default": null,
           "description": "The scheduled check, as a whole (what it leaves out takes its default); `false` turns it\noff. Left out: not managed.",
           "title": "Auto Sync"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The library's title, on one line; stored like an edit by hand, so a later import keeps it.\nLeft out: not managed, and the repository's README names the library.",
+          "title": "Title"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The library's description (empty: none); stored like an edit by hand, so a later import\nkeeps it. Left out: not managed, and the repository's README describes the library.",
+          "title": "Description"
         }
       },
       "required": [

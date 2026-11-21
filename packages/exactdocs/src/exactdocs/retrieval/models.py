@@ -178,6 +178,23 @@ def model_text(text: str, limit: int) -> str:
     return clean if len(clean) <= limit else clean[: limit - 3] + "..."
 
 
+def model_markdown(text: str, limit: int) -> str:
+    """Make a model-written Markdown answer safe to show: no control characters but line breaks.
+
+    Args:
+        text: What the model wrote.
+        limit: The most characters kept.
+
+    Returns:
+        The text with every control or format character removed but line feeds and tabs
+        (carriage returns too), cut to ``limit`` characters (``...`` at the end when it was cut).
+    """
+    kept = "".join(
+        c for c in text if c in "\n\t" or not unicodedata.category(c).startswith("C")
+    ).strip()
+    return kept if len(kept) <= limit else kept[: limit - 3] + "..."
+
+
 def _is_mark(char: str) -> bool:
     """Tell whether a character is a combining mark.
 
@@ -603,6 +620,10 @@ class SearchHit:
     explored_path: tuple[str, ...] = ()
     """The read calls the agentic explorer made up to the one that reached this chunk's article,
     in order (``search_docs(...)``, ``article_outline(guide/auth.md)``); empty for other modes."""
+    bm25_rank: int | None = None
+    """Its 1-based rank in the search's BM25 ranking, when the search ranked it with BM25."""
+    vector_rank: int | None = None
+    """Its 1-based rank in the search's vector ranking, when the search ranked it by vectors."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -662,6 +683,37 @@ class FusedRank:
     """Its 1-based rank in the vector half, if it is there."""
 
 
+def _fused_ranks[K: str | tuple[str, str]](
+    bm25: Sequence[K], vectors: Sequence[K], k: int
+) -> list[tuple[K, float, int | None, int | None]]:
+    """Fuse two rankings with reciprocal rank fusion, whatever names their items.
+
+    Args:
+        bm25: The BM25 half, best first.
+        vectors: The vector half, nearest first.
+        k: The constant damping the weight of the first ranks.
+
+    Returns:
+        ``(item, score, bm25 rank, vector rank)`` of every item of either half once, best first:
+        ties go to the item BM25 ranks higher, then to the one the vectors rank higher, then to
+        the item itself, so the order is reproducible.
+    """
+    bm25_rank = {c: r for r, c in enumerate(dict.fromkeys(bm25), start=1)}
+    vector_rank = {c: r for r, c in enumerate(dict.fromkeys(vectors), start=1)}
+    fused = [
+        (
+            c,
+            sum(1 / (k + r) for r in (bm25_rank.get(c), vector_rank.get(c)) if r),
+            bm25_rank.get(c),
+            vector_rank.get(c),
+        )
+        for c in dict.fromkeys([*bm25_rank, *vector_rank])
+    ]
+    unranked = math.inf
+    fused.sort(key=lambda f: (-f[1], f[2] or unranked, f[3] or unranked, f[0]))
+    return fused
+
+
 def reciprocal_rank_fusion(
     bm25: Sequence[ChunkId], vectors: Sequence[ChunkId], k: int = RRF_K
 ) -> list[FusedRank]:
@@ -679,27 +731,48 @@ def reciprocal_rank_fusion(
     Returns:
         Every chunk of either half once, best first.
     """
-    bm25_rank = {c: r for r, c in enumerate(dict.fromkeys(bm25), start=1)}
-    vector_rank = {c: r for r, c in enumerate(dict.fromkeys(vectors), start=1)}
-    fused = [
-        FusedRank(
-            chunk_id=c,
-            score=sum(1 / (k + r) for r in (bm25_rank.get(c), vector_rank.get(c)) if r),
-            bm25_rank=bm25_rank.get(c),
-            vector_rank=vector_rank.get(c),
-        )
-        for c in dict.fromkeys([*bm25_rank, *vector_rank])
+    return [
+        FusedRank(chunk_id=c, score=score, bm25_rank=b, vector_rank=v)
+        for c, score, b, v in _fused_ranks(bm25, vectors, k)
     ]
-    unranked = math.inf
-    fused.sort(
-        key=lambda f: (
-            -f.score,
-            f.bm25_rank or unranked,
-            f.vector_rank or unranked,
-            f.chunk_id,
-        )
-    )
-    return fused
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ManifestRank:
+    """A chunk's place after fusing two rankings of several manifests (across libraries)."""
+
+    manifest_id: str
+    """The manifest (so the library version) the chunk was found in."""
+    chunk_id: ChunkId
+    """The chunk."""
+    score: float
+    """The sum of ``1 / (k + rank)`` over the halves it is in; higher is better."""
+    bm25_rank: int | None
+    """Its 1-based rank in the BM25 half, if it is there."""
+    vector_rank: int | None
+    """Its 1-based rank in the vector half, if it is there."""
+
+
+def fuse_across_manifests(
+    bm25: Sequence[tuple[str, ChunkId]], vectors: Sequence[tuple[str, ChunkId]], k: int = RRF_K
+) -> list[ManifestRank]:
+    """Fuse two rankings of chunks of several manifests, as ``reciprocal_rank_fusion`` does.
+
+    A chunk ID can be in several manifests (the same section in two libraries): a chunk is named
+    by its manifest and its ID.
+
+    Args:
+        bm25: ``(manifest, chunk)`` of the BM25 half, best first.
+        vectors: ``(manifest, chunk)`` of the vector half, nearest first.
+        k: The constant damping the weight of the first ranks.
+
+    Returns:
+        Every chunk of either half once, best first.
+    """
+    return [
+        ManifestRank(manifest_id=m, chunk_id=c, score=score, bm25_rank=b, vector_rank=v)
+        for (m, c), score, b, v in _fused_ranks(bm25, vectors, k)
+    ]
 
 
 def highlights(text: str, terms: Collection[str]) -> tuple[tuple[int, int], ...]:
@@ -884,6 +957,35 @@ class ModelRole(StrEnum):
     JUDGE = "judge"
     """An LLM that grades candidates (#96); the ``llm`` role when it is not set."""
 
+    @property
+    def thinks(self) -> bool:
+        """Say whether the role's model takes a thinking level (#421).
+
+        Returns:
+            True for the chat roles, ``llm`` and ``judge``.
+        """
+        return self in {ModelRole.LLM, ModelRole.JUDGE}
+
+
+class ThinkingLevel(StrEnum):
+    """How much a chat model thinks before it answers (#421); unset: the provider's default.
+
+    Each provider gets its own control for the level: Google's thinking level (Gemini 3 and
+    later) or budget (Gemini 2.5), Claude's effort or budget, OpenAI's ``reasoning_effort``.
+    Thinking tokens are billed as output, and several providers default to a high level.
+    """
+
+    MINIMAL = "minimal"
+    """As little as the model allows (models without it get their lowest level)."""
+    LOW = "low"
+    """Little: enough for HyDE, a judge's ratings and a few tool calls."""
+    MEDIUM = "medium"
+    """Moderate."""
+    HIGH = "high"
+    """Much."""
+    XHIGH = "xhigh"
+    """More than high (models without it get their highest level)."""
+
 
 class RerankWith(StrEnum):
     """What reorders a search's best candidates when both are configured (#96)."""
@@ -920,6 +1022,7 @@ class RetrievalMode(StrEnum):
     """How a search found its results. One result shape serves every mode."""
 
     BM25 = "bm25"
+    VECTOR = "vector"
     HYBRID = "hybrid"
     HYBRID_HYDE = "hybrid_hyde"
     AGENTIC = "agentic"
@@ -934,7 +1037,7 @@ class RetrievalMode(StrEnum):
         match self:
             case RetrievalMode.BM25:
                 return frozenset()
-            case RetrievalMode.HYBRID:
+            case RetrievalMode.VECTOR | RetrievalMode.HYBRID:
                 return frozenset({ModelRole.EMBEDDING})
             case RetrievalMode.HYBRID_HYDE:
                 return frozenset({ModelRole.EMBEDDING, ModelRole.LLM})
@@ -943,12 +1046,12 @@ class RetrievalMode(StrEnum):
 
     @property
     def needs_vectors(self) -> bool:
-        """Say whether this mode searches the vector store (the hybrid ones do).
+        """Say whether this mode searches the vector store (``vector`` and the hybrid ones do).
 
         Returns:
             True when the mode cannot run without the vector store.
         """
-        return self in {RetrievalMode.HYBRID, RetrievalMode.HYBRID_HYDE}
+        return self in {RetrievalMode.VECTOR, RetrievalMode.HYBRID, RetrievalMode.HYBRID_HYDE}
 
     @property
     def needs_llm(self) -> bool:
@@ -2369,6 +2472,28 @@ class InstanceRoles:
     """HyDE and the agentic explorer."""
     judge: ModelRef | None = None
     """The LLM judge; the ``llm`` role when unset."""
+    llm_thinking: ThinkingLevel | None = None
+    """The ``llm`` role's thinking level; ``None``: the provider's default."""
+    judge_thinking: ThinkingLevel | None = None
+    """The ``judge`` role's thinking level; ``None``: the ``llm`` role's when the judge is the
+    LLM, else the provider's default."""
+
+    def thinking(self, role: ModelRole) -> ThinkingLevel | None:
+        """Read the thinking level set for ``role`` itself (no default).
+
+        Args:
+            role: The role.
+
+        Returns:
+            Its level; always ``None`` for a role that does not think.
+        """
+        match role:
+            case ModelRole.LLM:
+                return self.llm_thinking
+            case ModelRole.JUDGE:
+                return self.judge_thinking
+            case _:
+                return None
 
     def explicit(self, role: ModelRole) -> ModelRef | None:
         """Read the model set for ``role`` itself (no default).
@@ -2418,6 +2543,11 @@ class LibraryAi:
     """Its own judge instead of the instance's."""
     reranker: ModelRef | None = None
     """Its own reranker instead of the instance's."""
+    llm_thinking: ThinkingLevel | None = None
+    """Its own thinking level for the ``llm`` role (its own model or the instance's);
+    ``None``: the instance's."""
+    judge_thinking: ThinkingLevel | None = None
+    """Its own thinking level for the ``judge`` role; ``None``: the instance's."""
     rerank_top_n: int | None = None
     """How many of its best candidates the reranker reorders; ``None``: the instance's."""
     rerank_with: RerankWith | None = None
@@ -2470,6 +2600,23 @@ class LibraryAi:
             case ModelRole.JUDGE:
                 return self.judge
 
+    def thinking(self, role: ModelRole) -> ThinkingLevel | None:
+        """Read the library's own thinking level for ``role``.
+
+        Args:
+            role: The role.
+
+        Returns:
+            Its level; always ``None`` for a role that does not think.
+        """
+        match role:
+            case ModelRole.LLM:
+                return self.llm_thinking
+            case ModelRole.JUDGE:
+                return self.judge_thinking
+            case _:
+                return None
+
     @property
     def is_default(self) -> bool:
         """Say whether the library overrides nothing.
@@ -2480,6 +2627,8 @@ class LibraryAi:
         return (
             self.enabled
             and not (self.llm or self.judge or self.reranker)
+            and self.llm_thinking is None
+            and self.judge_thinking is None
             and self.rerank_top_n is None
             and self.rerank_with is None
             and not self.budgets
@@ -2516,10 +2665,16 @@ class RoleBinding:
     """Its model."""
     source: RoleSource
     """Instance, library override, or the judge's ``llm`` default."""
+    thinking: ThinkingLevel | None = None
+    """Its thinking level (#421); ``None``: the provider's default."""
 
 
 def bind_role(role: ModelRole, instance: InstanceRoles, library: LibraryAi) -> RoleBinding | None:
     """Resolve the model a role uses: the library's, else the instance's (the judge: else ``llm``).
+
+    The thinking level resolves the same way, on its own: the library's level for the role, else
+    the instance's; a judge that is the ``llm`` role with no level of its own thinks as the
+    ``llm`` role does.
 
     Args:
         role: The role.
@@ -2531,12 +2686,15 @@ def bind_role(role: ModelRole, instance: InstanceRoles, library: LibraryAi) -> R
     """
     if not library.enabled:
         return None
+    thinking = library.thinking(role) or instance.thinking(role)
     if (own := library.override(role)) is not None:
-        return RoleBinding(role=role, ref=own, source=RoleSource.LIBRARY)
+        return RoleBinding(role=role, ref=own, source=RoleSource.LIBRARY, thinking=thinking)
     if (set_ := instance.explicit(role)) is not None:
-        return RoleBinding(role=role, ref=set_, source=RoleSource.INSTANCE)
+        return RoleBinding(role=role, ref=set_, source=RoleSource.INSTANCE, thinking=thinking)
     if role is ModelRole.JUDGE and (llm := bind_role(ModelRole.LLM, instance, library)):
-        return RoleBinding(role=role, ref=llm.ref, source=RoleSource.LLM)
+        return RoleBinding(
+            role=role, ref=llm.ref, source=RoleSource.LLM, thinking=thinking or llm.thinking
+        )
     return None
 
 
@@ -3105,14 +3263,22 @@ class AiCaller:
     """The library searched or embedded."""
     user: str | None = None
     """The account (an API token's or a session's); ``None`` for a stdio MCP process."""
+    also: tuple[str, ...] = ()
+    """Further libraries the call reads and counts to (an agentic answer over several, #428):
+    each is charged the whole call, so each library's budget bounds it."""
 
     def scopes(self) -> tuple[tuple[str, str], ...]:
         """Name the ledger scopes an LLM or a rerank call counts to.
 
         Returns:
-            (kind, ID) of the instance, the library and, with an account, the user.
+            (kind, ID) of the instance, the library (and each of ``also``) and, with an account,
+            the user.
         """
-        scopes = [(SPEND_SCOPE_INSTANCE, SPEND_INSTANCE_ID), (SPEND_SCOPE_LIBRARY, self.library)]
+        libraries = dict.fromkeys([self.library, *self.also])
+        scopes = [
+            (SPEND_SCOPE_INSTANCE, SPEND_INSTANCE_ID),
+            *((SPEND_SCOPE_LIBRARY, library) for library in libraries),
+        ]
         if self.user is not None:
             scopes.append((SPEND_SCOPE_USER, self.user))
         return tuple(scopes)
@@ -3735,6 +3901,51 @@ class GuidanceFiles:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class AnswerCitation:
+    """A source the answering agent cites (#428), as it wrote it: untrusted until checked."""
+
+    library: str
+    """The library, as the model wrote it; checked against the question's scope."""
+    chunk_id: str
+    """The chunk ID, as the model wrote it; checked against that library's version."""
+    quote: str | None
+    """A passage it says it copied from the chunk; kept only when the chunk holds it verbatim."""
+    reason: str
+    """Why the chunk is a source, in its words."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AnswerUsage:
+    """What one agentic answer used: model requests, tokens and tool calls."""
+
+    requests: int = 0
+    """Model requests made."""
+    input_tokens: int = 0
+    """Tokens sent, as the provider reported them."""
+    output_tokens: int = 0
+    """Tokens received, as the provider reported them."""
+    tool_calls: int = 0
+    """Tool calls made: ``run_code`` and every read inside it."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AnswerDraft:
+    """What the answering agent returned: its answer and citations, or why its run stopped."""
+
+    answer: str = ""
+    """Its Markdown answer, model output; empty when the run stopped."""
+    citations: tuple[AnswerCitation, ...] = ()
+    """The sources it cites, best first, less those its output guardrail rejected."""
+    usage: AnswerUsage = field(default_factory=AnswerUsage)
+    """What the run used, also when it stopped."""
+    stopped: FallbackReason | None = None
+    """Why the run ended without an answer (``agent_limit_reached``, ``llm_budget_reached``,
+    ``agent_loop_detected``, ``agent_failed``); ``None`` when it answered."""
+    rejected: int = 0
+    """How many citations the output guardrail rejected (outside the scope, or made up)."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class AgentRun:
     """One agentic search as the explorer runs it: the question, its limits and who pays."""
 
@@ -4211,3 +4422,16 @@ def caller_audience(caller: str | None, *, key: bytes) -> str:
         An HMAC-SHA256 (hex) of the account, never its name.
     """
     return hmac.new(key, f"caller:{caller or ''}".encode(), hashlib.sha256).hexdigest()
+
+
+class Access(StrEnum):
+    """The library role a caller needs for an action; the values are the role names."""
+
+    READ = "viewer"
+    """Search and read."""
+    CONTRIBUTE = "contributor"
+    """Import content: add versions, sync, tag articles."""
+    ADMINISTER = "admin"
+    """Configure the library and remove versions."""
+    OWN = "creator"
+    """Remove the library."""

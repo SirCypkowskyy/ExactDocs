@@ -15,6 +15,7 @@ from pydantic import (
 )
 
 from exactdocs.retrieval.constants import (
+    DEFAULT_ANSWER_SOURCES,
     DEFAULT_GRACE_SECONDS,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_RETRIES,
@@ -24,6 +25,9 @@ from exactdocs.retrieval.constants import (
     EXPLORED_PATH_DESCRIPTION,
     JUSTIFICATION_DESCRIPTION,
     LIBRARY_VERSIONS_DESCRIPTION,
+    MAX_ANSWER_LIBRARIES,
+    MAX_ANSWER_SOURCES,
+    MAX_CHOSEN_LIBRARIES,
     MAX_EMBEDDING_DIMENSIONS,
     MAX_KEY,
     MAX_MODEL_NAME,
@@ -72,6 +76,7 @@ from exactdocs.retrieval.models import (
     SpendWindow,
     StoredChunk,
     TagMatch,
+    ThinkingLevel,
     VectorMetric,
     source_link,
 )
@@ -131,8 +136,8 @@ class SearchDocsQuery(_Dto):
     limit: int = Field(default=5, ge=1, le=50)
     """How many results to return, best first."""
     mode: str | None = Field(default=None, max_length=MAX_NAME)
-    """`bm25`, `hybrid`, `hybrid_hyde` or `agentic`, if configured; default: the library's mode,
-    else the instance's, else the best one configured.
+    """`bm25`, `vector`, `hybrid`, `hybrid_hyde` or `agentic`, if configured; default: the
+    library's mode, else the instance's, else the best one configured.
     """
 
     @field_validator("ref", "mode", mode="before")
@@ -162,13 +167,21 @@ class SearchDocsQuery(_Dto):
         return _normalize_tags(value)
 
 
+LibraryId = Annotated[str, StringConstraints(pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)]
+
+
 class SearchAllQuery(_Dto):
-    """Search the default version of every library at once, or of one when ``library`` is set."""
+    """Search the default version of every library at once, or of the chosen ones."""
 
     query: str = Field(min_length=1, max_length=MAX_QUERY)
     """What to look for: an identifier, an error message or a question."""
     library: str | None = Field(default=None, pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)
     """`/owner/repo`: only its results (its default version); counts stay global."""
+    libraries: list[LibraryId] = Field(default_factory=list, max_length=MAX_CHOSEN_LIBRARIES)
+    """`/owner/repo` of each library to search (with `library`, if set); none: every library
+    the caller may read. Counts stay global."""
+    mode: str | None = Field(default=None, max_length=MAX_NAME)
+    """`bm25` (the default), `vector` or `hybrid`; the vector modes need an embedding model."""
     tags: list[Tag] = Field(default_factory=list, max_length=MAX_TAGS)
     """Only chunks of articles so tagged. Case-insensitive; a comma separates tags."""
     tags_match: TagMatch = Field(default=TagMatch.ANY)
@@ -189,10 +202,37 @@ class SearchAllQuery(_Dto):
         """
         return _normalize_tags(value)
 
-    @field_validator("library", mode="before")
+    @field_validator("libraries", mode="before")
+    @classmethod
+    def _split_libraries(cls, value: object) -> object:
+        """Split comma-separated library IDs (a library ID never holds a comma); drop blanks.
+
+        Args:
+            value: The libraries as sent.
+
+        Returns:
+            One ID per item; any other value unchanged.
+        """
+        if not isinstance(value, list | tuple) or not all(isinstance(v, str) for v in value):
+            return value
+        return [part.strip() for v in value for part in v.split(",") if part.strip()]
+
+    @property
+    def chosen(self) -> list[str]:
+        """The libraries to search, ``library`` first, each once (any letter case).
+
+        Returns:
+            The library IDs; empty for every library.
+        """
+        once: dict[str, str] = {}
+        for library in [*([self.library] if self.library else []), *self.libraries]:
+            once.setdefault(library.casefold(), library)
+        return list(once.values())
+
+    @field_validator("library", "mode", mode="before")
     @classmethod
     def _blank_is_none(cls, value: object) -> object:
-        """Treat a blank library as none.
+        """Treat a blank library or mode as none.
 
         Args:
             value: The raw field.
@@ -331,6 +371,12 @@ class LibrarySearchResultOut(SearchResultOut):
     """Library ID, `/owner/repo`, of the library the result is from."""
     version: str
     """The default version of that library, the one searched."""
+    bm25_rank: int | None = None
+    """Its 1-based rank in the search's BM25 ranking; null when BM25 did not rank it (`vector`,
+    or a `hybrid` result only the vectors found)."""
+    vector_rank: int | None = None
+    """Its 1-based rank in the search's vector ranking; null when the vectors did not rank it
+    (`bm25`, or a `hybrid` result only BM25 found)."""
 
     @classmethod
     def of(cls, version: SearchableVersion, stored: StoredChunk, hit: SearchHit) -> Self:
@@ -345,7 +391,13 @@ class LibrarySearchResultOut(SearchResultOut):
             The result, naming its library and version.
         """
         result = SearchResultOut.from_models(version, stored, hit)
-        return cls(**dict(result), library=version.library, version=version.version)
+        return cls(
+            **dict(result),
+            library=version.library,
+            version=version.version,
+            bm25_rank=hit.bm25_rank,
+            vector_rank=hit.vector_rank,
+        )
 
 
 class LibraryFacetOut(_Dto):
@@ -369,19 +421,155 @@ class SearchAllResult(_Dto):
     notice: str = Field(default=NOTICE)
     """Untrusted-content notice; read it before the results."""
     retrieval_mode: RetrievalMode
-    """The mode that answered."""
+    """The mode that answered: the one asked for, or `bm25` when the vectors could not be used
+    (`fallback_reason` says why)."""
     reranked: bool
     """A reranker reordered the candidates."""
     coverage: CoverageOut
     """How much of the index the answer stands on."""
+    fallback_reason: FallbackReason | None = Field(default=None)
+    """Set when BM25 answered a `vector` or `hybrid` search: says why."""
     libraries_searched: int
     """Libraries whose default version was searched."""
     libraries_omitted: int
     """Libraries with a default version left out because there are too many."""
+    libraries_without_vectors: list[str] = Field(default_factory=list)
+    """Libraries searched but left out of the vector ranking (`vector`, `hybrid`): AI is off for
+    them, or their default version is not embedded with the current model yet."""
     libraries: list[LibraryFacetOut]
-    """Libraries with at least one match, most matches first. Never narrowed."""
+    """Libraries with at least one BM25 match, most matches first. Never narrowed."""
     results: list[LibrarySearchResultOut]
     """The results, best first, each naming its library and version."""
+
+
+class AnswerQuery(_Dto):
+    """A question for the answering agent (#428), over the default versions of chosen libraries."""
+
+    question: str = Field(min_length=1, max_length=MAX_QUERY)
+    """What to answer, in your words."""
+    libraries: list[LibraryId] = Field(default_factory=list, max_length=MAX_ANSWER_LIBRARIES)
+    """`/owner/repo` of each library to read; none: every library you may read (the first 20)."""
+    tags: list[Tag] = Field(default_factory=list, max_length=MAX_TAGS)
+    """Only chunks of articles so tagged. Case-insensitive; a comma separates tags."""
+    tags_match: TagMatch = Field(default=TagMatch.ANY)
+    """`any`: at least one of `tags`; `all`: every one."""
+    max_sources: int = Field(default=DEFAULT_ANSWER_SOURCES, ge=1, le=MAX_ANSWER_SOURCES)
+    """The most sources the answer lists."""
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _split_tags(cls, value: object) -> object:
+        """Split comma-separated tags and normalize them.
+
+        Args:
+            value: The tags as sent.
+
+        Returns:
+            The tags normalized, without blanks or repeats; any other value unchanged.
+        """
+        return _normalize_tags(value)
+
+    @property
+    def chosen(self) -> list[str]:
+        """The libraries to read, each once (any letter case).
+
+        Returns:
+            The library IDs; empty for every library.
+        """
+        once: dict[str, str] = {}
+        for library in self.libraries:
+            once.setdefault(library.casefold(), library)
+        return list(once.values())
+
+
+class AnswerSourceOut(_Dto):
+    """A source of an agentic answer: a chunk of a chosen library's default version."""
+
+    library: str
+    """Library ID, `/owner/repo`."""
+    version: str
+    """The version read: the library's default version."""
+    commit_sha: str
+    """The commit that version was imported at."""
+    chunk_id: str
+    """The chunk's ID: `read_chunk` returns it whole."""
+    article_path: str
+    """Path of the chunk's article, e.g. `docs/guide/auth.md`."""
+    heading_path: list[str]
+    """The chunk's heading and those above it, outermost first."""
+    anchor: str
+    """Anchor of the chunk's heading in the article; empty when it has none."""
+    source_url: str | None
+    """Link to the section at the commit; null when the host is unknown."""
+    quote: str | None
+    """A passage of the chunk the agent quoted, verbatim (checked); null when it quoted none or
+    the chunk does not hold it."""
+    reason: str = Field(description=JUSTIFICATION_DESCRIPTION)
+    """Why the agent cites it, in its own words; its schema description is
+    ``JUSTIFICATION_DESCRIPTION``."""
+
+
+class AnswerUsageOut(_Dto):
+    """What an agentic answer used."""
+
+    requests: int
+    """Model requests made."""
+    input_tokens: int
+    """Tokens sent, as the provider reported them."""
+    output_tokens: int
+    """Tokens received, as the provider reported them."""
+    tool_calls: int
+    """Tool calls made: `run_code` and every read inside it."""
+    max_tool_calls: int
+    """The most tool calls the run could make (`[ai.agentic] max_tool_calls`)."""
+    cost_usd: float | None
+    """What the tokens cost at the model's price; null when the model has no known price."""
+
+
+class AnswerLibraryOut(_Dto):
+    """A library an agentic answer read, at its default version."""
+
+    library: str
+    """Library ID, `/owner/repo`."""
+    version: str
+    """The version read."""
+
+
+class AnswerResult(_Dto):
+    """An agentic answer (#428): the answer in Markdown and the sources it stands on."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    notice: str = Field(default=NOTICE)
+    """Untrusted-content notice: the answer and the reasons are model output over untrusted
+    documentation."""
+    answer: str
+    """The answer, in Markdown; model output. Empty when the run stopped (`fallback_reason`)."""
+    sources: list[AnswerSourceOut]
+    """The sources it cites, best first, each checked against a chosen library's version; when
+    the run stopped, the chunks the agent had read."""
+    libraries: list[AnswerLibraryOut]
+    """The libraries the agent could read."""
+    libraries_without_ai: list[str] = Field(default_factory=list)
+    """Chosen libraries left out because AI is off for them: nothing of them is sent."""
+    libraries_omitted: int = 0
+    """Readable libraries left out because there were more than 20 and none was chosen."""
+    fallback_reason: FallbackReason | None = None
+    """Why there is no answer: `agent_limit_reached`, `llm_budget_reached`, `llm_rate_limited`,
+    `agent_loop_detected`, `agent_failed`, or `mode_unavailable` (no library may be sent)."""
+    usage: AnswerUsageOut
+    """What the run used."""
+
+
+class AnswerAvailabilityOut(_Dto):
+    """Whether agentic answers can run on this instance now."""
+
+    available: bool
+    """An `llm` role is configured and its profile exists."""
+    reason: str | None = None
+    """Why not, when not."""
+    max_tool_calls: int
+    """The most tool calls one answer may make."""
 
 
 class ChunkHeadingIn(_Dto):
@@ -1172,8 +1360,8 @@ class SetLibraryRetrievalCommand(_Dto):
     library: str = Field(pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)
     """`/owner/repo`, any letter case."""
     mode: str | None = Field(default=None, max_length=MAX_NAME)
-    """`bm25`, `hybrid`, `hybrid_hyde` or `agentic`; it must be available now. Empty: use the
-    instance's mode.
+    """`bm25`, `vector`, `hybrid`, `hybrid_hyde` or `agentic`; it must be available now. Empty:
+    use the instance's mode.
     """
 
     ai_enabled: bool = True
@@ -1184,6 +1372,14 @@ class SetLibraryRetrievalCommand(_Dto):
     """The library's own judge, `<profile>:<model>`; empty: the instance's (else the LLM)."""
     reranker: str | None = Field(default=None, max_length=MAX_MODEL_REF)
     """The library's own reranker, `<profile>:<model>`; empty: the instance's `reranker` role."""
+    llm_thinking: ThinkingLevel | None = None
+    """The library's own thinking level for its `llm` role (its own LLM or the instance's):
+    `minimal`, `low`, `medium`, `high` or `xhigh`; empty: the instance's
+    (`EXACTDOCS_AI__LLM__THINKING`). Thinking tokens are billed as output; a level the model
+    cannot take is refused (422 `thinking_unsupported`)."""
+    judge_thinking: ThinkingLevel | None = None
+    """The library's own thinking level for its `judge` role, as `llm_thinking`; empty: the
+    instance's (the `llm` role's when the judge is the LLM)."""
     rerank_top_n: int | None = Field(
         default=None, ge=1, le=MAX_RERANK_TOP_N, description=RERANK_TOP_N_DESCRIPTION
     )
@@ -1240,6 +1436,10 @@ class LibraryRetrievalOut(_Dto):
     """The library's own judge (`<profile>:<model>`); null: the instance's, else the LLM."""
     reranker: str | None = None
     """The library's own reranker (`<profile>:<model>`); null: the instance's."""
+    llm_thinking: ThinkingLevel | None = None
+    """The library's own thinking level for the `llm` role; null: the instance's."""
+    judge_thinking: ThinkingLevel | None = None
+    """The library's own thinking level for the `judge` role; null: the instance's."""
     rerank_top_n: int | None = None
     """How many of its best candidates the reranker reorders; null: the instance's."""
     effective_rerank_top_n: int
@@ -1445,6 +1645,28 @@ class RoleOut(_Dto):
     """`instance`, or `llm` for a judge that defaults to the LLM; null when not set."""
     profile_exists: bool
     """False when the role names a profile that does not exist (the role is then not usable)."""
+    thinking: ThinkingLevel | None = None
+    """`llm` and `judge` only: how much the model thinks before it answers (`minimal`, `low`,
+    `medium`, `high`, `xhigh`); null: the provider's default. A judge that is the LLM thinks as
+    the LLM does unless it has a level of its own."""
+    own_thinking: ThinkingLevel | None = None
+    """The level set for this role itself (the configuration's, else the REST API's); null: none of
+    its own (the judge then thinks as the LLM when it is the LLM)."""
+    thinking_configured: bool = False
+    """True when the level is set in the environment or the configuration file
+    (`EXACTDOCS_AI__<ROLE>__THINKING`): it cannot be changed over the REST API."""
+    thinking_unsupported: str | None = None
+    """Why the role's model cannot take its level, when that is known: the level is then left out
+    of its calls (and a warning logged at start)."""
+
+
+class SetRoleThinkingCommand(_Dto):
+    """Set (or clear) the thinking level of an instance role over the REST API (#421)."""
+
+    role: ModelRole
+    """`llm` or `judge`; the other roles take no level."""
+    thinking: ThinkingLevel | None = None
+    """`minimal`, `low`, `medium`, `high` or `xhigh`; null: the provider's default."""
 
 
 class RoleListOut(_Dto):
@@ -1619,7 +1841,8 @@ class EmbeddingPlanOut(_Dto):
     manifest_id: str | None
     """The version's active manifest; null when nothing is to be sent."""
     missing: int
-    """Chunks of the manifest without a vector in the space when the plan was made."""
+    """Chunks of the manifest without a vector in the space when the plan was made, each once
+    (a chunk held by several identical files is embedded once)."""
     created: bool
     """This plan created the space: the model changed, so every version needs embedding."""
     skipped: EmbeddingSkip | None
@@ -1646,6 +1869,11 @@ class EmbeddedBatchOut(_Dto):
     """Vectors stored."""
     input_tokens: int
     """Tokens the provider reported."""
+    left: int | None
+    """Chunks of the manifest still without a vector after the batch, counted like the plan's
+    ``missing``; fewer than the plan's ``missing`` less what was embedded when another job
+    embedded chunks shared with it meanwhile. Null when the job stops without counting (the
+    model changed, the library's AI was switched off, the space was retired)."""
     finished: bool
     """No chunk of the manifest is left to embed (or nothing may be sent any more)."""
 

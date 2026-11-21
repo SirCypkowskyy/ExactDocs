@@ -29,6 +29,7 @@ from exactdocs.retrieval.constants import (
     _VECTOR_DELETE,
     _VECTOR_DROP,
     _VECTOR_MISSING,
+    _VECTOR_MISSING_COUNT,
     _VECTOR_NEAREST,
     _VECTOR_PENDING,
     _VECTOR_PENDING_ARTICLES,
@@ -357,6 +358,23 @@ class SqliteVectorIndex:
             await self._live(connection, space_id)
             rows = await connection.execute(statement, {"manifest": manifest_id, "limit": limit})
             return [(r.blob_sha, r.config_hash, r.position) for r in rows]
+
+    async def count_missing(self, space_id: EmbeddingSpaceId, manifest_id: str) -> int:
+        """Count the manifest's chunks without a vector, each once, in one query.
+
+        Args:
+            space_id: The space.
+            manifest_id: The manifest.
+
+        Returns:
+            The count.
+        """
+        statement = text(_VECTOR_MISSING_COUNT.format(table=vector_table(space_id)))
+        async with self.engine.connect() as connection:
+            await self._live(connection, space_id)
+            return int(
+                (await connection.execute(statement, {"manifest": manifest_id})).scalar_one()
+            )
 
     async def pending(
         self, space_id: EmbeddingSpaceId | None, manifest_ids: Collection[str]

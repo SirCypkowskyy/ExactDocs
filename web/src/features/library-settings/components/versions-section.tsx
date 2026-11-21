@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check } from "lucide-react";
 import { type FormEvent, type ReactNode, useCallback, useRef, useState } from "react";
+import { toast } from "sonner";
 import {
   type Credential,
   type CredentialDraft,
@@ -17,6 +18,7 @@ import { Button } from "@/shared/ui/button";
 import { CredentialField } from "@/shared/ui/credential-field";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { RefPicker } from "@/shared/ui/ref-picker";
+import { Commit, VersionStation } from "@/shared/ui/route";
 import { accessQueryOptions, addVersion, refreshLibraries, removeVersion } from "../api/settings";
 import { useNow } from "../hooks/use-now";
 import {
@@ -29,9 +31,8 @@ import {
   type Problem,
   type SettingsLibrary,
   type SettingsVersion,
-  shortSha,
 } from "../model/settings";
-import { secondary, sectionHeading } from "./styles";
+import { SettingsSection } from "./settings-section";
 import { TypedConfirm } from "./typed-confirm";
 
 interface Props {
@@ -53,17 +54,19 @@ function VersionRow({
   onRemove: (version: SettingsVersion, trigger: HTMLElement) => void;
 }) {
   return (
-    <li className="flex items-center justify-between gap-4 py-3">
+    <li className="relative flex flex-wrap items-start justify-between gap-x-4 gap-y-1 py-3 before:absolute before:top-0 before:bottom-0 before:left-1 before:w-0.5 before:bg-route/40 first:before:top-6 last:before:bottom-auto last:before:h-6 only:before:hidden">
       <div className="min-w-0">
-        <p className="flex flex-wrap items-baseline gap-x-2">
-          <span className="font-mono text-[15px] font-medium [overflow-wrap:anywhere]">
-            {version.ref}
-          </span>
-          {version.is_default && <span className="text-xs font-medium text-mark">default</span>}
+        <p className="flex flex-wrap items-center gap-x-3">
+          <VersionStation
+            version={version.ref}
+            isDefault={version.is_default}
+            className="relative text-body [&_span:last-child]:text-body [&_span:last-child]:[overflow-wrap:anywhere]"
+          />
+          {version.is_default && <span className="text-small font-medium text-route">default</span>}
         </p>
-        <p className="text-sm text-muted-foreground">
+        <p className="mt-0.5 pl-4 text-body text-muted-foreground">
           {version.kind !== "tag" && <span className="capitalize">{version.kind} · </span>}
-          <span className="font-mono text-[13px]">{shortSha(version.commit_sha)}</span>
+          <Commit sha={version.commit_sha} />
           <span className="sr-only"> commit</span>
           <span aria-hidden="true"> · </span>
           <time dateTime={version.imported_at} title={absoluteTimeWithZone(version.imported_at)}>
@@ -76,7 +79,7 @@ function VersionRow({
         variant="ghost"
         aria-label={`Remove version ${version.ref}`}
         onClick={(e) => onRemove(version, e.currentTarget)}
-        className="-mr-3 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:text-destructive md:h-9"
+        className="-mr-3 shrink-0 text-muted-foreground hover:bg-destructive-soft hover:text-destructive focus-visible:text-destructive"
       >
         Remove
       </Button>
@@ -202,6 +205,9 @@ function AddVersionForm({
       setDraft(EMPTY_CREDENTIAL);
       setListedWith(undefined);
       setAdded(result);
+      toast.success(`Importing ${ref}`, {
+        description: "It appears here as soon as the import finishes.",
+      });
     } catch (error) {
       refuse(explainAddVersion(error, ref, sent.credential?.kind));
     } finally {
@@ -227,7 +233,7 @@ function AddVersionForm({
 
   return (
     <form onSubmit={submit} noValidate>
-      <h3 className="text-lg font-semibold">Add a version</h3>
+      <h3 className="text-section font-semibold">Add a version</h3>
       <div className="mt-4">
         <FormAlert id="add-version-alert" message={problem?.message} link={problem?.link} />
       </div>
@@ -281,14 +287,14 @@ function AddVersionForm({
             }}
           />
         )}
-        <p className="text-sm text-muted-foreground">
+        <p className="text-body text-muted-foreground">
           It is imported with the same paths and tag rules as the other versions.
         </p>
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" aria-disabled={pending} aria-busy={pending} className="min-w-32">
+          <Button type="submit" pending={pending} aria-disabled={pending} className="min-w-32">
             {pending ? "Adding" : "Add version"}
           </Button>
         </div>
@@ -337,6 +343,11 @@ export function VersionsSection(props: Props) {
             : `${version.ref} was already removed.`,
       );
       setRemoving(undefined);
+      toast.success(`Removed ${version.ref}`, {
+        ...(result?.default_version && {
+          description: `The default version is now ${result.default_version}.`,
+        }),
+      });
       refreshLibraries(queryClient);
     },
     onError: (error, version) => {
@@ -356,24 +367,17 @@ export function VersionsSection(props: Props) {
   }
 
   return (
-    <section aria-labelledby="versions-heading" className="mt-12 border-t border-border pt-10">
-      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
-        <div className="max-w-prose">
-          <h2
-            id="versions-heading"
-            ref={heading}
-            tabIndex={-1}
-            className={cn(sectionHeading, "outline-none")}
-          >
-            Versions
-          </h2>
-          <p className="mt-1.5 text-muted-foreground">
-            Each version is a branch, tag or commit imported as it was.
-          </p>
-        </div>
+    <SettingsSection
+      id="versions"
+      title="Versions"
+      description="Each version is a branch, tag or commit imported as it was. The filled station is the default."
+      headingRef={heading}
+    >
+      <div className="mb-4">
         <Button
           ref={addButton}
           type="button"
+          variant="outline"
           aria-expanded={adding}
           aria-controls="add-version"
           onClick={() => {
@@ -382,7 +386,6 @@ export function VersionsSection(props: Props) {
             setMounted(true);
             setAdding(true);
           }}
-          className={secondary}
         >
           Add a version
         </Button>
@@ -394,23 +397,23 @@ export function VersionsSection(props: Props) {
           if (e.target === e.currentTarget && !adding) setMounted(false);
         }}
         className={cn(
-          "grid transition-[grid-template-rows] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
+          "grid transition-[grid-template-rows] duration-(--dur) ease-(--ease-out) motion-reduce:transition-none",
           adding ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
         )}
       >
         <div className="overflow-hidden" inert={!adding}>
           {mounted && (
-            <div className="mt-6 rounded-lg bg-secondary/60 p-4 sm:p-5">
+            <div className="mb-4 rounded-lg bg-raised p-4 sm:p-5">
               <AddVersionForm {...props} onClose={closeAdd} />
             </div>
           )}
         </div>
       </div>
 
-      <p role="status" className="mt-4 min-h-5 text-sm">
+      <p role="status" className="min-h-5 text-body">
         {notice && activity.by === "versions" && (
           <span className="fade-in inline-flex items-start gap-1.5">
-            <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
+            <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
             {notice}
           </span>
         )}
@@ -418,15 +421,12 @@ export function VersionsSection(props: Props) {
 
       <div className="mt-2">
         {versions.length === 0 ? (
-          <p className="text-muted-foreground">
+          <p className="rounded-lg border border-dashed border-input px-4 py-5 text-body text-muted-foreground">
             No versions yet. Add one, or wait for the first import to finish.
           </p>
         ) : (
           // No bottom rule: the next section brings its own.
-          <ul
-            aria-label="Imported versions"
-            className="divide-y divide-border border-t border-border"
-          >
+          <ul aria-label="Imported versions" className="divide-y divide-rule">
             {versions.map((v) => (
               <VersionRow
                 key={v.ref}
@@ -469,6 +469,6 @@ export function VersionsSection(props: Props) {
           (removedOk.current ? heading.current : trigger.current)?.focus();
         }}
       />
-    </section>
+    </SettingsSection>
   );
 }

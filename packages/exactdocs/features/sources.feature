@@ -31,3 +31,20 @@ Feature: Libraries declared in a sources file
     Then "/fixture/other-repo" is listed under "undeclared" and still exists
     When the operator runs "exactdocs sources apply exactdocs.sources.yaml --prune"
     Then "/fixture/other-repo" is removed
+
+  Scenario: An entry declares its own title and description
+    Given the sources file also declares the title "Azure Functions" and the description "Functions docs."
+    When the operator runs "exactdocs sources apply exactdocs.sources.yaml"
+    Then "/fixture/docs-repo" has the title "Azure Functions" and the description "Functions docs."
+    When the sources file declares the title "Azure Functions 2"
+    And the operator runs "exactdocs sources plan exactdocs.sources.yaml"
+    Then the output lists "/fixture/docs-repo" under "update"
+    And the output shows the title changing to "Azure Functions 2"
+    When the operator runs "exactdocs sources apply exactdocs.sources.yaml"
+    Then "/fixture/docs-repo" has the title "Azure Functions 2" and the description "Functions docs."
+
+  Scenario: An entry without title and description leaves them alone
+    When the operator runs "exactdocs sources apply exactdocs.sources.yaml"
+    Then the library "/fixture/docs-repo" was named by its README
+    When the operator runs "exactdocs sources plan exactdocs.sources.yaml"
+    Then the output lists "/fixture/docs-repo" under "unchanged"

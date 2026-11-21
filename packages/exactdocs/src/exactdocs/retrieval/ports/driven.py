@@ -6,10 +6,12 @@ from datetime import date, datetime
 from typing import Protocol
 
 from exactdocs.retrieval.models import (
+    Access,
     AgentCacheScope,
     AgentPick,
     AgentRead,
     AgentRun,
+    AnswerDraft,
     ArticleEntry,
     ArticleText,
     BudgetLimit,
@@ -57,6 +59,7 @@ from exactdocs.retrieval.models import (
     SpendKey,
     StoredChunk,
     TagFilter,
+    ThinkingLevel,
     VectorCoverage,
     VectorHit,
     VersionCounts,
@@ -578,6 +581,14 @@ class LibraryModes(Protocol):
         """
         ...
 
+    async def ai_disabled(self) -> frozenset[str]:
+        """Read which libraries have AI turned off, in one read.
+
+        Returns:
+            The case-folded IDs of the libraries whose AI is off.
+        """
+        ...
+
     async def forget(self, library: str) -> None:
         """Drop everything stored for a library that was removed (a no-op when nothing is).
 
@@ -601,6 +612,30 @@ class LibraryModes(Protocol):
 
         Returns:
             Each ``<profile>:<model>`` once.
+        """
+        ...
+
+
+class RoleThinkingLevels(Protocol):
+    """The thinking levels of the instance's ``llm`` and ``judge`` roles set over the REST API.
+
+    A level set in the environment or the configuration file wins over a stored one (#421).
+    """
+
+    async def levels(self) -> Mapping[ModelRole, ThinkingLevel]:
+        """Read every stored level.
+
+        Returns:
+            Each role's level; a role without one is missing.
+        """
+        ...
+
+    async def save(self, role: ModelRole, level: ThinkingLevel | None) -> None:
+        """Store a role's level, or clear it.
+
+        Args:
+            role: ``llm`` or ``judge``.
+            level: The level; ``None`` removes it.
         """
         ...
 
@@ -724,15 +759,31 @@ class ModelFactory(Protocol):
         """
         ...
 
-    async def chat_model(self, profile: ProviderProfile, model: str) -> object:
+    async def chat_model(
+        self, profile: ProviderProfile, model: str, *, thinking: ThinkingLevel | None = None
+    ) -> object:
         """Build a chat model (``llm`` and ``judge`` roles).
+
+        Args:
+            profile: The profile.
+            model: The model name.
+            thinking: Its thinking level, sent as the provider's own setting; left out when the
+                model cannot take one. ``None``: the provider's default.
+
+        Returns:
+            An opaque handle (a pydantic-ai model).
+        """
+        ...
+
+    async def thinking_unsupported(self, profile: ProviderProfile, model: str) -> str | None:
+        """Say why a chat model cannot take a thinking level, when that is known without a call.
 
         Args:
             profile: The profile.
             model: The model name.
 
         Returns:
-            An opaque handle (a pydantic-ai model).
+            A fixed text, or ``None`` when it can, or when that cannot be known in advance.
         """
         ...
 
@@ -771,13 +822,21 @@ class ModelFactory(Protocol):
         """
         ...
 
-    async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
+    async def check(
+        self,
+        profile: ProviderProfile,
+        model: str,
+        role: ModelRole,
+        *,
+        thinking: ThinkingLevel | None = None,
+    ) -> ModelCheck:
         """Make one minimal call to the model as ``role`` uses it and time it.
 
         Args:
             profile: The profile.
             model: The model name.
             role: Which kind of call: a chat turn, an embedding or a rerank.
+            thinking: A chat model's thinking level, as its role's calls send it.
 
         Returns:
             The outcome; a failed call is ``ok=False`` with an error text holding no key.
@@ -1004,6 +1063,25 @@ class VectorIndex(Protocol):
 
         Returns:
             At most ``limit`` keys, each once; empty when the coverage is complete.
+
+        Raises:
+            UnknownEmbeddingSpaceError: No space has this ID.
+            RetiredEmbeddingSpaceError: The space was retired.
+        """
+        ...
+
+    async def count_missing(self, space_id: EmbeddingSpaceId, manifest_id: str) -> int:
+        """Count the chunks ``missing`` would return without a limit: each stored chunk once.
+
+        Unlike ``coverage``, which counts the manifest's rows (one per article path), a chunk
+        held by several paths (identical files) counts once, as it is embedded once.
+
+        Args:
+            space_id: The space.
+            manifest_id: The version's manifest; an unknown one has none.
+
+        Returns:
+            How many chunks of the manifest have no vector in the space.
 
         Raises:
             UnknownEmbeddingSpaceError: No space has this ID.
@@ -1343,6 +1421,136 @@ class AgentReads(Protocol):
         ...
 
 
+class LibrariesBrowser(Protocol):
+    """The read tools of the answering agent (#428): several libraries, each at one version.
+
+    Retrieval implements it (``LibrariesScope``) over the default versions of the libraries the
+    caller chose and may read, with AI on, under the call's tag filter. It reaches the agent as its
+    ``deps``: a tool argument may name a library, but only one of this scope, and nothing else
+    (another library, a version, a tag) can be named. A library outside the scope reads as not
+    found.
+    """
+
+    def libraries(self) -> Sequence[tuple[str, str]]:
+        """Name the libraries of the scope.
+
+        Returns:
+            ``(library, version)`` of each, in the order chosen.
+        """
+        ...
+
+    async def search_docs(
+        self, query: str, library: str | None, limit: int
+    ) -> Sequence[tuple[str, SearchHit, StoredChunk]]:
+        """Search the scope (or one library of it) with BM25, within the tag filter.
+
+        Args:
+            query: The words to look for.
+            library: One library of the scope; ``None`` for all of them in one ranking.
+            limit: How many hits at most.
+
+        Returns:
+            ``(library, hit, chunk)`` of the best hits, best first.
+        """
+        ...
+
+    async def list_articles(self, library: str, prefix: str = "") -> Sequence[ArticleEntry]:
+        """List a library's articles under a folder.
+
+        Args:
+            library: A library of the scope.
+            prefix: A folder; empty for every article.
+
+        Returns:
+            The articles; none for a library outside the scope.
+        """
+        ...
+
+    async def article_outline(self, library: str, path: str) -> Outline | None:
+        """Read an article's heading tree.
+
+        Args:
+            library: A library of the scope.
+            path: The article's path.
+
+        Returns:
+            The outline, or ``None`` when the library is outside the scope or has no such article.
+        """
+        ...
+
+    async def read_chunk(self, library: str, chunk_id: str) -> StoredChunk | None:
+        """Read one chunk.
+
+        Args:
+            library: A library of the scope.
+            chunk_id: Its ID.
+
+        Returns:
+            The chunk (cut for the agent), or ``None`` when it is not in the scope.
+        """
+        ...
+
+    async def admit(self, cited: Sequence[tuple[str, str]]) -> Sequence[tuple[str, str]]:
+        """Keep the ``(library, chunk ID)`` pairs the scope holds and the tag filter keeps.
+
+        Args:
+            cited: The agent's citations, as the model wrote them.
+
+        Returns:
+            The admitted pairs, in order, once each, each library as the scope spells it.
+        """
+        ...
+
+
+class AnswerProgress(Protocol):
+    """Hears how far an agentic answer has got (#428), for a progress stream."""
+
+    def tool_call(self, made: int, limit: int) -> None:
+        """Hear that the agent made another tool call.
+
+        Args:
+            made: Tool calls made so far, ``run_code`` and the reads inside it.
+            limit: The most it may make (``max_tool_calls``).
+        """
+        ...
+
+
+class Answerer(Protocol):
+    """Runs the answering agent (#428): an LLM that reads several libraries and writes an answer.
+
+    The pydantic-ai adapter runs an agent in harness Code Mode, as ``Explorer`` does, with the
+    browser's read tools inside ``run_code`` only, bounded by ``run.bounds`` and the spend budgets
+    (``SpendLimits`` over ``ledger``), instrumented without content, and ended on a loop. Its
+    output guardrail keeps only the citations ``browser.admit`` admits. A run that stops returns a
+    draft with ``stopped`` set and what it used, never raises for it.
+    """
+
+    async def answer(
+        self,
+        model: object,
+        browser: LibrariesBrowser,
+        run: AgentRun,
+        *,
+        ledger: SpendLedger,
+        clock: Clock,
+        progress: AnswerProgress | None = None,
+    ) -> AnswerDraft:
+        """Answer ``run.question`` from the browser's libraries.
+
+        Args:
+            model: The ``llm`` role's pydantic-ai model.
+            browser: The read tools on the question's scope.
+            run: The question, the limits and who pays (``run.limit``: most citations).
+            ledger: The spend rows the harness ``SpendLimits`` reads and records to.
+            clock: Decides the spend windows.
+            progress: Hears each tool call; none by default.
+
+        Returns:
+            The answer and its citations, or why the run stopped; with its usage either way.
+        """
+        ...
+
+
 class Explorer(Protocol):
     """Runs the agentic explorer: an LLM that browses one version and picks the chunks (RET-04).
 
@@ -1574,5 +1782,32 @@ class InstructionFiles(Protocol):
 
         Returns:
             Its files, sorted by path; none when it keeps none.
+        """
+        ...
+
+
+class AccessPolicy(Protocol):
+    """Library roles: what the caller may do with a library (a bridge to identity)."""
+
+    async def allows(self, library: str, access: Access) -> bool:
+        """Tell whether the caller may do what ``access`` stands for with the library.
+
+        Args:
+            library: The library ID (``/owner/repo``), any case.
+            access: The role the action needs.
+
+        Returns:
+            ``True`` when the caller's effective role on the library is that or higher.
+        """
+        ...
+
+    async def readable(self, libraries: Collection[str]) -> frozenset[str]:
+        """Return the libraries the caller may read.
+
+        Args:
+            libraries: Library IDs.
+
+        Returns:
+            The lower-case IDs among them the caller may read.
         """
         ...

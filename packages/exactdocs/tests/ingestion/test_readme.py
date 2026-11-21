@@ -1,4 +1,6 @@
-"""What a root README says about its library: first heading, first paragraph, sanitized, capped."""
+"""What a root README says about its library: its H1 or logo, first paragraph, sanitized, capped."""
+
+from pathlib import Path
 
 import pytest
 
@@ -14,7 +16,8 @@ from exactdocs.ingestion.models import ReadmeSummary, readme_summary
         ("", None, None),
         ("no heading, just text\n", None, "no heading, just text"),
         ("Intro first.\n\n# Acme\n\nAfter.\n", "Acme", "After."),
-        ("## Second level\n\nText.\n", "Second level", "Text."),
+        ("## Second level\n\nText.\n", None, "Text."),
+        ("Intro.\n\n## Sponsors\n\nAcme Corp.\n", None, "Intro."),
         ("---\ntitle: Front\n---\n# Acme\n\nText.\n", "Acme", "Text."),
         (
             "# `acme` *SDK*\n\nUses **bold**, [links](http://x.y) and `code`.\n",
@@ -31,7 +34,21 @@ from exactdocs.ingestion.models import ReadmeSummary, readme_summary
         ("# Acme\n\n[Docs](http://x.y) | [API](http://x.z)\n\nReal.\n", "Acme", "Real."),
         ("# Acme\n\n[Docs](http://x.y)\n\nReal.\n", "Acme", "Real."),
         ("# [Acme](http://x.y)\n\nSee [the docs](http://x.y) now.\n", "Acme", "See the docs now."),
-        ("<h1 align=center>Acme</h1>\n\nText.\n", None, "Text."),
+        ("<h1 align=center>Acme</h1>\n\nText.\n", "Acme", "Text."),
+        ('<h1 align="center"><img src="logo.svg" alt="Acme"></h1>\n\nText.\n', "Acme", "Text."),
+        ("# ![Acme](logo.png)\n\nText.\n", "Acme", "Text."),
+        ("# [![Acme logo](logo.png)](https://acme.dev)\n\nText.\n", "Acme", "Text."),
+        ('# <img src="logo.png" alt="Acme">\n\nText.\n', "Acme", "Text."),
+        ("![Acme](logo.png)\n\nText.\n\n## Install\n\nRun it.\n", "Acme", "Text."),
+        ('<p><img src="logo.png" alt="Acme"></p>\n\n## Install\n\nRun it.\n', "Acme", "Run it."),
+        ("[![ci](https://img.shields.io/x.svg)](b)\n\n## Install\n\nRun it.\n", None, "Run it."),
+        ('<img src="ci/badge.svg" alt="CI">\n\n## Install\n\nRun it.\n', None, "Run it."),
+        ("![logo](logo.png)\n\n## Install\n\nRun it.\n", None, "Run it."),
+        ("Text first.\n\n![Diagram](d.png)\n\n## Install\n", None, "Text first."),
+        ("![Acme](logo.png)\n\n# Acme Payments\n\nText.\n", "Acme Payments", "Text."),
+        ("# Acme\n\n> A quote.\n\nText.\n", "Acme", "Text."),
+        ("# Acme\n\n**Docs**: [https://x.y](https://x.y)\n\nText.\n", "Acme", "Text."),
+        ("# Acme\n\n**Acme** is an SDK: [docs](https://x.y).\n", "Acme", "Acme is an SDK: docs."),
     ],
 )
 def test_extraction(source: str, title: str | None, description: str | None) -> None:
@@ -45,3 +62,35 @@ def test_long_values_are_cut() -> None:
     assert summary.description is not None
     assert len(summary.title) == README_TITLE_MAX
     assert len(summary.description) <= README_DESCRIPTION_MAX
+
+
+READMES = Path(__file__).parents[1] / "fixtures" / "readmes"
+
+
+@pytest.mark.parametrize(
+    ("name", "title", "description"),
+    [
+        (
+            "fastapi.md",
+            "FastAPI",
+            (
+                "FastAPI is a modern, fast (high-performance), web framework for building APIs "
+                "with Python based on standard Python type hints."
+            ),
+        ),
+        (
+            "pydantic-ai.md",
+            "Pydantic AI",
+            (
+                "Pydantic AI is the Python AI SDK: a typed, extensible agent loop with every "
+                "model a string swap away."
+            ),
+        ),
+    ],
+)
+def test_a_logo_names_the_project_never_a_section_heading(
+    name: str, title: str, description: str
+) -> None:
+    source = (READMES / name).read_text(encoding="utf-8")
+
+    assert readme_summary(source) == ReadmeSummary(title=title, description=description)

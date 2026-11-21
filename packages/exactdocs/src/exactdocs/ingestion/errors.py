@@ -7,6 +7,7 @@ from exactdocs_kernel import (
     BusyError,
     ConflictError,
     DomainError,
+    ForbiddenError,
     NotFoundError,
     UnauthenticatedError,
     ValidationError,
@@ -168,13 +169,19 @@ class RepositoryTooLargeError(ValidationError):
 
     code = "repository_too_large"
 
-    def __init__(self, limit: int) -> None:
-        """Name the size limit that was passed.
+    def __init__(self, limit: int, *, files: bool = False) -> None:
+        """Name the limit that was hit: a number of bytes, or of files.
 
         Args:
-            limit: The most bytes accepted; the message names it in MiB.
+            limit: The most bytes (or files, with ``files``) accepted.
+            files: Whether ``limit`` counts files, not bytes.
         """
-        super().__init__(f"the selected files are larger than {limit // 2**20} MiB")
+        if files:
+            super().__init__(f"the fetch holds more than {limit} files")
+        elif limit >= 2**20:
+            super().__init__(f"the selected files are larger than {limit // 2**20} MiB")
+        else:
+            super().__init__(f"the selected files are larger than {limit} bytes")
 
 
 class TreeTooLargeError(ValidationError):
@@ -327,6 +334,39 @@ class JobNotFoundError(NotFoundError):
             job_id: The job ID as given.
         """
         super().__init__(f"job {job_id!r} does not exist")
+        self.job_id = job_id
+
+
+class JobFinishedError(ConflictError):
+    """A job that has ended (succeeded, failed or cancelled) cannot be cancelled."""
+
+    code = "job_finished"
+
+    def __init__(self, job_id: str, state: str) -> None:
+        """Name the job and the state it ended in.
+
+        Args:
+            job_id: The job ID.
+            state: The state it is in: ``succeeded``, ``failed`` or ``cancelled``.
+        """
+        super().__init__(
+            f"job {job_id!r} is {state}: only a queued or running job can be cancelled"
+        )
+        self.job_id, self.job_state = job_id, str(state)
+
+
+class JobCancelledError(DomainError):
+    """Raised inside a running job at its next step boundary once someone cancelled it."""
+
+    code = "job_cancelled"
+
+    def __init__(self, job_id: str) -> None:
+        """Name the job that stops.
+
+        Args:
+            job_id: The job ID.
+        """
+        super().__init__(f"job {job_id!r} was cancelled")
         self.job_id = job_id
 
 
@@ -526,7 +566,7 @@ class NoArticlesError(ValidationError):
 
     def __init__(self) -> None:
         """Create the error with its fixed message."""
-        super().__init__("no .md or .mdx file of this commit matches the library's paths")
+        super().__init__("no .md, .mdx or .rst file of this commit matches the library's paths")
 
 
 class ImportTooLargeError(ValidationError):
@@ -749,3 +789,27 @@ class AutoImportFailedError(DomainError):
             errors: One text per tag that was not queued or version that was not removed.
         """
         super().__init__("; ".join(errors))
+
+
+class LibraryAccessDeniedError(ForbiddenError):
+    """The caller's role on the library is too low for what they asked."""
+
+    def __init__(self, library_id: str, needed: str) -> None:
+        """Name the library and the role it takes.
+
+        Args:
+            library_id: The library asked about.
+            needed: The lowest library role that may do it.
+        """
+        super().__init__(f"library {library_id!r}: this needs the {needed} role")
+        self.library_id = library_id
+
+
+class LibraryCreationDeniedError(ForbiddenError):
+    """The caller lacks the instance-wide library creation permission."""
+
+    code = "library_creation_denied"
+
+    def __init__(self) -> None:
+        """Report missing instance creation permission."""
+        super().__init__("library creation is not permitted")

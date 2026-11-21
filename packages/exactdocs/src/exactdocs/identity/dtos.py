@@ -1,9 +1,18 @@
 """Data crossing the identity boundary (into and out of driving ports). Immutable, validated."""
 
 from datetime import datetime
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from exactdocs.identity.constants import (
     MAX_PASSWORD_LENGTH,
@@ -16,11 +25,48 @@ from exactdocs.identity.constants import (
     TOKEN_NAME_DESCRIPTION,
     USERNAME_DESCRIPTION,
 )
-from exactdocs.identity.models import Account, ApiToken, SignInPolicy
+from exactdocs.identity.models import Account, ApiToken, LibraryGrant, LibraryRole, SignInPolicy
+from exactdocs_kernel import LIBRARY_ID_PATTERN, MAX_NAME
 
 
 class _Dto(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
+
+
+_LibraryId = Annotated[str, Field(pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)]
+_SortedLibraryIds = Annotated[list[_LibraryId], Field(json_schema_extra={"uniqueItems": True})]
+
+
+class _LibrarySelection(_Dto):
+    """An optional, canonical selection of libraries; an empty selection allows none."""
+
+    library_ids: frozenset[_LibraryId] | None = None
+    """Selected library IDs; omit or use null for all libraries the user can access."""
+
+    @field_validator("library_ids")
+    @classmethod
+    def _canonical_libraries(cls, value: frozenset[str] | None) -> frozenset[str] | None:
+        """Normalize the library selection.
+
+        Args:
+            value: The optional selected IDs.
+
+        Returns:
+            Casefolded unique IDs, preserving unrestricted and empty selections.
+        """
+        return None if value is None else frozenset(library.casefold() for library in value)
+
+    @field_serializer("library_ids")
+    def _sorted_libraries(self, value: frozenset[str] | None) -> _SortedLibraryIds | None:
+        """Serialize the selection in a stable order (a set's order varies per process).
+
+        Args:
+            value: The canonical selected IDs.
+
+        Returns:
+            The IDs sorted, or ``None`` for an unrestricted selection.
+        """
+        return None if value is None else sorted(value)
 
 
 class AccountSummary(_Dto):
@@ -44,6 +90,24 @@ class AccountSummary(_Dto):
             Its summary.
         """
         return cls(id=account.id, username=account.username.value, role=account.role.value)
+
+
+class ApiTokenIdentity(AccountSummary, _LibrarySelection):
+    """A verified API credential and the account it acts as; never parsed from token claims."""
+
+    token_id: str
+    """Stable credential ID, without its secret."""
+
+
+class ExternalTokenIdentity(_Dto):
+    """The verified identity of one OAuth request, without changing web-account state."""
+
+    account: AccountSummary
+    """The linked account, or the synthetic provider/subject caller."""
+    groups: frozenset[str]
+    """Groups from this signed ID token, mapped with the provider's group prefix."""
+    linked: bool
+    """Whether this caller must still have its linked account in the repository."""
 
 
 class SetupState(_Dto):
@@ -75,7 +139,7 @@ class AuthenticateQuery(_Dto):
     """Password of the account."""
 
 
-class LoginForTokenCommand(_Dto):
+class LoginForTokenCommand(_LibrarySelection):
     """Credentials exchanged for an API token (the CLI's login); ``name`` labels the token."""
 
     username: str = Field(max_length=4 * MAX_USERNAME_LENGTH)
@@ -264,6 +328,12 @@ class SessionState(_Dto):
     providers: list[SignInProviderSummary] = Field(default_factory=list)
     """The identity providers one may sign in with besides a password; empty when none is
     configured (and while setup is due: the first admin is always local)."""
+    source: Literal["session", "cloudflare_access"] | None = None
+    """How the caller is signed in: an ExactDocs session cookie, or the Cloudflare Access token
+    of the request; `null` unless `state` is `signed_in`."""
+    sign_out_url: str | None = None
+    """Where to send the browser to sign out when `source` is `cloudflare_access` (Access's own
+    logout: ending the ExactDocs session alone would sign it in again); `null` otherwise."""
 
 
 class StartExternalSignInCommand(_Dto):
@@ -324,7 +394,7 @@ class RevalidationReport(_Dto):
     the answer was dropped and the newer state kept."""
 
 
-class CreateTokenCommand(_Dto):
+class CreateTokenCommand(_LibrarySelection):
     """A new API token for the caller. ``expires_at`` (timezone-aware) is optional."""
 
     name: str = Field(max_length=MAX_TOKEN_NAME_INPUT, description=TOKEN_NAME_DESCRIPTION)
@@ -333,7 +403,7 @@ class CreateTokenCommand(_Dto):
     """When the token stops working (in the future, with a timezone); omit it for no expiry."""
 
 
-class TokenSummary(_Dto):
+class TokenSummary(_LibrarySelection):
     """A token as listed: everything but the secret."""
 
     id: str
@@ -366,6 +436,7 @@ class TokenSummary(_Dto):
             created_at=token.created_at,
             expires_at=token.expires_at,
             last_used_at=token.last_used_at,
+            library_ids=token.library_ids,
         )
 
 
@@ -381,3 +452,134 @@ class TokenGrant(TokenSummary):
 
     token: str = Field(repr=False)
     """The token's secret, shown only this once: send it as `Authorization: Bearer <token>`."""
+
+
+class LibraryRolesQuery(_Dto):
+    """Ask what one authenticated caller may do with libraries."""
+
+    account_id: str
+    """The account."""
+    libraries: list[str]
+    """Library IDs (``/owner/repo``)."""
+    external_identity: ExternalTokenIdentity | None = None
+    """Trusted request identity from the token verifier; never accepted from client arguments."""
+
+
+class LibraryRoles(_Dto):
+    """An account's effective role on each library asked about."""
+
+    roles: dict[str, str]
+    """Library ID (lower-case) to the role: `viewer`, `contributor`, `admin` or `creator`. A
+    library the account has no role on is left out."""
+
+    def allows(self, library: str, needed: str) -> bool:
+        """Tell whether the account's role on a library is ``needed`` or higher.
+
+        Args:
+            library: The library ID, any case.
+            needed: The lowest role that may do it: `viewer`, `contributor`, `admin` or
+                `creator`.
+
+        Returns:
+            ``False`` when the account has no role on the library.
+        """
+        role = self.roles.get(library.casefold())
+        return role is not None and LibraryRole(role).allows(LibraryRole(needed))
+
+
+class ClaimLibraryCommand(_Dto):
+    """Make an account the creator of a new library, dropping every earlier grant on its ID."""
+
+    account_id: str
+    """The account that created the library."""
+    library: str
+    """The library ID."""
+
+
+class DropLibraryGrantsCommand(_Dto):
+    """Drop every grant on a library that no longer exists."""
+
+    library: str
+    """The library ID."""
+
+
+class LibraryGrantRequest(_Dto):
+    """Give a user or a group a role on a library (replacing the role they had)."""
+
+    kind: Literal["user", "group"]
+    """Whether `subject` is a username or a group name."""
+    subject: str = Field(min_length=1, max_length=256)
+    """The username, or the group's name as ExactDocs stores it (with the provider's prefix)."""
+    role: Literal["viewer", "contributor", "admin"]
+    """The role to give. `creator` is not given: the library's creator holds it."""
+
+
+class GrantLibraryRoleCommand(LibraryGrantRequest):
+    """A grant, made by a caller."""
+
+    caller_id: str
+    """The account that shares the library."""
+    library: str
+    """The library ID."""
+
+
+class RevokeLibraryRoleCommand(_Dto):
+    """Take a role away from a user or a group, made by a caller."""
+
+    caller_id: str
+    """The account that stops sharing."""
+    library: str
+    """The library ID."""
+    kind: Literal["user", "group"]
+    """Whether `subject` is a username or a group name."""
+    subject: str
+    """The username or the group's name."""
+
+
+class ListLibraryGrantsQuery(_Dto):
+    """List who may do what with a library, asked by a caller."""
+
+    caller_id: str
+    """The account that asks."""
+    library: str
+    """The library ID."""
+
+
+class LibraryGrantSummary(_Dto):
+    """One grant as the outside world sees it."""
+
+    kind: Literal["user", "group"]
+    """Whether `subject` is a username or a group name."""
+    subject: str
+    """The username, or the group's name."""
+    role: str
+    """The role: `viewer`, `contributor`, `admin` or `creator`."""
+
+    @classmethod
+    def from_model(cls, grant: LibraryGrant, *, subject: str) -> Self:
+        """Map a grant to its boundary representation.
+
+        Args:
+            grant: The grant.
+            subject: What to show as its subject (a user's name, not its ID).
+
+        Returns:
+            Its summary.
+        """
+        return cls(kind=grant.kind.value, subject=subject, role=grant.role.value)
+
+
+class LibraryGrants(_Dto):
+    """Everyone who holds a role on a library."""
+
+    grants: list[LibraryGrantSummary]
+    """The grants: users first, then groups, by name."""
+
+
+class LibraryCreationQuery(_Dto):
+    """Ask whether an authenticated caller may create libraries on this instance."""
+
+    account_id: str
+    """The stable account ID."""
+    external_identity: ExternalTokenIdentity | None = None
+    """Trusted verified request identity; never client arguments."""

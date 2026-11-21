@@ -318,6 +318,56 @@ describe("account panel", () => {
   });
 });
 
+describe("signed in through Cloudflare Access", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const accessSession = {
+    state: "signed_in",
+    account,
+    source: "cloudflare_access",
+    sign_out_url: "https://team.cloudflareaccess.com/cdn-cgi/access/logout",
+  };
+
+  it("signs out at Access, never only locally (which would sign straight back in)", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new QueryClient();
+    client.setQueryData(["session"], accessSession);
+    render(
+      <QueryClientProvider client={client}>
+        <SignOutButton onSignedOut={() => {}} />
+      </QueryClientProvider>,
+    );
+    const link = screen.getByRole("link", { name: "Sign out" });
+    expect(link).toHaveAttribute("href", accessSession.sign_out_url);
+    expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("says on the account page where the sign-in comes from", () => {
+    const client = new QueryClient();
+    client.setQueryData(["session"], accessSession);
+    render(
+      <QueryClientProvider client={client}>
+        <AccountPanel onSignedOut={() => {}} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText("through Cloudflare Access")).toBeInTheDocument();
+  });
+
+  it("says nothing of Access for a session of ExactDocs", () => {
+    const client = new QueryClient();
+    client.setQueryData(["session"], { state: "signed_in", account, source: "session" });
+    render(
+      <QueryClientProvider client={client}>
+        <AccountPanel onSignedOut={() => {}} />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByText("through Cloudflare Access")).toBeNull();
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+  });
+});
+
 describe("sign-out error placement", () => {
   afterEach(() => vi.unstubAllGlobals());
 
@@ -372,6 +422,11 @@ describe("sign-in through an identity provider", () => {
 
   it.each([
     ["not_allowed", /not in a group allowed/],
+    ["github_team_required", /not a member of an allowed team/],
+    ["github_org_required", /not a member of an allowed organization/],
+    ["github_app_not_approved:acme", /organization acme has not approved this app/],
+    ["github_sso_required:acme", /authorize SSO for acme/],
+    ["github_access_denied:acme", /organization acme refused access/],
     ["account_disabled", /account is disabled/],
     ["username_unavailable", /username is taken/],
     ["provider_unavailable", /can't be reached/],
@@ -380,6 +435,16 @@ describe("sign-in through an identity provider", () => {
   ])("explains a refused sign-in (%s)", (code, message) => {
     renderWithClient(<SignInPage error={code} providers={providers} onSignedIn={vi.fn()} />);
     expect(screen.getByRole("alert")).toHaveTextContent(message);
+  });
+
+  it.each([
+    "github_sso_required:<img src=x onerror=alert(1)>",
+    "github_sso_required:acme:extra",
+    "github_sso_required:acme\n",
+    `github_sso_required:${"a".repeat(101)}`,
+  ])("ignores malformed GitHub refusal %s", (error) => {
+    renderWithClient(<SignInPage error={error} providers={providers} onSignedIn={vi.fn()} />);
+    expect(screen.queryByRole("alert")).toHaveTextContent("");
   });
 
   it("shows nothing for a code it does not know (the query string is not trusted)", () => {

@@ -135,8 +135,20 @@ async def test_session_state_before_setup_and_when_signed_out(container: Contain
         await create_admin(container)
         signed_out = await client.get("/api/v1/session")
 
-    assert fresh == {"state": "setup_required", "account": None, "providers": []}
-    assert signed_out.json() == {"state": "signed_out", "account": None, "providers": []}
+    assert fresh == {
+        "state": "setup_required",
+        "account": None,
+        "providers": [],
+        "source": None,
+        "sign_out_url": None,
+    }
+    assert signed_out.json() == {
+        "state": "signed_out",
+        "account": None,
+        "providers": [],
+        "source": None,
+        "sign_out_url": None,
+    }
     assert signed_out.headers["cache-control"] == "no-store"
 
 

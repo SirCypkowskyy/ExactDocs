@@ -13,6 +13,7 @@ from typing import Self
 
 import pytest
 
+from exactdocs.ingestion import use_cases
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.memory import (
     InMemoryCheckpoints,
@@ -22,6 +23,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
     NoCopier,
     NoStoredTags,
 )
+from exactdocs.ingestion.adapters.driven.restructuredtext import RestructuredTextConverter
 from exactdocs.ingestion.constants import (
     IMPORT_JOB,
     MAX_INSTRUCTION_DIRS,
@@ -41,6 +43,7 @@ from exactdocs.ingestion.errors import (
     NoArticlesError,
     NotAGitRepositoryError,
     RepositoryAuthRequiredError,
+    RepositoryTooLargeError,
     RepositoryUnreachableError,
 )
 from exactdocs.ingestion.models import (
@@ -71,7 +74,12 @@ from exactdocs.ingestion.models import (
     parse_article,
 )
 from exactdocs.ingestion.module import TagLocks, import_job
-from exactdocs.ingestion.ports import GuidancePolicy, RenameSource, RepositoryFiles
+from exactdocs.ingestion.ports import (
+    GuidancePolicy,
+    MarkupConverter,
+    RenameSource,
+    RepositoryFiles,
+)
 from exactdocs.ingestion.use_cases import (
     ImportVersionUseCase,
     RunNextJobUseCase,
@@ -105,6 +113,7 @@ class Checkout:
     tmp: Path | None = None
     after_write: Callable[[Path], None] = lambda _: None
     open: bool = False  # inside ``fetch``
+    bounded: bool = False  # ``fetch_files`` raises when its files add up to more than max_bytes
 
     @asynccontextmanager
     async def fetch(
@@ -148,7 +157,9 @@ class Checkout:
         del repository, commit_sha, refs, credential
         self.extra.append((list(paths), max_bytes))
         assert self.tmp is not None
-        folder = self.tmp / "second"
+        if self.bounded and sum(len(self.elsewhere.get(n, b"")) for n in paths) > max_bytes:
+            raise RepositoryTooLargeError(max_bytes)  # what the real gateway's watchdog does
+        folder = self.tmp / f"second{len(self.extra)}"  # one per call
         folder.mkdir()
         for name in paths:
             if name in self.elsewhere:
@@ -273,10 +284,14 @@ class Side:
 
 
 class CountingChunker:
+    """The real chunker; it raises on the articles at ``failing`` (one bad file, as in #430)."""
+
     def __init__(self) -> None:
         self.inner = MarkdownChunker()
         self.chunked: list[str] = []
         self.config_hash = self.inner.config_hash
+        self.failing: set[str] = set()
+        self.error: Exception = IndexError("list index out of range")
 
     def configured(self, config: ChunkingConfig) -> Self:
         self.inner = self.inner.configured(config)
@@ -285,6 +300,8 @@ class CountingChunker:
 
     def chunk(self, article: ParsedArticle) -> Sequence[ArticleChunk]:
         self.chunked.append(article.path)
+        if article.path in self.failing:
+            raise self.error
         return self.inner.chunk(article)
 
 
@@ -391,6 +408,7 @@ def build_world(
     stored: Stored | None = None,
     guidance: GuidancePolicy | None = None,
     reader: RepositoryFiles | None = None,
+    converter: MarkupConverter | None = None,
 ) -> World:
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -415,6 +433,7 @@ def build_world(
         copier=NoCopier(),
         guidance=guidance,
         files=reader,
+        converter=converter,
     )
     run = handlers[kind]
     return World(run, gateway, catalog, chunks, chunker, Progress())  # ty: ignore[invalid-argument-type]
@@ -821,6 +840,107 @@ async def test_files_that_cannot_be_read_are_skipped_with_a_reason(tmp_path: Pat
     }
     assert ("docs/big.md", ProblemCode.TOO_LARGE, "larger than 50 bytes") in world.progress.problems
     assert world.progress.reports[-1] == (7, 7)  # skipped files count as processed
+
+
+async def test_a_fence_with_a_blank_info_string_imports(tmp_path: Path) -> None:
+    """Issue #430: ```` ``` ```` then blanks failed the whole import with an IndexError."""
+    blank = "# Storage\n\n```   \naz storage account list\n```\n\n~~~\t\necho x\n~~~\n"
+    world = build_world(tmp_path, {"docs/storage.md": blank.encode(), "docs/ok.md": b"# Ok\n"})
+
+    await world.run(make_job(), world.progress)
+
+    articles = {a.path: a for a in world.catalog.stored[0].articles}
+    assert sorted(articles) == ["docs/ok.md", "docs/storage.md"]
+    assert [c.code_languages for c in articles["docs/storage.md"].chunks] == [()]
+    assert world.progress.problems == []
+
+
+async def test_a_file_the_chunker_cannot_cut_is_skipped_and_the_rest_imported(
+    tmp_path: Path,
+) -> None:
+    world = build_world(
+        tmp_path,
+        {
+            "docs/auth.md": AUTH.encode(),
+            "docs/bad.md": b"# Bad\n\nCuts badly.\n",
+            "docs/install.md": INSTALL.encode(),
+        },
+    )
+    world.chunker.failing = {"docs/bad.md"}
+
+    await world.run(make_job(), world.progress)
+
+    assert [a.path for a in world.catalog.stored[0].articles] == ["docs/auth.md", "docs/install.md"]
+    assert world.progress.problems == [
+        ("docs/bad.md", ProblemCode.UNPARSABLE, "could not be parsed or chunked: IndexError")
+    ]
+    assert ProblemCode.UNPARSABLE.is_skip
+    assert world.log[-2:] == ["catalog activate m1", "catalog describe"]
+    assert world.progress.reports[-1] == (3, 3)  # the failed file counts as processed
+
+
+async def test_every_path_of_a_blob_the_chunker_cannot_cut_is_listed(tmp_path: Path) -> None:
+    bad = b"# Bad\n"  # one blob at two paths: chunked once, listed twice
+    world = build_world(
+        tmp_path, {"docs/a.md": bad, "docs/b.md": bad, "docs/install.md": INSTALL.encode()}
+    )
+    world.chunker.failing = {"docs/a.md"}
+
+    await world.run(make_job(), world.progress)
+
+    assert [a.path for a in world.catalog.stored[0].articles] == ["docs/install.md"]
+    assert [(p, c) for p, c, _ in world.progress.problems] == [
+        ("docs/a.md", ProblemCode.UNPARSABLE),
+        ("docs/b.md", ProblemCode.UNPARSABLE),
+    ]
+
+
+async def test_a_file_that_cannot_be_parsed_is_skipped_and_the_rest_imported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = use_cases.parse_article
+
+    def parse(path: str, text: str) -> ParsedArticle:
+        if path == "docs/bad.md":
+            raise RecursionError
+        return real(path, text)
+
+    monkeypatch.setattr(use_cases, "parse_article", parse)
+    world = build_world(tmp_path, {"docs/bad.md": b"# Bad\n", "docs/install.md": INSTALL.encode()})
+
+    await world.run(make_job(), world.progress)
+
+    assert [a.path for a in world.catalog.stored[0].articles] == ["docs/install.md"]
+    assert world.progress.problems == [
+        ("docs/bad.md", ProblemCode.UNPARSABLE, "could not be parsed or chunked: RecursionError")
+    ]
+    assert world.chunker.chunked == ["docs/install.md"]
+
+
+async def test_when_no_file_can_be_cut_the_import_has_no_articles(tmp_path: Path) -> None:
+    world = build_world(tmp_path, {"docs/bad.md": b"# Bad\n"})
+    world.chunker.failing = {"docs/bad.md"}
+
+    with pytest.raises(NoArticlesError):
+        await world.run(make_job(), world.progress)
+
+    assert world.log == []
+    assert [(p, c) for p, c, _ in world.progress.problems] == [
+        ("docs/bad.md", ProblemCode.UNPARSABLE)
+    ]
+
+
+async def test_running_out_of_memory_while_chunking_still_fails_the_import(
+    tmp_path: Path,
+) -> None:
+    world = build_world(tmp_path, {"docs/bad.md": b"# Bad\n", "docs/ok.md": INSTALL.encode()})
+    world.chunker.failing, world.chunker.error = {"docs/bad.md"}, MemoryError()
+
+    with pytest.raises(MemoryError):  # not about one file: the whole import stops
+        await world.run(make_job(), world.progress)
+
+    assert world.log == []
+    assert world.progress.problems == []
 
 
 async def test_a_file_name_that_is_not_utf8_is_skipped_with_a_printable_path(
@@ -1497,7 +1617,7 @@ async def test_referenced_images_are_imported_from_both_checkouts(tmp_path: Path
         ("docs/guide/logo.svg", "image/svg+xml", git_blob_sha(SVG), SVG),
         ("docs/img/flow.png", "image/png", git_blob_sha(PNG), PNG),
     ]
-    assert world.gateway.extra == [(["docs/img/flow.png"], 2**30)]
+    assert world.gateway.extra == [(["docs/img/flow.png"], 2**30 - len(SVG) + 2**20)]
     assert world.progress.problems == []
 
 
@@ -1581,6 +1701,31 @@ async def test_the_version_keeps_images_up_to_its_budget_and_skips_the_rest(
     assert [(p, c) for p, c, _ in world.progress.problems] == [("docs/c.png", "image_budget")]
 
 
+async def test_outside_images_too_big_for_the_budget_are_skipped_not_fatal(
+    tmp_path: Path,
+) -> None:
+    """Entra: thousands of referenced images outside the selection must not fail the import."""
+    names = [f"docs/media/{n:03}.png" for n in range(120)]
+    page = " ".join(f"![]({n.removeprefix('docs/')})" for n in ["docs/media/huge.png", *names])
+    huge = PNG + b"h" * 5000
+    world = build_world(
+        tmp_path,
+        {"docs/a.md": page.encode()},
+        elsewhere=dict.fromkeys(names, PNG) | {"docs/media/huge.png": huge},
+        max_image_bytes=64,
+        max_images_bytes=10 * len(PNG),
+    )
+    world.gateway.bounded = True
+
+    await world.run(make_job(), world.progress)
+
+    assert len(world.catalog.stored[0].images) == 10
+    problems = {p: c for p, c, _ in world.progress.problems}
+    assert problems["docs/media/huge.png"] == "too_large"
+    assert problems["docs/media/010.png"] == "image_budget"
+    assert len(world.gateway.extra) > 1  # fetched in batches, the big batch halved
+
+
 async def test_a_symlinked_image_is_not_followed(tmp_path: Path) -> None:
     outside = tmp_path / "secret.png"
     outside.write_bytes(PNG)
@@ -1631,8 +1776,7 @@ async def test_images_looked_for_are_capped_per_version(tmp_path: Path) -> None:
 
     await world.run(make_job(), world.progress)
 
-    (extra, _) = world.gateway.extra[0]
-    assert len(extra) == cap
+    assert sum(len(paths) for paths, _ in world.gateway.extra) == cap
     assert [c for _, c, _ in world.progress.problems].count("truncated") == 1
 
 
@@ -1947,3 +2091,132 @@ def test_candidates_are_the_root_and_the_selected_folders_shallowest_first_and_b
     assert found[:4] == ["AGENTS.md", "CLAUDE.md", "docs/AGENTS.md", "docs/CLAUDE.md"]
     assert len(found) == 2 * MAX_INSTRUCTION_DIRS
     assert not [p for p in found if ".git" in p]
+
+
+SPHINX = Path(__file__).parents[1] / "fixtures" / "sphinx-docs"
+"""The fixture Sphinx documentation (README.md there)."""
+
+
+def _sphinx_files() -> dict[str, bytes]:
+    return {
+        path.relative_to(SPHINX).as_posix(): path.read_bytes()
+        for path in SPHINX.joinpath("doc").rglob("*")
+        if path.is_file()
+    }
+
+
+def _rst_world(
+    tmp_path: Path,
+    files: Mapping[str, bytes],
+    *,
+    selection: PathSelection | None = None,
+    max_import_bytes: int = 2**30,
+) -> World:
+    return build_world(
+        tmp_path,
+        files,
+        selection=selection or PathSelection.of(["docs/", "doc/build/"]),
+        max_import_bytes=max_import_bytes,
+        converter=RestructuredTextConverter(),
+    )
+
+
+async def test_markdown_and_restructuredtext_are_imported_into_the_same_version(
+    tmp_path: Path,
+) -> None:
+    world = _rst_world(tmp_path, {"docs/auth.md": AUTH.encode(), **_sphinx_files()})
+
+    await world.run(make_job(), world.progress)
+
+    articles = {a.path: a for a in world.catalog.stored[0].articles}
+    assert set(articles) == {
+        "docs/auth.md",
+        "doc/build/index.rst",
+        "doc/build/tutorial.rst",
+        "doc/build/orm/session.rst",
+        "doc/build/orm/_inc/connection_note.rst",
+        "doc/build/orm/_inc/pool_sizes.rst",
+    }  # no .txt (no path names it), no conf.py, no example .py
+    session = articles["doc/build/orm/session.rst"]
+    assert session.title == "Using a Store"
+    assert session.content.startswith("# Using a Store\n")
+    assert "The pool keeps at most `pool_size` connections open." in session.content
+    assert "def open_and_add(order):" in session.content
+    paths = {c.heading_path for c in session.chunks}
+    assert ("Using a Store", "Opening a Store", "Retry policies", "Flush order") in paths
+    assert "python+sql" in {lang for c in session.chunks for lang in c.code_languages}
+    assert articles["doc/build/tutorial.rst"].title == "Tutorial"
+    assert articles["docs/auth.md"].title == "Auth"
+
+
+async def test_markup_problems_are_listed_per_file_and_the_article_is_imported(
+    tmp_path: Path,
+) -> None:
+    world = _rst_world(tmp_path, _sphinx_files())
+
+    await world.run(make_job(), world.progress)
+
+    problems = {path: (code, reason) for path, code, reason in world.progress.problems}
+    code, reason = problems["doc/build/orm/session.rst"]
+    assert code == ProblemCode.MARKUP
+    assert "tab-set" in reason
+    assert "paramref" in reason
+    assert "outside/missing.rst: not among the imported files" in reason
+    assert "doc/build/index.rst" not in problems
+    assert not ProblemCode.MARKUP.is_skip
+    assert "doc/build/orm/session.rst" in {a.path for a in world.catalog.stored[0].articles}
+
+
+async def test_a_txt_file_is_an_article_only_when_a_path_names_txt(tmp_path: Path) -> None:
+    world = _rst_world(tmp_path, _sphinx_files(), selection=PathSelection.of(["doc/build/*.txt"]))
+
+    await world.run(make_job(), world.progress)
+
+    (article,) = world.catalog.stored[0].articles
+    assert (article.path, article.title) == ("doc/build/changelog.txt", "Changelog")
+
+
+async def test_a_converted_article_is_keyed_by_its_includes_not_its_blob(tmp_path: Path) -> None:
+    page = b"Page\n====\n\n.. include:: part.rst\n"
+    (tmp_path / "1").mkdir()
+    (tmp_path / "2").mkdir()
+    first = _rst_world(tmp_path / "1", {"docs/page.rst": page, "docs/part.rst": b"One.\n"})
+    second = _rst_world(tmp_path / "2", {"docs/page.rst": page, "docs/part.rst": b"Two.\n"})
+
+    for world in (first, second):
+        await world.run(make_job(), world.progress)
+
+    keys = [
+        next(a for a in w.catalog.stored[0].articles if a.path == "docs/page.rst").blob_sha
+        for w in (first, second)
+    ]
+    assert keys[0] != keys[1]
+    assert keys[0] != git_blob_sha(page)
+    assert all(len(key) == 64 for key in keys)
+
+
+async def test_includes_count_toward_the_import_byte_budget(tmp_path: Path) -> None:
+    page = b"Page\n====\n\n" + b".. include:: part.rst\n\n" * 3
+    part = b"x" * 400 + b"\n"
+    world = _rst_world(
+        tmp_path,
+        {"docs/page.rst": page, "docs/part.rst": part},
+        selection=PathSelection.of(["docs/page.rst"]),
+        max_import_bytes=len(page) + 2 * len(part),
+    )
+
+    with pytest.raises(ImportTooLargeError):
+        await world.run(make_job(), world.progress)
+
+
+async def test_without_a_converter_restructuredtext_is_skipped_with_a_reason(
+    tmp_path: Path,
+) -> None:
+    world = build_world(tmp_path, {"docs/a.rst": b"A\n=\n", "docs/b.md": b"# B\n"})
+
+    await world.run(make_job(), world.progress)
+
+    assert [a.path for a in world.catalog.stored[0].articles] == ["docs/b.md"]
+    assert [(p, c) for p, c, _ in world.progress.problems] == [
+        ("docs/a.rst", ProblemCode.UNREADABLE)
+    ]

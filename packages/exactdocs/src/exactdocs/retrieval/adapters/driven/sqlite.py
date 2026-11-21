@@ -76,6 +76,7 @@ from exactdocs.retrieval.models import (
     LibraryAi,
     ManifestChunk,
     ModelRef,
+    ModelRole,
     ProfileOrigin,
     ProviderKind,
     ProviderProfile,
@@ -88,6 +89,7 @@ from exactdocs.retrieval.models import (
     SpendKey,
     SpendWindow,
     StoredChunk,
+    ThinkingLevel,
     VersionCounts,
 )
 
@@ -176,6 +178,9 @@ library_settings = Table(
     Column("llm", Text),
     Column("judge", Text),
     Column("reranker", Text),
+    # Its own thinking levels (#421): ThinkingLevel values; NULL: the instance's.
+    Column("llm_thinking", Text),
+    Column("judge_thinking", Text),
     Column("rerank_top_n", Integer),  # NULL: the instance's top N
     Column("rerank_with", Text),  # RerankWith value (#96); NULL: the instance's choice
     # The library's own budgets (#102); NULL: not limited by the library.
@@ -185,6 +190,14 @@ library_settings = Table(
     Column("monthly_tokens", BigInteger),
     # What its AGENTS.md / CLAUDE.md do for agentic retrieval (RET-08): RepoGuidance value.
     Column("repo_guidance", Text, nullable=False, server_default="off"),
+)
+# The instance roles' thinking levels set over the REST API (#421): one row per role
+# (`llm`, `judge`); a level set in the environment or the configuration file wins over it.
+role_settings = Table(
+    "retrieval_role_settings",
+    metadata,
+    Column("role", Text, primary_key=True),
+    Column("thinking", Text),  # ThinkingLevel value
 )
 # Provider profiles managed over the REST API. The key is sealed by the secret box (its own HKDF
 # purpose); every other field is JSON in `settings`, as `ProviderProfile` names them.
@@ -870,6 +883,8 @@ class SqliteLibraryModes:
             llm=_stored_ref(row.llm),
             judge=_stored_ref(row.judge),
             reranker=_stored_ref(row.reranker),
+            llm_thinking=_stored_thinking(row.llm_thinking),
+            judge_thinking=_stored_thinking(row.judge_thinking),
             rerank_top_n=row.rerank_top_n,
             rerank_with=_stored_rerank_with(row.rerank_with),
             budgets=_stored_budgets(row),
@@ -894,6 +909,16 @@ class SqliteLibraryModes:
         async with self.engine.connect() as connection:
             rows = (await connection.execute(query)).all()
         return {row.library: _stored_budgets(row) for row in rows}
+
+    async def ai_disabled(self) -> frozenset[str]:
+        """Read which libraries have AI turned off, in one query.
+
+        Returns:
+            The case-folded IDs of the libraries whose AI is off.
+        """
+        query = select(library_settings.c.library).where(library_settings.c.ai_enabled == 0)
+        async with self.engine.connect() as connection:
+            return frozenset((await connection.execute(query)).scalars())
 
     async def forget(self, library: str) -> None:
         """Delete the library's row.
@@ -928,6 +953,8 @@ class SqliteLibraryModes:
                         llm=_ref_text(ai.llm),
                         judge=_ref_text(ai.judge),
                         reranker=_ref_text(ai.reranker),
+                        llm_thinking=_thinking_text(ai.llm_thinking),
+                        judge_thinking=_thinking_text(ai.judge_thinking),
                         rerank_top_n=ai.rerank_top_n,
                         rerank_with=None if ai.rerank_with is None else ai.rerank_with.value,
                         repo_guidance=ai.repo_guidance.value,
@@ -947,6 +974,68 @@ class SqliteLibraryModes:
         async with self.engine.connect() as connection:
             texts = (await connection.execute(statement)).scalars().all()
         return frozenset(str(ref) for text in texts if (ref := _stored_ref(text)) is not None)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteRoleThinkingLevels:
+    """Implements ``ports.driven.RoleThinkingLevels`` in ``retrieval_role_settings``."""
+
+    engine: AsyncEngine
+    """The application database."""
+
+    async def levels(self) -> dict[ModelRole, ThinkingLevel]:
+        """Read every stored level; a role or a level this build does not know is skipped.
+
+        Returns:
+            Each role's level.
+        """
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(select(role_settings))).all()
+        return {
+            ModelRole(row.role): level
+            for row in rows
+            if row.role in ModelRole and (level := _stored_thinking(row.thinking)) is not None
+        }
+
+    async def save(self, role: ModelRole, level: ThinkingLevel | None) -> None:
+        """Replace a role's row; no level deletes it.
+
+        Args:
+            role: The role.
+            level: The level, or ``None``.
+        """
+        async with self.engine.execution_options(begin_immediate=True).begin() as connection:
+            await connection.execute(
+                delete(role_settings).where(role_settings.c.role == role.value)
+            )
+            if level is not None:
+                await connection.execute(
+                    insert(role_settings).values(role=role.value, thinking=level.value)
+                )
+
+
+def _stored_thinking(text: str | None) -> ThinkingLevel | None:
+    """Read a stored thinking level; one this build does not know counts as unset.
+
+    Args:
+        text: The stored ``ThinkingLevel`` value.
+
+    Returns:
+        The level, or ``None``.
+    """
+    return ThinkingLevel(text) if text in ThinkingLevel else None
+
+
+def _thinking_text(level: ThinkingLevel | None) -> str | None:
+    """Write a thinking level as stored.
+
+    Args:
+        level: The level.
+
+    Returns:
+        Its value, or ``None``.
+    """
+    return None if level is None else level.value
 
 
 def _stored_guidance(text: str | None) -> RepoGuidance:

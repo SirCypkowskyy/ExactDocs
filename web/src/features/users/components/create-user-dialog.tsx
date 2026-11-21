@@ -123,8 +123,8 @@ function Body({ onDone, onCreated }: { onDone: () => void; onCreated: (name: str
         <Button variant="ghost" aria-disabled={pending} onClick={() => !pending && onDone()}>
           Cancel
         </Button>
-        <Button type="submit" aria-disabled={pending} aria-busy={pending}>
-          {pending ? "Creating" : "Create user"}
+        <Button type="submit" pending={pending}>
+          Create user
         </Button>
       </div>
     </form>

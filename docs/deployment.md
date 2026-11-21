@@ -82,6 +82,49 @@ networks:
     ipam: { config: [{ subnet: 172.30.0.0/24 }] }
 ```
 
+## Behind Cloudflare Access
+
+A common setup publishes ExactDocs through a Cloudflare Tunnel with an Access application in
+front. ExactDocs can then trust the identity Access checked, so people do not sign in a second
+time and MCP clients need only the Access service-token headers.
+
+1. **Make the origin reachable only through the tunnel.** Run `cloudflared` next to ExactDocs and
+   do not publish ExactDocs' port to the host or the internet (no `ports:` in Compose, a
+   firewall in front of anything else). Anyone who can reach the origin directly can replay a
+   stolen Access token; nobody can forge one, since its signature is checked.
+2. **Create a self-hosted Access application** for the public host name. Copy its
+   **Application Audience (AUD) tag** (application overview) and note your team domain
+   (`https://<team>.cloudflareaccess.com`, under Zero Trust settings).
+3. **Configure ExactDocs** (all fields: [Cloudflare Access](configuration.md#cloudflare-access)):
+
+    ```yaml
+    services:
+      exactdocs:
+        environment:
+          EXACTDOCS_ALLOWED_HOSTS: "docs.acme.com"
+          EXACTDOCS_PUBLIC_URL: "https://docs.acme.com"
+          EXACTDOCS_AUTH__CLOUDFLARE_ACCESS__TEAM_DOMAIN: "https://acme.cloudflareaccess.com"
+          EXACTDOCS_AUTH__CLOUDFLARE_ACCESS__AUDIENCE: '["<aud tag>"]'
+          EXACTDOCS_AUTH__CLOUDFLARE_ACCESS__ADMIN_EMAILS: '["ada@acme.com"]'
+          EXACTDOCS_AUTH__CLOUDFLARE_ACCESS__SERVICE_TOKENS: '{"<client id>.access": "ci-bot"}'
+      cloudflared:
+        image: cloudflare/cloudflared:latest
+        command: tunnel --no-autoupdate run
+        environment:
+          TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    ```
+
+4. **For MCP clients and scripts**, create an Access **service token**, add a *Service Auth*
+   policy for it to the application, create the account it acts as on the **Users** page (for
+   example `ci-bot`, then give it library roles), and map the token's client ID to that account
+   in `service_tokens`. See [MCP behind Cloudflare Access](mcp.md#behind-cloudflare-access).
+
+What people see: after the Access login, the web UI opens signed in, with no sign-in form. The
+**Account** page says the sign-in comes from Cloudflare Access, and **Sign out** goes to
+`<team_domain>/cdn-cgi/access/logout`, which ends the Access session too (ending only the
+ExactDocs session would sign the browser straight back in). The local admin from the setup keeps
+working with its password, for example from inside the network.
+
 ## Health checks
 
 Two probes answer `GET` and `HEAD` without sign-in, even before the first account exists, for

@@ -255,6 +255,49 @@ def step_nothing_sent(context: Context, library: str) -> None:
     assert _spaces(context) == []
 
 
+@given('a commit on branch "{branch}" adds one new article as "{first}" and "{second}"')
+def step_same_article_twice(context: Context, branch: str, first: str, second: str) -> None:
+    repo, git = context.fixture_repo.path, context.fixture_git
+    git("checkout", "-q", branch, cwd=repo)
+    text = "# FAQ\n\n## Refunds\n\nRefunds settle in two days.\n\n## Fees\n\nNo fees apply.\n"
+    for path in (first, second):  # the same blob at two paths, as copied READMEs are (#431)
+        (repo / path).write_text(text, encoding="utf-8", newline="\n")
+    git("add", first, second, cwd=repo)
+    git("-c", "user.name=Fixture", "-c", "user.email=f@exactdocs.invalid",
+        "commit", "-q", "-m", "docs: add the FAQ twice", cwd=repo)  # fmt: skip
+    git("checkout", "-q", "main", cwd=repo)
+
+
+@given('library "{library}" holds the same files at "{ref}"')
+def step_same_files(context: Context, library: str, ref: str) -> None:
+    asyncio.run(import_versions(context, [ref], library=library, title="Same docs"))
+    context.libraries = [LIBRARY, library]
+
+
+@when("the embedding jobs of every library run")
+def step_every_library_embedded(context: Context) -> None:
+    context.endpoint = start_gateway(context)
+    serve_embedding(context, embedding_ai(context.endpoint, "e5"))  # the start queues them
+    context.jobs = [job for lib in context.libraries for job in wait_for_embedding(context, lib)]
+
+
+@then("every embedding job succeeded with as many chunks done as its total")
+def step_done_is_total(context: Context) -> None:
+    # The libraries' jobs may run at the same time: one finds chunks the other embedded.
+    assert {(job["library"], job["version"]) for job in context.jobs} == {
+        (LIBRARY, "v1.4.0"),
+        (LIBRARY, "next"),
+        (context.libraries[1], "next"),
+    }, context.jobs
+    for job in context.jobs:
+        assert job["state"] == "succeeded", job
+        assert job["done"] == job["total"], job
+    assert any(job["total"] for job in context.jobs), context.jobs
+    estimate = context.client.get("/api/v1/ai/embedding/estimate")
+    assert estimate.status_code == HTTPStatus.OK, estimate.text
+    assert estimate.json()["chunks"] == 0, estimate.text  # nothing was left out
+
+
 @given("an embedding model is configured and nothing is embedded yet")
 def step_configured(context: Context) -> None:
     context.endpoint = start_gateway(context)
