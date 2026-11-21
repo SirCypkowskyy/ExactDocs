@@ -9,7 +9,7 @@ Feature: Admins see each library's AI pipeline, its spend limits and the instanc
   Scenario: The effective pipeline is visible
     Given an embedding model is configured and every version is embedded
     When the admin reads the library's retrieval settings
-    Then the effective pipeline is "hybrid" and only "bm25, hybrid" can be chosen
+    Then the effective pipeline is "hybrid" and only "bm25, vector, hybrid" can be chosen
 
   Scenario: A library can opt out of external AI
     Given an embedding model is configured and every version is embedded
