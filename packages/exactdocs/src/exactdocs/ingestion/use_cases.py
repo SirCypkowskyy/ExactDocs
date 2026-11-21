@@ -41,6 +41,7 @@ from exactdocs.ingestion.constants import (
     LIBRARY_KINDS,
     MAX_CONTROL_RATIO,
     MAX_IMAGES,
+    MAX_INCLUDES,
     MAX_INSTRUCTION_FILE_BYTES,
     MAX_LISTED_REFS,
     MAX_PREVIEW_FILES,
@@ -175,6 +176,7 @@ from exactdocs.ingestion.models import (
     ImportedRef,
     ImportedVersion,
     ImportSource,
+    IncludeRefused,
     InstructionPolicy,
     Job,
     JobId,
@@ -204,9 +206,12 @@ from exactdocs.ingestion.models import (
     WebhookProvider,
     check_credential_fits,
     compose_renames,
+    converted_article,
+    converted_key,
     git_blob_sha,
     imported_tags,
     instruction_candidates,
+    is_restructuredtext,
     is_unordered,
     parse_article,
     parse_context7,
@@ -244,6 +249,7 @@ from exactdocs.ingestion.ports.driven import (
     LibrarySettingsStore,
     LibrarySources,
     ManualTagStore,
+    MarkupConverter,
     NewLibraries,
     RecoveryHook,
     Removals,
@@ -2604,6 +2610,8 @@ class ImportVersionUseCase:
     """Says whether the library keeps its instruction files (RET-08); without it none are kept."""
     files: RepositoryFiles | None = None
     """Reads the instruction files (RET-08); without it none are kept."""
+    converter: MarkupConverter | None = None
+    """Writes reStructuredText articles as Markdown (#435); without it they are skipped."""
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
         """Run the import, skipping the steps a run before a crash completed; raising fails it.
@@ -3194,8 +3202,13 @@ class ImportVersionUseCase:
         Returns:
             The batch's articles, problems and counts.
         """
-        read, used = await self._read(await checkout.folder(), given, progress)
-        files = [(path, sha) for path, sha, _ in (r for r in read if not isinstance(r, Skip))]
+        folder = await checkout.folder()
+        read, used = await self._converted(folder, *await self._read(folder, given, progress))
+        files = [
+            (path, sha)
+            for path, sha, _ in (r for r in read if not isinstance(r, Skip))
+            if not is_restructuredtext(path)  # its key is not its blob: it is converted again
+        ]
         found = await self._stored(given.library, given.ref, files)
         loaded, problems = _parse(given.paths, read, found)
         known = given.known
@@ -3274,6 +3287,44 @@ class ImportVersionUseCase:
                 await progress.report(done=given.first + offset, total=given.total)
         return read, used
 
+    async def _converted(
+        self, folder: Path, read: list[tuple[str, str, str] | Skip], used: int
+    ) -> tuple[list[tuple[str, str, str | ParsedArticle] | Skip], int]:
+        """Convert the reStructuredText files read into articles, keyed by what they depend on.
+
+        The files their includes read count toward ``max_import_bytes`` too. Without a converter
+        such a file is skipped.
+
+        Args:
+            folder: The checkout's folder.
+            read: Each file's ``(path, blob SHA, text)`` or skip.
+            used: The bytes of text used so far.
+
+        Returns:
+            The same list, a converted file as ``(path, key, article)``, and the bytes used.
+
+        Raises:
+            ImportTooLargeError: The text adds up to more than ``max_import_bytes``.
+        """
+        result: list[tuple[str, str, str | ParsedArticle] | Skip] = []
+        for item in read:
+            if isinstance(item, Skip) or not is_restructuredtext(item[0]):
+                result.append(item)
+                continue
+            path, _, text = item
+            if self.converter is None:
+                reason = "reStructuredText is not converted here"
+                result.append(Skip(code=ProblemCode.UNREADABLE, reason=reason))
+                continue
+            files = _CheckoutFiles(folder=folder, limit=self.max_article_bytes)
+            converted = await asyncio.to_thread(self.converter.convert, path, text, files)
+            used += files.used
+            if used > self.max_import_bytes:
+                raise ImportTooLargeError(self.max_import_bytes)
+            key = converted_key(path, text, files.read_files, self.converter.version)
+            result.append((path, key, converted_article(path, converted)))
+        return result, used
+
     async def _stored(
         self, library: str, ref: str, files: Sequence[tuple[str, str]]
     ) -> dict[tuple[str, str], ParsedArticle]:
@@ -3314,17 +3365,19 @@ async def _same[T](value: T) -> T:
 
 def _parse(
     paths: Sequence[str],
-    read: Sequence[tuple[str, str, str] | Skip],
+    read: Sequence[tuple[str, str, str | ParsedArticle] | Skip],
     found: Mapping[tuple[str, str], ParsedArticle],
 ) -> tuple[list[tuple[str, str, ParsedArticle]], list[tuple[str, ProblemCode, str]]]:
     """Parse the files read, unless an earlier import stored them; list every file's problems.
 
     A file skipped while reading, or that cannot be parsed, is left out with a problem; an
-    article imported with notes on its front matter is listed with them.
+    article imported with notes on its front matter is listed with them. A converted
+    (reStructuredText) file is taken as it is, its notes listed as markup problems.
 
     Args:
         paths: The batch's files.
-        read: Each file's ``(path, blob SHA, text)`` or why it was skipped, in ``paths`` order.
+        read: Each file's ``(path, blob SHA or key, text or converted article)`` or why it was
+            skipped, in ``paths`` order.
         found: What earlier imports stored, by ``(path, blob SHA)``.
 
     Returns:
@@ -3339,13 +3392,19 @@ def _parse(
             problems.append((shown, result.code, result.reason))
             continue
         _, blob_sha, text = result
-        parsed = found.get((path, blob_sha)) or _one_file(shown, partial(parse_article, path, text))
+        code = ProblemCode.FRONT_MATTER
+        if isinstance(text, ParsedArticle):
+            parsed, code = text, ProblemCode.MARKUP
+        else:
+            parsed = found.get((path, blob_sha)) or _one_file(
+                shown, partial(parse_article, path, text)
+            )
         if isinstance(parsed, _Unparsable):  # the version imports without it
             problems.append((shown, ProblemCode.UNPARSABLE, parsed.reason))
             continue
         loaded.append((path, blob_sha, parsed))
         # The article is imported; the note is listed.
-        problems.extend((shown, ProblemCode.FRONT_MATTER, note) for note in parsed.problems)
+        problems.extend((shown, code, note) for note in parsed.problems)
     return loaded, problems
 
 
@@ -3986,6 +4045,67 @@ class Skip:
     """Why, in words for users."""
     path: str = ""
     """The file's repository path, once known."""
+
+
+@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- counts what it read
+class _CheckoutFiles:
+    """Implements ``IncludedFiles`` over the checkout: the files one article's includes read.
+
+    Each file is read as an article is (a plain file, decoded the same way, at most ``limit``
+    bytes); together they may take at most ``limit`` bytes and ``MAX_INCLUDES`` files. A file
+    outside the checkout (the selected paths) is not fetched.
+    """
+
+    folder: Path
+    """The checkout's folder."""
+    limit: int
+    """The most bytes one file, and all of them together, may have."""
+    read_files: list[tuple[str, str]] = field(default_factory=list)
+    """``(path, text)`` of every file read, in order."""
+    used: int = 0
+    """Bytes read."""
+
+    def read(self, path: str) -> str | IncludeRefused:
+        """Return a file's text, or why it is not read; see the ``IncludedFiles`` port.
+
+        Args:
+            path: A repository path.
+
+        Returns:
+            The text, or the refusal.
+        """
+        refused = self._refused(path)
+        loaded = _load(self.folder, path, self.limit) if refused is None else None
+        if isinstance(loaded, Skip):
+            refused = loaded.reason
+        elif loaded is not None and self.used + loaded[2] > self.limit:
+            refused = f"includes add up to more than {self.limit} bytes"
+        if refused is not None or not isinstance(loaded, tuple):
+            return IncludeRefused(reason=refused or "unreadable")
+        _, text, size = loaded
+        self.used += size
+        self.read_files.append((path, text))
+        return text
+
+    def _refused(self, path: str) -> str | None:
+        """Say why a file is not even looked at: too many included already, absent, a link.
+
+        Args:
+            path: A repository path.
+
+        Returns:
+            The reason, or None when it may be read.
+        """
+        if len(self.read_files) >= MAX_INCLUDES:
+            return f"more than {MAX_INCLUDES} files included"
+        try:
+            if _through_a_link(self.folder, path):
+                return "not a regular file"
+            if not (self.folder / path).is_file():
+                return "not among the imported files"
+        except OSError:
+            return "unreadable"
+        return None
 
 
 def _load(folder: Path, path: str, limit: int) -> tuple[str, str, int] | Skip:

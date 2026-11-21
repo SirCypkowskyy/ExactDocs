@@ -8768,7 +8768,7 @@
             },
             "type": "array",
             "title": "Include Paths",
-            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx` file."
+            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx`/`.rst` file (`.txt` only\nwhen a path names it)."
           },
           "exclude_paths": {
             "items": {
@@ -8834,7 +8834,7 @@
               }
             ],
             "title": "Context7 Paths",
-            "description": "Without paths, take those of the repository's root `context7.json` (null or true); false:\nno paths mean every `.md`/`.mdx` file."
+            "description": "Without paths, take those of the repository's root `context7.json` (null or true); false:\nno paths mean every `.md`/`.mdx`/`.rst` file."
           }
         },
         "additionalProperties": false,
@@ -12324,7 +12324,7 @@
             },
             "type": "array",
             "title": "Include Paths",
-            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx` file."
+            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx`/`.rst` file (`.txt` only\nwhen a path names it)."
           },
           "exclude_paths": {
             "items": {
@@ -13255,7 +13255,7 @@
             },
             "type": "array",
             "title": "Include Paths",
-            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx` file."
+            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx`/`.rst` file (`.txt` only\nwhen a path names it)."
           },
           "exclude_paths": {
             "items": {
@@ -13338,7 +13338,8 @@
           "missing_image",
           "truncated",
           "context7",
-          "instruction_files"
+          "instruction_files",
+          "markup"
         ],
         "title": "ProblemCode",
         "description": "Why a file shows up in a job's problems; stable, clients may branch on it."
@@ -14933,7 +14934,7 @@
               }
             ],
             "title": "Include Paths",
-            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx` file (the repository's\n`context7.json` does not fill in a managed empty list). Left out: not managed."
+            "description": "Folders, files or globs to import; empty: every `.md`/`.mdx`/`.rst` file (the repository's\n`context7.json` does not fill in a managed empty list). Left out: not managed."
           },
           "exclude_paths": {
             "anyOf": [

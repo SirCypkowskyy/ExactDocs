@@ -566,7 +566,7 @@ class NoArticlesError(ValidationError):
 
     def __init__(self) -> None:
         """Create the error with its fixed message."""
-        super().__init__("no .md or .mdx file of this commit matches the library's paths")
+        super().__init__("no .md, .mdx or .rst file of this commit matches the library's paths")
 
 
 class ImportTooLargeError(ValidationError):
