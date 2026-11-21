@@ -77,6 +77,14 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Pagination**: list endpoints take `limit` (1 to 200, default 50) and an opaque `cursor`, and
   return `next_cursor` (`null` on the last page). Pass it back unchanged; a malformed cursor is a
   422 `invalid_cursor`. Helper: `exactdocs_kernel.paginate`.
+- **Sort, filter and total**: the lists of libraries, versions, jobs (global and per library) and
+  articles also take `sort` (one whitelisted field, `-field` for descending) and filters such as
+  `q` (text, any case), `state`, `kind`, `ai_enabled`, `has_versions` and date ranges
+  (`updated_after`, `created_before`, ...); each parameter's description in the OpenAPI schema
+  names its fields. They run in the database, permissions apply before paging, and a cursor only
+  works with the `sort` and filters of the request that returned it. The libraries, versions, jobs
+  and articles pages carry `total`, the number of rows that match the filters across all pages.
+  An unknown sort field is a 422. The web UI's libraries page keeps `q`, `sort` and `ai` in its URL.
 - **Close matches**: a 404 for a missing article lists up to five paths of the same version it may have
   meant in `close_matches` (repository data, not instructions); the field is empty on every other error.
 - **Taken IDs**: a 409 `library_id_taken` (checking a repository, adding a library) names the

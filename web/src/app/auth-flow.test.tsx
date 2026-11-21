@@ -145,7 +145,7 @@ describe("route errors", () => {
 
   it("sends a 401 from a page's own data to sign-in", async () => {
     const { router } = mount("/", (url) =>
-      url.endsWith("/libraries")
+      url.includes("/libraries?")
         ? json({ error: "not_authenticated", detail: "no session", fields: [] }, 401)
         : json(signedIn),
     );
