@@ -1,10 +1,12 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
 import { type FormEvent, type ReactNode, type RefObject, useId, useRef, useState } from "react";
+import { toast } from "sonner";
 import { HttpError } from "@/shared/lib/http";
 import { MAX_TAG_LENGTH, MAX_TAGS } from "@/shared/lib/tags";
 import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
 import { cn } from "@/shared/lib/utils";
+import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { pill, pillTone } from "@/shared/ui/recipes";
 import { refreshTags, setManualTags } from "../api/manual-tags";
@@ -15,6 +17,7 @@ import {
   keptNotice,
   type ManualTag,
   tagGroups,
+  tagsSetOn,
   withoutTag,
 } from "../model/article-tags";
 import type { Article } from "../model/browse";
@@ -160,15 +163,11 @@ function AddTagForm({
         aria-invalid={invalid || undefined}
         // The reason a value was refused is read with the field.
         aria-describedby={invalid ? `${statusId} ${hintId}` : hintId}
-        className="h-11 min-w-0 flex-1 text-sm lg:h-8"
+        className="h-11 min-w-0 flex-1 text-body lg:h-8"
       />
-      <button
-        type="submit"
-        disabled={busy}
-        className={`${small} bg-primary text-primary-foreground hover:bg-primary/90`}
-      >
-        {busy ? "Saving…" : "Add"}
-      </button>
+      <Button type="submit" size="sm" pending={busy}>
+        Add
+      </Button>
       <button type="button" onClick={onClose} className={quiet}>
         Cancel
       </button>
@@ -189,7 +188,9 @@ function Status({
   error: string | undefined;
   notice: string | undefined;
 }) {
-  const tone = error ? "mt-1.5 text-xs text-destructive" : "mt-1.5 text-xs text-muted-foreground";
+  const tone = error
+    ? "mt-1.5 text-small text-destructive"
+    : "mt-1.5 text-small text-muted-foreground";
   return (
     <p id={id} role="status" className={error || notice ? tone : "sr-only"}>
       {error ?? notice ?? ""}
@@ -221,6 +222,14 @@ export function TagEditor({ owner, repo, article }: TagEditorProps) {
       setManualTags(owner, repo, path, tags),
     // Wait for the reload, so the change shows the moment the controls come back.
     onSuccess: () => refreshTags(queryClient, owner, repo),
+    // The line under the tags says the same; a refused value has nothing to retry, a lost
+    // connection does.
+    onError: (failure, variables) =>
+      toast.error(explain(failure), {
+        ...(!(failure instanceof HttpError && failure.status < 500) && {
+          action: { label: "Try again", onClick: () => save.mutate(variables) },
+        }),
+      }),
   });
   const groups = tagGroups(article);
   const busy = save.isPending;
@@ -239,6 +248,9 @@ export function TagEditor({ owner, repo, article }: TagEditorProps) {
         {
           onSuccess: (saved) => {
             setText("");
+            const addedTag = added.tags.at(-1) ?? "";
+            if (!(saved && addedNothing(before, saved.tags)))
+              toast.success("Tag added", { description: addedTag });
             // The server made the tag; a spelling of one the path had adds nothing.
             if (saved && addedNothing(before, saved.tags)) setProblem(REASONS.duplicate);
           },
@@ -259,6 +271,14 @@ export function TagEditor({ owner, repo, article }: TagEditorProps) {
       {
         onSuccess: () => {
           setRemoved(tag.tag);
+          const previous = tagsSetOn(article.manual_tags, tag.path);
+          toast.success("Tag removed", {
+            description: tag.tag,
+            action: {
+              label: "Undo",
+              onClick: () => save.mutate({ path: tag.path, tags: previous }),
+            },
+          });
           focusAfterRender(() => next ?? addButton.current ?? field.current);
         },
       },

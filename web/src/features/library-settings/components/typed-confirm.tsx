@@ -9,6 +9,7 @@ import {
   ConfirmTitle,
 } from "@/shared/ui/dialog";
 import { FormAlert } from "@/shared/ui/form-alert";
+import { control, controlHeight } from "@/shared/ui/recipes";
 import type { Problem } from "../model/settings";
 
 interface TypedConfirmProps {
@@ -54,7 +55,7 @@ function Body({ loss, safe, phrase, confirmLabel, pending, problem, onConfirm }:
         </div>
       </ConfirmDescription>
       <div className="mt-5 flex flex-col gap-1.5">
-        <label htmlFor="confirm-phrase" className="text-sm font-medium">
+        <label htmlFor="confirm-phrase" className="text-body font-medium">
           Type <span className="font-mono">{phrase}</span> to confirm
         </label>
         <input
@@ -65,7 +66,7 @@ function Body({ loss, safe, phrase, confirmLabel, pending, problem, onConfirm }:
           autoCapitalize="off"
           spellCheck={false}
           readOnly={pending}
-          className="h-11 w-full rounded-md border border-input bg-secondary px-3 font-mono text-base outline-none transition-[border-color,box-shadow] duration-150 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+          className={cn(control, controlHeight, "px-3 font-mono")}
         />
       </div>
       <div className="mt-4">

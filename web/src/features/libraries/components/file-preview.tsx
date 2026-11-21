@@ -60,7 +60,7 @@ function Context7Note({
 }) {
   if (!context7 && !warning) return null;
   return (
-    <div className="mt-4 rounded-md bg-accent px-3 py-2.5 text-sm">
+    <div className="mt-4 rounded-md bg-accent px-3 py-2.5 text-body">
       <p className="inline-flex items-start gap-2 font-medium">
         <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
         {context7
@@ -111,8 +111,8 @@ function OlderVersions({ versions: all, current, selected, onSelect }: VersionsP
   if (versions.length === 0) return null;
   return (
     <fieldset className="mt-5" aria-describedby="older-hint">
-      <legend className="text-sm font-medium">Also import older versions</legend>
-      <p id="older-hint" className="mt-1 text-sm text-muted-foreground">
+      <legend className="text-body font-medium">Also import older versions</legend>
+      <p id="older-hint" className="mt-1 text-body text-muted-foreground">
         The repository's context7.json offers these tags. Each one ticked is imported after the
         library is added.
       </p>
@@ -127,7 +127,7 @@ function OlderVersions({ versions: all, current, selected, onSelect }: VersionsP
                 className="size-4 accent-[var(--color-mark)]"
               />
               <span className="font-mono text-[13px] [overflow-wrap:anywhere]">{v.tag}</span>
-              {v.title && <span className="text-sm text-muted-foreground">{v.title}</span>}
+              {v.title && <span className="text-body text-muted-foreground">{v.title}</span>}
             </label>
           </li>
         ))}
@@ -166,20 +166,20 @@ function FilePreview({
   return (
     <section
       aria-labelledby="preview-title"
-      className="fade-in rounded-lg border border-border px-4 py-4"
+      className="fade-in rounded-lg border border-border bg-raised px-4 py-4"
     >
-      <Heading id="preview-title" className="text-base font-semibold">
+      <Heading id="preview-title" className="text-section font-semibold">
         {compact ? "Files these paths take" : "Files to import"}
       </Heading>
-      <p className="mt-0.5 text-sm text-muted-foreground">
+      <p className="mt-0.5 text-body text-muted-foreground">
         <span className="font-mono text-[13px] [overflow-wrap:anywhere]">{preview.ref}</span>
         <span aria-hidden="true"> · </span>
         <span className="font-mono text-[13px]">{shortSha(preview.commit_sha)}</span>
         <span className="sr-only"> commit</span>
       </p>
-      <p className="mt-3 text-sm font-medium">{previewCountText(preview)}</p>
+      <p className="mt-3 text-body font-medium">{previewCountText(preview)}</p>
       {stale && (
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1 text-body text-muted-foreground">
           The form changed since this preview. Preview again to see the files it takes now.
         </p>
       )}
@@ -189,7 +189,7 @@ function FilePreview({
           // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling list must be reachable by keyboard (Safari does not focus scrollers)
           tabIndex={0}
           aria-label="Matching files"
-          className={`mt-3 max-h-80 overflow-y-auto rounded-md bg-secondary px-3 py-2.5 font-mono text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring ${stale ? "opacity-60" : ""}`}
+          className={`mt-3 max-h-80 overflow-y-auto rounded-md bg-code px-3 py-2.5 font-mono text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring ${stale ? "opacity-60" : ""}`}
         >
           <Entries folder={tree} root />
         </section>
@@ -247,7 +247,7 @@ export function PreviewPanel({
     <>
       <div className="flex flex-col gap-1">
         <PreviewButton pending={preview.pending} onClick={() => void preview.start(form)} />
-        <p id="preview-hint" className="text-sm text-muted-foreground">
+        <p id="preview-hint" className="text-body text-muted-foreground">
           See which files this version and these paths take, before importing.
         </p>
       </div>
@@ -298,7 +298,7 @@ export function SelectionPreview({ url, version, include, exclude }: SelectionPr
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-1">
         <PreviewButton pending={preview.pending} onClick={() => void preview.start(form)} />
-        <p id="preview-hint" className="text-sm text-muted-foreground">
+        <p id="preview-hint" className="text-body text-muted-foreground">
           See which files these paths take in{" "}
           {version ? (
             <span className="font-mono text-[13px]">{version}</span>
@@ -343,7 +343,7 @@ export function ExtraVersions({
   if (extras.length === 0) return null;
   return (
     <section aria-labelledby="extras-title" className="mt-8">
-      <h3 id="extras-title" className="text-base font-semibold">
+      <h3 id="extras-title" className="text-section font-semibold">
         Older versions
       </h3>
       <ul className="mt-3 space-y-4">
@@ -361,7 +361,7 @@ export function ExtraVersions({
               <JobLine jobId={x.jobId} label={`${libraryId} ${x.tag}`} />
             ) : x.error ? (
               <div className="flex flex-wrap items-center gap-x-3">
-                <p className="text-sm text-destructive">{x.error}</p>
+                <p className="text-body text-destructive">{x.error}</p>
                 {x.retry && (
                   <Button
                     variant="ghost"
@@ -381,7 +381,7 @@ export function ExtraVersions({
                 )}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">Waiting to be queued</p>
+              <p className="text-body text-muted-foreground">Waiting to be queued</p>
             )}
           </li>
         ))}

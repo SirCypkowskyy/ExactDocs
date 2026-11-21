@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
 import { BROWSE_KEY, LIBRARIES_KEY } from "@/shared/lib/query-keys";
@@ -279,6 +280,18 @@ describe("settings model", () => {
 });
 
 describe("details form", () => {
+  it("says so beside the nav while edits are unsaved, and toasts once saved", async () => {
+    const success = vi.spyOn(toast, "success").mockReturnValue("t");
+    serve();
+    renderPage();
+    const title = await screen.findByLabelText("Title");
+    await userEvent.type(title, "!");
+    expect(await screen.findByText("1 section has unsaved changes.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(success).toHaveBeenCalledWith("Saved the library details"));
+    success.mockRestore();
+  });
+
   it("saves a changed title and sends nothing else", async () => {
     const calls = serve();
     renderPage();

@@ -1,18 +1,20 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowLeft, Check } from "lucide-react";
-import { type FormEvent, type Ref, useCallback, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, type Ref, useCallback, useRef, useState } from "react";
+import { toast } from "sonner";
 import { type Credential, type CredentialDraft, credentialKindFor } from "@/shared/lib/credentials";
 import { filledRules, lines, type TagRuleDraft } from "@/shared/lib/path-selection";
 import { type RefChoice, refToSend } from "@/shared/lib/refs";
 import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
 import { usePageTitle } from "@/shared/lib/use-page-title";
-import { Button } from "@/shared/ui/button";
+import { Button, buttonVariants } from "@/shared/ui/button";
 import { CredentialField } from "@/shared/ui/credential-field";
 import { Field } from "@/shared/ui/field";
 import { FormAlert } from "@/shared/ui/form-alert";
+import { Page, PageHeader } from "@/shared/ui/page";
 import { RefPicker } from "@/shared/ui/ref-picker";
-import { addLibrary, checkRepository } from "../api/add-library";
+import { addLibrary, checkRepository, importJobQueryOptions } from "../api/add-library";
 import { librariesKeys } from "../api/libraries-query";
 import { useOlderVersions, usePreview } from "../hooks/use-preview";
 import { usePrivateAccess } from "../hooks/use-private-access";
@@ -26,6 +28,7 @@ import {
   validateForm,
   validateUrl,
 } from "../model/add-library";
+import { type AddPhase, AddSteps } from "./add-steps";
 import { ExtraVersions, PreviewPanel } from "./file-preview";
 import { AdvancedOptions } from "./file-selection";
 import { ImportProgress } from "./import-progress";
@@ -50,7 +53,7 @@ const FOCUS: Record<AddField, string> = {
 function RepoFound({ checked }: { checked: Checked | undefined }) {
   return (
     <>
-      <p role="status" className="min-h-5 text-sm text-muted-foreground">
+      <p role="status" className="min-h-5 text-body text-muted-foreground">
         {checked && (
           <span className="fade-in inline-flex items-start gap-1.5">
             <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
@@ -71,9 +74,9 @@ function RepoFound({ checked }: { checked: Checked | undefined }) {
 /** An SSH server's key, to compare with the one the host publishes before anything is added. */
 function HostKey({ fingerprint }: { fingerprint: string }) {
   return (
-    <div className="fade-in rounded-md border border-border bg-secondary/60 px-3 py-2.5 text-sm">
+    <div className="fade-in rounded-md border border-border bg-secondary/60 px-3 py-2.5 text-body">
       <p className="font-medium">SSH host key of the server</p>
-      <code className="mt-1 block font-mono text-[13px] break-all text-foreground select-all">
+      <code className="mt-1 block font-mono text-small break-all text-foreground select-all">
         {fingerprint}
       </code>
       <p className="mt-1 text-muted-foreground">
@@ -103,7 +106,7 @@ function PrivateAccess({
   const kind = credentialKindFor(url);
   return (
     <div className="flex flex-col gap-3">
-      <label className="inline-flex min-h-11 cursor-pointer items-center gap-2.5 self-start text-sm font-medium md:min-h-8">
+      <label className="inline-flex min-h-11 cursor-pointer items-center gap-2.5 self-start text-body font-medium md:min-h-8">
         <input
           id="private"
           type="checkbox"
@@ -130,8 +133,8 @@ function PrivateAccess({
             tabIndex={-1}
             className={
               error
-                ? "fade-in text-sm font-medium text-destructive outline-none"
-                : "fade-in text-sm text-muted-foreground outline-none"
+                ? "fade-in text-body font-medium text-destructive outline-none"
+                : "fade-in text-body text-muted-foreground outline-none"
             }
           >
             {error ??
@@ -152,13 +155,7 @@ function SubmitButton({ pending, checked }: { pending: boolean; checked: boolean
       ? "Checking"
       : "Check repository";
   return (
-    <Button type="submit" aria-disabled={pending} aria-busy={pending}>
-      {pending && (
-        <span
-          aria-hidden="true"
-          className="spin size-4 rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground"
-        />
-      )}
+    <Button type="submit" pending={pending} aria-disabled={pending} className="min-w-36">
       {label}
     </Button>
   );
@@ -257,10 +254,7 @@ function LibraryLink({ id }: { id: string }) {
 function FormActions({ pending, checked }: { pending: boolean; checked: boolean }) {
   return (
     <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-      <Link
-        to="/"
-        className="inline-flex h-11 items-center justify-center rounded-md px-3 text-sm font-medium outline-none transition-colors duration-150 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-      >
+      <Link to="/" className={buttonVariants({ variant: "ghost" })}>
         Cancel
       </Link>
       <SubmitButton pending={pending} checked={checked} />
@@ -268,33 +262,16 @@ function FormActions({ pending, checked }: { pending: boolean; checked: boolean 
   );
 }
 
-/** Back to the list, and the title: the import screen takes the heading's place once added. */
-function PageHeading({
-  heading,
-  added,
-}: {
-  heading: Ref<HTMLHeadingElement> | undefined;
-  added: boolean;
-}) {
-  return (
-    <>
-      <Link
-        to="/"
-        className="-ml-2 inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground outline-none transition-colors duration-150 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
-      >
-        <ArrowLeft aria-hidden="true" className="size-4" />
-        Libraries
-      </Link>
-      <h1
-        ref={heading}
-        tabIndex={-1}
-        className="mt-2 text-3xl font-semibold tracking-tight outline-none"
-      >
-        {added ? "Import" : "Add a library"}
-      </h1>
-    </>
-  );
-}
+/** The way back to the list, above the title. */
+const backToList = (
+  <Link
+    to="/"
+    className="-ml-2 inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 text-body text-muted-foreground outline-none transition-colors duration-(--dur-fast) hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+  >
+    <ArrowLeft aria-hidden="true" className="size-4" />
+    Libraries
+  </Link>
+);
 
 function LibraryIdField({
   value,
@@ -314,9 +291,51 @@ function LibraryIdField({
       value={value}
       error={error}
       hint="How agents refer to this library, as /owner/repo."
-      className="font-mono text-[15px]"
+      className="font-mono"
       onChange={(e) => onChange(e.target.value)}
     />
+  );
+}
+
+/** The same query the progress screen polls: one request, shared. */
+function useAddPhase(added: AddedLibrary | undefined, checked: boolean): AddPhase {
+  const jobState = useQuery({
+    ...importJobQueryOptions(added?.job_id ?? ""),
+    enabled: Boolean(added),
+  }).data?.state;
+  if (!added) return checked ? "choose" : "check";
+  if (jobState === "succeeded") return "done";
+  return jobState === "failed" ? "failed" : "import";
+}
+
+function AddFrame({
+  phase,
+  added,
+  heading,
+  children,
+}: {
+  phase: AddPhase;
+  added: boolean;
+  heading: Ref<HTMLHeadingElement>;
+  children: ReactNode;
+}) {
+  return (
+    <Page>
+      <PageHeader
+        above={backToList}
+        {...(!added && { headingRef: heading })}
+        title={added ? "Import" : "Add a library"}
+        description={
+          added
+            ? "Reading the repository and indexing its documents."
+            : "Point ExactDocs at a git repository with Markdown docs. It imports one version at a time, exactly as it was."
+        }
+      />
+      <div className="lg:grid lg:grid-cols-[13rem_minmax(0,42rem)] lg:gap-12">
+        <AddSteps phase={phase} />
+        <div>{children}</div>
+      </div>
+    </Page>
   );
 }
 
@@ -487,6 +506,9 @@ export function AddLibraryPage() {
       setChecked((c) => c && { ...c, credential: undefined });
       if (run.current === mine) {
         setAdded(result);
+        toast.success(`Added ${result.library_id}`, {
+          description: `Importing ${result.ref} now. You can leave this page.`,
+        });
         const tags = preview.chosen([ref, result.ref]);
         if (tags.length) void older.queue(result.library_id, tags);
       }
@@ -499,6 +521,8 @@ export function AddLibraryPage() {
       }
     }
   }
+
+  const phase = useAddPhase(added, Boolean(checked));
 
   function reset() {
     setUrl("");
@@ -520,102 +544,98 @@ export function AddLibraryPage() {
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10">
-      <PageHeading heading={added ? undefined : heading} added={Boolean(added)} />
+    <AddFrame phase={phase} added={Boolean(added)} heading={heading}>
+      {added ? (
+        <ImportProgress added={added} onAddAnother={reset}>
+          <ExtraVersions
+            extras={older.extras}
+            libraryId={added.library_id}
+            onRetry={(tag) => void older.retry(tag)}
+          />
+        </ImportProgress>
+      ) : (
+        <form onSubmit={submit} noValidate className="flex flex-col gap-6">
+          <FormAlert id={ALERT_ID} message={problem?.message} link={problem?.link} />
+          <AddressStep
+            url={url}
+            error={errors.url}
+            taken={errors.url ? taken : undefined}
+            alertId={problem?.message ? ALERT_ID : undefined}
+            access={access}
+            accessError={errors.credential}
+            checked={checked}
+            onEdit={edit}
+            onAccessChanged={accessChanged}
+          />
 
-      <div className="mt-8 max-w-xl">
-        {added ? (
-          <ImportProgress added={added} onAddAnother={reset}>
-            <ExtraVersions
-              extras={older.extras}
-              libraryId={added.library_id}
-              onRetry={(tag) => void older.retry(tag)}
-            />
-          </ImportProgress>
-        ) : (
-          <form onSubmit={submit} noValidate className="flex flex-col gap-6">
-            <FormAlert id={ALERT_ID} message={problem?.message} link={problem?.link} />
-            <AddressStep
-              url={url}
-              error={errors.url}
-              taken={errors.url ? taken : undefined}
-              alertId={problem?.message ? ALERT_ID : undefined}
-              access={access}
-              accessError={errors.credential}
-              checked={checked}
-              onEdit={edit}
-              onAccessChanged={accessChanged}
-            />
+          {checked && (
+            <div className="fade-in flex flex-col gap-6">
+              <LibraryIdField
+                value={libraryId}
+                error={errors.id}
+                onChange={(v) => {
+                  setLibraryId(v);
+                  clear("id");
+                }}
+              />
+              <RefPicker
+                url={checked.url}
+                credential={checked.credential}
+                choice={choice}
+                typed={typedRef}
+                error={errors.ref}
+                onChoice={(c) => {
+                  setChoice(c);
+                  clear("ref");
+                  // A new field appears for a typed ref: the user's next move is to type.
+                  if (c.kind === "other") {
+                    focusAfterRender(() => document.getElementById("ref-typed"));
+                  }
+                }}
+                onUnavailable={unavailable}
+                onTyped={(v) => {
+                  setTypedRef(v);
+                  clear("ref");
+                }}
+              />
+              <AdvancedOptions
+                open={advanced}
+                onOpen={setAdvanced}
+                include={include}
+                exclude={exclude}
+                rules={rules}
+                pathError={errors.paths}
+                tagError={errors.tags}
+                showRuleErrors={showRuleErrors}
+                onInclude={(v) => {
+                  setInclude(v);
+                  clear("paths");
+                }}
+                onExclude={(v) => {
+                  setExclude(v);
+                  clear("paths");
+                }}
+                onRules={(r) => {
+                  setRules(r);
+                  clear("tags");
+                }}
+              />
+              <PreviewPanel
+                preview={preview}
+                form={{
+                  url: checked.url,
+                  ref: refToSend(choice, typedRef),
+                  include,
+                  exclude,
+                  credential: checked.credential,
+                }}
+              />
+            </div>
+          )}
 
-            {checked && (
-              <div className="fade-in flex flex-col gap-6">
-                <LibraryIdField
-                  value={libraryId}
-                  error={errors.id}
-                  onChange={(v) => {
-                    setLibraryId(v);
-                    clear("id");
-                  }}
-                />
-                <RefPicker
-                  url={checked.url}
-                  credential={checked.credential}
-                  choice={choice}
-                  typed={typedRef}
-                  error={errors.ref}
-                  onChoice={(c) => {
-                    setChoice(c);
-                    clear("ref");
-                    // A new field appears for a typed ref: the user's next move is to type.
-                    if (c.kind === "other") {
-                      focusAfterRender(() => document.getElementById("ref-typed"));
-                    }
-                  }}
-                  onUnavailable={unavailable}
-                  onTyped={(v) => {
-                    setTypedRef(v);
-                    clear("ref");
-                  }}
-                />
-                <AdvancedOptions
-                  open={advanced}
-                  onOpen={setAdvanced}
-                  include={include}
-                  exclude={exclude}
-                  rules={rules}
-                  pathError={errors.paths}
-                  tagError={errors.tags}
-                  showRuleErrors={showRuleErrors}
-                  onInclude={(v) => {
-                    setInclude(v);
-                    clear("paths");
-                  }}
-                  onExclude={(v) => {
-                    setExclude(v);
-                    clear("paths");
-                  }}
-                  onRules={(r) => {
-                    setRules(r);
-                    clear("tags");
-                  }}
-                />
-                <PreviewPanel
-                  preview={preview}
-                  form={{
-                    url: checked.url,
-                    ref: refToSend(choice, typedRef),
-                    include,
-                    exclude,
-                    credential: checked.credential,
-                  }}
-                />
-              </div>
-            )}
-
-            <FormActions pending={pending} checked={Boolean(checked)} />
-          </form>
-        )}
-      </div>
-    </main>
+          <FormActions pending={pending} checked={Boolean(checked)} />
+        </form>
+      )}
+    </AddFrame>
   );
 }

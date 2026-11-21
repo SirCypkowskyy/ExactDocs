@@ -157,6 +157,15 @@ describe("searching all libraries", () => {
     expect(within(nav).getByRole("link", { name: "/acme/payments, 3 matches" })).toBeVisible();
   });
 
+  it("groups hits under their library's route and counts libraries in words", async () => {
+    mount("/search?q=token");
+    const payments = await screen.findByRole("heading", { name: /acme\/payments/ });
+    expect(payments).toHaveTextContent("version v2.0.0");
+    expect(payments).toHaveTextContent("commit 2af418f");
+    expect(screen.getByRole("heading", { name: /fixture\/docs-repo/ })).toBeVisible();
+    expect(screen.getByText(/in 2 libraries/)).toBeVisible();
+  });
+
   it("links a result to its library and version at the anchor", async () => {
     const { router } = mount("/search?q=token");
     await userEvent.click(
@@ -285,9 +294,13 @@ describe("searching all libraries", () => {
 
   it("keeps the query behind the phone's search door on /search, and focuses the page box only without one", async () => {
     mount("/search?q=token");
-    const door = within(await screen.findByRole("banner")).getByRole("link", {
-      name: "Search all libraries",
-    });
+    // The first banner is the band; the page header is a second one.
+    const door = within((await screen.findAllByRole("banner"))[0] as HTMLElement).getByRole(
+      "link",
+      {
+        name: "Search all libraries",
+      },
+    );
     await waitFor(() => expect(door).toHaveAttribute("href", "/search?q=token"));
     const [, page] = await screen.findAllByRole("searchbox", { name: "Search all libraries" });
     expect(page).not.toHaveFocus();

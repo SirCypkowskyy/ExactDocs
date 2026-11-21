@@ -54,7 +54,7 @@ export function SignOutButton({ onSignedOut }: { onSignedOut: () => void }) {
       <p
         id="sign-out-error"
         role="alert"
-        className="absolute top-full left-0 z-10 sm:right-0 sm:left-auto mt-1 whitespace-nowrap rounded-md bg-card px-3 py-1.5 text-sm font-medium text-destructive shadow-md empty:hidden"
+        className="absolute top-full left-0 z-10 sm:right-0 sm:left-auto mt-1 whitespace-nowrap rounded-md bg-card px-3 py-1.5 text-body font-medium text-destructive shadow-md empty:hidden"
       >
         {failed && "Couldn't sign out. Try again."}
       </p>

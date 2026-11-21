@@ -169,7 +169,7 @@ export function VersionPicker({
           className="z-50 w-[min(22rem,calc(100vw-1.5rem))] origin-(--radix-popover-content-transform-origin) rounded-lg border border-border bg-popover text-popover-foreground shadow-lg outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-safe:data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:duration-(--dur) data-[state=closed]:duration-(--dur-fast)"
         >
           {versions.length >= FILTER_FROM && (
-            <div className="border-b border-border p-2">
+            <div className="border-b border-rule p-2">
               <input
                 type="search"
                 value={filter}
@@ -227,6 +227,10 @@ export function VersionPicker({
                         <span className="text-small text-muted-foreground">{v.kind}</span>
                       )}
                     </span>
+                    {resolved[i]?.isFetching && (
+                      // The rename lookup for this version is still on its way.
+                      <Spinner className="text-muted-foreground" />
+                    )}
                     <span className="font-mono text-[12px] text-muted-foreground tabular-nums">
                       {shortSha(v.commit_sha)}
                     </span>

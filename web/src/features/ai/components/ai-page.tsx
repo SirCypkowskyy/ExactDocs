@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, CircleCheck } from "lucide-react";
-import type { ReactNode } from "react";
+import { CircleAlert, CircleCheck, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 import {
   type AiProvider,
   type AiRole,
@@ -14,8 +14,12 @@ import {
 } from "@/shared/lib/ai-queries";
 import { absoluteTime, absoluteTimeWithZone } from "@/shared/lib/time";
 import { usePageTitle } from "@/shared/lib/use-page-title";
+import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
+import { EmptyState, Page, PageHeader, Section } from "@/shared/ui/page";
+import { pill, pillTone } from "@/shared/ui/recipes";
 import { SelectField } from "@/shared/ui/select-field";
+import { Skeleton } from "@/shared/ui/skeleton";
 import {
   aiUsageQueryOptions,
   checkProvider,
@@ -23,7 +27,9 @@ import {
   setRoleThinking,
 } from "../api/ai";
 import {
+  BUDGET_NEAR,
   type Budget,
+  budgetUsed,
   budgetWords,
   checkWords,
   count,
@@ -37,55 +43,58 @@ import {
   scopeName,
   usd,
 } from "../model/ai";
+import { Meter } from "./meter";
 
-const heading = "text-2xl font-semibold tracking-tight";
+const SKELETON_ROWS = [0, 1, 2, 3] as const;
+const card = "rounded-lg border border-border bg-raised";
 
 /** The instance's AI: providers and roles, embedding progress and spend (admins). */
 export function AiPage() {
   const title = usePageTitle("AI");
   return (
-    <main className="px-4 py-6 pb-12 sm:px-6 sm:py-8 sm:pb-16 2xl:mx-auto 2xl:max-w-[72rem]">
-      <h1 ref={title} tabIndex={-1} className="text-4xl font-semibold tracking-tight outline-none">
-        AI
-      </h1>
-      <p className="mt-1 max-w-prose text-muted-foreground">
-        The providers and models this instance uses, how far embedding has got, and what AI calls
-        spent. Keys are never shown.
-      </p>
-      <ProvidersSection />
-      <EmbeddingSection />
-      <UsageSection />
-    </main>
+    <Page>
+      <PageHeader
+        title="AI"
+        headingRef={title}
+        description="The providers and models this instance uses, how far embedding has got, and what AI calls spent. Keys are never shown."
+      />
+      <div className="flex flex-col gap-12">
+        <div className="grid items-start gap-12 lg:grid-cols-2 lg:gap-8">
+          <ProvidersSection />
+          <EmbeddingSection />
+        </div>
+        <UsageSection />
+      </div>
+    </Page>
   );
 }
 
-function Section({
-  id,
-  title,
-  intro,
-  children,
-}: {
-  id: string;
-  title: string;
-  intro: string;
-  children: ReactNode;
-}) {
+/** A block that failed to load: one sentence, inside the block, with a way to retry. */
+function Problem({ error, onRetry }: { error: unknown; onRetry: () => void }) {
   return (
-    <section aria-labelledby={id} className="mt-12 border-t border-border pt-10">
-      <h2 id={id} className={heading}>
-        {title}
-      </h2>
-      <p className="mt-1.5 max-w-prose text-muted-foreground">{intro}</p>
-      <div className="mt-6">{children}</div>
-    </section>
+    <div
+      role="alert"
+      className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg bg-destructive-soft py-1.5 pr-1.5 pl-4"
+    >
+      <p className="text-body font-medium text-destructive-ink">{explainAiError(error)}</p>
+      <Button variant="ghost" onClick={onRetry}>
+        Try again
+      </Button>
+    </div>
   );
 }
 
-function Problem({ error }: { error: unknown }) {
+function CardSkeleton({ label, rows = 2 }: { label: string; rows?: number }) {
   return (
-    <p role="alert" className="text-sm font-medium text-destructive">
-      {explainAiError(error)}
-    </p>
+    <div aria-busy="true" className="flex flex-col gap-3">
+      <span className="sr-only">{label}</span>
+      {SKELETON_ROWS.slice(0, rows).map((i) => (
+        <div key={i} className={cn(card, "flex flex-col gap-2.5 p-4")}>
+          <Skeleton className="h-5 w-40" />
+          <Skeleton className="h-4 w-64 max-w-full" />
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -94,51 +103,63 @@ function ProvidersSection() {
   const roles = useQuery(aiRolesQueryOptions());
   return (
     <Section
-      id="providers-heading"
+      id="providers"
       title="Providers and roles"
-      intro="Each role is a model of a provider profile. Check a profile to make one small call per role that uses it."
+      description="Each role is a model of a provider profile. Check a profile to make one small call per role that uses it."
     >
-      {roles.isError ? (
-        <Problem error={roles.error} />
-      ) : (
-        roles.data && <RoleList roles={roles.data} />
-      )}
-      {providers.isPending ? (
-        <p className="mt-6 text-sm text-muted-foreground">Loading the providers…</p>
-      ) : providers.isError ? (
-        <Problem error={providers.error} />
-      ) : providers.data.length === 0 ? (
-        <p className="mt-6 text-sm text-muted-foreground">
-          No provider is configured: searches use BM25 and nothing leaves the instance.
-        </p>
-      ) : (
-        <ul className="mt-6 flex flex-col gap-4">
-          {providers.data.map((p) => (
-            <ProviderCard key={p.name} provider={p} />
-          ))}
-        </ul>
-      )}
+      <div className="flex flex-col gap-4">
+        {roles.isError ? (
+          <Problem error={roles.error} onRetry={() => roles.refetch()} />
+        ) : roles.data ? (
+          <RoleList roles={roles.data} />
+        ) : (
+          <div aria-busy="true" className={cn(card, "flex flex-col gap-3 p-4")}>
+            <span className="sr-only">Loading the roles</span>
+            {[0, 1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-5 w-full" />
+            ))}
+          </div>
+        )}
+        {providers.isPending ? (
+          <CardSkeleton label="Loading the providers" />
+        ) : providers.isError ? (
+          <Problem error={providers.error} onRetry={() => providers.refetch()} />
+        ) : providers.data.length === 0 ? (
+          <EmptyState icon={<Sparkles aria-hidden="true" />} title="No provider is configured">
+            Searches use BM25 and nothing leaves the instance. Add a provider profile to the
+            instance configuration to turn on embeddings or an LLM.
+          </EmptyState>
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {providers.data.map((p) => (
+              <ProviderCard key={p.name} provider={p} />
+            ))}
+          </ul>
+        )}
+      </div>
     </Section>
   );
 }
 
 function RoleList({ roles }: { roles: readonly AiRole[] }) {
   return (
-    <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-2 text-sm">
+    <dl className={cn(card, "grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-2.5 p-4 text-body")}>
       {roles.map((r) => (
         <div key={r.role} className="contents">
           <dt className="font-medium">{ROLE_LABEL[r.role]}</dt>
           <dd className="[overflow-wrap:anywhere]">
             {r.model ? (
               <>
-                <span className="font-mono">{r.model}</span>
+                <span className="font-mono text-small">{r.model}</span>
                 {r.source === "llm" && <span className="text-muted-foreground"> (the LLM's)</span>}
                 {!r.profile_exists && (
                   <span className="text-destructive"> (its profile does not exist)</span>
                 )}
               </>
             ) : (
-              <span className="text-muted-foreground">Not set</span>
+              <span className="text-muted-foreground">
+                Not set. Choose its model in the instance configuration.
+              </span>
             )}
             {(r.role === "llm" || r.role === "judge") && <RoleThinking role={r} name={r.role} />}
           </dd>
@@ -191,51 +212,62 @@ function ProviderCard({ provider: p }: { provider: AiProvider }) {
   const queryClient = useQueryClient();
   const check = useMutation({
     mutationFn: () => checkProvider(p.name),
+    onSuccess: (result) => {
+      const failed = result.checks.filter((c) => c.status !== "ok").length;
+      if (failed === 0) toast.success(`${p.name}: every check passed`);
+      else toast.error(`${p.name}: ${failed} of ${result.checks.length} checks failed`);
+    },
+    onError: (error) => toast.error(`${p.name}: ${explainAiError(error)}`),
     // A check calls the profile as it is now: show the profiles as they are now too.
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: aiProvidersQueryOptions().queryKey }),
   });
-  const label = `Check ${p.name}`;
+  const keyTone = p.key === "none" ? pillTone.neutral : pillTone.positive;
   return (
-    <li className="rounded-lg bg-secondary/60 p-4 sm:p-5">
-      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+    <li className={cn(card, "p-4")}>
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
         <div className="min-w-0">
-          <h3 className="font-mono text-base font-semibold [overflow-wrap:anywhere]">{p.name}</h3>
-          <p className="text-sm text-muted-foreground">
-            {p.kind} · {originWords(p)} · {keyWords(p)}
-          </p>
-          {p.base_url && <p className="font-mono text-sm [overflow-wrap:anywhere]">{p.base_url}</p>}
-          <p className="mt-1 text-sm">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+            <h3 className="font-mono text-body font-semibold [overflow-wrap:anywhere]">{p.name}</h3>
+            <span className={cn(pill, pillTone.neutral)}>{p.kind}</span>
+            <span className={cn(pill, keyTone)}>{keyWords(p)}</span>
+          </div>
+          <p className="mt-1.5 text-small text-muted-foreground">{originWords(p)}</p>
+          {p.base_url && (
+            <p className="mt-1 font-mono text-small [overflow-wrap:anywhere]">{p.base_url}</p>
+          )}
+          <p className="mt-1.5 text-body">
             {p.roles.length > 0
               ? `Used for: ${p.roles.map((r) => ROLE_LABEL[r]).join(", ")}`
               : "No instance role uses it."}
           </p>
           {p.unsupported && (
-            <p className="mt-1 text-sm font-medium text-destructive">{p.unsupported}</p>
+            <p className="mt-1.5 text-body font-medium text-destructive">{p.unsupported}</p>
           )}
         </div>
         <Button
-          type="button"
-          aria-label={label}
-          aria-disabled={check.isPending}
-          aria-busy={check.isPending}
-          className="bg-secondary text-foreground ring-1 ring-inset ring-border hover:bg-accent"
+          variant="outline"
+          aria-label={`Check ${p.name}`}
+          pending={check.isPending}
           onClick={() => !check.isPending && check.mutate()}
         >
-          {check.isPending ? "Checking" : "Check"}
+          Check
         </Button>
       </div>
-      <div role="status" aria-label={`${p.name} check`} className="mt-2 text-sm">
+      <div role="status" aria-label={`${p.name} check`} className="mt-3 text-body empty:hidden">
         {/* The status region announces it already: no second live region inside. */}
         {check.isError && (
           <p className="font-medium text-destructive">{explainAiError(check.error)}</p>
         )}
         {check.data && (
-          <ul className="flex flex-col gap-1">
+          <ul className="row-in flex flex-col gap-1.5 border-t border-rule pt-3">
             {check.data.checks.map((c) => (
               <li key={`${c.role}-${c.model}`} className="flex items-start gap-2">
                 {c.status === "ok" ? (
-                  <CircleCheck aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
+                  <CircleCheck
+                    aria-hidden="true"
+                    className="mt-0.5 size-4 shrink-0 text-positive"
+                  />
                 ) : (
                   <CircleAlert
                     aria-hidden="true"
@@ -262,34 +294,36 @@ function EmbeddingSection() {
   const progress = useQuery(embeddingProgressQueryOptions());
   return (
     <Section
-      id="embedding-heading"
+      id="embedding"
       title="Embedding"
-      intro="Every version of a library with AI on is embedded in the background. While a new model embeds, the old space keeps answering."
+      description="Every version of a library with AI on is embedded in the background. While a new model embeds, the old space keeps answering."
     >
       {progress.isPending ? (
-        <p className="text-sm text-muted-foreground">Loading the embedding progress…</p>
+        <CardSkeleton label="Loading the embedding progress" />
       ) : progress.isError ? (
-        <Problem error={progress.error} />
+        <Problem error={progress.error} onRetry={() => progress.refetch()} />
       ) : (
-        <>
-          <p className="text-sm">
+        <div className="flex flex-col gap-4">
+          <p className="text-body">
             Model:{" "}
             {progress.data.model ? (
-              <span className="font-mono">{progress.data.model}</span>
+              <span className="font-mono text-small">{progress.data.model}</span>
             ) : (
               <span className="text-muted-foreground">none configured</span>
             )}
           </p>
           {progress.data.spaces.length === 0 ? (
-            <p className="mt-3 text-sm text-muted-foreground">Nothing has been embedded yet.</p>
+            <EmptyState title="Nothing has been embedded yet">
+              Embedding starts when a library has AI on and a model is set for the embedding role.
+            </EmptyState>
           ) : (
-            <ul className="mt-4 flex flex-col gap-4">
+            <ul className="flex flex-col gap-3">
               {progress.data.spaces.map((s) => (
                 <SpaceRow key={s.id} space={s} />
               ))}
             </ul>
           )}
-        </>
+        </div>
       )}
     </Section>
   );
@@ -299,24 +333,19 @@ function SpaceRow({ space: s }: { space: SpaceProgress }) {
   const done = percent(s.chunks_embedded, s.chunks);
   const name = `Space ${s.id}: ${s.model}`;
   return (
-    <li className="rounded-lg bg-secondary/60 p-4 sm:p-5">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4">
-        <h3 className="font-mono text-base font-semibold [overflow-wrap:anywhere]">{name}</h3>
-        <p className="text-sm text-muted-foreground">
+    <li className={cn(card, "p-4")}>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
+        <h3 className="font-mono text-body font-semibold [overflow-wrap:anywhere]">{name}</h3>
+        <span className={cn(pill, s.state === "active" ? pillTone.positive : pillTone.route)}>
           {s.state === "active" ? "Searched" : "Building"}
-          {s.current ? " · configured model" : " · retired once the new one is done"}
-        </p>
+        </span>
       </div>
-      <p className="text-sm text-muted-foreground">
-        {s.profile_kind} · {s.dimensions} dimensions · created {absoluteTime(s.created_at)}
+      <p className="mt-1 text-small text-muted-foreground">
+        {s.current ? "Configured model" : "Retired once the new one is done"} · {s.profile_kind} ·{" "}
+        {s.dimensions} dimensions · created {absoluteTime(s.created_at)}
       </p>
-      <progress
-        className="mt-3 h-2 w-full overflow-hidden rounded-full accent-primary"
-        max={100}
-        value={done}
-        aria-label={`${name} progress`}
-      />
-      <p className="mt-1 text-sm">
+      <Meter value={done} label={`${name} progress`} className="mt-3" />
+      <p className="mt-2 text-body tabular-nums">
         {done}%: {count(s.chunks_embedded)} of {count(s.chunks)} chunks,{" "}
         {count(s.versions_embedded)} of {count(s.versions)} versions
       </p>
@@ -328,17 +357,22 @@ function UsageSection() {
   const usage = useQuery(aiUsageQueryOptions());
   return (
     <Section
-      id="usage-heading"
+      id="usage"
       title="Usage and budgets"
-      intro="What AI calls spent today and this month (UTC), and what is left of each budget, for the instance, embedding runs, every library and account that spent something, and every library with budgets of its own. A used-up budget skips the paid step; searches still answer."
+      description="What AI calls spent today and this month (UTC), and what is left of each budget. A used-up budget skips the paid step; searches still answer."
     >
       {usage.isPending ? (
-        <p className="text-sm text-muted-foreground">Loading the usage…</p>
+        <div aria-busy="true" className={cn(card, "flex flex-col gap-4 p-4")}>
+          <span className="sr-only">Loading the usage</span>
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-5 w-full" />
+          ))}
+        </div>
       ) : usage.isError ? (
-        <Problem error={usage.error} />
+        <Problem error={usage.error} onRetry={() => usage.refetch()} />
       ) : (
         <>
-          <p className="text-sm">
+          <p className="mb-3 text-body text-muted-foreground">
             LLM searches per minute per caller:{" "}
             {usage.data.llm_searches_per_minute ?? "not limited"}
           </p>
@@ -347,21 +381,21 @@ function UsageSection() {
             aria-label="Usage table"
             // biome-ignore lint/a11y/noNoninteractiveTabindex: a table wider than the screen scrolls
             tabIndex={0}
-            className="mt-4 overflow-x-auto rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="overflow-x-auto rounded-lg border border-border outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <table className="w-full min-w-[36rem] text-left text-sm">
-              <thead className="text-muted-foreground">
+            <table className="w-full min-w-[56rem] text-left text-body">
+              <thead className="bg-raised text-small text-muted-foreground">
                 <tr>
-                  <th scope="col" className="py-2 pr-4 font-medium">
+                  <th scope="col" className="px-4 py-2.5 font-medium">
                     Scope
                   </th>
-                  <th scope="col" className="py-2 pr-4 font-medium">
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">
                     Today
                   </th>
-                  <th scope="col" className="py-2 pr-4 font-medium">
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">
                     This month
                   </th>
-                  <th scope="col" className="py-2 font-medium">
+                  <th scope="col" className="px-4 py-2.5 font-medium">
                     Budgets
                   </th>
                 </tr>
@@ -388,32 +422,45 @@ function spent(s: ScopeUsage["day"]) {
 
 function UsageRow({ scope: s }: { scope: ScopeUsage }) {
   return (
-    <tr className="border-t border-border align-top">
-      <th scope="row" className="py-2 pr-4 font-medium [overflow-wrap:anywhere]">
+    <tr className="border-t border-rule align-top">
+      <th scope="row" className="px-4 py-3 font-medium [overflow-wrap:anywhere]">
         {scopeName(s)}
       </th>
-      <td className="py-2 pr-4">{spent(s.day)}</td>
-      <td className="py-2 pr-4">{spent(s.month)}</td>
-      <td className="py-2">
+      <td className="px-4 py-3 text-right tabular-nums">{spent(s.day)}</td>
+      <td className="px-4 py-3 text-right tabular-nums">{spent(s.month)}</td>
+      <td className="min-w-64 px-4 py-3">
         {s.budgets.length === 0 ? (
           <span className="text-muted-foreground">None</span>
         ) : (
-          <ul>
-            {s.budgets.map((b: Budget) => {
-              const note = ownBudgetNote(b);
-              return (
-                <li key={b.window}>
-                  <span className={b.reached ? "font-medium text-destructive" : undefined}>
-                    {budgetWords(b)}
-                    {b.reached && ` · reached until ${absoluteTimeWithZone(b.resets_at)}`}
-                  </span>
-                  {note && <span className="block text-xs text-muted-foreground">{note}</span>}
-                </li>
-              );
-            })}
+          <ul className="flex flex-col gap-3">
+            {s.budgets.map((b: Budget) => (
+              <BudgetItem key={b.window} budget={b} />
+            ))}
           </ul>
         )}
       </td>
     </tr>
+  );
+}
+
+function BudgetItem({ budget: b }: { budget: Budget }) {
+  const note = ownBudgetNote(b);
+  const used = budgetUsed(b);
+  const tone = b.reached ? "destructive" : used >= BUDGET_NEAR ? "warning" : "route";
+  return (
+    <li>
+      <span className={b.reached ? "font-medium text-destructive" : undefined}>
+        {budgetWords(b)}
+        {b.reached && ` · reached until ${absoluteTimeWithZone(b.resets_at)}`}
+      </span>
+      <Meter
+        role="meter"
+        value={used}
+        tone={tone}
+        label={`${b.window === "day" ? "Today's" : "This month's"} budget used`}
+        className="mt-1.5"
+      />
+      {note && <span className="mt-1 block text-small text-muted-foreground">{note}</span>}
+    </li>
   );
 }
