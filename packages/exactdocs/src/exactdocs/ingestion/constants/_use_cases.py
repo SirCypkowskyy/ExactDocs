@@ -18,6 +18,8 @@ KNOWN_BATCH: Final[int] = 500
 """Blobs asked about in one call when checking which are already chunked."""
 MAX_WANTED_IMAGES: Final[int] = 4 * MAX_IMAGES
 """Distinct image paths looked for per version."""
+OUTSIDE_IMAGES_BATCH: Final[int] = 50
+"""Image paths outside the selection fetched in one checkout (a batch that is too big is halved)."""
 _BOMS: Final[tuple[tuple[bytes, str], ...]] = (
     (codecs.BOM_UTF32_LE, "utf-32"),
     (codecs.BOM_UTF32_BE, "utf-32"),

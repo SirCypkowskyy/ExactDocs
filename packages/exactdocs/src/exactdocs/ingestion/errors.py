@@ -169,13 +169,19 @@ class RepositoryTooLargeError(ValidationError):
 
     code = "repository_too_large"
 
-    def __init__(self, limit: int) -> None:
-        """Name the size limit that was passed.
+    def __init__(self, limit: int, *, files: bool = False) -> None:
+        """Name the limit that was hit: a number of bytes, or of files.
 
         Args:
-            limit: The most bytes accepted; the message names it in MiB.
+            limit: The most bytes (or files, with ``files``) accepted.
+            files: Whether ``limit`` counts files, not bytes.
         """
-        super().__init__(f"the selected files are larger than {limit // 2**20} MiB")
+        if files:
+            super().__init__(f"the fetch holds more than {limit} files")
+        elif limit >= 2**20:
+            super().__init__(f"the selected files are larger than {limit // 2**20} MiB")
+        else:
+            super().__init__(f"the selected files are larger than {limit} bytes")
 
 
 class TreeTooLargeError(ValidationError):

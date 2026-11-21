@@ -45,6 +45,7 @@ from exactdocs.ingestion.constants import (
     MAX_LISTED_REFS,
     MAX_PREVIEW_FILES,
     MAX_WANTED_IMAGES,
+    OUTSIDE_IMAGES_BATCH,
     PARSER_VERSION,
     PERMANENT_IMPORT_FAILURES,
     PUSH_JOB,
@@ -140,6 +141,7 @@ from exactdocs.ingestion.errors import (
     PushQueuedError,
     RefDeletedError,
     RepositoryAuthRequiredError,
+    RepositoryTooLargeError,
     RepositoryUnreachableError,
     ReprocessFailedError,
     StoredTextOutdatedError,
@@ -3065,20 +3067,41 @@ class ImportVersionUseCase:
         outside = _ImageBudget(
             per_image=taken.per_image, total=taken.total, count=taken.count, used=taken.used
         )
-        if taken.absent and job.commit_sha and job.version:
-            async with self.gateway.fetch_files(
-                source.url,
-                job.commit_sha,
-                taken.absent,
-                max_bytes=self.max_images_bytes,
-                refs=_full_refs(job.ref_kind or RefKind.COMMIT, job.version),
-                credential=credential,
-            ) as folder:
-                outside.absent = await asyncio.to_thread(
-                    _read_images, folder, taken.absent, outside
-                )
-        else:
+        if not (taken.absent and job.commit_sha and job.version):
             outside.absent = list(taken.absent)
+            return outside
+        refs = _full_refs(job.ref_kind or RefKind.COMMIT, job.version)
+        size = OUTSIDE_IMAGES_BATCH
+        pending = [taken.absent[i : i + size] for i in range(0, len(taken.absent), size)]
+        while pending:
+            batch = pending.pop(0)
+            left = outside.total - outside.used
+            if outside.count >= MAX_IMAGES or left <= 0:
+                reason = "the version's image budget is used up"
+                outside.skipped.extend(
+                    Skip(code=ProblemCode.IMAGE_BUDGET, reason=reason, path=p) for p in batch
+                )
+                continue
+            try:
+                async with self.gateway.fetch_files(
+                    source.url,
+                    job.commit_sha,
+                    batch,
+                    max_bytes=left + outside.per_image,
+                    refs=refs,
+                    credential=credential,
+                ) as folder:
+                    outside.absent += await asyncio.to_thread(_read_images, folder, batch, outside)
+            except RepositoryTooLargeError:
+                # Referenced files are not all images: halve the batch to find the big ones.
+                if len(batch) > 1:
+                    half = len(batch) // 2
+                    pending[:0] = [batch[:half], batch[half:]]
+                else:
+                    reason = "larger than what is left of the version's image budget"
+                    outside.skipped.append(
+                        Skip(code=ProblemCode.TOO_LARGE, reason=reason, path=batch[0])
+                    )
         return outside
 
     async def _articles(
