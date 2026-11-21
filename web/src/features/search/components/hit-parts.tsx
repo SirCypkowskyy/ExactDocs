@@ -1,25 +1,79 @@
-import { highlightPieces, type SearchHit } from "../model/search";
+import { cn } from "@/shared/lib/utils";
+import { codeWell } from "@/shared/ui/recipes";
+import { Skeleton as Bar } from "@/shared/ui/skeleton";
+import type { SearchHit } from "../model/search";
+import { isCut, type Span, snippetBlocks } from "../model/snippet";
 
-export const retry =
-  "inline-flex h-11 cursor-pointer items-center rounded-md bg-secondary px-3 text-sm font-medium outline-none transition-[background-color,transform] duration-150 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] lg:h-9";
+const inlineCode = "rounded-[3px] bg-code px-0.5 font-mono text-[0.92em]";
 
+function Spans({ spans }: { spans: readonly Span[] }) {
+  // No horizontal padding on a match: one inside a word ("RetryPolicy") must not open a gap in it.
+  return spans.map((span) =>
+    span.hit ? (
+      <mark
+        key={span.key}
+        className="rounded-[3px] bg-route/[0.22] text-foreground [box-decoration-break:clone]"
+      >
+        {span.code ? <code className={inlineCode}>{span.text}</code> : span.text}
+      </mark>
+    ) : span.code ? (
+      <code key={span.key} className={inlineCode}>
+        {span.text}
+      </code>
+    ) : (
+      <span key={span.key}>{span.text}</span>
+    ),
+  );
+}
+
+/** The matched passage as text: headings, fences, quotes and table markup read as what they are. */
 export function Snippet({ hit }: { hit: Pick<SearchHit, "snippet" | "highlights"> }) {
+  const blocks = snippetBlocks(hit.snippet, hit.highlights);
+  const cut = isCut(hit.snippet);
+  const lastKey = blocks.at(-1)?.key;
   return (
-    <p className="mt-1.5 text-[15px] leading-[1.6] whitespace-pre-line text-foreground/90 [overflow-wrap:anywhere]">
-      {highlightPieces(hit.snippet, hit.highlights).map((piece) =>
-        piece.hit ? (
-          // No horizontal padding: a match inside a word ("RetryPolicy") must not open a gap in it.
-          <mark
-            key={piece.at}
-            className="rounded-[3px] bg-mark/[0.22] text-foreground [box-decoration-break:clone]"
-          >
-            {piece.text}
-          </mark>
-        ) : (
-          <span key={piece.at}>{piece.text}</span>
-        ),
-      )}
-    </p>
+    <div className="mt-2 space-y-1.5 text-body leading-[1.6] text-foreground [overflow-wrap:anywhere]">
+      {blocks.map((block) => {
+        const more = cut && block.key === lastKey ? "…" : null;
+        if (block.kind === "code") {
+          const lastLine = block.lines.at(-1)?.key;
+          return (
+            <pre
+              key={block.key}
+              className={cn(
+                codeWell,
+                // Wraps instead of scrolling: a snippet is a glimpse, the article has the full line.
+                "py-1.5 whitespace-pre-wrap",
+              )}
+            >
+              {block.lines.map((line) => (
+                <span key={line.key} className="block">
+                  <Spans spans={line.spans} />
+                  {line.key === lastLine && more}
+                </span>
+              ))}
+            </pre>
+          );
+        }
+        if (block.kind === "quote") {
+          return (
+            <p key={block.key} className="border-l border-input pl-3 text-muted-foreground">
+              {block.label && (
+                <span className="mr-1.5 font-medium text-foreground">{block.label}:</span>
+              )}
+              <Spans spans={block.spans} />
+              {more}
+            </p>
+          );
+        }
+        return (
+          <p key={block.key} className="line-clamp-4">
+            <Spans spans={block.spans} />
+            {more}
+          </p>
+        );
+      })}
+    </div>
   );
 }
 
@@ -31,7 +85,7 @@ export function Crumbs({ hit }: { hit: Pick<SearchHit, "heading_path" | "article
   return (
     <span
       title={all.length > 3 ? all.join(" › ") : undefined}
-      className="block font-serif text-lg leading-snug font-semibold [overflow-wrap:anywhere]"
+      className="block text-section leading-snug font-semibold [overflow-wrap:anywhere]"
     >
       {crumbs.map((crumb, i) => (
         <span
@@ -40,7 +94,7 @@ export function Crumbs({ hit }: { hit: Pick<SearchHit, "heading_path" | "article
         >
           {i > 0 && (
             <>
-              <span aria-hidden="true" className="px-1.5 text-muted-foreground/70">
+              <span aria-hidden="true" className="px-1.5 text-muted-foreground">
                 ›
               </span>
               <span className="sr-only"> / </span>
@@ -53,28 +107,25 @@ export function Crumbs({ hit }: { hit: Pick<SearchHit, "heading_path" | "article
   );
 }
 
-const bar = "block rounded bg-muted-foreground/[0.14]";
-
 /** Same shape as the real list (optional chip row, count line, rows), so nothing moves when it lands. */
 export function Skeleton({ chips = false }: { chips?: boolean }) {
   return (
-    <div aria-hidden="true" className="pending-in motion-safe:animate-pulse">
+    <div aria-hidden="true" className="pending-in">
       {chips && (
         <div className="mb-5 flex gap-2">
           {["a", "b", "c"].map((id) => (
-            <span key={id} className={`${bar} h-11 w-24 rounded-md lg:h-8`} />
+            <Bar key={id} className="h-11 w-24 lg:h-8" />
           ))}
         </div>
       )}
-      <span className={`${bar} mb-4 h-5 w-28`} />
-      <ul className="divide-y divide-border">
+      <Bar className="mb-4 h-5 w-28" />
+      <ul className="divide-y divide-rule">
         {["a", "b", "c", "d"].map((id) => (
-          <li key={id} className="space-y-2 py-3">
-            <span className={`${bar} h-5 w-2/5`} />
-            <span className={`${bar} h-3 w-1/4`} />
-            <span className={`${bar} h-3.5 w-full`} />
-            <span className={`${bar} h-3.5 w-4/5`} />
-            <span className={`${bar} h-3 w-1/6`} />
+          <li key={id} className="space-y-2 py-4">
+            <Bar className="h-5 w-2/5" />
+            <Bar className="h-3 w-1/4" />
+            <Bar className="h-3.5 w-full" />
+            <Bar className="h-3.5 w-4/5" />
           </li>
         ))}
       </ul>

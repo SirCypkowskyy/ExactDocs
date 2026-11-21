@@ -105,7 +105,7 @@ function Row({ owner, repo, v, Line, onReimported }: RowProps) {
               <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
             )}
             {v.status === "up_to_date" && (
-              <Check aria-hidden="true" className="size-4 shrink-0 text-mark" />
+              <Check aria-hidden="true" className="size-4 shrink-0 text-route" />
             )}
             <span className={failed ? "font-medium text-destructive" : undefined}>
               {statusWords(v.status)}

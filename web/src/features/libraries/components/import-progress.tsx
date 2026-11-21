@@ -103,7 +103,7 @@ function Status({ job, state, known, skipped, words: w = IMPORT_WORDS }: StatusP
   if (state === "succeeded") {
     return (
       <p className="inline-flex items-center gap-1.5 text-base font-medium">
-        <Check aria-hidden="true" className="size-4 text-mark" />
+        <Check aria-hidden="true" className="size-4 text-route" />
         {done} {units(w, done)} {w.done}
         {w.unit === "file" && skipped !== "0" && `, ${skipped} skipped`}
       </p>
@@ -158,7 +158,7 @@ function Meter({ id, job, state, known, noun = "Import" }: MeterProps) {
     >
       <div
         className={cn(
-          "h-full rounded-full bg-mark",
+          "h-full rounded-full bg-route",
           known
             ? "origin-left transition-transform duration-500 ease-out motion-reduce:transition-none"
             : state === "queued" || state === "running"
@@ -191,7 +191,7 @@ function Failure({
             <Link
               to="/libraries/$owner/$repo/settings"
               params={{ owner, repo }}
-              className="rounded underline decoration-mark/40 underline-offset-4 outline-none hover:decoration-mark focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded underline decoration-route/40 underline-offset-4 outline-none hover:decoration-route focus-visible:ring-2 focus-visible:ring-ring"
             >
               settings page
             </Link>
@@ -297,10 +297,7 @@ function Heading({
       id="progress-title"
       ref={ref}
       tabIndex={-1}
-      className={cn(
-        "font-semibold outline-none",
-        version ? "text-lg" : "font-serif text-2xl tracking-tight",
-      )}
+      className={cn("font-semibold outline-none", version ? "text-lg" : "text-2xl tracking-tight")}
     >
       {verb}{" "}
       <span className="font-mono text-[0.9em] font-normal [overflow-wrap:anywhere]">

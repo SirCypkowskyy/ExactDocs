@@ -1,86 +1,152 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "@fontsource-variable/source-serif-4";
+@import "@fontsource-variable/ibm-plex-sans";
+@import "@fontsource-variable/ibm-plex-sans/wght-italic.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/*
+ * ExactDocs design tokens. web/DESIGN.md explains each one and when to use it; components use
+ * these names only (Tailwind classes generated from @theme below), never raw colours.
+ *
+ * The world: a cool tinted frame (the top band and the window margin) around a white working
+ * sheet; ink and two greys; one route hue (deep teal) for "where you are" and progress; eight
+ * line colours, one per library, used only on its round bullet.
+ */
 :root {
-  --radius: 0.5rem;
-  --background: oklch(0.985 0.005 250);
-  --foreground: oklch(0.24 0.035 255);
-  --card: oklch(0.995 0.003 250);
-  --card-foreground: oklch(0.24 0.035 255);
-  --popover: oklch(0.995 0.003 250);
-  --popover-foreground: oklch(0.24 0.035 255);
-  --primary: oklch(0.27 0.045 255);
-  --primary-foreground: oklch(0.985 0.005 250);
-  --secondary: oklch(0.95 0.01 250);
-  --secondary-foreground: oklch(0.27 0.045 255);
-  --muted: oklch(0.95 0.01 250);
-  --muted-foreground: oklch(0.45 0.025 255);
-  --accent: oklch(0.93 0.015 230);
-  --accent-foreground: oklch(0.27 0.045 255);
-  --destructive: oklch(0.5 0.17 27);
-  --border: oklch(0.88 0.012 255);
-  --input: oklch(0.64 0.02 255);
-  --ring: oklch(0.52 0.11 215);
-  /* The ink field behind the sign-in and setup pages, and the marker that stands for "exact". */
-  --field: oklch(0.25 0.04 255);
-  --field-foreground: oklch(0.96 0.01 250);
-  --field-muted: oklch(0.78 0.02 250);
-  --mark: oklch(0.5 0.09 215);
-  --mark-foreground: oklch(0.985 0.005 250);
+  --radius: 0.5rem; /* cards 8, controls 6, chips 4, the sheet 16 */
+
+  /* Surfaces */
+  --frame: oklch(0.965 0.006 230); /* the band and the margin around the sheet */
+  --background: oklch(1 0 0); /* the sheet: where the work is */
+  --foreground: oklch(0.2 0.006 250);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2 0.006 250);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2 0.006 250);
+  --raised: oklch(0.973 0.004 240); /* a panel one step off the sheet: settings panels, code */
+  --muted: oklch(0.973 0.004 240);
+  --muted-foreground: oklch(0.47 0.005 250); /* 6.6:1 on white */
+  --secondary: oklch(0.948 0.004 240);
+  --secondary-foreground: oklch(0.2 0.006 250);
+  --accent: oklch(0.948 0.004 240); /* hover and the active nav pill */
+  --accent-foreground: oklch(0.2 0.006 250);
+
+  /* Lines: card edges, row rules, control borders (one step stronger) */
+  --border: oklch(0.925 0.004 240);
+  --rule: oklch(0.955 0.003 240);
+  --input: oklch(0.84 0.005 250);
+
+  /* Actions: the primary is near-black; the route hue is for place, selection and progress */
+  --primary: oklch(0.2 0.006 250);
+  --primary-foreground: oklch(0.99 0 0);
+  --route: oklch(0.47 0.08 215); /* #1b6c80 */
+  --route-foreground: oklch(0.99 0 0);
+  --route-soft: oklch(0.95 0.025 215);
+  --ring: oklch(0.55 0.1 215);
+
+  /* States: text colour and pale pill pairs */
+  --positive: oklch(0.5 0.11 155);
+  --positive-soft: oklch(0.96 0.04 155);
+  --positive-ink: oklch(0.3 0.07 155);
+  --warning: oklch(0.47 0.12 55);
+  --warning-soft: oklch(0.975 0.035 85);
+  --warning-ink: oklch(0.42 0.11 55);
+  --destructive: oklch(0.52 0.19 27);
+  --destructive-soft: oklch(0.965 0.025 27);
+  --destructive-ink: oklch(0.4 0.15 27);
+
+  /* Line colours: one per library (shared/lib/line-colour.ts), white text on each at 4.5:1+ */
+  --line-1: oklch(0.47 0.08 215);
+  --line-2: oklch(0.47 0.15 255);
+  --line-3: oklch(0.48 0.11 155);
+  --line-4: oklch(0.5 0.17 27);
+  --line-5: oklch(0.47 0.1 70);
+  --line-6: oklch(0.48 0.14 350);
+  --line-7: oklch(0.48 0.09 120);
+  --line-8: oklch(0.45 0.02 250);
+
   /* The scrim behind a modal. */
-  --overlay: oklch(0.24 0.035 255 / 0.3);
-  /* Syntax roles in code blocks: every one clears 4.5:1 on the code ground. */
-  --hl-comment: oklch(0.48 0.02 255);
-  --hl-keyword: oklch(0.44 0.14 255);
-  --hl-string: oklch(0.43 0.1 155);
+  --overlay: oklch(0.2 0.01 250 / 0.35);
+
+  /* Code: syntax roles, each 4.5:1+ on --code */
+  --code: oklch(0.973 0.004 240);
+  --hl-comment: oklch(0.5 0.01 250);
+  --hl-keyword: oklch(0.45 0.14 255);
+  --hl-string: oklch(0.44 0.1 155);
   --hl-number: oklch(0.5 0.12 55);
-  --hl-title: oklch(0.44 0.13 305);
-  --hl-type: oklch(0.46 0.12 25);
-  --hl-meta: oklch(0.45 0.02 255);
-  --hl-deletion: oklch(0.45 0.15 27);
+  --hl-title: oklch(0.45 0.13 330);
+  --hl-type: oklch(0.47 0.12 25);
+  --hl-meta: oklch(0.47 0.01 250);
+  --hl-deletion: oklch(0.47 0.16 27);
   /* Callout tints (note, tip, warning; danger is --destructive). */
   --tint-note: oklch(0.5 0.1 250);
   --tint-tip: oklch(0.52 0.11 155);
   --tint-warning: oklch(0.6 0.13 75);
+
+  /* Motion: short, decelerating, interruptible. Reduced motion zeroes the travel, keeps fades. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur: 180ms;
+  --dur-slow: 240ms;
+
   color-scheme: light;
 }
 
-/* Dark: the same ink world at night. Set on <html> before first paint (index.html). */
+/* Dark: true neutrals, never navy; the band is darker than the sheet. */
 .dark {
-  --background: oklch(0.17 0.02 255);
-  --foreground: oklch(0.93 0.01 250);
-  --card: oklch(0.2 0.022 255);
-  --card-foreground: oklch(0.93 0.01 250);
-  --popover: oklch(0.21 0.024 255);
-  --popover-foreground: oklch(0.93 0.01 250);
-  --primary: oklch(0.9 0.02 240);
-  --primary-foreground: oklch(0.2 0.035 255);
-  --secondary: oklch(0.25 0.024 255);
-  --secondary-foreground: oklch(0.93 0.01 250);
-  --muted: oklch(0.25 0.024 255);
-  --muted-foreground: oklch(0.74 0.02 255);
-  --accent: oklch(0.28 0.03 235);
-  --accent-foreground: oklch(0.95 0.01 250);
-  --destructive: oklch(0.7 0.16 25);
-  --border: oklch(0.3 0.022 255);
-  --input: oklch(0.52 0.025 255);
-  --ring: oklch(0.72 0.1 215);
-  --field: oklch(0.13 0.025 255);
-  --field-foreground: oklch(0.95 0.01 250);
-  --field-muted: oklch(0.74 0.02 250);
-  --mark: oklch(0.76 0.1 210);
-  --mark-foreground: oklch(0.17 0.03 255);
-  --overlay: oklch(0.05 0.01 255 / 0.6);
-  --hl-comment: oklch(0.7 0.02 255);
+  --frame: oklch(0.13 0.002 250);
+  --background: oklch(0.175 0.003 250);
+  --foreground: oklch(0.95 0.002 250);
+  --card: oklch(0.175 0.003 250);
+  --card-foreground: oklch(0.95 0.002 250);
+  --popover: oklch(0.215 0.003 250);
+  --popover-foreground: oklch(0.95 0.002 250);
+  --raised: oklch(0.205 0.003 250);
+  --muted: oklch(0.205 0.003 250);
+  --muted-foreground: oklch(0.74 0.004 250);
+  --secondary: oklch(0.245 0.003 250);
+  --secondary-foreground: oklch(0.95 0.002 250);
+  --accent: oklch(0.245 0.003 250);
+  --accent-foreground: oklch(0.97 0.002 250);
+  --border: oklch(0.27 0.003 250);
+  --rule: oklch(0.23 0.003 250);
+  --input: oklch(0.4 0.004 250);
+  --primary: oklch(0.95 0.002 250);
+  --primary-foreground: oklch(0.175 0.003 250);
+  --route: oklch(0.75 0.09 210);
+  --route-foreground: oklch(0.17 0.02 220);
+  --route-soft: oklch(0.27 0.035 215);
+  --ring: oklch(0.72 0.1 210);
+  --positive: oklch(0.75 0.14 155);
+  --positive-soft: oklch(0.26 0.04 155);
+  --positive-ink: oklch(0.82 0.12 155);
+  --warning: oklch(0.8 0.13 75);
+  --warning-soft: oklch(0.27 0.04 75);
+  --warning-ink: oklch(0.85 0.11 80);
+  --destructive: oklch(0.7 0.17 22);
+  --destructive-soft: oklch(0.26 0.05 22);
+  --destructive-ink: oklch(0.8 0.12 22);
+  --line-1: oklch(0.5 0.08 215);
+  --line-2: oklch(0.5 0.14 255);
+  --line-3: oklch(0.5 0.11 155);
+  --line-4: oklch(0.52 0.17 27);
+  --line-5: oklch(0.5 0.1 70);
+  --line-6: oklch(0.5 0.14 350);
+  --line-7: oklch(0.5 0.09 120);
+  --line-8: oklch(0.48 0.02 250);
+  --overlay: oklch(0.05 0 0 / 0.6);
+  --code: oklch(0.205 0.003 250);
+  --hl-comment: oklch(0.72 0.01 250);
   --hl-keyword: oklch(0.79 0.1 255);
   --hl-string: oklch(0.8 0.11 155);
   --hl-number: oklch(0.82 0.11 65);
-  --hl-title: oklch(0.8 0.1 305);
+  --hl-title: oklch(0.8 0.1 330);
   --hl-type: oklch(0.79 0.11 30);
-  --hl-meta: oklch(0.72 0.02 255);
+  --hl-meta: oklch(0.72 0.01 250);
   --hl-deletion: oklch(0.74 0.14 27);
   --tint-note: oklch(0.74 0.1 250);
   --tint-tip: oklch(0.76 0.12 155);
@@ -93,12 +159,15 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --radius-sheet: 16px;
+  --color-frame: var(--frame);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
+  --color-raised: var(--raised);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
@@ -108,31 +177,82 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-destructive-ink: var(--destructive-ink);
+  --color-positive: var(--positive);
+  --color-positive-soft: var(--positive-soft);
+  --color-positive-ink: var(--positive-ink);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-ink: var(--warning-ink);
   --color-border: var(--border);
+  --color-rule: var(--rule);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-field: var(--field);
-  --color-field-foreground: var(--field-foreground);
-  --color-field-muted: var(--field-muted);
-  --color-mark: var(--mark);
-  --color-mark-foreground: var(--mark-foreground);
+  --color-route: var(--route);
+  --color-route-foreground: var(--route-foreground);
+  --color-route-soft: var(--route-soft);
+  --color-code: var(--code);
   --color-overlay: var(--overlay);
-  --font-serif: "Source Serif 4 Variable", "Iowan Old Style", Georgia, serif;
+  --color-line-1: var(--line-1);
+  --color-line-2: var(--line-2);
+  --color-line-3: var(--line-3);
+  --color-line-4: var(--line-4);
+  --color-line-5: var(--line-5);
+  --color-line-6: var(--line-6);
+  --color-line-7: var(--line-7);
+  --color-line-8: var(--line-8);
+
+  --font-sans: "IBM Plex Sans Variable", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono:
+    "IBM Plex Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+
+  /* Type scale (DESIGN.md): 12 / 14 / 16 / 22 / 28, plus the reader's 17. */
+  --text-small: 0.75rem;
+  --text-small--line-height: 1.125rem;
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.25rem;
+  --text-section: 1rem;
+  --text-section--line-height: 1.5rem;
+  --text-title: 1.375rem;
+  --text-title--line-height: 1.75rem;
+  --text-figure: 1.75rem;
+  --text-figure--line-height: 2.125rem;
+
+  --ease-out: var(--ease-out);
+  --ease-in-out: var(--ease-in-out);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    scrollbar-color: color-mix(in oklab, var(--muted-foreground) 40%, transparent) transparent;
+    -webkit-tap-highlight-color: transparent;
+  }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-frame font-sans text-foreground antialiased;
+    font-feature-settings: "ss02"; /* Plex: the single-storey g reads calmer in UI text */
   }
   ::selection {
-    background: color-mix(in oklab, var(--mark) 30%, transparent);
+    background: color-mix(in oklab, var(--route) 26%, transparent);
     color: var(--foreground);
   }
-  html {
-    scrollbar-color: color-mix(in oklab, var(--muted-foreground) 45%, transparent) transparent;
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--muted-foreground);
+    opacity: 1;
+  }
+  /* Figures line up wherever they are compared. */
+  table,
+  time,
+  .num {
+    font-variant-numeric: tabular-nums;
   }
 }
 
@@ -143,18 +263,48 @@ html.theme-fade::view-transition-new(root) {
   animation-timing-function: ease-out;
 }
 
-/* One calm entrance for the auth pages; reduced-motion users get the content at once. */
+/*
+ * Route changes cross-fade the sheet's content, with a short rise for the new page
+ * (router.ts turns view transitions on; the band and the frame stay put).
+ */
+html:not(.theme-fade)::view-transition-old(page) {
+  animation: fade-out var(--dur-fast) var(--ease-out) both;
+}
+html:not(.theme-fade)::view-transition-new(page) {
+  animation: page-in var(--dur) var(--ease-out) both;
+}
+html:not(.theme-fade)::view-transition-group(page) {
+  animation-duration: var(--dur);
+}
+/* Nothing but the sheet moves on navigation. */
+html:not(.theme-fade)::view-transition-old(root),
+html:not(.theme-fade)::view-transition-new(root) {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
+  /* One entrance for the auth form; elsewhere pages arrive through the view transition. */
   .rise {
-    animation: rise 320ms cubic-bezier(0.23, 1, 0.32, 1) backwards;
-    animation-delay: calc(var(--i, 0) * 60ms);
+    animation: rise 260ms var(--ease-out) backwards;
+    animation-delay: calc(var(--i, 0) * 50ms);
   }
   .fade-in {
-    animation: fade-in 180ms ease-out;
+    animation: fade-in var(--dur) ease-out;
+  }
+  /* A row that just arrived in a list. */
+  .row-in {
+    animation: row-in var(--dur) var(--ease-out) backwards;
   }
   /* A notice that eases open instead of shoving the page down: pair with a `grid` wrapper. */
   .expand-in {
-    animation: expand-in 180ms cubic-bezier(0.23, 1, 0.32, 1) backwards;
+    animation: expand-in var(--dur) var(--ease-out) backwards;
   }
   .spin {
     animation: spin 700ms linear infinite;
@@ -162,6 +312,11 @@ html.theme-fade::view-transition-new(root) {
   /* Progress with no total yet: a fill that travels the track (transform only). */
   .sweep {
     animation: sweep 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+  /* The route's rule draws from the bullet to the new station. */
+  .route-draw {
+    transform-origin: left center;
+    animation: route-draw var(--dur-slow) var(--ease-out) backwards;
   }
 }
 
@@ -181,7 +336,27 @@ html.theme-fade::view-transition-new(root) {
 @keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(8px);
+  }
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@keyframes row-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes route-draw {
+  from {
+    transform: scaleX(0);
   }
 }
 
@@ -194,6 +369,12 @@ html.theme-fade::view-transition-new(root) {
 
 @keyframes fade-in {
   from {
+    opacity: 0;
+  }
+}
+
+@keyframes fade-out {
+  to {
     opacity: 0;
   }
 }

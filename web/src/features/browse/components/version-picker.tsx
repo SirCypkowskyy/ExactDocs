@@ -1,9 +1,11 @@
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
-import { Check, ChevronsUpDown, LoaderCircle } from "lucide-react";
+import { ChevronsUpDown } from "lucide-react";
 import { Popover } from "radix-ui";
 import { type KeyboardEvent, type MouseEvent, useRef, useState } from "react";
 import { cn } from "@/shared/lib/utils";
+import { control, controlHeight, trigger } from "@/shared/ui/recipes";
+import { Spinner } from "@/shared/ui/spinner";
 import { pathInVersionQueryOptions } from "../api/browse-queries";
 import { type BrowseSearch, orderVersions, shortSha, type Version } from "../model/browse";
 import { DefaultPin } from "./default-pin";
@@ -20,6 +22,20 @@ interface VersionPickerProps {
 }
 
 const FILTER_FROM = 8;
+
+/** A version as a station on the library's line: filled where you are, a double ring for the default. */
+function Station({ current, isDefault }: { current: boolean; isDefault: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "relative z-10 size-3 flex-none rounded-full border-2 border-route bg-background transition-colors duration-(--dur-fast)",
+        current && "bg-route",
+        isDefault && "ring-2 ring-route/30 ring-offset-1 ring-offset-background",
+      )}
+    />
+  );
+}
 
 /** A click the browser should handle itself: new tab, new window, or (Alt) download. */
 const handledByBrowser = (event: MouseEvent) =>
@@ -117,32 +133,30 @@ export function VersionPicker({
             : `Version: ${current.ref}, switching to ${waitingFor.ref}. Change version`
         }
         aria-busy={waitingFor !== null || undefined}
-        className="flex h-11 w-full min-w-0 cursor-pointer items-center justify-between gap-2 rounded-md bg-secondary px-3 text-sm outline-none ring-1 ring-inset ring-border transition-[background-color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.98] data-[state=open]:ring-ring [@media(hover:hover)]:hover:bg-accent"
+        className={cn(trigger, "w-full data-[state=open]:border-ring")}
       >
-        <span className="flex min-w-0 items-baseline gap-2">
+        <span className="flex min-w-0 items-center gap-2">
+          <Station current isDefault={shownVersion.is_default} />
           <span
             className={cn(
-              "truncate font-mono font-semibold",
+              "truncate font-mono text-[13px] font-semibold",
               waitingFor !== null && "text-muted-foreground",
             )}
           >
             {shownVersion.ref}
           </span>
           {shownVersion.is_default && (
-            <span className="text-xs text-mark max-sm:hidden">{defaultLabel}</span>
+            <span className="text-small text-muted-foreground max-sm:hidden">{defaultLabel}</span>
           )}
         </span>
         <span className="flex shrink-0 items-center gap-2">
-          <span className="font-mono text-xs text-muted-foreground max-lg:hidden">
+          <span className="font-mono text-[12px] text-muted-foreground max-lg:hidden">
             {shortSha(shownVersion.commit_sha)}
           </span>
           {waitingFor === null ? (
             <ChevronsUpDown aria-hidden="true" className="size-4 text-muted-foreground" />
           ) : (
-            <LoaderCircle
-              aria-hidden="true"
-              className="size-4 text-muted-foreground motion-safe:animate-spin"
-            />
+            <Spinner className="text-muted-foreground" />
           )}
         </span>
       </Popover.Trigger>
@@ -152,7 +166,7 @@ export function VersionPicker({
           sideOffset={6}
           collisionPadding={12}
           onKeyDown={onKeyDown}
-          className="z-50 w-[min(22rem,calc(100vw-1.5rem))] origin-(--radix-popover-content-transform-origin) rounded-lg border border-border bg-popover text-popover-foreground shadow-lg outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-safe:data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:duration-150 data-[state=closed]:duration-100"
+          className="z-50 w-[min(22rem,calc(100vw-1.5rem))] origin-(--radix-popover-content-transform-origin) rounded-lg border border-border bg-popover text-popover-foreground shadow-lg outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-safe:data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:duration-(--dur) data-[state=closed]:duration-(--dur-fast)"
         >
           {versions.length >= FILTER_FROM && (
             <div className="border-b border-border p-2">
@@ -164,7 +178,7 @@ export function VersionPicker({
                 aria-label="Filter versions"
                 autoComplete="off"
                 spellCheck={false}
-                className="h-10 w-full rounded-md bg-secondary px-3 font-mono text-sm outline-none ring-1 ring-inset ring-input placeholder:font-sans placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                className={cn(control, controlHeight, "px-3 font-mono placeholder:font-sans")}
               />
             </div>
           )}
@@ -196,22 +210,24 @@ export function VersionPicker({
                       void switchTo(v, path);
                     }}
                     className={cn(
-                      "flex min-h-11 items-center gap-2 rounded-md px-2.5 py-1 text-sm lg:min-h-9 outline-none transition-colors duration-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                      isCurrent ? "bg-mark/[0.16]" : "[@media(hover:hover)]:hover:bg-accent",
+                      // The list is the line: a rule runs through every station (DESIGN.md, The idea).
+                      "relative flex min-h-11 items-center gap-2.5 rounded-md px-2.5 py-1 text-body outline-none transition-colors duration-(--dur-fast) before:absolute before:top-0 before:bottom-0 before:left-[15px] before:w-0.5 before:bg-route/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring lg:min-h-9",
+                      i === 0 && "before:top-1/2",
+                      i === shown.length - 1 && "before:bottom-1/2",
+                      isCurrent ? "bg-route-soft" : "[@media(hover:hover)]:hover:bg-accent",
                     )}
                   >
-                    <Check
-                      aria-hidden="true"
-                      className={cn("size-4 shrink-0 text-mark", !isCurrent && "invisible")}
-                    />
+                    <Station current={isCurrent} isDefault={v.is_default} />
                     <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                      <span className="truncate font-mono font-medium">{v.ref}</span>
-                      {v.is_default && <span className="text-xs text-mark">{defaultLabel}</span>}
+                      <span className="truncate font-mono text-[13px] font-medium">{v.ref}</span>
+                      {v.is_default && (
+                        <span className="text-small text-muted-foreground">{defaultLabel}</span>
+                      )}
                       {v.kind !== "tag" && (
-                        <span className="text-xs text-muted-foreground">{v.kind}</span>
+                        <span className="text-small text-muted-foreground">{v.kind}</span>
                       )}
                     </span>
-                    <span className="font-mono text-xs text-muted-foreground tabular-nums">
+                    <span className="font-mono text-[12px] text-muted-foreground tabular-nums">
                       {shortSha(v.commit_sha)}
                     </span>
                   </Link>
@@ -219,7 +235,7 @@ export function VersionPicker({
               );
             })}
             {shown.length === 0 && (
-              <li className="px-3 py-4 text-sm text-muted-foreground">
+              <li className="px-3 py-4 text-body text-muted-foreground">
                 No version matches "{filter.trim()}".
               </li>
             )}

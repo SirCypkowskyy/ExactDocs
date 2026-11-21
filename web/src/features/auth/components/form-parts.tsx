@@ -14,13 +14,7 @@ export function SubmitButton({
   busy: string;
 }): ReactNode {
   return (
-    <Button type="submit" aria-disabled={pending} aria-busy={pending} className="mt-2 w-full">
-      {pending && (
-        <span
-          aria-hidden="true"
-          className="spin size-4 rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground"
-        />
-      )}
+    <Button type="submit" pending={pending} className="mt-1 w-full">
       {pending ? busy : idle}
     </Button>
   );

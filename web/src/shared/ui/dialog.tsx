@@ -12,10 +12,7 @@ const panel =
 export const DialogRoot = Dialog.Root;
 export const DialogTrigger = Dialog.Trigger;
 export const DialogTitle = ({ className, ...p }: React.ComponentProps<typeof Dialog.Title>) => (
-  <Dialog.Title
-    className={cn("font-serif text-xl font-semibold tracking-tight", className)}
-    {...p}
-  />
+  <Dialog.Title className={cn("text-xl font-semibold tracking-tight", className)} {...p} />
 );
 export const DialogDescription = ({
   className,
@@ -40,10 +37,7 @@ export const ConfirmTitle = ({
   className,
   ...p
 }: React.ComponentProps<typeof AlertDialog.Title>) => (
-  <AlertDialog.Title
-    className={cn("font-serif text-xl font-semibold tracking-tight", className)}
-    {...p}
-  />
+  <AlertDialog.Title className={cn("text-xl font-semibold tracking-tight", className)} {...p} />
 );
 export const ConfirmDescription = ({
   className,
