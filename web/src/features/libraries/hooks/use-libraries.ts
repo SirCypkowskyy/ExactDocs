@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BROWSE_KEY } from "@/shared/lib/query-keys";
 import {
@@ -7,9 +7,17 @@ import {
   librariesQueryOptions,
 } from "../api/libraries-query";
 import { type LatestJob, type Library, type Sync, syncOf } from "../model/library";
+import type { ListView } from "../model/list-view";
 
-export function useLibraries() {
-  return useSuspenseQuery(librariesQueryOptions());
+/** The pages loaded so far, flattened, with the server's total for the current filters. */
+export function useLibraries(view: ListView) {
+  const query = useInfiniteQuery(librariesQueryOptions(view));
+  const pages = query.data?.pages ?? [];
+  return {
+    query,
+    libraries: pages.flatMap((p) => p.libraries),
+    total: pages.at(-1)?.total ?? 0,
+  };
 }
 
 export type SyncState = { status: "pending" } | { status: "error" } | Sync;
