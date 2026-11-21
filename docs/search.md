@@ -527,6 +527,21 @@ the `agent` stage, with one span per model request and per tool call (the read c
 versions of what it returned), never with prompts, answers or tool arguments. `/metrics` shows its
 tokens (`gen_ai.client.token.usage`).
 
+### Answers over several libraries
+
+The search playground (#428) also has the agent write an answer: `POST /api/v1/answer` runs the same
+harness (Code Mode, the sandbox, the spend limits) over the default versions of the libraries you
+choose, with the read functions `list_libraries`, `search_docs`, `list_articles`, `article_outline` and
+`read_chunk`, each naming one library of that choice. Its output is the answer in Markdown and its
+sources: a library, a chunk ID, a quote and a reason each. An output guardrail keeps only chunks of the
+chosen libraries that the caller may read (roles and API token scope) and the tags allow, and a quote
+is kept only when the chunk holds it verbatim. It is bounded by the limits above and counted like
+any LLM search: to the instance, the caller and each library it reads, and once to
+`llm_searches_per_minute`. A run that stops answers with no text and the chunks it had read, with
+the `fallback_reason`s of the table above (a rate limit gives `llm_rate_limited`). A library with AI off
+is never read. `POST /api/v1/answer/stream` also streams how many tool calls the run has made out of
+its limit. See the [REST API](rest-api.md).
+
 ### Re-asked questions
 
 Teams ask the same thing more than once. With the agentic answer cache on, an agentic answer is

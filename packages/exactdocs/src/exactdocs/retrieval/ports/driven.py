@@ -11,6 +11,7 @@ from exactdocs.retrieval.models import (
     AgentPick,
     AgentRead,
     AgentRun,
+    AnswerDraft,
     ArticleEntry,
     ArticleText,
     BudgetLimit,
@@ -1408,6 +1409,136 @@ class AgentReads(Protocol):
 
         Args:
             read: The read; it holds no argument and no text.
+        """
+        ...
+
+
+class LibrariesBrowser(Protocol):
+    """The read tools of the answering agent (#428): several libraries, each at one version.
+
+    Retrieval implements it (``LibrariesScope``) over the default versions of the libraries the
+    caller chose and may read, with AI on, under the call's tag filter. It reaches the agent as its
+    ``deps``: a tool argument may name a library, but only one of this scope, and nothing else
+    (another library, a version, a tag) can be named. A library outside the scope reads as not
+    found.
+    """
+
+    def libraries(self) -> Sequence[tuple[str, str]]:
+        """Name the libraries of the scope.
+
+        Returns:
+            ``(library, version)`` of each, in the order chosen.
+        """
+        ...
+
+    async def search_docs(
+        self, query: str, library: str | None, limit: int
+    ) -> Sequence[tuple[str, SearchHit, StoredChunk]]:
+        """Search the scope (or one library of it) with BM25, within the tag filter.
+
+        Args:
+            query: The words to look for.
+            library: One library of the scope; ``None`` for all of them in one ranking.
+            limit: How many hits at most.
+
+        Returns:
+            ``(library, hit, chunk)`` of the best hits, best first.
+        """
+        ...
+
+    async def list_articles(self, library: str, prefix: str = "") -> Sequence[ArticleEntry]:
+        """List a library's articles under a folder.
+
+        Args:
+            library: A library of the scope.
+            prefix: A folder; empty for every article.
+
+        Returns:
+            The articles; none for a library outside the scope.
+        """
+        ...
+
+    async def article_outline(self, library: str, path: str) -> Outline | None:
+        """Read an article's heading tree.
+
+        Args:
+            library: A library of the scope.
+            path: The article's path.
+
+        Returns:
+            The outline, or ``None`` when the library is outside the scope or has no such article.
+        """
+        ...
+
+    async def read_chunk(self, library: str, chunk_id: str) -> StoredChunk | None:
+        """Read one chunk.
+
+        Args:
+            library: A library of the scope.
+            chunk_id: Its ID.
+
+        Returns:
+            The chunk (cut for the agent), or ``None`` when it is not in the scope.
+        """
+        ...
+
+    async def admit(self, cited: Sequence[tuple[str, str]]) -> Sequence[tuple[str, str]]:
+        """Keep the ``(library, chunk ID)`` pairs the scope holds and the tag filter keeps.
+
+        Args:
+            cited: The agent's citations, as the model wrote them.
+
+        Returns:
+            The admitted pairs, in order, once each, each library as the scope spells it.
+        """
+        ...
+
+
+class AnswerProgress(Protocol):
+    """Hears how far an agentic answer has got (#428), for a progress stream."""
+
+    def tool_call(self, made: int, limit: int) -> None:
+        """Hear that the agent made another tool call.
+
+        Args:
+            made: Tool calls made so far, ``run_code`` and the reads inside it.
+            limit: The most it may make (``max_tool_calls``).
+        """
+        ...
+
+
+class Answerer(Protocol):
+    """Runs the answering agent (#428): an LLM that reads several libraries and writes an answer.
+
+    The pydantic-ai adapter runs an agent in harness Code Mode, as ``Explorer`` does, with the
+    browser's read tools inside ``run_code`` only, bounded by ``run.bounds`` and the spend budgets
+    (``SpendLimits`` over ``ledger``), instrumented without content, and ended on a loop. Its
+    output guardrail keeps only the citations ``browser.admit`` admits. A run that stops returns a
+    draft with ``stopped`` set and what it used, never raises for it.
+    """
+
+    async def answer(
+        self,
+        model: object,
+        browser: LibrariesBrowser,
+        run: AgentRun,
+        *,
+        ledger: SpendLedger,
+        clock: Clock,
+        progress: AnswerProgress | None = None,
+    ) -> AnswerDraft:
+        """Answer ``run.question`` from the browser's libraries.
+
+        Args:
+            model: The ``llm`` role's pydantic-ai model.
+            browser: The read tools on the question's scope.
+            run: The question, the limits and who pays (``run.limit``: most citations).
+            ledger: The spend rows the harness ``SpendLimits`` reads and records to.
+            clock: Decides the spend windows.
+            progress: Hears each tool call; none by default.
+
+        Returns:
+            The answer and its citations, or why the run stopped; with its usage either way.
         """
         ...
 

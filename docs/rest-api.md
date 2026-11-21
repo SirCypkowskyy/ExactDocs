@@ -504,6 +504,26 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   library over every readable library whatever the mode. Nothing is reranked (`reranked: false`).
 - **Vector search** (#428): `mode=vector` on one version ranks its chunks by their vectors alone,
   with no BM25 half, and falls back exactly as `hybrid` does. It is never a default.
+- **Agentic answer** (#428): `POST /answer` with `{"question": ..., "libraries": [...], "tags": [...],
+  "tags_match": "any", "max_sources": 8}` has an agent on the `llm` role read the default version
+  of every chosen library (none chosen: every library you may read, the first 20; `libraries_omitted`
+  counts the rest) and write an answer. It returns `answer` (Markdown, model output, at most 8000
+  characters) and `sources`: each with `library`, `version`, `commit_sha`, `chunk_id`,
+  `article_path`, `heading_path`, `anchor`, `source_url`, `quote` (a passage of the chunk, kept only when
+  the chunk holds it verbatim) and `reason` (the model's sentence); and `usage` (`requests`, tokens,
+  `tool_calls` out of `max_tool_calls`, `cost_usd`). Only libraries you may read (your role and your API
+  token's library scope) with AI on are read: a chosen one you may not read is 404
+  `version_not_indexed`, one with AI off is named in `libraries_without_ai` and nothing of it is sent
+  (when none remains: `fallback_reason: mode_unavailable`). A cited chunk outside the chosen libraries,
+  your permissions or the tags is dropped. The run is bounded by `[ai.agentic]` (tool calls, model
+  requests, tokens, time, loops) and counted to the instance, the caller and every library read (the
+  budgets) and once to the LLM search rate limit; a run that stops answers 200 with `answer: ""`, the
+  chunks it had read as `sources`, and `fallback_reason` `agent_limit_reached`, `agent_loop_detected`,
+  `agent_failed`, `llm_budget_reached` or `llm_rate_limited`. 422 `mode_unavailable` without an `llm`
+  role. `GET /answer` says whether it can run (`{"available", "reason", "max_tool_calls"}`).
+  `POST /answer/stream` is the same call as server-sent events: `progress` (`{"tool_calls",
+  "max_tool_calls"}`) after each tool call, then one `answer` (the body above) or `error` (`{"error",
+  "detail"}`); closing the stream cancels the run. The search playground uses it.
 - **Agentic search** (RET-04): `mode=agentic` (never a default) lets an agent on the `llm` role
   browse the version (outlines, articles, chunks and BM25, all of that version only) and pick the
   chunks that answer the question. Its results are the picks the version holds and the call's

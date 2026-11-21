@@ -1,7 +1,12 @@
 import { queryOptions } from "@tanstack/react-query";
 import { getJson, type QueryOf } from "@/shared/lib/http";
 import { SEARCH_ALL_KEY } from "@/shared/lib/query-keys";
-import type { LibrarySummary, PlaygroundMode, PlaygroundResults } from "../model/playground";
+import type {
+  AnswerAvailability,
+  LibrarySummary,
+  PlaygroundMode,
+  PlaygroundResults,
+} from "../model/playground";
 
 const RESULT_LIMIT = 20;
 
@@ -33,4 +38,11 @@ export const playgroundSearchQueryOptions = (
     },
     enabled: q.trim() !== "",
     retry: false,
+  });
+
+/** Whether the agent can answer now (an `llm` role is configured), and why not. */
+export const answerAvailabilityQueryOptions = () =>
+  queryOptions({
+    queryKey: [...SEARCH_ALL_KEY, "playground", "answer-availability"] as const,
+    queryFn: ({ signal }) => getJson<AnswerAvailability>("/v1/answer", { signal }),
   });

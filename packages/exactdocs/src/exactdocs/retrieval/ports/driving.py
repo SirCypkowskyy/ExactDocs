@@ -4,6 +4,9 @@ from typing import Protocol
 
 from exactdocs.retrieval.dtos import (
     AiUsageOut,
+    AnswerAvailabilityOut,
+    AnswerQuery,
+    AnswerResult,
     ArticleOutlineOut,
     ArticleOutlineQuery,
     CheckProviderCommand,
@@ -56,6 +59,7 @@ from exactdocs.retrieval.dtos import (
     UnembeddedVersionsQuery,
     VectorStoreStateOut,
 )
+from exactdocs.retrieval.ports.driven import AnswerProgress
 
 
 class SearchDocs(Protocol):
@@ -77,6 +81,49 @@ class SearchDocs(Protocol):
 
         Returns:
             The results of the one version searched.
+        """
+        ...
+
+
+class AnswerQuestion(Protocol):
+    """Answer a question from the default versions of chosen libraries with an agent (#428).
+
+    The agent runs on the instance's ``llm`` role, bounded like an agentic search
+    (``[ai.agentic]``, the budgets, the LLM search rate limit), reading only libraries the caller
+    may read (roles and the API token's scope) with AI on. Every cited chunk is checked against
+    those libraries' versions. Raises ``UnavailableModeError`` without an ``llm`` role and
+    ``VersionNotIndexedError`` for a chosen library without a readable default version. A limit,
+    a budget, a loop or a failure never raises: the result says why in ``fallback_reason``.
+    """
+
+    async def __call__(
+        self,
+        query: AnswerQuery,
+        *,
+        caller: str | None = None,
+        progress: AnswerProgress | None = None,
+    ) -> AnswerResult:
+        """Run the use case.
+
+        Args:
+            query: The question, the libraries and the filters.
+            caller: The account asking: its spend and rate limit.
+            progress: Hears each tool call (a progress stream); none by default.
+
+        Returns:
+            The answer and its sources, with what the run used.
+        """
+        ...
+
+
+class GetAnswerAvailability(Protocol):
+    """Say whether agentic answers can run now, and why not (#428)."""
+
+    async def __call__(self) -> AnswerAvailabilityOut:
+        """Run the use case.
+
+        Returns:
+            Whether they can, why not, and the tool-call limit.
         """
         ...
 
