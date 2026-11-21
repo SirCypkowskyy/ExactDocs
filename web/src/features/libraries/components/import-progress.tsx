@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Check, CircleAlert } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useRef } from "react";
+import { toast } from "sonner";
 import { HttpError } from "@/shared/lib/http";
 import { BROWSE_KEY } from "@/shared/lib/query-keys";
 import { cn } from "@/shared/lib/utils";
@@ -109,7 +110,7 @@ function Status({ job, state, known, skipped, words: w = IMPORT_WORDS }: StatusP
   }
   if (state === "succeeded") {
     return (
-      <p className="inline-flex items-center gap-1.5 text-base font-medium">
+      <p className="inline-flex items-center gap-1.5 text-body font-medium">
         <Check aria-hidden="true" className="size-4 text-route" />
         {done} {units(w, done)} {w.done}
         {w.unit === "file" && skipped !== "0" && `, ${skipped} skipped`}
@@ -151,7 +152,7 @@ function Failed({
 }) {
   const triedAll = w.unit === "version" && known && done >= total;
   return (
-    <p className="inline-flex items-center gap-1.5 text-base font-medium text-destructive">
+    <p className="inline-flex items-center gap-1.5 text-body font-medium text-destructive">
       <CircleAlert aria-hidden="true" className="size-4" />
       {triedAll
         ? `Failed: all ${total} ${units(w, total)} tried, not every one could be ${w.done}`
@@ -179,13 +180,14 @@ function Meter({ id, job, state, known, noun = "Import" }: MeterProps) {
       aria-valuemin={0}
       aria-valuemax={known ? job?.total : undefined}
       aria-valuenow={known ? job?.done : undefined}
-      className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-secondary"
+      aria-valuetext={known && job ? `${job.done} of ${job.total}` : undefined}
+      className="mt-2 h-2 w-full overflow-hidden rounded-full bg-secondary"
     >
       <div
         className={cn(
           "h-full rounded-full bg-route",
           known
-            ? "origin-left transition-transform duration-500 ease-out motion-reduce:transition-none"
+            ? "origin-left transition-transform duration-(--dur-slow) ease-(--ease-out) motion-reduce:transition-none"
             : state === "queued" || state === "running"
               ? "sweep w-1/3"
               : "",
@@ -226,7 +228,7 @@ function Failure({
           "This version did not finish importing, so it was not added. Fix the cause below, then add it again."
         )}
       </p>
-      <p className="mt-4 text-sm font-medium">Details from the server</p>
+      <p className="mt-4 text-body font-medium">Details from the server</p>
       <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap rounded-md bg-secondary px-3 py-3 font-mono text-[13px] [overflow-wrap:anywhere]">
         {job?.error ?? "No reason was recorded."}
       </pre>
@@ -256,6 +258,31 @@ function useRefreshListsWhen(finished: boolean) {
     void queryClient.invalidateQueries({ queryKey: librariesKeys.latestJobs() });
     void queryClient.invalidateQueries({ queryKey: BROWSE_KEY });
   }, [finished, queryClient]);
+}
+
+/** The result of an import is said once as a toast too: the person may have left the page. */
+function useToastWhenOver(
+  state: string,
+  job: Job | undefined,
+  skipped: string,
+  libraryId: string,
+  ref: string,
+  library: boolean,
+) {
+  const told = useRef(false);
+  useEffect(() => {
+    if (told.current || (state !== "succeeded" && state !== "failed")) return;
+    told.current = true;
+    const what = library ? libraryId : ref;
+    if (state === "succeeded") {
+      const done = job?.done ?? 0;
+      toast.success(`Imported ${what}`, {
+        description: `${plural(done, "file", "files")} imported${skipped !== "0" ? `, ${skipped} skipped` : ""}.`,
+      });
+    } else {
+      toast.error(`Import of ${what} failed`, { description: job?.error ?? undefined });
+    }
+  }, [state, job, skipped, libraryId, ref, library]);
 }
 
 function Actions({
@@ -292,7 +319,7 @@ function Actions({
     </div>
   ) : (
     <div className="mt-6">
-      <p className="text-sm text-muted-foreground">
+      <p className="text-body text-muted-foreground">
         You can leave this page. The import keeps running, and the library list shows how it went.
       </p>
       <Link to="/" className={cn(backLink(false), "-ml-3 mt-2")}>
@@ -322,7 +349,10 @@ function Heading({
       id="progress-title"
       ref={ref}
       tabIndex={-1}
-      className={cn("font-semibold outline-none", version ? "text-lg" : "text-2xl tracking-tight")}
+      className={cn(
+        "font-semibold outline-none",
+        version ? "text-section" : "text-title tracking-[-0.01em]",
+      )}
     >
       {verb}{" "}
       <span className="font-mono text-[0.9em] font-normal [overflow-wrap:anywhere]">
@@ -368,9 +398,14 @@ function Outcome({ id, job, state, skipped, summary, gone, lostContact, variant 
         </p>
       ) : (
         <div className="mt-6">
-          <div className="flex items-baseline justify-between gap-4 text-sm">
+          <div className="flex items-baseline justify-between gap-4 text-body">
             <Status job={job} state={state} known={known} skipped={skipped} />
             {lostContact && <p className="text-muted-foreground">Lost contact, retrying…</p>}
+            {state === "running" && known && job && (
+              <p className="text-muted-foreground tabular-nums">
+                {Math.round((job.done / job.total) * 100)}%
+              </p>
+            )}
           </div>
           {!finished && <Meter id={id} job={job} state={state} known={known} />}
           {job && <CancelJob job={job} label={`the import of ${id}`} />}
@@ -397,6 +432,7 @@ export function ImportProgress({ added, onAddAnother, finish, children }: Props)
   const lostContact = Boolean(error) && !finished && !gone;
 
   useRefreshListsWhen(finished);
+  useToastWhenOver(state, job, skipped, added.library_id, added.ref, Boolean(onAddAnother));
 
   // The text changes with the phase only, never with the counter.
   const announced = phaseText(state, job?.done ?? 0, skipped, job?.error ?? null);
@@ -455,9 +491,9 @@ export function JobLine({ jobId, label }: { jobId: string; label: string }) {
   const skipped = skippedLabel(summarizeProblems(job?.problems ?? []));
   const words = wordsOf(job?.kind);
   useRefreshListsWhen(finished);
-  if (gone) return <p className="text-sm text-muted-foreground">Progress for {label} is gone.</p>;
+  if (gone) return <p className="text-body text-muted-foreground">Progress for {label} is gone.</p>;
   return (
-    <div className="text-sm">
+    <div className="text-body">
       {/* Heard once per phase, never per file. */}
       <p role="status" className="sr-only">
         {finished &&
@@ -467,7 +503,7 @@ export function JobLine({ jobId, label }: { jobId: string; label: string }) {
       {!finished && <Meter id={label} job={job} state={state} known={known} noun={words.noun} />}
       {job && <CancelJob job={job} label={label} />}
       {state === "failed" && job?.error && (
-        <p className="mt-1 text-[13px] text-muted-foreground [overflow-wrap:anywhere]">
+        <p className="mt-1 text-small text-muted-foreground [overflow-wrap:anywhere]">
           {job.error}
         </p>
       )}

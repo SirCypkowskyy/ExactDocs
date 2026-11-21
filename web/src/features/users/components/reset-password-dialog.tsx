@@ -97,8 +97,8 @@ function Body({
         <Button variant="ghost" aria-disabled={pending} onClick={() => !pending && onClose()}>
           Cancel
         </Button>
-        <Button type="submit" aria-disabled={pending} aria-busy={pending}>
-          {pending ? "Resetting" : "Reset password"}
+        <Button type="submit" pending={pending}>
+          Reset password
         </Button>
       </div>
     </form>

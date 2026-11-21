@@ -7,6 +7,7 @@ import { HttpError } from "@/shared/lib/http";
 import { AiPage } from "./index";
 import {
   type Budget,
+  budgetUsed,
   budgetWords,
   checkWords,
   explainAiError,
@@ -339,10 +340,15 @@ describe("instance AI page", () => {
     const embedding = await region("Embedding");
 
     expect(await embedding.findByText("Space 2: e5")).toBeInTheDocument();
-    expect(embedding.getByLabelText("Space 2: e5 progress")).toHaveAttribute("value", "25");
+    expect(embedding.getByRole("progressbar", { name: "Space 2: e5 progress" })).toHaveAttribute(
+      "aria-valuenow",
+      "25",
+    );
     expect(embedding.getByText(/25%: 50 of 200 chunks, 1 of 4 versions/)).toBeInTheDocument();
-    expect(embedding.getByText(/Building · configured model/)).toBeInTheDocument();
-    expect(embedding.getByText(/Searched · retired once the new one is done/)).toBeInTheDocument();
+    expect(embedding.getByText("Building")).toBeInTheDocument();
+    expect(embedding.getByText(/^Configured model ·/)).toBeInTheDocument();
+    expect(embedding.getByText("Searched")).toBeInTheDocument();
+    expect(embedding.getByText(/^Retired once the new one is done ·/)).toBeInTheDocument();
   });
 
   it("shows spend and the budget left per scope, and which budget is reached", async () => {
@@ -412,6 +418,29 @@ describe("ai model", () => {
     expect(percent(200, 200)).toBe(100);
     expect(percent(0, 0)).toBe(100);
     expect(percent(1, 3)).toBe(33);
+  });
+
+  it("shows how much of a budget is used, and retries a part that failed", async () => {
+    serve({ "/ai/usage": { status: 500, body: {} } });
+    renderPage();
+    const usage = await region("Usage and budgets");
+    expect(await usage.findByRole("alert")).toHaveTextContent(/went wrong/);
+    expect(usage.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
+
+  it("measures a budget by its tighter ceiling", () => {
+    const day: Budget = {
+      window: "day",
+      window_start: "2026-11-11",
+      resets_at: "2026-11-12T00:00:00Z",
+      usd_limit: 10,
+      usd_left: 2,
+      tokens_limit: 1000,
+      tokens_left: 900,
+      reached: false,
+    };
+    expect(budgetUsed(day)).toBe(80);
+    expect(budgetUsed({ ...day, reached: true })).toBe(100);
   });
 
   it("puts budgets and checks into words", () => {

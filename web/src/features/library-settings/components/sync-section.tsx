@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Check, CircleAlert } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 import { relativeTime } from "@/shared/lib/time";
 import { Button } from "@/shared/ui/button";
 import { FormAlert } from "@/shared/ui/form-alert";
@@ -21,7 +22,8 @@ import {
   statusWords,
   syncHeadline,
 } from "../model/settings";
-import { secondary, sectionHeading } from "./styles";
+import { SettingsSection } from "./settings-section";
+import { secondary } from "./styles";
 
 interface Props {
   owner: string;
@@ -97,10 +99,10 @@ function Row({ owner, repo, v, Line, onReimported }: RowProps) {
   return (
     <li className="py-3">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
-        <span className="font-mono text-[15px] font-medium [overflow-wrap:anywhere]">{v.ref}</span>
+        <span className="font-mono text-body font-medium [overflow-wrap:anywhere]">{v.ref}</span>
         {/* A live row's own job line says how it is going and when it ends. */}
         {!live && (
-          <span className="inline-flex items-center gap-1.5 text-sm">
+          <span className="inline-flex items-center gap-1.5 text-body">
             {failed && (
               <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
             )}
@@ -114,14 +116,14 @@ function Row({ owner, repo, v, Line, onReimported }: RowProps) {
         )}
       </div>
       {v.status === "queued" && (
-        <p className="mt-0.5 flex items-center gap-1.5 font-mono text-[13px] text-muted-foreground">
+        <p className="mt-0.5 flex items-center gap-1.5 font-mono text-small text-muted-foreground">
           {shortSha(v.previous_commit_sha)}
           <ArrowRight aria-hidden="true" className="size-3" />
           {shortSha(v.commit_sha)}
           <span className="sr-only"> (previous commit to new commit)</span>
         </p>
       )}
-      {failed && <p className="mt-0.5 text-sm text-muted-foreground">{failureWords(v)}</p>}
+      {failed && <p className="mt-0.5 text-body text-muted-foreground">{failureWords(v)}</p>}
       {failed && v.error_code === "tag_moved" && (
         <Reimport owner={owner} repo={repo} v={v} onReimported={onReimported} />
       )}
@@ -149,11 +151,14 @@ export function SyncSection({ owner, repo, Line, activity, onStart }: Props) {
     onSuccess: (data) => {
       setProblem(undefined);
       setResult({ data, at: new Date().toISOString() });
+      toast.success("Re-sync finished", { description: syncHeadline(data) });
       refreshLibraries(queryClient);
     },
     onError: (error) => {
       setResult(undefined);
-      setProblem(explainSync(error));
+      const p = explainSync(error);
+      setProblem(p);
+      toast.error("Re-sync failed", { description: p.message });
       // A 409 means something is importing: the sync badges on the list should show it.
       refreshLibraries(queryClient);
     },
@@ -165,26 +170,23 @@ export function SyncSection({ owner, repo, Line, activity, onStart }: Props) {
   const pinned = shown?.data.versions.filter((v) => v.status === "pinned") ?? [];
 
   return (
-    <section aria-labelledby="sync-heading" className="mt-12 border-t border-border pt-10">
-      <h2 id="sync-heading" className={sectionHeading}>
-        Re-sync
-      </h2>
-      <p className="mt-1.5 max-w-prose text-muted-foreground">
-        Check the repository for new commits on each branch version and import only what changed.
-        Tags and commits are pinned: a tag that moved upstream is reported, and re-imported only
-        when you confirm it.
-      </p>
-      <div className="mt-5">
+    <SettingsSection
+      id="sync"
+      title="Re-sync"
+      description="Check the repository for new commits on each branch version and import only what changed. Tags and commits are pinned: a tag that moved upstream is reported, and re-imported only when you confirm it."
+    >
+      <div>
         <Button
           type="button"
+          variant="outline"
+          pending={sync.isPending}
           aria-disabled={sync.isPending}
-          aria-busy={sync.isPending}
           onClick={() => {
             if (sync.isPending) return;
             onStart();
             sync.mutate();
           }}
-          className={`${secondary} min-w-32`}
+          className="min-w-32"
         >
           {sync.isPending ? "Checking" : "Re-sync now"}
         </Button>
@@ -209,7 +211,7 @@ export function SyncSection({ owner, repo, Line, activity, onStart }: Props) {
         )}
       </p>
       {rows.length > 0 && (
-        <ul aria-label="Versions" className="fade-in mt-2 divide-y divide-border">
+        <ul aria-label="Versions" className="fade-in mt-2 divide-y divide-rule">
           {rows.map((v) => (
             <Row
               key={v.ref}
@@ -236,11 +238,11 @@ export function SyncSection({ owner, repo, Line, activity, onStart }: Props) {
         </ul>
       )}
       {pinned.length > 0 && (
-        <p className="fade-in mt-3 text-sm text-muted-foreground [overflow-wrap:anywhere]">
+        <p className="fade-in mt-3 text-body text-muted-foreground [overflow-wrap:anywhere]">
           {pinned.map((v) => v.ref).join(", ")} {pinned.length === 1 ? "is" : "are"} pinned and{" "}
           {pinned.length === 1 ? "never changes" : "never change"}.
         </p>
       )}
-    </section>
+    </SettingsSection>
   );
 }

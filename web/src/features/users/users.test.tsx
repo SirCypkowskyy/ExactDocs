@@ -1,10 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
 import { UsersPage } from "./index";
 import { explainUserError, validateNewUser, validatePassword } from "./model/user";
+
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const user = (id: string, username: string, extra = {}) => ({
   id,
@@ -75,9 +78,9 @@ describe("users page", () => {
     renderPage();
     const list = await screen.findByRole("list", { name: "User accounts" });
     const [ada, bob] = within(list).getAllByRole("listitem") as [HTMLElement, HTMLElement];
-    expect(ada).toHaveTextContent(/ada\s*\(you\)/);
-    expect(ada).toHaveTextContent(/Admin · Active/);
-    expect(bob).toHaveTextContent(/User · Active/);
+    expect(ada).toHaveTextContent(/ada\s*You/);
+    expect(ada).toHaveTextContent(/Admin\s*Active/);
+    expect(bob).toHaveTextContent(/User\s*Active/);
     // Nobody disables themselves from here (the server keeps the last admin anyway).
     expect(within(ada).queryByRole("button", { name: /disable/i })).not.toBeInTheDocument();
     expect(within(bob).getByRole("button", { name: "Disable bob" })).toBeInTheDocument();
@@ -109,6 +112,7 @@ describe("users page", () => {
     });
     expect(await screen.findByText("carol")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(/carol created/);
+    expect(toast.success).toHaveBeenCalledWith("User carol created", expect.anything());
     expect(document.body).not.toHaveTextContent(PASSWORD);
   });
 
@@ -179,7 +183,7 @@ describe("users page", () => {
     renderPage();
     const list = await screen.findByRole("list", { name: "User accounts" });
     const [ada, bob] = within(list).getAllByRole("listitem") as [HTMLElement, HTMLElement];
-    expect(ada).toHaveTextContent(/\(you\)/);
+    expect(ada).toHaveTextContent(/You/);
     expect(
       within(ada).queryByRole("button", { name: /reset the password/i }),
     ).not.toBeInTheDocument();

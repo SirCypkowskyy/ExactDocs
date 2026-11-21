@@ -144,7 +144,7 @@ function NotInVersion({
       </h2>
       <p className="mt-2 text-body text-pretty text-muted-foreground">
         {version.ref} has no{" "}
-        <code className="font-mono text-sm text-foreground [overflow-wrap:anywhere]">
+        <code className="font-mono text-body text-foreground [overflow-wrap:anywhere]">
           <PathText path={path} />
         </code>
         . It may have been added later, moved or removed.

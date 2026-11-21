@@ -58,7 +58,7 @@ export function LibrariesList({ libraries, syncs }: LibrariesListProps) {
       {/* Column titles for sighted users; each cell below says what it is in its own text. */}
       <div
         aria-hidden="true"
-        className={`hidden border-b border-border pb-2 pl-[3.25rem] text-small text-muted-foreground ${columns}`}
+        className={`hidden border-b border-rule pb-2 pl-[3.25rem] text-small text-muted-foreground ${columns}`}
       >
         <span>Library</span>
         <span>Versions</span>

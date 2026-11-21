@@ -23,7 +23,7 @@ test("setup, add the fixture repository, browse an article, search a term", asyn
   await expect(page.getByText("Found on a git server")).toBeVisible();
   await page.getByLabel("Version to import").selectOption({ label: "v1.4.0" });
   await page.getByRole("button", { name: "Add library" }).click();
-  await expect(page.getByText(/^\d+ files imported/)).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText(/^\d+ files imported/).first()).toBeVisible({ timeout: 60_000 });
   await page.screenshot({ path: "shots/1-imported.png" });
 
   // the same repository again: the form says its library ID is taken and links to that library (#219)

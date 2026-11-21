@@ -68,6 +68,21 @@ describe("tokens", () => {
     expect(await screen.findByText(/no tokens yet/i)).toBeInTheDocument();
   });
 
+  it("shows a ready-to-paste MCP config with this server's origin and a placeholder token", async () => {
+    stubApi();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    renderSection();
+    const config = await screen.findByRole("region", { name: "MCP client config" });
+    expect(config).toHaveTextContent(`${window.location.origin}/mcp`);
+    expect(config).toHaveTextContent("Bearer exd_YOUR_TOKEN");
+    await userEvent.click(screen.getByRole("button", { name: "Copy config" }));
+    expect(writeText).toHaveBeenCalledWith(
+      expect.stringContaining(`${window.location.origin}/mcp`),
+    );
+    expect(await screen.findByRole("button", { name: "Config copied" })).toBeInTheDocument();
+  });
+
   it("lists name, expiry and last use, never a secret", async () => {
     stubApi([
       row(1, { expires_at: "2099-01-01T00:00:00Z" }),

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type Ref, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
 import { Button } from "@/shared/ui/button";
 import {
@@ -36,7 +37,9 @@ import {
   unhealedJob,
   validateSelection,
 } from "../model/settings";
-import { secondary, sectionHeading } from "./styles";
+import { useReportDirty } from "./dirty";
+import { SettingsSection } from "./settings-section";
+import { secondary } from "./styles";
 
 interface Props {
   owner: string;
@@ -98,8 +101,8 @@ function ReprocessConfirm({
           </ConfirmCancel>
           <Button
             type="button"
+            pending={pending}
             aria-disabled={pending}
-            aria-busy={pending}
             onClick={() => {
               if (!pending) p.onConfirm();
             }}
@@ -127,14 +130,14 @@ function SaveRow({ ref, blocked, busy, hint }: SaveRowProps) {
       <Button
         ref={ref}
         type="submit"
+        pending={busy}
         aria-disabled={blocked}
-        aria-busy={busy}
         aria-describedby="paths-save-hint"
         className="min-w-32 aria-disabled:cursor-default"
       >
         {busy ? "Saving" : "Save paths and tags"}
       </Button>
-      <p id="paths-save-hint" className="text-sm text-muted-foreground">
+      <p id="paths-save-hint" className="text-body text-muted-foreground">
         {hint}
       </p>
     </div>
@@ -161,7 +164,7 @@ function SavedStatus({
       {saved?.job_id && (
         <div className="fade-in mt-2 max-w-sm">
           <Line jobId={saved.job_id} label="every version" />
-          <p className="mt-1 text-sm text-muted-foreground [overflow-wrap:anywhere]">
+          <p className="mt-1 text-body text-muted-foreground [overflow-wrap:anywhere]">
             {saved.versions.join(", ")}
           </p>
         </div>
@@ -236,6 +239,7 @@ export function PathsSection({ owner, repo, library, Line, Preview, activity, on
   const failed = unhealedJob(recent);
 
   const change = selectionChange(base, draft);
+  useReportDirty("paths", change !== null);
   const refs = library.versions.map((v) => v.ref);
   const current = activity.by === "paths";
 
@@ -243,6 +247,9 @@ export function PathsSection({ owner, repo, library, Line, Preview, activity, on
     mutationFn: (settings: SelectionDraft) => saveSelection(owner, repo, settings),
     onSuccess: (data) => {
       setStored(data);
+      toast.success("Saved files and tags", {
+        description: savedHeadline(data),
+      });
       setEdits(undefined);
       setShowRuleErrors(false);
       setProblem(undefined);
@@ -305,15 +312,12 @@ export function PathsSection({ owner, repo, library, Line, Preview, activity, on
   const shownProblem = current ? problem : undefined;
 
   return (
-    <section aria-labelledby="paths-heading" className="mt-12 border-t border-border pt-10">
-      <h2 id="paths-heading" className={sectionHeading}>
-        Files and tags
-      </h2>
-      <p className="mt-1.5 max-w-prose text-muted-foreground">
-        Which files of the repository become articles, and the tags they get by path. Saving a
-        change re-processes every version.
-      </p>
-      <form onSubmit={submit} noValidate className="mt-5 flex flex-col gap-6">
+    <SettingsSection
+      id="paths"
+      title="Files and tags"
+      description="Which files of the repository become articles, and the tags they get by path. Saving a change re-processes every version."
+    >
+      <form onSubmit={submit} noValidate className="flex flex-col gap-6">
         <FormAlert id="paths-alert" message={shownProblem?.message} link={shownProblem?.link} />
         <PathFields
           include={draft.include}
@@ -323,7 +327,7 @@ export function PathsSection({ owner, repo, library, Line, Preview, activity, on
           onExclude={(exclude) => edit({ exclude })}
         />
         {access?.private ? (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-body text-muted-foreground">
             Preview isn't available for a private repository yet: it can't use the library's stored
             credential. Saving still re-processes every version with it.
           </p>
@@ -380,6 +384,6 @@ export function PathsSection({ owner, repo, library, Line, Preview, activity, on
           after.current()?.focus();
         }}
       />
-    </section>
+    </SettingsSection>
   );
 }

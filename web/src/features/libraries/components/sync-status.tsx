@@ -69,7 +69,7 @@ function ReimportMovedTag({ library, version }: { library: string; version: stri
           onClick={() => {
             if (!reimport.isPending) reimport.mutate();
           }}
-          className="inline-flex min-h-11 items-center rounded-md bg-foreground px-3 font-medium text-background outline-none transition-colors duration-150 hover:bg-foreground/90 focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+          className="inline-flex min-h-11 items-center rounded-md bg-foreground px-3 font-medium text-background outline-none transition-colors duration-(--dur-fast) hover:bg-foreground/90 focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
         >
           {reimport.isPending ? "Queueing" : "Re-import the new commit"}{" "}
           <span className="sr-only">of {version}</span>
@@ -91,14 +91,14 @@ export function FailureDetail({ job, open }: { job: LatestJob; open: boolean }) 
   const [, owner = "", repo = ""] = job.library.split("/");
   const moved = job.error_code === "tag_moved";
   return (
-    <div className="mt-3 rounded-md bg-secondary px-3 py-3 text-sm">
+    <div className="mt-3 rounded-md bg-secondary px-3 py-3 text-body">
       <p className="text-muted-foreground">
         <span className="font-mono text-[13px]">{job.version ?? "Sync"}</span> failed{" "}
         <time dateTime={finished} title={absoluteTimeWithZone(finished)}>
           {absoluteTime(finished)}
         </time>
       </p>
-      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-xs">
+      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-small">
         {job.error ?? "No reason was recorded."}
       </pre>
       <SkippedFiles job={job} open={open} />
@@ -107,7 +107,7 @@ export function FailureDetail({ job, open }: { job: LatestJob; open: boolean }) 
         to="/libraries/$owner/$repo/settings"
         params={{ owner, repo }}
         hash="sync-heading"
-        className="mt-3 inline-flex min-h-11 items-center rounded-md bg-background px-3 font-medium outline-none ring-1 ring-inset ring-border transition-colors duration-150 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+        className="mt-3 inline-flex min-h-11 items-center rounded-md bg-background px-3 font-medium outline-none ring-1 ring-inset ring-border transition-colors duration-(--dur-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
       >
         {moved ? "Review the moved tag in settings" : "Open settings to sync again"}
       </Link>
@@ -115,7 +115,7 @@ export function FailureDetail({ job, open }: { job: LatestJob; open: boolean }) 
   );
 }
 
-const muted = "text-sm text-muted-foreground";
+const muted = "text-body text-muted-foreground";
 
 function Unknown({ sync }: { sync: Extract<SyncState, { status: string }> }) {
   if (sync.status === "pending") {
@@ -141,7 +141,7 @@ function Running({ job }: { job: LatestJob }) {
   const label = `the sync of ${job.version ?? job.library}`;
   if (job.state === "queued") {
     return (
-      <div className="text-sm">
+      <div className="text-body">
         <p>Queued</p>
         <CancelJob job={job} label={label} />
       </div>
@@ -149,7 +149,7 @@ function Running({ job }: { job: LatestJob }) {
   }
   const known = job.total > 0;
   return (
-    <div className="text-sm">
+    <div className="text-body">
       <p className="tabular-nums">
         {known ? `Importing ${job.done} of ${job.total}` : "Importing"}
       </p>
@@ -163,7 +163,7 @@ function Running({ job }: { job: LatestJob }) {
       >
         <div
           className={cn(
-            "h-full origin-left bg-route transition-transform duration-500 ease-out",
+            "h-full origin-left bg-route transition-transform duration-(--dur-slow) ease-(--ease-out)",
             !known && "w-1/3 motion-safe:animate-pulse",
           )}
           style={
@@ -187,13 +187,13 @@ interface FailedProps {
 
 function Failed({ job, failures, now, open, onToggle, panel }: FailedProps) {
   return (
-    <div className="min-w-0 text-sm">
+    <div className="min-w-0 text-body">
       <button
         type="button"
         aria-expanded={open}
         aria-controls={panel}
         onClick={onToggle}
-        className="-ml-1 flex min-h-11 max-w-full items-center gap-1.5 rounded-md px-1 text-left outline-none transition-colors duration-150 hover:bg-secondary focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+        className="-ml-1 flex min-h-11 max-w-full items-center gap-1.5 rounded-md px-1 text-left outline-none transition-colors duration-(--dur-fast) hover:bg-secondary focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
       >
         <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
         <span className="whitespace-nowrap font-medium text-destructive">
@@ -205,13 +205,13 @@ function Failed({ job, failures, now, open, onToggle, panel }: FailedProps) {
         <ChevronRight
           aria-hidden="true"
           className={cn(
-            "size-4 shrink-0 text-muted-foreground transition-transform duration-150 ease-out",
+            "size-4 shrink-0 text-muted-foreground transition-transform duration-(--dur-fast) ease-out",
             open && "rotate-90",
           )}
         />
       </button>
       {job.error && !open && (
-        <p className="line-clamp-2 text-[13px] text-muted-foreground" title={job.error}>
+        <p className="line-clamp-2 text-small text-muted-foreground" title={job.error}>
           {job.error}
         </p>
       )}
