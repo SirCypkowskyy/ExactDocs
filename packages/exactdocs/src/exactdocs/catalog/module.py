@@ -17,7 +17,6 @@ from exactdocs.catalog.models import (
 )
 from exactdocs.catalog.ports.driven import (
     AccessPolicy,
-    AiSwitches,
     ArticleTitleFinder,
     EntrySearch,
     ImportedTagWriter,
@@ -175,18 +174,6 @@ class _EveryoneMayDoAnything:
             library: The library ID.
         """
         del library
-
-
-class _AiEverywhere:
-    """The default ``ai_switches`` of ``build``: no library has AI turned off."""
-
-    async def disabled(self) -> frozenset[str]:
-        """Return no library: AI is on for all.
-
-        Returns:
-            The empty set.
-        """
-        return frozenset()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -394,7 +381,6 @@ class CatalogModule:
         article_titles: ArticleTitleFinder | None = None,
         instruction_files: InstructionFileReader | None = None,
         access: AccessPolicy | None = None,
-        ai_switches: AiSwitches | None = None,
         entry_search: EntrySearch | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
@@ -416,7 +402,6 @@ class CatalogModule:
             article_titles: Looks article titles up by path; none are known without it.
             instruction_files: Reads the instruction files kept with a manifest; none without it.
             access: Library roles: what the caller may do with a library; everything without it.
-            ai_switches: Which libraries have AI off, for a list filter; none without it.
             entry_search: Filters, sorts and pages entries in the store; without it every entry is
                 read through ``manifests`` and sorted in memory (for tests).
 
@@ -428,9 +413,7 @@ class CatalogModule:
         titles = article_titles or _NoTitles()
         tagger = ManualTagger(repository=repository, manifests=manifests)
         return cls(
-            list_libraries=ListLibrariesUseCase(
-                repository=repository, access=access, ai_switches=ai_switches or _AiEverywhere()
-            ),
+            list_libraries=ListLibrariesUseCase(repository=repository, access=access),
             create_library=CreateLibraryUseCase(repository=repository, access=access),
             discard_library=DiscardLibraryUseCase(repository=repository, access=access),
             is_library_id_taken=IsLibraryIdTakenUseCase(repository=repository, access=access),

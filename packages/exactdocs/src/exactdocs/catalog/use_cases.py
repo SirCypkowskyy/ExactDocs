@@ -128,7 +128,6 @@ from exactdocs.catalog.models import (
 )
 from exactdocs.catalog.ports.driven import (
     AccessPolicy,
-    AiSwitches,
     ArticleTitleFinder,
     EntrySearch,
     ImportedTagWriter,
@@ -200,16 +199,23 @@ class ListLibrariesUseCase:
     """Stores the libraries, their versions, settings and manual tags."""
     access: AccessPolicy
     """Decides what the caller may do with the library."""
-    ai_switches: AiSwitches
-    """Tells which libraries have AI turned off, for the `ai_enabled` filter."""
 
-    async def __call__(self, query: ListLibrariesQuery) -> LibraryList:
+    async def __call__(
+        self,
+        query: ListLibrariesQuery,
+        *,
+        only: frozenset[str] | None = None,
+        without: frozenset[str] = frozenset(),
+    ) -> LibraryList:
         """List a page of the libraries the caller may read, filtered and sorted.
 
         Permissions apply first: a hidden library is in no page and in no count.
 
         Args:
             query: The filters, the sort, the page size and the cursor of the previous page.
+            only: Case-folded library IDs; when given, no other library is listed.
+            without: Case-folded library IDs that are not listed. The caller resolves what
+                the catalog does not know (the AI switch, say) into these two sets.
 
         Returns:
             The page of libraries with the next cursor and the count of every match.
@@ -218,11 +224,12 @@ class ListLibrariesUseCase:
         every = await self.repository.list_all()
         readable = await self.access.readable([lib.id.value for lib in every])
         libraries = [lib for lib in every if lib.id.value in readable]
-        if query.ai_enabled is not None:
-            off = await self.ai_switches.disabled()
-            libraries = [
-                lib for lib in libraries if (lib.id.value.lower() not in off) is query.ai_enabled
-            ]
+        libraries = [
+            lib
+            for lib in libraries
+            if lib.id.value.lower() not in without
+            and (only is None or lib.id.value.lower() in only)
+        ]
         libraries = [lib for lib in libraries if _library_matches(lib, query)]
         page = sorted_page(
             libraries,

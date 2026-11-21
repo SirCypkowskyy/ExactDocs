@@ -182,7 +182,6 @@ from exactdocs.retrieval.models import (
     SourceHost,
     TagFilter,
 )
-from exactdocs.retrieval.ports.driven import LibraryModes as RetrievalLibraryModes
 from exactdocs.retrieval.ports.driving import (
     CollectChunks,
     DiscardPendingChunks,
@@ -948,22 +947,6 @@ class CatalogManualTags:
                 m.manifest_id: {a.path: tuple(a.tags) for a in m.articles} for m in done.retagged
             },
         )
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class RetrievalAiSwitches:
-    """Implements ``catalog.ports.driven.AiSwitches`` with retrieval's per-library settings."""
-
-    settings: RetrievalLibraryModes
-    """Where retrieval keeps each library's AI overrides."""
-
-    async def disabled(self) -> frozenset[str]:
-        """Return the libraries whose AI is turned off.
-
-        Returns:
-            Their case-folded IDs.
-        """
-        return await self.settings.ai_disabled()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

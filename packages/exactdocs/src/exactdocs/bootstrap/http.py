@@ -262,7 +262,7 @@ def create_app(container: Container) -> FastAPI:
 
     protected.include_router(
         catalog_http.build_router(
-            list_libraries=container.catalog.list_libraries,
+            list_libraries=container.list_libraries,
             get_library=container.catalog.get_library,
             resolve_version=container.catalog.resolve_version,
             list_versions=container.catalog.list_versions,

@@ -673,18 +673,6 @@ class AccessPolicy(Protocol):
         ...
 
 
-class AiSwitches(Protocol):
-    """Which libraries have AI turned off, for the libraries list's `ai_enabled` filter."""
-
-    async def disabled(self) -> frozenset[str]:
-        """Return the libraries whose AI is turned off.
-
-        Returns:
-            Their lower-case IDs; a library that is not in the set has AI on.
-        """
-        ...
-
-
 class EntrySearch(Protocol):
     """Filters, sorts and pages the entries of a manifest in the store.
 

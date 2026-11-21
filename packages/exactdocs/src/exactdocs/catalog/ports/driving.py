@@ -68,11 +68,19 @@ from exactdocs.catalog.dtos import (
 class ListLibraries(Protocol):
     """List a page of libraries and their indexed versions."""
 
-    async def __call__(self, query: ListLibrariesQuery) -> LibraryList:
+    async def __call__(
+        self,
+        query: ListLibrariesQuery,
+        *,
+        only: frozenset[str] | None = None,
+        without: frozenset[str] = frozenset(),
+    ) -> LibraryList:
         """Run the use case.
 
         Args:
             query: The page size and the cursor of the previous page.
+            only: Case-folded library IDs; when given, no other library is listed.
+            without: Case-folded library IDs that are not listed.
 
         Returns:
             The page of libraries, sorted by ID, with the next cursor.

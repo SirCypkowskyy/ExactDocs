@@ -1,6 +1,5 @@
 from exactdocs.catalog.ports.driven import (
     AccessPolicy,
-    AiSwitches,
     EntrySearch,
     ImportedTagWriter,
     InstructionFileReader,
@@ -35,7 +34,6 @@ from exactdocs.catalog.ports.driving import (
 __all__ = [
     "AccessPolicy",
     "ActivateManifest",
-    "AiSwitches",
     "CollectGarbage",
     "DiscardPendingManifests",
     "EntrySearch",
