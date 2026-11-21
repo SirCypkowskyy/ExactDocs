@@ -284,6 +284,7 @@ describe("agent answer in the playground", () => {
     expect(await screen.findByText("Use RetryPolicy.")).toBeInTheDocument();
     expect(screen.getByText(/3 of 20 tool calls/)).toBeInTheDocument();
     expect(screen.getByText("1,200 in / 80 out tokens", { exact: false })).toBeInTheDocument();
+    expect(screen.getByText(/\$0\.0123/)).toBeInTheDocument();
     const sources = screen.getByRole("list", { name: "Sources" });
     expect(within(sources).getByRole("link")).toHaveAttribute(
       "href",

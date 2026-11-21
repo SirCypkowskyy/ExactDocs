@@ -352,6 +352,17 @@ async def test_a_used_up_library_budget_answers_nothing_and_runs_no_agent() -> N
     assert dict(world.ledger.rows) == before
 
 
+async def test_a_caller_over_the_llm_search_rate_limit_runs_no_agent() -> None:
+    world = await _world(budgets=Budgets(llm_searches_per_minute=1))
+
+    first = await _ask(world, PAYMENTS)
+    second = await _ask(world, PAYMENTS)
+
+    assert first.fallback_reason is None
+    assert second.fallback_reason is FallbackReason.LLM_RATE_LIMITED
+    assert (second.answer, second.usage.requests) == ("", 0)
+
+
 async def test_the_run_counts_to_the_caller_and_every_library_it_reads() -> None:
     world = await _world()
 
