@@ -13,6 +13,7 @@ from sqlalchemy import (
     Row,
     Table,
     Text,
+    case,
     delete,
     func,
     insert,
@@ -91,6 +92,9 @@ jobs = Table(
     Column("created_at", Text, nullable=False),
     Column("started_at", Text),
     Column("finished_at", Text),
+    # Who cancelled the job and when; only `cancel` writes them (never `save`).
+    Column("cancelled_by", Text),
+    Column("cancelled_at", Text),
     # A page of a library's jobs is a range of this index (see `list_page_for_library`).
     Index("ingestion_jobs_library_id", "library", "id"),
     Index("ingestion_jobs_state", "state"),
@@ -170,13 +174,59 @@ class SqliteJobRepository:
             raise
 
     async def save(self, job: Job) -> None:
-        """Replace the stored job that has the same ID.
+        """Replace the stored job that has the same ID, unless it is ``cancelled``.
+
+        The cancellation columns are not written: a running job's progress never wipes out a
+        cancellation stored meanwhile (only ``cancel`` writes them).
 
         Args:
             job: The job as it is now.
         """
+        values = {
+            k: v for k, v in _values(job).items() if k not in {"cancelled_by", "cancelled_at"}
+        }
+        saved = (
+            update(jobs)
+            .where(jobs.c.id == job.id, jobs.c.state != JobState.CANCELLED)
+            .values(**values)
+        )
         async with self.engine.begin() as connection:
-            await connection.execute(update(jobs).where(jobs.c.id == job.id).values(**_values(job)))
+            await connection.execute(saved)
+
+    async def cancel(self, job_id: JobId, *, by: str | None, now: datetime) -> Job | None:
+        """Ask to cancel a queued or running job in one UPDATE; a finished one is left alone.
+
+        The statement decides the race with the worker: a queued job becomes ``cancelled`` (its
+        ``CASE`` reads the row as it was), a running one is only flagged; a job that ended, or
+        that was asked already, matches nothing.
+
+        Args:
+            job_id: The job's ID.
+            by: Who cancels it.
+            now: The time of the request.
+
+        Returns:
+            The job after the request, or ``None`` when no row has this ID.
+        """
+        queued = jobs.c.state == JobState.QUEUED
+        asked = (
+            update(jobs)
+            .where(
+                jobs.c.id == job_id,
+                jobs.c.state.in_([JobState.QUEUED, JobState.RUNNING]),
+                jobs.c.cancelled_at.is_(None),
+            )
+            .values(
+                state=case((queued, JobState.CANCELLED.value), else_=jobs.c.state),
+                finished_at=case((queued, _text(now)), else_=jobs.c.finished_at),
+                cancelled_by=by,
+                cancelled_at=_text(now),
+            )
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(asked)
+            row = (await connection.execute(select(jobs).where(jobs.c.id == job_id))).first()
+        return _job(row) if row else None
 
     async def get(self, job_id: JobId) -> Job | None:
         """Return the job, or ``None``.
@@ -201,6 +251,28 @@ class SqliteJobRepository:
             Every job of the library.
         """
         query = select(jobs).where(jobs.c.library == library).order_by(jobs.c.id.desc())
+        async with self.engine.connect() as connection:
+            return [_job(row) for row in await connection.execute(query)]
+
+    async def list_newest_of_kind(self, library: str, kind: JobKind) -> Sequence[Job]:
+        """Return the newest job of ``kind`` of each version of the library, in one query.
+
+        Job IDs are time-ordered, so the greatest ID of each version is its newest job; only
+        those rows are read in full.
+
+        Args:
+            library: The library ID.
+            kind: The job kind.
+
+        Returns:
+            One job per version.
+        """
+        newest = (
+            select(func.max(jobs.c.id))
+            .where(jobs.c.library == library, jobs.c.kind == kind)
+            .group_by(jobs.c.version)
+        )
+        query = select(jobs).where(jobs.c.id.in_(newest))
         async with self.engine.connect() as connection:
             return [_job(row) for row in await connection.execute(query)]
 
@@ -416,6 +488,8 @@ def _values(job: Job) -> Mapping[str, Any]:
         "created_at": _text(job.created_at),
         "started_at": _text(job.started_at),
         "finished_at": _text(job.finished_at),
+        "cancelled_by": job.cancelled_by,
+        "cancelled_at": _text(job.cancelled_at),
     }
 
 
@@ -495,6 +569,8 @@ def _job(row: Row) -> Job:
         created_at=created_at,
         started_at=_moment(row.started_at),
         finished_at=_moment(row.finished_at),
+        cancelled_by=row.cancelled_by,
+        cancelled_at=_moment(row.cancelled_at),
     )
 
 

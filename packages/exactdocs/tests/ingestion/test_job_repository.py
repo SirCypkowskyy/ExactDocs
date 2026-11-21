@@ -554,3 +554,93 @@ async def test_a_second_queued_push_of_a_ref_is_refused_but_a_running_one_lets_i
     await repository.add(push("p2"))
     with pytest.raises(PushQueuedError):
         await repository.add(push("p5"))
+
+
+# ---------------------------------------------------------------- cancellation (#432)
+
+
+async def test_a_queued_job_is_cancelled_at_once(repository: JobRepository) -> None:
+    await repository.add(queued("j1"))
+    at = T0 + timedelta(minutes=1)
+
+    cancelled = await repository.cancel(JobId("j1"), by="alice", now=at)
+
+    assert cancelled is not None
+    assert (cancelled.state, cancelled.cancelled_by) == (JobState.CANCELLED, "alice")
+    assert (cancelled.cancelled_at, cancelled.finished_at) == (at, at)
+    assert await repository.get(JobId("j1")) == cancelled
+    assert await repository.list_queued() == []
+    assert await repository.claim_next(T0) is None
+
+
+async def test_a_running_job_is_only_flagged_and_its_progress_never_wipes_the_flag(
+    repository: JobRepository,
+) -> None:
+    running = queued("j1").started(T0)
+    await repository.add(running)
+
+    flagged = await repository.cancel(JobId("j1"), by="alice", now=T0)
+    await repository.save(running.progressed(done=1, total=2))  # read before the cancel
+
+    stored = await repository.get(JobId("j1"))
+    assert flagged is not None
+    assert stored is not None
+    assert (flagged.state, flagged.cancelled_by) == (JobState.RUNNING, "alice")
+    assert (stored.state, stored.done, stored.cancelled_by) == (JobState.RUNNING, 1, "alice")
+
+
+async def test_a_second_request_and_a_finished_job_are_left_as_they_are(
+    repository: JobRepository,
+) -> None:
+    await repository.add(queued("run", version="v1").started(T0))
+    await repository.add(queued("done", version="v2").started(T0).succeeded(T0))
+    await repository.cancel(JobId("run"), by="alice", now=T0)
+
+    again = await repository.cancel(JobId("run"), by="bob", now=T0 + timedelta(minutes=1))
+    finished = await repository.cancel(JobId("done"), by="bob", now=T0)
+
+    assert again is not None
+    assert finished is not None
+    assert (again.cancelled_by, again.cancelled_at) == ("alice", T0)
+    assert (finished.state, finished.cancelled_at) == (JobState.SUCCEEDED, None)
+    assert await repository.cancel(JobId("nope"), by="bob", now=T0) is None
+
+
+async def test_a_cancelled_job_is_never_saved_over(repository: JobRepository) -> None:
+    await repository.add(queued("j1"))
+    await repository.cancel(JobId("j1"), by="alice", now=T0)
+
+    await repository.save(queued("j1").started(T0))  # a worker that read it before
+
+    stored = await repository.get(JobId("j1"))
+    assert stored is not None
+    assert (stored.state, stored.started_at) == (JobState.CANCELLED, None)
+
+
+async def test_a_cancelled_import_frees_its_ref(repository: JobRepository) -> None:
+    await repository.add(queued("j1"))
+    await repository.cancel(JobId("j1"), by="alice", now=T0)
+
+    await repository.add(queued("j2", minute=1))  # no VersionImportingError
+
+    assert {job.id for job in await repository.list_queued()} == {"j2"}
+
+
+async def test_the_newest_job_of_a_kind_of_each_version_is_listed(
+    repository: JobRepository,
+) -> None:
+    embed = JobKind("embed")
+    for job_id, version, kind in (
+        ("a1", "v1", embed),
+        ("a2", "v1", embed),
+        ("a3", "v1", JobKind("import")),
+        ("b1", "v2", embed),
+    ):
+        job = Job.queued(job_id=JobId(job_id), kind=kind, library="/a/b", version=version, now=T0)
+        await repository.add(job.started(T0).succeeded(T0))
+    other = Job.queued(job_id=JobId("c9"), kind=embed, library="/a/c", version="v1", now=T0)
+    await repository.add(other)
+
+    newest = await repository.list_newest_of_kind("/a/b", embed)
+
+    assert sorted(job.id for job in newest) == ["a2", "b1"]

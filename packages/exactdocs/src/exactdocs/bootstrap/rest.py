@@ -76,6 +76,10 @@ class ErrorResponse(BaseModel):
     """On `library_id_taken`: the ID of the library that already exists, e.g. `/acme/payments`.
     Null otherwise.
     """
+    job_state: str | None = None
+    """On `job_finished`: the state the job ended in (`succeeded`, `failed` or `cancelled`).
+    Null otherwise.
+    """
 
 
 def error_responses() -> dict[int | str, dict[str, Any]]:
@@ -168,8 +172,14 @@ async def _domain_error(_: Request, exc: Exception) -> Response:
     close = [str(path) for path in getattr(exc, "close_matches", ())]
     # Both `library_id_taken` errors (ingestion, catalog) name the ID they found taken.
     taken = getattr(exc, "library_id", None) if code == "library_id_taken" else None
+    # `job_finished` names the state the job ended in.
+    ended = getattr(exc, "job_state", None) if code == "job_finished" else None
     body = ErrorResponse(
-        error=code, detail=str(exc), close_matches=close, library_id=str(taken) if taken else None
+        error=code,
+        detail=str(exc),
+        close_matches=close,
+        library_id=str(taken) if taken else None,
+        job_state=str(ended) if ended else None,
     )
     retry = isinstance(exc, (BusyError, RateLimitedError))
     headers = {"Retry-After": str(exc.retry_after)} if retry else None

@@ -16,7 +16,12 @@ import {
   summarizeProblems,
 } from "../model/add-library";
 import { type Job, shortSha } from "../model/library";
+import { CancelJob } from "./cancel-job";
 import { SkippedList } from "./skipped-list";
+
+/** Whether a job has ended: succeeded, failed or cancelled. */
+const isOver = (state: string) =>
+  state === "succeeded" || state === "failed" || state === "cancelled";
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -60,6 +65,8 @@ function phaseText(
         : `${w.noun} finished. ${done} ${units(w, done)} ${w.done}.`;
     case "failed":
       return `${w.noun} failed. ${error ?? ""}`.trim();
+    case "cancelled":
+      return `${w.noun} cancelled.`;
     default:
       return "";
   }
@@ -110,7 +117,25 @@ function Status({ job, state, known, skipped, words: w = IMPORT_WORDS }: StatusP
       </p>
     );
   }
-  return <Failed done={done} total={total} known={known} w={w} />;
+  return <Ended job={job} done={done} total={total} known={known} w={w} />;
+}
+
+/** A job that stopped before its end: someone cancelled it, or it failed. */
+function Ended(props: {
+  job: Job | undefined;
+  done: number;
+  total: number;
+  known: boolean;
+  w: JobWords;
+}) {
+  const { job, done, total, known, w } = props;
+  if (job?.state !== "cancelled") return <Failed done={done} total={total} known={known} w={w} />;
+  const by = job.cancelled_by ? ` by ${job.cancelled_by}` : "";
+  return (
+    <p className="text-base font-medium">
+      {`Cancelled${by} after ${done}${known ? ` of ${total}` : ""} ${units(w, known ? total : done)}`}
+    </p>
+  );
 }
 
 /** How a failed job ended. A version-counted job goes on past a failed version: at its end, it did not stop. */
@@ -362,7 +387,7 @@ interface OutcomeProps {
 
 /** What the job has to say right now: progress, the failure, or the files it skipped. */
 function Outcome({ id, job, state, skipped, summary, gone, lostContact, variant }: OutcomeProps) {
-  const finished = state === "succeeded" || state === "failed";
+  const finished = isOver(state);
   const known = (job?.total ?? 0) > 0;
   return (
     <>
@@ -383,6 +408,7 @@ function Outcome({ id, job, state, skipped, summary, gone, lostContact, variant 
             )}
           </div>
           {!finished && <Meter id={id} job={job} state={state} known={known} />}
+          {job && <CancelJob job={job} label={`the import of ${id}`} />}
         </div>
       )}
       {state === "failed" && <Failure job={job} variant={variant} id={id} />}
@@ -398,7 +424,7 @@ export function ImportProgress({ added, onAddAnother, finish, children }: Props)
   useEffect(() => heading.current?.focus({ preventScroll: true }), []);
 
   const state = job?.state ?? "queued";
-  const finished = state === "succeeded" || state === "failed";
+  const finished = isOver(state);
   const summary = summarizeProblems(job?.problems ?? []);
   const skipped = skippedLabel(summary);
   // A 4xx will not fix itself (the job is gone, or we are signed out): stop and say so.
@@ -416,7 +442,15 @@ export function ImportProgress({ added, onAddAnother, finish, children }: Props)
       <Heading
         ref={heading}
         version={!onAddAnother}
-        verb={state === "failed" ? "Import failed" : finished ? "Imported" : "Importing"}
+        verb={
+          state === "failed"
+            ? "Import failed"
+            : state === "cancelled"
+              ? "Import cancelled"
+              : finished
+                ? "Imported"
+                : "Importing"
+        }
         refName={added.ref}
         libraryId={added.library_id}
       />
@@ -451,7 +485,7 @@ export function ImportProgress({ added, onAddAnother, finish, children }: Props)
 export function JobLine({ jobId, label }: { jobId: string; label: string }) {
   const { data: job, error } = useQuery(importJobQueryOptions(jobId));
   const state = job?.state ?? "queued";
-  const finished = state === "succeeded" || state === "failed";
+  const finished = isOver(state);
   const gone = error instanceof HttpError && error.status < 500 && !job;
   const known = (job?.total ?? 0) > 0;
   const skipped = skippedLabel(summarizeProblems(job?.problems ?? []));
@@ -467,6 +501,7 @@ export function JobLine({ jobId, label }: { jobId: string; label: string }) {
       </p>
       <Status job={job} state={state} known={known} skipped={skipped} words={words} />
       {!finished && <Meter id={label} job={job} state={state} known={known} noun={words.noun} />}
+      {job && <CancelJob job={job} label={label} />}
       {state === "failed" && job?.error && (
         <p className="mt-1 text-small text-muted-foreground [overflow-wrap:anywhere]">
           {job.error}

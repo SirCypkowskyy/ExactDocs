@@ -1257,6 +1257,33 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/jobs/{job_id}/cancel": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Cancel Job
+         * @description Cancel a queued or running job (contributor on its library; operators always may).
+         *
+         *     A queued job is cancelled at once and never starts: its version stays as it was (or is
+         *     never created, for a first import). A running job stops at its next step boundary: no
+         *     version is left half replaced and no new embedding batch is sent after the one in
+         *     flight; what it finished is kept (an embedding's vectors). Until it stops it answers
+         *     `running` with `cancelled_at` set, and asking again answers the same. A job that ended
+         *     (`succeeded`, `failed` or `cancelled`) answers 409 `job_finished`, with its `job_state`.
+         */
+        readonly post: operations["ingestion-cancel_job"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries/{owner}/{repo}/auto-sync": {
         readonly parameters: {
             readonly query?: never;
@@ -2673,6 +2700,12 @@ export interface components {
              */
             readonly library_id: string | null;
             /**
+             * Job State
+             * @description On `job_finished`: the state the job ended in (`succeeded`, `failed` or `cancelled`).
+             *     Null otherwise.
+             */
+            readonly job_state: string | null;
+            /**
              * Message
              * @description Alias of ``detail`` under the name context7's errors use (``{error, message}``).
              */
@@ -2756,7 +2789,7 @@ export interface components {
          * @description Where a job is in its life. Only ``queued`` and ``running`` jobs are unfinished.
          * @enum {string}
          */
-        readonly JobState: "queued" | "running" | "succeeded" | "failed";
+        readonly JobState: "queued" | "running" | "succeeded" | "failed" | "cancelled";
         /**
          * JobSummary
          * @description A job and how far it got. ``total`` is 0 until the job knows its size.
@@ -2769,8 +2802,8 @@ export interface components {
             readonly id: string;
             /**
              * Kind
-             * @description What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect` or
-             *     `embed`.
+             * @description What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect`,
+             *     `embed` or `push`.
              */
             readonly kind: string;
             /**
@@ -2788,7 +2821,11 @@ export interface components {
              * @description The commit `version` was pinned to, if any.
              */
             readonly commit_sha: string | null;
-            /** @description `queued` and `running` jobs are unfinished; `succeeded` and `failed` ones are done. */
+            /**
+             * @description `queued` and `running` jobs are unfinished; `succeeded`, `failed` and `cancelled` ones are
+             *     done. A running job someone cancelled stays `running` (with `cancelled_at` set) until it
+             *     stops at its next step boundary.
+             */
             readonly state: components["schemas"]["JobState"];
             /**
              * Done
@@ -2863,6 +2900,23 @@ export interface components {
              * @description When the job ended; null while it is unfinished.
              */
             readonly finished_at: string | null;
+            /**
+             * Cancelled By
+             * @description The user name of who cancelled the job; null unless someone did.
+             */
+            readonly cancelled_by?: string | null;
+            /**
+             * Cancelled At
+             * @description When someone asked to cancel the job; null unless someone did.
+             */
+            readonly cancelled_at?: string | null;
+            /**
+             * Cancellable
+             * @description Whether the caller may cancel the job now: it is queued or running, nobody cancelled it
+             *     yet, and the caller has the `contributor` role on its library (operators always have).
+             * @default false
+             */
+            readonly cancellable: boolean;
         };
         /**
          * KeySource
@@ -2882,8 +2936,8 @@ export interface components {
             readonly id: string;
             /**
              * Kind
-             * @description What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect` or
-             *     `embed`.
+             * @description What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect`,
+             *     `embed` or `push`.
              */
             readonly kind: string;
             /**
@@ -2896,7 +2950,11 @@ export interface components {
              * @description The ref of the version the job is for; null for a job of the whole library.
              */
             readonly version: string | null;
-            /** @description `queued` and `running` jobs are unfinished; `succeeded` and `failed` ones are done. */
+            /**
+             * @description `queued` and `running` jobs are unfinished; `succeeded`, `failed` and `cancelled` ones are
+             *     done. A running job someone cancelled stays `running` (with `cancelled_at` set) until it
+             *     stops at its next step boundary.
+             */
             readonly state: components["schemas"]["JobState"];
             /**
              * Done
@@ -2940,6 +2998,23 @@ export interface components {
              * @description When the job ended; null while it is unfinished.
              */
             readonly finished_at: string | null;
+            /**
+             * Cancelled By
+             * @description The user name of who cancelled the job; null unless someone did.
+             */
+            readonly cancelled_by?: string | null;
+            /**
+             * Cancelled At
+             * @description When someone asked to cancel the job; null unless someone did.
+             */
+            readonly cancelled_at?: string | null;
+            /**
+             * Cancellable
+             * @description Whether the caller may cancel the job now: it is queued or running, nobody cancelled it
+             *     yet, and the caller has the `contributor` role on its library (operators always have).
+             * @default false
+             */
+            readonly cancellable: boolean;
         };
         /**
          * LatestJobs
@@ -5032,7 +5107,7 @@ export interface components {
          * @description What a re-sync did with one version.
          * @enum {string}
          */
-        readonly SyncStatus: "queued" | "up_to_date" | "importing" | "pinned" | "failed";
+        readonly SyncStatus: "queued" | "up_to_date" | "importing" | "pinned" | "failed" | "cancelled";
         /**
          * SyncedLibrary
          * @description The outcome per version; ``queued`` ones have an import to poll by ``job_id``.
@@ -10967,6 +11042,82 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["JobList"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-cancel_job": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly job_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["JobSummary"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

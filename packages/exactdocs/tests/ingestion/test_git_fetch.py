@@ -157,6 +157,70 @@ async def test_refuses_more_than_the_size_cap(docs_repo: DocsRepo, work: Path) -
     assert leftovers(work) == []
 
 
+async def test_the_size_error_names_the_byte_limit(docs_repo: DocsRepo, work: Path) -> None:
+    gateway = GitCli(git=GitCli.locate().git, work_root=work, max_fetch_bytes=1000)
+
+    with pytest.raises(RepositoryTooLargeError, match="larger than 1000 bytes"):
+        async with gateway.fetch(
+            repository(docs_repo.file_url), sha(docs_repo, "main"), PathSelection.of(["docs/"])
+        ):
+            pass
+
+
+async def test_the_size_error_names_the_file_limit(docs_repo: DocsRepo, work: Path) -> None:
+    gateway = GitCli(git=GitCli.locate().git, work_root=work, max_fetch_files=3)
+
+    with pytest.raises(RepositoryTooLargeError, match="more than 3 files") as raised:
+        async with gateway.fetch(
+            repository(docs_repo.file_url), sha(docs_repo, "main"), PathSelection.of(["docs/"])
+        ):
+            pass
+    assert "MiB" not in str(raised.value)
+
+
+async def test_a_watchdog_stop_names_the_file_limit_too(
+    tmp_path: Path, docs_repo: DocsRepo
+) -> None:
+    gateway = GitCli(
+        git=stalling_git(tmp_path, 'for i in 1 2 3 4 5 6; do : > "$4/.git/f$i"; done; sleep 30'),
+        work_root=tmp_path / "work", watch_interval=0.05, max_fetch_files=5,
+    )  # fmt: skip
+
+    with pytest.raises(RepositoryTooLargeError, match="more than 5 files"):
+        async with gateway.fetch(
+            repository(docs_repo.file_url), sha(docs_repo, "main"), PathSelection.of()
+        ):
+            pass
+
+
+async def test_fetch_files_writes_only_the_named_files_of_a_directory_full_of_others(
+    work: Path, tmp_path: Path
+) -> None:
+    """A big directory next to the wanted files costs nothing: the paths are literal."""
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    for n in range(30):
+        (origin / "docs" / "media").mkdir(parents=True, exist_ok=True)
+        (origin / "docs" / "media" / f"{n}.bin").write_bytes(os.urandom(100_000))
+    (origin / "docs" / "a.png").write_bytes(b"small")
+    git("init", "-q", "-b", "main", cwd=origin)
+    git("add", ".", cwd=origin)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x", cwd=origin)
+    pinned = git("rev-parse", "HEAD", cwd=origin)
+    tight = GitCli.locate(work_root=work)
+
+    async with tight.fetch_files(
+        repository(origin.as_uri()), pinned, ["docs/a.png"], max_bytes=10
+    ) as dir_:
+        assert files(dir_) == {"docs/a.png"}
+
+    with pytest.raises(RepositoryTooLargeError, match="larger than"):
+        async with tight.fetch_files(
+            repository(origin.as_uri()), pinned, ["docs/media/1.bin"], max_bytes=-4 * 2**20
+        ):
+            pass
+
+
 @pytest.mark.parametrize(
     ("url", "commit"),
     [("-x", "1" * 40), ("file:///a b\n", "1" * 40), ("file:///x", "main"), ("file:///x", "--all")],

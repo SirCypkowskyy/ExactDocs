@@ -7752,6 +7752,108 @@
         }
       }
     },
+    "/api/v1/jobs/{job_id}/cancel": {
+      "post": {
+        "tags": [
+          "ingestion",
+          "ingestion"
+        ],
+        "summary": "Cancel Job",
+        "description": "Cancel a queued or running job (contributor on its library; operators always may).\n\nA queued job is cancelled at once and never starts: its version stays as it was (or is\nnever created, for a first import). A running job stops at its next step boundary: no\nversion is left half replaced and no new embedding batch is sent after the one in\nflight; what it finished is kept (an embedding's vectors). Until it stops it answers\n`running` with `cancelled_at` set, and asking again answers the same. A job that ended\n(`succeeded`, `failed` or `cancelled`) answers 409 `job_finished`, with its `job_state`.",
+        "operationId": "ingestion-cancel_job",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/libraries/{owner}/{repo}/auto-sync": {
       "get": {
         "tags": [
@@ -10686,6 +10788,18 @@
             "title": "Library Id",
             "description": "On `library_id_taken`: the ID of the library that already exists, e.g. `/acme/payments`.\nNull otherwise."
           },
+          "job_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job State",
+            "description": "On `job_finished`: the state the job ended in (`succeeded`, `failed` or `cancelled`).\nNull otherwise."
+          },
           "message": {
             "type": "string",
             "title": "Message",
@@ -10700,6 +10814,7 @@
           "fields",
           "close_matches",
           "library_id",
+          "job_state",
           "message"
         ],
         "title": "ErrorResponse",
@@ -10844,7 +10959,8 @@
           "queued",
           "running",
           "succeeded",
-          "failed"
+          "failed",
+          "cancelled"
         ],
         "title": "JobState",
         "description": "Where a job is in its life. Only ``queued`` and ``running`` jobs are unfinished."
@@ -10859,7 +10975,7 @@
           "kind": {
             "type": "string",
             "title": "Kind",
-            "description": "What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect` or\n`embed`."
+            "description": "What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect`,\n`embed` or `push`."
           },
           "library": {
             "type": "string",
@@ -10892,7 +11008,7 @@
           },
           "state": {
             "$ref": "#/components/schemas/JobState",
-            "description": "`queued` and `running` jobs are unfinished; `succeeded` and `failed` ones are done."
+            "description": "`queued` and `running` jobs are unfinished; `succeeded`, `failed` and `cancelled` ones are\ndone. A running job someone cancelled stays `running` (with `cancelled_at` set) until it\nstops at its next step boundary."
           },
           "done": {
             "type": "integer",
@@ -10994,6 +11110,37 @@
             ],
             "title": "Finished At",
             "description": "When the job ended; null while it is unfinished."
+          },
+          "cancelled_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelled By",
+            "description": "The user name of who cancelled the job; null unless someone did."
+          },
+          "cancelled_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelled At",
+            "description": "When someone asked to cancel the job; null unless someone did."
+          },
+          "cancellable": {
+            "type": "boolean",
+            "title": "Cancellable",
+            "description": "Whether the caller may cancel the job now: it is queued or running, nobody cancelled it\nyet, and the caller has the `contributor` role on its library (operators always have).",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -11040,7 +11187,7 @@
           "kind": {
             "type": "string",
             "title": "Kind",
-            "description": "What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect` or\n`embed`."
+            "description": "What the job does: `import`, `refresh`, `reprocess`, `retag`, `rechunk`, `collect`,\n`embed` or `push`."
           },
           "library": {
             "type": "string",
@@ -11061,7 +11208,7 @@
           },
           "state": {
             "$ref": "#/components/schemas/JobState",
-            "description": "`queued` and `running` jobs are unfinished; `succeeded` and `failed` ones are done."
+            "description": "`queued` and `running` jobs are unfinished; `succeeded`, `failed` and `cancelled` ones are\ndone. A running job someone cancelled stays `running` (with `cancelled_at` set) until it\nstops at its next step boundary."
           },
           "done": {
             "type": "integer",
@@ -11133,6 +11280,37 @@
             ],
             "title": "Finished At",
             "description": "When the job ended; null while it is unfinished."
+          },
+          "cancelled_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelled By",
+            "description": "The user name of who cancelled the job; null unless someone did."
+          },
+          "cancelled_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelled At",
+            "description": "When someone asked to cancel the job; null unless someone did."
+          },
+          "cancellable": {
+            "type": "boolean",
+            "title": "Cancellable",
+            "description": "Whether the caller may cancel the job now: it is queued or running, nobody cancelled it\nyet, and the caller has the `contributor` role on its library (operators always have).",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -14949,7 +15127,8 @@
           "up_to_date",
           "importing",
           "pinned",
-          "failed"
+          "failed",
+          "cancelled"
         ],
         "title": "SyncStatus",
         "description": "What a re-sync did with one version."
