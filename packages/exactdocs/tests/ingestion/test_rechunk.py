@@ -1,14 +1,19 @@
 """Re-chunking every version of a library from what it stores, after its chunking changed."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
+from cancelling import WHO, Canceller, run_job
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
-from exactdocs.ingestion.adapters.driven.memory import InMemoryCheckpoints, InMemoryLibrarySources
+from exactdocs.ingestion.adapters.driven.memory import (
+    InMemoryCheckpoints,
+    InMemoryJobRepository,
+    InMemoryLibrarySources,
+)
 from exactdocs.ingestion.constants import PARSER_VERSION, RECHUNK_JOB, REFRESH_JOB
 from exactdocs.ingestion.errors import (
     RepositoryUnreachableError,
@@ -26,6 +31,8 @@ from exactdocs.ingestion.models import (
     ImportSource,
     Job,
     JobId,
+    JobState,
+    ParsedArticle,
     PathSelection,
     ProblemCode,
     ProposedId,
@@ -36,7 +43,7 @@ from exactdocs.ingestion.models import (
     git_blob_sha,
     parse_article,
 )
-from exactdocs.ingestion.use_cases import RechunkLibraryUseCase, TagLocks
+from exactdocs.ingestion.use_cases import RechunkLibraryUseCase, StopOnCancel, TagLocks
 
 LIBRARY = "/acme/docs"
 URL = RepositoryUrl(
@@ -98,9 +105,12 @@ class Copier:
     )
     outdated: set[str] = field(default_factory=set)
     copies: int = 0
+    on_copy: Callable[[], Awaitable[None]] | None = None
 
     async def copy(self, library: str, ref: str, *, content_version: int) -> CopiedVersion | None:
         assert (library, content_version) == (LIBRARY, PARSER_VERSION)
+        if self.on_copy is not None:
+            await self.on_copy()
         if ref in self.outdated:
             raise StoredTextOutdatedError(library, ref)
         if ref not in self.articles:
@@ -230,9 +240,27 @@ class Progress:
         self.parses.append((parsed, taken))
 
 
+class FailingChunker:
+    """The real chunker, raising on the articles at ``failing`` (one bad file, as in #430)."""
+
+    def __init__(self, failing: set[str], inner: MarkdownChunker | None = None) -> None:
+        self.failing = failing
+        self.inner = inner or MarkdownChunker()
+        self.config_hash = self.inner.config_hash
+
+    def configured(self, config: ChunkingConfig) -> FailingChunker:
+        return FailingChunker(self.failing, self.inner.configured(config))
+
+    def chunk(self, article: ParsedArticle) -> Sequence[ArticleChunk]:
+        if article.path in self.failing:
+            raise IndexError(article.path)
+        return self.inner.chunk(article)
+
+
 @dataclass
 class World:
     sources: InMemoryLibrarySources
+    chunker: MarkdownChunker | FailingChunker = field(default_factory=MarkdownChunker)
     log: list[str] = field(default_factory=list)
     copier: Copier = field(init=False)
     tags: Tags = field(init=False)
@@ -249,7 +277,7 @@ class World:
         return RechunkLibraryUseCase(
             sources=self.sources,
             copier=self.copier,
-            chunker=MarkdownChunker(),
+            chunker=self.chunker,
             tags=self.tags,
             versions=self.publisher,  # ty: ignore[invalid-argument-type]
             index=self.index,
@@ -412,6 +440,21 @@ async def test_an_article_only_its_file_can_rebuild_has_its_version_re_imported(
     assert world.progress.counters[-1] == (8, 0)  # 3 cut from v1.0.0's copy, 5 by the re-import
 
 
+async def test_an_article_the_chunker_cannot_cut_has_its_version_re_imported(world):
+    """The re-import lists the file as a problem and serves the rest (#430)."""
+    world.chunker = FailingChunker({"docs/broken.md"})  # only v1.0.0 has that article
+
+    await world.run()
+
+    assert [(j.kind, j.version, j.commit_sha) for j in world.importer.seen] == [
+        (REFRESH_JOB, "v1.0.0", "a" * 40)
+    ]
+    assert "v1.0.0-copy1" not in world.index.indexed  # nothing half-cut is served
+    assert "discard manifest v1.0.0-copy1" in world.log
+    assert world.publisher.active["v1.0.0"] == "m1"
+    assert world.publisher.active["main"] == "main-copy2"
+
+
 @pytest.mark.parametrize(
     "source",
     [
@@ -446,3 +489,18 @@ def test_an_article_with_ordinary_front_matter_is_rebuilt_without_its_file(sourc
 @pytest.mark.parametrize("source", [ODD, "---\n\n---\n---\ntitle: [\n# Inside\n---\n# Real\n"])
 def test_a_blank_front_matter_before_an_invalid_block_needs_the_file(source):
     assert stored("docs/a.md", source).parsed() is None
+
+
+async def test_a_cancelled_rechunk_stops_between_versions_and_keeps_the_ones_it_finished(world):
+    jobs = InMemoryJobRepository()
+    world.copier.on_copy = Canceller(jobs, job_id="job")  # in the first version's step
+    handler = replace(world.handler(), checkpoints=StopOnCancel(inner=InMemoryCheckpoints()))
+    queued = Job.queued(
+        job_id=JobId("job"), kind=RECHUNK_JOB, library=LIBRARY, version=None, now=datetime.now(UTC)
+    )
+
+    ended = await run_job(jobs, queued, handler)
+
+    assert (ended.state, ended.cancelled_by, ended.done) == (JobState.CANCELLED, WHO, 1)
+    assert world.publisher.active == {"v1.0.0": "v1.0.0-copy1", "main": "m2"}  # never half
+    assert world.copier.copies == 1

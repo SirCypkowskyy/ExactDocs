@@ -4,6 +4,7 @@ import { type ReactNode, useId } from "react";
 import { HttpError } from "@/shared/lib/http";
 import { normalizeQuery } from "@/shared/lib/search-query";
 import { cn } from "@/shared/lib/utils";
+import { buttonVariants } from "@/shared/ui/button";
 import { globalSearchQueryOptions } from "../api/global-search-queries";
 import {
   countLine,
@@ -14,7 +15,11 @@ import {
   totalMatches,
 } from "../model/global";
 import { GLOBAL_RESULTS_ID, GlobalSearchBox } from "./global-search-box";
-import { Crumbs, retry, Skeleton, Snippet } from "./hit-parts";
+import { Crumbs, Skeleton, Snippet } from "./hit-parts";
+
+/** A secondary action under a search state (retry, widen, another version). */
+const retry = buttonVariants({ variant: "outline", size: "sm" });
+
 import { focusGlobalInput, onArrows } from "./keyboard";
 
 /** Chips shown before "+N more"; the selected library always stays visible. */
@@ -25,7 +30,7 @@ const chip =
 
 const chipTone = (selected: boolean) =>
   selected
-    ? "bg-mark text-primary-foreground"
+    ? "bg-route text-route-foreground"
     : "bg-secondary text-secondary-foreground [@media(hover:hover)]:hover:bg-accent";
 
 /** `owner/repo` with the owner softer and the repo firm; the owner gives way first when it is long. */
@@ -174,7 +179,7 @@ function Empty({
 }) {
   return (
     <div className="max-w-xl">
-      <h2 className="font-serif text-2xl font-semibold tracking-tight">
+      <h2 className="text-2xl font-semibold tracking-tight">
         {unavailable
           ? "Library not available"
           : library
@@ -240,7 +245,7 @@ function Body({
         <Empty q={q} library={library} unavailable />
       ) : (
         <div role="alert" className="max-w-xl">
-          <h2 className="font-serif text-2xl font-semibold tracking-tight">Search failed</h2>
+          <h2 className="text-2xl font-semibold tracking-tight">Search failed</h2>
           <p className="mt-2 text-muted-foreground">
             Couldn't search. Check your connection or try again.
           </p>
@@ -311,7 +316,7 @@ export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; l
         aria-busy={result.isFetching}
         className="min-w-0"
       >
-        <h1 id={heading} className="font-serif text-3xl font-semibold tracking-tight">
+        <h1 id={heading} className="text-3xl font-semibold tracking-tight">
           {q ? (
             <>
               Search: <span className="[overflow-wrap:anywhere]">{q}</span>

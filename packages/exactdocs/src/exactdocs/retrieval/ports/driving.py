@@ -43,6 +43,7 @@ from exactdocs.retrieval.dtos import (
     RetagArticlesCommand,
     RetaggedChunks,
     RoleListOut,
+    RoleOut,
     SaveProviderCommand,
     SearchAllQuery,
     SearchAllResult,
@@ -50,6 +51,7 @@ from exactdocs.retrieval.dtos import (
     SearchDocsResult,
     SearchIndexStateOut,
     SetLibraryRetrievalCommand,
+    SetRoleThinkingCommand,
     UnembeddedVersionsOut,
     UnembeddedVersionsQuery,
     VectorStoreStateOut,
@@ -483,6 +485,26 @@ class ListRoles(Protocol):
 
         Returns:
             One entry per role.
+        """
+        ...
+
+
+class SetRoleThinking(Protocol):
+    """Set or clear an instance role's thinking level over the REST API (#421).
+
+    Raises ``RoleTakesNoThinkingError`` (not ``llm`` or ``judge``), ``RoleConfiguredError``
+    (the level is set in the environment or the configuration file) and
+    ``ThinkingUnsupportedError`` (the role's model cannot take a level).
+    """
+
+    async def __call__(self, command: SetRoleThinkingCommand) -> RoleOut:
+        """Run the use case.
+
+        Args:
+            command: The role and its level.
+
+        Returns:
+            The role as it is now.
         """
         ...
 

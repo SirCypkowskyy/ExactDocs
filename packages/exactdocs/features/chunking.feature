@@ -22,3 +22,8 @@ Feature: Heading-based chunks
   Scenario: A parser change re-chunks
     Given the parser version is bumped
     Then the chunking-config hash differs from before
+
+  Scenario: A code fence with only blanks after its backticks names no language
+    Given the article "storage.md" has code fences with only spaces or a tab after the backticks
+    When I chunk the article "storage.md"
+    Then its only chunk holds every fence and names no code language

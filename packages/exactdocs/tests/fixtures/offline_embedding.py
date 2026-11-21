@@ -21,7 +21,13 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.retrieval.adapters.driven.memory import HashEmbeddingModels
 from exactdocs.retrieval.errors import ProviderUnsupportedError
-from exactdocs.retrieval.models import ModelCheck, ModelRole, ProviderProfile, RetrievalMode
+from exactdocs.retrieval.models import (
+    ModelCheck,
+    ModelRole,
+    ProviderProfile,
+    RetrievalMode,
+    ThinkingLevel,
+)
 from exactdocs.retrieval.ports.driven import AgentReads, Reranker
 from retrieval_eval.fixture import ContainerBuilder
 
@@ -57,7 +63,22 @@ class MarkerFactory:
         """
         del profile
 
-    async def chat_model(self, profile: ProviderProfile, model: str) -> object:
+    async def thinking_unsupported(self, profile: ProviderProfile, model: str) -> str | None:
+        """Know of no model that cannot think.
+
+        Args:
+            profile: The profile.
+            model: The model.
+
+        Returns:
+            ``None``.
+        """
+        del profile, model
+        return None
+
+    async def chat_model(
+        self, profile: ProviderProfile, model: str, *, thinking: ThinkingLevel | None = None
+    ) -> object:
         """Return the stand-in chat model, if there is one.
 
         Args:
@@ -70,6 +91,7 @@ class MarkerFactory:
         Raises:
             ProviderUnsupportedError: No stand-in chat model was given.
         """
+        del thinking
         if self.chat is None:
             raise ProviderUnsupportedError(profile.name, model)
         return self.chat()
@@ -107,7 +129,14 @@ class MarkerFactory:
         """
         del name
 
-    async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
+    async def check(
+        self,
+        profile: ProviderProfile,
+        model: str,
+        role: ModelRole,
+        *,
+        thinking: ThinkingLevel | None = None,
+    ) -> ModelCheck:
         """Report the stand-in as working.
 
         Args:
@@ -118,6 +147,7 @@ class MarkerFactory:
         Returns:
             A passed check.
         """
+        del thinking
         return ModelCheck(role=role, profile=profile.name, model=model, ok=True)
 
 

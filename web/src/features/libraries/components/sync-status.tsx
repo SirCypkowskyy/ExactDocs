@@ -8,6 +8,7 @@ import { jobQueryOptions, librariesKeys } from "../api/libraries-query";
 import { reimportVersion } from "../api/reimport";
 import type { SyncState } from "../hooks/use-libraries";
 import { explainReimport, type LatestJob } from "../model/library";
+import { CancelJob } from "./cancel-job";
 
 const SKIPPED_SHOWN = 5;
 
@@ -137,7 +138,15 @@ function Unknown({ sync }: { sync: Extract<SyncState, { status: string }> }) {
 }
 
 function Running({ job }: { job: LatestJob }) {
-  if (job.state === "queued") return <p className="text-sm">Queued</p>;
+  const label = `the sync of ${job.version ?? job.library}`;
+  if (job.state === "queued") {
+    return (
+      <div className="text-sm">
+        <p>Queued</p>
+        <CancelJob job={job} label={label} />
+      </div>
+    );
+  }
   const known = job.total > 0;
   return (
     <div className="text-sm">
@@ -154,7 +163,7 @@ function Running({ job }: { job: LatestJob }) {
       >
         <div
           className={cn(
-            "h-full origin-left bg-mark transition-transform duration-500 ease-out",
+            "h-full origin-left bg-route transition-transform duration-500 ease-out",
             !known && "w-1/3 motion-safe:animate-pulse",
           )}
           style={
@@ -162,6 +171,7 @@ function Running({ job }: { job: LatestJob }) {
           }
         />
       </div>
+      <CancelJob job={job} label={label} />
     </div>
   );
 }
@@ -234,6 +244,12 @@ export function SyncStatus({ sync, now, open, onToggle, panel }: SyncStatusProps
           onToggle={onToggle}
           panel={panel}
         />
+      );
+    case "cancelled":
+      return (
+        <p className={muted}>
+          Sync cancelled{sync.job.cancelled_by ? ` by ${sync.job.cancelled_by}` : ""}
+        </p>
       );
     case "ok":
       return (

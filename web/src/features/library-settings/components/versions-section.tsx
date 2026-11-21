@@ -59,7 +59,7 @@ function VersionRow({
           <span className="font-mono text-[15px] font-medium [overflow-wrap:anywhere]">
             {version.ref}
           </span>
-          {version.is_default && <span className="text-xs font-medium text-mark">default</span>}
+          {version.is_default && <span className="text-xs font-medium text-route">default</span>}
         </p>
         <p className="text-sm text-muted-foreground">
           {version.kind !== "tag" && <span className="capitalize">{version.kind} · </span>}
@@ -410,7 +410,7 @@ export function VersionsSection(props: Props) {
       <p role="status" className="mt-4 min-h-5 text-sm">
         {notice && activity.by === "versions" && (
           <span className="fade-in inline-flex items-start gap-1.5">
-            <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
+            <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
             {notice}
           </span>
         )}

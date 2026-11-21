@@ -21,3 +21,11 @@ Feature: An embedding endpoint embeds every version in the background
     When the operator runs "exactdocs ai estimate"
     Then it prints the chunks, the estimated tokens and the estimated USD, labelled as an estimate
     And nothing is sent to the embedding provider
+
+  Scenario: A finished embedding reports every chunk of its version done, shared ones included
+    Given the fixture repository is a private copy
+    And a commit on branch "next" adds one new article as "docs/guide/faq.md" and "docs/faq.md"
+    And ExactDocs is running with the fixture docs repository imported at "v1.4.0" and "next"
+    And library "/acme/same-docs" holds the same files at "next"
+    When the embedding jobs of every library run
+    Then every embedding job succeeded with as many chunks done as its total

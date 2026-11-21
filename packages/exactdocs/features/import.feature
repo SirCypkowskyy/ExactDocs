@@ -21,6 +21,14 @@ Feature: An import publishes a complete version or nothing
       | docs/legacy/undecodable.md  | undecodable | not text in any supported encoding  |
       | docs/reference/oversized.md | too_large   | larger than 2097152 bytes           |
 
+  Scenario: A file that cannot be cut into chunks does not fail the import
+    Given the chunker cannot cut "docs/guide/auth.md"
+    When "docs/" of the fixture repository at "v1.3.0" is imported
+    Then the import succeeds
+    And the job lists "docs/guide/auth.md" as a file that could not be parsed
+    And "/fixture/docs-repo/v1.3.0" has no article "docs/guide/auth.md"
+    And "/fixture/docs-repo/v1.3.0" has the article "docs/guide/setup.md"
+
   Scenario: A Latin-1 file is decoded, not skipped
     When "docs/" of the fixture repository at "v1.3.0" is imported
     Then the article "docs/legacy/latin1.md" of "/fixture/docs-repo/v1.3.0" keeps its accented characters

@@ -3,7 +3,27 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>ExactDocs</title>
+    <!-- The theme is set before first paint, so a dark page never flashes light (src/shared/lib/theme.ts). -->
+    <script>
+      (() => {
+        let theme = "system";
+        try {
+          const stored = localStorage.getItem("exactdocs-theme");
+          if (stored === "light" || stored === "dark" || stored === "system") theme = stored;
+        } catch {
+          // Storage blocked: follow the system.
+        }
+        const dark =
+          theme === "dark" ||
+          (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        const root = document.documentElement;
+        if (dark) root.classList.add("dark");
+        root.style.colorScheme = dark ? "dark" : "light";
+        root.dataset.theme = theme;
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

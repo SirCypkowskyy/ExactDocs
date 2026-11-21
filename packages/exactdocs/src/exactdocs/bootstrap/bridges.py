@@ -894,7 +894,7 @@ class RetrievalVersionEmbedder:
             if error.transient:  # the job tries the batch again, after a wait
                 raise EmbeddingUnavailableError(str(error)) from error
             raise
-        return EmbeddedBatch(embedded=batch.embedded, finished=batch.finished)
+        return EmbeddedBatch(embedded=batch.embedded, finished=batch.finished, left=batch.left)
 
     async def finish(self, plan: EmbedPlan) -> None:
         """Switch to the plan's space once it covers every version.

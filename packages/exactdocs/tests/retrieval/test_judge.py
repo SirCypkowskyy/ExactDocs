@@ -94,6 +94,7 @@ from exactdocs.retrieval.models import (
     SearchableVersion,
     SourceHost,
     SpendWindow,
+    ThinkingLevel,
     estimated_tokens,
     judge_id,
     judge_max_tokens,
@@ -220,7 +221,23 @@ class FakeFactory:
     def unsupported(self, profile: ProviderProfile) -> str | None:
         del profile
 
-    async def chat_model(self, profile: ProviderProfile, model: str) -> object:
+    async def thinking_unsupported(self, profile: ProviderProfile, model: str) -> str | None:
+        """Know of no model that cannot think.
+
+        Args:
+            profile: The profile.
+            model: The model.
+
+        Returns:
+            ``None``.
+        """
+        del profile, model
+        return None
+
+    async def chat_model(
+        self, profile: ProviderProfile, model: str, *, thinking: ThinkingLevel | None = None
+    ) -> object:
+        del thinking
         self.chats.append((profile.name, model))
         return self.judge.model()
 
@@ -234,7 +251,15 @@ class FakeFactory:
     async def release(self, name: str) -> None:
         del name
 
-    async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
+    async def check(
+        self,
+        profile: ProviderProfile,
+        model: str,
+        role: ModelRole,
+        *,
+        thinking: ThinkingLevel | None = None,
+    ) -> ModelCheck:
+        del thinking
         return ModelCheck(role=role, profile=profile.name, model=model, ok=True)
 
 

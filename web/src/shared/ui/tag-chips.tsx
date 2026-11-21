@@ -73,7 +73,7 @@ export function TagChips({
                   className={cn(
                     "inline-flex h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-3 text-sm outline-none transition-[background-color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.97] lg:h-8 lg:px-2.5",
                     on
-                      ? "bg-mark text-primary-foreground"
+                      ? "bg-route text-primary-foreground"
                       : "bg-secondary text-secondary-foreground [@media(hover:hover)]:hover:bg-accent",
                   )}
                 >

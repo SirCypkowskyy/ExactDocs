@@ -3,6 +3,8 @@ import { Link } from "@tanstack/react-router";
 import { type ReactNode, useId } from "react";
 import { parseTags } from "@/shared/lib/tags";
 import { cn } from "@/shared/lib/utils";
+import { buttonVariants } from "@/shared/ui/button";
+import { kbd, pill, pillTone } from "@/shared/ui/recipes";
 import { searchQueryOptions } from "../api/search-queries";
 import { useSearchNav } from "../hooks/use-search-nav";
 import type { SearchContext } from "../model/context";
@@ -12,14 +14,18 @@ import {
   type SearchHit,
   type SearchResults as SearchResultData,
 } from "../model/search";
-import { Crumbs, retry, Skeleton, Snippet } from "./hit-parts";
+import { Crumbs, Skeleton, Snippet } from "./hit-parts";
+
+/** A secondary action under a search state (retry, widen, another version). */
+const retry = buttonVariants({ variant: "outline", size: "sm" });
+
 import { onArrows } from "./keyboard";
 import { INPUT_ID, RESULTS_ID } from "./search-box";
 
 function Hit({ hit, ctx }: { hit: SearchHit; ctx: SearchContext }) {
   return (
     // The whole row is the target (the title link stretches over it), so the hover tint covers the tags too.
-    <li className="relative px-2 py-3 transition-colors duration-150 [@media(hover:hover)]:hover:bg-accent/70">
+    <li className="row-in relative rounded-lg px-3 py-4 transition-colors duration-(--dur-fast) [@media(hover:hover)]:hover:bg-raised">
       <Link
         data-result=""
         to="/libraries/$owner/$repo"
@@ -31,15 +37,17 @@ function Hit({ hit, ctx }: { hit: SearchHit; ctx: SearchContext }) {
         className="rounded-md outline-none after:absolute after:inset-0 after:rounded-md after:content-[''] focus-visible:after:ring-2 focus-visible:after:ring-ring"
       >
         <Crumbs hit={hit} />
-        <span className="mt-0.5 block font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
+        <span className="mt-0.5 block font-mono text-[12px] text-muted-foreground [overflow-wrap:anywhere]">
           {hit.article_path}
         </span>
       </Link>
       <Snippet hit={hit} />
       {hit.tags.length > 0 && (
-        <ul className="mt-1.5 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+        <ul aria-label="Tags" className="relative mt-2 flex flex-wrap gap-1.5">
           {hit.tags.map((tag) => (
-            <li key={tag}>{tag}</li>
+            <li key={tag} className={cn(pill, pillTone.neutral)}>
+              {tag}
+            </li>
           ))}
         </ul>
       )}
@@ -52,8 +60,8 @@ function NoResults({ ctx, q }: { ctx: SearchContext; q: string }) {
   const tags = parseTags(ctx.tags);
   return (
     <div className="max-w-xl">
-      <h2 className="font-serif text-2xl font-semibold tracking-tight">No results in {ctx.ref}</h2>
-      <p className="mt-2 text-muted-foreground">
+      <h2 className="text-title font-semibold">No results in {ctx.ref}</h2>
+      <p className="mt-2 text-body text-muted-foreground">
         Nothing in <span className="font-mono text-foreground">{ctx.ref}</span> matches{" "}
         <span className="font-medium text-foreground [overflow-wrap:anywhere]">“{q}”</span>
         {tags.length > 0 &&
@@ -104,19 +112,19 @@ function HitList({
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: arrow keys move between the links inside
     <div onKeyDown={onArrows(() => document.getElementById(INPUT_ID)?.focus())}>
-      <p aria-hidden="true" className="mb-4 flex h-5 items-center text-sm text-muted-foreground">
+      <p aria-hidden="true" className="mb-3 flex h-5 items-center text-body text-muted-foreground">
         <span className="font-medium text-foreground">
           {resultsNoun(count, data.coverage.complete)}
         </span>
         &nbsp;in&nbsp;<span className="font-mono">{ctx.ref}</span>
-        <span className="ml-3 hidden text-xs lg:inline">
-          <kbd className="font-mono">↓</kbd> to move through results
+        <span className="ml-3 hidden text-small lg:inline">
+          <kbd className={kbd}>↓</kbd> to move through results
         </span>
       </p>
       {/* The dim waits 150 ms (transition-delay applies only when it starts): a quick answer never blinks. */}
       <ul
         className={cn(
-          "-mx-2 divide-y divide-border transition-opacity duration-150",
+          "-mx-3 divide-y divide-rule transition-opacity duration-(--dur)",
           stale && "opacity-60 delay-150",
         )}
       >
@@ -125,7 +133,7 @@ function HitList({
         ))}
       </ul>
       {!data.coverage.complete && (
-        <p className="mt-4 text-sm text-muted-foreground">
+        <p className="mt-4 text-body text-muted-foreground">
           Showing the best {count}. More sections match: add a tag or a more specific word.
         </p>
       )}
@@ -136,8 +144,8 @@ function HitList({
 function Failed({ refName, onRetry }: { refName: string; onRetry: () => void }) {
   return (
     <div role="alert" className="max-w-xl">
-      <h2 className="font-serif text-2xl font-semibold tracking-tight">Search failed</h2>
-      <p className="mt-2 text-muted-foreground">
+      <h2 className="text-title font-semibold">Search failed</h2>
+      <p className="mt-2 text-body text-muted-foreground">
         Couldn't search {refName}. Check your connection or try again.
       </p>
       <button type="button" className={cn(retry, "mt-3")} onClick={onRetry}>
@@ -177,7 +185,7 @@ export function SearchResults({ ctx }: { ctx: SearchContext }) {
       id={RESULTS_ID}
       aria-labelledby={heading}
       aria-busy={result.isFetching}
-      className="min-h-[24rem] max-w-2xl min-w-0"
+      className="min-h-[24rem] max-w-[72ch] min-w-0"
     >
       <h2 id={heading} className="sr-only">
         Search results

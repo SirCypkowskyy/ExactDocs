@@ -55,6 +55,7 @@ from exactdocs.retrieval.models import (
     RetrievalMode,
     SearchableVersion,
     SourceHost,
+    ThinkingLevel,
     fuse_across_manifests,
     identifier_tokens,
 )
@@ -135,9 +136,14 @@ class Factory:
     def unsupported(self, profile: ProviderProfile) -> str | None:
         del profile
 
-    async def chat_model(self, profile: ProviderProfile, model: str) -> object:
-        del profile, model
+    async def chat_model(
+        self, profile: ProviderProfile, model: str, *, thinking: ThinkingLevel | None = None
+    ) -> object:
+        del profile, model, thinking
         return object()
+
+    async def thinking_unsupported(self, profile: ProviderProfile, model: str) -> str | None:
+        del profile, model
 
     async def embedder(self, profile: ProviderProfile, model: str) -> object:
         del profile, model
@@ -149,7 +155,15 @@ class Factory:
     async def release(self, name: str) -> None:
         del name
 
-    async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
+    async def check(
+        self,
+        profile: ProviderProfile,
+        model: str,
+        role: ModelRole,
+        *,
+        thinking: ThinkingLevel | None = None,
+    ) -> ModelCheck:
+        del thinking
         return ModelCheck(role=role, profile=profile.name, model=model, ok=True)
 
 

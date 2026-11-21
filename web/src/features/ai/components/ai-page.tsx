@@ -7,11 +7,21 @@ import {
   aiProvidersQueryOptions,
   aiRolesQueryOptions,
   ROLE_LABEL,
+  THINKING_HINT,
+  THINKING_LABEL,
+  THINKING_LEVELS,
+  type ThinkingLevel,
 } from "@/shared/lib/ai-queries";
 import { absoluteTime, absoluteTimeWithZone } from "@/shared/lib/time";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { Button } from "@/shared/ui/button";
-import { aiUsageQueryOptions, checkProvider, embeddingProgressQueryOptions } from "../api/ai";
+import { SelectField } from "@/shared/ui/select-field";
+import {
+  aiUsageQueryOptions,
+  checkProvider,
+  embeddingProgressQueryOptions,
+  setRoleThinking,
+} from "../api/ai";
 import {
   type Budget,
   budgetWords,
@@ -28,18 +38,14 @@ import {
   usd,
 } from "../model/ai";
 
-const heading = "font-serif text-2xl font-semibold tracking-tight";
+const heading = "text-2xl font-semibold tracking-tight";
 
 /** The instance's AI: providers and roles, embedding progress and spend (admins). */
 export function AiPage() {
   const title = usePageTitle("AI");
   return (
     <main className="px-4 py-6 pb-12 sm:px-6 sm:py-8 sm:pb-16 2xl:mx-auto 2xl:max-w-[72rem]">
-      <h1
-        ref={title}
-        tabIndex={-1}
-        className="font-serif text-4xl font-semibold tracking-tight outline-none"
-      >
+      <h1 ref={title} tabIndex={-1} className="text-4xl font-semibold tracking-tight outline-none">
         AI
       </h1>
       <p className="mt-1 max-w-prose text-muted-foreground">
@@ -134,10 +140,50 @@ function RoleList({ roles }: { roles: readonly AiRole[] }) {
             ) : (
               <span className="text-muted-foreground">Not set</span>
             )}
+            {(r.role === "llm" || r.role === "judge") && <RoleThinking role={r} name={r.role} />}
           </dd>
         </div>
       ))}
     </dl>
+  );
+}
+
+/** The thinking level of the `llm` or `judge` role: set here, unless the configuration sets it. */
+function RoleThinking({ role, name }: { role: AiRole; name: "llm" | "judge" }) {
+  const queryClient = useQueryClient();
+  const save = useMutation({
+    mutationFn: (thinking: ThinkingLevel | null) => setRoleThinking(name, thinking),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: aiRolesQueryOptions().queryKey }),
+  });
+  const own = role.own_thinking ?? "";
+  const inherited = role.thinking && !role.own_thinking ? THINKING_LABEL[role.thinking] : null;
+  const hint = role.thinking_configured
+    ? `Set in the configuration (EXACTDOCS_AI__${name.toUpperCase()}__THINKING).`
+    : THINKING_HINT;
+  const warning = role.thinking_unsupported
+    ? `Its model takes no thinking level, so its calls leave it out: ${role.thinking_unsupported}.`
+    : undefined;
+  return (
+    <div className="mt-2 max-w-sm">
+      <SelectField
+        id={`thinking-${name}`}
+        label={`${ROLE_LABEL[name]} thinking`}
+        value={own}
+        disabled={role.thinking_configured || save.isPending}
+        hint={hint}
+        error={save.isError ? explainAiError(save.error) : warning}
+        onChange={(e) => save.mutate((e.target.value || null) as ThinkingLevel | null)}
+      >
+        <option value="">
+          {inherited ? `The LLM's level (${inherited})` : "The provider's default"}
+        </option>
+        {THINKING_LEVELS.map((level) => (
+          <option key={level} value={level}>
+            {THINKING_LABEL[level]}
+          </option>
+        ))}
+      </SelectField>
+    </div>
   );
 }
 
@@ -189,7 +235,7 @@ function ProviderCard({ provider: p }: { provider: AiProvider }) {
             {check.data.checks.map((c) => (
               <li key={`${c.role}-${c.model}`} className="flex items-start gap-2">
                 {c.status === "ok" ? (
-                  <CircleCheck aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-mark" />
+                  <CircleCheck aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
                 ) : (
                   <CircleAlert
                     aria-hidden="true"
@@ -296,7 +342,13 @@ function UsageSection() {
             LLM searches per minute per caller:{" "}
             {usage.data.llm_searches_per_minute ?? "not limited"}
           </p>
-          <div className="mt-4 overflow-x-auto">
+          {/* Scrolls sideways on a phone: focusable, so a keyboard can scroll it too. */}
+          <section
+            aria-label="Usage table"
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: a table wider than the screen scrolls
+            tabIndex={0}
+            className="mt-4 overflow-x-auto rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
             <table className="w-full min-w-[36rem] text-left text-sm">
               <thead className="text-muted-foreground">
                 <tr>
@@ -320,7 +372,7 @@ function UsageSection() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </section>
         </>
       )}
     </Section>

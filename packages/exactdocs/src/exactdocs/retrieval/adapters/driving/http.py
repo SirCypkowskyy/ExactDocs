@@ -55,12 +55,14 @@ from exactdocs.retrieval.dtos import (
     ReadChunkQuery,
     ResolveLibraryIdQuery,
     RoleListOut,
+    RoleOut,
     SaveProviderCommand,
     SearchAllQuery,
     SearchAllResult,
     SearchDocsQuery,
     SearchDocsResult,
     SetLibraryRetrievalCommand,
+    SetRoleThinkingCommand,
 )
 from exactdocs.retrieval.models import (
     AnthropicPlatform,
@@ -69,6 +71,7 @@ from exactdocs.retrieval.models import (
     RepoGuidance,
     RerankWith,
     TagMatch,
+    ThinkingLevel,
 )
 from exactdocs.retrieval.ports.driving import (
     ArticleOutline,
@@ -88,6 +91,7 @@ from exactdocs.retrieval.ports.driving import (
     SearchAllLibraries,
     SearchDocs,
     SetLibraryRetrieval,
+    SetRoleThinking,
 )
 from exactdocs_kernel import NOTICE
 
@@ -112,6 +116,15 @@ class LibraryRetrievalIn(BaseModel):
     """The library's own reranker, `<profile>:<model>`; null: the instance's. The embedding model
     is instance-wide only and cannot be set here.
     """
+    llm_thinking: ThinkingLevel | None = None
+    """How much its `llm` role's model (its own or the instance's) thinks before it answers:
+    `minimal`, `low`, `medium`, `high` or `xhigh`. Thinking tokens are billed as output, and
+    several providers default to a high level; HyDE and the agentic mode rarely need more than
+    `low`. Null: the instance's level (`EXACTDOCS_AI__LLM__THINKING`). A level the model cannot
+    take is refused (422 `thinking_unsupported`, naming the role and the model)."""
+    judge_thinking: ThinkingLevel | None = None
+    """The same for its `judge` role; null: the instance's (the `llm` role's when the judge is
+    the LLM)."""
     rerank_top_n: int | None = Field(
         default=None, ge=1, le=MAX_RERANK_TOP_N, description=RERANK_TOP_N_DESCRIPTION
     )
@@ -194,6 +207,16 @@ class NewProviderIn(ProviderIn):
 
     name: str = Field(pattern=PROFILE_NAME_PATTERN)
     """Used in roles as `<name>:<model>`: lower case, digits, `_` and `-`."""
+
+
+class RoleThinkingIn(BaseModel):
+    """An instance role's thinking level, as the admin sets it."""
+
+    model_config = ConfigDict(extra="forbid", use_attribute_docstrings=True)
+
+    thinking: ThinkingLevel | None = None
+    """How much the role's model thinks before it answers: `minimal`, `low`, `medium`, `high` or
+    `xhigh`; null: the provider's default. Thinking tokens are billed as output."""
 
 
 class ProviderCheckIn(BaseModel):
@@ -774,6 +797,7 @@ def build_ai_router(
     delete_provider: DeleteProvider,
     check_provider: CheckProvider,
     list_roles: ListRoles,
+    set_role_thinking: SetRoleThinking,
     estimate_embedding: EstimateEmbedding,
     get_embedding_progress: GetEmbeddingProgress,
     get_ai_usage: GetAiUsage,
@@ -787,6 +811,7 @@ def build_ai_router(
         delete_provider: Deletes one.
         check_provider: Makes one minimal call per role that uses one.
         list_roles: Shows the instance's roles.
+        set_role_thinking: Sets an instance role's thinking level.
         estimate_embedding: Estimates what embedding the versions not embedded yet costs.
         get_embedding_progress: Shows how far each embedding space has got.
         get_ai_usage: Shows spend and budget left per scope.
@@ -896,6 +921,27 @@ def build_ai_router(
             One entry per role.
         """
         return await list_roles()
+
+    @router.put("/roles/{role}", name="set_role_thinking")
+    async def set_thinking(role: ModelRole, body: RoleThinkingIn) -> RoleOut:
+        """Set (or clear, with null) the thinking level of the `llm` or `judge` role.
+
+        The level is sent as the provider's own setting at the next call: Google's thinking level
+        or budget, Claude's effort or budget, OpenAI's `reasoning_effort`. A level set in the
+        environment or the configuration file (`EXACTDOCS_AI__<ROLE>__THINKING`) cannot be
+        changed here (409 `role_configured`); another role takes none (422
+        `role_takes_no_thinking`); a level the role's model cannot take is refused (422
+        `thinking_unsupported`, naming the role and the model).
+
+        Args:
+            role: `llm` or `judge`.
+            body: The level.
+
+        Returns:
+            The role as it is now.
+        """
+        command = _command(lambda: SetRoleThinkingCommand(role=role, thinking=body.thinking))
+        return await set_role_thinking(command)
 
     _embedding_routes(router, estimate_embedding, get_embedding_progress)
 

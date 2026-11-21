@@ -13,6 +13,7 @@ from typing import Self
 
 import pytest
 
+from exactdocs.ingestion import use_cases
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.memory import (
     InMemoryCheckpoints,
@@ -41,6 +42,7 @@ from exactdocs.ingestion.errors import (
     NoArticlesError,
     NotAGitRepositoryError,
     RepositoryAuthRequiredError,
+    RepositoryTooLargeError,
     RepositoryUnreachableError,
 )
 from exactdocs.ingestion.models import (
@@ -105,6 +107,7 @@ class Checkout:
     tmp: Path | None = None
     after_write: Callable[[Path], None] = lambda _: None
     open: bool = False  # inside ``fetch``
+    bounded: bool = False  # ``fetch_files`` raises when its files add up to more than max_bytes
 
     @asynccontextmanager
     async def fetch(
@@ -148,7 +151,9 @@ class Checkout:
         del repository, commit_sha, refs, credential
         self.extra.append((list(paths), max_bytes))
         assert self.tmp is not None
-        folder = self.tmp / "second"
+        if self.bounded and sum(len(self.elsewhere.get(n, b"")) for n in paths) > max_bytes:
+            raise RepositoryTooLargeError(max_bytes)  # what the real gateway's watchdog does
+        folder = self.tmp / f"second{len(self.extra)}"  # one per call
         folder.mkdir()
         for name in paths:
             if name in self.elsewhere:
@@ -273,10 +278,14 @@ class Side:
 
 
 class CountingChunker:
+    """The real chunker; it raises on the articles at ``failing`` (one bad file, as in #430)."""
+
     def __init__(self) -> None:
         self.inner = MarkdownChunker()
         self.chunked: list[str] = []
         self.config_hash = self.inner.config_hash
+        self.failing: set[str] = set()
+        self.error: Exception = IndexError("list index out of range")
 
     def configured(self, config: ChunkingConfig) -> Self:
         self.inner = self.inner.configured(config)
@@ -285,6 +294,8 @@ class CountingChunker:
 
     def chunk(self, article: ParsedArticle) -> Sequence[ArticleChunk]:
         self.chunked.append(article.path)
+        if article.path in self.failing:
+            raise self.error
         return self.inner.chunk(article)
 
 
@@ -821,6 +832,107 @@ async def test_files_that_cannot_be_read_are_skipped_with_a_reason(tmp_path: Pat
     }
     assert ("docs/big.md", ProblemCode.TOO_LARGE, "larger than 50 bytes") in world.progress.problems
     assert world.progress.reports[-1] == (7, 7)  # skipped files count as processed
+
+
+async def test_a_fence_with_a_blank_info_string_imports(tmp_path: Path) -> None:
+    """Issue #430: ```` ``` ```` then blanks failed the whole import with an IndexError."""
+    blank = "# Storage\n\n```   \naz storage account list\n```\n\n~~~\t\necho x\n~~~\n"
+    world = build_world(tmp_path, {"docs/storage.md": blank.encode(), "docs/ok.md": b"# Ok\n"})
+
+    await world.run(make_job(), world.progress)
+
+    articles = {a.path: a for a in world.catalog.stored[0].articles}
+    assert sorted(articles) == ["docs/ok.md", "docs/storage.md"]
+    assert [c.code_languages for c in articles["docs/storage.md"].chunks] == [()]
+    assert world.progress.problems == []
+
+
+async def test_a_file_the_chunker_cannot_cut_is_skipped_and_the_rest_imported(
+    tmp_path: Path,
+) -> None:
+    world = build_world(
+        tmp_path,
+        {
+            "docs/auth.md": AUTH.encode(),
+            "docs/bad.md": b"# Bad\n\nCuts badly.\n",
+            "docs/install.md": INSTALL.encode(),
+        },
+    )
+    world.chunker.failing = {"docs/bad.md"}
+
+    await world.run(make_job(), world.progress)
+
+    assert [a.path for a in world.catalog.stored[0].articles] == ["docs/auth.md", "docs/install.md"]
+    assert world.progress.problems == [
+        ("docs/bad.md", ProblemCode.UNPARSABLE, "could not be parsed or chunked: IndexError")
+    ]
+    assert ProblemCode.UNPARSABLE.is_skip
+    assert world.log[-2:] == ["catalog activate m1", "catalog describe"]
+    assert world.progress.reports[-1] == (3, 3)  # the failed file counts as processed
+
+
+async def test_every_path_of_a_blob_the_chunker_cannot_cut_is_listed(tmp_path: Path) -> None:
+    bad = b"# Bad\n"  # one blob at two paths: chunked once, listed twice
+    world = build_world(
+        tmp_path, {"docs/a.md": bad, "docs/b.md": bad, "docs/install.md": INSTALL.encode()}
+    )
+    world.chunker.failing = {"docs/a.md"}
+
+    await world.run(make_job(), world.progress)
+
+    assert [a.path for a in world.catalog.stored[0].articles] == ["docs/install.md"]
+    assert [(p, c) for p, c, _ in world.progress.problems] == [
+        ("docs/a.md", ProblemCode.UNPARSABLE),
+        ("docs/b.md", ProblemCode.UNPARSABLE),
+    ]
+
+
+async def test_a_file_that_cannot_be_parsed_is_skipped_and_the_rest_imported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = use_cases.parse_article
+
+    def parse(path: str, text: str) -> ParsedArticle:
+        if path == "docs/bad.md":
+            raise RecursionError
+        return real(path, text)
+
+    monkeypatch.setattr(use_cases, "parse_article", parse)
+    world = build_world(tmp_path, {"docs/bad.md": b"# Bad\n", "docs/install.md": INSTALL.encode()})
+
+    await world.run(make_job(), world.progress)
+
+    assert [a.path for a in world.catalog.stored[0].articles] == ["docs/install.md"]
+    assert world.progress.problems == [
+        ("docs/bad.md", ProblemCode.UNPARSABLE, "could not be parsed or chunked: RecursionError")
+    ]
+    assert world.chunker.chunked == ["docs/install.md"]
+
+
+async def test_when_no_file_can_be_cut_the_import_has_no_articles(tmp_path: Path) -> None:
+    world = build_world(tmp_path, {"docs/bad.md": b"# Bad\n"})
+    world.chunker.failing = {"docs/bad.md"}
+
+    with pytest.raises(NoArticlesError):
+        await world.run(make_job(), world.progress)
+
+    assert world.log == []
+    assert [(p, c) for p, c, _ in world.progress.problems] == [
+        ("docs/bad.md", ProblemCode.UNPARSABLE)
+    ]
+
+
+async def test_running_out_of_memory_while_chunking_still_fails_the_import(
+    tmp_path: Path,
+) -> None:
+    world = build_world(tmp_path, {"docs/bad.md": b"# Bad\n", "docs/ok.md": INSTALL.encode()})
+    world.chunker.failing, world.chunker.error = {"docs/bad.md"}, MemoryError()
+
+    with pytest.raises(MemoryError):  # not about one file: the whole import stops
+        await world.run(make_job(), world.progress)
+
+    assert world.log == []
+    assert world.progress.problems == []
 
 
 async def test_a_file_name_that_is_not_utf8_is_skipped_with_a_printable_path(
@@ -1497,7 +1609,7 @@ async def test_referenced_images_are_imported_from_both_checkouts(tmp_path: Path
         ("docs/guide/logo.svg", "image/svg+xml", git_blob_sha(SVG), SVG),
         ("docs/img/flow.png", "image/png", git_blob_sha(PNG), PNG),
     ]
-    assert world.gateway.extra == [(["docs/img/flow.png"], 2**30)]
+    assert world.gateway.extra == [(["docs/img/flow.png"], 2**30 - len(SVG) + 2**20)]
     assert world.progress.problems == []
 
 
@@ -1581,6 +1693,31 @@ async def test_the_version_keeps_images_up_to_its_budget_and_skips_the_rest(
     assert [(p, c) for p, c, _ in world.progress.problems] == [("docs/c.png", "image_budget")]
 
 
+async def test_outside_images_too_big_for_the_budget_are_skipped_not_fatal(
+    tmp_path: Path,
+) -> None:
+    """Entra: thousands of referenced images outside the selection must not fail the import."""
+    names = [f"docs/media/{n:03}.png" for n in range(120)]
+    page = " ".join(f"![]({n.removeprefix('docs/')})" for n in ["docs/media/huge.png", *names])
+    huge = PNG + b"h" * 5000
+    world = build_world(
+        tmp_path,
+        {"docs/a.md": page.encode()},
+        elsewhere=dict.fromkeys(names, PNG) | {"docs/media/huge.png": huge},
+        max_image_bytes=64,
+        max_images_bytes=10 * len(PNG),
+    )
+    world.gateway.bounded = True
+
+    await world.run(make_job(), world.progress)
+
+    assert len(world.catalog.stored[0].images) == 10
+    problems = {p: c for p, c, _ in world.progress.problems}
+    assert problems["docs/media/huge.png"] == "too_large"
+    assert problems["docs/media/010.png"] == "image_budget"
+    assert len(world.gateway.extra) > 1  # fetched in batches, the big batch halved
+
+
 async def test_a_symlinked_image_is_not_followed(tmp_path: Path) -> None:
     outside = tmp_path / "secret.png"
     outside.write_bytes(PNG)
@@ -1631,8 +1768,7 @@ async def test_images_looked_for_are_capped_per_version(tmp_path: Path) -> None:
 
     await world.run(make_job(), world.progress)
 
-    (extra, _) = world.gateway.extra[0]
-    assert len(extra) == cap
+    assert sum(len(paths) for paths, _ in world.gateway.extra) == cap
     assert [c for _, c, _ in world.progress.problems].count("truncated") == 1
 
 

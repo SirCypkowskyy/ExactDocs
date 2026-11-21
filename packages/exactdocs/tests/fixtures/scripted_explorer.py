@@ -33,7 +33,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 
 from exactdocs.retrieval.errors import ProviderUnsupportedError
-from exactdocs.retrieval.models import ModelCheck, ModelRole, ProviderProfile
+from exactdocs.retrieval.models import ModelCheck, ModelRole, ProviderProfile, ThinkingLevel
 from exactdocs.retrieval.ports.driven import Reranker
 
 RUN_CODE = "run_code"
@@ -453,7 +453,22 @@ class ScriptedModels:
         del profile
         return None
 
-    async def chat_model(self, profile: ProviderProfile, model: str) -> object:
+    async def thinking_unsupported(self, profile: ProviderProfile, model: str) -> str | None:
+        """Know of no model that cannot think.
+
+        Args:
+            profile: The profile.
+            model: The model.
+
+        Returns:
+            ``None``.
+        """
+        del profile, model
+        return None
+
+    async def chat_model(
+        self, profile: ProviderProfile, model: str, *, thinking: ThinkingLevel | None = None
+    ) -> object:
         """Hand out the scripted model.
 
         Args:
@@ -463,6 +478,7 @@ class ScriptedModels:
         Returns:
             The ``FunctionModel``.
         """
+        del thinking
         self.chat_models.append(f"{profile.name}:{model}")
         return self.model
 
@@ -498,7 +514,14 @@ class ScriptedModels:
         """
         del name
 
-    async def check(self, profile: ProviderProfile, model: str, role: ModelRole) -> ModelCheck:
+    async def check(
+        self,
+        profile: ProviderProfile,
+        model: str,
+        role: ModelRole,
+        *,
+        thinking: ThinkingLevel | None = None,
+    ) -> ModelCheck:
         """Report the stand-in as working.
 
         Args:
@@ -509,6 +532,7 @@ class ScriptedModels:
         Returns:
             A passed check.
         """
+        del thinking
         return ModelCheck(role=role, profile=profile.name, model=model, ok=True)
 
 

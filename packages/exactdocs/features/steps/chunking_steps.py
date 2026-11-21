@@ -58,3 +58,25 @@ def step_bump(context: Context) -> None:
 @then("the chunking-config hash differs from before")
 def step_differs(context: Context) -> None:
     assert MarkdownChunker().config_hash != context.before
+
+
+# Issue #430: the Azure storage docs open fences so; the import failed with an IndexError.
+BLANK_FENCES = "# Storage\n\n```   \naz storage account list\n```\n\n~~~\t\necho x\n~~~\n"
+
+
+@given('the article "{path}" has code fences with only spaces or a tab after the backticks')
+def step_blank_fences(context: Context, path: str) -> None:
+    context.article = parse_article(path, BLANK_FENCES)
+
+
+@when('I chunk the article "{path}"')
+def step_chunk_article(context: Context, path: str) -> None:
+    assert context.article.path == path
+    context.chunks = MarkdownChunker().chunk(context.article)
+
+
+@then("its only chunk holds every fence and names no code language")
+def step_no_language(context: Context) -> None:
+    (chunk,) = context.chunks
+    assert chunk.content == BLANK_FENCES, chunk.content
+    assert chunk.code_languages == ()

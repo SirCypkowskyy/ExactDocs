@@ -1,4 +1,4 @@
-import type { AiProvider, AiRole } from "@/shared/lib/ai-queries";
+import type { AiProvider, AiRole, ThinkingLevel } from "@/shared/lib/ai-queries";
 import type { components } from "@/shared/lib/api-schema";
 
 export type LibraryRetrieval = components["schemas"]["LibraryRetrievalOut"];
@@ -151,6 +151,10 @@ export interface RetrievalDraft {
   llm: RoleDraft;
   judge: RoleDraft;
   reranker: RoleDraft;
+  /** `""`: the instance's level. */
+  llmThinking: "" | ThinkingLevel;
+  /** `""`: the instance's level. */
+  judgeThinking: "" | ThinkingLevel;
   rerankTopN: string;
   /** `""`: the instance's choice. */
   rerankWith: "" | RerankWith;
@@ -162,8 +166,27 @@ export interface RetrievalDraft {
 }
 
 export type DraftErrors = Partial<
-  Record<Exclude<keyof RetrievalDraft, "aiEnabled" | "repoGuidance">, string>
+  Record<
+    Exclude<keyof RetrievalDraft, "aiEnabled" | "repoGuidance" | "llmThinking" | "judgeThinking">,
+    string
+  >
 >;
+
+/** The roles whose model takes a thinking level, and their draft field (#421). */
+export const THINKING_ROLES = [
+  ["llm", "llmThinking"],
+  ["judge", "judgeThinking"],
+] as const;
+
+/** What a library's empty thinking level means: the instance's level for the role, in words. */
+export function instanceThinking(
+  role: "llm" | "judge",
+  roles: readonly AiRole[] | undefined,
+  label: (level: ThinkingLevel) => string,
+): string {
+  const level = roles?.find((x) => x.role === role)?.thinking;
+  return level ? `The instance's level (${label(level)})` : "The instance's level";
+}
 
 const roleDraft = (ref: string | null): RoleDraft => {
   if (!ref) return { profile: "", model: "" };
@@ -181,6 +204,8 @@ export function retrievalDraftOf(r: LibraryRetrieval): RetrievalDraft {
     llm: roleDraft(r.llm),
     judge: roleDraft(r.judge),
     reranker: roleDraft(r.reranker),
+    llmThinking: r.llm_thinking ?? "",
+    judgeThinking: r.judge_thinking ?? "",
     rerankTopN: text(r.rerank_top_n),
     rerankWith: r.rerank_with ?? "",
     repoGuidance: r.repo_guidance,
@@ -202,6 +227,8 @@ export function bodyOf(d: RetrievalDraft): LibraryRetrievalBody {
     llm: ref(d.llm),
     judge: ref(d.judge),
     reranker: ref(d.reranker),
+    llm_thinking: d.llmThinking || null,
+    judge_thinking: d.judgeThinking || null,
     rerank_top_n: num(d.rerankTopN),
     rerank_with: d.rerankWith || null,
     repo_guidance: d.repoGuidance,

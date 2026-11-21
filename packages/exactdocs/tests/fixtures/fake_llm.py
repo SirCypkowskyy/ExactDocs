@@ -235,9 +235,34 @@ def _answer(
             "stop_sequence": None,
             "usage": {"input_tokens": 5, "output_tokens": 1},
         }
+    return _rerank_or_gemini(path, body)
+
+
+def _rerank_or_gemini(path: str, body: dict[str, Any]) -> dict[str, Any] | list[Any] | None:
+    """Answer a rerank, or a Gemini API ``generateContent`` with ``OK``.
+
+    Args:
+        path: The request path, without its query.
+        body: The JSON body.
+
+    Returns:
+        The answer, or ``None`` for a path the gateway does not serve.
+    """
     if path.endswith("/rerank"):
         return _rerank(body)
-    return None
+    if not path.endswith(":generateContent"):
+        return None
+    return {
+        "candidates": [
+            {
+                "content": {"role": "model", "parts": [{"text": "OK"}]},
+                "finishReason": "STOP",
+                "index": 0,
+            }
+        ],
+        "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 1, "totalTokenCount": 6},
+        "modelVersion": path.rsplit("/", 1)[-1].split(":", maxsplit=1)[0],
+    }
 
 
 HOLD_SECONDS = 60.0

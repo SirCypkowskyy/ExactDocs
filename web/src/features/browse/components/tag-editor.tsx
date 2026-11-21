@@ -4,7 +4,9 @@ import { type FormEvent, type ReactNode, type RefObject, useId, useRef, useState
 import { HttpError } from "@/shared/lib/http";
 import { MAX_TAG_LENGTH, MAX_TAGS } from "@/shared/lib/tags";
 import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
+import { cn } from "@/shared/lib/utils";
 import { Input } from "@/shared/ui/input";
+import { pill, pillTone } from "@/shared/ui/recipes";
 import { refreshTags, setManualTags } from "../api/manual-tags";
 import {
   type AddResult,
@@ -24,10 +26,10 @@ interface TagEditorProps {
 }
 
 const small =
-  "inline-flex h-11 cursor-pointer items-center gap-1 rounded-md px-3 text-[13px] font-medium outline-none transition-[background-color,transform] duration-150 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] disabled:cursor-progress disabled:opacity-60 lg:h-7 lg:px-2";
+  "inline-flex h-11 cursor-pointer items-center gap-1 rounded-full px-3 text-small font-medium outline-none transition-[background-color,color,transform] duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] disabled:cursor-progress disabled:opacity-60 lg:h-6 lg:px-2.5";
 /** One manual tag's identity: the same tag can be set on this path and on an older one. */
 const keyOf = (m: ManualTag) => `${m.path}\u0000${m.tag}`;
-const quiet = `${small} bg-secondary text-secondary-foreground [@media(hover:hover)]:hover:bg-accent`;
+const quiet = `${small} border border-dashed border-input text-muted-foreground [@media(hover:hover)]:hover:bg-accent [@media(hover:hover)]:hover:text-foreground`;
 
 const REASONS: Record<Extract<AddResult, { ok: false }>["reason"], string> = {
   invalid: `A tag starts with a letter or digit and goes on with letters, digits and . _ + - (${MAX_TAG_LENGTH} characters at most).`,
@@ -48,25 +50,27 @@ function explain(error: unknown): string {
 
 function Group({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-      <dt className="w-24 shrink-0 text-xs text-muted-foreground/80">{label}</dt>
-      <dd className="m-0 min-w-0 flex-1">{children}</dd>
+    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+      <dt className="text-small text-muted-foreground">{label}</dt>
+      <dd className="m-0 min-w-0">{children}</dd>
     </div>
   );
 }
 
 function Plain({ tags, label }: { tags: readonly string[]; label: string }) {
   return (
-    <ul aria-label={label} className="flex flex-wrap gap-x-3 text-[13px] text-muted-foreground">
+    <ul aria-label={label} className="flex flex-wrap gap-1.5">
       {tags.map((t) => (
-        <li key={t}>{t}</li>
+        <li key={t} className={cn(pill, "h-6", pillTone.neutral, "text-foreground")}>
+          {t}
+        </li>
       ))}
     </ul>
   );
 }
 
 const chipButton =
-  "inline-flex size-11 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring aria-disabled:cursor-progress aria-disabled:opacity-60 lg:size-7 [@media(hover:hover)]:hover:text-foreground";
+  "inline-flex size-11 cursor-pointer items-center justify-center rounded-full text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring aria-disabled:cursor-progress aria-disabled:opacity-60 lg:size-6 [@media(hover:hover)]:hover:text-foreground";
 
 /** One manual tag, where it was set when that is an older path, and its remove button. */
 function ManualChip({
@@ -83,10 +87,10 @@ function ManualChip({
   onRemove: () => void;
 }) {
   return (
-    <li className="inline-flex items-center gap-0.5 rounded-md bg-secondary pl-2.5 text-[13px] lg:pl-2">
+    <li className="row-in inline-flex items-center gap-0.5 rounded-full bg-route-soft pl-2.5 text-small font-medium">
       <span>{tag.tag}</span>
       {inherited && (
-        <span className="ml-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+        <span className="ml-1 font-normal text-muted-foreground [overflow-wrap:anywhere]">
           set on <span className="font-mono">{tag.path}</span>
         </span>
       )}
@@ -168,7 +172,7 @@ function AddTagForm({
       <button type="button" onClick={onClose} className={quiet}>
         Cancel
       </button>
-      <p id={hintId} className="w-full text-xs text-muted-foreground">
+      <p id={hintId} className="w-full text-small text-muted-foreground">
         For this path in every version of the library, and where it was renamed to later.
       </p>
     </form>
@@ -270,28 +274,28 @@ export function TagEditor({ owner, repo, article }: TagEditorProps) {
   }
 
   return (
-    <section aria-label="Tags" className="mt-3">
-      <dl className="m-0 space-y-1.5">
+    <section aria-label="Tags" className="min-w-0">
+      <dl className="m-0 flex flex-wrap items-center gap-x-4 gap-y-2">
         {groups.frontMatter.length > 0 && (
-          <Group label="Front matter">
+          <Group label="From the file">
             <Plain tags={groups.frontMatter} label="Tags from front matter" />
           </Group>
         )}
         {groups.rules.length > 0 && (
-          <Group label="Path rules">
+          <Group label="From path rules">
             <Plain tags={groups.rules} label="Tags from path rules" />
           </Group>
         )}
         {groups.imported.length > 0 && (
           <Group label="Imported">
             <Plain tags={groups.imported} label="Tags from front matter or path rules" />
-            <p className="mt-0.5 text-xs text-muted-foreground">
+            <p className="mt-1 text-small text-muted-foreground">
               This version was imported before ExactDocs kept which is which. Importing it again, or
               changing a tag rule, tells them apart.
             </p>
           </Group>
         )}
-        <Group label="By hand">
+        <Group label="Added here">
           <ul aria-label="Tags added by hand" className="flex flex-wrap items-center gap-1.5">
             {groups.manual.map((m, index) => (
               <ManualChip

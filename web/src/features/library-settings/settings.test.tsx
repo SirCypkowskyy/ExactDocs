@@ -572,7 +572,7 @@ describe("re-sync", () => {
       await screen.findByRole("button", { name: "Re-import the new commit of v1.4.0" }),
     );
     const said = await screen.findByText(/nothing to re-import/);
-    expect(said.closest("p")).toHaveClass("bg-accent"); // not a mistake: neutral
+    expect(said.closest("p")).toHaveClass("bg-route-soft"); // not a mistake: neutral
     expect(screen.getByText(/tag now points at another commit/)).toBeInTheDocument();
     // Asking again would get the same answer.
     expect(screen.queryByRole("button", { name: /Re-import/ })).not.toBeInTheDocument();
@@ -584,7 +584,7 @@ describe("re-sync", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
     const wait = await screen.findByText(/still importing/);
     // A wait state is neutral, not red.
-    expect(wait.closest("p")).toHaveClass("bg-accent");
+    expect(wait.closest("p")).toHaveClass("bg-route-soft");
 
     serve({ sync: () => failure(422, "repo_unreachable", "failed job j7: unreachable") });
     await userEvent.click(screen.getByRole("button", { name: "Re-sync now" }));

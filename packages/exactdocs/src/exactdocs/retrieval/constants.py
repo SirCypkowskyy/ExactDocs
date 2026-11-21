@@ -952,6 +952,12 @@ _VECTOR_MISSING: Final[str] = (
     "ORDER BY c.blob_sha, c.config_hash, c.position LIMIT :limit"
 )
 """A manifest's chunks without a vector, in a stable order."""
+_VECTOR_MISSING_COUNT: Final[str] = (
+    "SELECT count(DISTINCT c.id)" + _VECTOR_JOIN + "LEFT JOIN {table} v ON v.chunk_key = c.id "
+    "WHERE mc.manifest_id = :manifest AND v.chunk_key IS NULL"
+)
+"""How many chunks ``_VECTOR_MISSING`` returns without a limit: a chunk held by several of the
+manifest's paths (identical files) counts once, as it is embedded once (#431)."""
 _HEADING_CHARACTERS: Final[str] = (
     "(SELECT coalesce(sum(length(h.value)), 0) FROM json_each(c.heading_path) h)"
 )
