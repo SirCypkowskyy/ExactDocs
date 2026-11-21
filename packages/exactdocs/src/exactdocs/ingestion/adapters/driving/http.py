@@ -135,7 +135,6 @@ def build_router(
         get_job: Reads one job.
         get_library_access: Says whether a library has a stored credential.
         list_latest_jobs: Lists the newest job of every (library, version).
-    list_jobs: Lists a page of the jobs of every readable library.
         list_jobs: Lists a page of the jobs of every readable library.
         list_library_jobs: Lists a page of a library's jobs.
         check_repository: Validates a git URL.
