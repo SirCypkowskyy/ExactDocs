@@ -34,7 +34,6 @@ from exactdocs.bootstrap.bridges import (
     CatalogLibraryIds,
     CatalogLibrarySettings,
     CatalogLibrarySources,
-    CatalogLibraryTexts,
     CatalogManualTags,
     CatalogNewLibraries,
     CatalogRemovals,
@@ -84,6 +83,7 @@ from exactdocs.bootstrap.database import (
 )
 from exactdocs.bootstrap.embedding import SaveProviderThenEmbed, requeue_daily
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
+from exactdocs.bootstrap.library_texts import CatalogLibraryTexts
 from exactdocs.bootstrap.local_models import LocalModels
 from exactdocs.bootstrap.open_access import OpenAccess
 from exactdocs.bootstrap.repo_guidance import SetRetrievalThenReprocess

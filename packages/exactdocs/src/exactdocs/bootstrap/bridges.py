@@ -48,7 +48,6 @@ from exactdocs.catalog.dtos import (
     StoreManifestCommand,
     TagRuleIn,
     TagSourcesIn,
-    UpdateLibraryCommand,
 )
 from exactdocs.catalog.dtos import (
     ChunkingIn as CatalogChunkingIn,
@@ -101,7 +100,6 @@ from exactdocs.catalog.ports.driving import (
     SetLibrarySettings,
     SetManualTags,
     StoreManifest,
-    UpdateLibrary,
 )
 from exactdocs.identity.dtos import (
     ApiTokenIdentity,
@@ -988,26 +986,6 @@ class CatalogLibrarySettings:
                     chunker=chunking.chunker,
                 ),
             )
-        )
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class CatalogLibraryTexts:
-    """Implements ``ingestion.ports.driven.LibraryTexts`` using the catalog."""
-
-    update_library: UpdateLibrary
-    """The catalog's edit of a library's title and description (kept across imports)."""
-
-    async def save(self, library: str, *, title: str | None, description: str | None) -> None:
-        """Store the text the way ``PATCH /libraries/{owner}/{repo}`` does.
-
-        Args:
-            library: The library ID.
-            title: The new title; ``None``: unchanged.
-            description: The new description; ``None``: unchanged.
-        """
-        await self.update_library(
-            UpdateLibraryCommand(id=library, title=title, description=description)
         )
 
 

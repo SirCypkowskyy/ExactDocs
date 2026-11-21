@@ -12163,6 +12163,28 @@
             ],
             "description": "The chunking, when it changes."
           },
+          "title": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TextChange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The title, when it changes."
+          },
+          "description": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TextChange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The description, when it changes."
+          },
           "refs_to_add": {
             "items": {
               "type": "string"
@@ -12216,6 +12238,8 @@
           "exclude_paths",
           "tag_rules",
           "chunking",
+          "title",
+          "description",
           "refs_to_add",
           "auto_sync",
           "job_kind",
@@ -14526,6 +14550,33 @@
             ],
             "title": "Auto Sync",
             "description": "The scheduled check, as a whole (what it leaves out takes its default); `false` turns it\noff. Left out: not managed."
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title",
+            "description": "The library's title, on one line; stored like an edit by hand, so a later import keeps it.\nLeft out: not managed, and the repository's README names the library."
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "The library's description (empty: none); stored like an edit by hand, so a later import\nkeeps it. Left out: not managed, and the repository's README describes the library."
           }
         },
         "additionalProperties": false,
@@ -15049,6 +15100,28 @@
         ],
         "title": "TaggedArticle",
         "description": "The manual tags of a path as stored: every version's article at that path carries them.\n\nSo does, in a later version, the article git saw it renamed to."
+      },
+      "TextChange": {
+        "properties": {
+          "before": {
+            "type": "string",
+            "title": "Before",
+            "description": "As stored."
+          },
+          "after": {
+            "type": "string",
+            "title": "After",
+            "description": "As declared, cleaned the way an edit by hand is."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "before",
+          "after"
+        ],
+        "title": "TextChange",
+        "description": "A managed title or description as stored and as declared."
       },
       "TokenGrant": {
         "properties": {

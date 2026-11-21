@@ -22,7 +22,7 @@ from html.parser import HTMLParser
 from itertools import pairwise, starmap
 from operator import itemgetter
 from pathlib import PurePosixPath
-from typing import Any, Final, NewType, Self
+from typing import Any, NewType, Self
 from urllib.parse import unquote, urlsplit
 
 import yaml
@@ -3276,11 +3276,10 @@ class SourcesField(StrEnum):
     TITLE = "title"
     DESCRIPTION = "description"
 
-
-TEXT_FIELDS: Final[frozenset[SourcesField]] = frozenset(
-    {SourcesField.TITLE, SourcesField.DESCRIPTION}
-)
-"""The managed fields that are the library's text, stored apart from its import settings."""
+    @property
+    def is_text(self) -> bool:
+        """Whether this is the library's text, stored apart from its import settings."""
+        return self in {SourcesField.TITLE, SourcesField.DESCRIPTION}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -3328,12 +3327,12 @@ class LibraryUpdate:
     @property
     def settings_changed(self) -> bool:
         """Whether an import setting (paths, tag rules, chunking) differs."""
-        return any(name not in TEXT_FIELDS for name in self.changed)
+        return any(not name.is_text for name in self.changed)
 
     @property
     def text_changed(self) -> bool:
         """Whether the title or the description differs."""
-        return any(name in TEXT_FIELDS for name in self.changed)
+        return any(name.is_text for name in self.changed)
 
     @property
     def writes(self) -> bool:
