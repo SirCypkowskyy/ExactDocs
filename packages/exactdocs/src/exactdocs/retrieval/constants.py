@@ -147,6 +147,9 @@ REDIS_DEFAULT_TIMEOUT_SECONDS: Final[int] = 10
 ``TIMEOUT``, so a query that runs out fails instead of answering with part of its results)."""
 REDIS_WRITE_BATCH: Final[int] = 256
 """Hashes written per transaction (``MULTI``: ``DEL`` and ``HSET`` of each)."""
+REDIS_INDEXING_POLL_SECONDS: Final[float] = 0.01
+"""How often a new index is asked whether its first scan of the keys already there is done
+(writes wait for it, up to the ``timeout`` option)."""
 REDIS_DELETE_BATCH: Final[int] = 1_000
 """Keys found and unlinked per round when a version's entries are deleted."""
 REDIS_TAG_SEPARATOR: Final[str] = "\x1f"

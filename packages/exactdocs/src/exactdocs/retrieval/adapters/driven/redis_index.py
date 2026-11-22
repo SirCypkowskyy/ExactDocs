@@ -38,6 +38,7 @@ from exactdocs.retrieval.constants import (
     REDIS_DEFAULT_TIMEOUT_SECONDS,
     REDIS_DELETE_BATCH,
     REDIS_FALSE,
+    REDIS_INDEXING_POLL_SECONDS,
     REDIS_OPTIONS,
     REDIS_PREFIX,
     REDIS_SCORER,
@@ -514,7 +515,25 @@ class _RedisIndex:
                 await self._create(index, schema)
             else:
                 check(info)
+            await self._indexed(index)
             self._ready.add(index)
+
+    async def _indexed(self, index: str) -> None:
+        """Wait (up to the timeout) for an index's first scan of the keys already there.
+
+        Writing while ``FT.CREATE``'s scan runs can index a hash twice, and the second copy's
+        ghost then counts in the term statistics (BM25's IDF) until the garbage collector runs.
+
+        Args:
+            index: The index.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.timeout_ms / 1000
+        while loop.time() < deadline:
+            info = await self._query("FT.INFO", index)
+            if info is None or _text(_get(info, "indexing")) in {"0", "None"}:
+                return
+            await asyncio.sleep(REDIS_INDEXING_POLL_SECONDS)
 
     async def _create(self, index: str, schema: Sequence[object]) -> None:
         """Run ``FT.CREATE`` (one another process created meanwhile is fine).

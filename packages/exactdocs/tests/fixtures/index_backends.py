@@ -39,6 +39,9 @@ class BackendCase:
     counts_terms: bool = False
     """It ranks by term counts (the in-memory reference), not BM25: the suites skip the cases
     only a BM25-like ranking passes (length normalisation, a heading's ancestors)."""
+    stale_statistics: bool = False
+    """Deleted entries still count in its term statistics until its garbage collector runs
+    (Redis' Query Engine): a rebuild finds the same hits, with other scores."""
 
 
 @asynccontextmanager
@@ -73,7 +76,10 @@ def _redis_cases() -> list[BackendCase]:
 
     return [
         BackendCase(
-            name="redis", search=redis_server.redis_search, vectors=redis_server.plain_vectors
+            name="redis",
+            search=redis_server.redis_search,
+            vectors=redis_server.plain_vectors,
+            stale_statistics=True,
         ),
         BackendCase(name="redis_hybrid", vectors=redis_server.hybrid_vectors),
     ]

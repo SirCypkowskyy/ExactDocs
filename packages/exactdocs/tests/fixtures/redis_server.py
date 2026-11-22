@@ -37,9 +37,7 @@ def options(prefix: str, *, hybrid: bool = False) -> dict[str, object]:
 def admin() -> Redis:
     """A client of the test server, for the tests' own looks and clean-ups."""
     assert REDIS_URL is not None
-    return Redis.from_url(
-        REDIS_URL, username=REDIS_USERNAME, password=REDIS_PASSWORD, protocol=3
-    )
+    return Redis.from_url(REDIS_URL, username=REDIS_USERNAME, password=REDIS_PASSWORD, protocol=3)
 
 
 async def drop(prefix: str) -> None:
