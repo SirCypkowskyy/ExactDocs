@@ -42,6 +42,15 @@ local = [
     "fastembed==0.9.1",
     "onnxruntime==1.31.0",
 ]
+# Milvus as the vector backend (#360, EXACTDOCS_VECTOR_BACKEND=milvus): imported only by
+# `retrieval/adapters/driven/milvus_index.py`, and only once an operator names the backend. Not in
+# any image. `milvus` is the client alone (a Milvus server or Zilliz Cloud); `milvus-lite` adds
+# Milvus Lite, the embedded engine on a local `.db` directory (pure Python with faiss-cpu: wheels
+# for Linux x86_64 and ARM64, macOS). Exact pins (pymilvus 3.0.2 of 2026-09-18, milvus-lite 3.2.2
+# of 2026-10-13, both more than 14 days old when taken), tested against the
+# `milvusdb/milvus` standalone server in CI and Milvus Lite on a temporary directory.
+milvus = ["pymilvus==3.0.2"]
+milvus-lite = ["pymilvus==3.0.2", "milvus-lite==3.2.2"]
 
 [project.scripts]
 exactdocs = "exactdocs.bootstrap.cli:main"
