@@ -99,7 +99,7 @@ from exactdocs.ingestion.constants._git import (
     _GIT_OVERHEAD,
     _GONE,
     _HEADS,
-    _HEAVY_SUFFIXES,
+    _HEAVY_PATTERNS,
     _HOST_KEY_CHANGED,
     _KEY_FILE,
     _KEYGEN_SECONDS,
@@ -1511,9 +1511,6 @@ def sparse_patterns(selection: PathSelection) -> list[str]:
     # article names is fetched on its own, within its own bounds.
     heavy = [f"!{suffix_pattern}" for suffix_pattern in _HEAVY_PATTERNS]
     return [*includes, *_ROOT_README, *excludes, *heavy, _ROOT_CONTEXT7]
-
-
-_HEAVY_PATTERNS = tuple(f"*{suffix}" for suffix in _HEAVY_SUFFIXES)
 
 
 def _literal(path: str) -> str | None:
