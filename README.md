@@ -152,7 +152,10 @@ benchmark numbers. See [Search and AI models](docs/search.md).
   `exactdocs index check` reports what it lost and `exactdocs index rebuild` writes it again.
   A backend is an optional extra behind one adapter; a backend that fuses keyword and vector
   search itself serves hybrid search natively. See
-  [External index backends](docs/architecture.md#external-index-backends).
+  [External index backends](docs/architecture.md#external-index-backends). Available:
+  - [libSQL](docs/configuration.md#libsql) for the search and vector indexes: FTS5 and libSQL's
+    native vector index, on a libSQL server (`sqld`, Turso) shared by several processes or in
+    one local file (`exactdocs[libsql]`).
 
 ## How it works
 

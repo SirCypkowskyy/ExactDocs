@@ -1333,6 +1333,13 @@ keeps the backends in step:
   through `StoredVectors`), and without a scope deletes the orphans and the retired spaces'
   copies. It is safe while serving and to repeat.
 
+**The backends.**
+
+| Name | Indexes | Adapter | Extra | Native hybrid |
+|---|---|---|---|---|
+| `memory` | search, vectors | `memory_index.py` (in process, tests only) | none | yes (RRF of term counts and cosine) |
+| `libsql` | search, vectors | `libsql_index.py`: FTS5 with SQLite's columns and `bm25()` weights; a table per space with an `F32_BLOB` column and a `libsql_vector_idx` index read by `vector_top_k`, filtered to the asked versions (an exact scan when they are too small a share of the space). A server over its HTTP API, or a local file ([Configuration](configuration.md#libsql)) | `libsql` (a local file only) | no (ExactDocs fuses) |
+
 **Adding a backend** is one adapter module in `retrieval/adapters/driven/` (the reference is
 `memory_index.py`; it holds nothing across a restart and is for tests), its extra in
 `packages/exactdocs/pyproject.toml`, one `IndexBackendKind` in `INDEX_BACKENDS`

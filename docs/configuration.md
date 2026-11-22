@@ -242,6 +242,115 @@ by the server.
 | `EXACTDOCS_TOKEN` | The API token, when `--token` is not given; also what `exactdocs config` snippets refer to |
 | `EXACTDOCS_CLIENT_CONFIG` | Another file instead of `config.json` in your user config directory |
 
+## External index backends
+
+`EXACTDOCS_SEARCH_BACKEND` and `EXACTDOCS_VECTOR_BACKEND` move an index out of the database (see
+[External index backends](architecture.md#external-index-backends)). Each backend is configured
+under `[index_backends.<name>]` in the TOML file, or `EXACTDOCS_INDEX_BACKENDS__<NAME>__<OPTION>`;
+keys and tokens only from the environment or a `*_file` option. After switching, or after the
+backend lost data, run `exactdocs index rebuild` ([Deployment](deployment.md#external-index-backends)).
+
+### libSQL
+
+[libSQL](https://github.com/tursodatabase/libsql), the open-source fork of SQLite behind Turso, can
+hold the **search index**, the **vector index**, or both (`EXACTDOCS_SEARCH_BACKEND=libsql`,
+`EXACTDOCS_VECTOR_BACKEND=libsql`, #358): full-text search with FTS5, as on SQLite, and vectors
+in libSQL's native vector type and index (`F32_BLOB`, `libsql_vector_idx`, `vector_top_k`), with
+no extension to load. It runs in one of two places, named by `url`:
+
+- **A libSQL server** (`sqld`, self-hosted, or a Turso database): `libsql://`, `https://` or
+  `http://`. ExactDocs talks to its HTTP API with its own HTTP client, so nothing more is
+  installed: the images can use it as they are. Tested against
+  `ghcr.io/tursodatabase/libsql-server:v0.24.33`.
+- **A local file**: `file:<path>` (or a path). libSQL then runs inside ExactDocs, through the
+  `libsql` package: `pip install 'exactdocs[libsql]'` or
+  `uvx --from 'exactdocs[libsql]' exactdocs serve`. It is not in the images. Its latest release
+  (0.1.11) has a Python 3.14 wheel for Linux x86_64 only; elsewhere pip builds it from source,
+  which needs a Rust toolchain.
+
+```toml
+# exactdocs.toml (EXACTDOCS_CONFIG_FILE)
+search_backend = "libsql"
+vector_backend = "libsql"
+
+[index_backends.libsql]
+url = "libsql://exactdocs-acme.turso.io"   # or "http://sqld:8080", or "file:/data/index.db"
+prefix = "exactdocs"
+```
+
+```bash
+export EXACTDOCS_INDEX_BACKENDS__LIBSQL__AUTH_TOKEN=...   # or auth_token_file in the TOML file
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `url` | required | `libsql://host[:port]` (HTTPS; add `?tls=0` for plain HTTP), `https://host[:port]`, `http://host[:port]`, or a local file: `file:<path>`, `file://<path>` or a path. A server URL names the server only: no path, user or password |
+| `auth_token` | unset | The server's token (a JWT: a Turso database token, or one signed with the key given to `sqld --auth-jwt-key-file` / `SQLD_AUTH_JWT_KEY`), sent as `Authorization: Bearer`. From the environment only (`EXACTDOCS_INDEX_BACKENDS__LIBSQL__AUTH_TOKEN`); the TOML file refuses it. Not for a local file |
+| `auth_token_file` | unset | A file holding the token (a mounted secret), instead of `auth_token` |
+| `prefix` | `exactdocs` | What every table ExactDocs creates starts with (letters, digits and `_`, at most 40). Give every ExactDocs instance that shares a libSQL database its own |
+| `timeout` | `10` | Seconds one request to a server may take |
+| `compress_neighbors` | `float8` | How the vector index stores the vectors of a node's neighbours: `float1bit`, `float8`, `float16`, `floatb16` or `float32` (sizing below). Set when a space's table is created: changing it later needs the space dropped (a new embedding model) or the tables dropped and `exactdocs index rebuild` |
+| `max_neighbors` | libSQL's | The most neighbours of a node in the vector index (libSQL's default grows with the square root of the dimensions). Fewer: a smaller, faster to write, less exact index |
+
+**What ExactDocs creates.** For the search index, `<prefix>_search_entries` (one row per chunk of
+each version: manifest ID, chunk ID, library, tags) and `<prefix>_search`, its FTS5 table with
+the columns, tokenizer (`unicode61 tokenchars '-_.'`) and `bm25()` column weights of ExactDocs'
+SQLite index. For the vector index, `<prefix>_spaces` (the embedding spaces and their
+dimensions) and, on the first write to a space, `<prefix>_space_<id>`: the chunks of each
+version with their vectors in an `F32_BLOB(<dimensions>)` column, and the vector index
+`<prefix>_space_<id>_ann` (cosine). A new embedding model makes a new space, so a new table; the
+retired space's table is dropped. A space of the same ID with other dimensions (another instance
+with the same `prefix`) is never written to: the write fails naming it.
+
+**Searches.** Every search names the versions it may look at, in SQL: never a chunk of another
+version. Full-text search ranks with FTS5's `bm25()`, as ExactDocs' SQLite index does; its
+statistics are over libSQL's entries (one per chunk of each version, where the database holds
+one per distinct section), so two hits whose scores are close may come in the other order. A
+vector search asks the vector index (`vector_top_k`) for enough neighbours that the asked
+versions' share of the space fills the limit (twice that many, at most 2,000), keeps theirs and
+orders them by their exact cosine distance; when the versions are too small a share of the space
+for that (or a tag filter keeps too few of them), it compares every vector of those versions
+instead, which is exact and cheap for a version's few thousand chunks. Hybrid search fuses
+libSQL's two halves in ExactDocs (reciprocal rank fusion), as with the database.
+
+**Several processes.** A libSQL server is what several ExactDocs processes or hosts share (with
+PostgreSQL as their database): each write is one transaction on the server, so they can write at
+the same time. A local file is for one host: processes there may share it (WAL, and a writer
+waits up to 5 seconds for another's lock), but never put it on a network filesystem. Embedded
+replicas (a local copy synced from a server) are not used.
+
+**Authentication.** Use `https` (or `libsql://`) for anything but a server on loopback or a
+private network: the token goes with every request. A missing or refused token stops the start
+with `HTTP 401` and the backend's name; no error or log line carries the token.
+
+**Sizing.** libSQL holds one row per chunk of each version (the same section in two versions is
+two rows), so count the chunks of every indexed version. The search index takes about what the
+text takes, twice (FTS5 keeps its own copy, as on SQLite). A vector takes 4 bytes per dimension,
+but the vector index takes much more: each node keeps its neighbours' vectors, compressed by
+`compress_neighbors`. SIZING_TABLE
+
+### ExactDocs' own database on libSQL
+
+Not supported yet: `EXACTDOCS_DATABASE_URL` takes SQLite or PostgreSQL. What was checked (#358):
+
+- **The schema runs on libSQL.** Every Alembic revision runs on a local libSQL file and on a
+  libSQL server and gives the same schema as SQLite (`tests/bootstrap/test_libsql_migrations.py`,
+  through the sync `libsql` driver; libSQL is SQLite 3.45). On the server, a connection's
+  `PRAGMA`s (`foreign_keys=OFF` before the revisions) last one HTTP request only, and the server
+  re-spells a virtual table's `CREATE` statement.
+- **No driver for ExactDocs' database stack.** ExactDocs runs SQLite through async SQLAlchemy
+  (aiosqlite). There is no maintained async driver for libSQL: `sqlalchemy-libsql` is sync and
+  needs `libsql-experimental` (deprecated, no Python 3.14 wheels); `libsql` 0.1.11 (the latest,
+  2025-09) is sync, has no Linux ARM64 wheel (the images and CI are ARM64), and its connection
+  lacks what ExactDocs' SQLite setup calls: `create_function`, `set_authorizer` (the AI spend
+  ledger's guard), `enable_load_extension` (`sqlite-vec`) and `backup` (`exactdocs backup`).
+  `pyturso` (Turso's rewrite) has wheels, but neither libSQL's vector index nor FTS5.
+- **The database's vector store needs `sqlite-vec`**, which a libSQL server cannot load: it would
+  need a store on libSQL's native vectors (this backend is one, for the copy it holds).
+
+So the existing SQLite persistence tests do not run on libSQL. Use libSQL as the search and
+vector backend above, with SQLite or PostgreSQL as the database.
+
 ## The secret key
 
 `EXACTDOCS_SECRET_KEY` encrypts the stored tokens and deploy keys of private repositories and the
