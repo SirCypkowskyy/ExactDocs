@@ -381,7 +381,7 @@ class _FileEngine:
 
     def _connect(self) -> None:
         """Open the file (on the backend's thread)."""
-        driver = importlib.import_module("libsql")
+        driver: Any = importlib.import_module("libsql")
         self.connection = driver.connect(self.path, isolation_level=None)
         cursor = self.connection.cursor()
         cursor.execute(f"PRAGMA busy_timeout={LIBSQL_BUSY_TIMEOUT_MS}")
