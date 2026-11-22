@@ -538,6 +538,9 @@ class _RedisIndex:
     async def _create(self, index: str, schema: Sequence[object]) -> None:
         """Run ``FT.CREATE`` (one another process created meanwhile is fine).
 
+        Every word is indexed (no stop words), without its positions (``NOOFFSETS``: nothing
+        here matches phrases or highlights; ExactDocs makes its snippets from the database).
+
         Args:
             index: The index.
             schema: The ``SCHEMA`` arguments.
@@ -545,7 +548,8 @@ class _RedisIndex:
         Raises:
             IndexBackendUnavailableError: Redis did not create it.
         """
-        definition = ["ON", "HASH", "PREFIX", 1, f"{index}:", "STOPWORDS", 0, "SCHEMA"]
+        definition = ["ON", "HASH", "PREFIX", 1, f"{index}:", "NOOFFSETS", "STOPWORDS", 0]
+        definition.append("SCHEMA")
         try:
             await self._open().execute_command("FT.CREATE", index, *definition, *schema)
         except ResponseError as error:

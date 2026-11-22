@@ -1333,6 +1333,13 @@ keeps the backends in step:
   through `StoredVectors`), and without a scope deletes the orphans and the retired spaces'
   copies. It is safe while serving and to repeat.
 
+**The backends.**
+
+| Name | Indexes | Adapter | Extra | Native hybrid |
+|---|---|---|---|---|
+| `memory` | search, vectors | `memory_index.py` (in process, tests only) | none | yes (RRF of term counts and cosine) |
+| `redis` | search, vectors | `redis_index.py`: Redis 8's Query Engine, a hash per chunk and version, indexes made with `FT.CREATE` (`<prefix>:search`, `<prefix>:space<id>`), `manifest_id` / `library` / `version_id` / `tags` as `TAG` fields ([Configuration](configuration.md#redis)) | `redis` | with `hybrid = true`: one `FT.HYBRID` query (BM25 and KNN fused by Redis, RRF) |
+
 **Adding a backend** is one adapter module in `retrieval/adapters/driven/` (the reference is
 `memory_index.py`; it holds nothing across a restart and is for tests), its extra in
 `packages/exactdocs/pyproject.toml`, one `IndexBackendKind` in `INDEX_BACKENDS`
