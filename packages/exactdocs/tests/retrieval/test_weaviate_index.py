@@ -278,6 +278,7 @@ async def test_a_collection_dropped_behind_its_back_is_made_again_on_the_next_wr
 
         assert await backend.nearest(s, ["m1"], [1, 0, 0], TagFilter(), 5) == []
         assert await backend.held(s.id, None) == []
+        await backend.remove(s.id, "m1", [ChunkId("a")])  # nothing left to delete: no error
         await backend.put(s, v1, [entry(v1, "b", (0.0, 1.0, 0.0))])
 
         assert await backend.held(s.id, None) == [

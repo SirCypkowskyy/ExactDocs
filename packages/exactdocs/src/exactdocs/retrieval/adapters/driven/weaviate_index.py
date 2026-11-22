@@ -456,12 +456,32 @@ class _WeaviateBackend:
         Args:
             collection: The collection.
             where: The filter.
+
+        Raises:
+            IndexBackendUnavailableError: Weaviate did not delete them.
         """
         data = self._open().collections.use(collection).data
         for _ in range(WEAVIATE_DELETE_ROUNDS):
-            result = await self._call(data.delete_many(where=where))
+            try:
+                result = await self._call(data.delete_many(where=where))
+            except IndexBackendUnavailableError:
+                if await self._gone(collection):  # dropped elsewhere: nothing left to delete
+                    return
+                raise
             if not result.matches or not result.successful:
                 return
+
+    async def _gone(self, collection: str) -> bool:
+        """Tell, after a call on a collection failed, whether it no longer exists.
+
+        Args:
+            collection: The collection.
+
+        Returns:
+            True when it was dropped (it is forgotten); False when it is there.
+        """
+        self._known.discard(collection)
+        return not await self._exists(collection)
 
     async def _groups(
         self, collection: str, where: _Filters | None, prop: str, limit: int
@@ -501,11 +521,19 @@ class _WeaviateBackend:
 
         Returns:
             One per version held, by manifest ID; empty for a missing collection.
+
+        Raises:
+            IndexBackendUnavailableError: Weaviate did not answer.
         """
         if not await self._exists(collection):
             return []
         where = None if library is None else Filter.by_property("library").equal(library)
-        counts = await self._groups(collection, where, "held_key", WEAVIATE_GROUP_LIMIT)
+        try:
+            counts = await self._groups(collection, where, "held_key", WEAVIATE_GROUP_LIMIT)
+        except IndexBackendUnavailableError:
+            if await self._gone(collection):  # dropped elsewhere: it holds nothing
+                return []
+            raise
         held = []
         for key, entries in counts.items():
             owner, _, manifest_id = key.rpartition(WEAVIATE_HELD_SEPARATOR)
@@ -533,8 +561,7 @@ class _WeaviateBackend:
             async with asyncio.timeout(self.deadline):
                 return await run(handle)
         except (WeaviateBaseError, OSError, TimeoutError) as error:
-            self._known.discard(collection)  # dropped elsewhere since? asked again next time
-            if not await self._exists(collection):
+            if await self._gone(collection):  # dropped elsewhere since: it holds nothing
                 return empty
             raise IndexBackendUnavailableError(self.name, _reason(error)) from error
 
