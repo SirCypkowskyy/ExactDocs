@@ -1,4 +1,4 @@
-import { queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/react-query";
 import { getJson, HttpError, type QueryOf } from "@/shared/lib/http";
 import { BROWSE_KEY } from "@/shared/lib/query-keys";
 import {
@@ -77,6 +77,48 @@ export const articlesPageQueryOptions = ({
       };
       return getJson<ArticleList>(`${lib(owner, repo)}/articles`, { signal, query });
     },
+  });
+
+export interface TableArgs extends VersionArgs {
+  tags: readonly string[];
+  filter: string | undefined;
+  sort: string | undefined;
+}
+
+/** The articles table: a page at a time, sorted and filtered (path or title, tags) by the server. */
+export const articlesTableQueryOptions = ({
+  owner,
+  repo,
+  ref,
+  sha,
+  tags,
+  filter,
+  sort,
+}: TableArgs) =>
+  infiniteQueryOptions({
+    queryKey: [
+      ...BROWSE_KEY,
+      owner,
+      repo,
+      ref,
+      sha,
+      "article-table",
+      { tags: tags.join(","), filter, sort },
+    ] as const,
+    queryFn: ({ signal, pageParam }) => {
+      const query: QueryOf<"/api/v1/libraries/{owner}/{repo}/articles"> = {
+        ref,
+        tags,
+        q: filter ?? null,
+        sort: sort ?? null,
+        limit: 50,
+        cursor: pageParam,
+      };
+      return getJson<ArticleList>(`${lib(owner, repo)}/articles`, { signal, query });
+    },
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.next_cursor,
+    placeholderData: keepPreviousData,
   });
 
 /** Refs and paths travel as query parameters: a ref may contain `/`. */

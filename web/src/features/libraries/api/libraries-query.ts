@@ -1,7 +1,8 @@
 import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/react-query";
 import { getJson } from "@/shared/lib/http";
 import { LIBRARIES_KEY } from "@/shared/lib/query-keys";
-import type { Job, LatestJobs, LibrariesResponse } from "../model/library";
+import { type JobsView, jobsParams } from "../model/jobs-view";
+import type { Job, JobList, LatestJobs, LibrariesResponse } from "../model/library";
 import { type ListView, listParams } from "../model/list-view";
 
 export const librariesKeys = {
@@ -17,6 +18,17 @@ export const librariesQueryOptions = (view: ListView = {}) =>
     queryKey: [...librariesKeys.list(), view] as const,
     queryFn: ({ signal, pageParam }) =>
       getJson<LibrariesResponse>(`/v1/libraries?${listParams(view, pageParam)}`, { signal }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.next_cursor,
+    placeholderData: keepPreviousData,
+  });
+
+/** The jobs a view asks for, a page at a time, sorted and filtered by the server. */
+export const jobsQueryOptions = (view: JobsView = {}) =>
+  infiniteQueryOptions({
+    queryKey: [...librariesKeys.all, "jobs", view] as const,
+    queryFn: ({ signal, pageParam }) =>
+      getJson<JobList>(`/v1/jobs?${jobsParams(view, pageParam)}`, { signal }),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.next_cursor,
     placeholderData: keepPreviousData,

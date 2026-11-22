@@ -18,6 +18,7 @@ import {
 
 export type SettingsLibrary = components["schemas"]["LibraryDetail"];
 export type SettingsVersion = components["schemas"]["VersionOut"];
+export type VersionList = components["schemas"]["VersionList"];
 export type AddedVersion = components["schemas"]["AddedVersion"];
 export type SyncedLibrary = components["schemas"]["SyncedLibrary"];
 export type SyncedVersion = components["schemas"]["SyncedVersion"];

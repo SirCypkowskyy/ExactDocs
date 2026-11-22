@@ -19,6 +19,7 @@ import {
   type Version,
 } from "../model/browse";
 import { ArticleView, CommitLinks } from "./article-view";
+import { ArticlesTable } from "./articles-table";
 import { FilesAside } from "./files-aside";
 
 interface BrowsePageProps {
@@ -116,7 +117,16 @@ function VersionBrowser({
             tags={search.tags}
           />
         ) : (
-          <Overview library={library} version={version} searchable={slots !== undefined} />
+          <>
+            <Overview library={library} version={version} searchable={slots !== undefined} />
+            <ArticlesTable
+              owner={owner}
+              repo={repo}
+              versionRef={version.ref}
+              sha={version.commit_sha}
+              search={search}
+            />
+          </>
         )}
       </section>
     </div>

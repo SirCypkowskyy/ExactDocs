@@ -1,4 +1,9 @@
-import { type QueryClient, queryOptions } from "@tanstack/react-query";
+import {
+  infiniteQueryOptions,
+  keepPreviousData,
+  type QueryClient,
+  queryOptions,
+} from "@tanstack/react-query";
 import type { Credential } from "@/shared/lib/credentials";
 import { getJson, sendJson } from "@/shared/lib/http";
 import { BROWSE_KEY, LIBRARIES_KEY } from "@/shared/lib/query-keys";
@@ -12,8 +17,10 @@ import type {
   SelectionDraft,
   SettingsLibrary,
   SyncedLibrary,
+  VersionList,
 } from "../model/settings";
 import { settingsOf } from "../model/settings";
+import { type VersionsView, versionsParams } from "../model/versions-view";
 
 const seg = encodeURIComponent;
 /** Jobs that re-process every version of a library after its settings were edited. */
@@ -46,6 +53,19 @@ export const reprocessJobsQueryOptions = (owner: string, repo: string) =>
       });
       return jobs.filter((j) => LIBRARY_JOBS.has(j.kind));
     },
+  });
+
+/** The library's versions a view asks for, a page at a time; under the browse key, so changes reload it. */
+export const versionsQueryOptions = (owner: string, repo: string, view: VersionsView) =>
+  infiniteQueryOptions({
+    queryKey: [...BROWSE_KEY, owner, repo, "versions", view] as const,
+    queryFn: ({ signal, pageParam }) =>
+      getJson<VersionList>(`${lib(owner, repo)}/versions?${versionsParams(view, pageParam)}`, {
+        signal,
+      }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.next_cursor,
+    placeholderData: keepPreviousData,
   });
 
 /** Whether the library has a stored credential (a preview cannot use it yet; an add-version can). */

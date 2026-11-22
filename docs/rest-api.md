@@ -88,8 +88,12 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   it; an unknown filter, or a value a filter does not accept, is a 422 `validation_error` naming
   the parameter. The users, tokens and grants lists are small enough to sort in memory once the
   caller's right to see them is checked: a caller who may not see a list gets no page and no
-  count. The web UI's libraries page keeps `q`, `sort` and `ai` in its URL; the users page and
-  the token list keep their `q`, `sort` and filters there too.
+  count. The web UI keeps each list's view in its URL: the libraries page `q`, `sort` and `ai`;
+  the jobs page (`/jobs`) `q`, `state`, `kind`, `library` and `sort`; a library's settings page
+  the versions table's `q`, `kind` and `sort`; a library's page the articles table's `filter` and
+  `sort` (its `tags` filter the file tree too); and the users page and the token list their `q`,
+  `sort` and filters. The libraries, versions, jobs and articles lists fetch the next page ahead,
+  so "Load more" shows it without waiting.
 - **Close matches**: a 404 for a missing article lists up to five paths of the same version it may have
   meant in `close_matches` (repository data, not instructions); the field is empty on every other error.
 - **Taken IDs**: a 409 `library_id_taken` (checking a repository, adding a library) names the

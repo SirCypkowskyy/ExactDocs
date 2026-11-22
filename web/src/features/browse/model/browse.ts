@@ -20,6 +20,9 @@ export interface BrowseSearch {
   q?: string | undefined;
   /** `all` makes a search need every selected tag; absent means any. */
   match?: "all" | undefined;
+  /** The articles table's text filter (path or title) and API `sort`; the tree ignores both. */
+  filter?: string | undefined;
+  sort?: string | undefined;
 }
 
 /** The version the page resolved, handed to the search slots (the `search` slice renders them). */

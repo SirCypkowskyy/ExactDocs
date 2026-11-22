@@ -93,6 +93,14 @@ function serve(routes: Routes = {}) {
       if (url.endsWith("/access") && routes.private !== undefined) {
         return Response.json({ private: routes.private });
       }
+      if (method === "GET" && url.includes("/versions?")) {
+        return Response.json({
+          library: library.id,
+          versions: library.versions,
+          next_cursor: null,
+          total: library.versions.length,
+        });
+      }
       if (method === "PATCH") {
         return reply(routes.patch?.(body) ?? { status: 200, body: { ...library, ...body } });
       }
@@ -901,5 +909,29 @@ describe("adding a version of a private library", () => {
     });
     expect(explainAddVersion(e("repository_auth_required"), "v1").field).toBe("credential");
     expect(explainAddVersion(e("host_key_changed"), "v1").message).toMatch(/different host key/);
+  });
+});
+
+describe("the versions table", () => {
+  it("lists the versions from the API and filters and sorts them on the server", async () => {
+    const calls = serve();
+    renderPage();
+    const table = await screen.findByRole("table", { name: "Imported versions" });
+    expect(await within(table).findByRole("button", { name: "Remove version main" })).toBeVisible();
+    expect(screen.getByText("Showing 2 of 2")).toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByLabelText("Kind"), "tag");
+    await waitFor(() =>
+      expect(calls.map((c) => c.url)).toContain(
+        "/api/v1/libraries/acme/payments/versions?limit=50&kind=tag",
+      ),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Sort by Imported" }));
+    await waitFor(() =>
+      expect(calls.map((c) => c.url)).toContain(
+        "/api/v1/libraries/acme/payments/versions?limit=50&kind=tag&sort=-imported_at",
+      ),
+    );
   });
 });

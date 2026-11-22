@@ -15,6 +15,7 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AppIndexRouteImport } from './routes/_app.index'
 import { Route as AppAccountRouteImport } from './routes/_app.account'
 import { Route as AppAiRouteImport } from './routes/_app.ai'
+import { Route as AppJobsRouteImport } from './routes/_app.jobs'
 import { Route as AppPlaygroundRouteImport } from './routes/_app.playground'
 import { Route as AppSearchRouteImport } from './routes/_app.search'
 import { Route as AppUsersRouteImport } from './routes/_app.users'
@@ -49,6 +50,11 @@ const AppAccountRoute = AppAccountRouteImport.update({
 const AppAiRoute = AppAiRouteImport.update({
   id: '/ai',
   path: '/ai',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppJobsRoute = AppJobsRouteImport.update({
+  id: '/jobs',
+  path: '/jobs',
   getParentRoute: () => AppRoute,
 } as any)
 const AppPlaygroundRoute = AppPlaygroundRouteImport.update({
@@ -89,6 +95,7 @@ export interface FileRoutesByFullPath {
   '/sign-in': typeof SignInRoute
   '/account': typeof AppAccountRoute
   '/ai': typeof AppAiRoute
+  '/jobs': typeof AppJobsRoute
   '/playground': typeof AppPlaygroundRoute
   '/search': typeof AppSearchRoute
   '/users': typeof AppUsersRoute
@@ -101,6 +108,7 @@ export interface FileRoutesByTo {
   '/sign-in': typeof SignInRoute
   '/account': typeof AppAccountRoute
   '/ai': typeof AppAiRoute
+  '/jobs': typeof AppJobsRoute
   '/playground': typeof AppPlaygroundRoute
   '/search': typeof AppSearchRoute
   '/users': typeof AppUsersRoute
@@ -116,6 +124,7 @@ export interface FileRoutesById {
   '/sign-in': typeof SignInRoute
   '/_app/account': typeof AppAccountRoute
   '/_app/ai': typeof AppAiRoute
+  '/_app/jobs': typeof AppJobsRoute
   '/_app/playground': typeof AppPlaygroundRoute
   '/_app/search': typeof AppSearchRoute
   '/_app/users': typeof AppUsersRoute
@@ -132,6 +141,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/account'
     | '/ai'
+    | '/jobs'
     | '/playground'
     | '/search'
     | '/users'
@@ -144,6 +154,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/account'
     | '/ai'
+    | '/jobs'
     | '/playground'
     | '/search'
     | '/users'
@@ -158,6 +169,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/_app/account'
     | '/_app/ai'
+    | '/_app/jobs'
     | '/_app/playground'
     | '/_app/search'
     | '/_app/users'
@@ -217,6 +229,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAiRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/jobs': {
+      id: '/_app/jobs'
+      path: '/jobs'
+      fullPath: '/jobs'
+      preLoaderRoute: typeof AppJobsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/playground': {
       id: '/_app/playground'
       path: '/playground'
@@ -265,6 +284,7 @@ declare module '@tanstack/react-router' {
 interface AppRouteChildren {
   AppAccountRoute: typeof AppAccountRoute
   AppAiRoute: typeof AppAiRoute
+  AppJobsRoute: typeof AppJobsRoute
   AppPlaygroundRoute: typeof AppPlaygroundRoute
   AppSearchRoute: typeof AppSearchRoute
   AppUsersRoute: typeof AppUsersRoute
@@ -277,6 +297,7 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppAccountRoute: AppAccountRoute,
   AppAiRoute: AppAiRoute,
+  AppJobsRoute: AppJobsRoute,
   AppPlaygroundRoute: AppPlaygroundRoute,
   AppSearchRoute: AppSearchRoute,
   AppUsersRoute: AppUsersRoute,
