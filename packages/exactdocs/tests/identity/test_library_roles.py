@@ -320,6 +320,46 @@ async def test_the_grants_are_listed_with_usernames_users_first(world: World) ->
     ]
 
 
+async def test_the_grants_are_filtered_sorted_by_role_and_paged_with_a_total(world: World) -> None:
+    await world.grant("ada", "corp:payments", "viewer", kind="group")
+    await world.grant("ada", "carol", "contributor")
+    await world.grant("ada", "bob", "viewer")
+    await world.grant("ada", "dave", "admin")
+    query: dict[str, object] = {"caller_id": world.ids["ada"], "library": LIBRARY}
+    query |= {"kind": ["user"], "sort": "-role", "limit": 2}
+
+    first = await world.identity.list_library_grants(ListLibraryGrantsQuery.model_validate(query))
+    second = await world.identity.list_library_grants(
+        ListLibraryGrantsQuery.model_validate({**query, "cursor": first.next_cursor})
+    )
+
+    assert [g.subject for g in first.grants] == ["dave", "carol"]
+    assert ([g.subject for g in second.grants], second.next_cursor) == (["bob"], None)
+    assert (first.total, second.total) == (3, 3)
+
+
+async def test_the_grants_text_filter_matches_users_and_groups(world: World) -> None:
+    await world.grant("ada", "corp:payments", "viewer", kind="group")
+    await world.grant("ada", "bob", "viewer")
+
+    shown = await world.identity.list_library_grants(
+        ListLibraryGrantsQuery(caller_id=world.ids["ada"], library=LIBRARY, q="PAY")
+    )
+
+    assert ([g.subject for g in shown.grants], shown.total) == (["corp:payments"], 1)
+
+
+async def test_a_caller_who_may_not_see_the_grants_gets_no_page_and_no_count(
+    world: World,
+) -> None:
+    await world.grant("ada", "bob", "viewer")
+
+    with pytest.raises(LibraryRoleRequiredError):
+        await world.identity.list_library_grants(
+            ListLibraryGrantsQuery(caller_id=world.ids["bob"], library=LIBRARY, q="bob", limit=1)
+        )
+
+
 @pytest.mark.parametrize("linked", [True, False])
 async def test_a_verified_identity_for_another_caller_has_no_library_role(
     world: World, linked: bool

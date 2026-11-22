@@ -12,7 +12,7 @@ from http import HTTPStatus
 from typing import Any
 
 import httpx
-from behave import given, then
+from behave import given, then, when
 from behave.runner import Context
 
 from exactdocs.bootstrap.constants import DATABASE_MEMBER
@@ -262,3 +262,43 @@ def step_hidden_query(context: Context, username: str) -> None:
     ]
     assert all(answer.get("isError") and "not_found" in str(answer) for answer in answers), answers
     assert str(answers[0]).replace(hidden, missing) == str(answers[1]), answers
+
+
+@given('"{username}" is a contributor of "{library}"')
+def step_contributor_of(context: Context, username: str, library: str) -> None:
+    get_person(context, username)
+    _grant(context, library, "user", username, "contributor")
+
+
+@when(
+    'the operator lists the viewers and contributors of "{library}" by name from Z to A, '
+    "{limit:d} at a time"
+)
+def step_list_grants(context: Context, library: str, limit: int) -> None:
+    context.grant_pages = []
+    params: dict[str, Any] = {"role": ["viewer", "contributor"], "sort": "-subject", "limit": limit}
+    while True:
+        response = send_as(
+            context, "GET", f"{_library_path(library)}/grants", session=DEMO_COOKIE, params=params
+        )
+        assert response.status_code == HTTPStatus.OK, response.text
+        context.grant_pages.append(response.json())
+        if response.json()["next_cursor"] is None:
+            break
+        params["cursor"] = response.json()["next_cursor"]
+
+
+@then('the grant pages show "{first}" then "{second}", each counting {total:d} grants')
+def step_grant_pages(context: Context, first: str, second: str, total: int) -> None:
+    shown = [[g["subject"] for g in page["grants"]] for page in context.grant_pages]
+    assert shown == [[first], [second]], shown
+    assert {page["total"] for page in context.grant_pages} == {total}
+
+
+@then('"{username}" asking for the grants is refused before any page')
+def step_grants_refused(context: Context, username: str) -> None:
+    session = get_person(context, username)["session"]
+    path = f"{_library_path('/fixture/docs-repo')}/grants"
+    response = send_as(context, "GET", path, session=session, params={"limit": 1})
+    assert response.status_code == HTTPStatus.FORBIDDEN, response.text
+    assert "total" not in response.json(), response.text

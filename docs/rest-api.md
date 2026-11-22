@@ -77,18 +77,23 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Pagination**: list endpoints take `limit` (1 to 200, default 50) and an opaque `cursor`, and
   return `next_cursor` (`null` on the last page). Pass it back unchanged; a malformed cursor is a
   422 `invalid_cursor`. Helper: `exactdocs_kernel.paginate`.
-- **Sort, filter and total**: the lists of libraries, versions, jobs (global and per library) and
-  articles also take `sort` (one whitelisted field, `-field` for descending) and filters such as
-  `q` (text, any case), `state`, `kind`, `ai_enabled`, `has_versions` and date ranges
-  (`updated_after`, `created_before`, ...); each parameter's description in the OpenAPI schema
-  names its fields. They run in the database, permissions apply before paging, and a cursor only
-  works with the `sort` and filters of the request that returned it. The libraries, versions, jobs
-  and articles pages carry `total`, the number of rows that match the filters across all pages.
-  An unknown sort field is a 422. The web UI keeps each list's view in its URL: the libraries page
-  `q`, `sort` and `ai`; the jobs page (`/jobs`) `q`, `state`, `kind`, `library` and `sort`; a
-  library's settings page the versions table's `q`, `kind` and `sort`; and a library's page the
-  articles table's `filter` and `sort` (its `tags` filter the file tree too). These lists fetch
-  the next page ahead, so "Load more" shows it without waiting.
+- **Sort, filter and total**: the lists of libraries, versions, jobs (global and per library),
+  articles, users, API tokens and a library's grants also take `sort` (one whitelisted field,
+  `-field` for descending) and filters such as `q` (text, any case), `state`, `kind`, `role`,
+  `disabled`, `ai_enabled`, `has_versions` and date ranges (`updated_after`, `created_before`,
+  ...); each parameter's description in the OpenAPI schema names its fields. They run in the
+  database, permissions apply before paging, and a cursor only works with the `sort` and filters
+  of the request that returned it. Every one of these pages carries `total`, the number of rows
+  that match the filters across all pages. An unknown sort field is a 422 `invalid_sort` naming
+  it; an unknown filter, or a value a filter does not accept, is a 422 `validation_error` naming
+  the parameter. The users, tokens and grants lists are small enough to sort in memory once the
+  caller's right to see them is checked: a caller who may not see a list gets no page and no
+  count. The web UI keeps each list's view in its URL: the libraries page `q`, `sort` and `ai`;
+  the jobs page (`/jobs`) `q`, `state`, `kind`, `library` and `sort`; a library's settings page
+  the versions table's `q`, `kind` and `sort`; a library's page the articles table's `filter` and
+  `sort` (its `tags` filter the file tree too); and the users page and the token list their `q`,
+  `sort` and filters. The libraries, versions, jobs and articles lists fetch the next page ahead,
+  so "Load more" shows it without waiting.
 - **Close matches**: a 404 for a missing article lists up to five paths of the same version it may have
   meant in `close_matches` (repository data, not instructions); the field is empty on every other error.
 - **Taken IDs**: a 409 `library_id_taken` (checking a repository, adding a library) names the
@@ -151,8 +156,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 
 - **API tokens**: `POST /api/v1/tokens` (`{"name", "expires_at"?, "library_ids"?}`, timezone-aware, in the future)
   answers 201 with the token's fields and `token`, the secret `exd_...`, which no other call ever
-  returns (`Cache-Control: no-store`). `GET /tokens` lists the caller's tokens (`id`, `name`,
-  `prefix`, `created_at`, `expires_at`, `last_used_at`, `library_ids`; newest first) and `DELETE /tokens/{id}`
+  returns (`Cache-Control: no-store`). `GET /tokens` lists a page of the caller's tokens (`id`, `name`,
+  `prefix`, `created_at`, `expires_at`, `last_used_at`, `library_ids`; newest first; `q`, `sort`) and `DELETE /tokens/{id}`
   revokes one at once (204; 404 `unknown_token` for another account's or a missing id). The
   secret is 256 random bits and only its SHA-256 is stored. An unknown, expired or revoked token is
   the same 401. `last_used_at` is written at most hourly, best effort (a failed write is logged
@@ -163,9 +168,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Users** (ACL-06): the local accounts, managed by an operator (an account with role `admin`;
   the first admin is one). There is **no self-signup** route: an account is made by the setup
   (the first admin only), by `exactdocs user create`, by a first sign-in through an identity
-  provider, or here. `GET /users` lists every account (`id`, `username`, `role`, `created_at`,
+  provider, or here. `GET /users` lists a page of the accounts (`id`, `username`, `role`, `created_at`,
   `disabled`, `provider` (`null` for a local account) and `groups` (the provider's, as of the
-  latest sign-in or revalidation); oldest first). `POST /users`
+  latest sign-in or revalidation); oldest first; `q`, `role`, `disabled`, `sort`). `POST /users`
   (`{"username", "password", "role"?}`, role `user` (default) or `admin`) answers 201 with the
   account; a taken name (compared case-insensitively) is 409 `username_taken`, and a name holding
   `@address:` (the sign-in throttle's own key separator) is 422 `invalid_username`.
@@ -192,8 +197,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   the same over MCP (a tool error `forbidden: ...`). `GET /libraries`, the searches across
   libraries and `resolve-library-id` list only libraries the caller holds a role on. The one
   who adds a library is its creator.
-  `GET /libraries/{owner}/{repo}/grants` lists who holds a role (`{"grants": [{"kind", "subject",
-  "role"}]}`: users by username, then groups); `PUT` (`{"kind": "user"|"group", "subject",
+  `GET /libraries/{owner}/{repo}/grants` lists a page of who holds a role (`{"grants": [{"kind",
+  "subject", "role"}], "next_cursor", "total"}`: users by username, then groups; `q`, `kind`,
+  `role`, `sort`); `PUT` (`{"kind": "user"|"group", "subject",
   "role": "viewer"|"contributor"|"admin"}`) gives or replaces a role and answers the grants;
   `DELETE /libraries/{owner}/{repo}/grants/{user|group}/{subject}` takes one away. All three
   need `admin` on the library, and `creator` to give, change or remove an `admin`; the

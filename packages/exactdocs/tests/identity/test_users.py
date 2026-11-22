@@ -19,6 +19,7 @@ from exactdocs.identity.dtos import (
     CreateUserCommand,
     ResetPasswordCommand,
     SetUserDisabledCommand,
+    UserListQuery,
     UserSummary,
 )
 from exactdocs.identity.errors import (
@@ -41,6 +42,7 @@ from exactdocs.identity.models import (
     hash_token,
 )
 from exactdocs.identity.module import IdentityModule
+from exactdocs_kernel import InvalidSortError
 from identity_stand_ins import no_external_sign_in
 
 HORSE = "correct horse battery staple"
@@ -155,13 +157,43 @@ async def test_users_are_listed_oldest_first_with_disabled_ones(world: World) ->
     await create(world, "bob")
     await disable(world, "carol")
 
-    users = (await world.identity.list_users()).users
+    users = (await world.identity.list_users(UserListQuery())).users
 
     assert [(u.username, u.role, u.disabled) for u in users] == [
         ("ada", "admin", False),
         ("carol", "user", True),
         ("bob", "user", False),
     ]
+
+
+async def test_users_are_filtered_sorted_and_paged_with_a_total(world: World) -> None:
+    for name in ("dave", "carol", "bob", "erin"):
+        await create(world, name)
+    await create(world, "zoe", role="admin")
+    await disable(world, "erin")
+    query = {"role": ["user"], "disabled": False, "sort": "-username", "limit": 2}
+
+    first = await world.identity.list_users(UserListQuery.model_validate(query))
+    second = await world.identity.list_users(
+        UserListQuery.model_validate({**query, "cursor": first.next_cursor})
+    )
+
+    assert [u.username for u in first.users] == ["dave", "carol"]
+    assert ([u.username for u in second.users], second.next_cursor) == (["bob"], None)
+    assert (first.total, second.total) == (3, 3)
+
+
+async def test_the_users_text_filter_matches_any_case(world: World) -> None:
+    await create(world, "carol")
+
+    found = await world.identity.list_users(UserListQuery(q="AR"))
+
+    assert ([u.username for u in found.users], found.total) == (["carol"], 1)
+
+
+async def test_an_unknown_sort_of_the_users_is_refused_by_name(world: World) -> None:
+    with pytest.raises(InvalidSortError, match="nickname"):
+        await world.identity.list_users(UserListQuery(sort="-nickname"))
 
 
 @pytest.mark.parametrize("username", ["bob", "BOB", " bob "])
@@ -220,7 +252,10 @@ async def test_a_lost_race_for_a_username_is_refused_too(world: World) -> None:
         await raced.create_user(
             CreateUserCommand(username="bob", password=SecretStr("another passphrase"))
         )
-    assert [u.username for u in (await world.identity.list_users()).users] == ["ada", "bob"]
+    assert [u.username for u in (await world.identity.list_users(UserListQuery())).users] == [
+        "ada",
+        "bob",
+    ]
 
 
 @pytest.mark.parametrize("username", ["a@address:1.2.3.4", "x@ADDRESS:y"])
@@ -378,7 +413,7 @@ async def test_the_last_enabled_admin_cannot_be_disabled(world: World) -> None:
     with pytest.raises(LastOperatorError):
         await disable(world, "ada")
 
-    assert not (await world.identity.list_users()).users[0].disabled
+    assert not (await world.identity.list_users(UserListQuery())).users[0].disabled
 
 
 async def test_an_admin_can_be_disabled_while_another_stays(world: World) -> None:
