@@ -42,6 +42,11 @@ local = [
     "fastembed==0.9.1",
     "onnxruntime==1.31.0",
 ]
+# Weaviate as the search and vector backend (#359, EXACTDOCS_SEARCH_BACKEND / VECTOR_BACKEND =
+# weaviate): imported only by `retrieval/adapters/driven/weaviate_index.py`, and only once an
+# operator names the backend. Not in the image. Exact pin (4.24.1, 2026-10-26, more than 14 days
+# old when taken), tested against the `cr.weaviate.io/semitechnologies/weaviate` server in CI.
+weaviate = ["weaviate-client==4.24.1"]
 
 [project.scripts]
 exactdocs = "exactdocs.bootstrap.cli:main"

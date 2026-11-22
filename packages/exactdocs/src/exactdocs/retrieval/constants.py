@@ -4,6 +4,7 @@ Each is ``Final`` and documented; see *Python conventions* in docs/architecture.
 """
 
 import re
+import uuid
 from collections.abc import Mapping
 from datetime import timedelta
 from types import MappingProxyType
@@ -130,6 +131,64 @@ EXTERNAL_HIT_MARGIN: Final[int] = 10
 # ---------------------------------------------------------------- adapters.driven.memory_index
 MEMORY_BACKEND: Final[str] = "memory"
 """The registered name of the in-process reference index backend (tests only)."""
+
+# ---------------------------------------------------------------- adapters.driven.weaviate_index
+WEAVIATE_BACKEND: Final[str] = "weaviate"
+"""The registered name of the Weaviate search and vector backend (#359)."""
+WEAVIATE_DEFAULT_COLLECTION: Final[str] = "ExactDocs"
+"""The ``collection`` option's default: the search index is the collection ``<collection>_search``
+and each embedding space the collection ``<collection>_space<id>``."""
+WEAVIATE_COLLECTION_NAME: Final[re.Pattern[str]] = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,199}")
+"""What the ``collection`` option may be: a Weaviate collection name (its first letter is made
+upper case, as Weaviate does), with room for the suffix."""
+WEAVIATE_SEARCH_SUFFIX: Final[str] = "_search"
+"""After the ``collection`` option in the search index's collection name."""
+WEAVIATE_SPACE_SUFFIX: Final[str] = "_space"
+"""Between the ``collection`` option and the space's ID in a vector collection's name."""
+WEAVIATE_VECTOR_NAME: Final[str] = "default"
+"""The named vector of every collection: self-provided (ExactDocs' own embeddings), never a
+Weaviate vectorizer, so no Weaviate module calls a model provider."""
+WEAVIATE_DEFAULT_GRPC_PORT: Final[int] = 50051
+"""The gRPC port the client uses when ``grpc_url`` is not given (Weaviate's default)."""
+WEAVIATE_DEFAULT_TIMEOUT_SECONDS: Final[int] = 10
+"""The ``timeout`` option's default: how long one query or write to Weaviate may take."""
+WEAVIATE_INIT_TIMEOUT_SECONDS: Final[int] = 5
+"""How long the start's connection check (REST metadata and gRPC health) may take."""
+WEAVIATE_DEFAULT_ALPHA: Final[float] = 0.5
+"""The ``alpha`` option's default: native hybrid weighs the words and the vector equally."""
+WEAVIATE_TEXT_FIELDS: Final[Mapping[str, float]] = MappingProxyType(
+    {"heading": 20.0, "path": 4.0, "body": 1.0}
+)
+"""The searchable properties of an object and their BM25 boosts: the section's own heading, its
+ancestor headings and its text, weighted as the database's FTS columns (``HEADING_WEIGHT``,
+``PATH_WEIGHT``, ``TEXT_WEIGHT``). Each holds ``identifier_tokens`` of its text."""
+WEAVIATE_INSERT_BATCH: Final[int] = 256
+"""Objects sent to Weaviate per batch insert."""
+WEAVIATE_DELETE_ROUNDS: Final[int] = 10_000
+"""The most batch deletes one ``delete`` makes per collection (each takes up to the server's
+``QUERY_MAXIMUM_RESULTS`` objects, 10,000 by default)."""
+WEAVIATE_GROUP_LIMIT: Final[int] = 100_000
+"""The most versions one count of the drift check (or of ``count``) groups by."""
+WEAVIATE_TIE_MARGIN: Final[int] = 10
+"""Hits asked beyond the limit, so equal scores at the cut are ordered by chunk ID here."""
+WEAVIATE_OBJECT_NAMESPACE: Final[uuid.UUID] = uuid.UUID("2b9f3c1e-8a4d-5e6f-9b7c-1d2e3f4a5b6c")
+"""The UUID namespace an object's ID is derived in, from its manifest and chunk IDs (UUID v5):
+one object per chunk of each version, the same ID every time it is written."""
+WEAVIATE_OPTIONS: Final[frozenset[str]] = frozenset(
+    {
+        "url",
+        "grpc_url",
+        "collection",
+        "api_key",
+        "api_key_file",
+        "timeout",
+        "alpha",
+        "fusion",
+    }
+)
+"""The options ``[index_backends.weaviate]`` takes; any other is refused at start."""
+WEAVIATE_FUSIONS: Final[frozenset[str]] = frozenset({"relative_score", "ranked"})
+"""The ``fusion`` option's values: Weaviate's hybrid fusion algorithms."""
 
 # ---------------------------------------------------------------- adapters.driven.memory
 MEMORY_FORMAT: Final[int] = 1
