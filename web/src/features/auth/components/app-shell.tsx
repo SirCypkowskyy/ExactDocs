@@ -26,12 +26,13 @@ import { useSession } from "../hooks/use-session";
  */
 
 type NavItem = {
-  to: "/" | "/search" | "/playground" | "/ai" | "/users";
+  to: "/" | "/jobs" | "/search" | "/playground" | "/ai" | "/users";
   label: string;
   admin?: boolean;
 };
 const NAV: NavItem[] = [
   { to: "/", label: "Libraries" },
+  { to: "/jobs", label: "Jobs" },
   { to: "/search", label: "Search" },
   { to: "/playground", label: "Playground" },
   // AI providers and accounts are for operators (admins); the API refuses anyone else.

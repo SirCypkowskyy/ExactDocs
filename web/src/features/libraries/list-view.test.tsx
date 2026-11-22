@@ -71,18 +71,24 @@ describe("the libraries list view", () => {
     );
   });
 
-  it("loads the first page, then the next one on demand, with the server's total", async () => {
+  it("shows the first page, prefetches the next, and shows it on demand", async () => {
     const fetchMock = serve();
     renderPage();
 
     expect(await screen.findByText("Showing 2 of 3")).toBeInTheDocument();
+    // The next page is fetched ahead, but only shown when asked for.
+    await waitFor(() =>
+      expect(urls(fetchMock)).toEqual([
+        "/api/v1/libraries?limit=50",
+        "/api/v1/libraries?limit=50&cursor=p2",
+      ]),
+    );
     expect(screen.queryByText("Library 3")).not.toBeInTheDocument();
-    expect(urls(fetchMock)).toEqual(["/api/v1/libraries?limit=50"]);
 
     await userEvent.click(screen.getByRole("button", { name: "Load more" }));
-    expect(await screen.findByText("Library 3")).toBeInTheDocument();
+    expect(screen.getByText("Library 3")).toBeInTheDocument();
     expect(screen.getByText("Showing 3 of 3")).toBeInTheDocument();
-    expect(urls(fetchMock)[1]).toBe("/api/v1/libraries?limit=50&cursor=p2");
+    expect(urls(fetchMock)).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
   });
 
@@ -105,7 +111,7 @@ describe("the libraries list view", () => {
     await userEvent.click(screen.getByRole("button", { name: "Sort by Last imported" }));
 
     await waitFor(() =>
-      expect(urls(fetchMock).at(-1)).toBe("/api/v1/libraries?limit=50&sort=-last_imported_at"),
+      expect(urls(fetchMock)).toContain("/api/v1/libraries?limit=50&sort=-last_imported_at"),
     );
     expect(history.location.search).toContain("sort=-last_imported_at");
     expect(

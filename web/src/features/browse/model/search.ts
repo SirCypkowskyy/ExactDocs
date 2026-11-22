@@ -1,6 +1,10 @@
+import { pickSort, textParam } from "@/shared/lib/list-sort";
 import { normalizeQuery } from "@/shared/lib/search-query";
 import { parseTags } from "@/shared/lib/tags";
 import type { BrowseSearch } from "./browse";
+
+/** The fields the articles API sorts by. */
+const ARTICLE_SORTS = ["path", "title", "size"];
 
 const text = (value: unknown): string | undefined => {
   // The router parses `?version=2` as the number 2: keep what the user wrote, as text.
@@ -17,5 +21,7 @@ export function parseSearch(raw: Record<string, unknown>): BrowseSearch {
     tags: parseTags(text(raw.tags)).join(",") || undefined,
     q: normalizeQuery(text(raw.q)),
     match: raw.match === "all" ? "all" : undefined,
+    filter: textParam(raw.filter),
+    sort: pickSort(raw.sort, ARTICLE_SORTS),
   };
 }

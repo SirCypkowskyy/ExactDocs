@@ -18,7 +18,7 @@ export function LibrariesPage() {
     (next: ListView) => void navigate({ to: "/", search: { ...next }, replace: true }),
     [navigate],
   );
-  const { query, libraries, total } = useLibraries(view);
+  const { query, libraries, total, hasMore, loadingMore, loadMore } = useLibraries(view);
   const { syncs, failedToLoad, loading, retry } = useSyncStates(libraries);
   const heading = usePageTitle("Libraries");
   // Without a chosen sort, loaded libraries with a failed sync come first.
@@ -90,9 +90,9 @@ export function LibrariesPage() {
         view={view}
         onView={onView}
         total={total}
-        hasMore={query.hasNextPage}
-        loadingMore={query.isFetchingNextPage}
-        onLoadMore={() => void query.fetchNextPage()}
+        hasMore={hasMore}
+        loadingMore={loadingMore}
+        onLoadMore={loadMore}
       />
     </Page>
   );

@@ -178,7 +178,9 @@ function mount(path: string, options: Options & { realRetries?: boolean } = {}) 
   return { router, calls, client };
 }
 
-const listings = (calls: URL[]) => calls.filter((u) => u.pathname.endsWith("/articles"));
+/** The file tree's listings (they name a folder); the articles table's pages are left out. */
+const listings = (calls: URL[]) =>
+  calls.filter((u) => u.pathname.endsWith("/articles") && u.searchParams.has("path_prefix"));
 
 describe("browsing a library version", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -204,6 +206,27 @@ describe("browsing a library version", () => {
       "href",
       `https://github.com/acme/payments/commit/${SHA}`,
     );
+  });
+
+  it("lists the version's articles in a table the server sorts and filters", async () => {
+    const { router, calls } = mount("/libraries/acme/payments?version=v1.4.0");
+    const table = await screen.findByRole("table", { name: "Articles" });
+    expect(await within(table).findByRole("link", { name: "docs/guide/auth.md" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("path=docs%2Fguide%2Fauth.md"),
+    );
+    const pages = () =>
+      calls.filter((u) => u.pathname.endsWith("/articles") && !u.searchParams.has("path_prefix"));
+
+    await userEvent.click(within(table).getByRole("button", { name: "Sort by Size" }));
+    await waitFor(() => expect(router.state.location.search).toMatchObject({ sort: "-size" }));
+    await waitFor(() => expect(pages().at(-1)?.searchParams.get("sort")).toBe("-size"));
+
+    await userEvent.type(screen.getByRole("searchbox", { name: "Find an article" }), "auth");
+    await waitFor(() => expect(router.state.location.search).toMatchObject({ filter: "auth" }));
+    await waitFor(() => expect(pages().at(-1)?.searchParams.get("q")).toBe("auth"));
+    // The tree is not filtered by the table's text.
+    expect(listings(calls).every((u) => !u.searchParams.has("q"))).toBe(true);
   });
 
   it("shows repository text as text, never as markup", async () => {

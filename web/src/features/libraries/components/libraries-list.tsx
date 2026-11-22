@@ -1,15 +1,10 @@
-import {
-  type ColumnDef,
-  flexRender,
-  getCoreRowModel,
-  type SortingState,
-  useReactTable,
-} from "@tanstack/react-table";
-import { ArrowDown, ArrowUp, ArrowUpDown, Check, Copy, LibraryBig } from "lucide-react";
+import type { ColumnDef } from "@tanstack/react-table";
+import { Check, Copy, LibraryBig } from "lucide-react";
 import { useEffect, useEffectEvent, useId, useState } from "react";
 import { toast } from "sonner";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
+import { ListFooter, SortHeader, useServerTable } from "@/shared/ui/data-table";
 import { Input } from "@/shared/ui/input";
 import { EmptyState } from "@/shared/ui/page";
 import { codeWell } from "@/shared/ui/recipes";
@@ -39,8 +34,6 @@ const columnDefs: ColumnDef<Library>[] = [
   { accessorKey: "last_imported_at", header: "Last imported", sortDescFirst: true },
   { id: "sync", header: "Sync", enableSorting: false },
 ];
-const sortingOf = (sort: string | undefined): SortingState =>
-  sort ? [{ id: sort.replace(/^-/, ""), desc: sort.startsWith("-") }] : [];
 
 const COMMAND = "exactdocs add https://github.com/acme/payments --path docs/";
 
@@ -155,18 +148,12 @@ export function LibrariesList({
 }: LibrariesListProps) {
   const now = useNow();
   const [text, setText] = useState(view.q ?? "");
-  const table = useReactTable({
-    data: libraries as Library[],
+  const table = useServerTable({
+    data: libraries,
     columns: columnDefs,
-    getCoreRowModel: getCoreRowModel(),
     getRowId: (library) => library.id,
-    manualSorting: true,
-    manualFiltering: true,
-    state: { sorting: sortingOf(view.sort) },
-    onSortingChange: (updater) => {
-      const [next] = typeof updater === "function" ? updater(sortingOf(view.sort)) : updater;
-      onView({ ...view, sort: next ? `${next.desc ? "-" : ""}${next.id}` : undefined });
-    },
+    sort: view.sort,
+    onSort: (sort) => onView({ ...view, sort }),
   });
   if (total === 0 && !isFiltered(view)) return <FirstRun />;
   return (
@@ -191,30 +178,11 @@ export function LibrariesList({
           <div
             className={`hidden border-b border-rule pb-2 pl-[3.25rem] text-small text-muted-foreground ${columns}`}
           >
-            {table.getHeaderGroups()[0]?.headers.map((header) => {
-              const dir = header.column.getIsSorted();
-              const label = flexRender(header.column.columnDef.header, header.getContext());
-              if (!header.column.getCanSort()) return <span key={header.id}>{label}</span>;
-              return (
-                <span key={header.id}>
-                  <button
-                    type="button"
-                    aria-label={`Sort by ${String(header.column.columnDef.header)}${dir ? `, sorted ${dir === "asc" ? "ascending" : "descending"}` : ""}`}
-                    onClick={header.column.getToggleSortingHandler()}
-                    className="inline-flex cursor-pointer items-center gap-1 rounded outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    {label}
-                    {dir === "asc" ? (
-                      <ArrowUp aria-hidden="true" className="size-3.5" />
-                    ) : dir === "desc" ? (
-                      <ArrowDown aria-hidden="true" className="size-3.5" />
-                    ) : (
-                      <ArrowUpDown aria-hidden="true" className="size-3.5 opacity-50" />
-                    )}
-                  </button>
-                </span>
-              );
-            })}
+            {table.getHeaderGroups()[0]?.headers.map((header) => (
+              <span key={header.id}>
+                <SortHeader header={header} />
+              </span>
+            ))}
           </div>
           <ul aria-label="Libraries" className="divide-y divide-rule">
             {table.getRowModel().rows.map(({ original: library }) => (
@@ -231,16 +199,13 @@ export function LibrariesList({
               </li>
             )}
           </ul>
-          <div className="flex items-center gap-3 pt-4 text-small text-muted-foreground">
-            <p className="num">
-              Showing {libraries.length} of {total}
-            </p>
-            {hasMore && (
-              <Button variant="outline" onClick={onLoadMore} disabled={loadingMore}>
-                Load more
-              </Button>
-            )}
-          </div>
+          <ListFooter
+            shown={libraries.length}
+            total={total}
+            hasMore={hasMore}
+            loadingMore={loadingMore}
+            onLoadMore={onLoadMore}
+          />
         </>
       )}
     </div>
