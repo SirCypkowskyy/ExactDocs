@@ -1333,6 +1333,13 @@ keeps the backends in step:
   through `StoredVectors`), and without a scope deletes the orphans and the retired spaces'
   copies. It is safe while serving and to repeat.
 
+**The backends.**
+
+| Name | Indexes | Adapter | Extra | Native hybrid |
+|---|---|---|---|---|
+| `memory` | search, vectors | `memory_index.py` (in process, tests only) | none | yes (RRF of term counts and cosine) |
+| `milvus` | vectors | `milvus_index.py`: a collection per space (cosine, `AUTOINDEX`), scalar fields `manifest_id` / `library` / `version_id` with inverted indexes and an array of tags, filtered in Milvus before ranking; a server or Zilliz Cloud, or Milvus Lite on a local `.db` directory; the synchronous client, in worker threads ([Configuration](configuration.md#milvus)) | `milvus` (server), `milvus-lite` (Lite too) | yes, unless `hybrid = false`: a BM25 function's sparse vector and the dense vector in one request, fused by Milvus' RRF ranker |
+
 **Adding a backend** is one adapter module in `retrieval/adapters/driven/` (the reference is
 `memory_index.py`; it holds nothing across a restart and is for tests), its extra in
 `packages/exactdocs/pyproject.toml`, one `IndexBackendKind` in `INDEX_BACKENDS`

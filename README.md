@@ -152,7 +152,10 @@ benchmark numbers. See [Search and AI models](docs/search.md).
   `exactdocs index check` reports what it lost and `exactdocs index rebuild` writes it again.
   A backend is an optional extra behind one adapter; a backend that fuses keyword and vector
   search itself serves hybrid search natively. See
-  [External index backends](docs/architecture.md#external-index-backends).
+  [External index backends](docs/architecture.md#external-index-backends). Available:
+  - [Milvus](docs/configuration.md#milvus) for the vector index, with native hybrid search
+    (BM25 and dense vectors fused by Milvus' RRF ranker): a server or Zilliz Cloud
+    (`exactdocs[milvus]`), or Milvus Lite in a local directory (`exactdocs[milvus-lite]`).
 
 ## How it works
 
