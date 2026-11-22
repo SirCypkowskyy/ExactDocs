@@ -162,6 +162,11 @@ WEAVIATE_TEXT_FIELDS: Final[Mapping[str, float]] = MappingProxyType(
 """The searchable properties of an object and their BM25 boosts: the section's own heading, its
 ancestor headings and its text, weighted as the database's FTS columns (``HEADING_WEIGHT``,
 ``PATH_WEIGHT``, ``TEXT_WEIGHT``). Each holds ``identifier_tokens`` of its text."""
+WEAVIATE_HELD_SEPARATOR: Final[str] = "\n"
+"""Between the library and the manifest ID in an object's ``held_key`` property (what the drift
+check groups by; neither contains a line break)."""
+WEAVIATE_RETURNED: Final[tuple[str, ...]] = ("manifest_id", "chunk_id")
+"""The properties a query returns: what a hit names."""
 WEAVIATE_INSERT_BATCH: Final[int] = 256
 """Objects sent to Weaviate per batch insert."""
 WEAVIATE_DELETE_ROUNDS: Final[int] = 10_000

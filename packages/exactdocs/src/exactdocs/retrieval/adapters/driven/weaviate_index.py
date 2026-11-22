@@ -1,9 +1,9 @@
-"""Weaviate as the search and vector backend (#359): ``EXACTDOCS_SEARCH_BACKEND=weaviate`` and/or
-``EXACTDOCS_VECTOR_BACKEND=weaviate``.
+"""Weaviate as the search and vector backend (#359), ``weaviate`` in either backend setting.
 
-The search index is one collection, ``<collection>_search``; each embedding space is one
-collection, ``<collection>_space<id>``. Either is created on its first write when it is missing,
-with ExactDocs' own (self-provided) vectors only: no Weaviate vectorizer, so no Weaviate module
+``EXACTDOCS_SEARCH_BACKEND=weaviate`` and/or ``EXACTDOCS_VECTOR_BACKEND=weaviate``. The search
+index is one collection, ``<collection>_search``; each embedding space is one collection,
+``<collection>_space<id>``. Either is created on its first write when it is missing, with
+ExactDocs' own (self-provided) vectors only: no Weaviate vectorizer, so no Weaviate module
 ever calls a model provider. An object is one chunk of one version (its UUID is derived from the
 manifest and chunk IDs) carrying the ``manifest_id``, ``library``, ``version_id``, ``chunk_id``,
 ``article_path`` and ``tags`` properties, and its words in three BM25-searchable properties
@@ -20,6 +20,7 @@ Its client, ``weaviate-client`` (v4), is the ``weaviate`` extra; only this modul
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -52,10 +53,12 @@ from exactdocs.retrieval.constants import (
     WEAVIATE_DELETE_ROUNDS,
     WEAVIATE_FUSIONS,
     WEAVIATE_GROUP_LIMIT,
+    WEAVIATE_HELD_SEPARATOR,
     WEAVIATE_INIT_TIMEOUT_SECONDS,
     WEAVIATE_INSERT_BATCH,
     WEAVIATE_OBJECT_NAMESPACE,
     WEAVIATE_OPTIONS,
+    WEAVIATE_RETURNED,
     WEAVIATE_SEARCH_SUFFIX,
     WEAVIATE_SPACE_SUFFIX,
     WEAVIATE_TEXT_FIELDS,
@@ -81,11 +84,6 @@ from exactdocs.retrieval.models import (
 
 type Connect = Callable[[], WeaviateAsyncClient]
 """Makes a new client; called by each ``open()`` (a client is bound to the event loop it ran in)."""
-
-_HELD_SEPARATOR = "\n"
-"""Between the library and the manifest ID in ``held_key`` (neither contains a line break)."""
-_RETURNED = ["manifest_id", "chunk_id"]
-"""The properties a query returns: what a hit names."""
 
 
 def object_id(manifest_id: str, chunk_id: str) -> uuid.UUID:
@@ -118,7 +116,7 @@ def _properties(entry: IndexEntry) -> dict[str, Any]:
         "chunk_id": str(entry.chunk_id),
         "article_path": entry.article_path,
         "tags": list(entry.tags),
-        "held_key": f"{entry.library}{_HELD_SEPARATOR}{entry.manifest_id}",
+        "held_key": f"{entry.library}{WEAVIATE_HELD_SEPARATOR}{entry.manifest_id}",
         "heading": identifier_tokens(heading),
         "path": identifier_tokens(" / ".join(entry.heading_path[:-1])),
         "body": identifier_tokens(entry.content),
@@ -210,9 +208,9 @@ def _filter(manifest_ids: Collection[str], tag_filter: TagFilter) -> _Filters:
     """
     where = Filter.by_property("manifest_id").contains_any(list(manifest_ids))
     if tag_filter.tags and tag_filter.match is TagMatch.ALL:
-        where = where & Filter.by_property("tags").contains_all(list(tag_filter.tags))
+        where &= Filter.by_property("tags").contains_all(list(tag_filter.tags))
     elif tag_filter.tags:
-        where = where & Filter.by_property("tags").contains_any(list(tag_filter.tags))
+        where &= Filter.by_property("tags").contains_any(list(tag_filter.tags))
     return where
 
 
@@ -288,7 +286,8 @@ class _WeaviateBackend:
     async def open(self) -> None:
         """Connect and check that Weaviate answers (REST and gRPC), and takes the API key.
 
-        ``IndexBackendUnavailableError`` when it cannot be reached, or refused the key.
+        Raises:
+            IndexBackendUnavailableError: It cannot be reached, or refused the key.
         """
         await self.close()
         client = self.connect()
@@ -364,8 +363,10 @@ class _WeaviateBackend:
         return found
 
     async def _ensure(self, collection: str, distance: VectorDistances | None) -> None:
-        """Create a collection when it is missing (asked on every write: Weaviate's auto-schema
-        would otherwise make one with its own types if it was dropped behind ExactDocs' back).
+        """Create a collection when it is missing (asked on every write).
+
+        Weaviate's auto-schema would otherwise make one with its own types, should it have been
+        dropped behind ExactDocs' back.
 
         Args:
             collection: The collection.
@@ -427,8 +428,10 @@ class _WeaviateBackend:
                 raise IndexBackendUnavailableError(self.name, reason)
 
     async def _delete(self, collection: str, where: _Filters) -> None:
-        """Delete every object of a collection a filter matches (a batch delete takes the server's
-        ``QUERY_MAXIMUM_RESULTS`` at most, so it is repeated until none matches).
+        """Delete every object of a collection a filter matches.
+
+        A batch delete takes the server's ``QUERY_MAXIMUM_RESULTS`` at most, so it is repeated
+        until none matches.
 
         Args:
             collection: The collection.
@@ -485,7 +488,7 @@ class _WeaviateBackend:
         counts = await self._groups(collection, where, "held_key", WEAVIATE_GROUP_LIMIT)
         held = []
         for key, entries in counts.items():
-            owner, _, manifest_id = key.rpartition(_HELD_SEPARATOR)
+            owner, _, manifest_id = key.rpartition(WEAVIATE_HELD_SEPARATOR)
             held.append(HeldVersion(manifest_id=manifest_id, library=owner, entries=entries))
         return sorted(held, key=lambda h: h.manifest_id)
 
@@ -521,15 +524,13 @@ async def _quietly(call: Awaitable[object]) -> None:
     Args:
         call: The call.
     """
-    try:
+    with suppress(WeaviateBaseError, OSError):
         await call
-    except (WeaviateBaseError, OSError):
-        pass
 
 
 @dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- holds its client
 class WeaviateSearchBackend(_WeaviateBackend):
-    """Implements ``ports.driven.SearchBackend`` over Weaviate's BM25: one ``_search`` collection."""
+    """Implements ``ports.driven.SearchBackend`` over Weaviate's BM25 (one collection)."""
 
     @property
     def _collection(self) -> str:
@@ -600,7 +601,7 @@ class WeaviateSearchBackend(_WeaviateBackend):
                 filters=_filter(manifest_ids, tag_filter),
                 limit=limit + WEAVIATE_TIE_MARGIN,
                 return_metadata=MetadataQuery(score=True),
-                return_properties=_RETURNED,
+                return_properties=list(WEAVIATE_RETURNED),
             ),
             None,
         )
@@ -627,8 +628,10 @@ class WeaviateSearchBackend(_WeaviateBackend):
 
 @dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- holds its client
 class WeaviateVectorBackend(_WeaviateBackend):
-    """Implements ``ports.driven.VectorBackend`` and ``NativeHybrid`` over Weaviate: one
-    collection per space, whose objects carry ExactDocs' vectors and the chunk's words."""
+    """Implements ``ports.driven.VectorBackend`` and ``NativeHybrid`` over Weaviate.
+
+    One collection per space, whose objects carry ExactDocs' vectors and the chunk's words.
+    """
 
     alpha: float = WEAVIATE_DEFAULT_ALPHA
     """How much the vector counts in a hybrid query (0: the words alone, 1: the vector alone)."""
@@ -751,7 +754,7 @@ class WeaviateVectorBackend(_WeaviateBackend):
                 filters=_filter(manifest_ids, tag_filter),
                 limit=limit + WEAVIATE_TIE_MARGIN,
                 return_metadata=MetadataQuery(distance=True),
-                return_properties=_RETURNED,
+                return_properties=list(WEAVIATE_RETURNED),
             ),
             None,
         )
@@ -811,7 +814,7 @@ class WeaviateVectorBackend(_WeaviateBackend):
                 filters=_filter(manifest_ids, tag_filter),
                 limit=limit + WEAVIATE_TIE_MARGIN,
                 return_metadata=MetadataQuery(score=True),
-                return_properties=_RETURNED,
+                return_properties=list(WEAVIATE_RETURNED),
             ),
             None,
         )
@@ -865,8 +868,11 @@ class _Endpoint:
     """Where a Weaviate API listens."""
 
     host: str
+    """The host name or address."""
     port: int
+    """The port."""
     secure: bool
+    """Whether it speaks TLS (``https``)."""
 
 
 def _endpoint(option: str, url: str, default_port: int | None) -> _Endpoint:
@@ -943,9 +949,13 @@ class _Options:
     """The validated ``[index_backends.weaviate]`` options both backends are built from."""
 
     connect: Connect
+    """Makes a client of the configured server."""
     collection: str
+    """The collections' prefix."""
     alpha: float
+    """Native hybrid's weight of the vector."""
     fusion: HybridFusion
+    """Native hybrid's fusion algorithm."""
 
 
 def _options(options: Mapping[str, object]) -> _Options:

@@ -13,7 +13,7 @@ set shared by two versions counts two entries there.
 
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Collection
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
 
@@ -119,6 +119,7 @@ class World:
     age_index: Callable[[], Awaitable[None]]  # record an older format, as an older build left it
     counts_terms: bool = False  # the memory reference ranks: no BM25 length normalisation
     shares_entries: bool = True  # a chunk set of two versions is one entry (else one each)
+    deletes_shift_scores: bool = False  # BM25 statistics count deleted entries until compaction
 
     async def index(
         self,
@@ -235,6 +236,7 @@ async def _external_world(
             age_local,
             counts_terms=case.counts_terms,
             shares_entries=False,
+            deletes_shift_scores=case.deletes_shift_scores,
         )
 
 
@@ -613,6 +615,13 @@ async def test_a_rebuild_finds_the_same_and_fills_lost_entries(world: World) -> 
 
     assert rebuilt.entries == await world.index_entries() == 4
     after = [await world.find(m, q) for m in ("m13", "m14") for q in ("retry_policy", "retried")]
+    if world.deletes_shift_scores:  # the same hits in the same order; the scores move a little
+        assert [[h.score for h in hits] for hits in after] == [
+            [pytest.approx(h.score, rel=0.1) for h in hits] for hits in before
+        ]
+        after, before = (
+            [[replace(h, score=0.0) for h in hits] for hits in found] for found in (after, before)
+        )
     assert after == before
     assert await world.find("m13", "retry_policy") == []  # still version-exact
 

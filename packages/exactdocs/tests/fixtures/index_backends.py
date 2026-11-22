@@ -39,6 +39,10 @@ class BackendCase:
     counts_terms: bool = False
     """It ranks by term counts (the in-memory reference), not BM25: the suites skip the cases
     only a BM25-like ranking passes (length normalisation, a heading's ancestors)."""
+    deletes_shift_scores: bool = False
+    """Its BM25 statistics still count deleted entries until the engine compacts (Weaviate): a
+    version written again after a loss ranks the same, with slightly different scores, so the
+    rebuild case compares the hits and their order, and the scores approximately."""
 
 
 @asynccontextmanager
@@ -75,6 +79,7 @@ def _weaviate_cases() -> list[BackendCase]:
             name="weaviate",
             search=weaviate_server.weaviate_search,
             vectors=weaviate_server.weaviate_vectors,
+            deletes_shift_scores=True,
         ),
     ]
 
