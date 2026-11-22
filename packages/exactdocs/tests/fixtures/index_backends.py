@@ -17,6 +17,7 @@ is left out when the variable is unset (as ``databases.py`` does for PostgreSQL)
 still run everywhere; CI sets the variable.
 """
 
+import os
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
@@ -60,8 +61,22 @@ async def _memory_vectors() -> AsyncGenerator[VectorBackend]:
         await backend.close()
 
 
+def _milvus_cases() -> list[BackendCase]:
+    """Milvus (#360): Milvus Lite always, a server when ``EXACTDOCS_TEST_MILVUS_URL`` is set."""
+    import milvus_server  # ruff: ignore[import-outside-top-level] -- the extra, only here
+
+    cases = [BackendCase(name="milvus_lite", vectors=milvus_server.lite)]
+    if milvus_server.MILVUS_URL:
+        cases.append(BackendCase(name="milvus", vectors=milvus_server.server))
+    elif os.environ.get("EXACTDOCS_REQUIRE_MILVUS") == "1":  # CI: never skipped there
+        message = "EXACTDOCS_REQUIRE_MILVUS=1 but EXACTDOCS_TEST_MILVUS_URL is not set"
+        raise RuntimeError(message)
+    return cases
+
+
 EXTERNAL_BACKENDS: list[BackendCase] = [
     BackendCase(name="memory", search=_memory_search, vectors=_memory_vectors, counts_terms=True),
+    *_milvus_cases(),
 ]
 """Every external backend the suites run on here. Add yours (see the module docstring)."""
 

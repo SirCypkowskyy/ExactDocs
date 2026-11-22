@@ -414,6 +414,14 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             production=False,
         ),
+        "milvus": IndexBackendKind(
+            name="milvus",
+            module="exactdocs.retrieval.adapters.driven.milvus_index",
+            search=None,
+            vectors="vector_backend",
+            extra="milvus",
+            packages=("pymilvus", "milvus_lite"),
+        ),
     }
 )
 """The external index backends, by name. Adding one is one adapter module in
