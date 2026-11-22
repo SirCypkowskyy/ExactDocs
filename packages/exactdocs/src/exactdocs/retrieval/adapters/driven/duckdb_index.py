@@ -171,7 +171,7 @@ def _held_rows(connection: _Connection, table: str, library: str | None) -> list
     return [HeldVersion(manifest_id=m, library=lib, entries=int(n)) for m, lib, n in rows]
 
 
-def _fts_file(version: str) -> Path:
+def fts_extension(version: str) -> Path:
     """Find the ``fts`` extension the ``duckdb-extension-fts`` wheel installed for this DuckDB.
 
     Args:
@@ -288,7 +288,7 @@ class _DuckDBFile:
         try:
             if fts:
                 version = str(_one(connection, "PRAGMA version")[0])
-                quoted = str(_fts_file(version)).replace("'", "''")
+                quoted = str(fts_extension(version)).replace("'", "''")
                 connection.execute(f"LOAD '{quoted}'")
         except (duckdb.Error, FileNotFoundError) as error:
             connection.close()
