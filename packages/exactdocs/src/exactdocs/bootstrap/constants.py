@@ -414,6 +414,14 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             production=False,
         ),
+        "mongodb": IndexBackendKind(
+            name="mongodb",
+            module="exactdocs.retrieval.adapters.driven.mongodb_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="mongodb",
+            packages=("pymongo", "bson", "gridfs"),
+        ),
     }
 )
 """The external index backends, by name. Adding one is one adapter module in

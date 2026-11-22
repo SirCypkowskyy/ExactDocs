@@ -17,6 +17,7 @@ is left out when the variable is unset (as ``databases.py`` does for PostgreSQL)
 still run everywhere; CI sets the variable.
 """
 
+import os
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
@@ -60,8 +61,27 @@ async def _memory_vectors() -> AsyncGenerator[VectorBackend]:
         await backend.close()
 
 
+def _mongodb_cases() -> list[BackendCase]:
+    """MongoDB (#363), search and vectors, and vectors with native hybrid, when
+    ``EXACTDOCS_TEST_MONGODB_URL`` is set."""
+    if not os.environ.get("EXACTDOCS_TEST_MONGODB_URL"):
+        if os.environ.get("EXACTDOCS_REQUIRE_MONGODB") == "1":  # CI: never skipped there
+            message = "EXACTDOCS_REQUIRE_MONGODB=1 but EXACTDOCS_TEST_MONGODB_URL is not set"
+            raise RuntimeError(message)
+        return []
+    import mongodb_server  # ruff: ignore[import-outside-top-level] -- the extra, only with a server
+
+    return [
+        BackendCase(
+            name="mongodb", search=mongodb_server.mongodb_search, vectors=mongodb_server.plain_vectors
+        ),
+        BackendCase(name="mongodb_hybrid", vectors=mongodb_server.hybrid_vectors),
+    ]
+
+
 EXTERNAL_BACKENDS: list[BackendCase] = [
     BackendCase(name="memory", search=_memory_search, vectors=_memory_vectors, counts_terms=True),
+    *_mongodb_cases(),
 ]
 """Every external backend the suites run on here. Add yours (see the module docstring)."""
 

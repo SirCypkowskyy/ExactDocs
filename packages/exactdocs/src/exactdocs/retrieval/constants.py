@@ -131,6 +131,87 @@ EXTERNAL_HIT_MARGIN: Final[int] = 10
 MEMORY_BACKEND: Final[str] = "memory"
 """The registered name of the in-process reference index backend (tests only)."""
 
+# ---------------------------------------------------------------- adapters.driven.mongodb_index
+MONGODB_BACKEND: Final[str] = "mongodb"
+"""The registered name of the MongoDB (Atlas Search and Vector Search) backend (#363)."""
+MONGODB_DEFAULT_DATABASE: Final[str] = "exactdocs"
+"""The ``database`` option's default."""
+MONGODB_DEFAULT_COLLECTION: Final[str] = "chunks"
+"""The ``collection`` option's default: the search index's collection; each embedding space's
+is ``<collection>.space<id>``."""
+MONGODB_NAME: Final[re.Pattern[str]] = re.compile(r"[A-Za-z0-9_-]{1,64}")
+"""What the ``database`` and ``collection`` options may be (no ``.``: the spaces' collections
+are ``<collection>.space<id>``, so no other instance's collection is ever taken for one)."""
+MONGODB_SPACE: Final[str] = ".space"
+"""Between the ``collection`` option and a space's ID in the space's collection name."""
+MONGODB_SEARCH_INDEX: Final[str] = "exactdocs_text"
+"""The Atlas Search index (``$search``) of the search collection, and of a space's collection
+with ``hybrid``."""
+MONGODB_VECTOR_INDEX: Final[str] = "exactdocs_vectors"
+"""The Atlas Vector Search index (``$vectorSearch``) of a space's collection."""
+MONGODB_ANALYZER: Final[str] = "lucene.whitespace"
+"""The analyzer of the text fields: they hold ``identifier_tokens`` (already lower case and
+split), so only spaces split them and ``-``, ``_`` and ``.`` stay inside a token."""
+MONGODB_FILTER_FIELDS: Final[tuple[str, ...]] = (
+    "manifest_id",
+    "library",
+    "version_id",
+    "chunk_id",
+    "tags",
+    "write_id",
+)
+"""The ``token`` fields of the search index and the ``filter`` fields of the vector index:
+every query filters on ``manifest_id`` (and the tags) in MongoDB, before ranking; ``write_id``
+marks each write, so a write waits until the search indexes return it."""
+MONGODB_DEFAULT_TIMEOUT_SECONDS: Final[int] = 10
+"""The ``timeout`` option's default: server selection, connecting, and each command's
+``maxTimeMS``."""
+MONGODB_DEFAULT_INDEX_TIMEOUT_SECONDS: Final[int] = 120
+"""The ``index_timeout`` option's default: how long a write waits for a new search index to be
+queryable and for the search indexes to return what it wrote (they follow the collection a
+moment behind, ``mongot`` reading its change stream)."""
+MONGODB_POLL_SECONDS: Final[tuple[float, float]] = (0.02, 0.5)
+"""The first and the longest wait between two looks at whether the search indexes caught up
+(the wait doubles in between)."""
+MONGODB_WRITE_BATCH: Final[int] = 500
+"""Documents replaced per ``bulk_write`` (one page of ``EXTERNAL_PAGE`` entries)."""
+MONGODB_MAX_CANDIDATES: Final[int] = 10_000
+"""The most ``numCandidates`` (and ``limit``) ``$vectorSearch`` takes."""
+MONGODB_CANDIDATES_FACTOR: Final[int] = 20
+"""``numCandidates`` per hit asked of an approximate ``$vectorSearch`` (MongoDB advises 10 to
+20 times the limit); at least ``MONGODB_MIN_CANDIDATES``."""
+MONGODB_MIN_CANDIDATES: Final[int] = 100
+"""The fewest ``numCandidates`` of an approximate ``$vectorSearch``."""
+MONGODB_TIE_MARGIN: Final[int] = 10
+"""Neighbours asked beyond the limit, so equal distances at the cut are ordered by chunk ID."""
+MONGODB_UNKNOWN_STAGE: Final[int] = 40324
+"""The server's error code for an aggregation stage it does not know (``$rankFusion`` before
+MongoDB 8.1): native hybrid search then fuses in ExactDocs."""
+MONGODB_VECTOR_SEARCH: Final[frozenset[str]] = frozenset({"approximate", "exact"})
+"""The ``vector_search`` option's values: HNSW (``numCandidates``) or a full scan (``exact``)."""
+MONGODB_OPTIONS: Final[frozenset[str]] = frozenset(
+    {
+        "url",
+        "url_file",
+        "username",
+        "password",
+        "password_file",
+        "database",
+        "collection",
+        "timeout",
+        "index_timeout",
+        "hybrid",
+        "vector_search",
+    }
+)
+"""The options ``[index_backends.mongodb]`` takes; any other is refused at start."""
+MONGODB_URL_SECRETS: Final[tuple[str, ...]] = ("password", "secret", "token")
+"""Connection string parameters ``url`` may not hold (they carry secrets): ``url_file`` may."""
+MONGODB_TRUE: Final[frozenset[str]] = frozenset({"1", "true", "yes", "on"})
+"""How a switch option (``hybrid``) given as text is turned on."""
+MONGODB_FALSE: Final[frozenset[str]] = frozenset({"0", "false", "no", "off", ""})
+"""How a switch option given as text is turned off."""
+
 # ---------------------------------------------------------------- adapters.driven.memory
 MEMORY_FORMAT: Final[int] = 1
 """Format version of the in-memory search index."""
