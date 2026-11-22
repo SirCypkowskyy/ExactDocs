@@ -589,10 +589,11 @@ class ChromaVectorBackend:
             raise IndexBackendUnavailableError(self.name, reason)
 
     async def _collection_names(self) -> list[str]:
-        """List this instance's collections (``<collection>_space<id>``), a page at a time.
+        """List this instance's collections, a page at a time.
 
         Returns:
-            Their names.
+            The names of the collections ``<collection>_space<id>`` that ExactDocs made (another
+            one of such a name is left alone).
         """
         client = self._open()
         own = re.compile(rf"{re.escape(self.collection + CHROMA_SPACE_SUFFIX)}\d+")
@@ -602,7 +603,11 @@ class ChromaVectorBackend:
             page = await self._call(
                 lambda o=offset: client.list_collections(limit=CHROMA_READ_PAGE, offset=o)
             )
-            names += [c.name for c in page if own.fullmatch(c.name)]
+            names += [
+                c.name
+                for c in page
+                if own.fullmatch(c.name) and CHROMA_DIMENSIONS_KEY in (c.metadata or {})
+            ]
             if len(page) < CHROMA_READ_PAGE:
                 return names
             offset += CHROMA_READ_PAGE
@@ -722,7 +727,8 @@ def _http(
     except ValueError:
         port = -1
     extra = parts.path.strip("/") or parts.query or parts.fragment or parts.username
-    if parts.scheme not in {"http", "https"} or not parts.hostname or extra or (port or 1) < 1:
+    bad_port = port is not None and port < 1
+    if parts.scheme not in {"http", "https"} or not parts.hostname or extra or bad_port:
         message = f"url {url!r} must be http(s)://host[:port] (no path, no credentials)"
         raise ValueError(message)
     ssl = parts.scheme == "https"

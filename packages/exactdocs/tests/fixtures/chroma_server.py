@@ -55,23 +55,25 @@ def drop_collections(prefix: str) -> None:
 
 
 @asynccontextmanager
-async def http_vectors() -> AsyncGenerator[ChromaVectorBackend]:
-    """A fresh, opened backend of the test server; its collections are dropped after."""
+async def place(mode: str) -> AsyncGenerator[dict[str, object]]:
+    """The options of a fresh place in Chroma: collections of a random prefix on the test server
+    (``http``, dropped after) or a temporary directory (``local``, removed after)."""
     collection = f"test_{secrets.token_hex(6)}"
-    backend = vector_backend(options(collection))
-    await backend.open()
-    try:
-        yield backend
-    finally:
-        await backend.close()
-        await asyncio.to_thread(drop_collections, f"{collection}_")
+    if mode == "http":
+        try:
+            yield options(collection)
+        finally:
+            await asyncio.to_thread(drop_collections, f"{collection}_")
+        return
+    with tempfile.TemporaryDirectory(prefix="exactdocs-chroma-") as directory:
+        yield {"path": directory, "collection": collection}
 
 
 @asynccontextmanager
-async def local_vectors() -> AsyncGenerator[ChromaVectorBackend]:
-    """A fresh, opened embedded backend on a temporary directory, removed after."""
-    with tempfile.TemporaryDirectory(prefix="exactdocs-chroma-") as directory:
-        backend = vector_backend({"path": directory})
+async def chroma_vectors(mode: str) -> AsyncGenerator[ChromaVectorBackend]:
+    """A fresh, opened backend: of the test server (``http``) or embedded (``local``)."""
+    async with place(mode) as found:
+        backend = vector_backend(found)
         await backend.open()
         try:
             yield backend
@@ -82,12 +84,12 @@ async def local_vectors() -> AsyncGenerator[ChromaVectorBackend]:
 @asynccontextmanager
 async def http() -> AsyncGenerator[VectorBackend]:
     """The HTTP client's case."""
-    async with http_vectors() as backend:
+    async with chroma_vectors("http") as backend:
         yield backend
 
 
 @asynccontextmanager
 async def local() -> AsyncGenerator[VectorBackend]:
     """The embedded persistent client's case."""
-    async with local_vectors() as backend:
+    async with chroma_vectors("local") as backend:
         yield backend
