@@ -42,6 +42,13 @@ local = [
     "fastembed==0.9.1",
     "onnxruntime==1.31.0",
 ]
+# libSQL as the search and vector backend (#358, EXACTDOCS_SEARCH_BACKEND / EXACTDOCS_VECTOR_BACKEND
+# = libsql): only a *local file* needs it (libSQL embedded in the process); a libSQL server is
+# reached over its HTTP API with httpx2, so it works without this extra. Imported only by
+# `retrieval/adapters/driven/libsql_index.py`. Not in the images. Exact pin: 0.1.11 (2025-09-02)
+# is the latest release; for Python 3.14 it has a wheel for Linux x86_64 only (other platforms
+# build it from source, which needs Rust).
+libsql = ["libsql==0.1.11"]
 
 [project.scripts]
 exactdocs = "exactdocs.bootstrap.cli:main"

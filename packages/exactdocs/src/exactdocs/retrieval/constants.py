@@ -131,6 +131,170 @@ EXTERNAL_HIT_MARGIN: Final[int] = 10
 MEMORY_BACKEND: Final[str] = "memory"
 """The registered name of the in-process reference index backend (tests only)."""
 
+# ---------------------------------------------------------------- adapters.driven.libsql_index
+LIBSQL_BACKEND: Final[str] = "libsql"
+"""The registered name of the libSQL search and vector backend (#358)."""
+LIBSQL_OPTIONS: Final[frozenset[str]] = frozenset(
+    {
+        "url",
+        "auth_token",
+        "auth_token_file",
+        "prefix",
+        "timeout",
+        "compress_neighbors",
+        "max_neighbors",
+    }
+)
+"""The options ``[index_backends.libsql]`` takes; any other is refused at start."""
+LIBSQL_DEFAULT_PREFIX: Final[str] = "exactdocs"
+"""The ``prefix`` option's default: every table the backend creates starts with it."""
+LIBSQL_PREFIX: Final[re.Pattern[str]] = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,39}")
+"""What the ``prefix`` option may be: it is spliced into table names, so letters, digits and
+``_`` only."""
+LIBSQL_DEFAULT_TIMEOUT_SECONDS: Final[float] = 10.0
+"""The ``timeout`` option's default: how long one request to a libSQL server may take."""
+LIBSQL_BUSY_TIMEOUT_MS: Final[int] = 5_000
+"""How long a local libSQL file's connection waits for another process's write lock."""
+LIBSQL_COMPRESSIONS: Final[frozenset[str]] = frozenset(
+    {"float1bit", "float8", "float16", "floatb16", "float32"}
+)
+"""The ``compress_neighbors`` values libSQL's vector index takes."""
+LIBSQL_DEFAULT_COMPRESSION: Final[str] = "float8"
+"""The ``compress_neighbors`` default: the index stores each neighbour's vector in one byte per
+dimension (a quarter of float32), which candidates only come from: their distances are exact."""
+LIBSQL_URL_SCHEMES: Final[frozenset[str]] = frozenset({"libsql", "https", "http"})
+"""The schemes of a libSQL server's URL (``libsql://`` is HTTPS, or HTTP with ``?tls=0``)."""
+LIBSQL_ANN_OVERFETCH: Final[int] = 2
+"""How many times more neighbours a vector search asks the index for than the asked versions'
+share of the space would give, since the index is shared by every version of the space."""
+LIBSQL_ANN_MAX_CANDIDATES: Final[int] = 2_000
+"""The most neighbours a vector search asks the index for; when the asked versions are too small
+a share of the space for that to find enough of theirs, it scans their vectors exactly instead."""
+LIBSQL_TAG_CONDITIONS: Final[dict[str | None, str]] = {
+    None: "",
+    "any": (
+        "AND EXISTS (SELECT 1 FROM json_each(e.tags)"
+        " WHERE value IN (SELECT value FROM json_each(?)))"
+    ),
+    "all": (
+        "AND NOT EXISTS (SELECT 1 FROM json_each(?) wanted"
+        " WHERE wanted.value NOT IN (SELECT value FROM json_each(e.tags)))"
+    ),
+}
+"""The SQL condition of each tag match on an entry ``e`` (``TagMatch`` value; None: no filter),
+with one parameter, the wanted tags as JSON. It sits in WHERE, so it applies before ranking."""
+LIBSQL_SEARCH_TABLES: Final[tuple[str, ...]] = (
+    (
+        "CREATE TABLE IF NOT EXISTS {entries} (id INTEGER PRIMARY KEY, "
+        "manifest_id TEXT NOT NULL, chunk_id TEXT NOT NULL, library TEXT NOT NULL, "
+        "tags TEXT NOT NULL, UNIQUE (manifest_id, chunk_id))"
+    ),
+    "CREATE INDEX IF NOT EXISTS {entries}_library ON {entries} (library, manifest_id)",
+    (
+        "CREATE VIRTUAL TABLE IF NOT EXISTS {fts} USING fts5(heading, path, text, identifiers, "
+        "tokenize=\"unicode61 tokenchars '-_.'\")"
+    ),
+)
+"""The search backend's tables: one entry per chunk of each version, and its FTS5 row (by the
+entry's row ID) with the columns and tokenizer of ExactDocs' SQLite index. The FTS5 table keeps
+its text, as SQLite's does: a contentless one (``contentless_delete``) keeps a deleted row's
+terms in its statistics, so ``bm25()`` would rank differently after a version is replaced."""
+LIBSQL_SEARCH_PUT: Final[tuple[str, str]] = (
+    (
+        "INSERT INTO {entries} (manifest_id, chunk_id, library, tags) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT (manifest_id, chunk_id) "
+        "DO UPDATE SET library = excluded.library, tags = excluded.tags"
+    ),
+    (
+        "INSERT OR REPLACE INTO {fts} (rowid, heading, path, text, identifiers) "
+        "VALUES ((SELECT id FROM {entries} WHERE manifest_id = ? AND chunk_id = ?), ?, ?, ?, ?)"
+    ),
+)
+"""Adds or replaces one entry, then its FTS5 row."""
+LIBSQL_SEARCH_DELETE: Final[tuple[str, str]] = (
+    "DELETE FROM {fts} WHERE rowid IN (SELECT id FROM {entries} WHERE manifest_id IN ({ids}))",
+    "DELETE FROM {entries} WHERE manifest_id IN ({ids})",
+)
+"""Deletes the versions' FTS5 rows, then their entries."""
+LIBSQL_HELD: Final[str] = (
+    "SELECT manifest_id, min(library), count(*) FROM {table} {where} "
+    "GROUP BY manifest_id ORDER BY manifest_id"
+)
+"""The versions a table holds entries of, and how many (``{where}``: the library, or empty)."""
+LIBSQL_SEARCH: Final[str] = (
+    "SELECT e.manifest_id, e.chunk_id, -bm25({fts}, ?, ?, ?, ?) AS score "
+    "FROM {fts} JOIN {entries} e ON e.id = {fts}.rowid "
+    "WHERE {fts} MATCH ? AND e.manifest_id IN ({ids}) {tags} "
+    "ORDER BY score DESC, e.chunk_id, e.manifest_id LIMIT ?"
+)
+"""Ranks the versions' entries with ``bm25()`` (the column weights first, as on SQLite)."""
+LIBSQL_COUNT: Final[str] = (
+    "SELECT e.manifest_id, count(*) FROM {fts} JOIN {entries} e ON e.id = {fts}.rowid "
+    "WHERE {fts} MATCH ? AND e.manifest_id IN ({ids}) {tags} GROUP BY e.manifest_id"
+)
+"""Counts the matching entries of each version."""
+LIBSQL_VECTOR_CHECK: Final[str] = "SELECT vector_extract(vector32('[1]'))"
+"""Fails on a server without libSQL's native vectors (plain SQLite)."""
+LIBSQL_SPACES_TABLE: Final[str] = (
+    "CREATE TABLE IF NOT EXISTS {spaces} "
+    "(space_id INTEGER PRIMARY KEY, dimensions INTEGER NOT NULL)"
+)
+"""The registry of the embedding spaces that have a table, with their dimensions."""
+LIBSQL_SPACE_IDS: Final[str] = "SELECT space_id FROM {spaces} ORDER BY space_id"
+"""Every space the registry holds."""
+LIBSQL_SPACE_CREATE: Final[tuple[str, ...]] = (
+    "INSERT OR IGNORE INTO {spaces} (space_id, dimensions) VALUES (?, ?)",
+    (
+        "CREATE TABLE IF NOT EXISTS {table} (id INTEGER PRIMARY KEY, "
+        "manifest_id TEXT NOT NULL, chunk_id TEXT NOT NULL, library TEXT NOT NULL, "
+        "tags TEXT NOT NULL, embedding F32_BLOB({dimensions}) NOT NULL, "
+        "UNIQUE (manifest_id, chunk_id))"
+    ),
+    "CREATE INDEX IF NOT EXISTS {table}_library ON {table} (library, manifest_id)",
+    "CREATE INDEX IF NOT EXISTS {table}_ann ON {table} (libsql_vector_idx(embedding, {settings}))",
+    "SELECT dimensions FROM {spaces} WHERE space_id = ?",
+)
+"""Registers a space and creates its table and vector index (``{settings}``: the index's
+quoted settings), then reads back the dimensions the registry holds for it."""
+LIBSQL_SPACE_DROP: Final[tuple[str, ...]] = (
+    "DROP INDEX IF EXISTS {table}_ann",
+    "DROP TABLE IF EXISTS {table}",
+    "DELETE FROM {spaces} WHERE space_id = ?",
+)
+"""Drops a space's vector index and table, and forgets it."""
+LIBSQL_VECTOR_PUT: Final[str] = (
+    "INSERT INTO {table} (manifest_id, chunk_id, library, tags, embedding) "
+    "VALUES (?, ?, ?, ?, vector32(?)) ON CONFLICT (manifest_id, chunk_id) "
+    "DO UPDATE SET library = excluded.library, tags = excluded.tags, "
+    "embedding = excluded.embedding"
+)
+"""Adds or replaces one entry and its vector (little-endian float32 bytes)."""
+LIBSQL_VECTOR_REMOVE: Final[str] = (
+    "DELETE FROM {table} WHERE manifest_id = ? AND chunk_id IN ({ids})"
+)
+"""Deletes some chunks of one version in a space."""
+LIBSQL_VECTOR_DELETE: Final[str] = "DELETE FROM {table} WHERE manifest_id IN ({ids})"
+"""Deletes the versions' entries in a space."""
+LIBSQL_NEAREST_SIZES: Final[tuple[str, str]] = (
+    "SELECT count(*) FROM {table} e WHERE e.manifest_id IN ({ids}) {tags}",
+    "SELECT coalesce(max(id), 0) FROM {table}",
+)
+"""How many entries the asked versions have (tags applied), and an upper bound of the space's."""
+LIBSQL_NEAREST_INDEX: Final[str] = (
+    "SELECT e.manifest_id, e.chunk_id, vector_distance_cos(e.embedding, vector32(?)) AS distance "
+    "FROM vector_top_k('{table}_ann', vector32(?), {k}) AS top "
+    "JOIN {table} e ON e.id = top.id WHERE e.manifest_id IN ({ids}) {tags} "
+    "ORDER BY distance, e.chunk_id, e.manifest_id LIMIT ?"
+)
+"""The asked versions' entries among the index's ``{k}`` neighbours of the query, by exact
+distance."""
+LIBSQL_NEAREST_SCAN: Final[str] = (
+    "SELECT e.manifest_id, e.chunk_id, vector_distance_cos(e.embedding, vector32(?)) AS distance "
+    "FROM {table} e WHERE e.manifest_id IN ({ids}) {tags} "
+    "ORDER BY distance, e.chunk_id, e.manifest_id LIMIT ?"
+)
+"""The asked versions' nearest entries, every one of their vectors compared (exact)."""
+
 # ---------------------------------------------------------------- adapters.driven.memory
 MEMORY_FORMAT: Final[int] = 1
 """Format version of the in-memory search index."""

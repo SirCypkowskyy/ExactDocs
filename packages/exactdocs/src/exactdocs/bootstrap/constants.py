@@ -414,6 +414,14 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             production=False,
         ),
+        "libsql": IndexBackendKind(
+            name="libsql",
+            module="exactdocs.retrieval.adapters.driven.libsql_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="libsql",
+            packages=("libsql",),
+        ),
     }
 )
 """The external index backends, by name. Adding one is one adapter module in
