@@ -17,6 +17,7 @@ is left out when the variable is unset (as ``databases.py`` does for PostgreSQL)
 still run everywhere; CI sets the variable.
 """
 
+import importlib
 import importlib.util
 import tempfile
 from collections.abc import AsyncGenerator, Callable
@@ -63,13 +64,15 @@ async def _memory_vectors() -> AsyncGenerator[VectorBackend]:
         await backend.close()
 
 
+DUCKDB_MODULE = "exactdocs.retrieval.adapters.driven.duckdb_index"  # only with the extra
+
+
 @asynccontextmanager
 async def _duckdb_search() -> AsyncGenerator[SearchBackend]:
     """DuckDB is embedded: a fresh database file in a temporary folder, no server."""
-    from exactdocs.retrieval.adapters.driven.duckdb_index import search_backend
-
+    build = importlib.import_module(DUCKDB_MODULE).search_backend
     with tempfile.TemporaryDirectory(prefix="exactdocs-duckdb-") as folder:
-        backend = search_backend({"path": str(Path(folder) / "index.duckdb"), "threads": 2})
+        backend = build({"path": str(Path(folder) / "index.duckdb"), "threads": 2})
         await backend.open()
         try:
             yield backend
@@ -79,10 +82,9 @@ async def _duckdb_search() -> AsyncGenerator[SearchBackend]:
 
 @asynccontextmanager
 async def _duckdb_vectors() -> AsyncGenerator[VectorBackend]:
-    from exactdocs.retrieval.adapters.driven.duckdb_index import vector_backend
-
+    build = importlib.import_module(DUCKDB_MODULE).vector_backend
     with tempfile.TemporaryDirectory(prefix="exactdocs-duckdb-") as folder:
-        backend = vector_backend({"path": str(Path(folder) / "index.duckdb"), "threads": 2})
+        backend = build({"path": str(Path(folder) / "index.duckdb"), "threads": 2})
         await backend.open()
         try:
             yield backend

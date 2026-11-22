@@ -148,17 +148,163 @@ backends open the same file with the same settings, so they share one database i
 DUCKDB_FTS_PACKAGE: Final[str] = "duckdb_extension_fts"
 """The installed package (``duckdb-extension-fts``, in the ``duckdb`` extra) that holds the
 signed ``fts`` extension per DuckDB release: ``extensions/<version>/fts.duckdb_extension``."""
-DUCKDB_SEARCH_TABLE: Final[str] = "exactdocs_search"
-"""The search entries: one row per chunk of each version, with its library and version."""
-DUCKDB_SEARCH_KEYS: Final[str] = "exactdocs_search_keys"
-"""The sequence numbering search rows: the ``fts`` index needs one unique key column."""
-DUCKDB_SEARCH_STATE: Final[str] = "exactdocs_search_state"
-"""One row: whether the ``fts`` index is older than the search table (it never updates itself;
-the first search after a write rebuilds it)."""
-DUCKDB_FTS_SCHEMA: Final[str] = f"fts_main_{DUCKDB_SEARCH_TABLE}"
-"""The schema ``PRAGMA create_fts_index`` makes for the search table (its ``match_bm25``)."""
+DUCKDB_FTS_SCHEMA: Final[str] = "fts_main_exactdocs_search"
+"""The schema ``PRAGMA create_fts_index`` makes for ``exactdocs_search`` (its ``match_bm25``)."""
 DUCKDB_VECTOR_TABLE_PREFIX: Final[str] = "exactdocs_vectors_"
 """A space's vectors live in ``exactdocs_vectors_<space id>`` (a ``FLOAT[<dimensions>]`` column)."""
+_DUCKDB_SEARCH_CREATE: Final[tuple[str, ...]] = (
+    "CREATE SEQUENCE IF NOT EXISTS exactdocs_search_keys",
+    """
+    CREATE TABLE IF NOT EXISTS exactdocs_search (
+        rowkey BIGINT NOT NULL DEFAULT nextval('exactdocs_search_keys'),
+        manifest_id VARCHAR NOT NULL,
+        library VARCHAR NOT NULL,
+        version_id VARCHAR NOT NULL,
+        chunk_id VARCHAR NOT NULL,
+        article_path VARCHAR NOT NULL,
+        heading_path VARCHAR[] NOT NULL,
+        content VARCHAR NOT NULL,
+        tags VARCHAR[] NOT NULL,
+        fts_heading VARCHAR NOT NULL,
+        fts_path VARCHAR NOT NULL,
+        fts_text VARCHAR NOT NULL,
+        fts_identifiers VARCHAR NOT NULL
+    )
+    """,
+    "CREATE TABLE IF NOT EXISTS exactdocs_search_state (stale BOOLEAN NOT NULL)",
+)
+"""The search tables: ``exactdocs_search`` holds one row per chunk of each version (its library,
+version, manifest, text and tags; ``rowkey`` is the unique key the ``fts`` index needs; the
+``fts_*`` columns are the tokens it indexes), and ``exactdocs_search_state`` one row saying
+whether the ``fts`` index is older than the table (it never follows writes by itself)."""
+_DUCKDB_STATE_READ: Final[str] = "SELECT stale FROM exactdocs_search_state"
+"""Reads whether the ``fts`` index is stale (no row: the tables were just created)."""
+_DUCKDB_STATE_FIRST: Final[str] = "INSERT INTO exactdocs_search_state VALUES (true)"
+"""The state's one row, for new tables."""
+_DUCKDB_MARK_STALE: Final[str] = "UPDATE exactdocs_search_state SET stale = true"
+"""Records a write the ``fts`` index does not have yet: the next search rebuilds it."""
+_DUCKDB_MARK_FRESH: Final[str] = "UPDATE exactdocs_search_state SET stale = false"
+"""Records that the ``fts`` index was just rebuilt."""
+_DUCKDB_FTS_BUILT: Final[str] = (
+    "SELECT 1 FROM duckdb_schemas() "
+    "WHERE database_name = current_database() AND schema_name = $schema"
+)
+"""Finds the ``fts`` index's schema; without it, the index counts as stale."""
+_DUCKDB_FTS_BUILD: Final[str] = (
+    "PRAGMA create_fts_index('exactdocs_search', 'rowkey', 'fts_heading', 'fts_path', "
+    r"'fts_text', 'fts_identifiers', stemmer='none', stopwords='none', ignore='[^\s\S]', "
+    "lower=0, strip_accents=0, overwrite=1)"
+)
+"""(Re)builds the ``fts`` index over the whole table. The adapter tokenizes every column itself
+(as FTS5's ``unicode61 tokenchars '-_.'`` and ``identifier_tokens`` split): the index only splits
+on white space (``ignore`` matches nothing), keeps case and accents and stems nothing, and splits
+the query's terms the same way."""
+_DUCKDB_SEARCH_DELETE_CHUNKS: Final[str] = (
+    "DELETE FROM exactdocs_search "
+    "WHERE manifest_id = $manifest AND chunk_id IN (SELECT unnest($chunks::VARCHAR[]))"
+)
+"""Deletes some entries of a version (before they are written again)."""
+_DUCKDB_SEARCH_DELETE_MANIFESTS: Final[str] = (
+    "DELETE FROM exactdocs_search WHERE manifest_id IN (SELECT unnest($manifests::VARCHAR[]))"
+)
+"""Deletes whole versions; returns how many rows went."""
+_DUCKDB_SEARCH_INSERT: Final[str] = """
+    INSERT INTO exactdocs_search (
+        manifest_id, library, version_id, chunk_id, article_path, heading_path, content, tags,
+        fts_heading, fts_path, fts_text, fts_identifiers
+    )
+    SELECT $manifest, $library, $version, unnest($chunks::VARCHAR[]),
+        unnest($articles::VARCHAR[]), unnest($headings::VARCHAR[][]),
+        unnest($contents::VARCHAR[]), unnest($tags::VARCHAR[][]), unnest($fts_heading::VARCHAR[]),
+        unnest($fts_path::VARCHAR[]), unnest($fts_text::VARCHAR[]),
+        unnest($fts_identifiers::VARCHAR[])
+"""
+"""Writes a page of entries of one version: one list parameter per column, zipped by ``unnest``."""
+_DUCKDB_SEARCH: Final[str] = """
+    SELECT manifest_id, chunk_id, score FROM (
+        SELECT manifest_id, chunk_id,
+            $heading_weight * coalesce(fts_main_exactdocs_search.match_bm25(
+                rowkey, $terms, fields := 'fts_heading'), 0)
+            + $path_weight * coalesce(fts_main_exactdocs_search.match_bm25(
+                rowkey, $terms, fields := 'fts_path'), 0)
+            + $text_weight * coalesce(fts_main_exactdocs_search.match_bm25(
+                rowkey, $terms, fields := 'fts_text'), 0)
+            + $identifiers_weight * coalesce(fts_main_exactdocs_search.match_bm25(
+                rowkey, $terms, fields := 'fts_identifiers'), 0) AS score
+        FROM exactdocs_search
+        WHERE manifest_id IN (SELECT unnest($manifests::VARCHAR[])) AND {tags}
+    ) WHERE score > 0
+    ORDER BY score DESC, chunk_id, manifest_id LIMIT $limit
+"""
+"""Ranks the versions' entries: BM25 per column, weighted as SQLite's FTS5 columns are
+(``HEADING_WEIGHT`` and the others); ``{tags}`` is a ``_DUCKDB_TAGS`` condition."""
+_DUCKDB_COUNT: Final[str] = """
+    SELECT manifest_id, count(*) FROM (
+        SELECT manifest_id, fts_main_exactdocs_search.match_bm25(rowkey, $terms) AS score
+        FROM exactdocs_search
+        WHERE manifest_id IN (SELECT unnest($manifests::VARCHAR[])) AND {tags}
+    ) WHERE score IS NOT NULL GROUP BY manifest_id
+"""
+"""Counts the matching entries of each version; ``{tags}`` is a ``_DUCKDB_TAGS`` condition."""
+_DUCKDB_TAGS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "any": "(len($tags::VARCHAR[]) = 0 OR list_has_any(tags, $tags::VARCHAR[]))",
+        "all": "list_has_all(tags, $tags::VARCHAR[])",
+    }
+)
+"""The tag filter's condition, by ``TagMatch`` value: any of the tags (none keeps all), or all."""
+_DUCKDB_HELD: Final[str] = (
+    "SELECT manifest_id, any_value(library), count(*) FROM {table} {where} "
+    "GROUP BY manifest_id ORDER BY manifest_id"
+)
+"""Lists the versions a table holds, with their entry counts (``{where}``: a library, or none)."""
+_DUCKDB_VECTOR_TABLES: Final[str] = (
+    "SELECT table_name FROM duckdb_tables() WHERE database_name = current_database() "
+    "AND schema_name = 'main' AND starts_with(table_name, $prefix)"
+)
+"""Lists the tables whose name starts with ``$prefix`` (the spaces' tables)."""
+_DUCKDB_VECTOR_CREATE: Final[str] = """
+    CREATE TABLE IF NOT EXISTS {table} (
+        manifest_id VARCHAR NOT NULL,
+        library VARCHAR NOT NULL,
+        version_id VARCHAR NOT NULL,
+        chunk_id VARCHAR NOT NULL,
+        article_path VARCHAR NOT NULL,
+        heading_path VARCHAR[] NOT NULL,
+        tags VARCHAR[] NOT NULL,
+        vector FLOAT[{dimensions}] NOT NULL
+    )
+"""
+"""A space's table, made at its first put: one row per chunk of each version, its float32 vector
+in a fixed-size array (no HNSW index: ``vss`` persistence is still experimental)."""
+_DUCKDB_VECTOR_DELETE_CHUNKS: Final[str] = (
+    "DELETE FROM {table} "
+    "WHERE manifest_id = $manifest AND chunk_id IN (SELECT unnest($chunks::VARCHAR[]))"
+)
+"""Deletes some entries of a version from a space's table."""
+_DUCKDB_VECTOR_DELETE_MANIFESTS: Final[str] = (
+    "DELETE FROM {table} WHERE manifest_id IN (SELECT unnest($manifests::VARCHAR[]))"
+)
+"""Deletes whole versions from a space's table."""
+_DUCKDB_VECTOR_INSERT: Final[str] = """
+    INSERT INTO {table}
+    SELECT $manifest, $library, $version, unnest($chunks::VARCHAR[]),
+        unnest($articles::VARCHAR[]), unnest($headings::VARCHAR[][]), unnest($tags::VARCHAR[][]),
+        unnest($vectors::FLOAT[][])::FLOAT[{dimensions}]
+"""
+"""Writes a page of entries of one version to a space's table."""
+_DUCKDB_VECTOR_DROP: Final[str] = "DROP TABLE IF EXISTS {table}"
+"""Drops a retired space's table."""
+_DUCKDB_NEAREST: Final[str] = """
+    SELECT manifest_id, chunk_id, distance FROM (
+        SELECT manifest_id, chunk_id,
+            greatest(array_cosine_distance(vector, $query::FLOAT[{dimensions}]), 0) AS distance
+        FROM {table}
+        WHERE manifest_id IN (SELECT unnest($manifests::VARCHAR[])) AND {tags}
+    ) ORDER BY distance, chunk_id, manifest_id LIMIT $limit
+"""
+"""The versions' nearest vectors in a space: an exact scan with core ``array_cosine_distance``;
+``{tags}`` is a ``_DUCKDB_TAGS`` condition."""
 DUCKDB_LOCK_HELD: Final[str] = "Conflicting lock"
 """What DuckDB's error says when another process has the database file open."""
 

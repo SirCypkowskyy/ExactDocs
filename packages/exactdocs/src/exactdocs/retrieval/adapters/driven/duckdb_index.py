@@ -35,15 +35,33 @@ from pathlib import Path
 import duckdb
 
 from exactdocs.retrieval.constants import (
+    _DUCKDB_COUNT,
+    _DUCKDB_FTS_BUILD,
+    _DUCKDB_FTS_BUILT,
+    _DUCKDB_HELD,
+    _DUCKDB_MARK_FRESH,
+    _DUCKDB_MARK_STALE,
+    _DUCKDB_NEAREST,
+    _DUCKDB_SEARCH,
+    _DUCKDB_SEARCH_CREATE,
+    _DUCKDB_SEARCH_DELETE_CHUNKS,
+    _DUCKDB_SEARCH_DELETE_MANIFESTS,
+    _DUCKDB_SEARCH_INSERT,
+    _DUCKDB_STATE_FIRST,
+    _DUCKDB_STATE_READ,
+    _DUCKDB_TAGS,
+    _DUCKDB_VECTOR_CREATE,
+    _DUCKDB_VECTOR_DELETE_CHUNKS,
+    _DUCKDB_VECTOR_DELETE_MANIFESTS,
+    _DUCKDB_VECTOR_DROP,
+    _DUCKDB_VECTOR_INSERT,
+    _DUCKDB_VECTOR_TABLES,
     DUCKDB_BACKEND,
     DUCKDB_CONFIG,
     DUCKDB_FTS_PACKAGE,
     DUCKDB_FTS_SCHEMA,
     DUCKDB_LOCK_HELD,
     DUCKDB_OPTIONS,
-    DUCKDB_SEARCH_KEYS,
-    DUCKDB_SEARCH_STATE,
-    DUCKDB_SEARCH_TABLE,
     DUCKDB_VECTOR_TABLE_PREFIX,
     HEADING_WEIGHT,
     IDENTIFIERS_WEIGHT,
@@ -61,91 +79,14 @@ from exactdocs.retrieval.models import (
     IndexedManifest,
     IndexEntry,
     TagFilter,
-    TagMatch,
     TextQuery,
     identifier_tokens,
 )
 
 type _Connection = duckdb.DuckDBPyConnection
+type _Config = dict[str, str | bool | int | float | list[str]]
 
-_search_columns = (
-    "manifest_id, library, version_id, chunk_id, article_path, heading_path, content, tags, "
-    "fts_heading, fts_path, fts_text, fts_identifiers"
-)
-_create_search = (
-    f"CREATE SEQUENCE IF NOT EXISTS {DUCKDB_SEARCH_KEYS}",
-    f"""
-    CREATE TABLE IF NOT EXISTS {DUCKDB_SEARCH_TABLE} (
-        rowkey BIGINT NOT NULL DEFAULT nextval('{DUCKDB_SEARCH_KEYS}'),
-        manifest_id VARCHAR NOT NULL,
-        library VARCHAR NOT NULL,
-        version_id VARCHAR NOT NULL,
-        chunk_id VARCHAR NOT NULL,
-        article_path VARCHAR NOT NULL,
-        heading_path VARCHAR[] NOT NULL,
-        content VARCHAR NOT NULL,
-        tags VARCHAR[] NOT NULL,
-        fts_heading VARCHAR NOT NULL,
-        fts_path VARCHAR NOT NULL,
-        fts_text VARCHAR NOT NULL,
-        fts_identifiers VARCHAR NOT NULL
-    )
-    """,
-    f"CREATE TABLE IF NOT EXISTS {DUCKDB_SEARCH_STATE} (stale BOOLEAN NOT NULL)",
-)
-_search_delete_chunks = (
-    f"DELETE FROM {DUCKDB_SEARCH_TABLE} "
-    "WHERE manifest_id = $manifest AND chunk_id IN (SELECT unnest($chunks::VARCHAR[]))"
-)
-_search_insert = f"""
-    INSERT INTO {DUCKDB_SEARCH_TABLE} ({_search_columns})
-    SELECT $manifest, $library, $version, unnest($chunks::VARCHAR[]),
-        unnest($articles::VARCHAR[]), unnest($headings::VARCHAR[][]),
-        unnest($contents::VARCHAR[]), unnest($tags::VARCHAR[][]), unnest($fts_heading::VARCHAR[]),
-        unnest($fts_path::VARCHAR[]), unnest($fts_text::VARCHAR[]),
-        unnest($fts_identifiers::VARCHAR[])
-"""
-_mark_stale = f"UPDATE {DUCKDB_SEARCH_STATE} SET stale = true"
-# Every column is tokenized here, as ``_words`` and ``identifier_tokens`` do: the ``fts`` index
-# only splits on white space (``ignore`` matches nothing), keeps case and accents and stems
-# nothing, and the query's terms are split the same way. Tokens are those of FTS5's
-# ``unicode61 tokenchars '-_.'``, so `retry_policy` and `--dry-run` stay whole.
-_build_fts = (
-    f"PRAGMA create_fts_index('{DUCKDB_SEARCH_TABLE}', 'rowkey', 'fts_heading', 'fts_path', "
-    r"'fts_text', 'fts_identifiers', stemmer='none', stopwords='none', ignore='[^\s\S]', "
-    "lower=0, strip_accents=0, overwrite=1)"
-)
-_match = f"{DUCKDB_FTS_SCHEMA}.match_bm25"
-_scored = f"""
-    SELECT manifest_id, chunk_id,
-        {HEADING_WEIGHT} * coalesce({_match}(rowkey, $terms, fields := 'fts_heading'), 0)
-        + {PATH_WEIGHT} * coalesce({_match}(rowkey, $terms, fields := 'fts_path'), 0)
-        + {TEXT_WEIGHT} * coalesce({_match}(rowkey, $terms, fields := 'fts_text'), 0)
-        + {IDENTIFIERS_WEIGHT} * coalesce({_match}(rowkey, $terms, fields := 'fts_identifiers'), 0)
-        AS score
-    FROM {DUCKDB_SEARCH_TABLE}
-    WHERE manifest_id IN (SELECT unnest($manifests::VARCHAR[])) AND {{tags}}
-"""
-_search = f"""
-    SELECT manifest_id, chunk_id, score FROM ({_scored}) WHERE score > 0
-    ORDER BY score DESC, chunk_id, manifest_id LIMIT $limit
-"""
-_count = f"""
-    SELECT manifest_id, count(*) FROM (
-        SELECT manifest_id, {_match}(rowkey, $terms) AS score FROM {DUCKDB_SEARCH_TABLE}
-        WHERE manifest_id IN (SELECT unnest($manifests::VARCHAR[])) AND {{tags}}
-    ) WHERE score IS NOT NULL GROUP BY manifest_id
-"""
-_tag_conditions = {
-    TagMatch.ANY: "(len($tags::VARCHAR[]) = 0 OR list_has_any(tags, $tags::VARCHAR[]))",
-    TagMatch.ALL: "list_has_all(tags, $tags::VARCHAR[])",
-}
-_held = "SELECT manifest_id, any_value(library), count(*) FROM {table} {where} GROUP BY manifest_id"
-_list_vector_tables = (
-    "SELECT table_name FROM duckdb_tables() WHERE database_name = current_database() "
-    "AND schema_name = 'main' AND starts_with(table_name, $prefix)"
-)
-_vector_table_name = re.compile(rf"{DUCKDB_VECTOR_TABLE_PREFIX}(\d+)")
+_space_table = re.compile(rf"{DUCKDB_VECTOR_TABLE_PREFIX}\d+")
 
 
 def _is_word_char(char: str) -> bool:
@@ -179,14 +120,15 @@ def _words(text: str) -> str:
     return " ".join(words)
 
 
-def _search_row(entry: IndexEntry) -> tuple[str, str, str, str]:
-    """Tokenize an entry's columns: heading, ancestor headings, text, identifiers.
+def _search_columns(entry: IndexEntry) -> tuple[str, str, str, str]:
+    """Tokenize an entry's indexed columns: heading, ancestor headings, text, identifiers.
 
     Args:
         entry: The entry.
 
     Returns:
-        What the ``fts`` index reads from each column (as SQLite's ``fts_row`` splits a chunk).
+        What the ``fts`` index reads from each column (split as SQLite's ``fts_row`` splits a
+        chunk).
     """
     headings = entry.heading_path
     full = " / ".join(headings)
@@ -198,19 +140,7 @@ def _search_row(entry: IndexEntry) -> tuple[str, str, str, str]:
     )
 
 
-def _tag_params(tag_filter: TagFilter) -> tuple[str, list[str]]:
-    """Return a tag filter's SQL condition and its ``$tags`` parameter.
-
-    Args:
-        tag_filter: Which tags a chunk's article must carry.
-
-    Returns:
-        The condition on the ``tags`` column, and the tags.
-    """
-    return _tag_conditions[tag_filter.match], list(tag_filter.tags)
-
-
-def _vector_table(space_id: EmbeddingSpaceId) -> str:
+def _space_table_of(space_id: EmbeddingSpaceId) -> str:
     """Name a space's table.
 
     Args:
@@ -222,34 +152,23 @@ def _vector_table(space_id: EmbeddingSpaceId) -> str:
     return f"{DUCKDB_VECTOR_TABLE_PREFIX}{int(space_id)}"
 
 
-def _held_rows(rows: Sequence[tuple[str, str, int]]) -> list[HeldVersion]:
-    """Turn ``_held`` rows into held versions.
+def _held_rows(connection: _Connection, table: str, library: str | None) -> list[HeldVersion]:
+    """List the versions a table holds.
 
     Args:
-        rows: ``(manifest_id, library, entries)`` rows.
-
-    Returns:
-        One per version, by manifest ID.
-    """
-    return sorted(
-        (HeldVersion(manifest_id=m, library=lib, entries=int(n)) for m, lib, n in rows),
-        key=lambda h: h.manifest_id,
-    )
-
-
-def _held_query(table: str, library: str | None) -> tuple[str, dict[str, object]]:
-    """Build the query listing the versions a table holds.
-
-    Args:
+        connection: The connection.
         table: The table.
         library: Only this library's, if given.
 
     Returns:
-        The SQL and its parameters.
+        One per version, by manifest ID.
     """
     if library is None:
-        return _held.format(table=table, where=""), {}
-    return _held.format(table=table, where="WHERE library = $library"), {"library": library}
+        rows = connection.execute(_DUCKDB_HELD.format(table=table, where="")).fetchall()
+    else:
+        sql = _DUCKDB_HELD.format(table=table, where="WHERE library = $library")
+        rows = connection.execute(sql, {"library": library}).fetchall()
+    return [HeldVersion(manifest_id=m, library=lib, entries=int(n)) for m, lib, n in rows]
 
 
 def _fts_file(version: str) -> Path:
@@ -285,11 +204,48 @@ def _lock_holder(error: duckdb.Error) -> str:
     Returns:
         ``<program> (PID <n>)``, or ``another process`` when the message does not say.
     """
-    found = re.search(r"Conflicting lock is held in (.+?)(?:\. See|$)", str(error))
+    found = re.search(r"Conflicting lock is held in (.+?\(PID \d+\))", str(error))
     return found.group(1) if found else "another process"
 
 
-@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- connection set at open
+def _one(connection: _Connection, sql: str, params: object = None) -> tuple:
+    """Run a query that returns one row.
+
+    Args:
+        connection: The connection.
+        sql: The query.
+        params: Its parameters.
+
+    Returns:
+        The row.
+
+    Raises:
+        duckdb.InternalException: It returned no row.
+    """
+    row = connection.execute(sql, params).fetchone()
+    if row is None:
+        message = f"no row from {sql!r}"
+        raise duckdb.InternalException(message)
+    return row
+
+
+def _in_transaction(connection: _Connection, work: Callable[[], None]) -> None:
+    """Run statements in one transaction, rolled back if one fails.
+
+    Args:
+        connection: The connection.
+        work: The statements.
+    """
+    connection.begin()
+    try:
+        work()
+    except BaseException:
+        connection.rollback()
+        raise
+    connection.commit()
+
+
+@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- opened at start
 class _DuckDBFile:
     """One DuckDB database file, opened at start, used from one worker thread at a time."""
 
@@ -297,7 +253,7 @@ class _DuckDBFile:
     """The backend's registered name, for messages."""
     path: Path
     """The database file."""
-    config: dict[str, object]
+    config: _Config
     """What the file is opened with (``DUCKDB_CONFIG`` plus the options)."""
     connection: _Connection | None = None
     """The open connection; ``None`` before ``open`` and after ``close``."""
@@ -385,60 +341,18 @@ class _DuckDBFile:
             raise IndexBackendUnavailableError(self.name, reason) from error
 
 
-def _one(connection: _Connection, sql: str, params: object = None) -> tuple:
-    """Run a query that returns one row.
-
-    Args:
-        connection: The connection.
-        sql: The query.
-        params: Its parameters.
-
-    Returns:
-        The row.
-
-    Raises:
-        duckdb.InternalException: It returned no row.
-    """
-    row = connection.execute(sql, params).fetchone()
-    if row is None:
-        message = f"no row from {sql!r}"
-        raise duckdb.InternalException(message)
-    return row
-
-
-def _in_transaction(connection: _Connection, work: Callable[[], None]) -> None:
-    """Run statements in one transaction, rolled back if one fails.
-
-    Args:
-        connection: The connection.
-        work: The statements.
-    """
-    connection.begin()
-    try:
-        work()
-    except BaseException:
-        connection.rollback()
-        raise
-    connection.commit()
-
-
 def _prepare_search(connection: _Connection) -> None:
     """Create the search tables it lacks; a missing ``fts`` index counts as stale.
 
     Args:
         connection: The connection.
     """
-    for statement in _create_search:
+    for statement in _DUCKDB_SEARCH_CREATE:
         connection.execute(statement)
-    if connection.execute(f"SELECT 1 FROM {DUCKDB_SEARCH_STATE}").fetchone() is None:
-        connection.execute(f"INSERT INTO {DUCKDB_SEARCH_STATE} VALUES (true)")
-    built = connection.execute(
-        "SELECT 1 FROM duckdb_schemas() WHERE database_name = current_database() "
-        "AND schema_name = $schema",
-        {"schema": DUCKDB_FTS_SCHEMA},
-    ).fetchone()
-    if built is None:
-        connection.execute(_mark_stale)
+    if connection.execute(_DUCKDB_STATE_READ).fetchone() is None:
+        connection.execute(_DUCKDB_STATE_FIRST)
+    if connection.execute(_DUCKDB_FTS_BUILT, {"schema": DUCKDB_FTS_SCHEMA}).fetchone() is None:
+        connection.execute(_DUCKDB_MARK_STALE)
 
 
 def _refresh_fts(connection: _Connection) -> None:
@@ -447,21 +361,21 @@ def _refresh_fts(connection: _Connection) -> None:
     Args:
         connection: The connection.
     """
-    (stale,) = _one(connection, f"SELECT stale FROM {DUCKDB_SEARCH_STATE}")
+    (stale,) = _one(connection, _DUCKDB_STATE_READ)
     if not stale:
         return
 
     def rebuild() -> None:
         """Index the whole table again, and record that it is current."""
-        connection.execute(_build_fts)
-        connection.execute(f"UPDATE {DUCKDB_SEARCH_STATE} SET stale = false")
+        connection.execute(_DUCKDB_FTS_BUILD)
+        connection.execute(_DUCKDB_MARK_FRESH)
 
     _in_transaction(connection, rebuild)
 
 
-@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- connection set at open
+@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- opened at start
 class DuckDBSearchBackend:
-    """Implements ``ports.driven.SearchBackend`` on a DuckDB file, ranked by the ``fts`` extension."""
+    """Implements ``ports.driven.SearchBackend`` on a DuckDB file, ranked by its ``fts`` BM25."""
 
     file: _DuckDBFile
     """The database file."""
@@ -485,7 +399,7 @@ class DuckDBSearchBackend:
         """
         if not entries:
             return
-        rows = [_search_row(e) for e in entries]
+        columns = [_search_columns(e) for e in entries]
         chunks = [e.chunk_id for e in entries]
         params = {
             "manifest": manifest.manifest_id,
@@ -496,10 +410,10 @@ class DuckDBSearchBackend:
             "headings": [list(e.heading_path) for e in entries],
             "contents": [e.content for e in entries],
             "tags": [list(e.tags) for e in entries],
-            "fts_heading": [r[0] for r in rows],
-            "fts_path": [r[1] for r in rows],
-            "fts_text": [r[2] for r in rows],
-            "fts_identifiers": [r[3] for r in rows],
+            "fts_heading": [c[0] for c in columns],
+            "fts_path": [c[1] for c in columns],
+            "fts_text": [c[2] for c in columns],
+            "fts_identifiers": [c[3] for c in columns],
         }
 
         def write(connection: _Connection) -> None:
@@ -512,10 +426,11 @@ class DuckDBSearchBackend:
             def statements() -> None:
                 """The delete, the insert and the mark."""
                 connection.execute(
-                    _search_delete_chunks, {"manifest": manifest.manifest_id, "chunks": chunks}
+                    _DUCKDB_SEARCH_DELETE_CHUNKS,
+                    {"manifest": manifest.manifest_id, "chunks": chunks},
                 )
-                connection.execute(_search_insert, params)
-                connection.execute(_mark_stale)
+                connection.execute(_DUCKDB_SEARCH_INSERT, params)
+                connection.execute(_DUCKDB_MARK_STALE)
 
             _in_transaction(connection, statements)
 
@@ -529,7 +444,7 @@ class DuckDBSearchBackend:
         """
         if not manifest_ids:
             return
-        wanted = list(manifest_ids)
+        params = {"manifests": list(manifest_ids)}
 
         def write(connection: _Connection) -> None:
             """Delete the rows; mark the ``fts`` index stale when some went.
@@ -540,14 +455,9 @@ class DuckDBSearchBackend:
 
             def statements() -> None:
                 """The delete and, if it took rows, the mark."""
-                (deleted,) = _one(
-                    connection,
-                    f"DELETE FROM {DUCKDB_SEARCH_TABLE} "
-                    "WHERE manifest_id IN (SELECT unnest($manifests::VARCHAR[]))",
-                    {"manifests": wanted},
-                )
+                (deleted,) = _one(connection, _DUCKDB_SEARCH_DELETE_MANIFESTS, params)
                 if deleted:
-                    connection.execute(_mark_stale)
+                    connection.execute(_DUCKDB_MARK_STALE)
 
             _in_transaction(connection, statements)
 
@@ -562,9 +472,8 @@ class DuckDBSearchBackend:
         Returns:
             One per version held, by manifest ID.
         """
-        sql, params = _held_query(DUCKDB_SEARCH_TABLE, library)
         return await self.file.run(
-            lambda connection: _held_rows(connection.execute(sql, params).fetchall())
+            lambda connection: _held_rows(connection, "exactdocs_search", library)
         )
 
     async def search(
@@ -583,14 +492,17 @@ class DuckDBSearchBackend:
         """
         if not manifest_ids or not query.terms or limit <= 0:
             return []
-        condition, tags = _tag_params(tag_filter)
+        sql = _DUCKDB_SEARCH.format(tags=_DUCKDB_TAGS[tag_filter.match])
         params = {
             "manifests": list(dict.fromkeys(manifest_ids)),
             "terms": " ".join(query.terms),
-            "tags": tags,
+            "tags": list(tag_filter.tags),
             "limit": limit,
+            "heading_weight": HEADING_WEIGHT,
+            "path_weight": PATH_WEIGHT,
+            "text_weight": TEXT_WEIGHT,
+            "identifiers_weight": IDENTIFIERS_WEIGHT,
         }
-        sql = _search.format(tags=condition)
 
         def ranked(connection: _Connection) -> list[BackendHit]:
             """Rebuild a stale ``fts`` index, then rank.
@@ -624,13 +536,12 @@ class DuckDBSearchBackend:
         """
         if not manifest_ids or not query.terms:
             return {}
-        condition, tags = _tag_params(tag_filter)
+        sql = _DUCKDB_COUNT.format(tags=_DUCKDB_TAGS[tag_filter.match])
         params = {
             "manifests": list(dict.fromkeys(manifest_ids)),
             "terms": " ".join(query.terms),
-            "tags": tags,
+            "tags": list(tag_filter.tags),
         }
-        sql = _count.format(tags=condition)
 
         def counted(connection: _Connection) -> dict[str, int]:
             """Rebuild a stale ``fts`` index, then count.
@@ -647,7 +558,7 @@ class DuckDBSearchBackend:
         return await self.file.run(counted)
 
 
-def _vector_tables(connection: _Connection) -> list[str]:
+def _space_tables(connection: _Connection) -> list[str]:
     """List the spaces' tables.
 
     Args:
@@ -656,29 +567,19 @@ def _vector_tables(connection: _Connection) -> list[str]:
     Returns:
         Their names.
     """
-    return [
-        name
-        for (name,) in connection.execute(
-            _list_vector_tables, {"prefix": DUCKDB_VECTOR_TABLE_PREFIX}
-        ).fetchall()
-        if _vector_table_name.fullmatch(name)
-    ]
+    rows = connection.execute(_DUCKDB_VECTOR_TABLES, {"prefix": DUCKDB_VECTOR_TABLE_PREFIX})
+    return [name for (name,) in rows.fetchall() if _space_table.fullmatch(name)]
 
 
-def _has_table(connection: _Connection, table: str) -> bool:
-    """Tell whether a space's table exists.
+def _no_tables(_: _Connection) -> None:
+    """Prepare nothing: a space's table is made at its first put.
 
     Args:
-        connection: The connection.
-        table: Its name.
-
-    Returns:
-        True when it does.
+        _: The connection.
     """
-    return table in _vector_tables(connection)
 
 
-@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- connection set at open
+@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- opened at start
 class DuckDBVectorBackend:
     """Implements ``ports.driven.VectorBackend`` on a DuckDB file: exact cosine over a column."""
 
@@ -688,8 +589,8 @@ class DuckDBVectorBackend:
     """The registered name."""
 
     async def open(self) -> None:
-        """Open the file (each space's table is created on its first put)."""
-        await self.file.open(lambda _: None, fts=False)
+        """Open the file (each space's table is made at its first put)."""
+        await self.file.open(_no_tables, fts=False)
 
     async def close(self) -> None:
         """Close the file."""
@@ -698,7 +599,7 @@ class DuckDBVectorBackend:
     async def put(
         self, space: EmbeddingSpace, manifest: IndexedManifest, entries: Sequence[IndexEntry]
     ) -> None:
-        """Add or replace the entries in the space's table (created on the first put).
+        """Add or replace the entries in the space's table (made at its first put).
 
         Args:
             space: The space.
@@ -708,7 +609,7 @@ class DuckDBVectorBackend:
         kept = [e for e in entries if e.vector is not None]
         if not kept:
             return
-        table, dimensions = _vector_table(space.id), int(space.spec.dimensions)
+        table, dimensions = _space_table_of(space.id), int(space.spec.dimensions)
         chunks = [e.chunk_id for e in kept]
         params = {
             "manifest": manifest.manifest_id,
@@ -722,42 +623,21 @@ class DuckDBVectorBackend:
         }
 
         def write(connection: _Connection) -> None:
-            """Create the table if needed, then replace the rows in one transaction.
+            """Make the table if needed, then replace the rows in one transaction.
 
             Args:
                 connection: The connection.
             """
-            connection.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {table} (
-                    manifest_id VARCHAR NOT NULL,
-                    library VARCHAR NOT NULL,
-                    version_id VARCHAR NOT NULL,
-                    chunk_id VARCHAR NOT NULL,
-                    article_path VARCHAR NOT NULL,
-                    heading_path VARCHAR[] NOT NULL,
-                    tags VARCHAR[] NOT NULL,
-                    vector FLOAT[{dimensions}] NOT NULL
-                )
-                """
-            )
+            connection.execute(_DUCKDB_VECTOR_CREATE.format(table=table, dimensions=dimensions))
 
             def statements() -> None:
                 """The delete and the insert."""
                 connection.execute(
-                    f"DELETE FROM {table} WHERE manifest_id = $manifest "
-                    "AND chunk_id IN (SELECT unnest($chunks::VARCHAR[]))",
+                    _DUCKDB_VECTOR_DELETE_CHUNKS.format(table=table),
                     {"manifest": manifest.manifest_id, "chunks": chunks},
                 )
                 connection.execute(
-                    f"""
-                    INSERT INTO {table}
-                    SELECT $manifest, $library, $version, unnest($chunks::VARCHAR[]),
-                        unnest($articles::VARCHAR[]), unnest($headings::VARCHAR[][]),
-                        unnest($tags::VARCHAR[][]),
-                        unnest($vectors::FLOAT[][])::FLOAT[{dimensions}]
-                    """,
-                    params,
+                    _DUCKDB_VECTOR_INSERT.format(table=table, dimensions=dimensions), params
                 )
 
             _in_transaction(connection, statements)
@@ -776,7 +656,7 @@ class DuckDBVectorBackend:
         """
         if not chunk_ids:
             return
-        table = _vector_table(space_id)
+        table = _space_table_of(space_id)
         params = {"manifest": manifest_id, "chunks": list(chunk_ids)}
 
         def write(connection: _Connection) -> None:
@@ -785,12 +665,8 @@ class DuckDBVectorBackend:
             Args:
                 connection: The connection.
             """
-            if _has_table(connection, table):
-                connection.execute(
-                    f"DELETE FROM {table} WHERE manifest_id = $manifest "
-                    "AND chunk_id IN (SELECT unnest($chunks::VARCHAR[]))",
-                    params,
-                )
+            if table in _space_tables(connection):
+                connection.execute(_DUCKDB_VECTOR_DELETE_CHUNKS.format(table=table), params)
 
         await self.file.run(write)
 
@@ -813,12 +689,8 @@ class DuckDBVectorBackend:
 
             def statements() -> None:
                 """One delete per space."""
-                for table in _vector_tables(connection):
-                    connection.execute(
-                        f"DELETE FROM {table} "
-                        "WHERE manifest_id IN (SELECT unnest($manifests::VARCHAR[]))",
-                        params,
-                    )
+                for table in _space_tables(connection):
+                    connection.execute(_DUCKDB_VECTOR_DELETE_MANIFESTS.format(table=table), params)
 
             _in_transaction(connection, statements)
 
@@ -830,8 +702,8 @@ class DuckDBVectorBackend:
         Args:
             space_id: The space.
         """
-        table = _vector_table(space_id)
-        await self.file.run(lambda connection: connection.execute(f"DROP TABLE IF EXISTS {table}"))
+        sql = _DUCKDB_VECTOR_DROP.format(table=_space_table_of(space_id))
+        await self.file.run(lambda connection: connection.execute(sql))
 
     async def held(self, space_id: EmbeddingSpaceId, library: str | None) -> Sequence[HeldVersion]:
         """List the versions the space holds.
@@ -843,8 +715,7 @@ class DuckDBVectorBackend:
         Returns:
             One per version held; none for an unknown space.
         """
-        table = _vector_table(space_id)
-        sql, params = _held_query(table, library)
+        table = _space_table_of(space_id)
 
         def listed(connection: _Connection) -> list[HeldVersion]:
             """List them, if the space has a table.
@@ -855,9 +726,9 @@ class DuckDBVectorBackend:
             Returns:
                 The versions.
             """
-            if not _has_table(connection, table):
+            if table not in _space_tables(connection):
                 return []
-            return _held_rows(connection.execute(sql, params).fetchall())
+            return _held_rows(connection, table, library)
 
         return await self.file.run(listed)
 
@@ -883,23 +754,18 @@ class DuckDBVectorBackend:
         """
         if not manifest_ids or limit <= 0:
             return []
-        table, dimensions = _vector_table(space.id), int(space.spec.dimensions)
-        condition, tags = _tag_params(tag_filter)
+        table = _space_table_of(space.id)
+        sql = _DUCKDB_NEAREST.format(
+            table=table,
+            dimensions=int(space.spec.dimensions),
+            tags=_DUCKDB_TAGS[tag_filter.match],
+        )
         params = {
             "manifests": list(dict.fromkeys(manifest_ids)),
             "query": [float(v) for v in query],
-            "tags": tags,
+            "tags": list(tag_filter.tags),
             "limit": limit,
         }
-        sql = f"""
-            SELECT manifest_id, chunk_id, distance FROM (
-                SELECT manifest_id, chunk_id, greatest(
-                    array_cosine_distance(vector, $query::FLOAT[{dimensions}]), 0
-                ) AS distance
-                FROM {table}
-                WHERE manifest_id IN (SELECT unnest($manifests::VARCHAR[])) AND {condition}
-            ) ORDER BY distance, chunk_id, manifest_id LIMIT $limit
-        """
 
         def found(connection: _Connection) -> list[BackendNeighbour]:
             """Scan the space's table, if it has one.
@@ -910,7 +776,7 @@ class DuckDBVectorBackend:
             Returns:
                 The neighbours.
             """
-            if not _has_table(connection, table):
+            if table not in _space_tables(connection):
                 return []
             return [
                 BackendNeighbour(manifest_id=m, chunk_id=ChunkId(c), distance=float(d))
@@ -942,7 +808,7 @@ def _file(options: Mapping[str, object]) -> _DuckDBFile:
     if not raw or raw.startswith(":memory:"):
         message = "the duckdb backend needs `path`, the database file (e.g. /data/index.duckdb)"
         raise ValueError(message)
-    config: dict[str, object] = dict(DUCKDB_CONFIG)
+    config: _Config = dict(DUCKDB_CONFIG)
     if (threads := options.get("threads")) is not None:
         count = int(str(threads))
         if count < 1:
