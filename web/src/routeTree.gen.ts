@@ -22,6 +22,7 @@ import { Route as AppUsersRouteImport } from './routes/_app.users'
 import { Route as AppLibrariesNewRouteImport } from './routes/_app.libraries.new'
 import { Route as AppLibrariesOwnerRepoRouteImport } from './routes/_app.libraries.$owner.$repo'
 import { Route as AppLibrariesOwnerRepoSettingsRouteImport } from './routes/_app.libraries.$owner.$repo_.settings'
+import { Route as AppLibrariesOwnerRepoSharingRouteImport } from './routes/_app.libraries.$owner.$repo_.sharing'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -88,6 +89,12 @@ const AppLibrariesOwnerRepoSettingsRoute =
     path: '/libraries/$owner/$repo/settings',
     getParentRoute: () => AppRoute,
   } as any)
+const AppLibrariesOwnerRepoSharingRoute =
+  AppLibrariesOwnerRepoSharingRouteImport.update({
+    id: '/libraries/$owner/$repo_/sharing',
+    path: '/libraries/$owner/$repo/sharing',
+    getParentRoute: () => AppRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
@@ -102,6 +109,7 @@ export interface FileRoutesByFullPath {
   '/libraries/new': typeof AppLibrariesNewRoute
   '/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
   '/libraries/$owner/$repo/settings': typeof AppLibrariesOwnerRepoSettingsRoute
+  '/libraries/$owner/$repo/sharing': typeof AppLibrariesOwnerRepoSharingRoute
 }
 export interface FileRoutesByTo {
   '/setup': typeof SetupRoute
@@ -116,6 +124,7 @@ export interface FileRoutesByTo {
   '/libraries/new': typeof AppLibrariesNewRoute
   '/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
   '/libraries/$owner/$repo/settings': typeof AppLibrariesOwnerRepoSettingsRoute
+  '/libraries/$owner/$repo/sharing': typeof AppLibrariesOwnerRepoSharingRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -132,6 +141,7 @@ export interface FileRoutesById {
   '/_app/libraries/new': typeof AppLibrariesNewRoute
   '/_app/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
   '/_app/libraries/$owner/$repo_/settings': typeof AppLibrariesOwnerRepoSettingsRoute
+  '/_app/libraries/$owner/$repo_/sharing': typeof AppLibrariesOwnerRepoSharingRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -148,6 +158,7 @@ export interface FileRouteTypes {
     | '/libraries/new'
     | '/libraries/$owner/$repo'
     | '/libraries/$owner/$repo/settings'
+    | '/libraries/$owner/$repo/sharing'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/setup'
@@ -162,6 +173,7 @@ export interface FileRouteTypes {
     | '/libraries/new'
     | '/libraries/$owner/$repo'
     | '/libraries/$owner/$repo/settings'
+    | '/libraries/$owner/$repo/sharing'
   id:
     | '__root__'
     | '/_app'
@@ -177,6 +189,7 @@ export interface FileRouteTypes {
     | '/_app/libraries/new'
     | '/_app/libraries/$owner/$repo'
     | '/_app/libraries/$owner/$repo_/settings'
+    | '/_app/libraries/$owner/$repo_/sharing'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -278,6 +291,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppLibrariesOwnerRepoSettingsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/libraries/$owner/$repo_/sharing': {
+      id: '/_app/libraries/$owner/$repo_/sharing'
+      path: '/libraries/$owner/$repo/sharing'
+      fullPath: '/libraries/$owner/$repo/sharing'
+      preLoaderRoute: typeof AppLibrariesOwnerRepoSharingRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -292,6 +312,7 @@ interface AppRouteChildren {
   AppLibrariesNewRoute: typeof AppLibrariesNewRoute
   AppLibrariesOwnerRepoRoute: typeof AppLibrariesOwnerRepoRoute
   AppLibrariesOwnerRepoSettingsRoute: typeof AppLibrariesOwnerRepoSettingsRoute
+  AppLibrariesOwnerRepoSharingRoute: typeof AppLibrariesOwnerRepoSharingRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -305,6 +326,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppLibrariesNewRoute: AppLibrariesNewRoute,
   AppLibrariesOwnerRepoRoute: AppLibrariesOwnerRepoRoute,
   AppLibrariesOwnerRepoSettingsRoute: AppLibrariesOwnerRepoSettingsRoute,
+  AppLibrariesOwnerRepoSharingRoute: AppLibrariesOwnerRepoSharingRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

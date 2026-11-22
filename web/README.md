@@ -35,7 +35,7 @@ flowchart TD
     parts --> shared
 ```
 
-The features are `ai`, `auth`, `browse`, `libraries`, `library-settings`, `search`, `tokens` and `users`. An
+The features are `ai`, `auth`, `browse`, `libraries`, `library-settings`, `playground`, `search`, `sharing`, `tokens` and `users`. An
 arrow is an allowed import; anything not drawn is forbidden (a feature never imports another
 feature, `app/` or `routes/`; `shared/` imports nothing from the rest).
 
