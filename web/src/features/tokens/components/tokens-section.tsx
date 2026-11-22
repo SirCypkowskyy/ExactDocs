@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Plus } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -14,15 +14,28 @@ import {
 import { EmptyState } from "@/shared/ui/page";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { revokeToken, tokensKey, tokensQueryOptions } from "../api/tokens-query";
+import type { TokensView } from "../model/list-view";
 import { explainTokenError, isAlreadyGone, MAX_TOKENS, type Token } from "../model/token";
 import { CreateTokenDialog } from "./create-token-dialog";
 import { McpConfig } from "./mcp-config";
 import { TokenList } from "./token-list";
 
+const NO_VIEW: TokensView = {};
+const ignore = () => {};
+
 /** API tokens: the account's list, create-once-and-copy, and confirmed revoke. */
-export function TokensSection() {
+export function TokensSection({
+  view = NO_VIEW,
+  onView = ignore,
+}: {
+  /** The search and sort, held in the URL by the route. */
+  view?: TokensView;
+  onView?: (view: TokensView) => void;
+}) {
   const queryClient = useQueryClient();
-  const tokens = useQuery(tokensQueryOptions());
+  const tokens = useInfiniteQuery(tokensQueryOptions(view));
+  const loaded = tokens.data?.pages.flatMap((p) => p.tokens) ?? [];
+  const total = tokens.data?.pages.at(-1)?.total ?? 0;
   const [creating, setCreating] = useState(false);
   const [revoking, setRevoking] = useState<Token>();
   const [announcement, setAnnouncement] = useState("");
@@ -45,8 +58,8 @@ export function TokensSection() {
     },
   });
 
-  const count = tokens.data?.length ?? 0;
-  const full = count >= MAX_TOKENS;
+  // A search narrows `total`, so the limit is only known without one (the server says 409 anyway).
+  const full = !view.q && total >= MAX_TOKENS;
 
   return (
     <section aria-labelledby="tokens-heading" className="flex flex-col gap-8">
@@ -88,7 +101,7 @@ export function TokensSection() {
 
         {tokens.isPending ? (
           <TokenSkeleton />
-        ) : tokens.isError ? (
+        ) : tokens.isError && !tokens.data ? (
           <div
             role="alert"
             className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg bg-destructive-soft py-1.5 pr-1.5 pl-4"
@@ -100,7 +113,7 @@ export function TokensSection() {
               Try again
             </Button>
           </div>
-        ) : tokens.data.length === 0 ? (
+        ) : total === 0 && !view.q ? (
           <EmptyState
             icon={<KeyRound aria-hidden="true" />}
             title="No tokens yet"
@@ -114,7 +127,16 @@ export function TokensSection() {
             it goes.
           </EmptyState>
         ) : (
-          <TokenList tokens={tokens.data} onRevoke={setRevoking} />
+          <TokenList
+            tokens={loaded}
+            view={view}
+            onView={onView}
+            total={total}
+            hasMore={tokens.hasNextPage}
+            loadingMore={tokens.isFetchingNextPage}
+            onLoadMore={() => void tokens.fetchNextPage()}
+            onRevoke={setRevoking}
+          />
         )}
       </div>
 

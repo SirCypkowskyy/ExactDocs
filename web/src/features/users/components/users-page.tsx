@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Users } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -18,21 +18,33 @@ import { EmptyState, Page, PageHeader } from "@/shared/ui/page";
 import { pill, pillTone } from "@/shared/ui/recipes";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { setUserDisabled, usersKey, usersQueryOptions } from "../api/users-query";
+import { isFiltered, type UsersView } from "../model/list-view";
 import { explainUserError, ROLE_LABELS, type Role, type User } from "../model/user";
 import { CreateUserDialog } from "./create-user-dialog";
 import { ResetPasswordDialog } from "./reset-password-dialog";
+import { columns, UsersList } from "./users-list";
 
 const date = new Intl.DateTimeFormat(UI_LOCALE, { dateStyle: "medium" });
 
-// Account | Role | Status | Created | Actions. Below `md` the pills sit under the name.
-const columns =
-  "md:grid md:grid-cols-[minmax(0,1fr)_5rem_6rem_7.5rem_auto] md:items-center md:gap-x-4";
+const NO_VIEW: UsersView = {};
+const ignore = () => {};
 
 /** The operator's users page: list, create, disable or enable, and reset a password. */
-export function UsersPage({ currentUserId }: { currentUserId: string }) {
+export function UsersPage({
+  currentUserId,
+  view = NO_VIEW,
+  onView = ignore,
+}: {
+  currentUserId: string;
+  /** The filters and sort, held in the URL by the route. */
+  view?: UsersView;
+  onView?: (view: UsersView) => void;
+}) {
   const heading = usePageTitle("Users");
   const queryClient = useQueryClient();
-  const users = useQuery(usersQueryOptions());
+  const users = useInfiniteQuery(usersQueryOptions(view));
+  const loaded = users.data?.pages.flatMap((p) => p.users) ?? [];
+  const total = users.data?.pages.at(-1)?.total ?? 0;
   const [creating, setCreating] = useState(false);
   const [disabling, setDisabling] = useState<User>();
   const [resetting, setResetting] = useState<User>();
@@ -91,7 +103,7 @@ export function UsersPage({ currentUserId }: { currentUserId: string }) {
 
       {users.isPending ? (
         <UsersSkeleton />
-      ) : users.isError ? (
+      ) : users.isError && !users.data ? (
         <div
           role="alert"
           className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg bg-destructive-soft py-1.5 pr-1.5 pl-4"
@@ -103,7 +115,7 @@ export function UsersPage({ currentUserId }: { currentUserId: string }) {
             Try again
           </Button>
         </div>
-      ) : users.data.length === 0 ? (
+      ) : total === 0 && !isFiltered(view) ? (
         <EmptyState
           icon={<Users aria-hidden="true" />}
           title="No accounts yet"
@@ -112,40 +124,29 @@ export function UsersPage({ currentUserId }: { currentUserId: string }) {
           Create the first account here and pass its password on to its owner.
         </EmptyState>
       ) : (
-        <div>
-          <div
-            aria-hidden="true"
-            className={cn(
-              "hidden border-b border-border pb-2 text-small text-muted-foreground",
-              columns,
-            )}
-          >
-            <span>Account</span>
-            <span>Role</span>
-            <span>Status</span>
-            <span>Created</span>
-            <span className="w-44" />
-          </div>
-          <ul
-            aria-label="User accounts"
-            className="divide-y divide-rule border-b border-border md:border-t-0 max-md:border-t"
-          >
-            {users.data.map((user) => (
-              <UserRow
-                key={user.id}
-                user={user}
-                you={user.id === currentUserId}
-                busy={toggling === user.id}
-                onReset={() => setResetting(user)}
-                onEnable={() => !toggle.isPending && toggle.mutate({ user, disabled: false })}
-                onDisable={() => {
-                  toggle.reset();
-                  setDisabling(user);
-                }}
-              />
-            ))}
-          </ul>
-        </div>
+        <UsersList
+          users={loaded}
+          view={view}
+          onView={onView}
+          total={total}
+          hasMore={users.hasNextPage}
+          loadingMore={users.isFetchingNextPage}
+          onLoadMore={() => void users.fetchNextPage()}
+          row={(user) => (
+            <UserRow
+              key={user.id}
+              user={user}
+              you={user.id === currentUserId}
+              busy={toggling === user.id}
+              onReset={() => setResetting(user)}
+              onEnable={() => !toggle.isPending && toggle.mutate({ user, disabled: false })}
+              onDisable={() => {
+                toggle.reset();
+                setDisabling(user);
+              }}
+            />
+          )}
+        />
       )}
 
       <CreateUserDialog

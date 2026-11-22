@@ -1,15 +1,22 @@
-import { queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, keepPreviousData } from "@tanstack/react-query";
 import type { components } from "@/shared/lib/api-schema";
 import { getJson, sendJson } from "@/shared/lib/http";
+import { type UsersView, usersParams } from "../model/list-view";
 import type { NewUser, User } from "../model/user";
 
 export const usersKey = ["users"] as const;
 
-export const usersQueryOptions = () =>
-  queryOptions({
-    queryKey: usersKey,
-    queryFn: ({ signal }) => getJson<components["schemas"]["UserList"]>("/v1/users", { signal }),
-    select: (data) => data.users,
+/** One page at a time; the next page is fetched on demand, sorted and filtered by the server. */
+export const usersQueryOptions = (view: UsersView = {}) =>
+  infiniteQueryOptions({
+    queryKey: [...usersKey, "list", view] as const,
+    queryFn: ({ signal, pageParam }) =>
+      getJson<components["schemas"]["UserList"]>(`/v1/users?${usersParams(view, pageParam)}`, {
+        signal,
+      }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.next_cursor,
+    placeholderData: keepPreviousData,
   });
 
 export const createUser = (user: NewUser) => sendJson<User>("POST", "/v1/users", user);
