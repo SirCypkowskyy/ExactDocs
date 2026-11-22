@@ -2138,6 +2138,126 @@
         }
       }
     },
+    "/api/v1/libraries/{owner}/{repo}/transfer": {
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Transfer Library",
+        "description": "Hand the library over to another user: they become its creator.\n\nOnly the library's `creator` (or an operator) may. The creator before stays an `admin`\nof the library. A user who is already the creator is a 422 `invalid_grant`.",
+        "operationId": "identity-transfer_library",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryTransferRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryGrants"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/libraries/{owner}/{repo}/asset": {
       "get": {
         "tags": [
@@ -13365,6 +13485,27 @@
             "type": "integer",
             "title": "Total",
             "description": "How many of the library's grants match the filters, across every page."
+          },
+          "caller_role": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "creator"
+            ],
+            "title": "Caller Role",
+            "description": "The caller's own role on the library. Only a `creator` (or an operator) gives, changes\nor removes an `admin` and transfers the library."
+          },
+          "creator": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creator",
+            "description": "The username of the library's creator, whatever the filters; null for a library that has\nnone (one added before roles, which operators manage)."
           }
         },
         "additionalProperties": false,
@@ -13372,7 +13513,9 @@
         "required": [
           "grants",
           "next_cursor",
-          "total"
+          "total",
+          "caller_role",
+          "creator"
         ],
         "title": "LibraryGrantList",
         "description": "A page of a library's grants: users first, then groups, by name unless sorted otherwise."
@@ -14297,6 +14440,24 @@
         ],
         "title": "LibrarySummary",
         "description": "A library and its imported versions."
+      },
+      "LibraryTransferRequest": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Username",
+            "description": "The username of the new creator. The creator before becomes an `admin` of the library."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "username"
+        ],
+        "title": "LibraryTransferRequest",
+        "description": "Hand a library over to another user: they become its creator."
       },
       "LibraryUpdateOut": {
         "properties": {

@@ -619,6 +619,22 @@ class RevokeLibraryRoleCommand(_Dto):
     """The username or the group's name."""
 
 
+class LibraryTransferRequest(_Dto):
+    """Hand a library over to another user: they become its creator."""
+
+    username: str = Field(min_length=1, max_length=256)
+    """The username of the new creator. The creator before becomes an `admin` of the library."""
+
+
+class TransferLibraryCommand(LibraryTransferRequest):
+    """A transfer of a library's ownership, made by a caller."""
+
+    caller_id: str
+    """The account that hands the library over."""
+    library: str
+    """The library ID."""
+
+
 class GrantListQuery(_PageQuery):
     """How a library's grants are filtered, sorted and paged."""
 
@@ -691,18 +707,38 @@ class LibraryGrantList(_Dto):
     """Pass as `cursor` to get the next page; null on the last page."""
     total: int
     """How many of the library's grants match the filters, across every page."""
+    caller_role: Literal["admin", "creator"]
+    """The caller's own role on the library. Only a `creator` (or an operator) gives, changes
+    or removes an `admin` and transfers the library."""
+    creator: str | None
+    """The username of the library's creator, whatever the filters; null for a library that has
+    none (one added before roles, which operators manage)."""
 
     @classmethod
-    def from_page(cls, page: Page[LibraryGrantSummary]) -> Self:
+    def from_page(
+        cls,
+        page: Page[LibraryGrantSummary],
+        *,
+        caller_role: Literal["admin", "creator"],
+        creator: str | None,
+    ) -> Self:
         """Wrap a page of grants.
 
         Args:
             page: The grants and the cursor of the next page.
+            caller_role: The caller's role on the library.
+            creator: The creator's username, if the library has one.
 
         Returns:
             The page at the boundary.
         """
-        return cls(grants=list(page.items), next_cursor=page.next_cursor, total=page.total or 0)
+        return cls(
+            grants=list(page.items),
+            next_cursor=page.next_cursor,
+            total=page.total or 0,
+            caller_role=caller_role,
+            creator=creator,
+        )
 
 
 class LibraryCreationQuery(_Dto):

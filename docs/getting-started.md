@@ -539,8 +539,11 @@ planned ([#383](https://github.com/SirCypkowskyy/ExactDocs/issues/383)).
 
 !!! note "Library roles"
     Each library has roles (`viewer`, `contributor`, `admin`, `creator`), granted to users and
-    groups. A library you add makes you its creator; share it with `PUT
-    /api/v1/libraries/{owner}/{repo}/grants`. Operators (admins) hold every library, and manage
+    groups. A library you add makes you its creator; share it from its **Share** button (the
+    library's *Sharing* page) or with `PUT /api/v1/libraries/{owner}/{repo}/grants`. Only the
+    creator gives or removes `admin` and hands the library over to another user (*Transfer
+    ownership*), who becomes its creator while you stay an admin. Operators (admins) hold every
+    library, and manage
     the accounts. Libraries that existed before roles have no creator, so other accounts see them
     only once an operator shares them. The AI providers and instance settings stay open to every
     signed-in account.

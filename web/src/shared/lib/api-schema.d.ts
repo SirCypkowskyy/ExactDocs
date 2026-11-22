@@ -312,6 +312,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/libraries/{owner}/{repo}/transfer": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Transfer Library
+         * @description Hand the library over to another user: they become its creator.
+         *
+         *     Only the library's `creator` (or an operator) may. The creator before stays an `admin`
+         *     of the library. A user who is already the creator is a 422 `invalid_grant`.
+         */
+        readonly post: operations["identity-transfer_library"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries/{owner}/{repo}/asset": {
         readonly parameters: {
             readonly query?: never;
@@ -3480,6 +3503,19 @@ export interface components {
              * @description How many of the library's grants match the filters, across every page.
              */
             readonly total: number;
+            /**
+             * Caller Role
+             * @description The caller's own role on the library. Only a `creator` (or an operator) gives, changes
+             *     or removes an `admin` and transfers the library.
+             * @enum {string}
+             */
+            readonly caller_role: "admin" | "creator";
+            /**
+             * Creator
+             * @description The username of the library's creator, whatever the filters; null for a library that has
+             *     none (one added before roles, which operators manage).
+             */
+            readonly creator: string | null;
         };
         /**
          * LibraryGrantRequest
@@ -3995,6 +4031,17 @@ export interface components {
              * @description When any version was last imported; null while none is.
              */
             readonly last_imported_at: string | null;
+        };
+        /**
+         * LibraryTransferRequest
+         * @description Hand a library over to another user: they become its creator.
+         */
+        readonly LibraryTransferRequest: {
+            /**
+             * Username
+             * @description The username of the new creator. The creator before becomes an `admin` of the library.
+             */
+            readonly username: string;
         };
         /**
          * LibraryUpdateOut
@@ -7557,6 +7604,87 @@ export interface operations {
             readonly cookie?: never;
         };
         readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LibraryGrants"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-transfer_library": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LibraryTransferRequest"];
+            };
+        };
         readonly responses: {
             /** @description Successful Response */
             readonly 200: {

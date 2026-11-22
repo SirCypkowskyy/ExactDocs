@@ -84,6 +84,7 @@ test("the main pages read in the light and the dark theme", async ({ browser }) 
     ["callouts", "/libraries/fixture/docs-repo?version=v1.4.0&path=docs%2Fguide%2Fcallouts.md"],
     ["search", "/libraries/fixture/docs-repo?version=v1.4.0&q=retry_policy"],
     ["settings", "/libraries/fixture/docs-repo/settings"],
+    ["sharing", "/libraries/fixture/docs-repo/sharing"],
     ["account", "/account"],
   ] as const;
   for (const colorScheme of ["light", "dark"] as const) {
@@ -156,6 +157,7 @@ test("the redesigned pages and their dialogs have no axe violation", async ({ br
     ["library", "/libraries/fixture/docs-repo?version=v1.4.0"],
     ["article", "/libraries/fixture/docs-repo?version=v1.4.0&path=docs%2Fguide%2Fresilience.md"],
     ["settings", "/libraries/fixture/docs-repo/settings"],
+    ["sharing", "/libraries/fixture/docs-repo/sharing"],
   ] as const;
   const widths = [
     ["desktop", { width: 1280, height: 900 }],
@@ -205,6 +207,17 @@ test("the redesigned pages and their dialogs have no axe violation", async ({ br
       await expect(page.getByText("Copy your token now")).toBeVisible();
       await page.screenshot({ path: `shots/redesign-${colorScheme}-${size}-token-secret.png` });
       await expectNoViolations(page, `token secret ${colorScheme} ${size}`);
+
+      // The sharing dialogs (#109): the operator added the library, so it is its creator.
+      await page.goto("/libraries/fixture/docs-repo/sharing");
+      await page.getByRole("button", { name: "Share", exact: true }).click();
+      await expect(page.getByRole("dialog")).toBeVisible();
+      await expectNoViolations(page, `share dialog ${colorScheme} ${size}`);
+      await page.keyboard.press("Escape");
+      await page.getByRole("button", { name: "Transfer ownership" }).click();
+      await expect(page.getByRole("dialog")).toBeVisible();
+      await expectNoViolations(page, `transfer dialog ${colorScheme} ${size}`);
+      await page.keyboard.press("Escape");
       await context.close();
     }
   }
