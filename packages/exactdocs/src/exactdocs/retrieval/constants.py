@@ -165,6 +165,14 @@ MILVUS_TAGS_CAPACITY: Final[int] = 4096
 """The most tags of one chunk a collection takes (Milvus' largest array)."""
 MILVUS_TOP_K: Final[int] = 16_384
 """The most hits one Milvus search returns (its ``topk`` limit), and the most rows one query."""
+MILVUS_VECTOR_FIELD: Final[str] = "vector"
+"""A collection's dense vector field: ExactDocs' own embedding of the chunk."""
+MILVUS_TEXT_FIELD: Final[str] = "text"
+"""A hybrid collection's analyzed field, the chunk's words, which the BM25 function reads."""
+MILVUS_SPARSE_FIELD: Final[str] = "sparse"
+"""A hybrid collection's sparse vector, the BM25 function's output."""
+MILVUS_RETURNED: Final[tuple[str, ...]] = ("manifest_id", "chunk_id")
+"""The fields a search returns: what a hit names."""
 MILVUS_UPSERT_BATCH: Final[int] = 256
 """Entries sent to Milvus per upsert."""
 MILVUS_DELETE_BATCH: Final[int] = 1000

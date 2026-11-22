@@ -57,14 +57,18 @@ from exactdocs.retrieval.constants import (
     MILVUS_LITE_SUFFIX,
     MILVUS_OPTIONS,
     MILVUS_QUERY_BATCH,
+    MILVUS_RETURNED,
     MILVUS_SERVER_SCHEMES,
     MILVUS_SPACE_SUFFIX,
+    MILVUS_SPARSE_FIELD,
     MILVUS_TAG_LENGTH,
     MILVUS_TAGS_CAPACITY,
+    MILVUS_TEXT_FIELD,
     MILVUS_TEXT_LENGTH,
     MILVUS_TIE_MARGIN,
     MILVUS_TOP_K,
     MILVUS_UPSERT_BATCH,
+    MILVUS_VECTOR_FIELD,
     RRF_K,
 )
 from exactdocs.retrieval.errors import IndexBackendUnavailableError
@@ -82,15 +86,6 @@ from exactdocs.retrieval.models import (
     TextQuery,
     identifier_tokens,
 )
-
-_RETURNED: list[str] = ["manifest_id", "chunk_id"]
-"""The fields a search returns: what a hit names."""
-_TEXT_FIELD = "text"
-"""The analyzed field BM25 reads (hybrid collections only)."""
-_SPARSE_FIELD = "sparse"
-"""The BM25 function's sparse vector (hybrid collections only)."""
-_VECTOR_FIELD = "vector"
-"""The dense vector: ExactDocs' own embedding."""
 
 
 def row_key(manifest_id: str, chunk_id: str) -> str:
@@ -184,10 +179,10 @@ def _row(entry: IndexEntry, vector: Sequence[float], *, hybrid: bool) -> dict[st
         "chunk_id": str(entry.chunk_id),
         "article_path": entry.article_path,
         "tags": list(entry.tags),
-        _VECTOR_FIELD: list(vector),
+        MILVUS_VECTOR_FIELD: list(vector),
     }
     if hybrid:
-        row[_TEXT_FIELD] = _words(entry)
+        row[MILVUS_TEXT_FIELD] = _words(entry)
     return row
 
 
@@ -254,6 +249,11 @@ class MilvusVectorBackend:
         await self.close()
 
         def connect() -> MilvusClient:
+            """Make the client and ask the server's version (Milvus Lite starts here).
+
+            Returns:
+                The connected client.
+            """
             if self.local:
                 Path(self.uri).parent.mkdir(parents=True, exist_ok=True)
             client = MilvusClient(
@@ -297,7 +297,7 @@ class MilvusVectorBackend:
             return
         collection = self._space(space.id)
         fields = await self._ensure(collection, space.spec.dimensions)
-        hybrid = _TEXT_FIELD in fields
+        hybrid = MILVUS_TEXT_FIELD in fields
         client = self._open()
         for start in range(0, len(with_vectors), MILVUS_UPSERT_BATCH):
             rows = [
@@ -418,10 +418,10 @@ class MilvusVectorBackend:
             lambda: client.search(
                 collection,
                 data=[[float(v) for v in query]],
-                anns_field=_VECTOR_FIELD,
+                anns_field=MILVUS_VECTOR_FIELD,
                 filter=where,
                 limit=depth,
-                output_fields=_RETURNED,
+                output_fields=list(MILVUS_RETURNED),
                 search_params={"metric_type": "COSINE"},
                 timeout=self.timeout,
             )
@@ -586,22 +586,22 @@ class MilvusVectorBackend:
             max_capacity=MILVUS_TAGS_CAPACITY,
             max_length=MILVUS_TAG_LENGTH,
         )
-        schema.add_field(_VECTOR_FIELD, DataType.FLOAT_VECTOR, dim=dimensions)
+        schema.add_field(MILVUS_VECTOR_FIELD, DataType.FLOAT_VECTOR, dim=dimensions)
         if self.bm25:
             schema.add_field(
-                _TEXT_FIELD,
+                MILVUS_TEXT_FIELD,
                 DataType.VARCHAR,
                 max_length=MILVUS_TEXT_LENGTH,
                 enable_analyzer=True,
                 analyzer_params={"tokenizer": "standard", "filter": ["lowercase"]},
             )
-            schema.add_field(_SPARSE_FIELD, DataType.SPARSE_FLOAT_VECTOR)
+            schema.add_field(MILVUS_SPARSE_FIELD, DataType.SPARSE_FLOAT_VECTOR)
             schema.add_function(
                 Function(
                     name="bm25",
                     function_type=FunctionType.BM25,
-                    input_field_names=[_TEXT_FIELD],
-                    output_field_names=[_SPARSE_FIELD],
+                    input_field_names=[MILVUS_TEXT_FIELD],
+                    output_field_names=[MILVUS_SPARSE_FIELD],
                 )
             )
         return schema
@@ -615,13 +615,15 @@ class MilvusVectorBackend:
             index), and BM25's inverted index on the sparse vector for hybrid.
         """
         indexes = MilvusClient.prepare_index_params()
-        indexes.add_index(_VECTOR_FIELD, index_type="AUTOINDEX", metric_type="COSINE")
+        indexes.add_index(MILVUS_VECTOR_FIELD, index_type="AUTOINDEX", metric_type="COSINE")
         for name in ("manifest_id", "library", "version_id"):
             indexes.add_index(name, index_type="INVERTED")
         if not self.local:
             indexes.add_index("tags", index_type="INVERTED")
         if self.bm25:
-            indexes.add_index(_SPARSE_FIELD, index_type="SPARSE_INVERTED_INDEX", metric_type="BM25")
+            indexes.add_index(
+                MILVUS_SPARSE_FIELD, index_type="SPARSE_INVERTED_INDEX", metric_type="BM25"
+            )
         return indexes
 
     async def _grouped(self, collection: str, where: str) -> Counter[tuple[str, str]] | None:
@@ -665,6 +667,11 @@ class MilvusVectorBackend:
         client = self._open()
 
         def count() -> Counter[tuple[str, str]]:
+            """Read the rows a page at a time, counting them by version.
+
+            Returns:
+                The counts by (manifest, library).
+            """
             counted: Counter[tuple[str, str]] = Counter()
             pages = client.query_iterator(
                 collection,
@@ -729,7 +736,7 @@ class MilvusHybridVectorBackend(MilvusVectorBackend):
                 BackendHit(manifest_id=h.manifest_id, chunk_id=h.chunk_id, score=1 / (RRF_K + n))
                 for n, h in enumerate(near, start=1)
             ]
-        if _SPARSE_FIELD not in self._fields.get(collection, frozenset()):
+        if MILVUS_SPARSE_FIELD not in self._fields.get(collection, frozenset()):
             reason = (
                 f"the collection {collection} has no BM25 field (made with hybrid = false): drop "
                 "it and run `exactdocs index rebuild`, or set hybrid = false"
@@ -741,14 +748,14 @@ class MilvusHybridVectorBackend(MilvusVectorBackend):
         halves = [
             AnnSearchRequest(
                 data=[words],
-                anns_field=_SPARSE_FIELD,
+                anns_field=MILVUS_SPARSE_FIELD,
                 param={"metric_type": "BM25"},
                 limit=depth,
                 expr=where,
             ),
             AnnSearchRequest(
                 data=[[float(v) for v in vector]],
-                anns_field=_VECTOR_FIELD,
+                anns_field=MILVUS_VECTOR_FIELD,
                 param={"metric_type": "COSINE"},
                 limit=depth,
                 expr=where,
@@ -760,7 +767,7 @@ class MilvusHybridVectorBackend(MilvusVectorBackend):
                 halves,
                 ranker=RRFRanker(RRF_K),
                 limit=min(MILVUS_TOP_K, limit + MILVUS_TIE_MARGIN),
-                output_fields=_RETURNED,
+                output_fields=list(MILVUS_RETURNED),
                 timeout=self.timeout,
             )
         )
