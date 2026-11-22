@@ -54,9 +54,9 @@ export function LibraryBullet({
       className={cn(
         "inline-flex flex-none items-center justify-center rounded-full font-semibold tracking-tight text-white select-none dark:text-white",
         LINE_BG[lineIndex(id)],
-        size === "sm" && "size-5 text-[9px]",
-        size === "md" && "size-7 text-[11px]",
-        size === "lg" && "size-9 text-[13px]",
+        size === "sm" && "size-6 text-small",
+        size === "md" && "size-7 text-small",
+        size === "lg" && "size-9 text-body",
         className,
       )}
     >
@@ -85,7 +85,7 @@ export function VersionStation({
           isDefault && "bg-route",
         )}
       />
-      <span className="truncate font-mono text-[13px] font-medium">{version}</span>
+      <span className="truncate font-mono text-mono font-medium">{version}</span>
     </span>
   );
 }
@@ -93,7 +93,7 @@ export function VersionStation({
 /** The short commit, the product's trust anchor: always monospace, always 7 characters. */
 export function Commit({ sha, className }: { sha: string; className?: string }) {
   return (
-    <span className={cn("font-mono text-[12px] text-muted-foreground", className)} title={sha}>
+    <span className={cn("font-mono text-small text-muted-foreground", className)} title={sha}>
       {sha.slice(0, 7)}
     </span>
   );

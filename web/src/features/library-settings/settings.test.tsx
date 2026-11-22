@@ -794,7 +794,7 @@ describe("removal while a request is in flight", () => {
     const confirm = within(dialog).getByRole("button", { name: "Remove version" });
     expect(confirm).toHaveClass("aria-disabled:cursor-not-allowed");
     expect(confirm).not.toHaveClass("aria-disabled:cursor-progress");
-    expect(within(dialog).getByLabelText(/Type main/)).toHaveClass("text-base");
+    expect(within(dialog).getByLabelText(/Type main/)).toHaveClass("text-section");
   });
 });
 

@@ -247,7 +247,7 @@ function Reveal({ secret, nudge, onDone }: { secret: string; nudge: number; onDo
         ref={code}
         className={cn(
           codeWell,
-          "mt-4 block border border-input px-4 py-3.5 select-all [font-variant-numeric:slashed-zero]",
+          "mt-4 block border border-input px-4 py-3.5 text-small select-all [font-variant-numeric:slashed-zero]",
         )}
       >
         {secret}

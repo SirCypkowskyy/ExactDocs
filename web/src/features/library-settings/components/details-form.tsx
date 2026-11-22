@@ -108,21 +108,21 @@ export function DetailsForm({ owner, repo, library, activity, onStart }: Props) 
           onChange={(e) => edit("description")(e.target.value)}
         />
         {/* Said when it matters: once something is edited. */}
+        {/* The room is kept, so the note fading in moves nothing (only opacity changes). */}
         <div
+          inert={unchanged}
           className={cn(
-            "grid transition-[grid-template-rows] duration-(--dur) ease-(--ease-out) motion-reduce:transition-none",
-            unchanged ? "grid-rows-[0fr]" : "grid-rows-[1fr]",
+            "transition-opacity duration-(--dur) ease-(--ease-out) motion-reduce:transition-none",
+            unchanged && "opacity-0",
           )}
         >
-          <div className="overflow-hidden" inert={unchanged}>
-            <p className="flex items-start gap-2 text-body text-muted-foreground">
-              <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
-              <span>
-                Edited fields are kept when the library is re-imported. Fields you leave alone keep
-                following the repository's README.
-              </span>
-            </p>
-          </div>
+          <p className="flex items-start gap-2 text-body text-muted-foreground">
+            <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
+            <span>
+              Edited fields are kept when the library is re-imported. Fields you leave alone keep
+              following the repository's README.
+            </span>
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <Button

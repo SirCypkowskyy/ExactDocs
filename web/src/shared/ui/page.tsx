@@ -53,7 +53,7 @@ export function PageHeader({
     <header className={cn("mb-6 lg:mb-8", className)}>
       {above && <div className="mb-3">{above}</div>}
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-        <div className="min-w-0 flex-1 basis-80">
+        <div className="min-w-0 flex-1 basis-64">
           <h1
             ref={headingRef}
             tabIndex={-1}

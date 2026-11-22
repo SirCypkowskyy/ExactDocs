@@ -124,9 +124,9 @@ function OlderVersions({ versions: all, current, selected, onSelect }: VersionsP
                 type="checkbox"
                 checked={selected.has(v.tag)}
                 onChange={(e) => onSelect(v.tag, e.target.checked)}
-                className="size-4 accent-[var(--color-mark)]"
+                className="size-4 accent-primary"
               />
-              <span className="font-mono text-[13px] [overflow-wrap:anywhere]">{v.tag}</span>
+              <span className="font-mono text-mono [overflow-wrap:anywhere]">{v.tag}</span>
               {v.title && <span className="text-body text-muted-foreground">{v.title}</span>}
             </label>
           </li>
@@ -172,9 +172,9 @@ function FilePreview({
         {compact ? "Files these paths take" : "Files to import"}
       </Heading>
       <p className="mt-0.5 text-body text-muted-foreground">
-        <span className="font-mono text-[13px] [overflow-wrap:anywhere]">{preview.ref}</span>
+        <span className="font-mono text-mono [overflow-wrap:anywhere]">{preview.ref}</span>
         <span aria-hidden="true"> · </span>
-        <span className="font-mono text-[13px]">{shortSha(preview.commit_sha)}</span>
+        <span className="font-mono text-mono">{shortSha(preview.commit_sha)}</span>
         <span className="sr-only"> commit</span>
       </p>
       <p className="mt-3 text-body font-medium">{previewCountText(preview)}</p>
@@ -189,7 +189,7 @@ function FilePreview({
           // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling list must be reachable by keyboard (Safari does not focus scrollers)
           tabIndex={0}
           aria-label="Matching files"
-          className={`mt-3 max-h-80 overflow-y-auto rounded-md bg-code px-3 py-2.5 font-mono text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring ${stale ? "opacity-60" : ""}`}
+          className={`mt-3 max-h-80 overflow-y-auto rounded-md bg-code px-3 py-2.5 font-mono text-mono outline-none focus-visible:ring-2 focus-visible:ring-ring ${stale ? "opacity-60" : ""}`}
         >
           <Entries folder={tree} root />
         </section>
@@ -300,12 +300,8 @@ export function SelectionPreview({ url, version, include, exclude }: SelectionPr
         <PreviewButton pending={preview.pending} onClick={() => void preview.start(form)} />
         <p id="preview-hint" className="text-body text-muted-foreground">
           See which files these paths take in{" "}
-          {version ? (
-            <span className="font-mono text-[13px]">{version}</span>
-          ) : (
-            "the default branch"
-          )}
-          , before saving.
+          {version ? <span className="font-mono text-mono">{version}</span> : "the default branch"},
+          before saving.
         </p>
       </div>
       <FormAlert id="preview-alert" message={problem?.message} link={problem?.link} />
@@ -353,7 +349,7 @@ export function ExtraVersions({
             <p
               data-tag-name
               tabIndex={-1}
-              className="w-fit rounded font-mono text-[13px] outline-none [overflow-wrap:anywhere] focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-fit rounded font-mono text-mono outline-none [overflow-wrap:anywhere] focus-visible:ring-2 focus-visible:ring-ring"
             >
               {x.tag}
             </p>

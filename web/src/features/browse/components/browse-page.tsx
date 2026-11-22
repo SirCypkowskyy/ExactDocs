@@ -6,7 +6,7 @@ import { usePageTitle } from "@/shared/lib/use-page-title";
 import { buttonVariants } from "@/shared/ui/button";
 import { EmptyState, Page, PageHeader } from "@/shared/ui/page";
 import { kbd } from "@/shared/ui/recipes";
-import { Commit, LibraryBullet, VersionStation } from "@/shared/ui/route";
+import { LibraryBullet } from "@/shared/ui/route";
 import { libraryQueryOptions } from "../api/browse-queries";
 import {
   type BrowseSearch,
@@ -40,17 +40,8 @@ function Overview({
 }) {
   return (
     <div className="fade-in max-w-[72ch]">
-      <p className="flex items-center gap-2 text-body text-muted-foreground">
-        <VersionStation
-          version={version.ref}
-          isDefault={version.is_default}
-          className="text-foreground"
-        />
-        <span aria-hidden="true" className="route-draw h-0.5 w-3 rounded-full bg-route/50" />
-        <Commit sha={version.commit_sha} />
-      </p>
-      <h2 className="mt-2 text-title font-semibold">
-        Browsing <span className="font-mono text-[0.9em]">{version.ref}</span>
+      <h2 className="text-section font-semibold">
+        Browsing <span className="font-mono">{version.ref}</span>
       </h2>
       {library.description && (
         <p className="mt-2 text-section text-pretty text-foreground">{library.description}</p>
@@ -134,10 +125,10 @@ function VersionBrowser({
 
 function UnknownVersion({ missing, shown }: { missing: string; shown: string }) {
   return (
-    <div className="expand-in mb-6 grid max-w-2xl">
+    <div className="reveal mb-6 max-w-2xl">
       <p
         role="status"
-        className="flex items-start gap-2 overflow-hidden rounded-md bg-route-soft px-3 py-2.5 text-body"
+        className="flex items-start gap-2 rounded-md bg-route-soft px-3 py-2.5 text-body"
       >
         <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
         <span>
@@ -166,7 +157,7 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
               <li>
                 <Link
                   to="/"
-                  className="-ml-1 inline-flex min-h-11 items-center rounded px-1 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-7"
+                  className="-ml-1 inline-flex min-h-11 items-center rounded px-1 outline-none transition-colors duration-(--dur-fast) hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-7"
                 >
                   Libraries
                 </Link>
@@ -174,10 +165,7 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
               <li aria-hidden="true">/</li>
               <li className="inline-flex min-w-0 items-center gap-1.5">
                 <LibraryBullet id={library.id} size="sm" />
-                <span
-                  aria-current="page"
-                  className="truncate font-mono text-[13px] text-foreground"
-                >
+                <span aria-current="page" className="truncate font-mono text-mono text-foreground">
                   {library.id}
                 </span>
               </li>
@@ -215,10 +203,14 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
           <Link
             to="/libraries/$owner/$repo/settings"
             params={{ owner, repo }}
-            className={buttonVariants({ variant: "outline", size: "sm" })}
+            className={buttonVariants({
+              variant: "outline",
+              size: "sm",
+              className: "max-sm:w-11 max-sm:px-0",
+            })}
           >
             <Settings aria-hidden="true" />
-            Settings
+            <span className="max-sm:sr-only">Settings</span>
           </Link>
         }
       />

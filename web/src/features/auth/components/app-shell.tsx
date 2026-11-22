@@ -141,7 +141,7 @@ function MobileNav({ items }: { items: NavItem[] }) {
   const { pending, run } = useSignOut();
   const accessSignOut = session?.source === "cloudflare_access" ? session.sign_out_url : null;
   const row =
-    "flex h-11 items-center gap-3 rounded-md px-3 text-section font-medium outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring aria-[current=page]:bg-accent";
+    "flex h-11 items-center gap-3 rounded-md px-3 text-section font-medium outline-none transition-colors duration-(--dur-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring aria-[current=page]:bg-accent";
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger

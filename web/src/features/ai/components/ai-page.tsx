@@ -143,29 +143,40 @@ function ProvidersSection() {
 
 function RoleList({ roles }: { roles: readonly AiRole[] }) {
   return (
-    <dl className={cn(card, "grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-2.5 p-4 text-body")}>
-      {roles.map((r) => (
-        <div key={r.role} className="contents">
-          <dt className="font-medium">{ROLE_LABEL[r.role]}</dt>
-          <dd className="[overflow-wrap:anywhere]">
-            {r.model ? (
-              <>
-                <span className="font-mono text-small">{r.model}</span>
-                {r.source === "llm" && <span className="text-muted-foreground"> (the LLM's)</span>}
-                {!r.profile_exists && (
-                  <span className="text-destructive"> (its profile does not exist)</span>
-                )}
-              </>
-            ) : (
-              <span className="text-muted-foreground">
-                Not set. Choose its model in the instance configuration.
-              </span>
-            )}
-            {(r.role === "llm" || r.role === "judge") && <RoleThinking role={r} name={r.role} />}
-          </dd>
-        </div>
-      ))}
-    </dl>
+    <div>
+      <dl
+        className={cn(card, "grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-2.5 p-4 text-body")}
+      >
+        {roles.map((r) => (
+          <div key={r.role} className="contents">
+            <dt className="font-medium">{ROLE_LABEL[r.role]}</dt>
+            <dd className="[overflow-wrap:anywhere]">
+              {r.model ? (
+                <>
+                  <span className="font-mono text-small">{r.model}</span>
+                  {r.source === "llm" && (
+                    <span className="text-muted-foreground"> (the LLM's)</span>
+                  )}
+                  {!r.profile_exists && (
+                    <span className="text-destructive"> (its profile does not exist)</span>
+                  )}
+                </>
+              ) : (
+                <span className="text-muted-foreground">Not set</span>
+              )}
+              {r.model && (r.role === "llm" || r.role === "judge") && (
+                <RoleThinking role={r} name={r.role} />
+              )}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {roles.some((r) => !r.model) && (
+        <p className="mt-2 text-small text-muted-foreground">
+          A role that is not set has no model yet: choose it in the instance configuration.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -174,7 +185,14 @@ function RoleThinking({ role, name }: { role: AiRole; name: "llm" | "judge" }) {
   const queryClient = useQueryClient();
   const save = useMutation({
     mutationFn: (thinking: ThinkingLevel | null) => setRoleThinking(name, thinking),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: aiRolesQueryOptions().queryKey }),
+    onSuccess: (_, thinking) => {
+      toast.success(
+        thinking
+          ? `${ROLE_LABEL[name]} thinking set to ${THINKING_LABEL[thinking].toLowerCase()}`
+          : `${ROLE_LABEL[name]} thinking back to the default`,
+      );
+      return queryClient.invalidateQueries({ queryKey: aiRolesQueryOptions().queryKey });
+    },
   });
   const own = role.own_thinking ?? "";
   const inherited = role.thinking && !role.own_thinking ? THINKING_LABEL[role.thinking] : null;
@@ -383,7 +401,7 @@ function UsageSection() {
             tabIndex={0}
             className="overflow-x-auto rounded-lg border border-border outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <table className="w-full min-w-[56rem] text-left text-body">
+            <table className="w-full min-w-[44rem] text-left text-body">
               <thead className="bg-raised text-small text-muted-foreground">
                 <tr>
                   <th scope="col" className="px-4 py-2.5 font-medium">
@@ -413,11 +431,19 @@ function UsageSection() {
   );
 }
 
-function spent(s: ScopeUsage["day"]) {
+/** The money leads; tokens and calls sit under it, so a column is one figure to scan. */
+function Spent({ spent: s }: { spent: ScopeUsage["day"] }) {
   const unpriced = s.unpriced_requests ? `, ${count(s.unpriced_requests)} unpriced` : "";
   // Local models cost nothing: their tokens are shown, but no token budget counts them.
   const local = s.local_tokens ? ` (+${count(s.local_tokens)} local, not budgeted)` : "";
-  return `${usd(s.usd)} · ${count(s.tokens)} tokens${local} · ${count(s.requests)} calls${unpriced}`;
+  return (
+    <>
+      <span className="block font-medium">{usd(s.usd)}</span>
+      <span className="block text-small text-muted-foreground">
+        {`${count(s.tokens)} tokens${local} · ${count(s.requests)} calls${unpriced}`}
+      </span>
+    </>
+  );
 }
 
 function UsageRow({ scope: s }: { scope: ScopeUsage }) {
@@ -426,8 +452,12 @@ function UsageRow({ scope: s }: { scope: ScopeUsage }) {
       <th scope="row" className="px-4 py-3 font-medium [overflow-wrap:anywhere]">
         {scopeName(s)}
       </th>
-      <td className="px-4 py-3 text-right tabular-nums">{spent(s.day)}</td>
-      <td className="px-4 py-3 text-right tabular-nums">{spent(s.month)}</td>
+      <td className="px-4 py-3 text-right tabular-nums">
+        <Spent spent={s.day} />
+      </td>
+      <td className="px-4 py-3 text-right tabular-nums">
+        <Spent spent={s.month} />
+      </td>
       <td className="min-w-64 px-4 py-3">
         {s.budgets.length === 0 ? (
           <span className="text-muted-foreground">None</span>

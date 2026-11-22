@@ -109,7 +109,7 @@ export function SearchBox({ ctx }: { ctx: SearchContext }) {
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={onKeyDown}
               aria-controls={ctx.q ? RESULTS_ID : undefined}
-              className="h-11 w-full min-w-0 rounded-md bg-card pr-16 pl-9 text-base outline-none ring-1 ring-inset ring-input transition-shadow duration-(--dur-fast) [appearance:none] placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring sm:text-body [&::-webkit-search-cancel-button]:hidden"
+              className="h-11 w-full min-w-0 rounded-md bg-card pr-16 pl-9 text-section outline-none ring-1 ring-inset ring-input transition-shadow duration-(--dur-fast) [appearance:none] placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring sm:text-body [&::-webkit-search-cancel-button]:hidden"
             />
             {draft === "" ? (
               <kbd className="pointer-events-none absolute top-1/2 right-3 hidden h-5 min-w-5 -translate-y-1/2 items-center justify-center rounded bg-secondary px-1 font-mono text-small text-muted-foreground lg:inline-flex">
@@ -124,7 +124,7 @@ export function SearchBox({ ctx }: { ctx: SearchContext }) {
                   commit("");
                   input.current?.focus();
                 }}
-                className="absolute top-0 right-0 inline-flex size-11 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-transform duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.95] [@media(hover:hover)]:hover:text-foreground"
+                className="absolute top-0 right-0 inline-flex size-11 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-transform duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] [@media(hover:hover)]:hover:text-foreground"
               >
                 <X aria-hidden="true" className="size-4" />
               </button>

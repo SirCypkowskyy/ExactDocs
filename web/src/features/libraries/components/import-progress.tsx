@@ -132,7 +132,7 @@ function Ended(props: {
   if (job?.state !== "cancelled") return <Failed done={done} total={total} known={known} w={w} />;
   const by = job.cancelled_by ? ` by ${job.cancelled_by}` : "";
   return (
-    <p className="text-base font-medium">
+    <p className="text-section font-medium">
       {`Cancelled${by} after ${done}${known ? ` of ${total}` : ""} ${units(w, known ? total : done)}`}
     </p>
   );
@@ -229,7 +229,7 @@ function Failure({
         )}
       </p>
       <p className="mt-4 text-body font-medium">Details from the server</p>
-      <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap rounded-md bg-secondary px-3 py-3 font-mono text-[13px] [overflow-wrap:anywhere]">
+      <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap rounded-md bg-secondary px-3 py-3 font-mono text-mono [overflow-wrap:anywhere]">
         {job?.error ?? "No reason was recorded."}
       </pre>
     </div>
@@ -355,7 +355,7 @@ function Heading({
       )}
     >
       {verb}{" "}
-      <span className="font-mono text-[0.9em] font-normal [overflow-wrap:anywhere]">
+      <span className="font-mono font-normal [overflow-wrap:anywhere]">
         {version ? refName : <LibraryId id={libraryId} />}
       </span>
     </Tag>
@@ -366,9 +366,9 @@ function Heading({
 function Subline({ added, library }: { added: Props["added"]; library: boolean }) {
   return (
     <p className="mt-2 text-muted-foreground">
-      <span className="font-mono text-[13px]">{library ? added.ref : added.library_id}</span>
+      <span className="font-mono text-mono">{library ? added.ref : added.library_id}</span>
       <span aria-hidden="true"> · </span>
-      <span className="font-mono text-[13px]">{shortSha(added.commit_sha)}</span>
+      <span className="font-mono text-mono">{shortSha(added.commit_sha)}</span>
       <span className="sr-only"> commit</span>
     </p>
   );
