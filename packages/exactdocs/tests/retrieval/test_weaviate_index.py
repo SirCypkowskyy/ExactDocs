@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from weaviate.connect.v4 import ConnectionAsync
 
 from exactdocs.bootstrap.index_backends import build_index_backends
 from exactdocs.bootstrap.settings import Settings
@@ -180,6 +181,29 @@ async def test_a_server_that_does_not_answer_is_unavailable_naming_no_secret() -
     assert "s3cret" not in str(raised.value)
     with pytest.raises(IndexBackendUnavailableError, match="not open"):
         await backend.held(EmbeddingSpaceId(1), None)
+
+
+@needs_server
+async def test_connecting_never_asks_pypi_for_the_latest_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked: list[str] = []
+    monkeypatch.setattr(
+        ConnectionAsync, "_check_package_version", lambda _self, colour: asked.append(colour)
+    )
+    async with weaviate_search():
+        pass
+
+    assert asked == []  # no request leaves for pypi.org: the server is all it talks to
+
+
+@needs_server
+async def test_a_grpc_endpoint_that_does_not_answer_stops_the_start() -> None:
+    backend = search_backend(options("Grpc") | {"grpc_url": "http://127.0.0.1:9", "timeout": 3})
+
+    with pytest.raises(IndexBackendUnavailableError, match="gRPC API does not answer"):
+        await backend.open()
+    await backend.close()
 
 
 # ---------------------------------------------------------------- against Weaviate

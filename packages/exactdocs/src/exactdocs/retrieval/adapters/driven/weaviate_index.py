@@ -245,6 +245,8 @@ def _reason(error: BaseException) -> str:
         return f"HTTP {error.status_code}"
     if isinstance(error, WeaviateGRPCUnavailableError):
         return "its gRPC API does not answer (check grpc_url)"
+    if isinstance(error, TimeoutError):
+        return "timed out"
     return type(error).__name__
 
 
@@ -280,6 +282,8 @@ class _WeaviateBackend:
     """Makes the client ``open()`` uses until ``close()``."""
     collection: str = WEAVIATE_DEFAULT_COLLECTION
     """The prefix of every collection's name (its first letter upper case, as Weaviate has it)."""
+    deadline: float = WEAVIATE_DEFAULT_TIMEOUT_SECONDS
+    """Seconds one call may take, the client's own retries included (the ``timeout`` option)."""
     name: str = WEAVIATE_BACKEND
     """The registered name."""
     _client: WeaviateAsyncClient | None = field(default=None, init=False, repr=False)
@@ -298,8 +302,15 @@ class _WeaviateBackend:
         await self.close()
         client = self.connect()
         try:
-            await client.connect()
-        except (WeaviateBaseError, OSError) as error:
+            async with asyncio.timeout(self.deadline):
+                await client.connect()  # REST: the server's metadata, with the API key
+                # The client's own gRPC health check, which ``skip_init_checks`` (set so that
+                # connecting never asks pypi.org for the latest client) leaves out.
+                await cast(
+                    "Awaitable[None]",
+                    client._connection._ping_grpc("async"),  # ruff: ignore[private-member-access]
+                )
+        except (WeaviateBaseError, OSError, TimeoutError) as error:
             await _quietly(client.close())
             raise IndexBackendUnavailableError(self.name, _reason(error)) from error
         self._client = client
@@ -337,8 +348,9 @@ class _WeaviateBackend:
             IndexBackendUnavailableError: Weaviate did not answer, or answered with an error.
         """
         try:
-            return await call
-        except (WeaviateBaseError, OSError) as error:
+            async with asyncio.timeout(self.deadline):
+                return await call
+        except (WeaviateBaseError, OSError, TimeoutError) as error:
             raise IndexBackendUnavailableError(self.name, _reason(error)) from error
 
     def _named(self, suffix: str) -> str:
@@ -393,24 +405,26 @@ class _WeaviateBackend:
                 else Configure.VectorIndex.hnsw(distance_metric=distance)
             )
             try:
-                await cast(
-                    "Awaitable[object]",
-                    client.collections.create(
-                        collection,
-                        description="ExactDocs index (derived data: exactdocs index rebuild)",
-                        properties=_schema(),
-                        vector_config=Configure.Vectors.self_provided(
-                            name=WEAVIATE_VECTOR_NAME, vector_index_config=index
+                await self._call(
+                    cast(
+                        "Awaitable[object]",
+                        client.collections.create(
+                            collection,
+                            description="ExactDocs index (derived data: exactdocs index rebuild)",
+                            properties=_schema(),
+                            vector_config=Configure.Vectors.self_provided(
+                                name=WEAVIATE_VECTOR_NAME, vector_index_config=index
+                            ),
+                            inverted_index_config=Configure.inverted_index(
+                                stopwords_preset=StopwordsPreset.NONE, index_property_length=True
+                            ),
                         ),
-                        inverted_index_config=Configure.inverted_index(
-                            stopwords_preset=StopwordsPreset.NONE, index_property_length=True
-                        ),
-                    ),
+                    )
                 )
-            except (WeaviateBaseError, OSError) as error:
+            except IndexBackendUnavailableError:
                 # Another process may have created it meanwhile (Weaviate refuses a second one).
                 if not await self._call(client.collections.exists(collection)):
-                    raise IndexBackendUnavailableError(self.name, _reason(error)) from error
+                    raise
             self._known.add(collection)
 
     async def _insert(self, collection: str, objects: Sequence[DataObject[Any, Any]]) -> None:
@@ -516,8 +530,9 @@ class _WeaviateBackend:
             return empty
         handle = self._open().collections.use(collection)
         try:
-            return await run(handle)
-        except (WeaviateBaseError, OSError) as error:
+            async with asyncio.timeout(self.deadline):
+                return await run(handle)
+        except (WeaviateBaseError, OSError, TimeoutError) as error:
             self._known.discard(collection)  # dropped elsewhere since? asked again next time
             if not await self._exists(collection):
                 return empty
@@ -962,6 +977,8 @@ class _Options:
     """Native hybrid's weight of the vector."""
     fusion: HybridFusion
     """Native hybrid's fusion algorithm."""
+    deadline: float
+    """Seconds one call may take (the ``timeout`` option)."""
 
 
 def _options(options: Mapping[str, object]) -> _Options:
@@ -1026,6 +1043,7 @@ def _options(options: Mapping[str, object]) -> _Options:
             grpc_port=grpc.port,
             grpc_secure=grpc.secure,
             auth_credentials=None if api_key is None else Auth.api_key(api_key),
+            skip_init_checks=True,  # no pypi.org lookup; ``open()`` pings gRPC itself
             additional_config=AdditionalConfig(
                 timeout=Timeout(init=WEAVIATE_INIT_TIMEOUT_SECONDS, query=timeout, insert=timeout)
             ),
@@ -1036,6 +1054,7 @@ def _options(options: Mapping[str, object]) -> _Options:
         collection=collection,
         alpha=alpha,
         fusion=HybridFusion.RANKED if fusion == "ranked" else HybridFusion.RELATIVE_SCORE,
+        deadline=timeout,
     )
 
 
@@ -1049,7 +1068,9 @@ def search_backend(options: Mapping[str, object]) -> WeaviateSearchBackend:
         The backend, not connected yet.
     """
     built = _options(options)
-    return WeaviateSearchBackend(connect=built.connect, collection=built.collection)
+    return WeaviateSearchBackend(
+        connect=built.connect, collection=built.collection, deadline=built.deadline
+    )
 
 
 def vector_backend(options: Mapping[str, object]) -> WeaviateVectorBackend:
@@ -1067,4 +1088,5 @@ def vector_backend(options: Mapping[str, object]) -> WeaviateVectorBackend:
         collection=built.collection,
         alpha=built.alpha,
         fusion=built.fusion,
+        deadline=built.deadline,
     )
