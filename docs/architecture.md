@@ -1333,6 +1333,13 @@ keeps the backends in step:
   through `StoredVectors`), and without a scope deletes the orphans and the retired spaces'
   copies. It is safe while serving and to repeat.
 
+**The backends.**
+
+| Name | Indexes | Adapter | Extra | Native hybrid |
+|---|---|---|---|---|
+| `memory` | search, vectors | `memory_index.py` (in process, tests only) | none | yes (RRF of term counts and cosine) |
+| `weaviate` | search, vectors | `weaviate_index.py`: a `_search` collection and a collection per space, objects filtered by `manifest_id` / `tags`, ExactDocs' own vectors (no vectorizer) ([Configuration](configuration.md#weaviate)) | `weaviate` | yes: Weaviate's hybrid query (BM25 and the vector, `alpha`, relative-score fusion) |
+
 **Adding a backend** is one adapter module in `retrieval/adapters/driven/` (the reference is
 `memory_index.py`; it holds nothing across a restart and is for tests), its extra in
 `packages/exactdocs/pyproject.toml`, one `IndexBackendKind` in `INDEX_BACKENDS`
