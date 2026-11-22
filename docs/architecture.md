@@ -1333,6 +1333,13 @@ keeps the backends in step:
   through `StoredVectors`), and without a scope deletes the orphans and the retired spaces'
   copies. It is safe while serving and to repeat.
 
+**The backends.**
+
+| Name | Indexes | Adapter | Extra | Native hybrid |
+|---|---|---|---|---|
+| `memory` | search, vectors | `memory_index.py` (in process, tests only) | none | yes (RRF of term counts and cosine) |
+| `mongodb` | search, vectors | `mongodb_index.py`: a document per chunk and version, in `<collection>` and one `<collection>.space<id>` per space; an Atlas Search index (`$search`, BM25 on three weighted fields) and an Atlas Vector Search index (`$vectorSearch`, cosine) made when missing, `manifest_id` / `library` / `version_id` / `chunk_id` / `tags` as `token` and `filter` fields; writes return once the indexes return them ([Configuration](configuration.md#mongodb)) | `mongodb` | with `hybrid` (on by default): one `$rankFusion` stage (MongoDB 8.1+), else `$search` and `$vectorSearch` fused in ExactDocs (RRF) |
+
 **Adding a backend** is one adapter module in `retrieval/adapters/driven/` (the reference is
 `memory_index.py`; it holds nothing across a restart and is for tests), its extra in
 `packages/exactdocs/pyproject.toml`, one `IndexBackendKind` in `INDEX_BACKENDS`

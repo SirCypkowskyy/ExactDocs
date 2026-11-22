@@ -387,7 +387,12 @@ async def test_a_user_and_password_are_used_and_a_wrong_one_is_refused_unnamed(
         given = options(database) | {"username": user}
         right = search_backend(given | {"password": password} | _auth_source(database))
         await right.open()
-        await right.close()
+        try:  # readWrite is enough: the collection, its search index, a write and a search
+            v1 = manifest("m1")
+            await right.put(v1, [entry(v1, "a", "retry policy")])
+            assert len(await right.search(["m1"], query("retry"), NO_TAGS, 5)) == 1
+        finally:
+            await right.close()
         wrong = search_backend(given | {"password": "not-it"} | _auth_source(database))
         with pytest.raises(IndexBackendUnavailableError, match="authentication failed") as refused:
             await wrong.open()
