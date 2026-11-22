@@ -13,6 +13,7 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AppIndexRouteImport } from './routes/_app.index'
+import { Route as AppAccessLogRouteImport } from './routes/_app.access-log'
 import { Route as AppAccountRouteImport } from './routes/_app.account'
 import { Route as AppAiRouteImport } from './routes/_app.ai'
 import { Route as AppJobsRouteImport } from './routes/_app.jobs'
@@ -21,6 +22,7 @@ import { Route as AppSearchRouteImport } from './routes/_app.search'
 import { Route as AppUsersRouteImport } from './routes/_app.users'
 import { Route as AppLibrariesNewRouteImport } from './routes/_app.libraries.new'
 import { Route as AppLibrariesOwnerRepoRouteImport } from './routes/_app.libraries.$owner.$repo'
+import { Route as AppLibrariesOwnerRepoAccessLogRouteImport } from './routes/_app.libraries.$owner.$repo_.access-log'
 import { Route as AppLibrariesOwnerRepoSettingsRouteImport } from './routes/_app.libraries.$owner.$repo_.settings'
 
 const AppRoute = AppRouteImport.update({
@@ -40,6 +42,11 @@ const SignInRoute = SignInRouteImport.update({
 const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAccessLogRoute = AppAccessLogRouteImport.update({
+  id: '/access-log',
+  path: '/access-log',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAccountRoute = AppAccountRouteImport.update({
@@ -82,6 +89,12 @@ const AppLibrariesOwnerRepoRoute = AppLibrariesOwnerRepoRouteImport.update({
   path: '/libraries/$owner/$repo',
   getParentRoute: () => AppRoute,
 } as any)
+const AppLibrariesOwnerRepoAccessLogRoute =
+  AppLibrariesOwnerRepoAccessLogRouteImport.update({
+    id: '/libraries/$owner/$repo_/access-log',
+    path: '/libraries/$owner/$repo/access-log',
+    getParentRoute: () => AppRoute,
+  } as any)
 const AppLibrariesOwnerRepoSettingsRoute =
   AppLibrariesOwnerRepoSettingsRouteImport.update({
     id: '/libraries/$owner/$repo_/settings',
@@ -93,6 +106,7 @@ export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/setup': typeof SetupRoute
   '/sign-in': typeof SignInRoute
+  '/access-log': typeof AppAccessLogRoute
   '/account': typeof AppAccountRoute
   '/ai': typeof AppAiRoute
   '/jobs': typeof AppJobsRoute
@@ -101,11 +115,13 @@ export interface FileRoutesByFullPath {
   '/users': typeof AppUsersRoute
   '/libraries/new': typeof AppLibrariesNewRoute
   '/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
+  '/libraries/$owner/$repo/access-log': typeof AppLibrariesOwnerRepoAccessLogRoute
   '/libraries/$owner/$repo/settings': typeof AppLibrariesOwnerRepoSettingsRoute
 }
 export interface FileRoutesByTo {
   '/setup': typeof SetupRoute
   '/sign-in': typeof SignInRoute
+  '/access-log': typeof AppAccessLogRoute
   '/account': typeof AppAccountRoute
   '/ai': typeof AppAiRoute
   '/jobs': typeof AppJobsRoute
@@ -115,6 +131,7 @@ export interface FileRoutesByTo {
   '/': typeof AppIndexRoute
   '/libraries/new': typeof AppLibrariesNewRoute
   '/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
+  '/libraries/$owner/$repo/access-log': typeof AppLibrariesOwnerRepoAccessLogRoute
   '/libraries/$owner/$repo/settings': typeof AppLibrariesOwnerRepoSettingsRoute
 }
 export interface FileRoutesById {
@@ -122,6 +139,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/setup': typeof SetupRoute
   '/sign-in': typeof SignInRoute
+  '/_app/access-log': typeof AppAccessLogRoute
   '/_app/account': typeof AppAccountRoute
   '/_app/ai': typeof AppAiRoute
   '/_app/jobs': typeof AppJobsRoute
@@ -131,6 +149,7 @@ export interface FileRoutesById {
   '/_app/': typeof AppIndexRoute
   '/_app/libraries/new': typeof AppLibrariesNewRoute
   '/_app/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
+  '/_app/libraries/$owner/$repo_/access-log': typeof AppLibrariesOwnerRepoAccessLogRoute
   '/_app/libraries/$owner/$repo_/settings': typeof AppLibrariesOwnerRepoSettingsRoute
 }
 export interface FileRouteTypes {
@@ -139,6 +158,7 @@ export interface FileRouteTypes {
     | '/'
     | '/setup'
     | '/sign-in'
+    | '/access-log'
     | '/account'
     | '/ai'
     | '/jobs'
@@ -147,11 +167,13 @@ export interface FileRouteTypes {
     | '/users'
     | '/libraries/new'
     | '/libraries/$owner/$repo'
+    | '/libraries/$owner/$repo/access-log'
     | '/libraries/$owner/$repo/settings'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/setup'
     | '/sign-in'
+    | '/access-log'
     | '/account'
     | '/ai'
     | '/jobs'
@@ -161,12 +183,14 @@ export interface FileRouteTypes {
     | '/'
     | '/libraries/new'
     | '/libraries/$owner/$repo'
+    | '/libraries/$owner/$repo/access-log'
     | '/libraries/$owner/$repo/settings'
   id:
     | '__root__'
     | '/_app'
     | '/setup'
     | '/sign-in'
+    | '/_app/access-log'
     | '/_app/account'
     | '/_app/ai'
     | '/_app/jobs'
@@ -176,6 +200,7 @@ export interface FileRouteTypes {
     | '/_app/'
     | '/_app/libraries/new'
     | '/_app/libraries/$owner/$repo'
+    | '/_app/libraries/$owner/$repo_/access-log'
     | '/_app/libraries/$owner/$repo_/settings'
   fileRoutesById: FileRoutesById
 }
@@ -213,6 +238,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/access-log': {
+      id: '/_app/access-log'
+      path: '/access-log'
+      fullPath: '/access-log'
+      preLoaderRoute: typeof AppAccessLogRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/account': {
@@ -271,6 +303,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppLibrariesOwnerRepoRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/libraries/$owner/$repo_/access-log': {
+      id: '/_app/libraries/$owner/$repo_/access-log'
+      path: '/libraries/$owner/$repo/access-log'
+      fullPath: '/libraries/$owner/$repo/access-log'
+      preLoaderRoute: typeof AppLibrariesOwnerRepoAccessLogRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/libraries/$owner/$repo_/settings': {
       id: '/_app/libraries/$owner/$repo_/settings'
       path: '/libraries/$owner/$repo/settings'
@@ -282,6 +321,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppRouteChildren {
+  AppAccessLogRoute: typeof AppAccessLogRoute
   AppAccountRoute: typeof AppAccountRoute
   AppAiRoute: typeof AppAiRoute
   AppJobsRoute: typeof AppJobsRoute
@@ -291,10 +331,12 @@ interface AppRouteChildren {
   AppIndexRoute: typeof AppIndexRoute
   AppLibrariesNewRoute: typeof AppLibrariesNewRoute
   AppLibrariesOwnerRepoRoute: typeof AppLibrariesOwnerRepoRoute
+  AppLibrariesOwnerRepoAccessLogRoute: typeof AppLibrariesOwnerRepoAccessLogRoute
   AppLibrariesOwnerRepoSettingsRoute: typeof AppLibrariesOwnerRepoSettingsRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppAccessLogRoute: AppAccessLogRoute,
   AppAccountRoute: AppAccountRoute,
   AppAiRoute: AppAiRoute,
   AppJobsRoute: AppJobsRoute,
@@ -304,6 +346,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppIndexRoute: AppIndexRoute,
   AppLibrariesNewRoute: AppLibrariesNewRoute,
   AppLibrariesOwnerRepoRoute: AppLibrariesOwnerRepoRoute,
+  AppLibrariesOwnerRepoAccessLogRoute: AppLibrariesOwnerRepoAccessLogRoute,
   AppLibrariesOwnerRepoSettingsRoute: AppLibrariesOwnerRepoSettingsRoute,
 }
 

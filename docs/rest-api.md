@@ -207,6 +207,19 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   exactly (letter case included) against the groups the identity provider reports. A username
   nobody has is 404 `unknown_account`, a missing grant 404 `unknown_grant`. Libraries that existed
   before roles have no creator: operators manage them and share them.
+- **Access log** (ACL-05): every creation, grant (a new role, or another one than before),
+  revocation, ownership transfer and removal of a library is recorded with who made it and when.
+  `GET /libraries/{owner}/{repo}/access-log` reads a library's log, newest first (`{"events":
+  [{"id", "library", "at", "actor", "change", "kind", "subject", "role", "previous_role"}],
+  "next_cursor", "total"}`; `change` is `library_created`, `granted`, `revoked`,
+  `ownership_transferred` or `library_deleted`; `actor` is a username, null when the instance
+  made the change; `role` is the role given, or taken away for `revoked`; filter with `change`,
+  repeated). It needs `admin` on the library. Operators see every event recorded under the
+  library's ID; anyone else only those since it was last removed. `GET /access-log` is the
+  operators' log of every library, removed ones included (filter with `library` and `change`); like
+  `/users` it needs the session cookie of an `admin` (an API token is 401, anyone else 403).
+  Giving someone the role they already hold records nothing. Changes made before the upgrade
+  that added the log are not in it.
 - **Editing a library**: `PATCH /libraries/{owner}/{repo}` (`{"title"?, "description"?}`). An edited
   field is kept across re-imports instead of following the default version's `context7.json` or
   root README (LIB-07).

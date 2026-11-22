@@ -3,6 +3,7 @@
 from typing import Protocol
 
 from exactdocs.identity.dtos import (
+    AccessLogPage,
     AccountSummary,
     ApiTokenIdentity,
     AuthenticateQuery,
@@ -21,6 +22,8 @@ from exactdocs.identity.dtos import (
     LibraryGrants,
     LibraryRoles,
     LibraryRolesQuery,
+    ListAccessLogQuery,
+    ListLibraryAccessLogQuery,
     ListLibraryGrantsQuery,
     LoginForTokenCommand,
     PasswordReset,
@@ -492,6 +495,41 @@ class ListLibraryGrants(Protocol):
 
         Returns:
             A page of the grants.
+        """
+        ...
+
+
+class ListLibraryAccessLog(Protocol):
+    """Read one library's access log, newest first; needs the ``admin`` role on it.
+
+    An instance operator sees every event recorded under the library's ID; anyone else only the
+    events since the library was last removed (a library created again under an old ID does not
+    show who had access to the one before).
+    """
+
+    async def __call__(self, query: ListLibraryAccessLogQuery) -> AccessLogPage:
+        """Run the use case.
+
+        Args:
+            query: The caller, the library, the filters and the page.
+
+        Returns:
+            A page of the events.
+        """
+        ...
+
+
+class ListAccessLog(Protocol):
+    """Read the access log of every library, removed ones included; instance operators only."""
+
+    async def __call__(self, query: ListAccessLogQuery) -> AccessLogPage:
+        """Run the use case.
+
+        Args:
+            query: The caller, the filters and the page.
+
+        Returns:
+            A page of the events.
         """
         ...
 

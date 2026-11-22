@@ -8,6 +8,8 @@ from exactdocs.identity.constants import (
     REMEMBER_SIGN_INS_FOR,
 )
 from exactdocs.identity.models import (
+    AccessEvent,
+    AccessLogFilter,
     Account,
     AccountId,
     ApiToken,
@@ -729,6 +731,70 @@ class InMemoryLibraryGrantRepository:
         """
         for key in [k for k in self.grants if k[0] == library]:
             del self.grants[key]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryAccessLog:
+    """Implements ``ports.driven.AccessLog``. For tests."""
+
+    events: list[AccessEvent] = field(default_factory=list)
+    """The events, in the order they were recorded."""
+
+    async def record(self, event: AccessEvent) -> None:
+        """Append an event.
+
+        Args:
+            event: What changed, by whom and when.
+        """
+        self.events.append(event)
+
+    def _matching(self, where: AccessLogFilter) -> list[AccessEvent]:
+        """Return the events that match, newest first.
+
+        Args:
+            where: Which events.
+
+        Returns:
+            The events, by ID descending.
+        """
+        return sorted(
+            (
+                e
+                for e in self.events
+                if (where.library is None or e.library == where.library)
+                and (where.changes is None or e.change in where.changes)
+                and (where.newer_than is None or e.id > where.newer_than)
+            ),
+            key=lambda e: e.id,
+            reverse=True,
+        )
+
+    async def newest(
+        self, where: AccessLogFilter, *, older_than: str | None, limit: int
+    ) -> list[AccessEvent]:
+        """Return the newest events that match, newest first.
+
+        Args:
+            where: Which events.
+            older_than: Only events recorded before the one with this ID.
+            limit: Most events returned.
+
+        Returns:
+            Up to ``limit`` events, by ID descending.
+        """
+        found = self._matching(where)
+        return [e for e in found if older_than is None or e.id < older_than][:limit]
+
+    async def count(self, where: AccessLogFilter) -> int:
+        """Count the events that match.
+
+        Args:
+            where: Which events.
+
+        Returns:
+            How many there are.
+        """
+        return len(self._matching(where))
 
 
 def _revision(link: ExternalIdentity) -> tuple[object, ...]:

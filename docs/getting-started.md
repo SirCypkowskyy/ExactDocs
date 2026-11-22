@@ -543,7 +543,9 @@ planned ([#383](https://github.com/SirCypkowskyy/ExactDocs/issues/383)).
     /api/v1/libraries/{owner}/{repo}/grants`. Operators (admins) hold every library, and manage
     the accounts. Libraries that existed before roles have no creator, so other accounts see them
     only once an operator shares them. The AI providers and instance settings stay open to every
-    signed-in account.
+    signed-in account. Every grant, revocation and removal is recorded: a library's admins read
+    its access log from its settings page, and operators read every library's on the
+    *Access log* page (`/access-log`).
 
 ### Planned: teams
 

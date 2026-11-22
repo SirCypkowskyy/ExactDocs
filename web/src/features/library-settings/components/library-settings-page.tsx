@@ -1,7 +1,9 @@
 import { Link } from "@tanstack/react-router";
+import { History } from "lucide-react";
 import { useEffect, useState } from "react";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { cn } from "@/shared/lib/utils";
+import { buttonVariants } from "@/shared/ui/button";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { LibraryBullet } from "@/shared/ui/route";
 import type { Activity, JobViews, SettingsLibrary } from "../model/settings";
@@ -109,6 +111,16 @@ export function LibrarySettingsPage({ owner, repo, library, jobs }: Props) {
           headingRef={heading}
           title={name}
           description="Library settings"
+          actions={
+            <Link
+              to="/libraries/$owner/$repo/access-log"
+              params={{ owner, repo }}
+              className={buttonVariants({ variant: "outline" })}
+            >
+              <History aria-hidden="true" />
+              Access log
+            </Link>
+          }
           above={
             <nav aria-label="Breadcrumb" className="text-body text-muted-foreground">
               <ol className="flex flex-wrap items-center gap-x-1.5">

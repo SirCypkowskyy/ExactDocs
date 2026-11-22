@@ -549,6 +549,7 @@ erDiagram
     identity_accounts ||--o{ identity_sessions : "signs in with"
     identity_accounts ||--o{ identity_api_tokens : "owns"
     identity_accounts ||..o{ identity_library_grants : "holds roles by ID"
+    identity_accounts ||..o{ identity_access_events : "changed access, by ID"
 
     identity_accounts {
         text id PK
@@ -572,6 +573,16 @@ erDiagram
         text kind PK "user or group"
         text subject PK "account ID or group name"
         text role "viewer, contributor, admin, creator"
+    }
+    identity_access_events {
+        text id PK "UUIDv7: sorts in recording order"
+        text library "/owner/repo, lower-case"
+        text at
+        text actor "account ID; null for the instance"
+        text change "library_created, granted, revoked, ownership_transferred, library_deleted"
+        text subject "account ID or group name; null for a deletion"
+        text role
+        text previous_role
     }
     identity_failed_sign_ins {
         text key PK "address:... or username:..."
@@ -854,6 +865,16 @@ identity's `ResolveLibraryRoles`, `ClaimLibrary` and `DropLibraryGrants`).
   `ListLibraryGrants`). They need `admin` on the library; giving, changing or removing an `admin`
   needs `creator`; the creator's own role is neither given nor changed there (transfer is
   E12-06).
+- **The access log** (ACL-05, `identity_access_events`, append-only behind the `AccessLog` driven
+  port): `ClaimLibrary`, `GrantLibraryRole`, `RevokeLibraryRole` and `DropLibraryGrants` each
+  record an `AccessEvent` (actor, change, subject, role, previous role, time) after their change;
+  an ownership transfer records `ownership_transferred` with the new creator as its subject. A
+  grant of the role already held changes nothing and records nothing. `ListLibraryAccessLog`
+  (`GET /libraries/{owner}/{repo}/access-log`, library admins) shows a non-operator only the events
+  since the library's last removal, so a library created again under an old ID does not reveal
+  who had access to the one before; `ListAccessLog` (`GET /access-log`, operators) reads every
+  library's, removed ones included. The event is written after the grant, not in the same
+  transaction: a crash between the two loses that entry.
 - **Upgrading**: libraries that exist when the migration runs get no grant. Operators keep full
   access; other accounts hold no role until an operator or the creator shares the library.
 

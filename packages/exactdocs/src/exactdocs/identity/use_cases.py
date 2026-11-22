@@ -16,6 +16,7 @@ from exactdocs.identity.constants import (
     ABSOLUTE_TIMEOUT,
     ACCESS_LINK_LIFETIME,
     ACCESS_LINK_REFRESH,
+    ACCESS_LOG_ACTION,
     CODE_VERIFIER_BYTES,
     GRANT_SORT_FIELDS,
     IDLE_TIMEOUT,
@@ -33,6 +34,8 @@ from exactdocs.identity.constants import (
     VALUE_PREFIX,
 )
 from exactdocs.identity.dtos import (
+    AccessEventSummary,
+    AccessLogPage,
     AccountSummary,
     ApiTokenIdentity,
     AuthenticateQuery,
@@ -52,6 +55,8 @@ from exactdocs.identity.dtos import (
     LibraryGrantSummary,
     LibraryRoles,
     LibraryRolesQuery,
+    ListAccessLogQuery,
+    ListLibraryAccessLogQuery,
     ListLibraryGrantsQuery,
     LoginForTokenCommand,
     PasswordReset,
@@ -87,6 +92,7 @@ from exactdocs.identity.errors import (
     LastOperatorError,
     LibraryRoleRequiredError,
     NotAllowedError,
+    NotAnOperatorError,
     NotSetUpError,
     NotSignedInError,
     ProviderAccessRevokedError,
@@ -103,7 +109,10 @@ from exactdocs.identity.errors import (
     UsernameUnavailableError,
 )
 from exactdocs.identity.models import (
+    AccessChange,
     AccessClaims,
+    AccessEvent,
+    AccessLogFilter,
     AccessPolicy,
     Account,
     AccountId,
@@ -129,6 +138,7 @@ from exactdocs.identity.models import (
 )
 from exactdocs.identity.ports.driven import (
     AccessAssertionVerifier,
+    AccessLog,
     AccountRepository,
     ExternalIdentityRepository,
     FailedSignInLog,
@@ -146,7 +156,14 @@ from exactdocs.identity.ports.driving import (
     IdentifyAccessCaller,
     IdentifyCaller,
 )
-from exactdocs_kernel import Clock, SealedTextUnreadableError, parse_sort, sorted_page
+from exactdocs_kernel import (
+    Clock,
+    SealedTextUnreadableError,
+    decode_cursor,
+    encode_cursor,
+    parse_sort,
+    sorted_page,
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1762,12 +1779,50 @@ class ResolveLibraryRolesUseCase:
         return LibraryRoles(roles={library: role.value for library, role in roles.items()})
 
 
+def _access_event(
+    clock: Clock,
+    library: str,
+    actor: str | None,
+    change: AccessChange,
+    grant: LibraryGrant | None = None,
+    previous_role: LibraryRole | None = None,
+) -> AccessEvent:
+    """Build an access log entry stamped now.
+
+    Args:
+        clock: The current time.
+        library: The library ID, lower-case.
+        actor: The account that made the change; ``None`` for the instance.
+        change: What happened.
+        grant: The grant given or taken away; ``None`` for a deletion.
+        previous_role: The role the subject held before, if any.
+
+    Returns:
+        The event, with a new time-ordered ID.
+    """
+    return AccessEvent(
+        id=str(uuid7()),
+        library=library,
+        at=clock.now(),
+        actor=None if actor is None else AccountId(actor),
+        change=change,
+        kind=None if grant is None else grant.kind,
+        subject=None if grant is None else grant.subject,
+        role=None if grant is None else grant.role,
+        previous_role=previous_role,
+    )
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ClaimLibraryUseCase:
     """Implements ``ports.driving.ClaimLibrary``."""
 
     grants: LibraryGrantRepository
     """Who holds which role on which library."""
+    log: AccessLog
+    """The access log."""
+    clock: Clock
+    """The current time."""
 
     async def __call__(self, command: ClaimLibraryCommand) -> None:
         """Make the account the library's creator; grants left on the same ID are dropped.
@@ -1775,7 +1830,19 @@ class ClaimLibraryUseCase:
         Args:
             command: The account and the library.
         """
-        await self.grants.claim(command.library.casefold(), AccountId(command.account_id))
+        library = command.library.casefold()
+        await self.grants.claim(library, AccountId(command.account_id))
+        creator = LibraryGrant(
+            library=library,
+            kind=SubjectKind.USER,
+            subject=command.account_id,
+            role=LibraryRole.CREATOR,
+        )
+        await self.log.record(
+            _access_event(
+                self.clock, library, command.account_id, AccessChange.LIBRARY_CREATED, creator
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1784,14 +1851,22 @@ class DropLibraryGrantsUseCase:
 
     grants: LibraryGrantRepository
     """Who holds which role on which library."""
+    log: AccessLog
+    """The access log."""
+    clock: Clock
+    """The current time."""
 
     async def __call__(self, command: DropLibraryGrantsCommand) -> None:
-        """Drop every grant on the library.
+        """Drop every grant on the library and log its deletion.
 
         Args:
-            command: The library.
+            command: The library and who removed it.
         """
-        await self.grants.clear(command.library.casefold())
+        library = command.library.casefold()
+        await self.grants.clear(library)
+        await self.log.record(
+            _access_event(self.clock, library, command.actor_id, AccessChange.LIBRARY_DELETED)
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1804,6 +1879,10 @@ class Sharing:
     """The links of external accounts, for their groups."""
     grants: LibraryGrantRepository
     """Who holds which role on which library."""
+    log: AccessLog
+    """The access log."""
+    clock: Clock
+    """The current time."""
 
     async def caller_role(self, caller_id: str, library: str) -> LibraryRole:
         """Return the caller's role on the library, if it may share it at all.
@@ -1868,6 +1947,64 @@ class Sharing:
             shown.append(LibraryGrantSummary.from_model(grant, subject=subject))
         return LibraryGrants(grants=shown)
 
+    async def record(
+        self,
+        caller_id: str,
+        change: AccessChange,
+        grant: LibraryGrant,
+        previous_role: LibraryRole | None = None,
+    ) -> None:
+        """Log a change of the library's grants made by the caller.
+
+        Args:
+            caller_id: The account that made it.
+            change: What happened.
+            grant: The grant given or taken away.
+            previous_role: The role the subject held before, if any.
+        """
+        await self.log.record(
+            _access_event(self.clock, grant.library, caller_id, change, grant, previous_role)
+        )
+
+    async def log_page(
+        self, where: AccessLogFilter, *, limit: int, cursor: str | None
+    ) -> AccessLogPage:
+        """Read a page of the access log, newest first, people by their names.
+
+        Args:
+            where: Which events.
+            limit: Most events on the page.
+            cursor: The ``next_cursor`` of the previous page; ``None`` for the first.
+
+        Returns:
+            The page, its next cursor and how many events match.
+        """
+        older_than = None if cursor is None else decode_cursor(cursor)
+        found = await self.log.newest(where, older_than=older_than, limit=limit + 1)
+        events, more = found[:limit], len(found) > limit
+        people = {e.actor for e in events if e.actor is not None} | {
+            e.subject for e in events if e.kind is SubjectKind.USER and e.subject is not None
+        }
+        names: dict[str, str] = {}
+        for account_id in people:
+            account = await self.accounts.get_by_id(AccountId(account_id))
+            names[account_id] = account.username.value if account else account_id
+        shown = [
+            AccessEventSummary.from_model(
+                event,
+                actor=None if event.actor is None else names[event.actor],
+                subject=names[event.subject]
+                if event.kind is SubjectKind.USER and event.subject is not None
+                else event.subject,
+            )
+            for event in events
+        ]
+        return AccessLogPage(
+            events=shown,
+            next_cursor=encode_cursor(events[-1].id) if more else None,
+            total=await self.log.count(where),
+        )
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GrantLibraryRoleUseCase:
@@ -1904,9 +2041,15 @@ class GrantLibraryRoleUseCase:
         )
         if touches_admin and not caller.allows(LibraryRole.CREATOR):
             raise LibraryRoleRequiredError(LibraryRole.CREATOR.value)
-        await self.sharing.grants.put(
-            LibraryGrant(library=library, kind=kind, subject=subject, role=wanted)
-        )
+        grant = LibraryGrant(library=library, kind=kind, subject=subject, role=wanted)
+        await self.sharing.grants.put(grant)
+        if held is None or held.role is not wanted:  # the same role again changes nothing
+            await self.sharing.record(
+                command.caller_id,
+                AccessChange.GRANTED,
+                grant,
+                previous_role=None if held is None else held.role,
+            )
         return await self.sharing.listing(library)
 
 
@@ -1944,7 +2087,8 @@ class RevokeLibraryRoleUseCase:
             raise InvalidGrantError(msg)
         if held.role is LibraryRole.ADMIN and not caller.allows(LibraryRole.CREATOR):
             raise LibraryRoleRequiredError(LibraryRole.CREATOR.value)
-        await self.sharing.grants.remove(library, kind, subject)
+        if await self.sharing.grants.remove(library, kind, subject):
+            await self.sharing.record(command.caller_id, AccessChange.REVOKED, held)
         return await self.sharing.listing(library)
 
 
@@ -1990,6 +2134,79 @@ class ListLibraryGrantsUseCase:
             cursor=query.cursor,
         )
         return LibraryGrantList.from_page(page)
+
+
+def _changes(wanted: Collection[str] | None) -> frozenset[AccessChange] | None:
+    """Map a filter's change names to the domain's.
+
+    Args:
+        wanted: The names, or ``None`` for every change.
+
+    Returns:
+        The changes, or ``None`` for every change.
+    """
+    return None if wanted is None else frozenset(AccessChange(c) for c in wanted)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ListLibraryAccessLogUseCase:
+    """Implements ``ports.driving.ListLibraryAccessLog``."""
+
+    sharing: Sharing
+    """Who may read a library's access, and how the log reads."""
+
+    async def __call__(self, query: ListLibraryAccessLogQuery) -> AccessLogPage:
+        """Read a page of the library's access log, if the caller is an admin of it.
+
+        The role is checked first: a caller who may not read the log gets no page and no count.
+
+        Args:
+            query: The caller, the library, the filters and the page.
+
+        Returns:
+            The page, its next cursor and how many events match.
+        """
+        library = query.library.casefold()
+        await self.sharing.caller_role(query.caller_id, library)
+        caller = await self.sharing.accounts.get_by_id(AccountId(query.caller_id))
+        since = None
+        if caller is None or not caller.is_operator:
+            deleted = AccessLogFilter(
+                library=library, changes=frozenset({AccessChange.LIBRARY_DELETED})
+            )
+            last = await self.sharing.log.newest(deleted, older_than=None, limit=1)
+            since = last[0].id if last else None
+        where = AccessLogFilter(library=library, changes=_changes(query.change), newer_than=since)
+        return await self.sharing.log_page(where, limit=query.limit, cursor=query.cursor)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ListAccessLogUseCase:
+    """Implements ``ports.driving.ListAccessLog``."""
+
+    sharing: Sharing
+    """How the log reads, people by their names."""
+
+    async def __call__(self, query: ListAccessLogQuery) -> AccessLogPage:
+        """Read a page of the access log of every library, if the caller is an operator.
+
+        Args:
+            query: The caller, the filters and the page.
+
+        Returns:
+            The page, its next cursor and how many events match.
+
+        Raises:
+            NotAnOperatorError: The caller is not an enabled instance operator.
+        """
+        caller = await self.sharing.accounts.get_by_id(AccountId(query.caller_id))
+        if caller is None or caller.is_disabled or not caller.is_operator:
+            raise NotAnOperatorError(ACCESS_LOG_ACTION)
+        where = AccessLogFilter(
+            library=None if query.library is None else query.library.casefold(),
+            changes=_changes(query.change),
+        )
+        return await self.sharing.log_page(where, limit=query.limit, cursor=query.cursor)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

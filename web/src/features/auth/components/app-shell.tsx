@@ -26,7 +26,7 @@ import { useSession } from "../hooks/use-session";
  */
 
 type NavItem = {
-  to: "/" | "/jobs" | "/search" | "/playground" | "/ai" | "/users";
+  to: "/" | "/jobs" | "/search" | "/playground" | "/ai" | "/users" | "/access-log";
   label: string;
   admin?: boolean;
 };
@@ -35,9 +35,11 @@ const NAV: NavItem[] = [
   { to: "/jobs", label: "Jobs" },
   { to: "/search", label: "Search" },
   { to: "/playground", label: "Playground" },
-  // AI providers and accounts are for operators (admins); the API refuses anyone else.
+  // AI providers, accounts and every library's access log are for operators (admins); the API
+  // refuses anyone else.
   { to: "/ai", label: "AI", admin: true },
   { to: "/users", label: "Users", admin: true },
+  { to: "/access-log", label: "Access log", admin: true },
 ];
 
 const bandLink =

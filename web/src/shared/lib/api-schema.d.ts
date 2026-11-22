@@ -261,6 +261,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/access-log": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List Access Log
+         * @description List the access changes of every library, newest first. Operators only.
+         *
+         *     Creations, grants (a new role, or another one), revocations, ownership transfers and
+         *     removals, each with who made it and when; a removed library's events stay. Filter with
+         *     `library` and `change`; `total` counts every match.
+         */
+        readonly get: operations["identity-list_access_log"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries/{owner}/{repo}/grants": {
         readonly parameters: {
             readonly query?: never;
@@ -307,6 +331,31 @@ export interface paths {
          * @description Take a role away from a user or a group. Needs `admin`, and `creator` for an admin's.
          */
         readonly delete: operations["identity-revoke_library_role"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/libraries/{owner}/{repo}/access-log": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List Library Access Log
+         * @description List who changed the library's access, how and when, newest first. Library admins only.
+         *
+         *     Its creation, grants (a new role, or another one), revocations and ownership transfers,
+         *     each with who made it and when. Operators see every event under the library's ID;
+         *     anyone else only those since it was last removed. Filter with `change`; `total` counts
+         *     every match.
+         */
+        readonly get: operations["identity-list_library_access_log"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -1477,6 +1526,82 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AccessEventSummary
+         * @description One entry of the access log as the outside world sees it.
+         */
+        readonly AccessEventSummary: {
+            /**
+             * Id
+             * @description The event's ID.
+             */
+            readonly id: string;
+            /**
+             * Library
+             * @description The library ID (`/owner/repo`, lower-case).
+             */
+            readonly library: string;
+            /**
+             * At
+             * Format: date-time
+             * @description When it happened.
+             */
+            readonly at: string;
+            /**
+             * Actor
+             * @description The username of who made the change; null when the instance did (CLI, a job).
+             */
+            readonly actor: string | null;
+            /**
+             * Change
+             * @description What happened: `library_created`, `granted` (a new role, or another one than before),
+             *     `revoked`, `ownership_transferred` or `library_deleted`.
+             * @enum {string}
+             */
+            readonly change: "library_created" | "granted" | "revoked" | "ownership_transferred" | "library_deleted";
+            /**
+             * Kind
+             * @description Whether `subject` is a username or a group name; null for a deletion.
+             */
+            readonly kind: ("user" | "group") | null;
+            /**
+             * Subject
+             * @description The username or group name the change is about; null for a deletion. An
+             *     `ownership_transferred` event names the new creator.
+             */
+            readonly subject: string | null;
+            /**
+             * Role
+             * @description The role given, or the role taken away (`revoked`); null for a deletion.
+             */
+            readonly role: string | null;
+            /**
+             * Previous Role
+             * @description The role the subject held before; null when it held none.
+             */
+            readonly previous_role: string | null;
+        };
+        /**
+         * AccessLogPage
+         * @description A page of the access log, newest first.
+         */
+        readonly AccessLogPage: {
+            /**
+             * Events
+             * @description The events of this page.
+             */
+            readonly events: readonly components["schemas"]["AccessEventSummary"][];
+            /**
+             * Next Cursor
+             * @description Pass as `cursor` to get the next (older) page; null on the last page.
+             */
+            readonly next_cursor: string | null;
+            /**
+             * Total
+             * @description How many events match the filters, across every page.
+             */
+            readonly total: number;
+        };
         /**
          * AccessTokenIn
          * @description An HTTPS access token for a private repository. Write-only: no response repeats it.
@@ -7367,6 +7492,92 @@ export interface operations {
             };
         };
     };
+    readonly "identity-list_access_log": {
+        readonly parameters: {
+            readonly query?: {
+                /** @description How many events per page. */
+                readonly limit?: number;
+                /**
+                 * @description Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
+                 *     filters of the request that returned it.
+                 */
+                readonly cursor?: string | null;
+                /** @description Only events of these changes; repeat for several. */
+                readonly change?: readonly ("library_created" | "granted" | "revoked" | "ownership_transferred" | "library_deleted")[] | null;
+                /** @description Only the events of this library (`/owner/repo`, any case), removed ones included. */
+                readonly library?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccessLogPage"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     readonly "identity-list_library_grants": {
         readonly parameters: {
             readonly query?: {
@@ -7565,6 +7776,93 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["LibraryGrants"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-list_library_access_log": {
+        readonly parameters: {
+            readonly query?: {
+                /** @description How many events per page. */
+                readonly limit?: number;
+                /**
+                 * @description Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
+                 *     filters of the request that returned it.
+                 */
+                readonly cursor?: string | null;
+                /** @description Only events of these changes; repeat for several. */
+                readonly change?: readonly ("library_created" | "granted" | "revoked" | "ownership_transferred" | "library_deleted")[] | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccessLogPage"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */
