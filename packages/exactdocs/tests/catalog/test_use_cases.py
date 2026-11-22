@@ -104,7 +104,7 @@ async def test_get_library_matches_the_id_case_insensitively(catalog: CatalogMod
     assert result.id == "/acme/payments"
     assert result.default_version == "v1.4.0"
     assert [v.ref for v in result.versions if v.is_default] == ["v1.4.0"]
-    assert result.settings.chunking.split_level == 6
+    assert (result.settings.chunking.split_level, result.settings.chunking.max_chars) == (3, 4000)
 
 
 async def test_get_library_raises_for_an_unknown_id(catalog: CatalogModule) -> None:

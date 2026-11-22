@@ -10,7 +10,7 @@ from exactdocs.bootstrap.bridges import (
     RetrievalChunkIndex,
 )
 from exactdocs.bootstrap.container import Container
-from exactdocs.catalog.dtos import CreateLibraryCommand, HostKind
+from exactdocs.catalog.dtos import ChunkingIn, CreateLibraryCommand, HostKind
 from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.adapters.driven.memory import InMemoryCredentialVault
@@ -30,6 +30,10 @@ LIBRARY = "/fixture/docs-repo"
 """The library ID the fixture repository is imported under."""
 VERSIONS = {"v1.3.0": RefKind.TAG, "v1.4.0": RefKind.TAG, "next": RefKind.BRANCH}
 """The versions imported, and what kind of ref each is."""
+EVERY_HEADING = ChunkingIn(split_level=6, max_chars=None)
+"""The fixture's chunking: every heading starts a chunk, as the eval dataset and the tests name its
+sections (``Guide > Install > Docker > Troubleshooting`` is a ``####``). A new library's default
+(#381) would hold those sections inside their parent."""
 MAX_BATCHES = 10_000
 """A safety net: embedding one version never takes more batches than this."""
 
@@ -94,6 +98,7 @@ async def import_fixture(container: Container, docs_repo: DocsRepo) -> None:
             host=HostKind.GIT,
             default_branch="main",
             include_paths=["docs/"],
+            chunking=EVERY_HEADING,
         )
     )
     run = importer(container)

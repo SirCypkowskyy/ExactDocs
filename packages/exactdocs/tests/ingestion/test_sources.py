@@ -558,9 +558,7 @@ class _AddLibrary:
             url=RepositoryUrl.parse(command.url),
             selection=PathSelection.of(command.include_paths, command.exclude_paths),
             tag_rules=TagRule.many([(r.pattern, r.tag) for r in command.tag_rules]),
-            chunking=ChunkingConfig()
-            if command.chunking is None
-            else ChunkingConfig(split_depth=command.chunking.split_level),
+            chunking=_config(command.chunking or ChunkingIn()),  # None: a new library's
         )
         self.world.sources.versions[library] = []
         return AddedLibrary(
@@ -570,6 +568,16 @@ class _AddLibrary:
             commit_sha=SHA,
             job_id=job_id,
         )
+
+
+def _config(chunking: ChunkingIn) -> ChunkingConfig:
+    """Map the settings sent as the importer does."""
+    return ChunkingConfig(
+        split_depth=chunking.split_level,
+        min_chars=chunking.min_chars,
+        max_chars=chunking.max_chars,
+        chunker=chunking.chunker,
+    )
 
 
 @dataclass
@@ -597,7 +605,7 @@ class _UpdateSettings:
         stored = self.world.sources.sources[command.library]
         chunking = stored.chunking
         if command.chunking is not None:
-            chunking = ChunkingConfig(split_depth=command.chunking.split_level)
+            chunking = _config(command.chunking)
         self.world.sources.sources[command.library] = ImportSource(
             url=stored.url,
             selection=PathSelection.of(command.include_paths, command.exclude_paths),

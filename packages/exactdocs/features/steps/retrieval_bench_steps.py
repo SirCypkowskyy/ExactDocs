@@ -43,7 +43,7 @@ def step_run(context: Context) -> None:
             corpus.projects,
             repos,
             load_golden(tmp / "cases"),
-            CONFIGURATIONS[:2],
+            [c for c in CONFIGURATIONS if c.name in {"default", "h2"}],
             matrix(["BAAI/bge-small-en-v1.5"]),
             hosted=context.hosted,
             models_dir=tmp / "models",
