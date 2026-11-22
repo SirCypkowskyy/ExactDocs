@@ -366,7 +366,7 @@ class MilvusVectorBackend:
         """Count the space's entries per version (the drift check).
 
         A server counts them grouped by version in one query; Milvus Lite, which has no grouped
-        count, has them read a page at a time.
+        count (or a server that refuses one), has them read a page at a time.
 
         Args:
             space_id: The space.
@@ -379,7 +379,10 @@ class MilvusVectorBackend:
         if not await self._exists(collection):
             return []
         where = 'manifest_id != ""' if library is None else f"library == {_literal(library)}"
-        counted = await self._grouped(collection, where)
+        try:
+            counted = await self._grouped(collection, where)
+        except IndexBackendUnavailableError:  # a server that refuses grouping: count row by row
+            counted = None
         if counted is None:
             counted = await self._counted(collection, where)
         return [
