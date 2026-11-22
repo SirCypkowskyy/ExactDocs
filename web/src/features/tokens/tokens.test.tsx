@@ -23,7 +23,8 @@ function stubApi(initial: ReturnType<typeof row>[] = []) {
   let tokens = [...initial];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
-    if (url === "/api/v1/tokens" && method === "GET") return json({ tokens });
+    if (url.startsWith("/api/v1/tokens?") && method === "GET")
+      return json({ tokens, next_cursor: null, total: tokens.length });
     if (url === "/api/v1/tokens" && method === "POST") {
       const body = JSON.parse(String(init?.body));
       const made = row(tokens.length + 1, { name: body.name, expires_at: body.expires_at ?? null });
@@ -321,7 +322,9 @@ describe("tokens", () => {
     );
     await waitFor(() =>
       expect(
-        fetchMock.mock.calls.filter(([u, i]) => u === "/api/v1/tokens" && !i?.method).length,
+        fetchMock.mock.calls.filter(
+          ([u, i]) => String(u).startsWith("/api/v1/tokens?") && !i?.method,
+        ).length,
       ).toBeGreaterThan(1),
     );
   });

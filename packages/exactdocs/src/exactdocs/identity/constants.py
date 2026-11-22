@@ -98,6 +98,12 @@ TOKEN_NAME_DESCRIPTION: Final[str] = (
     "refused with `invalid_token_name` (422)."
 )
 """OpenAPI description of a new token's name, built from the limits so they cannot drift."""
+USER_SORT_FIELDS: Final[tuple[str, ...]] = ("created_at", "username", "role")
+"""What the users list can be sorted by; `created_at` (oldest first) is the default."""
+TOKEN_SORT_FIELDS: Final[tuple[str, ...]] = ("created_at", "name", "expires_at", "last_used_at")
+"""What the token list can be sorted by; `-created_at` (newest first) is the default."""
+GRANT_SORT_FIELDS: Final[tuple[str, ...]] = ("kind", "subject", "role")
+"""What a library's grants can be sorted by; `kind` (users, then groups, by name) is the default."""
 
 # ---------------------------------------------------------------- use_cases
 SIGN_IN_SECRET_BYTES: Final[int] = 32

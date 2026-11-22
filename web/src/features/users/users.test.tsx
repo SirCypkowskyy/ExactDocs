@@ -28,7 +28,8 @@ function stubApi() {
   ];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
-    if (url === "/api/v1/users" && method === "GET") return json({ users });
+    if (url.startsWith("/api/v1/users?") && method === "GET")
+      return json({ users, next_cursor: null, total: users.length });
     if (url === "/api/v1/users" && method === "POST") {
       const body = JSON.parse(String(init?.body));
       if (users.some((u) => u.username === body.username.toLowerCase())) {
@@ -255,7 +256,7 @@ describe("user form rules", () => {
     ];
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => json({ users: accounts })),
+      vi.fn(async () => json({ users: accounts, next_cursor: null, total: 3 })),
     );
     renderPage();
     const list = await screen.findByRole("list", { name: "User accounts" });

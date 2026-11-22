@@ -6,7 +6,7 @@ import math
 import secrets
 from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import uuid7
 
@@ -17,6 +17,7 @@ from exactdocs.identity.constants import (
     ACCESS_LINK_LIFETIME,
     ACCESS_LINK_REFRESH,
     CODE_VERIFIER_BYTES,
+    GRANT_SORT_FIELDS,
     IDLE_TIMEOUT,
     MAX_TOKENS_PER_ACCOUNT,
     PREFIX_SHOWN,
@@ -26,7 +27,9 @@ from exactdocs.identity.constants import (
     SIGN_IN_ATTEMPT_LIFETIME,
     SIGN_IN_SECRET_BYTES,
     TOKEN_BYTES,
+    TOKEN_SORT_FIELDS,
     TOUCH_INTERVAL,
+    USER_SORT_FIELDS,
     VALUE_PREFIX,
 )
 from exactdocs.identity.dtos import (
@@ -44,6 +47,7 @@ from exactdocs.identity.dtos import (
     FinishExternalSignInCommand,
     GrantLibraryRoleCommand,
     LibraryCreationQuery,
+    LibraryGrantList,
     LibraryGrants,
     LibraryGrantSummary,
     LibraryRoles,
@@ -63,8 +67,10 @@ from exactdocs.identity.dtos import (
     ThrottleReset,
     TokenGrant,
     TokenList,
+    TokenListQuery,
     TokenSummary,
     UserList,
+    UserListQuery,
     UserSummary,
 )
 from exactdocs.identity.errors import (
@@ -140,7 +146,7 @@ from exactdocs.identity.ports.driving import (
     IdentifyAccessCaller,
     IdentifyCaller,
 )
-from exactdocs_kernel import Clock, SealedTextUnreadableError
+from exactdocs_kernel import Clock, SealedTextUnreadableError, parse_sort, sorted_page
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -771,6 +777,31 @@ async def _find_account(
     return account
 
 
+def _contains(text: str, needle: str | None) -> bool:
+    """Tell whether a list item passes the text filter ``q``.
+
+    Args:
+        text: The item's name.
+        needle: The filter; ``None`` or blank lets everything through.
+
+    Returns:
+        Whether ``text`` contains ``needle``, in any case.
+    """
+    return not needle or needle.casefold() in text.casefold()
+
+
+def _sortable(moment: datetime | None) -> str:
+    """Return a time as text that sorts in time order.
+
+    Args:
+        moment: The time, or ``None`` (never).
+
+    Returns:
+        An ISO 8601 UTC timestamp; empty for ``None``, which sorts first.
+    """
+    return "" if moment is None else moment.astimezone(UTC).isoformat()
+
+
 async def _clear_throttle(failures: FailedSignInLog, username: str) -> ThrottleReset:
     """Drop a username's sign-in throttle count and every address remembered for it.
 
@@ -826,18 +857,42 @@ class ListUsersUseCase:
     externals: ExternalIdentityRepository
     """The links of external accounts, for their provider and groups."""
 
-    async def __call__(self) -> UserList:
-        """List every account, disabled ones included, with where each signs in.
+    async def __call__(self, query: UserListQuery) -> UserList:
+        """List a page of the accounts, disabled ones included, with where each signs in.
+
+        Args:
+            query: The filters, the sort and the page.
 
         Returns:
-            The accounts, oldest first.
+            The page, its next cursor and how many accounts match.
         """
+        sort = parse_sort(query.sort, allowed=USER_SORT_FIELDS, default="created_at")
         links = await self.externals.groups_by_account()
         users = []
         for account in await self.accounts.list_all():
             provider, groups = links.get(account.id, (None, []))
             users.append(UserSummary.from_model(account, provider=provider, groups=groups))
-        return UserList(users=users)
+        users = [
+            u
+            for u in users
+            if _contains(u.username, query.q)
+            and (query.role is None or u.role in query.role)
+            and (query.disabled is None or u.disabled is query.disabled)
+        ]
+        page = sorted_page(
+            users,
+            sort=sort,
+            key_field="id",
+            values={
+                "created_at": lambda u: _sortable(u.created_at),
+                "username": lambda u: u.username,
+                "role": lambda u: u.role,
+            },
+            key=lambda u: u.id,
+            limit=query.limit,
+            cursor=query.cursor,
+        )
+        return UserList.from_page(page)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1036,17 +1091,34 @@ class ListTokensUseCase:
     tokens: TokenRepository
     """Where API tokens are stored."""
 
-    async def __call__(self, account: AccountSummary) -> TokenList:
-        """List the account's tokens without their secrets.
+    async def __call__(self, account: AccountSummary, query: TokenListQuery) -> TokenList:
+        """List a page of the account's tokens without their secrets.
 
         Args:
             account: The account whose tokens to list.
+            query: The filters, the sort and the page.
 
         Returns:
-            The tokens, newest first.
+            The page, its next cursor and how many tokens match.
         """
+        sort = parse_sort(query.sort, allowed=TOKEN_SORT_FIELDS, default="-created_at")
         found = await self.tokens.list_for_account(AccountId(account.id))
-        return TokenList(tokens=[TokenSummary.from_model(t) for t in found])
+        tokens = [TokenSummary.from_model(t) for t in found if _contains(t.name, query.q)]
+        page = sorted_page(
+            tokens,
+            sort=sort,
+            key_field="id",
+            values={
+                "created_at": lambda t: _sortable(t.created_at),
+                "name": lambda t: t.name.casefold(),
+                "expires_at": lambda t: _sortable(t.expires_at),
+                "last_used_at": lambda t: _sortable(t.last_used_at),
+            },
+            key=lambda t: t.id,
+            limit=query.limit,
+            cursor=query.cursor,
+        )
+        return TokenList.from_page(page)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1883,18 +1955,41 @@ class ListLibraryGrantsUseCase:
     sharing: Sharing
     """Who may share, and how grants read."""
 
-    async def __call__(self, query: ListLibraryGrantsQuery) -> LibraryGrants:
-        """List the library's grants, if the caller is an admin of it.
+    async def __call__(self, query: ListLibraryGrantsQuery) -> LibraryGrantList:
+        """List a page of the library's grants, if the caller is an admin of it.
+
+        The role is checked first: a caller who may not see the grants gets no page and no count.
 
         Args:
-            query: The caller and the library.
+            query: The caller, the library, the filters, the sort and the page.
 
         Returns:
-            The grants.
+            The page, its next cursor and how many grants match.
         """
+        sort = parse_sort(query.sort, allowed=GRANT_SORT_FIELDS, default="kind")
         library = query.library.casefold()
         await self.sharing.caller_role(query.caller_id, library)
-        return await self.sharing.listing(library)
+        grants = [
+            g
+            for g in (await self.sharing.listing(library)).grants
+            if _contains(g.subject, query.q)
+            and (query.kind is None or g.kind in query.kind)
+            and (query.role is None or g.role in query.role)
+        ]
+        page = sorted_page(
+            grants,
+            sort=sort,
+            key_field="",  # no sort field is unique on its own: every sort pages by its value
+            values={
+                "kind": lambda g: int(g.kind == SubjectKind.GROUP.value),  # users first
+                "subject": lambda g: g.subject.casefold(),
+                "role": lambda g: LibraryRole(g.role).rank,
+            },
+            key=lambda g: f"{g.kind}:{g.subject}",
+            limit=query.limit,
+            cursor=query.cursor,
+        )
+        return LibraryGrantList.from_page(page)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

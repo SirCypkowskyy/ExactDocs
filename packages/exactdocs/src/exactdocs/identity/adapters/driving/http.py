@@ -30,6 +30,8 @@ from exactdocs.identity.dtos import (
     CreateUserCommand,
     FinishExternalSignInCommand,
     GrantLibraryRoleCommand,
+    GrantListQuery,
+    LibraryGrantList,
     LibraryGrantRequest,
     LibraryGrants,
     ListLibraryGrantsQuery,
@@ -43,7 +45,9 @@ from exactdocs.identity.dtos import (
     StartExternalSignInCommand,
     TokenGrant,
     TokenList,
+    TokenListQuery,
     UserList,
+    UserListQuery,
     UserSummary,
 )
 from exactdocs.identity.errors import (
@@ -266,16 +270,19 @@ def build_tokens_router(
         return await create_token(account, command)
 
     @router.get("/tokens")
-    async def list_all(account: caller) -> TokenList:
+    async def list_all(account: caller, query: Annotated[TokenListQuery, Query()]) -> TokenList:
         """List the signed-in account's API tokens, newest first, without their secrets.
+
+        A page at a time; filter with `q`, order with `sort`; `total` counts every match.
 
         Args:
             account: The signed-in account.
+            query: The filter, the sort, the page size and the cursor of the previous page.
 
         Returns:
-            The tokens.
+            The page of tokens, its next cursor and the total.
         """
-        return await list_tokens(account)
+        return await list_tokens(account, query)
 
     @router.delete("/tokens/{token_id}", status_code=204)
     async def revoke(token_id: str, account: caller) -> None:
@@ -344,16 +351,20 @@ def build_users_router(
 
     @router.get(
         "/users",
-        description=f"List every local account, disabled ones included, oldest first. "
-        f"{USERS_DESCRIPTION}",
+        description=f"List the local accounts, disabled ones included, oldest first unless "
+        f"`sort` says otherwise, a page at a time. Filter with `q`, `role` and `disabled`; "
+        f"`total` counts every match. {USERS_DESCRIPTION}",
     )
-    async def get_users() -> UserList:
-        """List every local account, disabled ones included, oldest first.
+    async def get_users(query: Annotated[UserListQuery, Query()]) -> UserList:
+        """List a page of the local accounts, disabled ones included.
+
+        Args:
+            query: The filters, the sort, the page size and the cursor of the previous page.
 
         Returns:
-            The accounts.
+            The page of accounts, its next cursor and the total.
         """
-        return await list_users()
+        return await list_users(query)
 
     @router.post("/users", status_code=201)
     async def add_user(command: CreateUserCommand) -> UserSummary:
@@ -764,20 +775,30 @@ def build_grants_router(
     account = Annotated[AccountSummary, Depends(caller)]
 
     @router.get("/libraries/{owner}/{repo}/grants", name="list_library_grants")
-    async def get_grants(owner: str, repo: str, who: account) -> LibraryGrants:
+    async def get_grants(
+        owner: str, repo: str, who: account, query: Annotated[GrantListQuery, Query()]
+    ) -> LibraryGrantList:
         """List who holds a role on the library: users first, then groups. Library admins only.
+
+        A page at a time; filter with `q`, `kind` and `role`, order with `sort`; `total` counts
+        every match.
 
         Args:
             owner: The library's owner segment.
             repo: The library's repository segment.
             who: The caller.
+            query: The filters, the sort, the page size and the cursor of the previous page.
 
         Returns:
-            The grants.
+            The page of grants, its next cursor and the total.
         """
         await require_library(f"/{owner}/{repo}")
         return await list_grants(
-            ListLibraryGrantsQuery(caller_id=who.id, library=f"/{owner}/{repo}")
+            ListLibraryGrantsQuery(
+                caller_id=who.id,
+                library=f"/{owner}/{repo}",
+                **query.model_dump(exclude_unset=True),
+            )
         )
 
     @router.put("/libraries/{owner}/{repo}/grants", name="grant_library_role")

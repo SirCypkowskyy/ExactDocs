@@ -25,3 +25,10 @@ Feature: Library roles
     And "bob" has an agent token limited to "/other/docs"
     Then "bob" cannot discover "/fixture/docs-repo"
     And "bob" sees the same query error for a hidden and a missing library
+
+  Scenario: A library's grants list sorts, filters and pages on the server
+    Given "bob" is a viewer of "/fixture/docs-repo"
+    And "carol" is a contributor of "/fixture/docs-repo"
+    When the operator lists the viewers and contributors of "/fixture/docs-repo" by name from Z to A, 1 at a time
+    Then the grant pages show "carol" then "bob", each counting 2 grants
+    And "bob" asking for the grants is refused before any page
