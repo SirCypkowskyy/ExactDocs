@@ -1504,3 +1504,64 @@ LIBRARY_VERSIONS_DESCRIPTION: Final[str] = (
     "not all; `version_count` counts them all."
 )
 """Schema description of a resolved library's ``versions``; it also names ``version_count``."""
+
+# ---------------------------------------------------------------- adapters.driven.lancedb_index
+LANCEDB_BACKEND: Final[str] = "lancedb"
+"""The registered name of the LanceDB index backend (#356)."""
+LANCEDB_OPTIONS: Final[frozenset[str]] = frozenset(
+    {
+        "uri",
+        "table_prefix",
+        "storage_options",
+        "single_writer",
+        "read_consistency_seconds",
+        "lock_timeout_seconds",
+    }
+)
+"""The options ``[index_backends.lancedb]`` takes; any other is refused at start."""
+LANCEDB_DEFAULT_PREFIX: Final[str] = "exactdocs"
+"""The tables' name prefix when ``table_prefix`` is not set."""
+LANCEDB_PREFIX: Final[re.Pattern[str]] = re.compile(r"[a-z][a-z0-9_]{0,39}")
+"""What ``table_prefix`` may be: a lower-case name LanceDB keeps as a directory name."""
+LANCEDB_SEARCH_TABLE: Final[str] = "{prefix}_chunks"
+"""The search index's table: one row per chunk of each version."""
+LANCEDB_SPACE_TABLE: Final[str] = "{prefix}_space_{space}"
+"""One embedding space's table: one row per chunk of each version, with its vector."""
+LANCEDB_LOCK_FILE: Final[str] = ".exactdocs-write.lock"
+"""The file in a local LanceDB directory every ExactDocs process locks (``flock``) to write."""
+LANCEDB_LOCK_TIMEOUT_SECONDS: Final[float] = 30.0
+"""How long a write waits for another process's write to end before it fails (and is retried
+by its job)."""
+LANCEDB_LOCK_POLL_SECONDS: Final[float] = 0.05
+"""How often a waiting write tries the lock again."""
+LANCEDB_READ_CONSISTENCY_SECONDS: Final[float] = 0.0
+"""How stale a read may be: 0 checks for other processes' writes on every read."""
+LANCEDB_OPTIMIZE_ROWS: Final[int] = 10_000
+"""Rows a process writes to a table before it adds them to the table's indexes at once (rows not
+indexed yet are still searched, by a scan)."""
+LANCEDB_OPTIMIZE_DELAY_SECONDS: Final[float] = 2.0
+"""Quiet time after a process's last write before it adds the written rows to the indexes and
+compacts the table (in the background; also when the backend closes)."""
+LANCEDB_WORD_COLUMNS: Final[tuple[str, str, str]] = ("heading_words", "path_words", "body_words")
+"""The full-text columns: the section's heading, its ancestors' headings and its text, each as
+``identifier_tokens`` gives it (whole words and identifier parts, casefolded)."""
+LANCEDB_IN_BATCH: Final[int] = 500
+"""Values per ``IN (...)`` list of a delete."""
+LANCEDB_TIE_MARGIN: Final[int] = 10
+"""Hits asked beyond the limit, so equal scores at the cut are ordered by chunk ID."""
+LANCEDB_SECRET_OPTION_PARTS: Final[tuple[str, ...]] = (
+    "secret",
+    "key",
+    "token",
+    "password",
+    "credential",
+    "sas",
+)
+"""``storage_options`` names that hold credentials: refused, they come from the standard
+environment variables the object store reads (``AWS_SECRET_ACCESS_KEY``...)."""
+LANCEDB_LOCAL_SCHEMES: Final[frozenset[str]] = frozenset({"", "file"})
+"""URI schemes of a local directory; any other (``s3``, ``gs``, ``az``...) is an object store."""
+LANCEDB_TRUE: Final[frozenset[str]] = frozenset({"1", "true", "yes", "on"})
+"""Spellings of a true switch (options from the environment are strings)."""
+LANCEDB_FALSE: Final[frozenset[str]] = frozenset({"0", "false", "no", "off", ""})
+"""Spellings of a false switch."""

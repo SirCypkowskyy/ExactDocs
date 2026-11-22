@@ -414,6 +414,14 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             production=False,
         ),
+        "lancedb": IndexBackendKind(
+            name="lancedb",
+            module="exactdocs.retrieval.adapters.driven.lancedb_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="lancedb",
+            packages=("lancedb", "pyarrow"),
+        ),
     }
 )
 """The external index backends, by name. Adding one is one adapter module in

@@ -152,7 +152,10 @@ benchmark numbers. See [Search and AI models](docs/search.md).
   `exactdocs index check` reports what it lost and `exactdocs index rebuild` writes it again.
   A backend is an optional extra behind one adapter; a backend that fuses keyword and vector
   search itself serves hybrid search natively. See
-  [External index backends](docs/architecture.md#external-index-backends).
+  [External index backends](docs/architecture.md#external-index-backends). Available:
+  - [LanceDB](docs/configuration.md#lancedb) for the search and vector indexes
+    (`exactdocs[lancedb]`), embedded in a local directory or in object storage, with native
+    hybrid search.
 
 ## How it works
 

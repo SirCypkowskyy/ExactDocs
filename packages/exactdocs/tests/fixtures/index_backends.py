@@ -14,12 +14,17 @@ An adapter PR adds one ``BackendCase`` to ``EXTERNAL_BACKENDS``: a name and an a
 manager per index it can hold, yielding a fresh, empty, opened backend and cleaning it up after.
 A backend that needs a server reads its URL from an ``EXACTDOCS_TEST_<NAME>_URL`` variable and
 is left out when the variable is unset (as ``databases.py`` does for PostgreSQL), so the suites
-still run everywhere; CI sets the variable.
+still run everywhere; CI sets the variable. An embedded backend (LanceDB) needs no server: it
+runs on a temporary directory wherever its extra is installed (the dev environment has it).
 """
 
+import importlib
+import importlib.util
+import tempfile
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
+from types import ModuleType
 
 from exactdocs.retrieval.adapters.driven.memory_index import (
     InMemorySearchBackend,
@@ -60,8 +65,43 @@ async def _memory_vectors() -> AsyncGenerator[VectorBackend]:
         await backend.close()
 
 
+def _lancedb() -> ModuleType:
+    """Import the LanceDB adapter (its extra) only when a LanceDB case runs."""
+    return importlib.import_module("exactdocs.retrieval.adapters.driven.lancedb_index")
+
+
+@asynccontextmanager
+async def _lancedb_search() -> AsyncGenerator[SearchBackend]:
+    with tempfile.TemporaryDirectory(prefix="exactdocs-lancedb-") as directory:
+        backend = _lancedb().search_backend({"uri": directory})
+        await backend.open()
+        try:
+            yield backend
+        finally:
+            await backend.close()
+
+
+@asynccontextmanager
+async def _lancedb_vectors() -> AsyncGenerator[VectorBackend]:
+    with tempfile.TemporaryDirectory(prefix="exactdocs-lancedb-") as directory:
+        backend = _lancedb().vector_backend({"uri": directory})
+        await backend.open()
+        try:
+            yield backend
+        finally:
+            await backend.close()
+
+
+def _lancedb_cases() -> list[BackendCase]:
+    """LanceDB (#356), embedded: on a temporary directory whenever its extra is installed."""
+    if importlib.util.find_spec("lancedb") is None:
+        return []
+    return [BackendCase(name="lancedb", search=_lancedb_search, vectors=_lancedb_vectors)]
+
+
 EXTERNAL_BACKENDS: list[BackendCase] = [
     BackendCase(name="memory", search=_memory_search, vectors=_memory_vectors, counts_terms=True),
+    *_lancedb_cases(),
 ]
 """Every external backend the suites run on here. Add yours (see the module docstring)."""
 
