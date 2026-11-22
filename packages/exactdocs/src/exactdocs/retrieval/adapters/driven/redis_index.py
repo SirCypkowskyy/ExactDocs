@@ -39,10 +39,14 @@ from exactdocs.retrieval.constants import (
     REDIS_DELETE_BATCH,
     REDIS_FALSE,
     REDIS_INDEXING_POLL_SECONDS,
+    REDIS_MISSING_INDEX,
     REDIS_OPTIONS,
     REDIS_PREFIX,
     REDIS_SCORER,
+    REDIS_SORTABLE,
+    REDIS_TAG_FIELDS,
     REDIS_TAG_SEPARATOR,
+    REDIS_TLS_FILES,
     REDIS_TRUE,
     REDIS_VECTOR_ALGORITHMS,
     REDIS_WRITE_BATCH,
@@ -71,15 +75,6 @@ type Connect = Callable[[], Redis]
 """Makes a new client; called by each ``open()`` (a client is bound to the event loop it ran in)."""
 type Row = dict[str, str]
 """One result of a query: its fields (and ``id``, the key, for ``FT.SEARCH``), decoded."""
-
-_MISSING_INDEX = ("no such index", "unknown index name", "index not found")
-"""What the Query Engine says, in one version or another, about an index that does not exist."""
-_TAG_FIELDS = ("manifest_id", "library", "version_id", "chunk_id")
-"""The ``TAG`` fields of every index, besides ``tags``."""
-_SORTABLE = frozenset({"manifest_id", "library", "chunk_id"})
-"""The fields queries group or sort on: kept sortable, so no hash is read to do it."""
-_TLS_FILES = ("tls_ca_file", "tls_cert_file", "tls_key_file")
-"""The TLS options: the CA that signed the server's certificate, and a client certificate."""
 
 
 def _escape(value: str) -> str:
@@ -336,7 +331,7 @@ def _missing_index(error: ResponseError) -> bool:
         True for a missing index.
     """
     message = str(error).lower()
-    return any(m in message for m in _MISSING_INDEX)
+    return any(m in message for m in REDIS_MISSING_INDEX)
 
 
 def _schema(*, text: bool) -> list[object]:
@@ -349,8 +344,8 @@ def _schema(*, text: bool) -> list[object]:
         The arguments.
     """
     schema: list[object] = []
-    for name in _TAG_FIELDS:
-        schema += [name, "TAG", "CASESENSITIVE", *(["SORTABLE"] if name in _SORTABLE else [])]
+    for name in REDIS_TAG_FIELDS:
+        schema += [name, "TAG", "CASESENSITIVE", *(["SORTABLE"] if name in REDIS_SORTABLE else [])]
     schema += ["tags", "TAG", "SEPARATOR", REDIS_TAG_SEPARATOR, "CASESENSITIVE"]
     if text:
         weights = (("heading", HEADING_WEIGHT), ("path", PATH_WEIGHT), ("text", TEXT_WEIGHT))
@@ -1085,7 +1080,7 @@ def _tls_files(options: Mapping[str, object], *, tls: bool) -> dict[str, str | N
         ValueError: A file is not there, TLS is off, or a client certificate lacks its key.
     """
     files: dict[str, str | None] = {}
-    for name in _TLS_FILES:
+    for name in REDIS_TLS_FILES:
         value = str(options.get(name) or "").strip()
         path = Path(value).expanduser() if value else None
         if path is not None and not path.is_file():

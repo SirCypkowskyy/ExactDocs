@@ -156,6 +156,18 @@ REDIS_TAG_SEPARATOR: Final[str] = "\x1f"
 """Between an entry's tags in its ``tags`` field (the unit separator: never inside a tag)."""
 REDIS_SCORER: Final[str] = "BM25STD"
 """The Query Engine's scorer of the full-text searches (BM25, as the database's indexes rank)."""
+REDIS_TAG_FIELDS: Final[tuple[str, ...]] = ("manifest_id", "library", "version_id", "chunk_id")
+"""The ``TAG`` fields of every index, besides ``tags``: every query filters on ``manifest_id``."""
+REDIS_SORTABLE: Final[frozenset[str]] = frozenset({"manifest_id", "library", "chunk_id"})
+"""The fields queries group or sort on: kept sortable, so no hash is read to do it."""
+REDIS_MISSING_INDEX: Final[tuple[str, ...]] = (
+    "no such index",
+    "unknown index name",
+    "index not found",
+)
+"""What the Query Engine says, in one version or another, about an index that does not exist."""
+REDIS_TLS_FILES: Final[tuple[str, ...]] = ("tls_ca_file", "tls_cert_file", "tls_key_file")
+"""The TLS options: the CA that signed the server's certificate, and a client certificate."""
 REDIS_VECTOR_ALGORITHMS: Final[frozenset[str]] = frozenset({"hnsw", "flat"})
 """The ``vector_algorithm`` option's values: approximate (HNSW, the default) or exact (FLAT)."""
 REDIS_OPTIONS: Final[frozenset[str]] = frozenset(
