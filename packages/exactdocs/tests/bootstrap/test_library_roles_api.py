@@ -301,10 +301,10 @@ async def test_grants_are_given_listed_and_revoked_over_rest(instance: Instance)
         assert (await bob.get(PATH)).status_code == 200
         listed = await ada.get(f"{PATH}/grants")
         assert listed.json() == {
-        "grants": [{"kind": "user", "subject": "bob", "role": "viewer"}],
-        "next_cursor": None,
-        "total": 1,
-    }
+            "grants": [{"kind": "user", "subject": "bob", "role": "viewer"}],
+            "next_cursor": None,
+            "total": 1,
+        }
 
         revoked = await ada.delete(f"{PATH}/grants/user/bob")
         assert revoked.json() == {"grants": []}
