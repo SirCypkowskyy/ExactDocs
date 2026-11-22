@@ -86,16 +86,20 @@ def step_import_and_embed(context: Context, first: str, second: str, ref: str) -
     context.search_ref = ref
 
 
+def _text(value: bytes | str) -> str:
+    return value.decode() if isinstance(value, bytes) else value
+
+
 async def _hashes(prefix: str, index: str) -> list[dict[str, str]]:
     """Every hash of one of the scenario's indexes, decoded (vectors left out)."""
     client = redis_server.admin()
     try:
         found = []
         async for key in client.scan_iter(match=f"{prefix}:{index}:*", count=1000):
-            fields = await client.hgetall(key)
+            fields = {_text(k): v for k, v in (await client.hgetall(key)).items()}
+            vector = fields.pop("vector", None)
             found.append(
-                {k.decode(): v.decode() for k, v in fields.items() if k != b"vector"}
-                | {"has_vector": str(b"vector" in fields)}
+                {k: _text(v) for k, v in fields.items()} | {"has_vector": str(bool(vector))}
             )
         return found
     finally:
