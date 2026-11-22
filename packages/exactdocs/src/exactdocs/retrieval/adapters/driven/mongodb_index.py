@@ -55,6 +55,7 @@ from pymongo.operations import SearchIndexModel
 from exactdocs.retrieval.constants import (
     HEADING_WEIGHT,
     MONGODB_ANALYZER,
+    MONGODB_AUTH_FAILED,
     MONGODB_BACKEND,
     MONGODB_CANDIDATES_FACTOR,
     MONGODB_DEFAULT_COLLECTION,
@@ -63,6 +64,7 @@ from exactdocs.retrieval.constants import (
     MONGODB_DEFAULT_TIMEOUT_SECONDS,
     MONGODB_FALSE,
     MONGODB_FILTER_FIELDS,
+    MONGODB_INDEX_EXISTS,
     MONGODB_MAX_CANDIDATES,
     MONGODB_MIN_CANDIDATES,
     MONGODB_NAME,
@@ -70,8 +72,10 @@ from exactdocs.retrieval.constants import (
     MONGODB_POLL_SECONDS,
     MONGODB_SEARCH_INDEX,
     MONGODB_SPACE,
+    MONGODB_TEXT_FIELDS,
     MONGODB_TIE_MARGIN,
     MONGODB_TRUE,
+    MONGODB_UNAUTHORIZED,
     MONGODB_UNKNOWN_STAGE,
     MONGODB_URL_SECRETS,
     MONGODB_VECTOR_INDEX,
@@ -104,12 +108,6 @@ logger = logging.getLogger(__name__)
 
 type Document = dict[str, Any]
 type Connect = Callable[[], AsyncMongoClient[Document]]
-
-_TEXT_FIELDS: tuple[tuple[str, float], ...] = (
-    ("heading", HEADING_WEIGHT),
-    ("path", PATH_WEIGHT),
-    ("body", TEXT_WEIGHT),
-)
 
 
 def _text_fields(entry: IndexEntry) -> Document:
@@ -176,7 +174,7 @@ def _search_definition() -> Document:
         "indexOptions": "freqs",
         "store": False,
     }
-    fields: Document = {name: dict(words) for name, _ in _TEXT_FIELDS}
+    fields: Document = {name: dict(words) for name in MONGODB_TEXT_FIELDS}
     fields |= {name: {"type": "token"} for name in MONGODB_FILTER_FIELDS}
     return {"mappings": {"dynamic": False, "fields": fields}}
 
@@ -248,7 +246,9 @@ def _words(manifest_ids: Collection[str], terms: Sequence[str], tag_filter: TagF
     """
     should = [
         {"text": {"query": list(terms), "path": name, "score": {"boost": {"value": weight}}}}
-        for name, weight in _TEXT_FIELDS
+        for name, weight in zip(
+            MONGODB_TEXT_FIELDS, (HEADING_WEIGHT, PATH_WEIGHT, TEXT_WEIGHT), strict=True
+        )
     ]
     return {
         "compound": {
@@ -333,9 +333,9 @@ def _reason(error: BaseException, hidden: Collection[str]) -> str:
     Returns:
         The kind of failure, with the server's own message for a refused command.
     """
-    if isinstance(error, OperationFailure) and error.code == 18:  # AuthenticationFailed
+    if isinstance(error, OperationFailure) and error.code == MONGODB_AUTH_FAILED:
         return "authentication failed: check the user and password"
-    if isinstance(error, OperationFailure) and error.code == 13:  # Unauthorized
+    if isinstance(error, OperationFailure) and error.code == MONGODB_UNAUTHORIZED:
         return f"permission denied ({_short(error, hidden)})"
     if isinstance(error, ServerSelectionTimeoutError):
         return f"no server answered ({_short(error, hidden)})"
@@ -358,8 +358,8 @@ class _MongoIndex:
     """The ``collection`` option: the search collection, and the spaces' collections' prefix."""
     index_timeout: float
     """The ``index_timeout`` option, in seconds."""
-    hidden: tuple[str, ...] = ()
-    """The secrets (the password) no message ever repeats."""
+    hidden: tuple[str, ...] = field(default=(), repr=False)
+    """The secrets (the password) no message ever repeats; never in the ``repr``."""
     name: str = MONGODB_BACKEND
     """The registered name."""
     _client: AsyncMongoClient[Document] | None = field(default=None, init=False)
@@ -430,7 +430,7 @@ class _MongoIndex:
                 The rows.
             """
             cursor = await self._db[collection].aggregate(pipeline)
-            return await cursor.to_list()
+            return [dict(row) for row in await cursor.to_list()]
 
         return await self._call(rows())
 
@@ -465,11 +465,13 @@ class _MongoIndex:
             try:
                 await target.create_search_indexes(models)
             except OperationFailure as error:
-                if error.code != 68:  # IndexAlreadyExists: another write made it first
+                if error.code != MONGODB_INDEX_EXISTS:  # another write made it first
                     reason = _reason(error, self.hidden)
                     raise IndexBackendUnavailableError(self.name, reason) from error
             except PyMongoError as error:
-                raise IndexBackendUnavailableError(self.name, _reason(error, self.hidden)) from error
+                raise IndexBackendUnavailableError(
+                    self.name, _reason(error, self.hidden)
+                ) from error
         elif all(existing[n].get("queryable") for n in wanted):
             return
 
@@ -496,6 +498,9 @@ class _MongoIndex:
 
         Args:
             collection: The collection.
+
+        Raises:
+            IndexBackendUnavailableError: The server refused.
         """
         try:
             await self._db.create_collection(collection, check_exists=True)
@@ -524,7 +529,7 @@ class _MongoIndex:
                 The descriptions.
             """
             cursor = await target.list_search_indexes()
-            return await cursor.to_list()
+            return [dict(index) for index in await cursor.to_list()]
 
         return {str(i["name"]): i for i in await self._call(listed())}
 
@@ -609,8 +614,9 @@ class _MongoIndex:
         tag_filter: TagFilter,
         limit: int,
     ) -> list[BackendHit]:
-        """Rank a collection's matching documents with BM25, best first, ties by chunk then
-        manifest ID (sorted by the search index itself).
+        """Rank a collection's matching documents with BM25, best first.
+
+        Ties are ordered by chunk ID, then manifest ID, by the search index itself.
 
         Args:
             collection: The collection.
@@ -750,8 +756,7 @@ class MongoSearchBackend(_MongoIndex):
 
 @dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- holds its client
 class MongoVectorBackend(_MongoIndex):
-    """Implements ``ports.driven.VectorBackend`` over Atlas Vector Search: a collection per
-    space."""
+    """Implements ``ports.driven.VectorBackend`` over Atlas Vector Search, by space."""
 
     exact: bool = False
     """``vector_search = "exact"``: a full scan of the filtered vectors instead of HNSW."""
@@ -791,8 +796,10 @@ class MongoVectorBackend(_MongoIndex):
     async def put(
         self, space: EmbeddingSpace, manifest: IndexedManifest, entries: Sequence[IndexEntry]
     ) -> None:
-        """Add or replace the entries' documents in the space's collection, and wait until its
-        search indexes return them (the collection and indexes are made when missing).
+        """Add or replace the entries' documents in the space's collection.
+
+        The collection and its search indexes are made when missing; the put returns once the
+        indexes return every document written.
 
         Args:
             space: The space.
@@ -1077,14 +1084,12 @@ class MongoHybridVectorBackend(MongoVectorBackend):
             cursor = await self._db[self.collection].aggregate([*probe, {"$limit": 1}])
             await cursor.to_list()
         except OperationFailure as error:
-            if error.code in {13, 18}:  # Unauthorized, AuthenticationFailed
+            if error.code in {MONGODB_UNAUTHORIZED, MONGODB_AUTH_FAILED}:
                 reason = _reason(error, self.hidden)
                 raise IndexBackendUnavailableError(self.name, reason) from error
             self.rank_fusion = False
             how = "unknown stage" if error.code == MONGODB_UNKNOWN_STAGE else f"code {error.code}"
-            logger.info(
-                "MongoDB has no $rankFusion (%s): hybrid search fuses in ExactDocs", how
-            )
+            logger.info("MongoDB has no $rankFusion (%s): hybrid search fuses in ExactDocs", how)
         except PyMongoError as error:
             raise IndexBackendUnavailableError(self.name, _reason(error, self.hidden)) from error
         else:
@@ -1211,14 +1216,13 @@ def _url(options: Mapping[str, object]) -> str:
             ``url`` holds a password or another secret.
     """
     given = str(options.get("url") or "").strip()
-    from_file = _secret_file(options, "url_file")
-    if bool(given) == bool(from_file):
+    if bool(given) == bool(str(options.get("url_file") or "").strip()):
         message = (
             "set url (a connection string without a password) or url_file (a file holding the "
             "connection string), one of them"
         )
         raise ValueError(message)
-    url = from_file or given
+    url = given or _secret_file(options, "url_file") or ""
     parts = urlsplit(url)
     if parts.scheme not in {"mongodb", "mongodb+srv"} or not parts.netloc.rpartition("@")[2]:
         message = "the connection string must be mongodb://host[:port] or mongodb+srv://host"
@@ -1312,8 +1316,8 @@ class _Settings:
     """The ``collection`` option."""
     index_timeout: int
     """The ``index_timeout`` option, in seconds."""
-    hidden: tuple[str, ...]
-    """The secrets no message repeats."""
+    hidden: tuple[str, ...] = field(repr=False)
+    """The secrets no message repeats; never in the ``repr``."""
     hybrid: bool
     """The ``hybrid`` option."""
     exact: bool
@@ -1346,12 +1350,13 @@ def _settings(options: Mapping[str, object]) -> _Settings:
         message = f"vector_search must be approximate or exact (got {search!r})"
         raise ValueError(message)
     in_url = urlsplit(url).password
-    hidden = tuple(s for s in (password, in_url) if s)
-    credentials: dict[str, str] = {}
+    # Only what is set: a None would override the user or password the connection string names.
+    credentials: dict[str, Any] = {}
     if username:
         credentials["username"] = username
     if password:
         credentials["password"] = password
+    hidden = tuple(s for s in (password, in_url) if s)
 
     def connect() -> AsyncMongoClient[Document]:
         """Make a client of the configured server.

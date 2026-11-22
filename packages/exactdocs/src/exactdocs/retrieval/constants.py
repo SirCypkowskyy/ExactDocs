@@ -152,6 +152,10 @@ MONGODB_VECTOR_INDEX: Final[str] = "exactdocs_vectors"
 MONGODB_ANALYZER: Final[str] = "lucene.whitespace"
 """The analyzer of the text fields: they hold ``identifier_tokens`` (already lower case and
 split), so only spaces split them and ``-``, ``_`` and ``.`` stay inside a token."""
+MONGODB_TEXT_FIELDS: Final[tuple[str, str, str]] = ("heading", "path", "body")
+"""The words' fields: the section's heading, the headings above it, its text (weighted
+``HEADING_WEIGHT``, ``PATH_WEIGHT`` and ``TEXT_WEIGHT`` in every query, as the database's own
+indexes weigh them)."""
 MONGODB_FILTER_FIELDS: Final[tuple[str, ...]] = (
     "manifest_id",
     "library",
@@ -187,6 +191,13 @@ MONGODB_TIE_MARGIN: Final[int] = 10
 MONGODB_UNKNOWN_STAGE: Final[int] = 40324
 """The server's error code for an aggregation stage it does not know (``$rankFusion`` before
 MongoDB 8.1): native hybrid search then fuses in ExactDocs."""
+MONGODB_AUTH_FAILED: Final[int] = 18
+"""The server's error code for credentials it refused (``AuthenticationFailed``)."""
+MONGODB_UNAUTHORIZED: Final[int] = 13
+"""The server's error code for a command the user may not run (``Unauthorized``)."""
+MONGODB_INDEX_EXISTS: Final[int] = 68
+"""The server's error code for a search index made meanwhile by another write
+(``IndexAlreadyExists``)."""
 MONGODB_VECTOR_SEARCH: Final[frozenset[str]] = frozenset({"approximate", "exact"})
 """The ``vector_search`` option's values: HNSW (``numCandidates``) or a full scan (``exact``)."""
 MONGODB_OPTIONS: Final[frozenset[str]] = frozenset(

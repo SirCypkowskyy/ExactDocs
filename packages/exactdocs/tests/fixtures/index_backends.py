@@ -73,7 +73,9 @@ def _mongodb_cases() -> list[BackendCase]:
 
     return [
         BackendCase(
-            name="mongodb", search=mongodb_server.mongodb_search, vectors=mongodb_server.plain_vectors
+            name="mongodb",
+            search=mongodb_server.mongodb_search,
+            vectors=mongodb_server.plain_vectors,
         ),
         BackendCase(name="mongodb_hybrid", vectors=mongodb_server.hybrid_vectors),
     ]
