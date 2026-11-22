@@ -131,6 +131,51 @@ EXTERNAL_HIT_MARGIN: Final[int] = 10
 MEMORY_BACKEND: Final[str] = "memory"
 """The registered name of the in-process reference index backend (tests only)."""
 
+# ---------------------------------------------------------------- adapters.driven.redis_index
+REDIS_BACKEND: Final[str] = "redis"
+"""The registered name of the Redis (Query Engine) search and vector backend (#364)."""
+REDIS_DEFAULT_PREFIX: Final[str] = "exactdocs"
+"""The ``prefix`` option's default: the search index is ``<prefix>:search`` and each embedding
+space's index ``<prefix>:space<id>``, each over the hashes whose keys start with its name."""
+REDIS_PREFIX: Final[re.Pattern[str]] = re.compile(r"[A-Za-z0-9_-]{1,64}")
+"""What the ``prefix`` option may be: no ``:``, so one instance's keys never fall under another
+instance's index (``a:search:`` is never a prefix of ``ab:search:``)."""
+REDIS_DEFAULT_PORT: Final[int] = 6379
+"""The port of a ``url`` that names none."""
+REDIS_DEFAULT_TIMEOUT_SECONDS: Final[int] = 10
+"""The ``timeout`` option's default: how long one command may take (also each query's
+``TIMEOUT``, so a query that runs out fails instead of answering with part of its results)."""
+REDIS_WRITE_BATCH: Final[int] = 256
+"""Hashes written per transaction (``MULTI``: ``DEL`` and ``HSET`` of each)."""
+REDIS_DELETE_BATCH: Final[int] = 1_000
+"""Keys found and unlinked per round when a version's entries are deleted."""
+REDIS_TAG_SEPARATOR: Final[str] = "\x1f"
+"""Between an entry's tags in its ``tags`` field (the unit separator: never inside a tag)."""
+REDIS_SCORER: Final[str] = "BM25STD"
+"""The Query Engine's scorer of the full-text searches (BM25, as the database's indexes rank)."""
+REDIS_VECTOR_ALGORITHMS: Final[frozenset[str]] = frozenset({"hnsw", "flat"})
+"""The ``vector_algorithm`` option's values: approximate (HNSW, the default) or exact (FLAT)."""
+REDIS_OPTIONS: Final[frozenset[str]] = frozenset(
+    {
+        "url",
+        "prefix",
+        "username",
+        "password",
+        "password_file",
+        "tls_ca_file",
+        "tls_cert_file",
+        "tls_key_file",
+        "timeout",
+        "hybrid",
+        "vector_algorithm",
+    }
+)
+"""The options ``[index_backends.redis]`` takes; any other is refused at start."""
+REDIS_TRUE: Final[frozenset[str]] = frozenset({"1", "true", "yes", "on"})
+"""How a switch option (``hybrid``) given as text is turned on."""
+REDIS_FALSE: Final[frozenset[str]] = frozenset({"0", "false", "no", "off", ""})
+"""How a switch option given as text is turned off."""
+
 # ---------------------------------------------------------------- adapters.driven.memory
 MEMORY_FORMAT: Final[int] = 1
 """Format version of the in-memory search index."""

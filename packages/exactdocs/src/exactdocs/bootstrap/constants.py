@@ -414,6 +414,14 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             production=False,
         ),
+        "redis": IndexBackendKind(
+            name="redis",
+            module="exactdocs.retrieval.adapters.driven.redis_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="redis",
+            packages=("redis",),
+        ),
     }
 )
 """The external index backends, by name. Adding one is one adapter module in
