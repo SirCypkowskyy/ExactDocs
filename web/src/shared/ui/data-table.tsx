@@ -61,6 +61,10 @@ export function useServerTable<T>({
     getRowId,
     manualSorting: true,
     manualFiltering: true,
+    // The server pages. Left on, every new `data` array queues a page reset (a state update),
+    // which renders again with a new array: an endless render loop once anything re-renders.
+    manualPagination: true,
+    autoResetAll: false,
     state: { sorting: sortingOf(sort), columnVisibility },
     onColumnVisibilityChange: setColumnVisibility,
     onSortingChange: (updater) => {
