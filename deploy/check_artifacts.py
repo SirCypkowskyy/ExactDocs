@@ -82,7 +82,7 @@ class Variant:
 
 IMAGE_VARIANTS = {
     # 375 MB until DBOS (#65); see docs/releasing.md.
-    "base": Variant(budget=400 * MB, allowed_ml=frozenset(), models=False),
+    "base": Variant(budget=410 * MB, allowed_ml=frozenset(), models=False),
     "ai": Variant(budget=560 * MB, allowed_ml=LLM_CLIENT_PACKAGES, models=False),
     "local": Variant(budget=950 * MB, allowed_ml=LOCAL_PACKAGES | LLM_CLIENT_PACKAGES, models=True),
 }

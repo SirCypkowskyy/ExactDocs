@@ -159,7 +159,7 @@ release's *Scan image* jobs; the sizes land in the job summary):
 | Artifact | Budget | Now | Also checked |
 |---|---|---|---|
 | wheel (with the UI) | 5 MB | 0.9 MB (CI, PR #237) | no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt`; no ML package in `Requires-Dist` |
-| image `base` (`<v>`; unpacked file bytes, `du -sxb /` in the container; independent of the image store) | 400 MB | 387.1 MB (CI, arm64, PR #285); 353.0 MB on amd64 | no such model file anywhere in the filesystem; no `ML_PACKAGES` distribution installed; no aiohttp |
+| image `base` (`<v>`; unpacked file bytes, `du -sxb /` in the container; independent of the image store) | 410 MB | 404.1 MB (CI, arm64, PR #464); 387.1 MB before MCP Apps (PR #285); 353.0 MB on amd64 | no such model file anywhere in the filesystem; no `ML_PACKAGES` distribution installed; no aiohttp |
 | image `ai` (`<v>-ai`: `exactdocs[ai]`) | 560 MB | 520.4 MB (CI, arm64, PR #285: +133 MB); 492.0 MB on amd64 | as `base`, except that pydantic-ai(-slim) is allowed: it calls models over HTTP and runs none |
 | image `local` (`<v>-local`: `exactdocs[ai,local]` + default models) | 950 MB | 866.5 MB (CI, arm64, PR #285: +479 MB, of which 159 MB are the models); 847.9 MB on amd64 | of `ML_PACKAGES` only fastembed, onnxruntime, tokenizers, huggingface-hub and pydantic-ai(-slim) (no torch, transformers, onnx, ...); both default models at their pinned revisions in `/opt/exactdocs/models` (the server's own marker check) with the pinned sha256 of their ONNX files (`MODEL_SHA256`), their license `NOTICE`, a directory UID 10001 cannot write, and `EXACTDOCS_MODELS_DIR` set to it; model files nowhere else (but ONNX Runtime's own few-KB examples); no aiohttp |
 
@@ -262,6 +262,14 @@ to drop.
 `prometheus-client` (pure Python, no dependencies of their own) add about 0.57 MB with their
 compiled bytecode, measured in a clean virtualenv; imported only when `EXACTDOCS_METRICS` is on.
 CI's *Docker image* job reports the exact size.
+
+**410 MB since MCP Apps (#115): 404.1 MB.** `view_article` and `view_search` render through
+Prefab UI (`prefab-ui`, pinned), whose renderer is a single self-contained page (`app.html`,
+6.8 MB, every script and style inlined). ExactDocs serves it itself so that a host never loads the
+UI from a CDN, which keeps the offline guarantee; that page is nearly all of the 8 MB the extra
+adds. The maintainer chose to raise the budget by 10 MB rather than move MCP Apps into an optional
+extra, so every install gets them. The headroom is now about 1.5 %: the next dependency that needs
+room must first look for something to drop.
 
 ## Image scan
 
