@@ -38,6 +38,7 @@ from exactdocs.identity.dtos import (
     LibraryGrantList,
     LibraryGrantRequest,
     LibraryGrants,
+    LibraryTransferRequest,
     ListAccessLogQuery,
     ListLibraryAccessLogQuery,
     ListLibraryGrantsQuery,
@@ -52,6 +53,7 @@ from exactdocs.identity.dtos import (
     TokenGrant,
     TokenList,
     TokenListQuery,
+    TransferLibraryCommand,
     UserList,
     UserListQuery,
     UserSummary,
@@ -86,6 +88,7 @@ from exactdocs.identity.ports.driving import (
     SignIn,
     SignOut,
     StartExternalSignIn,
+    TransferLibrary,
 )
 from exactdocs_kernel import DomainError
 
@@ -804,20 +807,24 @@ def build_grants_router(
     grant_role: GrantLibraryRole,
     revoke_role: RevokeLibraryRole,
     list_access_log: ListLibraryAccessLog,
+    transfer: TransferLibrary,
     caller: CurrentCaller,
     require_library: Callable[[str], Awaitable[None]],
 ) -> APIRouter:
-    """Expose ``/libraries/{owner}/{repo}/grants`` and ``/access-log``: who may do what, and why.
+    """Expose ``/libraries/{owner}/{repo}/grants``, ``.../transfer`` and ``.../access-log``.
+
+    Who holds which role, handing the library over, and who changed its access and when.
 
     Every route needs the ``admin`` role on the library (an instance operator holds it on all of
-    them). Giving or taking the ``admin`` role needs the ``creator`` role. A session or an API
-    token may call them: a token acts as its account.
+    them). Giving or taking the ``admin`` role, and handing the library over, needs the
+    ``creator`` role. A session or an API token may call them: a token acts as its account.
 
     Args:
         list_grants: The driving port that lists the grants.
         grant_role: The driving port that gives a role.
         revoke_role: The driving port that takes a role away.
         list_access_log: The driving port that reads the library's access log.
+        transfer: The driving port that hands a library over to a new creator.
         caller: The dependency that names the calling account.
         require_library: Verifies live catalog presence and credential read access.
 
@@ -902,6 +909,31 @@ def build_grants_router(
         return await revoke_role(
             RevokeLibraryRoleCommand(
                 caller_id=who.id, library=f"/{owner}/{repo}", kind=kind, subject=subject
+            )
+        )
+
+    @router.post("/libraries/{owner}/{repo}/transfer", name="transfer_library")
+    async def post_transfer(
+        owner: str, repo: str, request: LibraryTransferRequest, who: account
+    ) -> LibraryGrants:
+        """Hand the library over to another user: they become its creator.
+
+        Only the library's `creator` (or an operator) may. The creator before stays an `admin`
+        of the library. A user who is already the creator is a 422 `invalid_grant`.
+
+        Args:
+            owner: The library's owner segment.
+            repo: The library's repository segment.
+            request: The new creator.
+            who: The caller.
+
+        Returns:
+            The library's grants now.
+        """
+        await require_library(f"/{owner}/{repo}")
+        return await transfer(
+            TransferLibraryCommand(
+                caller_id=who.id, library=f"/{owner}/{repo}", **request.model_dump()
             )
         )
 

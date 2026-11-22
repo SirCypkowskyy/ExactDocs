@@ -1442,6 +1442,35 @@ class SqliteLibraryGrantRepository:
             )
             await connection.execute(insert(library_grants).values(_grant_values(creator)))
 
+    async def transfer(self, library: str, account_id: AccountId) -> list[AccountId]:
+        """Make the account the library's creator in one transaction; the creators become admins.
+
+        Args:
+            library: The library ID, lower-case.
+            account_id: The new creator.
+
+        Returns:
+            The accounts that were the library's creator before.
+        """
+        creator = LibraryGrant(
+            library=library, kind=SubjectKind.USER, subject=account_id, role=LibraryRole.CREATOR
+        )
+        demote = (
+            update(library_grants)
+            .where(
+                library_grants.c.library == library,
+                library_grants.c.kind == SubjectKind.USER.value,
+                library_grants.c.role == LibraryRole.CREATOR.value,
+            )
+            .values(role=LibraryRole.ADMIN.value)
+            .returning(library_grants.c.subject)
+        )
+        async with self.engine.begin() as connection:
+            previous = [AccountId(row.subject) for row in await connection.execute(demote)]
+            await connection.execute(_delete_grant(library, SubjectKind.USER, account_id))
+            await connection.execute(insert(library_grants).values(_grant_values(creator)))
+        return sorted(previous)
+
     async def clear(self, library: str) -> None:
         """Delete every grant on a library.
 

@@ -74,6 +74,7 @@ from exactdocs.identity.dtos import (
     TokenList,
     TokenListQuery,
     TokenSummary,
+    TransferLibraryCommand,
     UserList,
     UserListQuery,
     UserSummary,
@@ -2112,10 +2113,11 @@ class ListLibraryGrantsUseCase:
         """
         sort = parse_sort(query.sort, allowed=GRANT_SORT_FIELDS, default="kind")
         library = query.library.casefold()
-        await self.sharing.caller_role(query.caller_id, library)
+        caller = await self.sharing.caller_role(query.caller_id, library)
+        everyone = (await self.sharing.listing(library)).grants
         grants = [
             g
-            for g in (await self.sharing.listing(library)).grants
+            for g in everyone
             if _contains(g.subject, query.q)
             and (query.kind is None or g.kind in query.kind)
             and (query.role is None or g.role in query.role)
@@ -2133,7 +2135,48 @@ class ListLibraryGrantsUseCase:
             limit=query.limit,
             cursor=query.cursor,
         )
-        return LibraryGrantList.from_page(page)
+        creator = next((g.subject for g in everyone if g.role == LibraryRole.CREATOR.value), None)
+        return LibraryGrantList.from_page(
+            page,
+            caller_role="creator" if caller.allows(LibraryRole.CREATOR) else "admin",
+            creator=creator,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TransferLibraryUseCase:
+    """Implements ``ports.driving.TransferLibrary``."""
+
+    sharing: Sharing
+    """Who may share, and how grants read."""
+
+    async def __call__(self, command: TransferLibraryCommand) -> LibraryGrants:
+        """Make the user the library's creator, and the creator before an ``admin``.
+
+        Args:
+            command: The caller, the library and the new creator's username.
+
+        Returns:
+            The library's grants now.
+
+        Raises:
+            LibraryRoleRequiredError: The caller is not the library's ``creator`` (nor an
+                operator).
+            InvalidGrantError: The user is already the library's creator.
+        """
+        library = command.library.casefold()
+        caller = await self.sharing.caller_role(command.caller_id, library)
+        if not caller.allows(LibraryRole.CREATOR):
+            raise LibraryRoleRequiredError(LibraryRole.CREATOR.value)
+        new_creator = AccountId(await self.sharing.subject_id(SubjectKind.USER, command.username))
+        held = await self.sharing.grants.get(library, SubjectKind.USER, new_creator)
+        if held is not None and held.role is LibraryRole.CREATOR:
+            msg = f"{command.username} is already the creator of {command.library}"
+            raise InvalidGrantError(msg)
+        # ``transfer`` answers the creators before (none for a library added before roles):
+        # what a record of the transfer names, next to the caller and the new creator.
+        await self.sharing.grants.transfer(library, new_creator)
+        return await self.sharing.listing(library)
 
 
 def _changes(wanted: Collection[str] | None) -> frozenset[AccessChange] | None:

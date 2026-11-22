@@ -154,6 +154,7 @@ def _protected_router(
             grant_role=container.identity.grant_library_role,
             revoke_role=container.identity.revoke_library_role,
             list_access_log=container.identity.list_library_access_log,
+            transfer=container.identity.transfer_library,
             caller=current_caller,
             require_library=require_library,
         )

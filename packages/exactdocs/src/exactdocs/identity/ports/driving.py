@@ -38,6 +38,7 @@ from exactdocs.identity.dtos import (
     TokenGrant,
     TokenList,
     TokenListQuery,
+    TransferLibraryCommand,
     UserList,
     UserListQuery,
     UserSummary,
@@ -477,6 +478,26 @@ class RevokeLibraryRole(Protocol):
 
         Args:
             command: The caller, the library and whose role goes.
+
+        Returns:
+            The library's grants now.
+        """
+        ...
+
+
+class TransferLibrary(Protocol):
+    """Hand a library over to another user: they become its creator, the creator an ``admin``.
+
+    Only the library's ``creator`` (or an operator) may (``LibraryRoleRequiredError``).
+    ``UnknownAccountError`` for a username nobody has, ``InvalidGrantError`` when the user is
+    already its creator.
+    """
+
+    async def __call__(self, command: TransferLibraryCommand) -> LibraryGrants:
+        """Run the use case.
+
+        Args:
+            command: The caller, the library and the new creator's username.
 
         Returns:
             The library's grants now.

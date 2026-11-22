@@ -39,6 +39,7 @@ from exactdocs.identity.ports.driving import (
     SignIn,
     SignOut,
     StartExternalSignIn,
+    TransferLibrary,
 )
 
 __all__ = [
@@ -80,4 +81,5 @@ __all__ = [
     "SignOut",
     "StartExternalSignIn",
     "TokenRepository",
+    "TransferLibrary",
 ]

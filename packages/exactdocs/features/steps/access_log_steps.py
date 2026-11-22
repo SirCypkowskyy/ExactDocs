@@ -1,12 +1,13 @@
 """Steps for the access log: changes made over REST by one person each, read back over REST.
 
-People and their credentials come from ``library_roles_steps``; the operator is the demo admin.
+People and their credentials, and who is an admin of a library, come from
+``library_roles_steps``; the operator is the demo admin.
 """
 
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
-from behave import given, then, when
+from behave import then, when
 from behave.runner import Context
 
 from steps.http_steps import DEMO_COOKIE
@@ -34,12 +35,6 @@ def _log(context: Context, library: str, session: str) -> list[dict[str, object]
     response = send_as(context, "GET", f"{_library_path(library)}/access-log", session=session)
     assert response.status_code == HTTPStatus.OK, response.text
     return response.json()["events"]
-
-
-@given('"{username}" is an admin of "{library}"')
-def step_admin_of(context: Context, username: str, library: str) -> None:
-    get_person(context, username)
-    _grant_as(context, DEMO_COOKIE, library, username, "admin")
 
 
 @when('"{actor}" grants "{username}" the {role} role on "{library}"')

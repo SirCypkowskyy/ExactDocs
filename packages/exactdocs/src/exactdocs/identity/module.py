@@ -54,6 +54,7 @@ from exactdocs.identity.ports.driving import (
     SignIn,
     SignOut,
     StartExternalSignIn,
+    TransferLibrary,
 )
 from exactdocs.identity.use_cases import (
     AuthenticateUseCase,
@@ -87,6 +88,7 @@ from exactdocs.identity.use_cases import (
     SignInUseCase,
     SignOutUseCase,
     StartExternalSignInUseCase,
+    TransferLibraryUseCase,
 )
 from exactdocs_kernel import Clock
 
@@ -155,6 +157,8 @@ class IdentityModule:
     """Read a library's access log (library admins)."""
     list_access_log: ListAccessLog
     """Read the access log of every library, removed ones included (operators)."""
+    transfer_library: TransferLibrary
+    """Hand a library over to another user (its creator only)."""
 
     @classmethod
     def build(
@@ -316,4 +320,5 @@ class IdentityModule:
             list_library_grants=ListLibraryGrantsUseCase(sharing=sharing),
             list_library_access_log=ListLibraryAccessLogUseCase(sharing=sharing),
             list_access_log=ListAccessLogUseCase(sharing=sharing),
+            transfer_library=TransferLibraryUseCase(sharing=sharing),
         )

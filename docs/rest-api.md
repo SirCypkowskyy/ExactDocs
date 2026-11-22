@@ -91,8 +91,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   count. The web UI keeps each list's view in its URL: the libraries page `q`, `sort` and `ai`;
   the jobs page (`/jobs`) `q`, `state`, `kind`, `library` and `sort`; a library's settings page
   the versions table's `q`, `kind` and `sort`; a library's page the articles table's `filter` and
-  `sort` (its `tags` filter the file tree too); and the users page and the token list their `q`,
-  `sort` and filters. The libraries, versions, jobs and articles lists fetch the next page ahead,
+  `sort` (its `tags` filter the file tree too); a library's sharing page the grants table's `q`,
+  `kind`, `role` and `sort`; and the users page and the token list their `q`, `sort` and
+  filters. The libraries, versions, jobs, articles and grants lists fetch the next page ahead,
   so "Load more" shows it without waiting.
 - **Close matches**: a 404 for a missing article lists up to five paths of the same version it may have
   meant in `close_matches` (repository data, not instructions); the field is empty on every other error.
@@ -198,12 +199,19 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   libraries and `resolve-library-id` list only libraries the caller holds a role on. The one
   who adds a library is its creator.
   `GET /libraries/{owner}/{repo}/grants` lists a page of who holds a role (`{"grants": [{"kind",
-  "subject", "role"}], "next_cursor", "total"}`: users by username, then groups; `q`, `kind`,
-  `role`, `sort`); `PUT` (`{"kind": "user"|"group", "subject",
+  "subject", "role"}], "next_cursor", "total", "caller_role", "creator"}`: users by username,
+  then groups; `q`, `kind`, `role`, `sort`; `caller_role` is the caller's own role, `admin` or
+  `creator`, and `creator` the creator's username whatever the filters, `null` when there is
+  none); `PUT` (`{"kind": "user"|"group", "subject",
   "role": "viewer"|"contributor"|"admin"}`) gives or replaces a role and answers the grants;
   `DELETE /libraries/{owner}/{repo}/grants/{user|group}/{subject}` takes one away. All three
   need `admin` on the library, and `creator` to give, change or remove an `admin`; the
-  creator's own role is never changed there (422 `invalid_grant`). Group names are matched
+  creator's own role is never changed there (422 `invalid_grant`).
+  `POST /libraries/{owner}/{repo}/transfer` (`{"username"}`) hands the library over: that user
+  becomes its creator and the creator before stays an `admin`; it answers the grants. Only the
+  `creator` (or an operator) may; the user who is already the creator is a 422 `invalid_grant`.
+  The web UI's *Sharing* page of a library (`/libraries/{owner}/{repo}/sharing`) uses these
+  routes. Group names are matched
   exactly (letter case included) against the groups the identity provider reports. A username
   nobody has is 404 `unknown_account`, a missing grant 404 `unknown_grant`. Libraries that existed
   before roles have no creator: operators manage them and share them.
