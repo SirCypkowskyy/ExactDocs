@@ -8,6 +8,7 @@ own; each scenario's collections (or directory) are removed after it.
 """
 
 import math
+import os
 import secrets
 import tempfile
 from collections.abc import Sequence
@@ -42,6 +43,9 @@ def step_chroma_instance(context: Context) -> None:
     if chroma_server.CHROMA_URL:
         context.chroma_options = chroma_server.options(collection)
         context.add_cleanup(chroma_server.drop_collections, f"{collection}_")
+    elif os.environ.get("EXACTDOCS_REQUIRE_CHROMA") == "1":  # CI: the server, never skipped
+        message = "EXACTDOCS_REQUIRE_CHROMA=1 but EXACTDOCS_TEST_CHROMA_URL is not set"
+        raise RuntimeError(message)
     else:
         directory = stack.enter_context(tempfile.TemporaryDirectory(prefix="exactdocs-chroma-"))
         context.chroma_options = {"path": directory, "collection": collection}

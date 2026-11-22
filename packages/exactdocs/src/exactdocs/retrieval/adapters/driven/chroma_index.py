@@ -41,6 +41,7 @@ from chromadb.errors import ChromaError, NotFoundError
 from exactdocs.retrieval.constants import (
     CHROMA_BACKEND,
     CHROMA_COLLECTION_NAME,
+    CHROMA_COSINE,
     CHROMA_DEFAULT_COLLECTION,
     CHROMA_DEFAULT_DATABASE,
     CHROMA_DEFAULT_TENANT,
@@ -75,9 +76,6 @@ type Connect = Callable[[], Client]
 """Makes a new client (it answers, or raises); called by each ``open()``, in a worker thread."""
 type Where = dict[str, Any]
 """A Chroma metadata filter."""
-
-_COSINE = "cosine"
-"""Chroma's name of the cosine distance (``hnsw`` / ``spann`` ``space``)."""
 
 
 class _GoneError(Exception):
@@ -129,7 +127,7 @@ def _space_name(metric: VectorMetric) -> str:
     """
     match metric:
         case VectorMetric.COSINE:
-            return _COSINE
+            return CHROMA_COSINE
 
 
 def _every(clauses: Sequence[Where]) -> Where:

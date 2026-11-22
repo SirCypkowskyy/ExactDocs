@@ -57,6 +57,13 @@ jobs:
         options: >-
           --health-cmd "pg_isready -h 127.0.0.1 -U exactdocs -d exactdocs"
           --health-interval 2s --health-timeout 5s --health-retries 30
+      # #361: Chroma, the vector backend's contract tests and scenario over HTTP
+      # (EXACTDOCS_TEST_CHROMA_URL), pinned to the version of the `chroma` extras' clients. The
+      # embedded client's cases need no server and run everywhere. Up long before the tests run.
+      chroma:
+        image: chromadb/chroma:1.5.9@sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6
+        ports:
+          - 8000/tcp
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
@@ -87,6 +94,8 @@ jobs:
           EXACTDOCS_TEST_PGBOUNCER_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.pgbouncer.ports['5432'] }}/exactdocs
           EXACTDOCS_REQUIRE_PGBOUNCER: "1" # the pooler tests and scenario never skip here
           EXACTDOCS_TEST_PG_SEARCH: "1" # the server has pg_search: the BM25 variants run (#104)
+          EXACTDOCS_TEST_CHROMA_URL: http://127.0.0.1:${{ job.services.chroma.ports['8000'] }}
+          EXACTDOCS_REQUIRE_CHROMA: "1" # the Chroma HTTP cases and scenario never skip here (#361)
         run: uv run pytest --cov=exactdocs --cov=exactdocs_kernel --cov-report=term-missing --junitxml=reports/pytest.xml
       - name: behave (acceptance)
         env:
@@ -96,6 +105,8 @@ jobs:
           EXACTDOCS_REQUIRE_PGBOUNCER: "1" # the pooler tests and scenario never skip here
           EXACTDOCS_TEST_PG_SEARCH: "1"
           EXACTDOCS_REQUIRE_SUPABASE: "1" # the @supabase scenarios never skip here
+          EXACTDOCS_TEST_CHROMA_URL: http://127.0.0.1:${{ job.services.chroma.ports['8000'] }}
+          EXACTDOCS_REQUIRE_CHROMA: "1"
         run: uv run behave --format=progress --junit --junit-directory=reports/behave
       # The shared ranking suite again, on Supabase's image (postgres_fts: it has no pg_search).
       - name: Ranking suite on supabase/postgres

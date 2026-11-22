@@ -1333,6 +1333,13 @@ keeps the backends in step:
   through `StoredVectors`), and without a scope deletes the orphans and the retired spaces'
   copies. It is safe while serving and to repeat.
 
+**The backends.**
+
+| Name | Indexes | Adapter | Extra | Native hybrid |
+|---|---|---|---|---|
+| `memory` | search, vectors | `memory_index.py` (in process, tests only) | none | yes (RRF of term counts and cosine) |
+| `chroma` | vectors | `chroma_index.py`: a collection per space (cosine, no embedding function: ExactDocs passes its vectors), scalar metadata `manifest_id` / `library` / one `tag:<tag>` key per tag, filtered in Chroma before ranking; the HTTP client (a server, Chroma Cloud) or the embedded persistent client, synchronous, in worker threads ([Configuration](configuration.md#chroma)) | `chroma` (HTTP only), `chroma-local` (embedded too) | no: ExactDocs fuses BM25 and Chroma's nearest vectors |
+
 **Adding a backend** is one adapter module in `retrieval/adapters/driven/` (the reference is
 `memory_index.py`; it holds nothing across a restart and is for tests), its extra in
 `packages/exactdocs/pyproject.toml`, one `IndexBackendKind` in `INDEX_BACKENDS`

@@ -154,6 +154,8 @@ CHROMA_TOKEN_HEADERS: Final[Mapping[str, str]] = MappingProxyType(
 )
 """The headers the ``token`` may be sent in (the ``token_header`` option), with what precedes
 it: Chroma's own (Chroma Cloud's) and the usual bearer token of a proxy in front of a server."""
+CHROMA_COSINE: Final[str] = "cosine"
+"""Chroma's name of the cosine distance (a collection's ``hnsw`` / ``spann`` ``space``)."""
 CHROMA_DIMENSIONS_KEY: Final[str] = "exactdocs_dimensions"
 """The collection metadata key ExactDocs writes the space's dimensions under: a collection of the
 same name without it, or with other dimensions, is not written to."""
