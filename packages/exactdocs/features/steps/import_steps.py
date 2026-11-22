@@ -6,6 +6,7 @@ import threading
 import time
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager
+from dataclasses import replace
 from http import HTTPStatus
 from pathlib import Path
 
@@ -136,8 +137,13 @@ class SwitchableRenames:
         return await self.git.renames(*args, **kwargs)  # ty: ignore[invalid-argument-type]
 
 
+def _repo(context: Context):
+    """The repository the scenario imports: its own (``import_repo``) or the fixture."""
+    return getattr(context, "import_repo", context.fixture_repo)
+
+
 def _commit(context: Context, ref: str) -> str:
-    return context.fixture_git("rev-parse", f"{ref}^{{commit}}", cwd=context.fixture_repo.path)
+    return context.fixture_git("rev-parse", f"{ref}^{{commit}}", cwd=_repo(context).path)
 
 
 def articles_of(context: Context, ref: str) -> list[dict]:
@@ -183,7 +189,7 @@ def import_version(context: Context, ref: str, **settings: object) -> None:
         )
         job_id = job.id
     else:
-        body = {"url": context.fixture_repo.file_url, "ref": ref, **settings}
+        body = {"url": _repo(context).file_url, "ref": ref, **settings}
         response = context.client.post("/api/v1/libraries", json=body)
         assert response.status_code == HTTPStatus.CREATED, response.text
         job_id = response.json()["job_id"]
@@ -201,6 +207,8 @@ def start(
     max_image_bytes: int | None = None,
     secret_key: str | None = None,
     auto_sync_schedule: str | None = None,
+    max_fetch_bytes: int | None = None,
+    max_import_bytes: int | None = None,
 ) -> None:
     # A scenario that starts over with other settings stops the instance it had first: a
     # process runs one job worker.
@@ -217,9 +225,13 @@ def start(
         settings.max_image_bytes = max_image_bytes
     if auto_sync_schedule is not None:
         settings.auto_sync_schedule = auto_sync_schedule
+    if max_import_bytes is not None:
+        settings.max_import_bytes = max_import_bytes
     context.settings = settings
     asyncio.run(store_demo_catalog(settings))
     git = GitCli.locate()
+    if max_fetch_bytes is not None:
+        git = replace(git, max_fetch_bytes=max_fetch_bytes)
     context.git = SwitchableGit(git)
     context.renames = SwitchableRenames(git)
     context.chunker = HeldChunker(MarkdownChunker())
