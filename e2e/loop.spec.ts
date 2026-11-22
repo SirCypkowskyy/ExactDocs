@@ -262,7 +262,7 @@ test("the reader, the search pills and the phone library page keep their proport
 });
 
 // #427, "lists stay responsive with large libraries": the real UI build in a real browser, with the
-// two lists that grow answered from synthetic data (300 libraries; a version of 7,000 articles that
+// two lists that grow answered from synthetic data (300 libraries in pages of 50; a version of 7,000 articles that
 // pages 100 at a time). It records load time, long tasks (> 50 ms) and frame times while scrolling,
 // prints them, and fails only on budgets loose enough for a CI machine without a GPU.
 async function observeLongTasks(page: Page) {
@@ -334,22 +334,44 @@ test("the library list and the file tree stay responsive with large libraries", 
     id: `/bulk/lib-${i}`,
     title: `Library ${i}`,
   }));
-  await page.route(/\/api\/v1\/libraries$/, (route) =>
-    route.fulfill({ json: { ...real, libraries: bulk } }),
-  );
+  // The API pages by cursor (an offset here); the list asks for 50 at a time.
+  await page.route(/\/api\/v1\/libraries\?/, (route) => {
+    const q = new URL(route.request().url()).searchParams;
+    const from = Number(q.get("cursor") ?? 0);
+    const limit = Number(q.get("limit") ?? 50);
+    return route.fulfill({
+      json: {
+        ...real,
+        libraries: bulk.slice(from, from + limit),
+        total: bulk.length,
+        next_cursor: from + limit < bulk.length ? String(from + limit) : null,
+      },
+    });
+  });
   const started = Date.now();
   await page.goto("/");
-  await expect(page.getByRole("link", { name: "Library 299" })).toBeVisible();
+  // The first page is 50 libraries of 300, and says so; the rest is one button away.
+  await expect(page.getByText("Showing 50 of 300")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Library 49", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Library 299", exact: true })).toHaveCount(0);
+  const firstMs = Date.now() - started;
+  for (let shown = 50; shown < 300; shown += 50) {
+    await page.getByRole("button", { name: "Load more" }).click();
+    await expect(page.getByText(`Showing ${shown + 50} of 300`)).toBeVisible();
+  }
+  await expect(page.getByRole("link", { name: "Library 299", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
   const listMs = Date.now() - started;
   const nodes = await page.evaluate(() => document.querySelectorAll("*").length);
   const list = await scrollFrames(page, null, 1500);
   console.log(
-    `300 libraries: ready in ${listMs} ms, ${nodes} DOM nodes, longest task ${Math.round(await longest(page))} ms, scroll frames p95 ${Math.round(list.p95)} ms max ${Math.round(list.max)} ms`,
+    `300 libraries in pages of 50: first page in ${firstMs} ms, all loaded in ${listMs} ms, ${nodes} DOM nodes, longest task ${Math.round(await longest(page))} ms, scroll frames p95 ${Math.round(list.p95)} ms max ${Math.round(list.max)} ms`,
   );
+  expect(firstMs).toBeLessThan(4000);
   expect(listMs).toBeLessThan(8000);
   expect(await longest(page)).toBeLessThan(1000);
   expect(list.p95).toBeLessThan(50);
-  await page.unroute(/\/api\/v1\/libraries$/);
+  await page.unroute(/\/api\/v1\/libraries\?/);
 
   // One version of 7,000 articles, paged 100 at a time like the API does.
   // One flat folder is the worst case for the DOM: every file is a row.
