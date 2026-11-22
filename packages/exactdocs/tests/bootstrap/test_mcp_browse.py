@@ -34,7 +34,12 @@ from exactdocs.catalog.dtos import (
     StoreManifestCommand,
 )
 from exactdocs.catalog.models import LibraryId, RefKind, Version, VersionRef
-from exactdocs.identity.dtos import AccountSummary, ExternalTokenIdentity, GrantLibraryRoleCommand
+from exactdocs.identity.dtos import (
+    AccountSummary,
+    ExternalTokenIdentity,
+    GrantLibraryRoleCommand,
+    UserListQuery,
+)
 from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkIn, IndexManifestCommand
 from exactdocs.retrieval.models import chunk_id
 from exactdocs_kernel import NOTICE
@@ -657,7 +662,7 @@ async def test_resource_lists_do_not_reuse_broader_authority_for_a_narrower_oaut
 ) -> None:
     monkeypatch.setattr("exactdocs.catalog.adapters.driving.mcp.RESOURCE_LIST_TTL", 60.0)
     async with container.running():
-        account = (await container.identity.list_users()).users[0]
+        account = (await container.identity.list_users(UserListQuery())).users[0]
         await publish(container, "v1.4.0", RefKind.TAG, ("guide/a.md", "Private", []))
         await container.identity.grant_library_role(
             GrantLibraryRoleCommand(

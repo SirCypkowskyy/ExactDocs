@@ -11,6 +11,7 @@ from contextlib import redirect_stdout
 from http import HTTPStatus
 from typing import Any
 from unittest.mock import patch
+from urllib.parse import urlencode
 
 import httpx
 from behave import given, then, when
@@ -222,3 +223,46 @@ def step_token_refused(context: Context) -> None:
     response = _send(context, "GET", "/api/v1/users", token=context.user_token)
     # Managing users takes a session: a token is not one (401), whoever it belongs to.
     assert response.status_code == HTTPStatus.UNAUTHORIZED, response.text
+
+
+@given('the operator created the users "{first}", "{second}" and "{third}", and disabled "{off}"')
+def step_created_users(context: Context, first: str, second: str, third: str, off: str) -> None:
+    for username in (first, second, third):
+        body = {"username": username, "password": BOB_PHRASE}
+        created = _send(context, "POST", "/api/v1/users", session=_operator(context), json=body)
+        assert created.status_code == HTTPStatus.CREATED, created.text
+    step_disable(context, off)
+
+
+@when("the operator lists the enabled users by name, {limit:d} at a time")
+def step_list_enabled(context: Context, limit: int) -> None:
+    context.user_pages = []
+    params: dict[str, Any] = {"sort": "username", "disabled": "false", "limit": limit}
+    while True:
+        response = _send(
+            context, "GET", f"/api/v1/users?{urlencode(params)}", session=_operator(context)
+        )
+        assert response.status_code == HTTPStatus.OK, response.text
+        context.user_pages.append(response.json())
+        if response.json()["next_cursor"] is None:
+            break
+        params["cursor"] = response.json()["next_cursor"]
+
+
+@then('the first page shows "{first}" and the next one "{second}"')
+def step_user_pages(context: Context, first: str, second: str) -> None:
+    shown = [", ".join(u["username"] for u in page["users"]) for page in context.user_pages]
+    assert shown == [first, second], shown
+
+
+@then("each page counts {total:d} users")
+def step_user_total(context: Context, total: int) -> None:
+    assert [page["total"] for page in context.user_pages] == [total] * len(context.user_pages)
+
+
+@then('sorting the users by "{field}" is refused, naming the field')
+def step_bad_user_sort(context: Context, field: str) -> None:
+    response = _send(context, "GET", f"/api/v1/users?sort={field}", session=_operator(context))
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, response.text
+    assert response.json()["error"] == "invalid_sort", response.text
+    assert field in response.json()["detail"], response.text

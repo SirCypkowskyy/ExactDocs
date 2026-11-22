@@ -17,6 +17,7 @@ from exactdocs.identity.dtos import (
     FinishExternalSignInCommand,
     GrantLibraryRoleCommand,
     LibraryCreationQuery,
+    LibraryGrantList,
     LibraryGrants,
     LibraryRoles,
     LibraryRolesQuery,
@@ -33,7 +34,9 @@ from exactdocs.identity.dtos import (
     StartExternalSignInCommand,
     TokenGrant,
     TokenList,
+    TokenListQuery,
     UserList,
+    UserListQuery,
     UserSummary,
 )
 
@@ -176,11 +179,14 @@ class GetSessionState(Protocol):
 class ListUsers(Protocol):
     """Every local account, for an operator."""
 
-    async def __call__(self) -> UserList:
+    async def __call__(self, query: UserListQuery) -> UserList:
         """Run the use case.
 
+        Args:
+            query: The filters, the sort and the page.
+
         Returns:
-            The accounts, oldest first.
+            A page of the accounts, oldest first unless sorted otherwise.
         """
         ...
 
@@ -276,14 +282,15 @@ class LoginForToken(Protocol):
 class ListTokens(Protocol):
     """The account's tokens, never their secrets."""
 
-    async def __call__(self, account: AccountSummary) -> TokenList:
+    async def __call__(self, account: AccountSummary, query: TokenListQuery) -> TokenList:
         """Run the use case.
 
         Args:
             account: The account whose tokens to list.
+            query: The filters, the sort and the page.
 
         Returns:
-            The tokens, newest first.
+            A page of the tokens, newest first unless sorted otherwise.
         """
         ...
 
@@ -477,14 +484,14 @@ class RevokeLibraryRole(Protocol):
 class ListLibraryGrants(Protocol):
     """List who holds a role on a library; needs the ``admin`` role on it."""
 
-    async def __call__(self, query: ListLibraryGrantsQuery) -> LibraryGrants:
+    async def __call__(self, query: ListLibraryGrantsQuery) -> LibraryGrantList:
         """Run the use case.
 
         Args:
-            query: The caller and the library.
+            query: The caller, the library, the filters, the sort and the page.
 
         Returns:
-            The grants.
+            A page of the grants.
         """
         ...
 

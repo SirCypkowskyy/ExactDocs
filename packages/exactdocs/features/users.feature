@@ -28,3 +28,10 @@ Feature: Local user accounts
     Given "bob" is signed in and has an API token
     Then bob cannot list, create, disable or reset users: each is forbidden
     And bob's token cannot list users either
+
+  Scenario: The users list sorts, filters and pages on the server
+    Given the operator created the users "carol", "bob" and "dave", and disabled "dave"
+    When the operator lists the enabled users by name, 2 at a time
+    Then the first page shows "ada, bob" and the next one "carol"
+    And each page counts 3 users
+    And sorting the users by "nickname" is refused, naming the field

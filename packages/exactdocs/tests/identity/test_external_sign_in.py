@@ -41,6 +41,7 @@ from exactdocs.identity.dtos import (
     ResetPasswordCommand,
     SetUserDisabledCommand,
     StartExternalSignInCommand,
+    UserListQuery,
 )
 from exactdocs.identity.errors import (
     AccountDisabledError,
@@ -634,7 +635,7 @@ async def test_users_show_their_provider_and_groups(world: World) -> None:
     world.provider.add("u-1", "alice", "b", "a")
     await sign_in(world, "u-1")
 
-    [user] = (await world.identity.list_users()).users
+    [user] = (await world.identity.list_users(UserListQuery())).users
 
     assert (user.provider, user.groups) == ("corp", ["a", "b"])
 

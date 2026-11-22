@@ -29,3 +29,8 @@ Feature: API tokens
   Scenario: Without a valid token MCP over HTTP is closed
     Then an MCP client without a token is refused
     And an MCP client with a made-up token is refused
+
+  Scenario: The token list sorts, filters and counts on the server
+    Given the admin created tokens named "laptop", "ci-main" and "ci-nightly"
+    When the admin lists the tokens matching "ci", by name from Z to A
+    Then the token list shows "ci-nightly, ci-main" and counts 2 tokens

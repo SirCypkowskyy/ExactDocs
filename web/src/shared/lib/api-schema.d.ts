@@ -130,6 +130,8 @@ export interface paths {
         /**
          * List All
          * @description List the signed-in account's API tokens, newest first, without their secrets.
+         *
+         *     A page at a time; filter with `q`, order with `sort`; `total` counts every match.
          */
         readonly get: operations["identity-list_all"];
         readonly put?: never;
@@ -173,7 +175,7 @@ export interface paths {
         };
         /**
          * Get Users
-         * @description List every local account, disabled ones included, oldest first. Operators only (`admin`): any other signed-in account is refused with `forbidden` (403). Needs a signed-in session; an API token is refused (401), so a leaked token cannot create accounts. There is no self-signup: accounts are created here, by `exactdocs user create` or, for the first admin, by the setup.
+         * @description List the local accounts, disabled ones included, oldest first unless `sort` says otherwise, a page at a time. Filter with `q`, `role` and `disabled`; `total` counts every match. Operators only (`admin`): any other signed-in account is refused with `forbidden` (403). Needs a signed-in session; an API token is refused (401), so a leaked token cannot create accounts. There is no self-signup: accounts are created here, by `exactdocs user create` or, for the first admin, by the setup.
          */
         readonly get: operations["identity-get_users"];
         readonly put?: never;
@@ -269,6 +271,9 @@ export interface paths {
         /**
          * List Library Grants
          * @description List who holds a role on the library: users first, then groups. Library admins only.
+         *
+         *     A page at a time; filter with `q`, `kind` and `role`, order with `sort`; `total` counts
+         *     every match.
          */
         readonly get: operations["identity-list_library_grants"];
         /**
@@ -3456,6 +3461,27 @@ export interface components {
             readonly matches: number;
         };
         /**
+         * LibraryGrantList
+         * @description A page of a library's grants: users first, then groups, by name unless sorted otherwise.
+         */
+        readonly LibraryGrantList: {
+            /**
+             * Grants
+             * @description The grants of this page.
+             */
+            readonly grants: readonly components["schemas"]["LibraryGrantSummary"][];
+            /**
+             * Next Cursor
+             * @description Pass as `cursor` to get the next page; null on the last page.
+             */
+            readonly next_cursor: string | null;
+            /**
+             * Total
+             * @description How many of the library's grants match the filters, across every page.
+             */
+            readonly total: number;
+        };
+        /**
          * LibraryGrantRequest
          * @description Give a user or a group a role on a library (replacing the role they had).
          */
@@ -5754,14 +5780,24 @@ export interface components {
         };
         /**
          * TokenList
-         * @description The caller's tokens, newest first.
+         * @description A page of the caller's tokens, newest first unless sorted otherwise.
          */
         readonly TokenList: {
             /**
              * Tokens
-             * @description The tokens, newest first.
+             * @description The tokens of this page.
              */
             readonly tokens: readonly components["schemas"]["TokenSummary"][];
+            /**
+             * Next Cursor
+             * @description Pass as `cursor` to get the next page; null on the last page.
+             */
+            readonly next_cursor: string | null;
+            /**
+             * Total
+             * @description How many of the caller's tokens match the filters, across every page.
+             */
+            readonly total: number;
         };
         /**
          * TokenSummary
@@ -5876,14 +5912,24 @@ export interface components {
         };
         /**
          * UserList
-         * @description Every local account, oldest first.
+         * @description A page of the accounts, oldest first unless sorted otherwise.
          */
         readonly UserList: {
             /**
              * Users
-             * @description The accounts, oldest first.
+             * @description The accounts of this page.
              */
             readonly users: readonly components["schemas"]["UserSummary"][];
+            /**
+             * Next Cursor
+             * @description Pass as `cursor` to get the next page; null on the last page.
+             */
+            readonly next_cursor: string | null;
+            /**
+             * Total
+             * @description How many accounts match the filters, across every page.
+             */
+            readonly total: number;
         };
         /**
          * UserSummary
@@ -6679,7 +6725,22 @@ export interface operations {
     };
     readonly "identity-list_all": {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                /** @description How many items per page. */
+                readonly limit?: number;
+                /**
+                 * @description Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
+                 *     `sort` and filters of the request that returned it.
+                 */
+                readonly cursor?: string | null;
+                /**
+                 * @description Only items whose name contains this text, any case: a user's username, a token's name, a
+                 *     grant's username or group.
+                 */
+                readonly q?: string | null;
+                /** @description Sort by one of created_at, name, expires_at, last_used_at; prefix `-` for descending. Default: `-created_at`. A token that never expires or was never used sorts first by `expires_at` or `last_used_at`. An unknown field is a 422. */
+                readonly sort?: string | null;
+            };
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
@@ -6905,7 +6966,26 @@ export interface operations {
     };
     readonly "identity-get_users": {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                /** @description How many items per page. */
+                readonly limit?: number;
+                /**
+                 * @description Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
+                 *     `sort` and filters of the request that returned it.
+                 */
+                readonly cursor?: string | null;
+                /**
+                 * @description Only items whose name contains this text, any case: a user's username, a token's name, a
+                 *     grant's username or group.
+                 */
+                readonly q?: string | null;
+                /** @description Sort by one of created_at, username, role; prefix `-` for descending. Default: `created_at`. An unknown field is a 422. */
+                readonly sort?: string | null;
+                /** @description Only accounts with one of these roles; repeat for several. */
+                readonly role?: readonly ("admin" | "user")[] | null;
+                /** @description `true`: only disabled accounts; `false`: only enabled ones. */
+                readonly disabled?: boolean | null;
+            };
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
@@ -7289,7 +7369,26 @@ export interface operations {
     };
     readonly "identity-list_library_grants": {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                /** @description How many items per page. */
+                readonly limit?: number;
+                /**
+                 * @description Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
+                 *     `sort` and filters of the request that returned it.
+                 */
+                readonly cursor?: string | null;
+                /**
+                 * @description Only items whose name contains this text, any case: a user's username, a token's name, a
+                 *     grant's username or group.
+                 */
+                readonly q?: string | null;
+                /** @description Sort by one of kind, subject, role; prefix `-` for descending. Default: `kind` (users, then groups, by name). `role` sorts from `viewer` up to `creator`. An unknown field is a 422. */
+                readonly sort?: string | null;
+                /** @description Only grants to users or to groups; repeat for both. */
+                readonly kind?: readonly ("user" | "group")[] | null;
+                /** @description Only grants of one of these roles; repeat for several. */
+                readonly role?: readonly ("viewer" | "contributor" | "admin" | "creator")[] | null;
+            };
             readonly header?: never;
             readonly path: {
                 readonly owner: string;
@@ -7305,7 +7404,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["LibraryGrants"];
+                    readonly "application/json": components["schemas"]["LibraryGrantList"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */
