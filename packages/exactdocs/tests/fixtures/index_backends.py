@@ -17,9 +17,12 @@ is left out when the variable is unset (as ``databases.py`` does for PostgreSQL)
 still run everywhere; CI sets the variable.
 """
 
+import importlib.util
+import tempfile
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 
 from exactdocs.retrieval.adapters.driven.memory_index import (
     InMemorySearchBackend,
@@ -60,8 +63,42 @@ async def _memory_vectors() -> AsyncGenerator[VectorBackend]:
         await backend.close()
 
 
+@asynccontextmanager
+async def _duckdb_search() -> AsyncGenerator[SearchBackend]:
+    """DuckDB is embedded: a fresh database file in a temporary folder, no server."""
+    from exactdocs.retrieval.adapters.driven.duckdb_index import search_backend
+
+    with tempfile.TemporaryDirectory(prefix="exactdocs-duckdb-") as folder:
+        backend = search_backend({"path": str(Path(folder) / "index.duckdb"), "threads": 2})
+        await backend.open()
+        try:
+            yield backend
+        finally:
+            await backend.close()
+
+
+@asynccontextmanager
+async def _duckdb_vectors() -> AsyncGenerator[VectorBackend]:
+    from exactdocs.retrieval.adapters.driven.duckdb_index import vector_backend
+
+    with tempfile.TemporaryDirectory(prefix="exactdocs-duckdb-") as folder:
+        backend = vector_backend({"path": str(Path(folder) / "index.duckdb"), "threads": 2})
+        await backend.open()
+        try:
+            yield backend
+        finally:
+            await backend.close()
+
+
 EXTERNAL_BACKENDS: list[BackendCase] = [
     BackendCase(name="memory", search=_memory_search, vectors=_memory_vectors, counts_terms=True),
+    # Embedded: no server, so no EXACTDOCS_TEST_DUCKDB_URL; left out only without the extra
+    # (the dev group installs it, so CI runs it).
+    *(
+        [BackendCase(name="duckdb", search=_duckdb_search, vectors=_duckdb_vectors)]
+        if importlib.util.find_spec("duckdb") is not None
+        else []
+    ),
 ]
 """Every external backend the suites run on here. Add yours (see the module docstring)."""
 

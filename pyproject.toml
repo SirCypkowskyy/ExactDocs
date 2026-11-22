@@ -15,6 +15,8 @@ dev = [
     # The local-models extra too (#245): its tests run tiny ONNX models through fastembed, and the
     # model-free tests prove it stays unimported until a `local` profile's role is configured.
     "exactdocs[local]",
+    # The DuckDB index backend (#357): embedded, so its contract tests run on a temporary file.
+    "exactdocs[duckdb]",
     "httpx>=0.28",
     # The retrieval eval suite (packages/exactdocs/evals, docs/decisions/ai-retrieval.md):
     # exact pin, it moves with pydantic-ai-slim in the `ai` extra.

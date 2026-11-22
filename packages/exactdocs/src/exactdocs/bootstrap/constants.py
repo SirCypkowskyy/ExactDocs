@@ -414,6 +414,14 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             production=False,
         ),
+        "duckdb": IndexBackendKind(
+            name="duckdb",
+            module="exactdocs.retrieval.adapters.driven.duckdb_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="duckdb",
+            packages=("duckdb", "duckdb_extension_fts"),
+        ),
     }
 )
 """The external index backends, by name. Adding one is one adapter module in

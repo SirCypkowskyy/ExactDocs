@@ -42,6 +42,12 @@ local = [
     "fastembed==0.9.1",
     "onnxruntime==1.31.0",
 ]
+# DuckDB as the search and vector backend (#357): EXACTDOCS_SEARCH_BACKEND / _VECTOR_BACKEND=duckdb.
+# Imported only when a backend names it. The `fts` extension ships as a wheel (the signed binary
+# DuckDB publishes, repackaged per DuckDB release) and is loaded from that file, never downloaded:
+# DuckDB checks its signature at LOAD. Both pins move together: the extension's wheel requires the
+# exact DuckDB release it was built for.
+duckdb = ["duckdb==2.0.0", "duckdb-extension-fts==2.0.0"]
 
 [project.scripts]
 exactdocs = "exactdocs.bootstrap.cli:main"

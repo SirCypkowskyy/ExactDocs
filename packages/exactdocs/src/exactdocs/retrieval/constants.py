@@ -131,6 +131,37 @@ EXTERNAL_HIT_MARGIN: Final[int] = 10
 MEMORY_BACKEND: Final[str] = "memory"
 """The registered name of the in-process reference index backend (tests only)."""
 
+# ---------------------------------------------------------------- adapters.driven.duckdb_index
+DUCKDB_BACKEND: Final[str] = "duckdb"
+"""The registered name of the DuckDB index backend (#357): one embedded database file."""
+DUCKDB_OPTIONS: Final[frozenset[str]] = frozenset({"path", "threads", "memory_limit"})
+"""The options ``[index_backends.duckdb]`` takes; ``path`` is required."""
+DUCKDB_CONFIG: Final[tuple[tuple[str, bool], ...]] = (
+    ("autoinstall_known_extensions", False),
+    ("autoload_known_extensions", False),
+    ("allow_community_extensions", False),
+    ("allow_unsigned_extensions", False),
+)
+"""Settings every connection opens the file with: DuckDB never downloads or loads an extension
+by itself (no outbound request), and loads only extensions DuckDB signed. The search and vector
+backends open the same file with the same settings, so they share one database in the process."""
+DUCKDB_FTS_PACKAGE: Final[str] = "duckdb_extension_fts"
+"""The installed package (``duckdb-extension-fts``, in the ``duckdb`` extra) that holds the
+signed ``fts`` extension per DuckDB release: ``extensions/<version>/fts.duckdb_extension``."""
+DUCKDB_SEARCH_TABLE: Final[str] = "exactdocs_search"
+"""The search entries: one row per chunk of each version, with its library and version."""
+DUCKDB_SEARCH_KEYS: Final[str] = "exactdocs_search_keys"
+"""The sequence numbering search rows: the ``fts`` index needs one unique key column."""
+DUCKDB_SEARCH_STATE: Final[str] = "exactdocs_search_state"
+"""One row: whether the ``fts`` index is older than the search table (it never updates itself;
+the first search after a write rebuilds it)."""
+DUCKDB_FTS_SCHEMA: Final[str] = f"fts_main_{DUCKDB_SEARCH_TABLE}"
+"""The schema ``PRAGMA create_fts_index`` makes for the search table (its ``match_bm25``)."""
+DUCKDB_VECTOR_TABLE_PREFIX: Final[str] = "exactdocs_vectors_"
+"""A space's vectors live in ``exactdocs_vectors_<space id>`` (a ``FLOAT[<dimensions>]`` column)."""
+DUCKDB_LOCK_HELD: Final[str] = "Conflicting lock"
+"""What DuckDB's error says when another process has the database file open."""
+
 # ---------------------------------------------------------------- adapters.driven.memory
 MEMORY_FORMAT: Final[int] = 1
 """Format version of the in-memory search index."""
