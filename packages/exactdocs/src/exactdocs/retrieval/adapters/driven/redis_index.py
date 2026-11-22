@@ -1184,7 +1184,6 @@ def _settings(options: Mapping[str, object]) -> _Settings:
             socket_timeout=timeout,
             socket_connect_timeout=timeout,
             protocol=3,
-            client_name=f"exactdocs-{prefix}",
         )
 
     return _Settings(

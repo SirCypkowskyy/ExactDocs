@@ -320,17 +320,29 @@ async def test_a_user_and_password_are_used_and_a_wrong_one_is_refused_unnamed()
     user, password = f"exactdocs_{secrets.token_hex(4)}", secrets.token_hex(16)
     prefix = f"test_{secrets.token_hex(6)}"
     client: Redis = admin()
+    rules = ["+@read", "+@write", "+@search", "+@transaction", "+ping", "+info"]  # the docs'
     await client.execute_command(
-        "ACL", "SETUSER", user, "on", f">{password}", f"~{prefix}:*", "+@all", "-@dangerous"
+        "ACL", "SETUSER", user, "on", f">{password}", f"~{prefix}:*", *rules
     )
     try:
         given = options(prefix) | {"username": user, "password": password}
-        backend = search_backend(given)
+        backend, vectors = search_backend(given), vector_backend(given | {"hybrid": True})
         await backend.open()
-        v1 = manifest("m1")
+        await vectors.open()
+        v1, s = manifest("m1"), space()
         await backend.put(v1, [entry(v1, "a")])
+        await vectors.put(s, v1, [entry(v1, "a", vector=(1.0, 0.0, 0.0))])
         assert len(await backend.search(["m1"], query("retry"), NO_TAGS, 5)) == 1
+        assert await backend.count(["m1"], query("retry"), NO_TAGS) == {"m1": 1}
+        assert len(await vectors.nearest(s, ["m1"], [1, 0, 0], NO_TAGS, 5)) == 1
+        assert isinstance(vectors, RedisHybridVectorBackend)
+        assert len(await vectors.hybrid(s, ["m1"], query("retry"), [1, 0, 0], NO_TAGS, 5)) == 1
+        assert len(await vectors.held(s.id, None)) == 1
+        await backend.delete(["m1"])
+        await vectors.delete(["m1"])
+        await vectors.drop_space(s.id)
         await backend.close()
+        await vectors.close()
 
         wrong = search_backend(given | {"password": "not-" + password})
         with pytest.raises(IndexBackendUnavailableError, match="authentication failed") as refused:
