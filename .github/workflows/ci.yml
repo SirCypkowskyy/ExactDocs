@@ -74,6 +74,13 @@ jobs:
           echo "::add-mask::${password%%@*}" # on its own: a log may show it outside the URL
           echo "::add-mask::$url"
           echo "EXACTDOCS_TEST_SUPABASE_URL=$url" >> "$GITHUB_ENV"
+      # #360: the Milvus standalone server (embedded etcd, local storage), for the vector backend's
+      # contract tests and scenario (EXACTDOCS_TEST_MILVUS_URL); Milvus Lite's cases need no
+      # server. A step: a service container cannot be given its `milvus run standalone` command.
+      - name: Start Milvus
+        run: |
+          url=$(deploy/milvus-test-server.sh "exactdocs-milvus-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}")
+          echo "EXACTDOCS_TEST_MILVUS_URL=$url" >> "$GITHUB_ENV"
       - name: ruff format
         run: uv run ruff format --check --diff .
       - name: ruff check
@@ -87,6 +94,7 @@ jobs:
           EXACTDOCS_TEST_PGBOUNCER_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.pgbouncer.ports['5432'] }}/exactdocs
           EXACTDOCS_REQUIRE_PGBOUNCER: "1" # the pooler tests and scenario never skip here
           EXACTDOCS_TEST_PG_SEARCH: "1" # the server has pg_search: the BM25 variants run (#104)
+          EXACTDOCS_REQUIRE_MILVUS: "1" # the Milvus server cases and scenario never skip here (#360)
         run: uv run pytest --cov=exactdocs --cov=exactdocs_kernel --cov-report=term-missing --junitxml=reports/pytest.xml
       - name: behave (acceptance)
         env:
@@ -96,6 +104,7 @@ jobs:
           EXACTDOCS_REQUIRE_PGBOUNCER: "1" # the pooler tests and scenario never skip here
           EXACTDOCS_TEST_PG_SEARCH: "1"
           EXACTDOCS_REQUIRE_SUPABASE: "1" # the @supabase scenarios never skip here
+          EXACTDOCS_REQUIRE_MILVUS: "1"
         run: uv run behave --format=progress --junit --junit-directory=reports/behave
       # The shared ranking suite again, on Supabase's image (postgres_fts: it has no pg_search).
       - name: Ranking suite on supabase/postgres
@@ -106,6 +115,9 @@ jobs:
       - name: Stop supabase/postgres
         if: ${{ always() }}
         run: docker rm -f "exactdocs-supabase-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null || true
+      - name: Stop Milvus
+        if: ${{ always() }}
+        run: docker rm -f "exactdocs-milvus-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null || true
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
