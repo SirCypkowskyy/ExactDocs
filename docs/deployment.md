@@ -205,6 +205,11 @@ The rebuild writes every version from the stored chunks and vectors (nothing is 
 embedded again) while the server keeps serving, and deletes the versions the database no longer
 has. A backend that does not answer at start stops the server, naming it.
 
+An embedded backend is the exception to "while the server keeps serving": a
+[DuckDB](configuration.md#duckdb) file is open in one process only, so stop the server, run
+`exactdocs index check` or `rebuild`, and start it again (the command is refused, naming the
+server's process, while it runs).
+
 ## Backup and restore
 
 This section is about the SQLite database. On PostgreSQL, use `pg_dump` (see

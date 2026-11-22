@@ -1275,7 +1275,14 @@ By default every index lives in ExactDocs' own database (SQLite FTS5 and sqlite-
 PostgreSQL full-text search, pg_search and pgvector). `EXACTDOCS_SEARCH_BACKEND` and
 `EXACTDOCS_VECTOR_BACKEND` move the search index or the vector index to an external backend
 (#352, epic E14: Elasticsearch/OpenSearch, Qdrant, Weaviate, Azure AI Search and others build on
-this). The rules:
+this). Registered so far:
+
+| Backend | Indexes | Extra | Adapter | Notes |
+|---|---|---|---|---|
+| `memory` | search, vectors | none | `memory_index.py` | In this process, empty at every start: tests and trying the extension point only |
+| `duckdb` | search, vectors | `duckdb` | `duckdb_index.py` | One embedded database file (#357): BM25 from the `fts` extension, loaded from the installed `duckdb-extension-fts` wheel, never downloaded; vectors scanned exactly with `array_cosine_distance` (no `vss`: HNSW persistence is still experimental); one process per file, a second is refused at open. See [DuckDB](configuration.md#duckdb) |
+
+The rules:
 
 - **Derived data.** The database stays the source of truth: it keeps every chunk, its search
   entries (the database's own index is still written, so switching back needs no reindex) and

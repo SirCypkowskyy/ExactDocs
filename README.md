@@ -151,7 +151,8 @@ benchmark numbers. See [Search and AI models](docs/search.md).
   every chunk and vector, so the backend is derived data: each version is held apart,
   `exactdocs index check` reports what it lost and `exactdocs index rebuild` writes it again.
   A backend is an optional extra behind one adapter; a backend that fuses keyword and vector
-  search itself serves hybrid search natively. See
+  search itself serves hybrid search natively. Available: DuckDB (one embedded file, no
+  server; `exactdocs[duckdb]`). See
   [External index backends](docs/architecture.md#external-index-backends).
 
 ## How it works
