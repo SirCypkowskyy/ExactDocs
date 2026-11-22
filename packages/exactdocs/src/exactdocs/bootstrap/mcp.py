@@ -1,4 +1,5 @@
 import base64
+import functools
 import json
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -147,6 +148,20 @@ class ExactDocsMCP(FastMCP):
         )
 
 
+@functools.cache
+def app_renderer_html() -> str:
+    """Read Prefab's self-contained renderer page once per process.
+
+    The page is 6.8 MB of text that is not pure ASCII, so each copy costs about 28 MB in memory.
+    Reading it for every server built (the test suite builds hundreds) once took a CI runner past
+    its memory.
+
+    Returns:
+        The renderer's HTML page.
+    """
+    return get_renderer_html(mode="bundled")
+
+
 def build_mcp(container: Container) -> FastMCP:
     """One MCP server exposing every domain's read-only tools; over HTTP it wants a credential.
 
@@ -227,8 +242,6 @@ def _build(
         """
         return skill
 
-    renderer = get_renderer_html(mode="bundled")
-
     @mcp.resource(
         APP_RENDERER_URI,
         name="exactdocs-app-renderer",
@@ -240,7 +253,7 @@ def _build(
         Returns:
             The renderer's HTML page.
         """
-        return renderer
+        return app_renderer_html()
 
     app = AppConfig(resource_uri=APP_RENDERER_URI)
     catalog_mcp.register_tools(
