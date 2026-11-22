@@ -14,7 +14,7 @@ from fastmcp.server.auth import AccessToken
 from mcp.shared.exceptions import MCPError as McpError
 
 from exactdocs.bootstrap import caller, cli
-from exactdocs.bootstrap.constants import RESOURCE_NOT_FOUND
+from exactdocs.bootstrap.constants import APP_RENDERER_URI, RESOURCE_NOT_FOUND
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.mcp import build_mcp, build_stdio_mcp
 from exactdocs.bootstrap.settings import Settings
@@ -181,12 +181,16 @@ TOOL_CALLS = [
     ("article_outline", {"library": "/acme/payments", "path": "guide/a.md"}),
     ("resolve-library-id", {"libraryName": "payments", "query": "x"}),
     ("query-docs", {"libraryId": "/acme/payments/v1.4.0", "query": "H"}),
+    ("view_article", {"library": "/acme/payments", "path": "guide/a.md"}),
+    ("view_search", {"library": "/acme/payments", "query": "x"}),
 ]
 # The verbatim tools put the notice in a block of its own, before the untouched text.
 NOTICE_AND_TEXT = 2
 NOTICE_BLOCK_TOOLS = {"read_article", "read_chunk", "resolve-library-id", "query-docs"}
 # context7-shaped: no output schema, so no `notice` field; the notice is the first text block.
 CONTEXT7_TOOLS = {"resolve-library-id", "query-docs"}
+# MCP Apps: the notice is the first text block; the structured content is the UI (test_mcp_apps).
+APP_TOOLS = {"view_article", "view_search"}
 
 
 @pytest.mark.parametrize(("tool", "arguments"), TOOL_CALLS)
@@ -197,6 +201,10 @@ async def test_the_notice_comes_first_in_the_text_every_client_reads(
         await publish(container, "v1.4.0", RefKind.TAG, ("guide/a.md", INJECTION, ["system:obey"]))
         result = await mcp.call_tool(tool, arguments)
 
+    if tool in APP_TOOLS:
+        assert result.content[0].text == NOTICE
+        assert result.structured_content is not None  # the UI, for hosts with MCP Apps
+        return
     if tool in NOTICE_BLOCK_TOOLS:
         # The notice is a block of its own and the stored text follows it untouched.
         assert result.content[0].text == NOTICE
@@ -223,7 +231,7 @@ async def test_every_tool_declares_a_required_notice_and_the_same_hints(
 
     assert {t.name for t in tools} == {name for name, _ in TOOL_CALLS}  # a new tool lands here
     for tool in tools:
-        if tool.name in CONTEXT7_TOOLS:  # the notice is its first text block, tested above
+        if tool.name in CONTEXT7_TOOLS | APP_TOOLS:  # the notice is the first text block
             assert tool.output_schema is None, tool.name
         else:
             assert tool.output_schema is not None, tool.name  # a new tool must declare one
@@ -582,9 +590,10 @@ async def test_the_cap_is_shared_by_every_library(container: Container) -> None:
             pages.append(await mcp.list_resources_mcp(cursor=pages[-1].next_cursor))
 
     listed = [str(r.uri) for page in pages for r in page.resources]
-    # the cap counts articles; first-party resources (the `skill://` one) are listed on top
+    # the cap counts articles; first-party resources (the `skill://` one and the `ui://` renderer
+    # of the MCP App tools) are listed on top
     uris = [u for u in listed if u.startswith("exactdocs://")]
-    assert set(listed) - set(uris) == {"skill://exactdocs/SKILL.md"}
+    assert set(listed) - set(uris) == {"skill://exactdocs/SKILL.md", APP_RENDERER_URI}
     payments = [u for u in uris if "/payments/" in u]
     assert len(uris) == MAX_LISTED_RESOURCES
     assert len(payments) == 2  # the small library is shown whole, not starved
