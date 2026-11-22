@@ -74,6 +74,16 @@ jobs:
           echo "::add-mask::${password%%@*}" # on its own: a log may show it outside the URL
           echo "::add-mask::$url"
           echo "EXACTDOCS_TEST_SUPABASE_URL=$url" >> "$GITHUB_ENV"
+      # #358: a libSQL server (sqld, the pinned ghcr.io/tursodatabase/libsql-server image) with JWT
+      # auth, for the libSQL backend's contract tests and scenario. Started here, not as a service:
+      # its key is made per run, and the token signed with it is masked.
+      - name: Start libSQL server
+        run: |
+          { read -r url; read -r token; } < <(deploy/libsql-test-server.sh "exactdocs-libsql-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}")
+          echo "::add-mask::$token"
+          echo "EXACTDOCS_TEST_LIBSQL_URL=$url" >> "$GITHUB_ENV"
+          echo "EXACTDOCS_TEST_LIBSQL_AUTH_TOKEN=$token" >> "$GITHUB_ENV"
+          echo "EXACTDOCS_REQUIRE_LIBSQL=1" >> "$GITHUB_ENV" # the libSQL server cases never skip here
       - name: ruff format
         run: uv run ruff format --check --diff .
       - name: ruff check
@@ -106,6 +116,9 @@ jobs:
       - name: Stop supabase/postgres
         if: ${{ always() }}
         run: docker rm -f "exactdocs-supabase-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null || true
+      - name: Stop libSQL server
+        if: ${{ always() }}
+        run: docker rm -f "exactdocs-libsql-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null || true
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
