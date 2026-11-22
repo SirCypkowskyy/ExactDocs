@@ -207,6 +207,7 @@ ACTIONS = [
     Action("remove a version", "admin", "DELETE", f"{PATH}/versions/v1.3.0", {}),
     Action("remove it", "creator", "DELETE", PATH, {}),
     Action("list who may do what", "admin", "GET", f"{PATH}/grants", {}),
+    Action("hand it over", "creator", "POST", f"{PATH}/transfer", {"json": {"username": "bob"}}),
 ]
 
 
@@ -304,6 +305,8 @@ async def test_grants_are_given_listed_and_revoked_over_rest(instance: Instance)
             "grants": [{"kind": "user", "subject": "bob", "role": "viewer"}],
             "next_cursor": None,
             "total": 1,
+            "caller_role": "creator",
+            "creator": None,
         }
 
         revoked = await ada.delete(f"{PATH}/grants/user/bob")
@@ -319,6 +322,29 @@ async def test_grants_are_given_listed_and_revoked_over_rest(instance: Instance)
             f"{PATH}/grants", json={"kind": "user", "subject": "bob", "role": "creator"}
         )
         assert creator.status_code == 422
+
+
+async def test_the_creator_hands_the_library_over_and_stays_an_admin(instance: Instance) -> None:
+    await instance.give("bob", "creator")
+    async with instance.signed_in("bob") as bob, instance.signed_in("carol") as carol:
+        moved = await bob.post(f"{PATH}/transfer", json={"username": "carol"})
+        assert moved.status_code == 200, moved.text
+        assert moved.json() == {
+            "grants": [
+                {"kind": "user", "subject": "bob", "role": "admin"},
+                {"kind": "user", "subject": "carol", "role": "creator"},
+            ]
+        }
+        listed = (await carol.get(f"{PATH}/grants")).json()
+        assert (listed["caller_role"], listed["creator"]) == ("creator", "carol")
+        again = await bob.post(f"{PATH}/transfer", json={"username": "bob"})
+        assert (again.status_code, again.json()["error"]) == (403, "forbidden")
+        same = await carol.post(f"{PATH}/transfer", json={"username": "carol"})
+        assert (same.status_code, same.json()["error"]) == (422, "invalid_grant")
+        unknown = await carol.post(f"{PATH}/transfer", json={"username": "zed"})
+        assert (unknown.status_code, unknown.json()["error"]) == (404, "unknown_account")
+        # Only the creator takes an admin's role away: now carol may.
+        assert (await carol.delete(f"{PATH}/grants/user/bob")).status_code == 200
 
 
 async def test_the_operator_manages_every_library_as_its_creator(instance: Instance) -> None:

@@ -730,6 +730,21 @@ class LibraryGrantRepository(Protocol):
         """
         ...
 
+    async def transfer(self, library: str, account_id: AccountId) -> list[AccountId]:
+        """Make the account the library's creator in one step; the creators before become admins.
+
+        The account's earlier grant on the library, if any, is replaced.
+
+        Args:
+            library: The library ID, lower-case.
+            account_id: The new creator.
+
+        Returns:
+            The accounts that were the library's creator before (none for a library that had
+            no creator).
+        """
+        ...
+
     async def clear(self, library: str) -> None:
         """Delete every grant on a library.
 

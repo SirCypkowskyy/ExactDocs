@@ -721,6 +721,33 @@ class InMemoryLibraryGrantRepository:
             )
         )
 
+    async def transfer(self, library: str, account_id: AccountId) -> list[AccountId]:
+        """Make the account the library's creator; the creators before become admins.
+
+        Args:
+            library: The library ID, lower-case.
+            account_id: The new creator.
+
+        Returns:
+            The accounts that were the library's creator before.
+        """
+        previous = [
+            g
+            for g in self.grants.values()
+            if g.library == library and g.kind is SubjectKind.USER and g.role is LibraryRole.CREATOR
+        ]
+        for grant in previous:
+            await self.put(replace(grant, role=LibraryRole.ADMIN))
+        await self.put(
+            LibraryGrant(
+                library=library,
+                kind=SubjectKind.USER,
+                subject=account_id,
+                role=LibraryRole.CREATOR,
+            )
+        )
+        return sorted(AccountId(g.subject) for g in previous)
+
     async def clear(self, library: str) -> None:
         """Delete every grant on a library.
 

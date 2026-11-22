@@ -32,3 +32,15 @@ Feature: Library roles
     When the operator lists the viewers and contributors of "/fixture/docs-repo" by name from Z to A, 1 at a time
     Then the grant pages show "carol" then "bob", each counting 2 grants
     And "bob" asking for the grants is refused before any page
+
+  Scenario: Transferring ownership
+    Given "alice" is the creator of "/fixture/docs-repo"
+    When the creator transfers "/fixture/docs-repo" to "carol"
+    Then "carol" is the creator and the previous owner becomes admin
+
+  Scenario: Only the creator removes admins and transfers ownership
+    Given "alice" is the creator of "/fixture/docs-repo"
+    And "bob" is an admin of "/fixture/docs-repo"
+    And "dave" is an admin of "/fixture/docs-repo"
+    Then "bob" may neither transfer "/fixture/docs-repo" nor take "dave"'s admin role away
+    But "alice" may take "dave"'s admin role away
