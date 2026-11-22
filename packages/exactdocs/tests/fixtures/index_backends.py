@@ -17,6 +17,7 @@ is left out when the variable is unset (as ``databases.py`` does for PostgreSQL)
 still run everywhere; CI sets the variable.
 """
 
+import os
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
@@ -60,8 +61,24 @@ async def _memory_vectors() -> AsyncGenerator[VectorBackend]:
         await backend.close()
 
 
+def _qdrant_cases() -> list[BackendCase]:
+    """Qdrant (#355), with and without native hybrid, when ``EXACTDOCS_TEST_QDRANT_URL`` is set."""
+    if not os.environ.get("EXACTDOCS_TEST_QDRANT_URL"):
+        if os.environ.get("EXACTDOCS_REQUIRE_QDRANT") == "1":  # CI: never skipped there
+            message = "EXACTDOCS_REQUIRE_QDRANT=1 but EXACTDOCS_TEST_QDRANT_URL is not set"
+            raise RuntimeError(message)
+        return []
+    import qdrant_server  # ruff: ignore[import-outside-top-level] -- the extra, only with a server
+
+    return [
+        BackendCase(name="qdrant", vectors=qdrant_server.plain),
+        BackendCase(name="qdrant_hybrid", vectors=qdrant_server.hybrid),
+    ]
+
+
 EXTERNAL_BACKENDS: list[BackendCase] = [
     BackendCase(name="memory", search=_memory_search, vectors=_memory_vectors, counts_terms=True),
+    *_qdrant_cases(),
 ]
 """Every external backend the suites run on here. Add yours (see the module docstring)."""
 

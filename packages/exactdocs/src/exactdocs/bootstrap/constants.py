@@ -414,6 +414,14 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             production=False,
         ),
+        "qdrant": IndexBackendKind(
+            name="qdrant",
+            module="exactdocs.retrieval.adapters.driven.qdrant_index",
+            search=None,
+            vectors="vector_backend",
+            extra="qdrant",
+            packages=("qdrant_client",),
+        ),
     }
 )
 """The external index backends, by name. Adding one is one adapter module in

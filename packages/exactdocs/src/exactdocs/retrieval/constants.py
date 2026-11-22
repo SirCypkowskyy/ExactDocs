@@ -4,6 +4,7 @@ Each is ``Final`` and documented; see *Python conventions* in docs/architecture.
 """
 
 import re
+import uuid
 from collections.abc import Mapping
 from datetime import timedelta
 from types import MappingProxyType
@@ -130,6 +131,60 @@ EXTERNAL_HIT_MARGIN: Final[int] = 10
 # ---------------------------------------------------------------- adapters.driven.memory_index
 MEMORY_BACKEND: Final[str] = "memory"
 """The registered name of the in-process reference index backend (tests only)."""
+
+# ---------------------------------------------------------------- adapters.driven.qdrant_index
+QDRANT_BACKEND: Final[str] = "qdrant"
+"""The registered name of the Qdrant vector backend (#355)."""
+QDRANT_DEFAULT_COLLECTION: Final[str] = "exactdocs"
+"""The ``collection`` option's default: each embedding space is the collection
+``<collection>_space<id>``."""
+QDRANT_COLLECTION_NAME: Final[re.Pattern[str]] = re.compile(r"[A-Za-z0-9_-]{1,200}")
+"""What the ``collection`` option may be (a Qdrant collection name, with room for the suffix)."""
+QDRANT_SPACE_SUFFIX: Final[str] = "_space"
+"""Between the ``collection`` option and the space's ID in a collection's name."""
+QDRANT_DEFAULT_TIMEOUT_SECONDS: Final[int] = 10
+"""The ``timeout`` option's default: how long one request to Qdrant may take."""
+QDRANT_DENSE_VECTOR: Final[str] = "dense"
+"""The named dense vector of a collection: the chunk's embedding (cosine)."""
+QDRANT_SPARSE_VECTOR: Final[str] = "words"
+"""The named sparse vector of a collection: the chunk's words, BM25-weighted, with Qdrant's IDF
+modifier (written when the ``hybrid`` option is on)."""
+QDRANT_UPSERT_BATCH: Final[int] = 256
+"""Points sent to Qdrant per upsert request."""
+QDRANT_FACET_LIMIT: Final[int] = 100_000
+"""The most distinct libraries, or versions of one library, a facet request of the drift check
+counts."""
+QDRANT_POINT_NAMESPACE: Final[uuid.UUID] = uuid.UUID("6f0b6f43-7b4e-5d4a-9a54-8d1c0b9a2f6e")
+"""The UUID namespace a point's ID is derived in, from its manifest and chunk IDs (UUID v5): one
+point per chunk of each version, the same ID every time it is written."""
+QDRANT_BM25_K1: Final[float] = 1.2
+"""BM25's term frequency saturation, for the sparse vectors of native hybrid search."""
+QDRANT_BM25_B: Final[float] = 0.75
+"""BM25's length normalisation, for the sparse vectors of native hybrid search."""
+QDRANT_BM25_AVERAGE_WORDS: Final[float] = 256.0
+"""The chunk length (in words) BM25 normalises against; Qdrant applies the IDF itself."""
+QDRANT_HEADING_WEIGHT: Final[int] = 3
+"""How many times a word of a chunk's headings counts against one of its body."""
+QDRANT_INDEXED_FIELDS: Final[tuple[str, ...]] = ("manifest_id", "library", "tags")
+"""The payload fields a collection indexes (keyword): every search and the drift check filter on
+them."""
+QDRANT_OPTIONS: Final[frozenset[str]] = frozenset(
+    {
+        "url",
+        "collection",
+        "api_key",
+        "api_key_file",
+        "timeout",
+        "hybrid",
+        "on_disk",
+        "quantization",
+    }
+)
+"""The options ``[index_backends.qdrant]`` takes; any other is refused at start."""
+QDRANT_TRUE: Final[frozenset[str]] = frozenset({"1", "true", "yes", "on"})
+"""How a switch option (``hybrid``, ``on_disk``) given as text is turned on."""
+QDRANT_FALSE: Final[frozenset[str]] = frozenset({"0", "false", "no", "off", ""})
+"""How a switch option given as text is turned off."""
 
 # ---------------------------------------------------------------- adapters.driven.memory
 MEMORY_FORMAT: Final[int] = 1
