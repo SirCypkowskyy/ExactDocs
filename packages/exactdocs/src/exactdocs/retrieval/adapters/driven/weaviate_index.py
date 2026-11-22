@@ -41,7 +41,11 @@ from weaviate.classes.data import DataObject
 from weaviate.classes.init import AdditionalConfig, Auth, Timeout
 from weaviate.classes.query import Filter, HybridFusion, MetadataQuery
 from weaviate.collections.classes.filters import _Filters
-from weaviate.exceptions import UnexpectedStatusCodeError, WeaviateBaseError
+from weaviate.exceptions import (
+    UnexpectedStatusCodeError,
+    WeaviateBaseError,
+    WeaviateGRPCUnavailableError,
+)
 
 from exactdocs.retrieval.constants import (
     WEAVIATE_BACKEND,
@@ -239,6 +243,8 @@ def _reason(error: BaseException) -> str:
     """
     if isinstance(error, UnexpectedStatusCodeError):
         return f"HTTP {error.status_code}"
+    if isinstance(error, WeaviateGRPCUnavailableError):
+        return "its gRPC API does not answer (check grpc_url)"
     return type(error).__name__
 
 
