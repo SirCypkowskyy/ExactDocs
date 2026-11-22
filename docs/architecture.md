@@ -1269,6 +1269,83 @@ room for its 9 MB.)
   `OpenTelemetrySearchTracer.cache_hit` counts `exactdocs.ai.cache_hits` (by cache,
   `agentic_answer` or `hyde_answer`, and mode) for each search whose LLM step a cache answered.
 
+## External index backends
+
+By default every index lives in ExactDocs' own database (SQLite FTS5 and sqlite-vec, or
+PostgreSQL full-text search, pg_search and pgvector). `EXACTDOCS_SEARCH_BACKEND` and
+`EXACTDOCS_VECTOR_BACKEND` move the search index or the vector index to an external backend
+(#352, epic E14: Elasticsearch/OpenSearch, Qdrant, Weaviate, Azure AI Search and others build on
+this). The rules:
+
+- **Derived data.** The database stays the source of truth: it keeps every chunk, its search
+  entries (the database's own index is still written, so switching back needs no reindex) and
+  every vector (an embedding is paid once; the backend holds a copy). Anything a backend holds
+  can be thrown away and written again by `exactdocs index rebuild`, without importing or
+  embedding anything again.
+- **Version isolation.** A backend holds one entry per chunk row of each version
+  (`IndexEntry`: manifest ID, library, version, chunk ID, article path, headings, text, tags and,
+  for vectors, the vector), never one shared by several versions. Every search names the
+  manifests it may look at; the domain also drops any hit of another manifest and any chunk the
+  database no longer has, so a backend that lags behind a removal never leaks a stale chunk.
+- **Optional extras.** A backend's client library is an optional extra
+  (`pip install 'exactdocs[<extra>]'`), imported only by its adapter module, and that module only
+  when an operator names the backend (`bootstrap/index_backends.py` imports it by name). An
+  architecture test (`tests/architecture/test_index_backends.py`) checks that nothing else
+  imports the extra's packages. A missing extra, invalid options, or a backend that does not
+  answer at start stop the instance with a message naming the backend.
+
+**The extension point.** Retrieval declares the backend ports in `ports/driven.py`:
+
+| Port | What a backend implements |
+|---|---|
+| `IndexBackend` | `name`, `open()` (connect and check, at start), `close()` |
+| `SearchBackend` | `put(manifest, entries)` (add or replace, page by page), `delete(manifest_ids)`, `held(library)` (versions and entry counts, for the drift check), `search(manifest_ids, query, tag_filter, limit)` and `count(...)`; the query comes as its text and its terms (`TextQuery`), never as syntax |
+| `VectorBackend` | `put(space, manifest, entries)`, `remove(space, manifest, chunk_ids)`, `delete(manifest_ids)`, `drop_space(space)`, `held(space, library)`, `nearest(space, manifest_ids, vector, tag_filter, limit)` with cosine distances |
+| `NativeHybrid` (optional) | `hybrid(space, manifest_ids, query, vector, tag_filter, limit)`: a vector backend that ranks words and vectors together itself. `RetrievalModule.build` checks for it (a `runtime_checkable` Protocol) and `HybridPipeline` then asks the backend once instead of fusing BM25 and the vectors with reciprocal rank fusion |
+
+The domain wraps them so that the use cases see the ports they always did: `ExternalSearchIndex`
+implements `SearchIndex` (the backend ranks; snippets are cut from the stored chunks) and
+`ExternalVectorIndex` implements `VectorIndex` (the database's store keeps spaces, coverage and
+vectors; `nearest` asks the backend; a backend that does not answer is
+`VectorStoreUnavailableError`, so hybrid answers with BM25 and says why). `ExternalIndexes`
+keeps the backends in step:
+
+- an **import** writes the version after its chunks are stored, with the vectors its chunks
+  already have in every space in use (a blob shared with an embedded version is never embedded
+  again, but its vectors are copied); an **embedding batch** copies its vectors to every
+  version holding the chunks *before* the store takes them; a **re-tag** rewrites the entries of
+  the articles it changed; a **removal or collection** deletes the version from the backends
+  *before* the database deletes its chunks; a retired **space** is dropped;
+- each write is tried `EXTERNAL_WRITE_ATTEMPTS` times with doubling waits while the backend
+  does not answer, inside the job step that made it; then `IndexBackendUnavailableError` fails
+  that job, never silently. The order above makes the job's own retry write it again: a failed
+  import leaves the version unpublished (re-running the import writes it), a failed embedding
+  batch leaves its chunks without a stored vector (the next start or import queues the version
+  again), a failed removal leaves the chunks for the next collection job;
+- `CheckExternalIndexes` compares each backend with the database, version by version, and names
+  what is `missing`, `incomplete` or `orphaned` (held after the database removed it); a server
+  runs it at start and every `INDEX_DRIFT_CHECK_SECONDS` (`DriftWatch`), logs what drifted, and
+  `/healthz` reports the count (`index_versions_missing`; drift never fails `/readyz`, so a lost
+  version does not take the instance out of rotation). `exactdocs index check` lists them and
+  exits 1;
+- `RebuildExternalIndexes` (`exactdocs index rebuild [--library] [--version]`) writes the
+  versions again from the database, page by page (`ChunkRepository.page`, the store's vectors
+  through `StoredVectors`), and without a scope deletes the orphans and the retired spaces'
+  copies. It is safe while serving and to repeat.
+
+**Adding a backend** is one adapter module in `retrieval/adapters/driven/` (the reference is
+`memory_index.py`; it holds nothing across a restart and is for tests), its extra in
+`packages/exactdocs/pyproject.toml`, one `IndexBackendKind` in `INDEX_BACKENDS`
+(`bootstrap/constants.py`: name, module, the factory function of each index it can hold, the
+extra and its packages), and one `BackendCase` in `tests/fixtures/index_backends.py`. The shared
+contract suites then run on it: `tests/retrieval/test_search_index.py` and
+`test_vector_index.py` (the `SearchIndex` and `VectorIndex` contracts every database adapter
+passes, through the domain's wrappers: put, delete and collect per version, version and library
+filters, top-k ordering, empty results, unknown versions) and `test_index_backends.py` (the
+backend ports themselves, native hybrid included when implemented). A factory takes the options
+of `[index_backends.<name>]` (`EXACTDOCS_INDEX_BACKENDS__<NAME>__<OPTION>`) and raises
+`ValueError` for invalid ones; secrets come from the environment or `*_file` options.
+
 ## AI retrieval (planned)
 
 Mostly not built yet; decided in [AI retrieval decisions](decisions/ai-retrieval.md) (#240) for the

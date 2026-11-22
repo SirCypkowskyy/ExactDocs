@@ -112,6 +112,25 @@ QUERY_DOCS_CANDIDATES: Final[int] = 50
 DEFAULT_QUERY_DOCS_TOKEN_BUDGET: Final[int] = 10_000
 """Size budget of a ``query-docs`` answer, in estimated tokens, when the caller names none."""
 
+# ---------------------------------------------------------------- use_cases (external indexes)
+EXTERNAL_WRITE_ATTEMPTS: Final[int] = 4
+"""Tries of one write to an external index backend that did not answer, inside the job's step;
+then the job fails, naming the backend, and nothing is lost: the database still holds it."""
+EXTERNAL_WRITE_RETRY_SECONDS: Final[float] = 1.0
+"""The first wait before a write to an external backend is tried again; it doubles each time."""
+EXTERNAL_PAGE: Final[int] = 500
+"""Chunks read from the database and written to an external backend per call."""
+EXTERNAL_INDEX_FORMAT: Final[int] = 1
+"""The format an external search index reports: its entries are rebuilt by
+``exactdocs index rebuild``, never by ``exactdocs reindex``."""
+EXTERNAL_HIT_MARGIN: Final[int] = 10
+"""Hits asked from an external backend beyond the limit, so the ones the database no longer has
+(a removal the backend has not caught up with) can be dropped without a short page."""
+
+# ---------------------------------------------------------------- adapters.driven.memory_index
+MEMORY_BACKEND: Final[str] = "memory"
+"""The registered name of the in-process reference index backend (tests only)."""
+
 # ---------------------------------------------------------------- adapters.driven.memory
 MEMORY_FORMAT: Final[int] = 1
 """Format version of the in-memory search index."""
@@ -923,6 +942,12 @@ _VECTOR_UPSERT: Final[str] = (
 """Stores or replaces one vector."""
 _VECTOR_DELETE: Final[str] = "DELETE FROM {table} WHERE chunk_key IN :keys"
 """Deletes the vectors of some chunk rows (``keys`` expands)."""
+_VECTOR_READ: Final[str] = "SELECT chunk_key, embedding FROM {table} WHERE chunk_key IN :keys"
+"""Reads back the vectors of some chunk rows (``keys`` expands), for an external index."""
+_PG_VECTOR_READ: Final[str] = (
+    "SELECT chunk_key, CAST(embedding AS real[]) AS embedding FROM {table} WHERE chunk_key IN :keys"
+)
+"""``_VECTOR_READ`` on PostgreSQL: pgvector's ``vector`` read as a ``real[]`` (float32 values)."""
 _VECTOR_NEAREST: Final[str] = (
     "SELECT mc.chunk_id, max(0.0, vec_distance_cosine(v.embedding, :query)) AS distance"
     + _VECTOR_JOIN

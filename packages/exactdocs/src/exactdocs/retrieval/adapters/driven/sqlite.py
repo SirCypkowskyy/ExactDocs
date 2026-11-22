@@ -665,6 +665,47 @@ class SqliteChunkRepository:
                 changed += result.rowcount
         return changed
 
+    async def page(
+        self, manifest_id: str, after: ChunkId | None, limit: int
+    ) -> Sequence[StoredChunk]:
+        """Return the manifest's chunks by chunk ID, a page at a time (its primary key's order).
+
+        Args:
+            manifest_id: The manifest.
+            after: Only chunks whose ID sorts after this one; ``None`` from the first.
+            limit: The most chunks returned.
+
+        Returns:
+            At most ``limit`` chunks, ordered by chunk ID.
+        """
+        query = _stored_chunks().where(manifest_chunks.c.manifest_id == manifest_id)
+        if after is not None:
+            query = query.where(manifest_chunks.c.chunk_id > after)
+        query = query.order_by(manifest_chunks.c.chunk_id).limit(limit)
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(query)).all()
+        return [_stored(manifest_id, row) for row in rows]
+
+    async def holding(self, keys: Collection[ChunkKey]) -> Sequence[StoredChunk]:
+        """Return every manifest's row of these stored chunks, by the chunk set index.
+
+        Args:
+            keys: The stored chunks.
+
+        Returns:
+            One entry per (manifest, row) holding one of them.
+        """
+        columns = tuple_(
+            manifest_chunks.c.blob_sha, manifest_chunks.c.config_hash, manifest_chunks.c.position
+        )
+        found: list[StoredChunk] = []
+        async with self.engine.connect() as connection:
+            # three bound variables per key
+            for batch in batched(sorted(set(keys)), VECTOR_BATCH, strict=False):
+                rows = await connection.execute(_stored_chunks().where(columns.in_(batch)))
+                found += [_stored(row.manifest_id, row) for row in rows]
+        return found
+
     async def embedding_sources(
         self, manifest_id: str, keys: Collection[ChunkKey]
     ) -> Mapping[ChunkKey, EmbeddingSource]:

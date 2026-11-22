@@ -50,9 +50,12 @@ from exactdocs.retrieval.models import (
     BudgetCeiling,
     BudgetLimit,
     Candidate,
+    DriftKind,
     EmbeddingSkip,
     EmbeddingSpace,
     FallbackReason,
+    IndexDrift,
+    IndexKind,
     KeySource,
     ModelCheck,
     ModelRole,
@@ -62,6 +65,7 @@ from exactdocs.retrieval.models import (
     ProviderKind,
     ProviderProfile,
     RebuiltIndex,
+    RebuiltVersions,
     Removed,
     RepoGuidance,
     RerankWith,
@@ -78,6 +82,7 @@ from exactdocs.retrieval.models import (
     TagMatch,
     ThinkingLevel,
     VectorMetric,
+    VersionDrift,
     source_link,
 )
 from exactdocs_kernel import (
@@ -879,6 +884,124 @@ class RebuiltIndexOut(_Dto):
             The DTO.
         """
         return cls(format=rebuilt.format, entries=rebuilt.entries)
+
+
+class ExternalIndexScope(_Dto):
+    """Which versions a check or a rebuild of the external indexes looks at (#352)."""
+
+    library: str | None = Field(default=None, max_length=MAX_NAME)
+    """Only this library (`/owner/repo`, any letter case); every library when omitted."""
+    version: str | None = Field(default=None, min_length=1, max_length=MAX_NAME)
+    """Only this version (a ref) of `library`, or of any library when `library` is omitted."""
+
+
+class VersionDriftOut(_Dto):
+    """A version whose external copy is not what the stored chunks give."""
+
+    index: IndexKind
+    """`search` or `vectors`."""
+    drift: DriftKind
+    """`missing` (not in the backend), `incomplete` (fewer entries) or `orphaned` (only in the
+    backend: the database no longer has the version)."""
+    library: str
+    """The library ID, lower case."""
+    version_id: str | None
+    """`<library>/<ref>`; null for an orphan."""
+    manifest_id: str
+    """The version's manifest."""
+    expected: int
+    """Entries the stored chunks give it."""
+    held: int
+    """Entries the backend holds."""
+    space_id: int | None
+    """The embedding space, for `vectors`."""
+
+    @classmethod
+    def from_model(cls, drift: VersionDrift) -> Self:
+        """Map the domain value object.
+
+        Args:
+            drift: One drifted version.
+
+        Returns:
+            The DTO.
+        """
+        return cls(
+            index=drift.kind,
+            drift=drift.drift,
+            library=drift.library,
+            version_id=drift.version_id,
+            manifest_id=drift.manifest_id,
+            expected=drift.expected,
+            held=drift.held,
+            space_id=drift.space_id,
+        )
+
+
+class IndexDriftOut(_Dto):
+    """What a check of the external indexes found."""
+
+    indexes: list[IndexKind]
+    """The external indexes checked; empty when every index lives in the database."""
+    checked: int
+    """Versions compared (once per index, and per embedding space)."""
+    versions: list[VersionDriftOut]
+    """The versions that drifted; empty when the backends hold what the database gives."""
+
+    @property
+    def clean(self) -> bool:
+        """Whether nothing drifted."""
+        return not self.versions
+
+    @classmethod
+    def from_model(cls, drift: IndexDrift) -> Self:
+        """Map the domain value object.
+
+        Args:
+            drift: What the check found.
+
+        Returns:
+            The DTO.
+        """
+        return cls(
+            indexes=list(drift.kinds),
+            checked=drift.checked,
+            versions=[VersionDriftOut.from_model(v) for v in drift.versions],
+        )
+
+
+class RebuiltVersionsOut(_Dto):
+    """What a rebuild of the external indexes wrote."""
+
+    indexes: list[IndexKind]
+    """The external indexes rebuilt; empty when every index lives in the database."""
+    versions: int
+    """Versions written."""
+    search_entries: int
+    """Entries written to the search backend."""
+    vector_entries: int
+    """Entries written to the vector backend, over every embedding space in use."""
+    orphans: int
+    """Versions deleted from a backend because the database no longer has them."""
+
+    @classmethod
+    def from_model(cls, rebuilt: RebuiltVersions, indexes: Sequence[IndexKind]) -> Self:
+        """Map the domain value object.
+
+        Args:
+            rebuilt: What the rebuild wrote.
+            indexes: The external indexes it wrote to.
+
+        Returns:
+            The DTO.
+        """
+        return cls(
+            indexes=list(indexes),
+            versions=rebuilt.versions,
+            search_entries=rebuilt.search_entries,
+            vector_entries=rebuilt.vector_entries,
+            orphans=rebuilt.orphans,
+        )
 
 
 class ReadChunkQuery(_Dto):
