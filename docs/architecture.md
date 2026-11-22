@@ -868,13 +868,16 @@ identity's `ResolveLibraryRoles`, `ClaimLibrary` and `DropLibraryGrants`).
   operator) may, the new user becomes the creator and the creators before become admins, in one
   step of the grant repository (`transfer`, which answers who they were).
 - **The access log** (ACL-05, `identity_access_events`, append-only behind the `AccessLog` driven
-  port): `ClaimLibrary`, `GrantLibraryRole`, `RevokeLibraryRole` and `DropLibraryGrants` each
-  record an `AccessEvent` (actor, change, subject, role, previous role, time) after their change;
-  an ownership transfer records `ownership_transferred` with the new creator as its subject. A
-  grant of the role already held changes nothing and records nothing. `ListLibraryAccessLog`
-  (`GET /libraries/{owner}/{repo}/access-log`, library admins) shows a non-operator only the events
-  since the library's last removal, so a library created again under an old ID does not reveal
-  who had access to the one before; `ListAccessLog` (`GET /access-log`, operators) reads every
+  port): `ClaimLibrary`, `GrantLibraryRole`, `RevokeLibraryRole`, `TransferLibrary` and
+  `DropLibraryGrants` each record an `AccessEvent` (actor, change, subject, role, previous role,
+  time) after their change. Every account or group whose role changed gets exactly one event: a
+  transfer records a `granted` event per creator before (`admin`, previous role `creator`), then
+  one `ownership_transferred` event with the new creator as its subject (role `creator`, previous
+  role whatever they held), so it reads first in the newest-first log; the new creator's grant is
+  not also logged as `granted`. A grant of the role already held changes nothing and records
+  nothing. `ListLibraryAccessLog` (`GET /libraries/{owner}/{repo}/access-log`, library admins)
+  shows a non-operator only the events since the library's last removal, so a library created
+  again under an old ID does not reveal who had access to the one before; `ListAccessLog` (`GET /access-log`, operators) reads every
   library's, removed ones included. The event is written after the grant, not in the same
   transaction: a crash between the two loses that entry.
 - **Upgrading**: libraries that exist when the migration runs get no grant. Operators keep full

@@ -135,7 +135,7 @@ describe("operators' access log", () => {
 describe("a library's access log", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("asks the library's endpoint and links back to its settings", async () => {
+  it("asks the library's endpoint and links back to its sharing page", async () => {
     const fetchMock = stubApi([event({})]);
     render(
       withClient(
@@ -149,9 +149,9 @@ describe("a library's access log", () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(
       /^\/api\/v1\/libraries\/acme\/payments\/access-log\?/,
     );
-    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Sharing" })).toHaveAttribute(
       "href",
-      "/libraries/acme/payments/settings",
+      "/libraries/acme/payments/sharing",
     );
     expect(screen.queryByLabelText("Library")).not.toBeInTheDocument();
   });

@@ -223,6 +223,10 @@ describe("sharing page", () => {
     expect(row("bob").queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
     expect(row("dave").getByRole("combobox", { name: "Role of dave" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Transfer ownership" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Access log" })).toHaveAttribute(
+      "href",
+      "/libraries/acme/payments/access-log",
+    );
 
     await userEvent.click(screen.getByRole("button", { name: "Share" }));
     const dialog = await screen.findByRole("dialog");

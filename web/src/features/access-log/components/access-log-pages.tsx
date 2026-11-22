@@ -55,11 +55,11 @@ export function LibraryAccessLogPage({
               <li aria-hidden="true">/</li>
               <li>
                 <Link
-                  to="/libraries/$owner/$repo/settings"
+                  to="/libraries/$owner/$repo/sharing"
                   params={{ owner, repo }}
                   className={crumb}
                 >
-                  Settings
+                  Sharing
                 </Link>
               </li>
               <li aria-hidden="true">/</li>

@@ -1,4 +1,4 @@
-"""The access log (ACL-05): grants, revocations, creations and deletions, with actor and time."""
+"""The access log (ACL-05): grants, revocations, transfers, creations and deletions."""
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -27,8 +27,10 @@ from exactdocs.identity.dtos import (
     ListAccessLogQuery,
     ListLibraryAccessLogQuery,
     RevokeLibraryRoleCommand,
+    TransferLibraryCommand,
 )
 from exactdocs.identity.errors import (
+    InvalidGrantError,
     LibraryRoleRequiredError,
     NotAnOperatorError,
     UnknownGrantError,
@@ -106,6 +108,11 @@ class World:
             RevokeLibraryRoleCommand(
                 caller_id=self.ids[caller], library=LIBRARY, kind=kind, subject=subject
             )
+        )
+
+    async def transfer(self, caller: str, to: str, library: str = LIBRARY) -> None:
+        await self.identity.transfer_library(
+            TransferLibraryCommand(caller_id=self.ids[caller], library=library, username=to)
         )
 
     async def read(self, caller: str, library: str = LIBRARY, **options: object) -> AccessLogPage:
@@ -322,26 +329,38 @@ def test_an_event_names_a_subject_and_role_exactly_when_it_is_about_someone() ->
     assert transfer.previous_role is LibraryRole.ADMIN
 
 
-async def test_a_transfer_recorded_by_the_sharing_use_cases_reads_back(world: World) -> None:
-    """Ready for #109: an ``ownership_transferred`` event reads back like any other."""
-    await world.log.record(
-        AccessEvent(
-            id="ffffffff-ffff-7fff-bfff-ffffffffffff",
-            library=LIBRARY,
-            at=START,
-            actor=AccountId(world.ids["alice"]),
-            change=AccessChange.OWNERSHIP_TRANSFERRED,
-            kind=SubjectKind.USER,
-            subject=world.ids["carol"],
-            role=LibraryRole.CREATOR,
-            previous_role=LibraryRole.ADMIN,
-        )
-    )
+async def test_a_transfer_records_the_new_creator_and_the_creator_before_as_admin(
+    world: World,
+) -> None:
+    await world.grant("alice", "carol", "admin")
 
-    assert rows(await world.read("alice"))[0] == (
-        "alice",
-        "ownership_transferred",
-        "carol",
-        "creator",
-        "admin",
-    )
+    await world.transfer("alice", "carol")
+
+    assert rows(await world.read("carol")) == [
+        ("alice", "ownership_transferred", "carol", "creator", "admin"),
+        ("alice", "granted", "alice", "admin", "creator"),
+        ("alice", "granted", "carol", "admin", None),
+        ("alice", "library_created", "alice", "creator", None),
+    ]
+    transfers = await world.read("carol", change=["ownership_transferred"])
+    assert [(e.kind, e.subject) for e in transfers.events] == [("user", "carol")]
+
+
+async def test_an_operator_handing_over_a_library_with_no_creator_records_only_the_transfer(
+    world: World,
+) -> None:
+    await world.transfer("ada", "bob", library=OTHER)
+
+    assert rows(await world.read("bob", OTHER)) == [
+        ("ada", "ownership_transferred", "bob", "creator", None),
+    ]
+
+
+async def test_a_refused_transfer_records_nothing(world: World) -> None:
+    await world.grant("alice", "bob", "admin")
+    with pytest.raises(LibraryRoleRequiredError):
+        await world.transfer("bob", "carol")
+    with pytest.raises(InvalidGrantError):
+        await world.transfer("alice", "alice")
+
+    assert (await world.read("alice")).total == 2  # created, granted

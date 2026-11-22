@@ -790,7 +790,10 @@ class AccessChange(StrEnum):
     REVOKED = "revoked"
     """A user or a group lost their role on the library."""
     OWNERSHIP_TRANSFERRED = "ownership_transferred"
-    """The ``creator`` role went to another account (the subject)."""
+    """The ``creator`` role went to another account (the subject).
+
+    The creators before, now admins, each get a ``granted`` event of their own.
+    """
     LIBRARY_DELETED = "library_deleted"
     """The library was removed, and every grant on it with it."""
 

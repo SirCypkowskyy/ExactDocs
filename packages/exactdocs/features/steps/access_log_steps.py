@@ -1,7 +1,7 @@
 """Steps for the access log: changes made over REST by one person each, read back over REST.
 
-People and their credentials, and who is an admin of a library, come from
-``library_roles_steps``; the operator is the demo admin.
+People and their credentials, and who is an admin or the creator of a library, come from
+``library_roles_steps`` (as does the transfer itself); the operator is the demo admin.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -64,6 +64,23 @@ def step_shows_grant(context: Context, actor: str) -> None:
         "bob",
         "viewer",
     ), newest
+    at = datetime.fromisoformat(str(newest["at"]))
+    assert abs(datetime.now(UTC) - at) < RECENT, newest
+
+
+@then(
+    'the library\'s audit log shows actor "{actor}", the ownership transfer to "{username}" '
+    "and the time"
+)
+def step_shows_transfer(context: Context, actor: str, username: str) -> None:
+    newest = _log(context, context.library, get_person(context, username)["session"])[0]
+    assert (newest["actor"], newest["change"], newest["kind"], newest["subject"]) == (
+        actor,
+        "ownership_transferred",
+        "user",
+        username,
+    ), newest
+    assert newest["role"] == "creator", newest
     at = datetime.fromisoformat(str(newest["at"]))
     assert abs(datetime.now(UTC) - at) < RECENT, newest
 

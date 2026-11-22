@@ -24,6 +24,17 @@ Feature: Access log
       | admin | granted | alice   | admin       |               |
     And "carol", a viewer of "/fixture/docs-repo", asking for its audit log is refused
 
+  Scenario: An ownership transfer is recorded, and the previous owner's new admin role with it
+    Given "alice" is the creator of "/fixture/docs-repo"
+    And "carol" is an admin of "/fixture/docs-repo"
+    When the creator transfers "/fixture/docs-repo" to "carol"
+    Then the library's audit log shows actor "alice", the ownership transfer to "carol" and the time
+    And "carol" reads in the audit log of "/fixture/docs-repo", newest first:
+      | actor | change                | subject | role    | previous role |
+      | alice | ownership_transferred | carol   | creator | admin         |
+      | alice | granted               | alice   | admin   | creator       |
+      | admin | granted               | carol   | admin   |               |
+
   Scenario: A deleted library stays in the operator's access log
     Given "bob" is a viewer of "/fixture/docs-repo"
     When the operator removes the library "/fixture/docs-repo"

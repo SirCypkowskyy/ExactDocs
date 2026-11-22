@@ -226,6 +226,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   library's ID; anyone else only those since it was last removed. `GET /access-log` is the
   operators' log of every library, removed ones included (filter with `library` and `change`); like
   `/users` it needs the session cookie of an `admin` (an API token is 401, anyone else 403).
+  A transfer records one `granted` entry per creator before (now `admin`, `previous_role`
+  `creator`) and then one `ownership_transferred` entry whose subject is the new creator (`role`
+  `creator`, `previous_role` the role they held, if any), with the caller as actor.
   Giving someone the role they already hold records nothing. Changes made before the upgrade
   that added the log are not in it.
 - **Editing a library**: `PATCH /libraries/{owner}/{repo}` (`{"title"?, "description"?}`). An edited

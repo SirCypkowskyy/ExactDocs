@@ -2151,7 +2151,10 @@ class TransferLibraryUseCase:
     """Who may share, and how grants read."""
 
     async def __call__(self, command: TransferLibraryCommand) -> LibraryGrants:
-        """Make the user the library's creator, and the creator before an ``admin``.
+        """Make the user the library's creator, and the creator before an ``admin``; log both.
+
+        The access log gets a ``granted`` event per creator before (``admin``, previous role
+        ``creator``), then one ``ownership_transferred`` event naming the new creator.
 
         Args:
             command: The caller, the library and the new creator's username.
@@ -2173,9 +2176,33 @@ class TransferLibraryUseCase:
         if held is not None and held.role is LibraryRole.CREATOR:
             msg = f"{command.username} is already the creator of {command.library}"
             raise InvalidGrantError(msg)
-        # ``transfer`` answers the creators before (none for a library added before roles):
-        # what a record of the transfer names, next to the caller and the new creator.
-        await self.sharing.grants.transfer(library, new_creator)
+        before = await self.sharing.grants.transfer(library, new_creator)
+        # One event per account whose role changed: each creator before is now an admin (a role
+        # change, logged as one), and the transfer itself names the new creator, recorded last
+        # so it reads first in the newest-first log.
+        for previous in before:
+            await self.sharing.record(
+                command.caller_id,
+                AccessChange.GRANTED,
+                LibraryGrant(
+                    library=library,
+                    kind=SubjectKind.USER,
+                    subject=previous,
+                    role=LibraryRole.ADMIN,
+                ),
+                previous_role=LibraryRole.CREATOR,
+            )
+        await self.sharing.record(
+            command.caller_id,
+            AccessChange.OWNERSHIP_TRANSFERRED,
+            LibraryGrant(
+                library=library,
+                kind=SubjectKind.USER,
+                subject=new_creator,
+                role=LibraryRole.CREATOR,
+            ),
+            previous_role=None if held is None else held.role,
+        )
         return await self.sharing.listing(library)
 
 
