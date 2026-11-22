@@ -414,6 +414,22 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             production=False,
         ),
+        "elasticsearch": IndexBackendKind(
+            name="elasticsearch",
+            module="exactdocs.retrieval.adapters.driven.elasticsearch_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="elasticsearch",
+            packages=("elasticsearch", "elastic_transport"),
+        ),
+        "opensearch": IndexBackendKind(
+            name="opensearch",
+            module="exactdocs.retrieval.adapters.driven.opensearch_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="opensearch",
+            packages=("opensearchpy",),
+        ),
     }
 )
 """The external index backends, by name. Adding one is one adapter module in

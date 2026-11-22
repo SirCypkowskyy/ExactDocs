@@ -32,6 +32,7 @@ report for that run."""
 
 fixture_repo = import_module("fixture_repo")
 databases = import_module("databases")  # raises when CI requires PostgreSQL and has none
+index_backends = import_module("index_backends")
 
 
 def before_all(context: Context) -> None:
@@ -76,3 +77,7 @@ def before_scenario(context: Context, scenario: Scenario) -> None:
         databases.ADMIN_URL is None or databases.PGBOUNCER_URL is None
     ):
         scenario.skip("needs PgBouncer in transaction mode: set EXACTDOCS_TEST_PGBOUNCER_URL")
+    # Elasticsearch and OpenSearch scenarios (#354) need a test cluster; CI runs both.
+    for cluster in ("elasticsearch", "opensearch"):
+        if cluster in scenario.effective_tags and index_backends.cluster_options(cluster) is None:
+            scenario.skip(f"needs a test cluster: set EXACTDOCS_TEST_{cluster.upper()}_URL")

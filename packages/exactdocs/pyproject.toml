@@ -42,6 +42,13 @@ local = [
     "fastembed==0.9.1",
     "onnxruntime==1.31.0",
 ]
+# External index backends (#354): imported only by their adapter module, and only when
+# EXACTDOCS_SEARCH_BACKEND / EXACTDOCS_VECTOR_BACKEND names the backend. The 8.x client talks to
+# Elasticsearch 8 and 9 (9 accepts its `compatible-with=8` requests; the 9.x client refuses 8)
+# and goes through elastic-transport's httpx node; the OpenSearch adapter runs opensearch-py's
+# synchronous (urllib3) client in worker threads. Neither extra adds aiohttp.
+elasticsearch = ["elasticsearch==8.19.3"]
+opensearch = ["opensearch-py==3.2.0"]
 
 [project.scripts]
 exactdocs = "exactdocs.bootstrap.cli:main"

@@ -1346,6 +1346,20 @@ backend ports themselves, native hybrid included when implemented). A factory ta
 of `[index_backends.<name>]` (`EXACTDOCS_INDEX_BACKENDS__<NAME>__<OPTION>`) and raises
 `ValueError` for invalid ones; secrets come from the environment or `*_file` options.
 
+**Registered backends.**
+
+| Name | Indexes | Extra | Adapter |
+|---|---|---|---|
+| `memory` | search, vectors (native hybrid) | none | `memory_index.py`: tests only, holds nothing across a restart |
+| `elasticsearch` | search, vectors (native hybrid: the RRF retriever) | `elasticsearch` | `elasticsearch_index.py` over `elastic_index.py` |
+| `opensearch` | search, vectors (native hybrid: a `hybrid` query and a normalisation pipeline) | `opensearch` | `opensearch_index.py` over `elastic_index.py` |
+
+Elasticsearch and OpenSearch (#354) answer the same REST API for everything ExactDocs asks, so
+`elastic_index.py` builds the requests and reads the answers once, behind an `Engine` (one
+request in, its JSON out) that each engine's module implements with its client; where the
+engines differ (the vector field, the kNN query, the hybrid query) the engine's name decides. It
+imports neither client. Options, analysis and sizing: [Configuration](configuration.md#elasticsearch-and-opensearch).
+
 ## AI retrieval (planned)
 
 Mostly not built yet; decided in [AI retrieval decisions](decisions/ai-retrieval.md) (#240) for the
