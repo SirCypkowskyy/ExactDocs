@@ -4,6 +4,7 @@ Each is ``Final`` and documented; see *Python conventions* in docs/architecture.
 """
 
 import re
+import uuid
 from collections.abc import Mapping
 from datetime import timedelta
 from types import MappingProxyType
@@ -130,6 +131,62 @@ EXTERNAL_HIT_MARGIN: Final[int] = 10
 # ---------------------------------------------------------------- adapters.driven.memory_index
 MEMORY_BACKEND: Final[str] = "memory"
 """The registered name of the in-process reference index backend (tests only)."""
+
+# ---------------------------------------------------------------- adapters.driven.chroma_index
+CHROMA_BACKEND: Final[str] = "chroma"
+"""The registered name of the Chroma vector backend (#361)."""
+CHROMA_DEFAULT_COLLECTION: Final[str] = "exactdocs"
+"""The ``collection`` option's default: each embedding space is the collection
+``<collection>_space<id>``."""
+CHROMA_COLLECTION_NAME: Final[re.Pattern[str]] = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}")
+"""What the ``collection`` option may be: the start of a Chroma collection name (letters, digits,
+``.``, ``_``, ``-``, starting with a letter or digit), with room for the suffix."""
+CHROMA_SPACE_SUFFIX: Final[str] = "_space"
+"""Between the ``collection`` option and the space's ID in a collection's name."""
+CHROMA_DEFAULT_TENANT: Final[str] = "default_tenant"
+"""The ``tenant`` option's default: a self-hosted server's own tenant."""
+CHROMA_DEFAULT_DATABASE: Final[str] = "default_database"
+"""The ``database`` option's default: a self-hosted server's own database."""
+CHROMA_DEFAULT_TIMEOUT_SECONDS: Final[int] = 30
+"""The ``timeout`` option's default: how long one call to Chroma may take."""
+CHROMA_TOKEN_HEADERS: Final[Mapping[str, str]] = MappingProxyType(
+    {"x-chroma-token": "", "authorization": "Bearer "}
+)
+"""The headers the ``token`` may be sent in (the ``token_header`` option), with what precedes
+it: Chroma's own (Chroma Cloud's) and the usual bearer token of a proxy in front of a server."""
+CHROMA_DIMENSIONS_KEY: Final[str] = "exactdocs_dimensions"
+"""The collection metadata key ExactDocs writes the space's dimensions under: a collection of the
+same name without it, or with other dimensions, is not written to."""
+CHROMA_MODEL_KEY: Final[str] = "exactdocs_model"
+"""The collection metadata key naming the space's embedding model (for an operator's eyes)."""
+CHROMA_TAG_PREFIX: Final[str] = "tag:"
+"""Before a tag in the name of the ``true`` metadata key that marks a record's article as
+carrying it (one key per tag: list metadata is not reliable in Chroma 1.5.9)."""
+CHROMA_WRITE_BATCH: Final[int] = 500
+"""Records sent to Chroma per upsert (lowered to the server's own maximum when that is smaller)."""
+CHROMA_READ_PAGE: Final[int] = 1_000
+"""Records' metadata read per request when the drift check counts a collection's versions."""
+CHROMA_TIE_MARGIN: Final[int] = 10
+"""Neighbours asked beyond the limit, so ties at the cut are broken by chunk ID, not by Chroma."""
+CHROMA_RECORD_NAMESPACE: Final[uuid.UUID] = uuid.UUID("0c9f3b0e-5a51-5b8e-9d43-6a1f3e7c2d11")
+"""The UUID namespace a record's ID is derived in, from its manifest and chunk IDs (UUID v5): one
+record per chunk of each version, the same ID every time it is written."""
+CHROMA_REASON_CHARS: Final[int] = 200
+"""The most characters of Chroma's own error message an error's reason carries."""
+CHROMA_OPTIONS: Final[frozenset[str]] = frozenset(
+    {
+        "url",
+        "path",
+        "collection",
+        "tenant",
+        "database",
+        "token",
+        "token_file",
+        "token_header",
+        "timeout",
+    }
+)
+"""The options ``[index_backends.chroma]`` takes; any other is refused at start."""
 
 # ---------------------------------------------------------------- adapters.driven.memory
 MEMORY_FORMAT: Final[int] = 1
