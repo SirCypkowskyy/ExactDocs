@@ -71,7 +71,7 @@ def test_a_registered_backend_is_named_in_any_letter_case() -> None:
 
 def test_an_unknown_backend_is_refused_naming_the_known_ones() -> None:
     with pytest.raises(
-        ValidationError, match=r"EXACTDOCS_SEARCH_BACKEND='qdrnt'.*database, memory"
+        ValidationError, match=r"EXACTDOCS_SEARCH_BACKEND='qdrnt'.*known: database, .*\bmemory\b"
     ):
         Settings(search_backend="qdrnt")
 
