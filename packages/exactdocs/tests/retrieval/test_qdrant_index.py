@@ -47,14 +47,10 @@ URL = "http://127.0.0.1:6333"
 
 needs_qdrant = integration.QDRANT
 """Qdrant, a server or the client's local mode (``:memory:``): integration tests (#507)."""
-local_mode = pytest.mark.skipif(
+not_local_mode = pytest.mark.skipif(
     QDRANT_URL == LOCAL, reason="needs a Qdrant server, not the client's local mode"
 )
-
-
-def needs_server[F](test: F) -> F:
-    """A Qdrant server: an integration test that the client's local mode (``:memory:``) skips."""
-    return needs_qdrant(local_mode(test))
+"""With ``needs_qdrant``: a Qdrant server, which the client's local mode does not stand for."""
 
 
 def manifest(manifest_id: str, ref: str = "v1") -> IndexedManifest:
@@ -191,7 +187,8 @@ def test_the_words_are_weighed_as_bm25_does_headings_counting_more() -> None:
 # ---------------------------------------------------------------- against Qdrant
 
 
-@needs_server
+@needs_qdrant
+@not_local_mode
 async def test_a_spaces_collection_and_payload_indexes_are_made_from_the_space() -> None:
     async with fresh() as backend:
         assert isinstance(backend, QdrantVectorBackend)
@@ -222,7 +219,8 @@ async def test_a_spaces_collection_and_payload_indexes_are_made_from_the_space()
     ]
 
 
-@needs_server
+@needs_qdrant
+@not_local_mode
 async def test_a_collection_dropped_behind_its_back_is_made_again_on_the_next_write() -> None:
     async with fresh() as backend:
         assert isinstance(backend, QdrantVectorBackend)
@@ -242,7 +240,8 @@ async def test_a_collection_dropped_behind_its_back_is_made_again_on_the_next_wr
         ]
 
 
-@needs_server
+@needs_qdrant
+@not_local_mode
 async def test_another_instances_collection_of_other_dimensions_is_never_written() -> None:
     async with fresh() as backend:
         v1 = manifest("m1")
@@ -257,7 +256,8 @@ async def test_another_instances_collection_of_other_dimensions_is_never_written
             await other.close()
 
 
-@needs_server
+@needs_qdrant
+@not_local_mode
 @pytest.mark.skipif(not QDRANT_API_KEY, reason="the test server takes no API key")
 async def test_a_server_with_an_api_key_refuses_a_backend_without_it() -> None:
     assert QDRANT_URL is not None
