@@ -27,6 +27,20 @@ What it does for real (an adapter cannot pass by relying on the fake being lax):
   ``1 / (60 + rank)`` summed;
 - ``$orderby`` (``search.score()`` and sortable fields), ``top`` / ``skip``, ``select`` of
   retrievable fields, ``$count``, facets on facetable fields (``count:N``);
+- semantic configurations (#473): at most 100 per index, unique names, each naming at least one
+  field, every field an existing searchable and retrievable string; a default that exists;
+- index updates (``PUT``, create or update): ``If-Match`` against the index's etag (``412``),
+  new fields and semantic configurations added, an existing field neither removed nor changed;
+- semantic ranking through ``semanticQuery`` (plain text, not empty, with ``queryType`` full or
+  simple) and ``semanticConfiguration`` (or the index's default; ``400`` when unknown or with
+  ``$orderby``), ``semanticErrorHandling`` partial or fail: the best 50 results of the query
+  (BM25, vector or hybrid, filtered first) are reranked and carry ``@search.rerankerScore``
+  (0 to 4), the rest follow in their order. The ranker is a deterministic stand-in: the share of
+  the semantic query's words the configuration's fields hold, times 4. With
+  ``semantic_overloaded`` the ranker is over capacity: ``partial`` answers the query's own order
+  with ``@search.semanticPartialResponseReason``, ``fail`` is ``503``. With
+  ``semantic_quota_used`` the Free plan's monthly requests are used up and a semantic query is
+  refused (Azure documents an error, not its status: the fake answers ``403``);
 - authentication: the ``api-key`` header or a bearer token, ``401`` / ``403`` otherwise.
 
 Anything else the adapter would send is refused with ``400`` naming it, so a new use of the API
@@ -85,7 +99,29 @@ SEARCH_KEYS = {
     "facets",
     "vectorQueries",
     "vectorFilterMode",
+    "semanticConfiguration",
+    "semanticQuery",
+    "semanticErrorHandling",
+    "semanticMaxWaitInMilliseconds",
 }
+SEMANTIC_DEPTH = 50
+"""How many of a query's best results the semantic ranker reranks."""
+SEMANTIC_CONFIGURATIONS = 100
+"""The most semantic configurations an index holds."""
+SEMANTIC_TYPES = {"Edm.String", "Collection(Edm.String)"}
+"""The types a semantic configuration's fields may have."""
+FIELD_CHANGES = (
+    "type",
+    "key",
+    "searchable",
+    "filterable",
+    "sortable",
+    "facetable",
+    "analyzer",
+    "dimensions",
+    "vectorSearchProfile",
+)
+"""What an index update may not change in an existing field (``retrievable`` may change)."""
 
 type Doc = dict[str, Any]
 
@@ -362,7 +398,33 @@ class FakeIndex:
                 self.documents[name] = self.documents.get(name, {}) | values
 
 
-def _normalised(definition: Doc) -> Doc:
+def _normalised_semantic(semantic: Doc | None) -> Doc | None:
+    """Fill a semantic section's defaults, as a GET of the index returns them."""
+    if not semantic:
+        return None
+    configurations = []
+    for configuration in semantic.get("configurations") or []:
+        fields = configuration.get("prioritizedFields") or {}
+        configurations.append(
+            {
+                "name": configuration.get("name"),
+                "rankingOrder": configuration.get("rankingOrder", "BoostedRerankerScore"),
+                "prioritizedFields": {
+                    "titleField": fields.get("titleField"),
+                    "prioritizedContentFields": list(fields.get("prioritizedContentFields") or []),
+                    "prioritizedKeywordsFields": list(
+                        fields.get("prioritizedKeywordsFields") or []
+                    ),
+                },
+            }
+        )
+    return {
+        "defaultConfiguration": semantic.get("defaultConfiguration"),
+        "configurations": configurations,
+    }
+
+
+def _normalised(definition: Doc, etag: str = '"0x1"') -> Doc:
     """Fill the defaults Azure fills, as a GET of the index returns them."""
     fields = []
     for spec in definition["fields"]:
@@ -400,11 +462,12 @@ def _normalised(definition: Doc) -> Doc:
             "similarity", {"@odata.type": "#Microsoft.Azure.Search.BM25Similarity"}
         ),
         "vectorSearch": definition.get("vectorSearch"),
+        "semantic": _normalised_semantic(definition.get("semantic")),
         "analyzers": [],
         "tokenizers": [],
         "tokenFilters": [],
         "charFilters": [],
-        "@odata.etag": '"0x1"',
+        "@odata.etag": etag,
     }
 
 
@@ -453,7 +516,150 @@ def _check_definition(definition: Doc) -> Doc:  # ruff: ignore[complex-structure
     default = normalised["defaultScoringProfile"]
     if default and default not in {p["name"] for p in normalised["scoringProfiles"]}:
         raise FakeError(400, f"The default scoring profile '{default}' does not exist")
+    _check_semantic(normalised)
     return normalised
+
+
+def _check_semantic(normalised: Doc) -> None:
+    """Refuse a semantic section Azure refuses (names, fields, the default)."""
+    semantic = normalised["semantic"]
+    if semantic is None:
+        return
+    configurations = semantic["configurations"]
+    if len(configurations) > SEMANTIC_CONFIGURATIONS:
+        raise FakeError(400, f"An index holds at most {SEMANTIC_CONFIGURATIONS} configurations")
+    names = [c["name"] for c in configurations]
+    if not all(names) or len(set(names)) != len(names):
+        raise FakeError(400, "Semantic configurations need unique, non-empty names")
+    fields = {f["name"]: f for f in normalised["fields"]}
+    for configuration in configurations:
+        _check_semantic_fields(configuration, fields)
+    default = semantic["defaultConfiguration"]
+    if default is not None and default not in names:
+        raise FakeError(400, f"The default semantic configuration '{default}' does not exist")
+
+
+def _prioritized_names(configuration: Doc) -> list[str]:
+    """The fields a semantic configuration names: its title, content and keyword fields."""
+    prioritized = configuration["prioritizedFields"]
+    references = [
+        *([prioritized["titleField"]] if prioritized["titleField"] else []),
+        *prioritized["prioritizedContentFields"],
+        *prioritized["prioritizedKeywordsFields"],
+    ]
+    return [str((reference or {}).get("fieldName")) for reference in references]
+
+
+def _check_semantic_fields(configuration: Doc, fields: Mapping[str, Doc]) -> None:
+    """Refuse a configuration naming no field, or a field it may not rank by."""
+    names = _prioritized_names(configuration)
+    if not names:
+        raise FakeError(
+            400,
+            f"The semantic configuration '{configuration['name']}' must name at least one of "
+            "titleField, prioritizedContentFields or prioritizedKeywordsFields",
+        )
+    for name in names:
+        spec = fields.get(name)
+        if spec is None:
+            raise FakeError(400, f"The semantic configuration names an unknown field '{name}'")
+        if spec["type"] not in SEMANTIC_TYPES:
+            raise FakeError(400, f"The field '{name}' of a semantic configuration is not text")
+        if not spec["searchable"] or not spec["retrievable"]:
+            raise FakeError(
+                400,
+                f"The field '{name}' of a semantic configuration must be searchable and "
+                "retrievable",
+            )
+
+
+def _check_update(existing: Doc, updated: Doc) -> None:
+    """Refuse an update that removes or changes an existing field, as Azure does."""
+    fields = {f["name"]: f for f in updated["fields"]}
+    for old in existing["fields"]:
+        new = fields.get(old["name"])
+        if new is None:
+            raise FakeError(400, f"The field '{old['name']}' cannot be removed from an index")
+        changed = [a for a in FIELD_CHANGES if old.get(a) != new.get(a)]
+        if changed:
+            raise FakeError(
+                400,
+                f"The field '{old['name']}' cannot be changed ({', '.join(changed)}): "
+                "delete and re-create the index",
+            )
+
+
+# ---------------------------------------------------------------- semantic ranking
+
+
+def _semantic_request(  # ruff: ignore[complex-structure]
+    index: FakeIndex, body: Doc
+) -> Doc | None:
+    """The semantic configuration a search asks to rerank with, checked as Azure checks it."""
+    semantic_keys = {
+        "semanticConfiguration",
+        "semanticQuery",
+        "semanticErrorHandling",
+        "semanticMaxWaitInMilliseconds",
+    }
+    if body.get("queryType") == "semantic":
+        raise FakeError(400, "the fake implements semantic ranking through semanticQuery only")
+    if not semantic_keys & set(body):
+        return None
+    query = body.get("semanticQuery")
+    if query is None:
+        raise FakeError(400, "Semantic parameters need queryType semantic or a semanticQuery")
+    if not isinstance(query, str) or not query.strip() or query.strip() == "*":
+        raise FakeError(400, "semanticQuery must be plain text, not empty")
+    if body.get("queryType") not in {None, "simple", "full"}:
+        raise FakeError(400, f"Unknown queryType {body.get('queryType')!r}")
+    if body.get("orderby"):
+        raise FakeError(400, "$orderby cannot be combined with semantic ranking")
+    if body.get("semanticErrorHandling") not in {None, "partial", "fail"}:
+        raise FakeError(400, "semanticErrorHandling must be partial or fail")
+    wait = body.get("semanticMaxWaitInMilliseconds")
+    if wait is not None and (not isinstance(wait, int) or wait < 700):
+        raise FakeError(400, "semanticMaxWaitInMilliseconds must be at least 700")
+    semantic = index.definition.get("semantic") or {}
+    name = body.get("semanticConfiguration") or semantic.get("defaultConfiguration")
+    if not name:
+        raise FakeError(400, "No semanticConfiguration given and the index has no default")
+    found = next((c for c in semantic.get("configurations") or [] if c["name"] == name), None)
+    if found is None:
+        raise FakeError(400, f"Unknown semantic configuration '{name}'")
+    return found
+
+
+def _words(text: str) -> set[str]:
+    return set(re.findall(r"\w+", text.casefold()))
+
+
+def semantic_score(query: str, text: str) -> float:
+    """The stand-in ranker's score of a text: 4 times the share of the query's words it holds."""
+    asked = _words(query)
+    return round(4.0 * len(asked & _words(text)) / len(asked), 6) if asked else 0.0
+
+
+def _semantic_rerank(
+    configuration: Doc, query: str, ordered: list[Doc], key: str
+) -> tuple[list[Doc], dict[str, float]]:
+    """Rerank the best ``SEMANTIC_DEPTH`` results: a deterministic stand-in for the ranker.
+
+    A result's reranker score is 4 times the share of the query's words its configuration's
+    fields (title, content, keywords) hold; ties keep the query's order; the results beyond the
+    best ``SEMANTIC_DEPTH`` follow, not reranked.
+    """
+    names = _prioritized_names(configuration)
+    head = ordered[:SEMANTIC_DEPTH]
+    scores: dict[str, float] = {}
+    for document in head:
+        values = [document.get(name) for name in names]
+        text = " ".join(
+            " ".join(v) if isinstance(v, list) else str(v) for v in values if v is not None
+        )
+        scores[document[key]] = semantic_score(query, text)
+    reranked = sorted(head, key=lambda d: -scores[d[key]])  # stable: ties keep the query's order
+    return [*reranked, *ordered[SEMANTIC_DEPTH:]], scores
 
 
 # ---------------------------------------------------------------- the service
@@ -468,6 +674,10 @@ class FakeSearchService:
     lag: int = 2
     indexes: dict[str, FakeIndex] = field(default_factory=dict)
     unavailable: bool = False
+    semantic_overloaded: bool = False
+    """The semantic ranker is over capacity: semantic queries are answered without it."""
+    semantic_quota_used: bool = False
+    """The Free plan's monthly semantic requests are used up: semantic queries are refused."""
     requests: list[tuple[str, str]] = field(default_factory=list)
     bodies: list[Doc] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -530,6 +740,8 @@ class FakeSearchService:
             return 200, self._index(name).definition
         if operation is None and method == "DELETE":
             return (204 if self.indexes.pop(name, None) else 404), None
+        if operation is None and method == "PUT":
+            return self._create_or_update(name, payload or {}, headers.get("If-Match"))
         if operation == "search.index" and method == "POST":
             return self._write(self._index(name), payload or {})
         if operation == "search.post.search" and method == "POST":
@@ -565,6 +777,25 @@ class FakeSearchService:
             )
         self.indexes[normalised["name"]] = FakeIndex(definition=normalised)
         return 201, normalised
+
+    def _create_or_update(
+        self, name: str, definition: Doc, if_match: str | None
+    ) -> tuple[int, Doc]:
+        if definition.get("name") != name:
+            raise FakeError(400, f"The index name in the body is not '{name}'")
+        index = self.indexes.get(name)
+        if index is None:
+            if if_match is not None:
+                raise FakeError(412, f"The index '{name}' does not exist", "PreconditionFailed")
+            return self._create(definition)
+        etag = index.definition["@odata.etag"]
+        if if_match is not None and if_match not in {"*", etag}:
+            raise FakeError(412, f"The index '{name}' was changed meanwhile", "PreconditionFailed")
+        version = int(etag.strip('"').removeprefix("0x"), 16) + 1
+        normalised = _check_definition(definition)
+        _check_update(index.definition, normalised)
+        index.definition = _normalised(definition, f'"0x{version:X}"')
+        return 200, index.definition
 
     # ------------------------------------------------------------ documents
 
@@ -621,6 +852,7 @@ class FakeSearchService:
         unknown = set(body) - SEARCH_KEYS
         if unknown:
             raise FakeError(400, f"the fake does not implement {sorted(unknown)}")
+        semantic = _semantic_request(index, body)
         index.tick()
         fields = index.fields
         documents = list(index.documents.values())
@@ -659,6 +891,7 @@ class FakeSearchService:
         if body.get("facets"):
             result["@search.facets"] = self._facets(fields, matched, body["facets"])
         ordered = self._ordered(fields, matched, scores, key, body.get("orderby"))
+        ordered, reranker = self._semantically(semantic, body, ordered, key, result)
         skip = int(body.get("skip") or 0)
         top = int(body["top"]) if body.get("top") is not None else 50
         select = [s.strip() for s in (body.get("select") or "").split(",") if s.strip()]
@@ -671,10 +904,29 @@ class FakeSearchService:
                 raise FakeError(400, f"The field '{name}' is not retrievable")
         shown = select or [n for n, f in fields.items() if f["retrievable"]]
         result["value"] = [
-            {"@search.score": scores[d[key]]} | {n: d.get(n) for n in shown}
+            {"@search.score": scores[d[key]]}
+            | ({"@search.rerankerScore": reranker[d[key]]} if d[key] in reranker else {})
+            | {n: d.get(n) for n in shown}
             for d in ordered[skip : skip + top]
         ]
         return result
+
+    def _semantically(
+        self, semantic: Doc | None, body: Doc, ordered: list[Doc], key: str, result: Doc
+    ) -> tuple[list[Doc], dict[str, float]]:
+        """Rerank the ordered results when the search asks for it, unless over capacity."""
+        if semantic is None:
+            return ordered, {}
+        if self.semantic_quota_used:
+            message = "The semantic ranker's free monthly requests are used up: choose a plan"
+            raise FakeError(403, message, "SemanticQuotaExceeded")
+        if self.semantic_overloaded:
+            if body.get("semanticErrorHandling", "fail") == "fail":
+                raise FakeError(503, "The semantic ranker is over capacity", "CapacityOverloaded")
+            result["@search.semanticPartialResponseReason"] = "CapacityOverloaded"
+            result["@search.semanticPartialResponseType"] = "baseResults"
+            return ordered, {}
+        return _semantic_rerank(semantic, body["semanticQuery"], ordered, key)
 
     def _bm25(  # ruff: ignore[complex-structure, too-many-locals]
         self, index: FakeIndex, documents: list[Doc], passing: list[Doc], text: str, body: Doc

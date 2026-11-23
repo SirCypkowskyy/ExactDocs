@@ -235,6 +235,7 @@ from exactdocs.retrieval.models import (
     ModelRole,
     ModeRegistry,
     NameMatch,
+    NativeRanking,
     Outline,
     PendingChunks,
     PipelineAnswer,
@@ -320,6 +321,7 @@ from exactdocs.retrieval.ports.driven import (
     ModelFactory,
     ModelRoles,
     NativeHybrid,
+    NativeRerank,
     Prices,
     ProviderProfiles,
     RenamedPaths,
@@ -1333,8 +1335,8 @@ class RetrievalModes:
             The reranked answer; on a timeout or a failure, the answer in its own order with a
             fallback reason. Never raises for the reranker. Also the chunks it read, by ID.
         """
-        if not choice.rerank or self.reranking is None:
-            return answer, {}
+        if not choice.rerank or self.reranking is None or answer.reranked:
+            return answer, {}  # nothing reranks, or the vector backend's own ranker did (#473)
         if choice.reranker is not RerankWith.JUDGE and choice.reranker_profile is None:
             found = await self.reranking.profile(version.library, choice.library_ai)
             if isinstance(found, FallbackReason):
@@ -4722,13 +4724,18 @@ class HybridPipeline:
     native: NativeHybrid | None = None
     """An external vector backend that fuses keyword and vector search itself (#352); it then
     ranks instead of reciprocal rank fusion. ``None``: the two halves are fused here."""
+    reranks: NativeRerank | None = None
+    """The same backend when it also reranks with a ranker of its own (#473, Azure AI Search's
+    semantic ranker): a search that asks for reranking (``request.rerank``) is then reranked by
+    it, and ExactDocs' reranker leaves the answer as it is. ``None``: ExactDocs reranks, if
+    anything does."""
 
     async def run(self, request: PipelineRequest) -> PipelineAnswer:
         """Fuse the BM25 and vector rankings of the version's chunks.
 
         Args:
-            request: What to search; ``space`` is the space to search; ``rerank`` is ignored
-                until a reranker exists.
+            request: What to search; ``space`` is the space to search; with ``rerank``, a
+                backend that reranks natively (``reranks``) reranks its hybrid answer.
 
         Returns:
             The best fused hits, or BM25's with the reason the vectors were not used.
@@ -4767,8 +4774,11 @@ class HybridPipeline:
     ) -> PipelineAnswer:
         """Let the backend rank the query's words and its vector together.
 
-        The same fallbacks as ``fuse``: BM25 answers, with the reason, when there is no vector
-        (or the backend does not answer, ``vector_store_unavailable``).
+        When the search asks for reranking and the backend reranks natively (``reranks``), it
+        also reranks the answer with its own ranker; the answer then says how many hits it
+        reordered (``reranked``), and ExactDocs' reranker does not rerank them again. The same
+        fallbacks as ``fuse``: BM25 answers, with the reason, when there is no vector (or the
+        backend does not answer, ``vector_store_unavailable``).
 
         Args:
             native: The backend.
@@ -4786,30 +4796,26 @@ class HybridPipeline:
             vector = await self._query_vector(request, space, embed, mode)
             if not isinstance(vector, FallbackReason):
                 terms = tuple(search_terms(request.query))
+                query = TextQuery(text=request.query, terms=terms)
                 try:
-                    ranked = await native.hybrid(
-                        space,
-                        [manifest],
-                        TextQuery(text=request.query, terms=terms),
-                        vector,
-                        request.tag_filter,
-                        request.limit + 1,  # one more tells whether the answer was cut short
-                    )
+                    ranking = await self._ranked(native, request, space, query, vector)
                 except IndexBackendUnavailableError:
                     reason = FallbackReason.VECTOR_STORE_UNAVAILABLE
                 else:
-                    ranked = [h for h in ranked if h.manifest_id == manifest]
+                    by_ranker = {h.chunk_id for h in ranking.hits[: ranking.reranked]}
+                    ranked = [h for h in ranking.hits if h.manifest_id == manifest]
                     stored = await self.chunks.get_many(manifest, [h.chunk_id for h in ranked])
                     hits = [
                         leading_hit(h.chunk_id, h.score, stored[h.chunk_id].chunk.content, terms)
                         for h in ranked
                         if h.chunk_id in stored
                     ]
+                    kept = hits[: request.limit]
                     return PipelineAnswer(
                         mode=mode,
-                        hits=tuple(hits[: request.limit]),
+                        hits=tuple(kept),
                         candidates=len(hits),
-                        reranked=0,
+                        reranked=sum(1 for h in kept if h.chunk_id in by_ranker),
                         complete=len(hits) <= request.limit,
                     )
             else:
@@ -4817,6 +4823,35 @@ class HybridPipeline:
         depth = request.limit + 1
         found = await self.search.search(manifest, request.query, request.tag_filter, depth)
         return _bm25_answer(found, request.limit, reason)
+
+    async def _ranked(
+        self,
+        native: NativeHybrid,
+        request: PipelineRequest,
+        space: EmbeddingSpace,
+        query: TextQuery,
+        vector: Sequence[float],
+    ) -> NativeRanking:
+        """Ask the backend for its hybrid answer, reranked by it when the search asks for that.
+
+        Args:
+            native: The backend.
+            request: The search: its version, tag filter, limit and rerank flag.
+            space: The space searched.
+            query: The query and its terms.
+            vector: The query's vector.
+
+        Returns:
+            The backend's hits; ``reranked`` 0 unless its own ranker reordered some.
+        """
+        manifests = [request.version.manifest_id]
+        depth = request.limit + 1  # one more tells whether the answer was cut short
+        if request.rerank and self.reranks is not None:
+            return await self.reranks.hybrid_reranked(
+                space, manifests, query, vector, request.tag_filter, depth
+            )
+        hits = await native.hybrid(space, manifests, query, vector, request.tag_filter, depth)
+        return NativeRanking(hits=tuple(hits), reranked=0)
 
     async def nearest_only(self, request: PipelineRequest) -> PipelineAnswer:
         """Rank the version's chunks by their vectors alone (``vector``): no BM25 half.

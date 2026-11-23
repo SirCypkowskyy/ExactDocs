@@ -12,6 +12,9 @@ name: Azure AI Search (real service)
 #                         Contributor and Search Index Data Contributor roles on the service
 #
 # Each test writes to indexes of its own (exactdocs-test-<random>) and deletes them afterwards.
+# The azure_search_semantic case (#473) also runs the suites with a semantic configuration, so
+# Azure's semantic ranker reranks: the service's region must offer it; its Free plan's monthly
+# semantic requests are plenty (a run makes a handful).
 
 on:
   workflow_dispatch:

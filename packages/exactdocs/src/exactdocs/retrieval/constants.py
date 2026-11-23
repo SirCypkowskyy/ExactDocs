@@ -183,8 +183,10 @@ AZURE_SEARCH_FIELD_ATTRIBUTES: Final[tuple[str, ...]] = (
     "filterable",
     "sortable",
     "facetable",
+    "retrievable",
 )
-"""The field attributes ExactDocs' queries rely on: an existing index's fields must have them."""
+"""The field attributes ExactDocs' queries rely on: an existing index's fields must have them
+(``retrievable`` only where ExactDocs asks for it: the semantic ranker's fields)."""
 AZURE_SEARCH_DELIMITERS: Final[str] = "|,;~^"
 """``search.in`` delimiters, tried in order: the first no value holds (else ``eq`` clauses)."""
 AZURE_SEARCH_DEFAULT_TIMEOUT_SECONDS: Final[int] = 10
@@ -229,9 +231,25 @@ AZURE_SEARCH_OPTIONS: Final[frozenset[str]] = frozenset(
         "index_timeout",
         "hybrid",
         "vector_search",
+        "semantic_configuration",
     }
 )
 """The options ``[index_backends.azure_search]`` takes; any other is refused at start."""
+AZURE_SEARCH_SEMANTIC_FIELDS: Final[tuple[str, str]] = ("title", "content")
+"""The plain-text fields a space's documents carry for the semantic ranker (#473), searchable
+and retrievable as a semantic configuration needs: the section's headings (its title field) and
+its text (its content field). Never searched by BM25 (``searchFields`` names the word fields) nor
+returned (``select``)."""
+AZURE_SEARCH_SEMANTIC_DEPTH: Final[int] = 50
+"""How many of a hybrid query's best results Azure's semantic ranker reranks (its most): a
+reranked query asks for at least as many, so the cut at the limit comes after the reranking."""
+AZURE_SEARCH_SEMANTIC_ERRORS: Final[str] = "partial"
+"""``semanticErrorHandling``: when the semantic ranker cannot rerank (over capacity), Azure
+answers with the hybrid order instead of failing; the hits then say they were not reranked, and
+ExactDocs' own reranker reranks them."""
+AZURE_SEARCH_SEMANTIC_NAME: Final[re.Pattern[str]] = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+"""What the ``semantic_configuration`` option may be: letters, digits, ``_`` and ``-``, at most
+128 characters."""
 AZURE_SEARCH_TRUE: Final[frozenset[str]] = frozenset({"1", "true", "yes", "on"})
 """How a switch option (``hybrid``) given as text is turned on."""
 AZURE_SEARCH_FALSE: Final[frozenset[str]] = frozenset({"0", "false", "no", "off", ""})

@@ -288,6 +288,7 @@ export EXACTDOCS_INDEX_BACKENDS__AZURE_SEARCH__API_KEY=...
 | `index_timeout` | `60` | Seconds a write waits for the index to return what it wrote (below); past it the write fails and its job is retried |
 | `hybrid` | `true` | Native hybrid search (below). The vector index only; `false` keeps the words out of the spaces' indexes |
 | `vector_search` | `approximate` | `approximate` (HNSW) or `exact` (every vector of the asked versions: exhaustive k-nearest-neighbours, exact and slower on large versions) |
+| `semantic_configuration` | unset | The name of a semantic configuration: Azure's **semantic ranker** reranks the hybrid searches that ask for reranking (below). Letters, digits, `_` and `-`, up to 128 characters; needs `hybrid = true`. Unset: the semantic ranker is never used |
 
 Both backends read the same table, so with both indexes in Azure AI Search they share the
 service.
@@ -339,9 +340,55 @@ to the version and the tags, fused by Azure with reciprocal rank fusion. With `h
 ExactDocs fuses its own search index (Azure AI Search's or the database's) with the nearest
 vectors itself. Turning it on later needs `exactdocs index rebuild` to write the words of the
 documents already there. The search across libraries (`search_all_docs`) always fuses in
-ExactDocs. The **semantic ranker** is not used: the native hybrid extension point has no rerank
-flag to map it onto yet (a follow-up); ExactDocs' own reranker, when configured, reorders the
-hybrid results as it does for every mode.
+ExactDocs.
+
+**Semantic ranker.** Azure's semantic ranker (#473) can rerank hybrid searches instead of
+ExactDocs' own reranker. Name a semantic configuration:
+
+```toml
+[index_backends.azure_search]
+endpoint = "https://contoso-docs.search.windows.net"
+semantic_configuration = "exactdocs-semantic"   # any name; ExactDocs makes it
+```
+
+and keep a reranker configured (`EXACTDOCS_AI__RERANKER__MODEL`, or a library's own): reranking
+is asked for as it always is, by the reranker role ([Reranker](search.md#reranker)). A hybrid
+search (`hybrid`, and `hybrid_hyde`'s native query) of a library that reranks is then one Azure
+request: the same hybrid query (the words, the vector, the filters to the version and the tags,
+before ranking), with `semanticConfiguration` and the query's own text as `semanticQuery`. Azure
+reranks its best 50 results; the result says `reranked: true`, its scores are the ranker's (0 to
+4), and ExactDocs' reranker is not called for that search (no cross-encoder or judge call, nothing
+recorded against ExactDocs' budgets; a budget that already turned the search's reranking off,
+`llm_budget_reached`, turns Azure's off too). Searches the semantic ranker does not answer are reranked
+as before by ExactDocs' reranker: `bm25` and `vector` searches, the search across libraries, and
+any hybrid search Azure could not rerank (the ranker over capacity: Azure answers in the hybrid
+order, `semanticErrorHandling = partial`; or the request refused, such as the Free plan's
+monthly requests used up: ExactDocs logs a warning and asks the hybrid query alone). Without a
+reranker configured nothing reranks, as today; without `semantic_configuration` the semantic
+ranker is never used.
+
+With the option, each space's documents also carry two plain-text fields the ranker reads,
+`title` (the section's headings, `Guide / Retries`) and `content` (its text, as written),
+searchable and retrievable as a semantic configuration needs but never searched by BM25 nor
+returned; the configuration ranks by them (`title` as its title field, `content` as its content
+field). A new space's index is made with them. An existing space's index without them gets them
+added in place (Azure adds fields and semantic configurations without a rebuild, and ExactDocs
+logs a warning): run `exactdocs index rebuild` once, so the documents written before carry the
+text. A configuration of that name over other fields, or a `title` / `content` field of another
+kind, is a schema mismatch: the write fails naming the index and what differs.
+
+**Setting it up.** The semantic ranker needs a region that offers it. Every service starts on
+its **Free** plan (any tier), which allows a monthly number of semantic requests (1,000 at the
+time of writing); once they are used up, semantic queries are refused until the next month.
+The **Standard** plan (the Basic tier or higher) bills each semantic request beyond the free
+ones, per 1,000 requests: see [Azure AI Search pricing](https://azure.microsoft.com/pricing/details/search/).
+Choose the plan in the portal (**Settings** > **Premium features** > **Semantic ranker**) or with
+the management API's `semanticSearch` property (`free` or `standard`). **What it costs:** every
+reranked hybrid search is one semantic request (a search that does not ask for reranking, or is
+not a native hybrid search, makes none), and the `content` field stores each chunk's text once
+more in every space's index (about what the chunks' text takes; see *Sizing*). The semantic
+ranker reads each document's first 2,000 or so tokens across `title` and `content`, more than
+ExactDocs' chunks hold.
 
 **Sizing.** One document per chunk of each version (the same section in two versions is two
 documents), so count the chunks of every indexed version. A vector takes 4 bytes per dimension
@@ -361,7 +408,8 @@ repository variable `AZURE_SEARCH_ENDPOINT` and, for `auth: api_key`, the enviro
 `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` of an app registration (or user-assigned identity) with a
 federated credential for `repo:<owner>/<repo>:environment:azure-search` and both roles above.
 Each test writes to indexes of its own (`exactdocs-test-<random>`) and deletes them, so a Free
-tier service will do. Locally:
+tier service will do. The `azure_search_semantic` cases run with a semantic configuration, so the
+service's region must offer the semantic ranker (its Free plan's requests are plenty). Locally:
 
 ```bash
 EXACTDOCS_TEST_AZURE_SEARCH_URL=https://<service>.search.windows.net \

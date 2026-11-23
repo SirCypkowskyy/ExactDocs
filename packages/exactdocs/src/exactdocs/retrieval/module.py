@@ -45,6 +45,7 @@ from exactdocs.retrieval.ports.driven import (
     ModelFactory,
     ModelRoles,
     NativeHybrid,
+    NativeRerank,
     Prices,
     ProviderProfiles,
     RenamedPaths,
@@ -216,6 +217,8 @@ class _Backends:
     """Keeps the backends in step (it does nothing without one)."""
     native: NativeHybrid | None
     """The vector backend, when it ranks hybrid searches by itself."""
+    reranks: NativeRerank | None = None
+    """The vector backend, when it also reranks its hybrid answers itself (#473)."""
 
     @property
     def mirror(self) -> ExternalIndexes | None:
@@ -282,6 +285,12 @@ class _Backends:
             vectors=vectors,
             external=external,
             native=vector_backend if isinstance(vector_backend, NativeHybrid) else None,
+            reranks=(
+                vector_backend
+                if isinstance(vector_backend, NativeHybrid)
+                and isinstance(vector_backend, NativeRerank)
+                else None
+            ),
         )
 
 
@@ -509,7 +518,8 @@ class RetrievalModule:
                 is still written.
             vector_backend: An external vector backend (#352): it answers the vector searches
                 of ``vectors``' spaces, which keep every vector; a ``NativeHybrid`` one also
-                ranks ``hybrid`` by itself.
+                ranks ``hybrid`` by itself, and a ``NativeRerank`` one reranks it too when the
+                search asks for reranking.
             stored_vectors: Reads ``vectors``' stored vectors back; needed with
                 ``vector_backend``.
             external_retry_seconds: The first wait before a write a backend did not take is
@@ -597,6 +607,7 @@ class RetrievalModule:
                 tracer=tracer,
                 timeout=query_embedding_timeout,
                 native=backends.native,
+                reranks=backends.reranks,
             )
             built[RetrievalMode.HYBRID] = hybrid
             built[RetrievalMode.VECTOR] = VectorPipeline(hybrid=hybrid)

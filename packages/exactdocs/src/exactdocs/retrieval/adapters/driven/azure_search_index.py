@@ -19,7 +19,13 @@ returns once the index counts them all (a delete: once it counts none of them).
 
 With the ``hybrid`` option (on by default) a space's documents carry the words too, and
 ``hybrid`` is one Azure hybrid query (BM25 and the vector query, fused by Azure with reciprocal
-rank fusion). The semantic ranker is not used: the ``NativeHybrid`` port has no rerank flag yet.
+rank fusion). With the ``semantic_configuration`` option too (#473), the backend is a
+``NativeRerank`` one: a space's documents also carry their headings and text as plain text
+(``title``, ``content``), its index has a semantic configuration of that name over them (added to
+an existing index when missing; one of that name over other fields is refused), and a search that
+asks for reranking is one hybrid query reranked by Azure's semantic ranker (``semanticQuery``, the
+query's text; the BM25 half keeps its escaped full Lucene query). When the ranker cannot rerank
+(over capacity), Azure answers in the hybrid order and the hits say they were not reranked.
 
 Requests go through azure-core's ``AsyncioRequestsTransport`` (no aiohttp); the tests inject an
 in-process fake of the REST API as the transport. Credentials are an admin API key (from the
@@ -35,6 +41,7 @@ import asyncio
 import base64
 import functools
 import json
+import logging
 import re
 import secrets
 import time
@@ -45,6 +52,7 @@ from types import TracebackType
 from typing import Any, Self
 from urllib.parse import urlsplit
 
+from azure.core import MatchConditions
 from azure.core.credentials import AccessToken, AzureKeyCredential, TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import (
@@ -85,6 +93,10 @@ from exactdocs.retrieval.constants import (
     AZURE_SEARCH_POLL_SECONDS,
     AZURE_SEARCH_RETRIES,
     AZURE_SEARCH_SCORING_PROFILE,
+    AZURE_SEARCH_SEMANTIC_DEPTH,
+    AZURE_SEARCH_SEMANTIC_ERRORS,
+    AZURE_SEARCH_SEMANTIC_FIELDS,
+    AZURE_SEARCH_SEMANTIC_NAME,
     AZURE_SEARCH_SORTED_FIELDS,
     AZURE_SEARCH_SPACE,
     AZURE_SEARCH_TEXT_FIELDS,
@@ -109,6 +121,7 @@ from exactdocs.retrieval.models import (
     HeldVersion,
     IndexedManifest,
     IndexEntry,
+    NativeRanking,
     TagFilter,
     TagMatch,
     TextQuery,
@@ -120,6 +133,8 @@ from exactdocs.retrieval.models import (
 type Document = dict[str, Any]
 type Credential = AzureKeyCredential | AsyncTokenCredential
 type Transport = Callable[[], AsyncHttpTransport]
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------- documents and queries
@@ -161,13 +176,15 @@ def _text_fields(entry: IndexEntry) -> Document:
     )
 
 
-def _document(entry: IndexEntry, write_id: str, *, words: bool) -> Document:
+def _document(entry: IndexEntry, write_id: str, *, words: bool, semantic: bool = False) -> Document:
     """Return the document of an entry, without its vector.
 
     Args:
         entry: The entry.
         write_id: The mark of the write that puts it.
         words: Whether it carries the words (the search index, a hybrid space).
+        semantic: Whether it carries its headings and text as plain text, for the semantic
+            ranker (a space with a semantic configuration).
 
     Returns:
         The document.
@@ -182,19 +199,64 @@ def _document(entry: IndexEntry, write_id: str, *, words: bool) -> Document:
         "tags": list(entry.tags),
         "write_id": write_id,
     }
+    if semantic:
+        title, content = AZURE_SEARCH_SEMANTIC_FIELDS
+        document |= {title: " / ".join(entry.heading_path), content: entry.content}
     return document | _text_fields(entry) if words else document
 
 
-def _definition(name: str, dimensions: int | None) -> Document:
+def _semantic_configuration(name: str) -> Document:
+    """Return ExactDocs' semantic configuration of a space's index (REST shape).
+
+    Args:
+        name: The ``semantic_configuration`` option.
+
+    Returns:
+        The configuration: the headings as its title field, the text as its content field.
+    """
+    title, content = AZURE_SEARCH_SEMANTIC_FIELDS
+    return {
+        "name": name,
+        "prioritizedFields": {
+            "titleField": {"fieldName": title},
+            "prioritizedContentFields": [{"fieldName": content}],
+        },
+    }
+
+
+def _semantic_fields() -> list[Document]:
+    """Return the plain-text fields the semantic ranker reads (REST shape).
+
+    Returns:
+        ``title`` and ``content``: searchable and retrievable strings (what a semantic
+        configuration's fields must be), with the default analyzer; never filtered on.
+    """
+    return [
+        {
+            "name": name,
+            "type": "Edm.String",
+            "searchable": True,
+            "retrievable": True,
+            "filterable": False,
+            "sortable": False,
+            "facetable": False,
+        }
+        for name in AZURE_SEARCH_SEMANTIC_FIELDS
+    ]
+
+
+def _definition(name: str, dimensions: int | None, semantic: str | None = None) -> Document:
     """Return the definition of an ExactDocs index (REST shape).
 
     Args:
         name: The index.
         dimensions: A space's dimensions; ``None`` for the search index (no vector field).
+        semantic: A space's semantic configuration (``semantic_configuration``), if any.
 
     Returns:
         The definition: the key, the filter fields, the words (whitespace analyzer, BM25, the
-        scoring profile) and, for a space, the vector field and its HNSW profile (cosine).
+        scoring profile) and, for a space, the vector field and its HNSW profile (cosine); with
+        ``semantic``, the plain-text fields and the semantic configuration over them.
     """
     plain = {"searchable": False, "filterable": False, "sortable": False, "facetable": False}
     fields: list[Document] = [
@@ -235,6 +297,9 @@ def _definition(name: str, dimensions: int | None) -> Document:
     }
     if dimensions is None:
         return definition
+    if semantic is not None:
+        fields.extend(_semantic_fields())
+        definition["semantic"] = {"configurations": [_semantic_configuration(semantic)]}
     fields.append(
         {
             "name": AZURE_SEARCH_VECTOR_FIELD,
@@ -330,6 +395,79 @@ def _mismatch(wanted: Document, found: Document) -> str | None:
     return None
 
 
+def _prioritized(configuration: Document) -> tuple[str | None, tuple[str, ...], tuple[str, ...]]:
+    """Return the fields a semantic configuration ranks by.
+
+    Args:
+        configuration: The configuration (REST shape).
+
+    Returns:
+        Its title field, its content fields and its keyword fields, in their order.
+    """
+    fields = configuration.get("prioritizedFields") or {}
+    title = (fields.get("titleField") or {}).get("fieldName")
+    content = tuple(f.get("fieldName") for f in fields.get("prioritizedContentFields") or [])
+    keywords = tuple(f.get("fieldName") for f in fields.get("prioritizedKeywordsFields") or [])
+    return title, content, keywords
+
+
+def _semantic_mismatch(name: str, found: Document) -> str | None:
+    """Say how an index's semantic parts differ from ExactDocs' (``None``: they serve, or are none).
+
+    Missing parts (the plain-text fields, the configuration) can be added to the index; a field
+    of that name of another kind, or a configuration of that name over other fields, cannot.
+
+    Args:
+        name: The ``semantic_configuration`` option.
+        found: The index's definition.
+
+    Returns:
+        The first difference, or ``None``.
+    """
+    fields = {f.get("name"): f for f in found.get("fields") or []}
+    for spec in _semantic_fields():
+        existing = fields.get(spec["name"])
+        problem = None if existing is None else _field_mismatch(spec, existing)
+        if problem:
+            return problem
+    configurations = (found.get("semantic") or {}).get("configurations") or []
+    existing = next((c for c in configurations if c.get("name") == name), None)
+    if existing is not None and _prioritized(existing) != _prioritized(
+        _semantic_configuration(name)
+    ):
+        title, content = AZURE_SEARCH_SEMANTIC_FIELDS
+        return (
+            f"its semantic configuration {name!r} ranks other fields than {title!r} (title) and "
+            f"{content!r} (content)"
+        )
+    return None
+
+
+def _with_semantic(name: str, found: Document) -> Document | None:
+    """Return the index's definition with the missing semantic parts added.
+
+    Args:
+        name: The ``semantic_configuration`` option.
+        found: The index's definition, which ``_semantic_mismatch`` accepted.
+
+    Returns:
+        The definition to update the index with (its etag kept, so a concurrent change is not
+        overwritten), or ``None`` when nothing is missing.
+    """
+    names = {f.get("name") for f in found.get("fields") or []}
+    missing = [spec for spec in _semantic_fields() if spec["name"] not in names]
+    semantic = dict(found.get("semantic") or {})
+    configurations = list(semantic.get("configurations") or [])
+    has_configuration = any(c.get("name") == name for c in configurations)
+    if not missing and has_configuration:
+        return None
+    if not has_configuration:
+        configurations.append(_semantic_configuration(name))
+    semantic["configurations"] = configurations
+    kept = {k: v for k, v in found.items() if not k.startswith("@odata.") or k == "@odata.etag"}
+    return kept | {"fields": [*(found.get("fields") or []), *missing], "semantic": semantic}
+
+
 def _literal(value: str) -> str:
     """Quote a string for an OData filter.
 
@@ -413,6 +551,10 @@ class _Query:
     """The facet expressions."""
     total: bool = False
     """Whether to count every match (``$count``)."""
+    semantic: str | None = None
+    """The semantic configuration that reranks the results, if any (``semanticConfiguration``)."""
+    semantic_query: str | None = None
+    """The plain text the semantic ranker reads (``semanticQuery``); with ``semantic``."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -447,6 +589,34 @@ def _hits(rows: Sequence[Document], limit: int) -> list[BackendHit]:
     ]
     hits.sort(key=lambda h: (-h.score, h.chunk_id, h.manifest_id))
     return hits[:limit]
+
+
+def _reranked(rows: Sequence[Document], limit: int) -> NativeRanking:
+    """Turn the results of a semantically reranked query into hits.
+
+    Args:
+        rows: The results; those the semantic ranker scored carry ``@search.reranker_score``
+            (none of them when it could not rerank: Azure's partial answer).
+        limit: The most hits.
+
+    Returns:
+        The reranked hits first, by the ranker's score (0 to 4), then the others in the hybrid
+        order (Azure reranks the best ``AZURE_SEARCH_SEMANTIC_DEPTH`` only); ties by chunk ID,
+        then manifest ID. ``reranked`` counts the ranker's hits kept.
+    """
+    head = [
+        BackendHit(
+            manifest_id=str(row["manifest_id"]),
+            chunk_id=ChunkId(str(row["chunk_id"])),
+            score=float(row["@search.reranker_score"]),
+        )
+        for row in rows
+        if row.get("@search.reranker_score") is not None
+    ]
+    head.sort(key=lambda h: (-h.score, h.chunk_id, h.manifest_id))
+    rest = [row for row in rows if row.get("@search.reranker_score") is None]
+    hits = [*head, *_hits(rest, len(rest))][:limit]
+    return NativeRanking(hits=tuple(hits), reranked=min(len(head), len(hits)))
 
 
 # ---------------------------------------------------------------- errors
@@ -718,20 +888,27 @@ class _Service:
             reason = _reason(error, self.connection.hidden)
             raise IndexBackendUnavailableError(self.name, reason) from error
 
-    async def ensure(self, index: str, dimensions: int | None) -> None:
+    async def ensure(self, index: str, dimensions: int | None, semantic: str | None = None) -> None:
         """Create the index when it is missing; refuse one with another schema.
+
+        With ``semantic``, an existing index without the semantic configuration (or its
+        plain-text fields) gets them added in place: Azure adds fields and semantic
+        configurations without a rebuild, but the documents written before carry no plain text
+        until ``exactdocs index rebuild`` writes them again (a warning says so).
 
         Args:
             index: The index.
             dimensions: A space's dimensions; ``None`` for the search index.
+            semantic: A space's semantic configuration (``semantic_configuration``), if any.
 
         Raises:
-            IndexBackendUnavailableError: The index exists with another schema, or the service
-                did not answer.
+            IndexBackendUnavailableError: The index exists with another schema (a semantic
+                configuration of that name over other fields included), or the service did not
+                answer.
         """
         if index in self._ready:
             return
-        wanted = _definition(index, dimensions)
+        wanted = _definition(index, dimensions, semantic)
         found = await self._definition_of(index)
         if found is None:
             try:
@@ -741,14 +918,42 @@ class _Service:
             except AzureError as error:
                 reason = _reason(error, self.connection.hidden)
                 raise IndexBackendUnavailableError(self.name, reason) from error
-        problem = None if found is None else _mismatch(wanted, found)
+        problem = None if found is None else _mismatch(_definition(index, dimensions), found)
+        if found is not None and semantic is not None:
+            problem = problem or _semantic_mismatch(semantic, found)
         if problem:
             message = (
                 f"the index {index!r} does not have ExactDocs' schema ({problem}): delete it, "
                 "or set another index, then run `exactdocs index rebuild`"
             )
             raise IndexBackendUnavailableError(self.name, message)
+        if found is not None and semantic is not None:
+            await self._add_semantic(index, semantic, found)
         self._ready.add(index)
+
+    async def _add_semantic(self, index: str, semantic: str, found: Document) -> None:
+        """Add the semantic configuration and its fields to an existing index that lacks them.
+
+        Args:
+            index: The index.
+            semantic: The ``semantic_configuration`` option.
+            found: The index's definition, which serves otherwise.
+        """
+        updated = _with_semantic(semantic, found)
+        if updated is None:
+            return
+        await self.call(
+            self.indexes.create_or_update_index(
+                updated, match_condition=MatchConditions.IfNotModified
+            )
+        )
+        logger.warning(
+            "%s: added the semantic configuration %r to the index %r; run `exactdocs index "
+            "rebuild` so the documents written before carry the text the semantic ranker reads",
+            self.name,
+            semantic,
+            index,
+        )
 
     async def _definition_of(self, index: str) -> Document | None:
         """Read an index's definition.
@@ -834,6 +1039,10 @@ class _Service:
                     top=query.top,
                     facets=list(query.facets) or None,
                     include_total_count=query.total or None,
+                    # The ranker reads the query's plain text; the words above stay full Lucene.
+                    semantic_configuration_name=query.semantic,
+                    semantic_query=query.semantic_query if query.semantic else None,
+                    semantic_error_mode=AZURE_SEARCH_SEMANTIC_ERRORS if query.semantic else None,
                 )
                 rows = [dict(row) async for row in results]
                 facets = await results.get_facets() if query.facets else None
@@ -1141,6 +1350,9 @@ class AzureVectorBackend:
     """Whether the documents carry the words too (``hybrid``)."""
     exact: bool = False
     """``vector_search = "exact"``: every vector of the asked versions, not HNSW."""
+    semantic: str | None = None
+    """``semantic_configuration`` (#473): the documents also carry their headings and text as
+    plain text, and the spaces' indexes this semantic configuration over them."""
 
     @property
     def name(self) -> str:
@@ -1193,10 +1405,11 @@ class AzureVectorBackend:
         if not with_vectors:
             return
         index = self.space_index(space.id)
-        await self.service.ensure(index, space.spec.dimensions)
+        await self.service.ensure(index, space.spec.dimensions, self.semantic)
         write_id = secrets.token_hex(8)
+        semantic = self.semantic is not None
         documents = {
-            (e.manifest_id, e.chunk_id): _document(e, write_id, words=self.words)
+            (e.manifest_id, e.chunk_id): _document(e, write_id, words=self.words, semantic=semantic)
             | {AZURE_SEARCH_VECTOR_FIELD: list(as_float32(e.vector or ()))}
             for e in with_vectors
         }
@@ -1328,6 +1541,74 @@ class AzureVectorBackend:
             ),
         )
         return _hits(answer.rows, limit)
+
+    async def semantic_search(
+        self,
+        space: EmbeddingSpace,
+        manifest_ids: Sequence[str],
+        query: TextQuery,
+        vector: Sequence[float],
+        tag_filter: TagFilter,
+        limit: int,
+    ) -> NativeRanking:
+        """Rank with one Azure hybrid query reranked by the semantic ranker (``semantic``).
+
+        The words and the vector are asked as ``hybrid_search`` asks them (the same filter,
+        before ranking), with ``semanticConfiguration`` and the query's text as
+        ``semanticQuery``; at least ``AZURE_SEARCH_SEMANTIC_DEPTH`` results are asked, so the
+        cut at ``limit`` comes after the reranking. A request the service refuses (the Free
+        plan's monthly semantic requests used up) is asked again without the ranker, with a
+        warning.
+
+        Args:
+            space: The space.
+            manifest_ids: The versions searched.
+            query: The query and its terms; the ranker reads its text.
+            vector: The query's vector.
+            tag_filter: Which chunks may be returned.
+            limit: The most hits.
+
+        Returns:
+            The hits, the reranked ones first; without a semantic configuration or a query
+            text, or when the ranker was refused, the hybrid query's, none reranked.
+
+        Raises:
+            IndexBackendUnavailableError: The service did not answer.
+        """
+        text = " ".join(query.text.split())
+        if self.semantic is None or not text:
+            hits = await self.hybrid_search(space, manifest_ids, query, vector, tag_filter, limit)
+            return NativeRanking(hits=tuple(hits), reranked=0)
+        if not manifest_ids or limit < 1:
+            return NativeRanking(hits=(), reranked=0)
+        wanted = max(limit + AZURE_SEARCH_TIE_MARGIN, AZURE_SEARCH_SEMANTIC_DEPTH)
+        try:
+            answer = await self.service.search(
+                self.space_index(space.id),
+                _Query(
+                    where=_filter(manifest_ids, tag_filter),
+                    terms=query.terms,
+                    vectors=(self._vector_query(vector, max(wanted, RRF_DEPTH)),),
+                    top=wanted,
+                    semantic=self.semantic,
+                    semantic_query=text,
+                ),
+            )
+        except IndexBackendUnavailableError as error:
+            refused = error.__cause__
+            if not isinstance(refused, HttpResponseError):
+                raise  # the service did not answer: the plain query would not either
+            # The service refused the ranker (its plan's monthly requests used up, the
+            # configuration deleted): the hybrid query alone, so ExactDocs' reranker reranks.
+            logger.warning(
+                "%s: the semantic ranker refused the search (HTTP %s: %s); answering without it",
+                self.name,
+                refused.status_code,
+                _short(_server_message(refused), self.service.connection.hidden),
+            )
+            hits = await self.hybrid_search(space, manifest_ids, query, vector, tag_filter, limit)
+            return NativeRanking(hits=tuple(hits), reranked=0)
+        return _reranked(answer.rows, limit)
 
     def _vector_query(self, vector: Sequence[float], k: int) -> VectorizedQuery:
         """Return the vector query of a search.
@@ -1473,6 +1754,40 @@ class AzureHybridVectorBackend:
             The hits, best first.
         """
         return await self.vectors.hybrid_search(
+            space, manifest_ids, query, vector, tag_filter, limit
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AzureSemanticVectorBackend(AzureHybridVectorBackend):
+    """``AzureHybridVectorBackend`` with ``NativeRerank``: Azure's semantic ranker reranks (#473).
+
+    Built when ``semantic_configuration`` names a semantic configuration (``vectors.semantic``).
+    """
+
+    async def hybrid_reranked(
+        self,
+        space: EmbeddingSpace,
+        manifest_ids: Sequence[str],
+        query: TextQuery,
+        vector: Sequence[float],
+        tag_filter: TagFilter,
+        limit: int,
+    ) -> NativeRanking:
+        """Rank with one Azure hybrid query reranked by the semantic ranker.
+
+        Args:
+            space: The space.
+            manifest_ids: The versions searched.
+            query: The query and its terms.
+            vector: The query's vector.
+            tag_filter: Which chunks may be returned.
+            limit: The most hits.
+
+        Returns:
+            The hits, the reranked ones first, and how many were reranked.
+        """
+        return await self.vectors.semantic_search(
             space, manifest_ids, query, vector, tag_filter, limit
         )
 
@@ -1728,6 +2043,34 @@ def _vector_search(options: Mapping[str, object]) -> bool:
     return search == "exact"
 
 
+def _semantic(options: Mapping[str, object], *, hybrid: bool) -> str | None:
+    """Read ``semantic_configuration``.
+
+    Args:
+        options: The options.
+        hybrid: Whether ``hybrid`` is on (the semantic ranker reranks native hybrid answers).
+
+    Returns:
+        The semantic configuration's name, or ``None`` when unset.
+
+    Raises:
+        ValueError: It is not a valid name, or ``hybrid`` is off.
+    """
+    name = _text(options, "semantic_configuration")
+    if name is None:
+        return None
+    if not AZURE_SEARCH_SEMANTIC_NAME.fullmatch(name):
+        message = (
+            f"semantic_configuration {name!r} must be 1 to 128 letters, digits, _ and -, "
+            "starting with a letter or digit"
+        )
+        raise ValueError(message)
+    if not hybrid:
+        message = "semantic_configuration reranks native hybrid searches: it needs hybrid = true"
+        raise ValueError(message)
+    return name
+
+
 def search_backend(
     options: Mapping[str, object],
     *,
@@ -1740,8 +2083,8 @@ def search_backend(
     ``auth`` (``api_key`` when a key is given, else ``default``; or ``managed_identity``),
     ``api_key`` (from the environment only) or ``api_key_file``, ``client_id`` (a user-assigned
     managed identity), ``audience`` (a sovereign cloud's), ``timeout`` (seconds, 10),
-    ``index_timeout`` (seconds, 60), and the vector backend's ``hybrid`` and ``vector_search``.
-    An invalid option raises ``ValueError``.
+    ``index_timeout`` (seconds, 60), and the vector backend's ``hybrid``, ``vector_search`` and
+    ``semantic_configuration``. An invalid option raises ``ValueError``.
 
     Args:
         options: The options.
@@ -1751,7 +2094,7 @@ def search_backend(
     Returns:
         The backend, not connected yet.
     """
-    _switch(options, "hybrid", default=True)
+    _semantic(options, hybrid=_switch(options, "hybrid", default=True))
     _vector_search(options)
     return AzureSearchBackend(
         service=_Service(connection=_connection(options, transport, credential))
@@ -1763,12 +2106,14 @@ def vector_backend(
     *,
     transport: Transport | None = None,
     credential: TokenCredential | None = None,
-) -> AzureVectorBackend | AzureHybridVectorBackend:
+) -> AzureVectorBackend | AzureHybridVectorBackend | AzureSemanticVectorBackend:
     """Build the Azure AI Search vector backend from its ``[index_backends.azure_search]`` options.
 
     Options as ``search_backend``'s, and ``hybrid`` (native hybrid search, on: a space's
-    documents carry the words too) and ``vector_search`` (``approximate``, HNSW, or ``exact``).
-    An invalid option raises ``ValueError``.
+    documents carry the words too), ``vector_search`` (``approximate``, HNSW, or ``exact``) and
+    ``semantic_configuration`` (the name of the semantic configuration whose semantic ranker
+    reranks hybrid searches that ask for reranking; unset: never used). An invalid option raises
+    ``ValueError``.
 
     Args:
         options: The options.
@@ -1776,12 +2121,17 @@ def vector_backend(
         credential: A sync Entra ID credential instead of the one ``auth`` names (tests).
 
     Returns:
-        The backend, not connected yet; with ``NativeHybrid`` when ``hybrid`` is on.
+        The backend, not connected yet; with ``NativeHybrid`` when ``hybrid`` is on, and
+        ``NativeRerank`` too with ``semantic_configuration``.
     """
     hybrid = _switch(options, "hybrid", default=True)
+    semantic = _semantic(options, hybrid=hybrid)
     vectors = AzureVectorBackend(
         service=_Service(connection=_connection(options, transport, credential)),
         words=hybrid,
         exact=_vector_search(options),
+        semantic=semantic,
     )
+    if semantic is not None:
+        return AzureSemanticVectorBackend(vectors=vectors)
     return AzureHybridVectorBackend(vectors=vectors) if hybrid else vectors

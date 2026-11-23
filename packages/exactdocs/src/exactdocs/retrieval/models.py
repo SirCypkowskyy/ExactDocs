@@ -940,6 +940,18 @@ class BackendHit:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class NativeRanking:
+    """A hybrid answer an external backend reranked with its own ranker (``NativeRerank``)."""
+
+    hits: tuple[BackendHit, ...]
+    """The hits, best first: the reranked ones (scored by the backend's ranker), then the rest
+    in the hybrid order."""
+    reranked: int
+    """How many of the first ``hits`` the backend's ranker reordered; 0 when it could not rerank
+    this time (the hits then keep the hybrid order)."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class BackendNeighbour:
     """A chunk an external vector backend found near a query vector."""
 

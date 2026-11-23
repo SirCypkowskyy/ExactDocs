@@ -38,6 +38,7 @@ from exactdocs.retrieval.dtos import (
 )
 from exactdocs.retrieval.errors import EmbeddingFailedError, ProviderUnsupportedError
 from exactdocs.retrieval.models import (
+    BackendHit,
     BudgetLimit,
     Budgets,
     ChunkId,
@@ -52,6 +53,7 @@ from exactdocs.retrieval.models import (
     ModelCheck,
     ModelRef,
     ModelRole,
+    NativeRanking,
     PipelineRequest,
     ProfileOrigin,
     ProviderKind,
@@ -67,7 +69,13 @@ from exactdocs.retrieval.models import (
     reciprocal_rank_fusion,
 )
 from exactdocs.retrieval.module import RetrievalModule
-from exactdocs.retrieval.ports.driven import Reranker, RetrievalPipeline, VectorBackend
+from exactdocs.retrieval.ports.driven import (
+    NativeHybrid,
+    NativeRerank,
+    Reranker,
+    RetrievalPipeline,
+    VectorBackend,
+)
 from exactdocs.retrieval.use_cases import SearchDocsUseCase
 
 LIB = "/acme/payments"
@@ -912,3 +920,151 @@ async def test_a_vector_backend_that_does_not_answer_falls_back_to_bm25() -> Non
             FallbackReason.VECTOR_STORE_UNAVAILABLE,
         )
         assert _texts(result)[0] == "Resilience/S0"
+
+
+# ---------------------------------------------------------------- a backend's own reranker (#473)
+
+
+@dataclass(slots=True)
+class RerankingHere:
+    """A ``NativeHybrid`` backend with ``NativeRerank``: its ranker reverses its hybrid order.
+
+    With ``partial`` its ranker cannot rerank (the hybrid order, ``reranked`` 0), as Azure AI
+    Search answers when its semantic ranker is over capacity; ``stray`` adds a hit of another
+    version, which the domain must drop.
+    """
+
+    inner: InMemoryVectorBackend = field(default_factory=InMemoryVectorBackend)
+    name: str = "reranking"
+    partial: bool = False
+    stray: BackendHit | None = None
+    asked: list[str] = field(default_factory=list)
+
+    async def open(self) -> None:
+        await self.inner.open()
+
+    async def close(self) -> None:
+        await self.inner.close()
+
+    async def put(self, space, manifest, entries) -> None:
+        await self.inner.put(space, manifest, entries)
+
+    async def remove(self, space_id, manifest_id, chunk_ids) -> None:
+        await self.inner.remove(space_id, manifest_id, chunk_ids)
+
+    async def delete(self, manifest_ids) -> None:
+        await self.inner.delete(manifest_ids)
+
+    async def drop_space(self, space_id) -> None:
+        await self.inner.drop_space(space_id)
+
+    async def held(self, space_id, library):
+        return await self.inner.held(space_id, library)
+
+    async def nearest(self, space, manifest_ids, query, tag_filter, limit):
+        return await self.inner.nearest(space, manifest_ids, query, tag_filter, limit)
+
+    async def hybrid(self, space, manifest_ids, query, vector, tag_filter, limit):
+        self.asked.append("hybrid")
+        return await self.inner.hybrid(space, manifest_ids, query, vector, tag_filter, limit)
+
+    async def hybrid_reranked(
+        self, space, manifest_ids, query, vector, tag_filter, limit
+    ) -> NativeRanking:
+        self.asked.append(f"reranked:{query.text}")
+        hits = list(await self.inner.hybrid(space, manifest_ids, query, vector, tag_filter, limit))
+        if self.stray is not None:
+            hits.insert(0, self.stray)
+        if self.partial:
+            return NativeRanking(hits=tuple(hits), reranked=0)
+        reranked = [
+            BackendHit(manifest_id=h.manifest_id, chunk_id=h.chunk_id, score=float(i))
+            for i, h in enumerate(hits, start=1)
+        ]
+        return NativeRanking(hits=tuple(reversed(reranked)), reranked=len(hits))
+
+
+def test_the_reranking_stand_in_is_a_native_hybrid_backend_that_reranks() -> None:
+    backend = RerankingHere()
+    assert isinstance(backend, NativeHybrid)
+    assert isinstance(backend, NativeRerank)
+    assert not isinstance(InMemoryVectorBackend(), NativeRerank)  # the others keep today's way
+
+
+async def test_a_reranked_hybrid_search_is_reranked_by_the_backends_own_ranker() -> None:
+    backend = RerankingHere()
+    world = await _embedded_world(vector_backend=backend, reranker=True)
+    plain = await _embedded_world(vector_backend=InMemoryVectorBackend())
+    hybrid = await _search(plain, "repeat failed requests", limit=50)
+
+    result = await _search(world, "repeat failed requests", limit=50)
+
+    assert (result.retrieval_mode, result.reranked, result.fallback_reason) == (
+        RetrievalMode.HYBRID,
+        True,
+        None,
+    )
+    assert backend.asked == ["reranked:repeat failed requests"]  # one request, the query's text
+    assert _texts(result) == list(reversed(_texts(hybrid)))  # the backend's ranker's order
+    assert result.coverage.reranked == len(result.results)
+    assert world.factory.cross_encoder.seen == []  # ExactDocs' reranker did not rerank again
+    assert {r.commit_sha for r in result.results} == {"2" * 40}  # never the other version
+
+
+async def test_a_search_that_does_not_ask_for_reranking_is_not_reranked_by_the_backend() -> None:
+    backend = RerankingHere()
+    world = await _embedded_world(vector_backend=backend)  # no reranker: the flag is off
+
+    result = await _search(world, "repeat failed requests")
+
+    assert (result.retrieval_mode, result.reranked) == (RetrievalMode.HYBRID, False)
+    assert backend.asked == ["hybrid"]
+
+
+async def test_an_answer_the_backend_could_not_rerank_is_reranked_by_exactdocs() -> None:
+    backend = RerankingHere(partial=True)
+    world = await _embedded_world(vector_backend=backend, reranker=True)
+
+    result = await _search(world, "repeat failed requests")
+
+    assert (result.retrieval_mode, result.reranked, result.fallback_reason) == (
+        RetrievalMode.HYBRID,
+        True,
+        None,
+    )
+    assert backend.asked == ["reranked:repeat failed requests"]
+    assert world.factory.cross_encoder.seen  # ExactDocs' own reranker, as without the capability
+
+
+async def test_a_backend_without_its_own_ranker_leaves_reranking_to_exactdocs() -> None:
+    world = await _embedded_world(vector_backend=InMemoryVectorBackend(), reranker=True)
+
+    result = await _search(world, "repeat failed requests")
+
+    assert (result.retrieval_mode, result.reranked) == (RetrievalMode.HYBRID, True)
+    assert world.factory.cross_encoder.seen  # today's behaviour
+
+
+async def test_a_hit_of_another_version_the_ranker_returns_is_dropped() -> None:
+    backend = RerankingHere(stray=BackendHit(manifest_id="m1", chunk_id=ChunkId("x"), score=9))
+    world = await _embedded_world(vector_backend=backend, reranker=True)
+
+    result = await _search(world, "repeat failed requests", limit=50)
+
+    assert result.reranked
+    assert {r.commit_sha for r in result.results} == {"2" * 40}
+    assert "x" not in {r.chunk_id for r in result.results}
+    assert result.coverage.reranked == len(result.results)
+
+
+async def test_a_backend_ranker_that_does_not_answer_falls_back_to_bm25() -> None:
+    backend = RerankingHere()
+    world = await _embedded_world(vector_backend=backend, reranker=True)
+    backend.inner.unavailable = True
+
+    result = await _search(world, "RetryPolicy")
+
+    assert (result.retrieval_mode, result.fallback_reason) == (
+        RetrievalMode.BM25,
+        FallbackReason.VECTOR_STORE_UNAVAILABLE,
+    )

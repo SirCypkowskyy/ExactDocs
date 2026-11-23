@@ -5,7 +5,9 @@ so CI runs every contract case without Azure. With ``EXACTDOCS_TEST_AZURE_SEARCH
 service's endpoint) the same cases also run against a real service: the API key from
 ``EXACTDOCS_TEST_AZURE_SEARCH_KEY``, or Entra ID (``DefaultAzureCredential``: the manual workflow
 signs in with ``azure/login``) when it is unset. Each case writes to indexes of its own
-(``exactdocs-test-<random>``) and deletes them afterwards.
+(``exactdocs-test-<random>``) and deletes them afterwards. The ``*_semantic`` cases name a
+semantic configuration (#473), so the semantic ranker reranks: on a real service, its semantic
+ranker must be enabled (any plan; the Free plan's monthly requests are plenty).
 """
 
 import os
@@ -27,6 +29,8 @@ from exactdocs.retrieval.ports import SearchBackend, VectorBackend
 URL_VARIABLE = "EXACTDOCS_TEST_AZURE_SEARCH_URL"
 KEY_VARIABLE = "EXACTDOCS_TEST_AZURE_SEARCH_KEY"
 REQUIRE_VARIABLE = "EXACTDOCS_REQUIRE_AZURE_SEARCH"
+SEMANTIC_CONFIGURATION = "exactdocs-semantic"
+"""The ``semantic_configuration`` of the semantic cases (#473): the semantic ranker reranks."""
 
 type Factory[T] = Callable[[], AbstractAsyncContextManager[T]]
 
@@ -86,13 +90,16 @@ def _search_case(options: Callable[[], dict[str, Any]], *, fake: bool) -> Factor
 
 
 def _vector_case(
-    options: Callable[[], dict[str, Any]], *, fake: bool, hybrid: bool
+    options: Callable[[], dict[str, Any]], *, fake: bool, hybrid: bool, semantic: bool = False
 ) -> Factory[VectorBackend]:
     @asynccontextmanager
     async def case() -> AsyncGenerator[VectorBackend]:
         service = FakeSearchService() if fake else None
         transport = service.transport if service is not None else None
-        backend = vector_backend(options() | {"hybrid": hybrid}, transport=transport)
+        more: dict[str, Any] = {"hybrid": hybrid}
+        if semantic:
+            more["semantic_configuration"] = SEMANTIC_CONFIGURATION
+        backend = vector_backend(options() | more, transport=transport)
         await backend.open()
         try:
             yield backend
@@ -120,6 +127,11 @@ def cases() -> list[tuple[str, Factory[SearchBackend] | None, Factory[VectorBack
             _vector_case(fake_options, fake=True, hybrid=True),
         ),
         ("azure_search_fake_plain", None, _vector_case(fake_options, fake=True, hybrid=False)),
+        (
+            "azure_search_fake_semantic",
+            None,
+            _vector_case(fake_options, fake=True, hybrid=True, semantic=True),
+        ),
     ]
     if real_url() is not None:
         found += [
@@ -129,5 +141,10 @@ def cases() -> list[tuple[str, Factory[SearchBackend] | None, Factory[VectorBack
                 _vector_case(real_options, fake=False, hybrid=True),
             ),
             ("azure_search_plain", None, _vector_case(real_options, fake=False, hybrid=False)),
+            (
+                "azure_search_semantic",
+                None,
+                _vector_case(real_options, fake=False, hybrid=True, semantic=True),
+            ),
         ]
     return found

@@ -5,8 +5,9 @@ The contract suites (``test_search_index.py``, ``test_vector_index.py``,
 (``azure_search_fake.py``, plugged in as the azure-core transport). Here: the options, the index
 lifecycle (made when missing, dimensions from the embedding model, a schema mismatch refused with
 a clear message), what the documents carry, the filters sent to Azure, writes that wait for near
-real time indexing, native hybrid in one request, and both kinds of credentials, the key never
-shown.
+real time indexing, native hybrid in one request, the semantic ranker reranking it (#473: the
+semantic configuration made or added, the request shape, a ranker over capacity), and both kinds
+of credentials, the key never shown.
 """
 
 import logging
@@ -27,6 +28,7 @@ from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.azure_search_index import (
     AzureHybridVectorBackend,
     AzureSearchBackend,
+    AzureSemanticVectorBackend,
     AzureVectorBackend,
     _ThreadedCredential,
     search_backend,
@@ -45,7 +47,7 @@ from exactdocs.retrieval.models import (
     TextQuery,
     search_terms,
 )
-from exactdocs.retrieval.ports import NativeHybrid
+from exactdocs.retrieval.ports import NativeHybrid, NativeRerank
 
 T0 = datetime(2026, 11, 23, 12, 0, tzinfo=UTC)
 LIB = "/acme/payments"
@@ -486,3 +488,265 @@ async def test_ids_and_tags_with_quotes_and_delimiters_are_filtered_exactly(
     assert service.bodies[-1]["filter"].startswith("(manifest_id eq 'm''1|,;~^')")
     await search.delete([odd.manifest_id])
     assert [h.manifest_id for h in await search.held(None)] == ["m2"]
+
+
+# ---------------------------------------------------------------- the semantic ranker (#473)
+
+
+SEMANTIC = "docs-semantic"
+ASKED = "how are failed calls retried"
+
+
+@pytest.fixture
+async def semantic(service: FakeSearchService) -> AsyncIterator[AzureSemanticVectorBackend]:
+    options = fake_options(service, semantic_configuration=SEMANTIC)
+    backend = vector_backend(options, transport=service.transport)
+    assert isinstance(backend, AzureSemanticVectorBackend)
+    await backend.open()
+    yield backend
+    await backend.close()
+
+
+async def _put_guide(backend: AzureHybridVectorBackend, s: EmbeddingSpace) -> None:
+    """Three chunks the hybrid query and the semantic ranker order differently."""
+    v1, v2 = manifest(), manifest("m15", "v1.5.0")
+    await backend.put(
+        s,
+        v1,
+        [
+            # The words over and over, and the nearest vector: the hybrid query's first.
+            entry(v1, "noise", "failed failed failed calls calls calls", vector=(1.0, 0.0, 0.0)),
+            # What answers the question: the semantic ranker's first.
+            entry(v1, "answer", "How are failed calls retried? Three times.", vector=(0, 0, 1)),
+            entry(v1, "other", "Unrelated text", vector=(0.0, 1.0, 0.0)),
+        ],
+    )
+    await backend.put(
+        s, v2, [entry(v2, "answer", "How are failed calls retried?", vector=(1, 0, 0))]
+    )
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ({"semantic_configuration": "has space"}, "semantic_configuration 'has space' must be"),
+        ({"semantic_configuration": "-dash"}, "starting with a letter or digit"),
+        ({"semantic_configuration": "x" * 129}, "1 to 128 letters"),
+        ({"semantic_configuration": "docs", "hybrid": False}, "it needs hybrid = true"),
+    ],
+)
+def test_an_invalid_semantic_configuration_is_refused_with_what_to_fix(
+    options: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        search_backend({"endpoint": ENDPOINT} | options)
+    with pytest.raises(ValueError, match=message):
+        vector_backend({"endpoint": ENDPOINT} | options)
+
+
+def test_a_semantic_configuration_makes_the_backend_rerank_natively(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EXACTDOCS_VECTOR_BACKEND", "azure_search")
+    monkeypatch.setenv("EXACTDOCS_INDEX_BACKENDS__AZURE_SEARCH__ENDPOINT", ENDPOINT)
+    monkeypatch.setenv("EXACTDOCS_INDEX_BACKENDS__AZURE_SEARCH__API_KEY", API_KEY)
+    monkeypatch.setenv("EXACTDOCS_INDEX_BACKENDS__AZURE_SEARCH__SEMANTIC_CONFIGURATION", SEMANTIC)
+
+    backends = build_index_backends(Settings())
+
+    assert isinstance(backends.vectors, AzureSemanticVectorBackend)
+    assert isinstance(backends.vectors, NativeHybrid)
+    assert isinstance(backends.vectors, NativeRerank)
+    assert backends.vectors.vectors.semantic == SEMANTIC
+    plain = vector_backend({"endpoint": ENDPOINT, "api_key": API_KEY})
+    assert isinstance(plain, NativeHybrid)
+    assert not isinstance(plain, NativeRerank)  # no semantic configuration: ExactDocs reranks
+
+
+async def test_a_space_index_is_made_with_the_semantic_configuration_over_plain_text(
+    service: FakeSearchService, semantic: AzureSemanticVectorBackend
+) -> None:
+    v1 = manifest()
+    await semantic.put(space(), v1, [entry(v1, "a", "Set retryPolicy.", vector=(1, 0, 0))])
+
+    index = service.indexes["exactdocs-space1"].definition
+    fields = {f["name"]: f for f in index["fields"]}
+    for name in ("title", "content"):
+        assert fields[name]["type"] == "Edm.String"
+        assert fields[name]["searchable"], name
+        assert fields[name]["retrievable"], name
+    (configuration,) = index["semantic"]["configurations"]
+    assert configuration["name"] == SEMANTIC
+    assert configuration["prioritizedFields"]["titleField"] == {"fieldName": "title"}
+    assert configuration["prioritizedFields"]["prioritizedContentFields"] == [
+        {"fieldName": "content"}
+    ]
+    (document,) = documents_of(service, "exactdocs-space1")
+    assert document["title"] == "Guide / Retries"
+    assert document["content"] == "Set retryPolicy."  # as written, for the ranker to read
+    assert document["body"] == "set retrypolicy retry policy"  # BM25's words unchanged
+
+
+async def test_a_reranked_hybrid_query_asks_azures_semantic_ranker_in_the_same_request(
+    service: FakeSearchService, semantic: AzureSemanticVectorBackend
+) -> None:
+    s = space()
+    await _put_guide(semantic, s)
+    service.bodies.clear()
+
+    ranking = await semantic.hybrid_reranked(s, ["m14"], query(ASKED), [1, 0, 0], TagFilter(), 3)
+
+    (body,) = service.bodies
+    assert body["search"] == "how are failed calls retried"  # BM25's escaped terms, as before
+    assert body["queryType"] == "full"
+    assert body["semanticConfiguration"] == SEMANTIC
+    assert body["semanticQuery"] == ASKED  # the ranker reads the query as written
+    assert body["semanticErrorHandling"] == "partial"
+    assert body["vectorQueries"][0]["fields"] == "vector"
+    assert body["filter"] == "search.in(manifest_id, 'm14', '|')"  # the version, before ranking
+    assert body["top"] >= 50  # every result the ranker reranks, cut after it
+    assert "orderby" not in body
+    assert body["select"] == "manifest_id,chunk_id"
+    assert [h.chunk_id for h in ranking.hits] == ["answer", "noise", "other"]
+    assert [h.score for h in ranking.hits] == [4.0, 1.6, 0.0]  # the ranker's scores, 0 to 4
+    assert ranking.reranked == 3
+    assert {h.manifest_id for h in ranking.hits} == {"m14"}
+
+
+async def test_the_semantic_ranker_reorders_what_the_hybrid_query_found(
+    semantic: AzureSemanticVectorBackend,
+) -> None:
+    s = space()
+    await _put_guide(semantic, s)
+
+    hybrid = await semantic.hybrid(s, ["m14"], query(ASKED), [1, 0, 0], TagFilter(), 3)
+    ranking = await semantic.hybrid_reranked(s, ["m14"], query(ASKED), [1, 0, 0], TagFilter(), 3)
+
+    assert hybrid[0].chunk_id == "noise"
+    assert ranking.hits[0].chunk_id == "answer"
+    assert {h.chunk_id for h in hybrid} == {h.chunk_id for h in ranking.hits}
+
+
+async def test_a_semantic_ranker_over_capacity_leaves_the_hybrid_order_not_reranked(
+    service: FakeSearchService, semantic: AzureSemanticVectorBackend
+) -> None:
+    s = space()
+    await _put_guide(semantic, s)
+    hybrid = await semantic.hybrid(s, ["m14"], query(ASKED), [1, 0, 0], TagFilter(), 3)
+    service.semantic_overloaded = True
+
+    ranking = await semantic.hybrid_reranked(s, ["m14"], query(ASKED), [1, 0, 0], TagFilter(), 3)
+
+    assert ranking.reranked == 0
+    assert [h.chunk_id for h in ranking.hits] == [h.chunk_id for h in hybrid]
+
+
+async def test_a_refused_semantic_ranker_answers_the_hybrid_query_alone(
+    service: FakeSearchService,
+    semantic: AzureSemanticVectorBackend,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    s = space()
+    await _put_guide(semantic, s)
+    hybrid = await semantic.hybrid(s, ["m14"], query(ASKED), [1, 0, 0], TagFilter(), 3)
+    service.semantic_quota_used = True  # the Free plan's monthly requests are used up
+    caplog.set_level(logging.WARNING)
+
+    ranking = await semantic.hybrid_reranked(s, ["m14"], query(ASKED), [1, 0, 0], TagFilter(), 3)
+
+    assert ranking.reranked == 0  # so ExactDocs' own reranker reranks, if one is configured
+    assert [h.chunk_id for h in ranking.hits] == [h.chunk_id for h in hybrid]
+    assert "free monthly requests are used up" in caplog.text
+    assert API_KEY not in caplog.text
+    service.unavailable = True  # a service that does not answer is unavailable, as before
+    with pytest.raises(IndexBackendUnavailableError, match="no answer"):
+        await semantic.hybrid_reranked(s, ["m14"], query(ASKED), [1, 0, 0], TagFilter(), 3)
+
+
+async def test_without_a_semantic_configuration_no_semantic_parameter_is_sent(
+    service: FakeSearchService, vectors: AzureHybridVectorBackend
+) -> None:
+    s = space()
+    await _put_guide(vectors, s)
+    service.bodies.clear()
+
+    await vectors.hybrid(s, ["m14"], query(ASKED), [1, 0, 0], TagFilter(), 3)
+
+    (body,) = service.bodies
+    assert not {k for k in body if k.startswith("semantic")}, body
+    assert not isinstance(vectors, NativeRerank)
+    definition = service.indexes["exactdocs-space1"].definition
+    assert definition["semantic"] is None
+    assert not {"title", "content"} & {f["name"] for f in definition["fields"]}
+
+
+async def test_an_existing_space_index_gets_the_semantic_configuration_added_in_place(
+    service: FakeSearchService,
+    vectors: AzureHybridVectorBackend,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    v1, s = manifest(), space()
+    await vectors.put(s, v1, [entry(v1, "old", "retry", vector=(1, 0, 0))])
+    backend = vector_backend(
+        fake_options(service, semantic_configuration=SEMANTIC), transport=service.transport
+    )
+    await backend.open()
+    caplog.set_level(logging.WARNING)
+
+    try:
+        await backend.put(s, v1, [entry(v1, "new", "retry again", vector=(0, 1, 0))])
+    finally:
+        await backend.close()
+
+    assert ("PUT", "/indexes('exactdocs-space1')") in service.requests
+    definition = service.indexes["exactdocs-space1"].definition
+    assert [c["name"] for c in definition["semantic"]["configurations"]] == [SEMANTIC]
+    assert {"title", "content"} <= {f["name"] for f in definition["fields"]}
+    assert definition["@odata.etag"] != '"0x1"'  # updated, not made again
+    documents = {d["chunk_id"]: d for d in documents_of(service, "exactdocs-space1")}
+    assert "content" not in documents["old"]  # written before: the rebuild writes it again
+    assert documents["new"]["content"] == "retry again"
+    assert "exactdocs index rebuild" in caplog.text
+
+
+async def test_a_semantic_configuration_of_that_name_over_other_fields_is_refused(
+    service: FakeSearchService, semantic: AzureSemanticVectorBackend
+) -> None:
+    v1, s = manifest(), space()
+    await semantic.put(s, v1, [entry(v1, "a", "retry", vector=(1, 0, 0))])
+    configuration = service.indexes["exactdocs-space1"].definition["semantic"]["configurations"][0]
+    configuration["prioritizedFields"]["prioritizedContentFields"] = [{"fieldName": "title"}]
+    other = vector_backend(
+        fake_options(service, semantic_configuration=SEMANTIC), transport=service.transport
+    )
+    await other.open()
+
+    try:
+        with pytest.raises(IndexBackendUnavailableError) as refused:
+            await other.put(s, v1, [entry(v1, "b", "retry", vector=(1, 0, 0))])
+    finally:
+        await other.close()
+
+    message = str(refused.value)
+    assert "'exactdocs-space1' does not have ExactDocs' schema" in message
+    assert f"semantic configuration {SEMANTIC!r} ranks other fields" in message
+
+
+async def test_a_plain_text_field_the_ranker_cannot_read_is_refused(
+    service: FakeSearchService, vectors: AzureHybridVectorBackend
+) -> None:
+    v1, s = manifest(), space()
+    await vectors.put(s, v1, [entry(v1, "a", "retry", vector=(1, 0, 0))])
+    fields = service.indexes["exactdocs-space1"].definition["fields"]
+    content = {"name": "content", "key": False, "searchable": True, "retrievable": False}
+    fields.append(fields[0] | content)
+    backend = vector_backend(
+        fake_options(service, semantic_configuration=SEMANTIC), transport=service.transport
+    )
+    await backend.open()
+
+    try:
+        with pytest.raises(IndexBackendUnavailableError, match="'content' is not retrievable"):
+            await backend.put(s, v1, [entry(v1, "b", "retry", vector=(1, 0, 0))])
+    finally:
+        await backend.close()
