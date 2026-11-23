@@ -11,6 +11,7 @@ from typing import Self
 from exactdocs.identity.models import AccessPolicy, LibraryCreationPolicy, SignInPolicy
 from exactdocs.identity.ports.driven import (
     AccessAssertionVerifier,
+    AccessLog,
     AccountRepository,
     ExternalIdentityRepository,
     FailedSignInLog,
@@ -38,6 +39,8 @@ from exactdocs.identity.ports.driving import (
     IdentifyCaller,
     IdentifyExternalToken,
     IdentifyToken,
+    ListAccessLog,
+    ListLibraryAccessLog,
     ListLibraryGrants,
     ListTokens,
     ListUsers,
@@ -69,6 +72,8 @@ from exactdocs.identity.use_cases import (
     IdentifyCallerUseCase,
     IdentifyExternalTokenUseCase,
     IdentifyTokenUseCase,
+    ListAccessLogUseCase,
+    ListLibraryAccessLogUseCase,
     ListLibraryGrantsUseCase,
     ListTokensUseCase,
     ListUsersUseCase,
@@ -148,6 +153,10 @@ class IdentityModule:
     """Take a role away from a user or a group."""
     list_library_grants: ListLibraryGrants
     """List who holds a role on a library (library admins)."""
+    list_library_access_log: ListLibraryAccessLog
+    """Read a library's access log (library admins)."""
+    list_access_log: ListAccessLog
+    """Read the access log of every library, removed ones included (operators)."""
     transfer_library: TransferLibrary
     """Hand a library over to another user (its creator only)."""
 
@@ -162,6 +171,7 @@ class IdentityModule:
         failures: FailedSignInLog,
         externals: ExternalIdentityRepository,
         library_grants: LibraryGrantRepository,
+        access_log: AccessLog,
         attempts: SignInAttemptRepository,
         box: SecretBox,
         clock: Clock,
@@ -183,6 +193,7 @@ class IdentityModule:
             externals: The links of external identities to accounts (kept even when no
                 provider is configured: their accounts must still lose access).
             library_grants: Who holds which role on which library.
+            access_log: The log of grants, revocations, ownership transfers and deletions.
             attempts: Where started external sign-ins wait for their callback.
             box: Seals the refresh tokens of external identities.
             clock: The current time.
@@ -218,7 +229,13 @@ class IdentityModule:
             clock=clock,
         )
         create_token = CreateTokenUseCase(tokens=tokens, clock=clock)
-        sharing = Sharing(accounts=repository, externals=externals, grants=library_grants)
+        sharing = Sharing(
+            accounts=repository,
+            externals=externals,
+            grants=library_grants,
+            log=access_log,
+            clock=clock,
+        )
         return cls(
             get_setup_state=GetSetupStateUseCase(repository=repository),
             create_first_admin=CreateFirstAdminUseCase(
@@ -294,10 +311,14 @@ class IdentityModule:
             resolve_library_roles=ResolveLibraryRolesUseCase(
                 accounts=repository, externals=externals, grants=library_grants
             ),
-            claim_library=ClaimLibraryUseCase(grants=library_grants),
-            drop_library_grants=DropLibraryGrantsUseCase(grants=library_grants),
+            claim_library=ClaimLibraryUseCase(grants=library_grants, log=access_log, clock=clock),
+            drop_library_grants=DropLibraryGrantsUseCase(
+                grants=library_grants, log=access_log, clock=clock
+            ),
             grant_library_role=GrantLibraryRoleUseCase(sharing=sharing),
             revoke_library_role=RevokeLibraryRoleUseCase(sharing=sharing),
             list_library_grants=ListLibraryGrantsUseCase(sharing=sharing),
+            list_library_access_log=ListLibraryAccessLogUseCase(sharing=sharing),
+            list_access_log=ListAccessLogUseCase(sharing=sharing),
             transfer_library=TransferLibraryUseCase(sharing=sharing),
         )

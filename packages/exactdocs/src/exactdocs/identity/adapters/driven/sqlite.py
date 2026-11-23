@@ -18,6 +18,7 @@ from sqlalchemy import (
     Text,
     delete,
     exists,
+    func,
     insert,
     literal,
     or_,
@@ -39,6 +40,9 @@ from exactdocs.identity.constants import (
     SIGN_IN_TURN_TIMEOUT,
 )
 from exactdocs.identity.models import (
+    AccessChange,
+    AccessEvent,
+    AccessLogFilter,
     Account,
     AccountId,
     ApiToken,
@@ -150,6 +154,20 @@ sign_in_attempts = Table(
     Column("code_verifier", Text, nullable=False),
     Column("return_to", Text, nullable=False),
     Column("created_at", Text, nullable=False),  # see `_stamp`
+)
+access_events = Table(
+    "identity_access_events",
+    metadata,
+    Column("id", Text, primary_key=True),  # a UUIDv7: sorts in the order of recording
+    Column("library", Text, nullable=False),  # `/owner/repo`, lower-case
+    Column("at", Text, nullable=False),  # see `_stamp`
+    Column("actor", Text),  # an account ID; NULL when the instance did it. No foreign key: the
+    # log outlives what it names.
+    Column("change", Text, nullable=False),
+    Column("kind", Text),  # NULL for a deletion, like `subject` and `role`
+    Column("subject", Text),
+    Column("role", Text),
+    Column("previous_role", Text),
 )
 known_sign_ins = Table(
     "identity_known_sign_ins",
@@ -1463,6 +1481,112 @@ class SqliteLibraryGrantRepository:
             await connection.execute(
                 delete(library_grants).where(library_grants.c.library == library)
             )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteAccessLog:
+    """Implements ``ports.driven.AccessLog`` (SQLite and PostgreSQL)."""
+
+    engine: AsyncEngine
+    """The database engine."""
+
+    async def record(self, event: AccessEvent) -> None:
+        """Append an event.
+
+        Args:
+            event: What changed, by whom and when.
+        """
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                insert(access_events).values(
+                    id=event.id,
+                    library=event.library,
+                    at=_stamp(event.at),
+                    actor=event.actor,
+                    change=event.change.value,
+                    kind=None if event.kind is None else event.kind.value,
+                    subject=event.subject,
+                    role=None if event.role is None else event.role.value,
+                    previous_role=None
+                    if event.previous_role is None
+                    else event.previous_role.value,
+                )
+            )
+
+    async def newest(
+        self, where: AccessLogFilter, *, older_than: str | None, limit: int
+    ) -> list[AccessEvent]:
+        """Return the newest events that match, newest first.
+
+        Args:
+            where: Which events.
+            older_than: Only events recorded before the one with this ID.
+            limit: Most events returned.
+
+        Returns:
+            Up to ``limit`` events, by ID descending.
+        """
+        query = select(access_events).where(*_access_conditions(where))
+        if older_than is not None:
+            query = query.where(access_events.c.id < older_than)
+        query = query.order_by(access_events.c.id.desc()).limit(limit)
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(query)).all()
+        return [_access_event(row) for row in rows]
+
+    async def count(self, where: AccessLogFilter) -> int:
+        """Count the events that match.
+
+        Args:
+            where: Which events.
+
+        Returns:
+            How many there are.
+        """
+        query = select(func.count()).select_from(access_events).where(*_access_conditions(where))
+        async with self.engine.connect() as connection:
+            return (await connection.execute(query)).scalar_one()
+
+
+def _access_conditions(where: AccessLogFilter) -> list[Any]:
+    """Return the ``WHERE`` conditions of an access log filter.
+
+    Args:
+        where: Which events.
+
+    Returns:
+        The conditions, all of which must hold.
+    """
+    conditions: list[Any] = []
+    if where.library is not None:
+        conditions.append(access_events.c.library == where.library)
+    if where.changes is not None:
+        conditions.append(access_events.c.change.in_(sorted(c.value for c in where.changes)))
+    if where.newer_than is not None:
+        conditions.append(access_events.c.id > where.newer_than)
+    return conditions
+
+
+def _access_event(row: Row[Any]) -> AccessEvent:
+    """Map an ``access_events`` row to its entity.
+
+    Args:
+        row: The row.
+
+    Returns:
+        The event.
+    """
+    return AccessEvent(
+        id=row.id,
+        library=row.library,
+        at=datetime.fromisoformat(row.at),
+        actor=None if row.actor is None else AccountId(row.actor),
+        change=AccessChange(row.change),
+        kind=None if row.kind is None else SubjectKind(row.kind),
+        subject=row.subject,
+        role=None if row.role is None else LibraryRole(row.role),
+        previous_role=None if row.previous_role is None else LibraryRole(row.previous_role),
+    )
 
 
 def _delete_grant(library: str, kind: SubjectKind, subject: str) -> Delete:

@@ -11,6 +11,7 @@ from types import MappingProxyType
 import pytest
 
 from exactdocs.identity.adapters.driven.memory import (
+    InMemoryAccessLog,
     InMemoryAccountRepository,
     InMemoryExternalIdentityRepository,
     InMemoryFailedSignInLog,
@@ -143,6 +144,7 @@ def build(*, configured: bool = True, auto_create_users: bool = True) -> World:
         failures=InMemoryFailedSignInLog(),
         externals=links,
         library_grants=InMemoryLibraryGrantRepository(),
+        access_log=InMemoryAccessLog(),
         attempts=InMemorySignInAttemptRepository(),
         box=FakeBox(),
         clock=clock,
@@ -210,6 +212,7 @@ async def test_admin_emails_decide_the_role_at_every_visit(world: World) -> None
         failures=InMemoryFailedSignInLog(),
         externals=world.links,
         library_grants=InMemoryLibraryGrantRepository(),
+        access_log=InMemoryAccessLog(),
         attempts=InMemorySignInAttemptRepository(),
         box=FakeBox(),
         clock=world.clock,
@@ -245,6 +248,7 @@ async def test_without_auto_create_users_people_linked_already_still_get_in() ->
         failures=InMemoryFailedSignInLog(),
         externals=world.links,
         library_grants=InMemoryLibraryGrantRepository(),
+        access_log=InMemoryAccessLog(),
         attempts=InMemorySignInAttemptRepository(),
         box=FakeBox(),
         clock=world.clock,
@@ -404,6 +408,7 @@ def test_the_module_needs_both_the_verifier_and_the_policy() -> None:
             failures=InMemoryFailedSignInLog(),
             externals=InMemoryExternalIdentityRepository(accounts=InMemoryAccountRepository()),
             library_grants=InMemoryLibraryGrantRepository(),
+            access_log=InMemoryAccessLog(),
             attempts=InMemorySignInAttemptRepository(),
             box=FakeBox(),
             clock=Clock(),

@@ -287,6 +287,23 @@ describe("settings model", () => {
   });
 });
 
+describe("sharing section", () => {
+  it("links to the sharing page and, next to it, the access log", async () => {
+    serve();
+    renderPage();
+    const section = within(await screen.findByRole("region", { name: "Sharing" }));
+    expect(section.getByRole("link", { name: "Manage sharing" })).toHaveAttribute(
+      "href",
+      "/libraries/acme/payments/sharing",
+    );
+    expect(section.getByRole("link", { name: "Access log" })).toHaveAttribute(
+      "href",
+      "/libraries/acme/payments/access-log",
+    );
+    expect(screen.getAllByRole("link", { name: "Access log" })).toHaveLength(1);
+  });
+});
+
 describe("details form", () => {
   it("says so beside the nav while edits are unsaved, and toasts once saved", async () => {
     const success = vi.spyOn(toast, "success").mockReturnValue("t");

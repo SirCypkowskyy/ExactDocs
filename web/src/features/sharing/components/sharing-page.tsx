@@ -6,13 +6,13 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowRightLeft, Lock, UserPlus } from "lucide-react";
+import { ArrowRightLeft, History, Lock, UserPlus } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { HttpError } from "@/shared/lib/http";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { usePrefetchedPages } from "@/shared/lib/use-prefetched-pages";
-import { Button } from "@/shared/ui/button";
+import { Button, buttonVariants } from "@/shared/ui/button";
 import {
   ConfirmAction,
   ConfirmCancel,
@@ -101,6 +101,14 @@ export function SharingPage({
         actions={
           caller && (
             <>
+              <Link
+                to="/libraries/$owner/$repo/access-log"
+                params={{ owner, repo }}
+                className={buttonVariants({ variant: "ghost" })}
+              >
+                <History aria-hidden="true" />
+                Access log
+              </Link>
               {caller === "creator" && (
                 <Button variant="outline" onClick={() => setTransferring(true)}>
                   <ArrowRightLeft aria-hidden="true" />

@@ -118,6 +118,7 @@ from exactdocs.identity import IdentityModule
 from exactdocs.identity.adapters.driven.argon2id import Argon2idPasswordHasher
 from exactdocs.identity.adapters.driven.memory import InMemoryFailedSignInLog
 from exactdocs.identity.adapters.driven.sqlite import (
+    SqliteAccessLog,
     SqliteAccountRepository,
     SqliteExternalIdentityRepository,
     SqliteFailedSignInLog,
@@ -447,6 +448,7 @@ def _identity(settings: Settings, engine: AsyncEngine, stand_ins: SignInStandIns
         else InMemoryFailedSignInLog(),
         externals=SqliteExternalIdentityRepository(engine=engine),
         library_grants=SqliteLibraryGrantRepository(engine=engine),
+        access_log=SqliteAccessLog(engine=engine),
         attempts=SqliteSignInAttemptRepository(engine=engine),
         box=_secret_box(settings, SIGN_IN_TOKENS_PURPOSE),
         clock=clock,

@@ -1615,9 +1615,11 @@ class IdentityAccessPolicy:
             await self.claim_library(ClaimLibraryCommand(account_id=account, library=library))
 
     async def forget(self, library: str) -> None:
-        """Drop every grant on a library that was removed.
+        """Drop every grant on a library that was removed, and log who removed it.
 
         Args:
             library: The library ID.
         """
-        await self.drop_library_grants(DropLibraryGrantsCommand(library=library))
+        await self.drop_library_grants(
+            DropLibraryGrantsCommand(library=library, actor_id=self.caller())
+        )
