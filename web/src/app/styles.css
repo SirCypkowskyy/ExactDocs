@@ -97,6 +97,17 @@
   --line-7: oklch(0.48 0.09 120);
   --line-8: oklch(0.45 0.02 250);
 
+  /* A library's logo sits on white in both themes (dark logos with transparent grounds must not
+     vanish on the dark sheet), inside a hairline drawn in ink at 12 % over the white. */
+  --logo-tile: #ffffff;
+  --logo-tile-edge: rgb(23 23 26 / 0.12);
+
+  /* Charts (Overview, AI spend, leaderboard): one grey for every series, and the route for the one
+     lit series ("you", the selected bar). Never line colours, never the lamp as a fill on light.
+     Both are 4.5:1+ on the sheet and on raised panels; the highlight is never told by colour alone. */
+  --chart-series: #6b6c72; /* 5.2:1 on white, 4.8:1 on raised, 3.4:1 against the highlight */
+  --chart-highlight: var(--route); /* ink in light (17.9:1), the lamp in dark (11:1) */
+
   /* Floating layers: the scrim, the tooltip, the one shadow (menus, popovers, dialogs only). */
   --overlay: rgb(23 23 26 / 0.38);
   --tip: #17171a;
@@ -181,6 +192,8 @@
   --line-6: oklch(0.5 0.14 350);
   --line-7: oklch(0.5 0.09 120);
   --line-8: oklch(0.48 0.02 250);
+  --logo-tile: #ffffff; /* stays white: the tile is the logo's own ground */
+  --chart-series: #8b8b94; /* 5.3:1 on the sheet, 5:1 on raised, 4.9:1 on popover */
   --overlay: rgb(0 0 0 / 0.6);
   --tip: #f3f1ec;
   --tip-foreground: #17171a;
@@ -209,6 +222,8 @@
   --rule: #cfcec9;
   --input: #6f6e69;
   --frame: #ebeae6;
+  --logo-tile-edge: rgb(23 23 26 / 0.3);
+  --chart-series: #4f5055; /* 8:1 on white */
 }
 :root.dark[data-contrast="more"] {
   --muted-foreground: #d2d2d8;
@@ -216,6 +231,7 @@
   --rule: #3c3c44;
   --input: #8a8a94;
   --frame: #060607;
+  --chart-series: #a0a0a8; /* 6.9:1 on the sheet */
 }
 
 /* The face: a readable alternative, or the device's own. */
@@ -338,6 +354,10 @@
   --color-tip-foreground: var(--tip-foreground);
   --color-code: var(--code);
   --color-overlay: var(--overlay);
+  --color-logo-tile: var(--logo-tile);
+  --color-logo-tile-edge: var(--logo-tile-edge);
+  --color-chart-series: var(--chart-series);
+  --color-chart-highlight: var(--chart-highlight);
   --color-line-1: var(--line-1);
   --color-line-2: var(--line-2);
   --color-line-3: var(--line-3);

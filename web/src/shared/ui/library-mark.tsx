@@ -17,9 +17,10 @@ import { LibraryBullet, lineIndex } from "./route";
 /*
  * A library's mark beside its name (#504): the project's own logo when the importer found one
  * (served by ExactDocs, never fetched from elsewhere), otherwise a generic icon on the library's
- * line colour, picked from its ID so it is the same on every visit. With "Library logos" off in
- * the interface preferences it falls back to the line-coloured monogram bullet. Decorative: the
- * library's name is always next to it.
+ * line colour, picked from its ID so it is the same on every visit. A logo sits on the white
+ * `logo-tile` with its hairline in both themes, so a dark logo with a transparent ground stays
+ * visible in dark mode. With "Library logos" off in the interface preferences it falls back to the
+ * line-coloured monogram bullet. Decorative: the library's name is always next to it.
  */
 
 const ICONS: readonly LucideIcon[] = [
@@ -84,7 +85,10 @@ export function LibraryMark({
   );
   if (logo && broken !== logo) {
     return (
-      <span aria-hidden="true" className={cn(box, "border border-border bg-background p-0.5")}>
+      <span
+        aria-hidden="true"
+        className={cn(box, "border border-logo-tile-edge bg-logo-tile p-0.5")}
+      >
         <img
           src={logo}
           alt=""
