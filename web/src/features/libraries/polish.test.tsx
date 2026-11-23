@@ -6,7 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
 import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { TestRouter } from "@/shared/lib/test-router";
-import { AddLibraryPage, JobLine, JobsPage, LibrariesPage } from "./index";
+import {
+  AddLibraryPage,
+  ImportProgress,
+  JobLine,
+  JobsPage,
+  JobsSkeleton,
+  LibrariesPage,
+  LibrariesSkeleton,
+} from "./index";
 import {
   explainAddError,
   explainPreviewError,
@@ -180,6 +188,75 @@ describe("the libraries slice in Polish", () => {
 
     expect(await screen.findByText("2 z 5 plików")).toBeInTheDocument();
     expect(screen.getByRole("progressbar", { name: "Postęp importu v1.4.0" })).toBeInTheDocument();
+  });
+
+  it("asks before cancelling a job, in Polish", async () => {
+    serve(() =>
+      job({
+        state: "queued",
+        done: 0,
+        total: 0,
+        finished_at: null,
+        started_at: null,
+        cancellable: true,
+      }),
+    );
+    renderWith(<JobLine jobId="j1" label="v1.4.0" />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Anuluj v1.4.0" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Anulować v1.4.0?" });
+    expect(dialog).toHaveTextContent("Jeszcze się nie rozpoczęło, więc nie zostanie uruchomione.");
+    expect(within(dialog).getByRole("button", { name: "Zostaw" })).toHaveFocus();
+    expect(within(dialog).getByRole("button", { name: "Tak, anuluj" })).toBeInTheDocument();
+  });
+
+  it("lists the files an import skipped in a Polish table", async () => {
+    const problems = [
+      ...Array.from({ length: 3 }, (_, i) => ({
+        path: `docs/b${i}.md`,
+        code: "binary",
+        reason: "bajty NUL",
+        is_skip: true,
+      })),
+      { path: "docs/odd.md", code: "front_matter", reason: "złe tagi", is_skip: false },
+    ];
+    serve((url) => (url.includes("/v1/jobs/") ? job({ problems }) : undefined));
+    renderWith(
+      <TestRouter
+        pages={{
+          "/": () => (
+            <ImportProgress
+              added={{ library_id: "/acme/payments", ref: "v1.4.0", commit_sha: SHA, job_id: "j1" }}
+            />
+          ),
+        }}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Pominięte pliki (3)" })).toBeInTheDocument();
+    const table = screen.getByRole("table", { name: "Pominięte pliki" });
+    for (const header of ["Ścieżka", "Problem", "Wynik"]) {
+      expect(
+        within(table).getByRole("columnheader", { name: new RegExp(header) }),
+      ).toBeInTheDocument();
+    }
+    expect(within(table).getAllByText("Pominięty")).toHaveLength(3);
+    expect(within(table).getByText("Zaimportowane z uwagą")).toBeInTheDocument();
+    expect(screen.getByLabelText("Znajdź plik")).toBeInTheDocument();
+    expect(screen.getByText("1–4 z 4")).toBeInTheDocument();
+  });
+
+  it("draws the libraries and jobs pages' skeletons in Polish", () => {
+    renderWith(
+      <>
+        <LibrariesSkeleton />
+        <JobsSkeleton />
+      </>,
+    );
+    expect(screen.getByRole("heading", { name: "Biblioteki" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Zadania" })).toBeInTheDocument();
+    expect(screen.getByText("Wczytywanie bibliotek")).toHaveAttribute("role", "status");
+    expect(screen.getByText("Wczytywanie zadań")).toHaveAttribute("role", "status");
   });
 
   it("explains refusals and counts with Polish plurals outside React", () => {
