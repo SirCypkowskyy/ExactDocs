@@ -247,6 +247,7 @@ def text_row(case: GoldenCase, answer: TextAnswer, index: SectionIndex) -> TextR
     return TextRow(
         case=case.name or "",
         row=Row(
+            case=case.name or "",
             kind=case.metadata.kind if case.metadata else "",
             project=case.inputs.project or "",
             answerable=bool(expected),

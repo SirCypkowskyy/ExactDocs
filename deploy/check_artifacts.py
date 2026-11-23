@@ -2,7 +2,13 @@
 
     check_artifacts.py wheel <file.whl>                       size, model files, ML dependencies
     check_artifacts.py image <image-ref> [base|ai|local]      size, installed packages, model
-                                                              files (needs docker)
+                      [--no-python]                           files (needs docker)
+
+`--no-python` checks an image whose Python cannot run here: a linux/amd64 image cross-built on an
+ARM64 runner, whose Python 3.14 crashes under QEMU (deploy/Dockerfile). Only `du` and `find` run
+in it: the distributions are read from their `.dist-info` directories, and the `-local` default
+models' check (ExactDocs' own code) is skipped. The models are pulled on the build platform, so
+the native image of the same build checks the same files.
 
 The image comes in three variants (#246), each with its own budget: `base` and `ai` hold no
 model file and no ML package (`ai` may hold pydantic-ai, which only calls models elsewhere);
@@ -64,6 +70,8 @@ MODEL_SHA256 = {
 """The default models' ONNX files at their pinned revisions (the Hub's LFS sha256 of
 Qdrant/bge-small-en-v1.5-onnx-Q@aa8f8b06 and Xenova/ms-marco-MiniLM-L-6-v2@a0914435): the
 `-local` image must hold exactly these bytes. Change with PINNED_MODEL_REVISIONS."""
+SITE_ROOTS = ("/app/.venv", "/usr/local/lib")
+"""Where an image's distributions are installed (`--no-python` reads their `.dist-info` there)."""
 MODEL_NOTICE = "NOTICE"
 """The models' licenses and attribution in MODELS_DIR (deploy/model-notices/NOTICE)."""
 
@@ -87,7 +95,9 @@ IMAGE_VARIANTS = {
     "local": Variant(budget=950 * MB, allowed_ml=LOCAL_PACKAGES | LLM_CLIENT_PACKAGES, models=True),
 }
 IMAGE_BUDGET = IMAGE_VARIANTS["base"].budget
-USAGE = "usage: check_artifacts.py wheel <file.whl> | image <image-ref> [base|ai|local]"
+USAGE = (
+    "usage: check_artifacts.py wheel <file.whl> | image <image-ref> [base|ai|local] [--no-python]"
+)
 
 # Run in the image's own Python: the installed distributions, and (local) why a default model
 # cannot serve its role, judged by ExactDocs' own check of the marker `models pull` wrote, whether
@@ -159,6 +169,18 @@ def normalize(name: str) -> str:
         Lower case, with runs of `-`, `_` and `.` as one `-`.
     """
     return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def dist_info_names(paths: list[str]) -> list[str]:
+    """The distribution names of `.dist-info` directories (`<name>-<version>.dist-info`).
+
+    Args:
+        paths: The directories' paths.
+
+    Returns:
+        Their names, as the directory spells them (compare with `normalize`).
+    """
+    return sorted({Path(p).name.removesuffix(".dist-info").split("-")[0] for p in paths})
 
 
 def report(kind: str, size: int, budget: int, problems: list[str]) -> int:
@@ -245,8 +267,14 @@ def _run(ref: str, *command: str, root: bool = False) -> str:
     )
 
 
-def image(ref: str, kind: str = "base") -> int:
+def image(ref: str, kind: str = "base", *, python: bool = True) -> int:
     """Check a docker image variant: size, installed packages, model files, default models.
+
+    Args:
+        ref: The image.
+        kind: Its variant.
+        python: Run the image's Python. Without it (an emulated image) the distributions come
+            from their `.dist-info` directories and the default models are not checked.
 
     Returns:
         The exit code: 1 when the image has problems, else 0.
@@ -257,14 +285,21 @@ def image(ref: str, kind: str = "base") -> int:
     size = int(_run(ref, "du", "-sxb", "/", root=True).split()[0])
     predicate = [a for s in MODEL_SUFFIXES for a in ("-o", "-name", f"*{s}")][1:]
     found = _run(ref, "find", "/", "-xdev", "(", *predicate, ")", root=True).split()
-    distributions = json.loads(_run(ref, "python", "-c", LIST_DISTRIBUTIONS))
+    if python:
+        distributions = json.loads(_run(ref, "python", "-c", LIST_DISTRIBUTIONS))
+    else:
+        # The image's own Python's search path: the virtualenv and the interpreter's prefix.
+        infos = _run(ref, "find", *SITE_ROOTS, "-type", "d", "-name", "*.dist-info", root=True)
+        distributions = dist_info_names(infos.split())
     models = []
-    if variant.models:
+    if variant.models and python:
         script = (
             f"EXPECTED = {MODELS_DIR!r}\nHASHES = {MODEL_SHA256!r}\nNOTICE = {MODEL_NOTICE!r}\n"
             f"{CHECK_MODELS}"
         )
         models = json.loads(_run(ref, "python", "-c", script).splitlines()[-1])
+    elif variant.models:
+        sys.stdout.write("default models not checked (--no-python): the native image checks them\n")
     problems = image_problems(variant, distributions, found, models)
     return report(f"image ({kind})", size, variant.budget, problems)
 
@@ -277,5 +312,7 @@ if __name__ == "__main__":
             sys.exit(image(ref))
         case ["image", ref, kind] if kind in IMAGE_VARIANTS:
             sys.exit(image(ref, kind))
+        case ["image", ref, kind, "--no-python"] if kind in IMAGE_VARIANTS:
+            sys.exit(image(ref, kind, python=False))
         case _:
             sys.exit(USAGE)

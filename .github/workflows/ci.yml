@@ -1,5 +1,12 @@
 name: CI
 
+# Runners (docs/releasing.md "CI/CD and runners"), switched by the repository variable RUNNER_MODE
+# (Settings -> Secrets and variables -> Actions -> Variables):
+#   hybrid (default, also when unset): every job on GitHub-hosted ubuntu-24.04 (amd64).
+#   self-hosted (when the GitHub-hosted minutes ran out): every job on the self-hosted ARM64
+#     runner [self-hosted, linux, ARM64, exactdocs]. Pinecone Local is amd64-only, so its service
+#     is not started and its cases skip; the libSQL local-file cases skip without the x86-only
+#     `libsql` wheel; every other service image is multi-arch. The images are built for arm64.
 on:
   pull_request:
   push:
@@ -19,7 +26,7 @@ env:
 jobs:
   python:
     name: Python (ruff, ty, pytest, behave)
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     # GitHub-hosted (#468): a smaller machine than the old self-hosted VM. With the E14 backends'
     # service containers (#351) pytest alone took 53 minutes.
     timeout-minutes: 120
@@ -120,7 +127,7 @@ jobs:
           --health-interval 2s --health-timeout 5s --health-retries 30
       # #363: MongoDB with Atlas Search and Vector Search (mongot) in one container, for the
       # MongoDB backend's contract tests and scenario (EXACTDOCS_TEST_MONGODB_URL), pinned to an
-      # exact version (multi-arch: the amd64 image runs here). A one-node replica set without
+      # exact version (multi-arch). A one-node replica set without
       # authentication; directConnection because the node names itself by its container's host.
       mongodb:
         image: mongodb/mongodb-atlas-local:9.0.8@sha256:747a6c6b37b9358b45d9ecc63e4b8b6d59f8d11896d1c75f967f2520e12f4947
@@ -129,12 +136,13 @@ jobs:
         options: >-
           --health-cmd "/usr/local/bin/runner healthcheck"
           --health-interval 2s --health-timeout 30s --health-retries 90
-      # #362: Pinecone Local's single-index emulator (amd64 only, so it runs since #468 moved CI
-      # to x86_64), for the Pinecone backend's contract tests and scenario
-      # (EXACTDOCS_TEST_PINECONE_URL). It ignores sparse values: native hybrid stays with the
-      # manual pinecone.yml workflow on a real index and the adapter's stand-in tests.
+      # #362: Pinecone Local's single-index emulator, for the Pinecone backend's contract tests
+      # and scenario (EXACTDOCS_TEST_PINECONE_URL). It ignores sparse values: native hybrid stays
+      # with the manual pinecone.yml workflow on a real index and the adapter's stand-in tests.
+      # amd64 only: on the ARM64 runner (RUNNER_MODE self-hosted) the image is empty, so the
+      # service does not start, the URL below is empty and those cases skip.
       pinecone:
-        image: ghcr.io/pinecone-io/pinecone-index:v1.0.0.rc0@sha256:d60708292452e1e1d0740da86f653706a73b3682f302e1f0c18908f59e7ec7e0
+        image: ${{ vars.RUNNER_MODE != 'self-hosted' && 'ghcr.io/pinecone-io/pinecone-index:v1.0.0.rc0@sha256:d60708292452e1e1d0740da86f653706a73b3682f302e1f0c18908f59e7ec7e0' || '' }}
         env:
           PORT: "5081"
           INDEX_TYPE: serverless
@@ -145,8 +153,10 @@ jobs:
           - 5081/tcp
     steps:
       # The service images and the backends' extras (#351) fill the ~14 GB a hosted runner starts
-      # with; MongoDB refuses writes under 500 MB free. Drop preinstalled SDKs first (about 20 GB).
+      # with; MongoDB refuses writes under 500 MB free. Drop preinstalled SDKs first (about 20 GB;
+      # hosted runners only).
       - name: Free disk space
+        if: runner.environment == 'github-hosted'
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
@@ -178,9 +188,11 @@ jobs:
         run: |
           { read -r url; read -r token; } < <(deploy/libsql-test-server.sh "exactdocs-libsql-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}")
           echo "::add-mask::$token"
-          echo "EXACTDOCS_TEST_LIBSQL_URL=$url" >> "$GITHUB_ENV"
-          echo "EXACTDOCS_TEST_LIBSQL_AUTH_TOKEN=$token" >> "$GITHUB_ENV"
-          echo "EXACTDOCS_REQUIRE_LIBSQL=1" >> "$GITHUB_ENV" # the libSQL server cases never skip here
+          {
+            echo "EXACTDOCS_TEST_LIBSQL_URL=$url"
+            echo "EXACTDOCS_TEST_LIBSQL_AUTH_TOKEN=$token"
+            echo "EXACTDOCS_REQUIRE_LIBSQL=1" # the libSQL server cases never skip here
+          } >> "$GITHUB_ENV"
       # #474: a second libSQL server, empty, for ExactDocs' own database: the persistence suite runs
       # on it below (each SQLite case wipes it), apart from the index backend's tables above.
       - name: Start libSQL server (database)
@@ -214,7 +226,7 @@ jobs:
           EXACTDOCS_REQUIRE_MILVUS: "1" # the Milvus server cases and scenario never skip here (#360)
           EXACTDOCS_TEST_MONGODB_URL: mongodb://127.0.0.1:${{ job.services.mongodb.ports['27017'] }}/?directConnection=true
           EXACTDOCS_REQUIRE_MONGODB: "1" # the MongoDB cases and scenario never skip here (#363)
-          EXACTDOCS_TEST_PINECONE_URL: http://127.0.0.1:${{ job.services.pinecone.ports['5081'] }}
+          EXACTDOCS_TEST_PINECONE_URL: ${{ vars.RUNNER_MODE != 'self-hosted' && format('http://127.0.0.1:{0}', job.services.pinecone.ports['5081']) || '' }}
         run: uv run pytest --cov=exactdocs --cov=exactdocs_kernel --cov-report=term-missing --junitxml=reports/pytest.xml
       - name: behave (acceptance)
         env:
@@ -238,7 +250,7 @@ jobs:
           EXACTDOCS_REQUIRE_MILVUS: "1"
           EXACTDOCS_TEST_MONGODB_URL: mongodb://127.0.0.1:${{ job.services.mongodb.ports['27017'] }}/?directConnection=true
           EXACTDOCS_REQUIRE_MONGODB: "1"
-          EXACTDOCS_TEST_PINECONE_URL: http://127.0.0.1:${{ job.services.pinecone.ports['5081'] }}
+          EXACTDOCS_TEST_PINECONE_URL: ${{ vars.RUNNER_MODE != 'self-hosted' && format('http://127.0.0.1:{0}', job.services.pinecone.ports['5081']) || '' }}
         run: uv run behave --format=progress --junit --junit-directory=reports/behave
       # The shared ranking suite again, on Supabase's image (postgres_fts: it has no pg_search).
       - name: Ranking suite on supabase/postgres
@@ -283,7 +295,7 @@ jobs:
 
   web:
     name: Web (biome, fallow, react-doctor, vitest, build)
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 20
     defaults:
       run:
@@ -314,7 +326,7 @@ jobs:
 
   image:
     name: Docker image (lint, build, scan, smoke test)
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -325,6 +337,7 @@ jobs:
             < deploy/Dockerfile
       # GitHub-hosted runners (#468) start with about 14 GB free; the image builds need more.
       - name: Free disk space
+        if: runner.environment == 'github-hosted'
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
       # The daemon's own BuildKit (driver "docker"): the image loads straight into the local
       # store. On GitHub-hosted runners (#468) nothing is cached between runs.
@@ -366,8 +379,13 @@ jobs:
         uses: ./.github/actions/trivy-gate
         with:
           image: exactdocs:ci
-      # The release also ships amd64; on the GitHub-hosted runners (#468) this stage is native.
-      # Build just the runtime-tools stage and prove the tools run there.
+      # The release also ships amd64; on the GitHub-hosted runners (#468) this stage is native, on
+      # the ARM64 runner it runs under QEMU (apt-get, dpkg: no Python). Build just the
+      # runtime-tools stage and prove the tools run there.
+      - uses: docker/setup-qemu-action@v4
+        if: runner.arch == 'ARM64'
+        with:
+          platforms: amd64
       - name: amd64 runtime-tools stage builds and runs git, ssh, tini
         uses: docker/build-push-action@v7
         with:
@@ -384,6 +402,7 @@ jobs:
             DEBIAN_REFRESH=${{ steps.created.outputs.week }}
       - run: |
           for tool in "git --version" "ssh -V" "tini --version"; do
+            # shellcheck disable=SC2086 # the command and its argument, split on purpose
             docker run --rm --platform linux/amd64 --entrypoint ${tool%% *} exactdocs:ci-amd64 ${tool#* }
           done
       - name: Build a fixture docs repository
@@ -439,7 +458,9 @@ jobs:
             chmod +x "$RUNNER_TEMP/docker-compose"
             compose=("$RUNNER_TEMP/docker-compose")
           fi
-          export POSTGRES_PASSWORD=$(openssl rand -hex 16) EXACTDOCS_SECRET_KEY=$(openssl rand -base64 32)
+          POSTGRES_PASSWORD=$(openssl rand -hex 16)
+          EXACTDOCS_SECRET_KEY=$(openssl rand -base64 32)
+          export POSTGRES_PASSWORD EXACTDOCS_SECRET_KEY
           cat > "$RUNNER_TEMP/compose.fixture.yaml" <<YAML
           services:
             exactdocs:
@@ -461,12 +482,13 @@ jobs:
   # `-local` one also searches with `--network none`, on the models baked into the image.
   image-variants:
     name: Docker image variants (-ai, -local)
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       # GitHub-hosted runners (#468) start with about 14 GB free; the image builds need more.
       - name: Free disk space
+        if: runner.environment == 'github-hosted'
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
       - uses: docker/setup-buildx-action@v4
         with:
@@ -551,8 +573,8 @@ jobs:
           done
       # #242: the vector store needs a Python that loads SQLite extensions: the image's own
       # (python:3.14-slim-trixie) with the sqlite-vec of the [ai] extra, natively: amd64 on the
-      # GitHub-hosted runners (#468). arm64 was checked natively on the old self-hosted runners;
-      # under QEMU the image's python3 crashes (#257), so it is not checked here.
+      # GitHub-hosted runners (#468), arm64 on the self-hosted runner (RUNNER_MODE self-hosted).
+      # Never under QEMU: the image's python3 crashes there (#257).
       - name: sqlite-vec loads and searches in the -ai image's Python
         if: ${{ !cancelled() }}
         run: |
@@ -593,7 +615,7 @@ jobs:
   # this job (runner.temp is per job). Not --no-cache: the --offline step needs a filled cache.
   uvx:
     name: uvx smoke, upgrade + browser end-to-end (built wheel)
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7

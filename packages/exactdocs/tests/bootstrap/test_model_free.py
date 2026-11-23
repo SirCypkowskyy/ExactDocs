@@ -325,3 +325,22 @@ def test_every_default_model_has_a_pinned_onnx_digest() -> None:
 
     assert folders == set(PINNED_MODEL_REVISIONS)
     assert all(len(d) == 64 for d in check_artifacts.MODEL_SHA256.values())
+
+
+def test_without_python_the_distributions_come_from_their_dist_info_directories() -> None:
+    """`check_artifacts.py image --no-python` (an amd64 image under QEMU) judges the same names."""
+    site = "/app/.venv/lib/python3.14/site-packages"
+    paths = [
+        f"{site}/pydantic_ai_slim-1.0.0.dist-info",
+        f"{site}/huggingface_hub-0.36.0.dist-info",
+        f"{site}/exactdocs-0.0.0.dev0.dist-info",
+        f"{site}/exactdocs-0.0.0.dev0.dist-info",
+    ]
+
+    names = check_artifacts.dist_info_names(paths)
+
+    assert names == ["exactdocs", "huggingface_hub", "pydantic_ai_slim"]
+    assert check_artifacts.image_problems(VARIANTS["base"], names, [], []) == [
+        "package in image: huggingface-hub",
+        "package in image: pydantic-ai-slim",
+    ]
