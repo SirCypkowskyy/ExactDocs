@@ -678,6 +678,7 @@ cases:
   expected_output:
     hits:
     - {version: v4.0.17, article: packages/docs/content/v4/changelog.mdx, heading_path: [ZodError, changes error map precedence]}
+    - {version: v4.0.17, article: packages/docs/content/error-customization.mdx, heading_path: [Per-parse error customization]}
     reference: >-
       Yes. Zod 4 changed the precedence: an error map passed into `.parse()` no longer takes
       precedence over a schema-level error map, so the schema-level message wins (in Zod 3 the
@@ -730,14 +731,13 @@ cases:
     project: zod
     version: v4.6.7
     query: 'Can a record use z.number() as its key schema, and what does it accept?'
-  metadata: {kind: version-change}
+  metadata: {kind: conceptual}
   expected_output:
     hits:
     - {version: v4.6.7, article: packages/docs/content/api.mdx, heading_path: [Records, z.record]}
     reference: >-
       Yes. A `z.number()` key validates that each key is a numeric string ("1", "1.5", "-3"),
-      and extra constraints such as `.int()`, `.min()` and `.max()` are checked too. In
-      v4.0.17 the docs said a number key schema always throws during parsing.
+      and extra constraints such as `.int()`, `.min()` and `.max()` are checked too.
     facts:
     - a number key schema validates that keys are numeric strings
     - numeric constraints like min, max and step are also validated on keys
@@ -906,12 +906,14 @@ cases:
     project: zod
     version: v4.6.7
     query: 'How do I compile every schema in my Node app automatically, and what does it cost in bundle size?'
-  metadata: {kind: cross-page}
+  metadata: {kind: how-to}
   expected_output:
     hits:
     - {version: v4.6.7, article: packages/docs/content/compile.mdx, heading_path: ['import "zod/compile"']}
     - {version: v4.6.7, article: packages/docs/content/blog/introducing-z-compile.mdx, heading_path: [Tradeoffs]}
     - {version: v4.6.7, article: packages/docs/content/compile.mdx, heading_path: [Bundle size]}
+    - {version: v4.6.7, article: packages/docs/content/blog/introducing-z-compile.mdx, heading_path: [Compile all the things!]}
+    - {version: v4.6.7, article: packages/docs/content/blog/zod-4-5.mdx, heading_path: [z.compile(), 'import "zod/compile"']}
     reference: >-
       `import "zod/compile"` before any module defines schemas (or `node --import
       zod/compile`); schemas are then compiled lazily on first parse. The compiler adds about
@@ -988,11 +990,12 @@ cases:
     project: zod
     version: v4.0.17
     query: 'How do I add length limits and a custom refine to a string in zod/mini, and why are they not methods there?'
-  metadata: {kind: cross-page}
+  metadata: {kind: how-to}
   expected_output:
     hits:
     - {version: v4.0.17, article: packages/docs/content/packages/mini.mdx, heading_path: [ZodMiniType, .check()]}
     - {version: v4.0.17, article: packages/docs/content/v4/index.mdx, heading_path: [Introducing Zod Mini]}
+    - {version: v4.0.17, article: packages/docs/content/packages/mini.mdx, heading_path: [Tree-shaking]}
     reference: >-
       Pass checks to `.check()`: `z.string().check(z.minLength(5), z.maxLength(10),
       z.refine(...))`. Zod Mini replaces methods with top-level functions because a
