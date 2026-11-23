@@ -1,9 +1,9 @@
-"""#358: ExactDocs' migrations on libSQL (a compatibility check, not a supported database).
+"""#358: ExactDocs' migrations on libSQL give SQLite's schema.
 
-ExactDocs' database cannot run on libSQL yet: its SQLite stack is async (SQLAlchemy over
-aiosqlite) and no maintained async libSQL driver exists (see *libSQL* in docs/configuration.md).
-What can be checked is the schema: these tests run every Alembic revision on libSQL through the
-sync ``libsql`` driver, on a local file and on a libSQL server (``EXACTDOCS_TEST_LIBSQL_URL``),
+ExactDocs' database runs on a libSQL server through ``turso-serverless`` (#474,
+``test_libsql_database.py``). These tests check the schema itself: they run every Alembic
+revision on libSQL through the sync ``libsql`` driver, on a local file and on a libSQL server
+(``EXACTDOCS_TEST_LIBSQL_URL``),
 and compare the result with stdlib SQLite's, so a revision that libSQL's SQLite (3.45) cannot run
 shows up. They need the ``libsql`` package (a Python 3.14 wheel for Linux x86_64 only), so they
 skip elsewhere; CI's x86_64 runners run them.

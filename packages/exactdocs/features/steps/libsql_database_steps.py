@@ -31,14 +31,14 @@ def _query(statement: str) -> list[tuple[object, ...]]:
 
 
 def _hits(base: str, library: str) -> dict[str, list[tuple[str, str]]]:
-    """The search hits of each query (each hit's article and heading), on one process."""
+    """The search hits of each query (each hit's chunk and article), on one process."""
     found = {}
     with signed_in(base) as client:
         for query in QUERIES:
             body = client.get(
                 f"/api/v1/libraries{library}/search", params={"ref": REF, "q": query}
             ).json()
-            found[query] = [(hit["path"], hit["heading"]) for hit in body["results"]]
+            found[query] = [(hit["chunk_id"], hit["article_path"]) for hit in body["results"]]
     return found
 
 
