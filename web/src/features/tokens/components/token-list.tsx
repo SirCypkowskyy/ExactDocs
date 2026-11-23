@@ -1,201 +1,259 @@
-import {
-  type ColumnDef,
-  getCoreRowModel,
-  type SortingState,
-  useReactTable,
-} from "@tanstack/react-table";
-import { useEffect, useEffectEvent, useId, useState } from "react";
-import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
-import { mediumDate } from "@/shared/lib/time";
+import type { ColumnDef, FilterFn, SortingFn } from "@tanstack/react-table";
+import { CircleX, Clock, Infinity as Endless } from "lucide-react";
+import { formatNumber, type Language, useLanguage, useMessages } from "@/shared/lib/i18n";
+import { absoluteTimeWithZone } from "@/shared/lib/time";
+import { useNow } from "@/shared/lib/use-now";
 import { cn } from "@/shared/lib/utils";
+import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
-import { Input } from "@/shared/ui/input";
-import { EmptyState } from "@/shared/ui/page";
-import { SelectField } from "@/shared/ui/select-field";
-import { Skeleton } from "@/shared/ui/skeleton";
+import { MonoCopy, RelativeTime } from "@/shared/ui/data-table/cells";
+import type { TableFilter } from "@/shared/ui/data-table/use-data-table";
+import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
+import { Tooltip } from "@/shared/ui/tooltip";
 import { messages } from "../messages";
-import type { TokensView } from "../model/list-view";
-import { isExpired, type Token } from "../model/token";
+import {
+  expiryOf,
+  scopeOf,
+  sortTime,
+  TOKEN_EXPIRIES,
+  TOKEN_SCOPES,
+  TOKEN_USES,
+  useOf,
+} from "../model/list-view";
+import type { Token } from "../model/token";
 
-/** Sorting is done by the API; the table holds the sort state the URL gives it. */
-const columnDefs: ColumnDef<Token>[] = [
-  { accessorKey: "name" },
-  { accessorKey: "created_at" },
-  { accessorKey: "expires_at" },
-  { accessorKey: "last_used_at" },
-];
-const DEFAULT_SORT = "-created_at";
-const sortingOf = (sort: string | undefined): SortingState => {
-  const spec = sort ?? DEFAULT_SORT;
-  return [{ id: spec.replace(/^-/, ""), desc: spec.startsWith("-") }];
-};
-const specOf = ([first]: SortingState) =>
-  first ? `${first.desc ? "-" : ""}${first.id}` : undefined;
+/*
+ * The token table's columns and filters (blocks-map §2.3, API tokens). The filterable columns hold
+ * a token's category (its scope, how soon it expires, how recently it was used), so the browser
+ * filters and counts them; the time columns still sort by the time itself.
+ */
 
-interface TokenListProps {
-  tokens: readonly Token[];
-  view: TokensView;
-  onView: (view: TokensView) => void;
-  total: number;
-  hasMore: boolean;
-  loadingMore: boolean;
-  onLoadMore: () => void;
-  onRevoke: (token: Token) => void;
-}
+type TokensMessages = (typeof messages)["en"];
 
-export function TokenList({
-  tokens,
-  view,
-  onView,
-  total,
-  hasMore,
-  loadingMore,
-  onLoadMore,
-  onRevoke,
-}: TokenListProps) {
-  const id = useId();
-  const language = useLanguage();
+/** A row matches when its category is one of the picked values. */
+const inList: FilterFn<Token> = (row, id, values: readonly string[]) =>
+  values.includes(row.getValue<string>(id));
+
+/** Sorts by a time of the token (never first ascending), not by the column's category. */
+const byTime =
+  (field: "expires_at" | "last_used_at"): SortingFn<Token> =>
+  (a, b) => {
+    const x = sortTime(a.original[field]);
+    const y = sortTime(b.original[field]);
+    return x < y ? -1 : x > y ? 1 : 0;
+  };
+
+/** How many library chips a row shows before the rest move behind "+N". */
+const SHOWN = 2;
+const chip = "rounded-sm bg-accent px-1.5 py-0.5 font-mono text-small text-foreground";
+
+/** The libraries a token reaches: all, none, or the first two as chips and the rest on demand. */
+function LibrariesCell({ token }: { token: Token }) {
   const t = useMessages(messages).list;
-  const c = useMessages(common);
-  const when = (iso: string) => mediumDate(iso, language);
-  const [text, setText] = useState(view.q ?? "");
-  const commit = useEffectEvent((value: string) => {
-    if ((view.q ?? "") !== value.trim()) onView({ ...view, q: value.trim() || undefined });
-  });
-  // Typing waits a moment before it asks the server.
-  useEffect(() => {
-    const t = setTimeout(() => commit(text), 300);
-    return () => clearTimeout(t);
-  }, [text]);
-  const table = useReactTable({
-    data: tokens as Token[],
-    columns: columnDefs,
-    getCoreRowModel: getCoreRowModel(),
-    getRowId: (token) => token.id,
-    manualSorting: true,
-    manualFiltering: true,
-    state: { sorting: sortingOf(view.sort) },
-    onSortingChange: (updater) => {
-      const next = typeof updater === "function" ? updater(sortingOf(view.sort)) : updater;
-      const spec = specOf(next);
-      onView({ ...view, sort: spec === DEFAULT_SORT ? undefined : spec });
-    },
-  });
+  const language = useLanguage();
+  const ids = token.library_ids;
+  if (ids == null) return <span className="text-muted-foreground">{t.allLibraries}</span>;
+  if (ids.length === 0) return <span className="text-muted-foreground">{t.noLibraries}</span>;
+  const rest = ids.length - SHOWN;
   return (
-    <div>
-      <search className="mb-4 flex flex-wrap items-end gap-3">
-        <div className="flex min-w-0 flex-1 basis-60 flex-col gap-2">
-          <label htmlFor={`${id}-q`} className="text-body font-medium">
-            {t.find}
-          </label>
-          <Input
-            id={`${id}-q`}
-            type="search"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={t.namePlaceholder}
-          />
-        </div>
-        <div className="w-52">
-          <SelectField
-            id={`${id}-sort`}
-            label={t.sortBy}
-            value={specOf(table.getState().sorting)}
-            onChange={(e) => table.setSorting(sortingOf(e.target.value))}
-          >
-            <option value="-created_at">{t.sort.newest}</option>
-            <option value="created_at">{t.sort.oldest}</option>
-            <option value="name">{t.sort.nameAsc}</option>
-            <option value="-name">{t.sort.nameDesc}</option>
-            <option value="-last_used_at">{t.sort.recentlyUsed}</option>
-            <option value="expires_at">{t.sort.expiry}</option>
-          </SelectField>
-        </div>
-      </search>
-      {tokens.length === 0 ? (
-        <EmptyState title={t.noMatchTitle} className="max-w-2xl">
-          <p>{t.noMatch(view.q ?? "")}</p>
-          <Button
-            variant="ghost"
-            className="mt-3"
-            onClick={() => {
-              setText("");
-              onView({ sort: view.sort });
-            }}
-          >
-            {c.clearSearch}
-          </Button>
-        </EmptyState>
-      ) : (
-        <>
-          <ul aria-label={t.label} className="divide-y divide-rule border-y border-border">
-            {table.getRowModel().rows.map(({ original: token }) => {
-              const expired = isExpired(token);
-              return (
-                <li key={token.id} className="row-in flex items-start justify-between gap-3 py-4">
-                  <div className="min-w-0">
-                    <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span
-                        className={cn(
-                          "font-medium [overflow-wrap:anywhere]",
-                          expired && "text-muted-foreground",
-                        )}
-                      >
-                        {token.name}
-                      </span>
-                      <code className="font-mono text-small text-muted-foreground">
-                        {token.prefix}…
-                      </code>
-                    </p>
-                    <p className="mt-0.5 text-small text-muted-foreground [overflow-wrap:anywhere]">
-                      {token.library_ids == null
-                        ? t.allLibraries
-                        : token.library_ids.length === 0
-                          ? t.noLibraries
-                          : token.library_ids.join(", ")}
-                    </p>
-                    <p className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-small text-muted-foreground tabular-nums">
-                      <span>{t.created(when(token.created_at))}</span>
-                      <span className={expired ? "font-medium text-destructive" : undefined}>
-                        {token.expires_at
-                          ? expired
-                            ? t.expired(when(token.expires_at))
-                            : t.expires(when(token.expires_at))
-                          : t.noExpiry}
-                      </span>
-                      <span>
-                        {token.last_used_at ? t.lastUsed(when(token.last_used_at)) : t.neverUsed}
-                      </span>
-                    </p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="shrink-0 text-destructive hover:bg-destructive-soft"
-                    aria-label={t.revokeNamed(token.name)}
-                    onClick={() => onRevoke(token)}
-                  >
-                    {t.revoke}
-                  </Button>
+    <span className="flex flex-wrap items-center gap-1.5">
+      {ids.slice(0, SHOWN).map((id) => (
+        <span key={id} className={chip}>
+          {id}
+        </span>
+      ))}
+      {rest > 0 && (
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={t.moreLibraries(rest, token.name)}
+              className="-my-2 min-w-11 px-1.5 text-small text-muted-foreground data-[state=open]:bg-accent fine:h-6 fine:min-w-6"
+            >
+              +{formatNumber(rest, language)}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto max-w-80 p-3">
+            <p className="mb-2 text-small text-muted-foreground">{t.librariesOf(token.name)}</p>
+            <ul className="flex flex-wrap gap-1.5">
+              {ids.map((id) => (
+                <li key={id} className={chip}>
+                  {id}
                 </li>
-              );
-            })}
-            {loadingMore && (
-              <li aria-hidden="true" className="py-4">
-                <Skeleton className="h-12 w-full" />
-              </li>
-            )}
-          </ul>
-          <div className="flex items-center gap-3 pt-4 text-small text-muted-foreground">
-            <p className="num">{t.showing(tokens.length, total)}</p>
-            {hasMore && (
-              <Button variant="outline" onClick={onLoadMore} disabled={loadingMore}>
-                {t.loadMore}
-              </Button>
-            )}
-          </div>
-        </>
+              ))}
+            </ul>
+          </PopoverContent>
+        </Popover>
       )}
-    </div>
+    </span>
   );
 }
+
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+
+/** "in 3 hours", "tomorrow", "in 12 days", "in 3 months" ("za 12 dni"): how far off a time is. */
+function untilText(iso: string, now: number, language: Language): string {
+  const relative = new Intl.RelativeTimeFormat(language, { numeric: "auto" });
+  const ms = Math.max(0, Date.parse(iso) - now);
+  if (ms < DAY) return relative.format(Math.max(1, Math.floor(ms / HOUR)), "hour");
+  const days = Math.floor(ms / DAY);
+  if (days <= 60) return relative.format(days, "day");
+  if (days < 365) return relative.format(Math.floor(days / 30), "month");
+  return relative.format(Math.floor(days / 365), "year");
+}
+
+/**
+ * A time ahead, like the kit's RelativeTime (which only looks back): relative, with the exact time
+ * and its zone in the tooltip, the accessible name and `dateTime`.
+ */
+function Until({ iso }: { iso: string }) {
+  const now = useNow();
+  const language = useLanguage();
+  const until = untilText(iso, now, language);
+  const exact = absoluteTimeWithZone(iso, language);
+  return (
+    <Tooltip label={exact}>
+      <time dateTime={iso} className="whitespace-nowrap">
+        <span aria-hidden="true">{until}</span>
+        <span className="sr-only">
+          {until}, {exact}
+        </span>
+      </time>
+    </Tooltip>
+  );
+}
+
+/** When it stops working: "in 12 days", a warning pill within a week, "Expired", or no expiry. */
+function ExpiresCell({ token }: { token: Token }) {
+  const t = useMessages(messages).list;
+  const now = useNow();
+  const at = token.expires_at;
+  if (at === null) return <span className="text-muted-foreground">{t.noExpiry}</span>;
+  const expiry = expiryOf(token, now);
+  if (expiry === "expired") {
+    return (
+      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Badge tone="destructive">
+          <CircleX aria-hidden="true" className="size-3" />
+          {t.expired}
+        </Badge>
+        <span className="text-muted-foreground">
+          <RelativeTime iso={at} />
+        </span>
+      </span>
+    );
+  }
+  if (expiry === "soon") {
+    return (
+      <Badge tone="warning">
+        <Clock aria-hidden="true" className="size-3" />
+        <Until iso={at} />
+      </Badge>
+    );
+  }
+  return <Until iso={at} />;
+}
+
+/** The name, muted once the token has expired. */
+function NameCell({ token }: { token: Token }) {
+  const expired = expiryOf(token, useNow()) === "expired";
+  return (
+    <span
+      className={cn("font-medium [overflow-wrap:anywhere]", expired && "text-muted-foreground")}
+    >
+      {token.name}
+    </span>
+  );
+}
+
+// Built once per language: a cell is rendered as a component, so a new function would remount it.
+export const columnsOf = (m: TokensMessages): ColumnDef<Token>[] => [
+  {
+    accessorKey: "name",
+    header: m.list.columns.name,
+    enableHiding: false,
+    meta: { priority: 1 },
+    cell: ({ row }) => <NameCell token={row.original} />,
+  },
+  {
+    accessorKey: "prefix",
+    header: m.list.columns.token,
+    enableSorting: false,
+    enableGlobalFilter: false,
+    meta: { priority: 2, skeleton: "mono" },
+    cell: ({ row }) => (
+      <MonoCopy
+        value={row.original.prefix}
+        display={`${row.original.prefix}…`}
+        what={m.list.prefix}
+      />
+    ),
+  },
+  {
+    id: "libraries",
+    accessorFn: scopeOf,
+    header: m.list.columns.libraries,
+    enableSorting: false,
+    enableGlobalFilter: false,
+    filterFn: inList,
+    meta: { className: "max-lg:hidden" },
+    cell: ({ row }) => <LibrariesCell token={row.original} />,
+  },
+  {
+    id: "created",
+    accessorFn: (token) => Date.parse(token.created_at),
+    header: m.list.columns.created,
+    sortDescFirst: true,
+    enableGlobalFilter: false,
+    meta: { className: "max-md:hidden" },
+    cell: ({ row }) => <RelativeTime iso={row.original.created_at} />,
+  },
+  {
+    id: "expires",
+    accessorFn: (token) => expiryOf(token, Date.now()),
+    header: m.list.columns.expires,
+    enableGlobalFilter: false,
+    filterFn: inList,
+    sortingFn: byTime("expires_at"),
+    meta: { priority: 2, skeleton: "pill" },
+    cell: ({ row }) => <ExpiresCell token={row.original} />,
+  },
+  {
+    id: "used",
+    accessorFn: (token) => useOf(token, Date.now()),
+    header: m.list.columns.used,
+    sortDescFirst: true,
+    enableGlobalFilter: false,
+    filterFn: inList,
+    sortingFn: byTime("last_used_at"),
+    meta: { priority: 3 },
+    cell: ({ row }) => <RelativeTime iso={row.original.last_used_at} empty={m.list.neverUsed} />,
+  },
+];
+
+/** The same marks as the expiry cell's pills. */
+const EXPIRY_ICONS = { expired: CircleX, soon: Clock, never: Endless } as const;
+
+export const filtersOf = (m: TokensMessages): TableFilter[] => [
+  {
+    id: "libraries",
+    title: m.list.columns.libraries,
+    options: TOKEN_SCOPES.map((s) => ({ value: s, label: m.list.scopes[s] })),
+  },
+  {
+    id: "expires",
+    title: m.list.columns.expires,
+    options: TOKEN_EXPIRIES.map((e) => ({
+      value: e,
+      label: m.list.expiries[e],
+      icon: EXPIRY_ICONS[e],
+    })),
+  },
+  {
+    id: "used",
+    title: m.list.columns.used,
+    options: TOKEN_USES.map((u) => ({ value: u, label: m.list.uses[u] })),
+  },
+];
