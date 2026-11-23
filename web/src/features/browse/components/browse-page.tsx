@@ -1,9 +1,17 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowUpRight, Info, Settings, Users } from "lucide-react";
+import { ArrowUpRight, GitBranch, Info, LibraryBig, Settings, Share2 } from "lucide-react";
 import { useLanguage, useMessages } from "@/shared/lib/i18n";
 import { absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 import { usePageTitle } from "@/shared/lib/use-page-title";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/shared/ui/breadcrumb";
 import { buttonVariants } from "@/shared/ui/button";
 import { EmptyState, Page, PageHeader } from "@/shared/ui/page";
 import { kbd } from "@/shared/ui/recipes";
@@ -125,8 +133,8 @@ function VersionBrowser({
             <ArticlesTable
               owner={owner}
               repo={repo}
-              versionRef={version.ref}
-              sha={version.commit_sha}
+              library={library}
+              version={version}
               search={search}
             />
           </>
@@ -169,26 +177,26 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
       <PageHeader
         headingRef={heading}
         title={library.title || library.id}
+        icon={<LibraryBig />}
         above={
-          <nav aria-label={t.breadcrumb} className="min-w-0 text-body text-muted-foreground">
-            <ol className="flex min-w-0 flex-wrap items-center gap-x-1.5">
-              <li>
-                <Link
-                  to="/"
-                  className="-ml-1 inline-flex min-h-11 items-center rounded px-1 outline-none transition-colors duration-(--dur-fast) hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-7"
-                >
-                  {t.libraries}
-                </Link>
-              </li>
-              <li aria-hidden="true">/</li>
-              <li className="inline-flex min-w-0 items-center gap-1.5">
+          <Breadcrumb>
+            <BreadcrumbList>
+              <BreadcrumbItem>
+                <BreadcrumbLink asChild>
+                  <Link to="/" className="-ml-1 inline-flex min-h-11 items-center px-1 lg:min-h-7">
+                    {t.libraries}
+                  </Link>
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
                 <LibraryBullet id={library.id} size="sm" />
-                <span aria-current="page" className="truncate font-mono text-mono text-foreground">
+                <BreadcrumbPage className="font-mono text-mono font-normal">
                   {library.id}
-                </span>
-              </li>
-            </ol>
-          </nav>
+                </BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
         }
         description={
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -200,7 +208,11 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
                 className="inline-flex min-h-8 max-w-full items-center gap-1 rounded outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <span className="truncate">{web.replace(/^https?:\/\//, "")}</span>
-                <ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
+                <ArrowUpRight
+                  aria-hidden="true"
+                  data-icon-motion="out"
+                  className="size-3 shrink-0"
+                />
                 <span className="sr-only">{t.opensRepository}</span>
               </a>
             )}
@@ -229,7 +241,7 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
                 className: "max-sm:hidden",
               })}
             >
-              <Users aria-hidden="true" />
+              <Share2 aria-hidden="true" data-icon-motion="out" />
               {t.share}
             </Link>
             <Link
@@ -241,7 +253,7 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
                 className: "max-sm:w-11 max-sm:px-0",
               })}
             >
-              <Settings aria-hidden="true" />
+              <Settings aria-hidden="true" data-icon-motion="cog" />
               <span className="max-sm:sr-only">{t.settings}</span>
             </Link>
           </>
@@ -259,7 +271,11 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
           version={version}
         />
       ) : (
-        <EmptyState title={t.nothingImported} className="max-w-xl">
+        <EmptyState
+          icon={<GitBranch aria-hidden="true" />}
+          title={t.nothingImported}
+          className="max-w-xl"
+        >
           {t.noVersions}
         </EmptyState>
       )}

@@ -32,6 +32,7 @@ export const messages = defineMessages(
       noVersions: "This library has no versions. Once its first import finishes they appear here.",
       searchRegion: "Search",
       articleRegion: "Article",
+      loading: "Loading the library",
       unknownVersion: (missing: ReactNode, shown: ReactNode) => (
         <>
           {missing} is not an imported version of this library. Showing {shown} instead.
@@ -46,12 +47,19 @@ export const messages = defineMessages(
       title: "Title",
       tags: "Tags",
       size: "Size",
-      bytes: (bytes: number) =>
-        bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(bytes < 10_240 ? 1 : 0)} KB`,
       loadFailed: "Couldn't load articles.",
       retry: "Retry",
       noMatch: "No articles match these filters.",
       none: "No articles.",
+      count: (count: number) => plural.en(count, { one: "# article", other: "# articles" }),
+      folder: "Folder",
+      open: "Open",
+      copyPath: "Copy path",
+      copyLink: "Copy link to this version",
+      openOn: (host: string | undefined) => `Open on ${host ?? "the host"}`,
+      inFolder: "Show this folder's articles",
+      pathCopied: "Path copied",
+      linkCopied: "Link copied",
     },
     notFound: {
       title: "Library not found",
@@ -213,6 +221,7 @@ export const messages = defineMessages(
         "Ta biblioteka nie ma wersji. Pojawią się tutaj, gdy skończy się jej pierwszy import.",
       searchRegion: "Wyszukiwanie",
       articleRegion: "Artykuł",
+      loading: "Wczytywanie biblioteki",
       unknownVersion: (missing, shown) => (
         <>
           {missing} nie jest zaimportowaną wersją tej biblioteki. Wyświetlana jest wersja {shown}.
@@ -227,19 +236,20 @@ export const messages = defineMessages(
       title: "Tytuł",
       tags: "Tagi",
       size: "Rozmiar",
-      bytes: (bytes) => {
-        if (bytes < 1024) return `${formatNumber(bytes, "pl")} B`;
-        const digits = bytes < 10_240 ? 1 : 0;
-        const kb = formatNumber(bytes / 1024, "pl", {
-          minimumFractionDigits: digits,
-          maximumFractionDigits: digits,
-        });
-        return `${kb} KB`;
-      },
       loadFailed: "Nie udało się wczytać artykułów.",
       retry: "Ponów",
       noMatch: "Żaden artykuł nie pasuje do tych filtrów.",
       none: "Brak artykułów.",
+      count: (count) =>
+        plural.pl(count, { one: "# artykuł", few: "# artykuły", many: "# artykułów" }),
+      folder: "Folder",
+      open: "Otwórz",
+      copyPath: "Kopiuj ścieżkę",
+      copyLink: "Kopiuj link do tej wersji",
+      openOn: (host) => (host ? `Otwórz w serwisie ${host}` : "Otwórz w repozytorium"),
+      inFolder: "Pokaż artykuły z tego folderu",
+      pathCopied: "Skopiowano ścieżkę",
+      linkCopied: "Skopiowano link",
     },
     notFound: {
       title: "Nie znaleziono biblioteki",

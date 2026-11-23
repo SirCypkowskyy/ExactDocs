@@ -1,9 +1,12 @@
-import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/react-query";
+import { queryOptions } from "@tanstack/react-query";
 import { getJson, HttpError, type QueryOf } from "@/shared/lib/http";
 import { BROWSE_KEY } from "@/shared/lib/query-keys";
+import type { ServerSource } from "@/shared/ui/data-table/server-pages";
+import type { ArticleFilters } from "../model/articles-view";
 import {
   type Article,
   type ArticleList,
+  type ArticleSummary,
   type LibraryAccess,
   type LibraryDetail,
   pathInVersion,
@@ -79,47 +82,35 @@ export const articlesPageQueryOptions = ({
     },
   });
 
-export interface TableArgs extends VersionArgs {
-  tags: readonly string[];
-  filter: string | undefined;
-  sort: string | undefined;
-}
-
-/** The articles table: a page at a time, sorted and filtered (path or title, tags) by the server. */
-export const articlesTableQueryOptions = ({
-  owner,
-  repo,
-  ref,
-  sha,
-  tags,
-  filter,
-  sort,
-}: TableArgs) =>
-  infiniteQueryOptions({
-    queryKey: [
-      ...BROWSE_KEY,
-      owner,
-      repo,
-      ref,
-      sha,
-      "article-table",
-      { tags: tags.join(","), filter, sort },
-    ] as const,
-    queryFn: ({ signal, pageParam }) => {
+/**
+ * The articles table's rows (DataTable v2, server mode): numbered pages over the API's cursor,
+ * sorted and filtered (path or title, tags, folder) by the server. The key carries the commit and
+ * the view, never the page or the size.
+ */
+export function articlesSource(
+  { owner, repo, ref, sha }: VersionArgs,
+  filters: ArticleFilters,
+): ServerSource<ArticleSummary> {
+  return {
+    key: [...BROWSE_KEY, owner, repo, ref, sha, "article-table", filters] as const,
+    // #509: `paging: "offset"` once the endpoint takes `offset`: Last, and one request per page.
+    fetchPage: ({ limit, cursor, signal }) => {
       const query: QueryOf<"/api/v1/libraries/{owner}/{repo}/articles"> = {
         ref,
-        tags,
-        q: filter ?? null,
-        sort: sort ?? null,
-        limit: 50,
-        cursor: pageParam,
+        tags: filters.tags,
+        q: filters.q ?? null,
+        sort: filters.sort ?? null,
+        limit,
+        cursor,
+        // Left out for the whole version (an empty prefix is the tree's root listing).
+        ...(filters.prefix && { path_prefix: filters.prefix }),
       };
-      return getJson<ArticleList>(`${lib(owner, repo)}/articles`, { signal, query });
+      return getJson<ArticleList>(`${lib(owner, repo)}/articles`, { signal, query }).then(
+        (list) => ({ rows: list.articles, total: list.total, nextCursor: list.next_cursor }),
+      );
     },
-    initialPageParam: null as string | null,
-    getNextPageParam: (last) => last.next_cursor,
-    placeholderData: keepPreviousData,
-  });
+  };
+}
 
 /** Refs and paths travel as query parameters: a ref may contain `/`. */
 export const articleQueryOptions = ({ owner, repo, ref, sha }: VersionArgs, path: string) =>
