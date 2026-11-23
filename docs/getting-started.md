@@ -194,7 +194,8 @@ They differ from `ctx7` in a few ways:
 - Failures go to stderr with the exit codes below; `ctx7` prints them to stdout and always exits 1.
 - The query may be given as several words.
 - A library lists its default version, articles and chunks, with no stars or trust score.
-- There is no `ctx7 search` yet; it needs a search-all REST route.
+- There is no `ctx7 search` command yet. To search every library at once, use the web UI's search,
+  the `search_all_docs` MCP tool or `GET /api/v1/search` ([REST API](rest-api.md)).
 
 ### Exit codes
 
@@ -534,25 +535,15 @@ provider may sign you straight back in.
     **Entra ID** puts at most 200 groups in a token. Beyond that, filter the groups sent to the app
     on the Entra side, or use app roles with `groups_claim = "roles"`.
 
-OAuth2-only providers, and GitHub or GitHub Enterprise with organization and team checks, are
-planned ([#383](https://github.com/SirCypkowskyy/ExactDocs/issues/383)).
+Two more kinds of provider sit next to `oidc`: `oauth2`, for a provider without OpenID Connect,
+and `github`, for GitHub or GitHub Enterprise with organization and team checks.
+[OAuth2-only sign-in](configuration.md#oauth2-only-sign-in) and
+[GitHub and GitHub Enterprise sign-in](configuration.md#github-and-github-enterprise-sign-in)
+list their fields.
 
-!!! note "Library roles"
-    Each library has roles (`viewer`, `contributor`, `admin`, `creator`), granted to users and
-    groups. A library you add makes you its creator; share it from its **Share** button (the
-    library's *Sharing* page) or with `PUT /api/v1/libraries/{owner}/{repo}/grants`. Only the
-    creator gives or removes `admin` and hands the library over to another user (*Transfer
-    ownership*), who becomes its creator while you stay an admin. Operators (admins) hold every
-    library, and manage the accounts. Libraries that existed before roles have no creator, so
-    other accounts see them only once an operator shares them. The AI providers and instance
-    settings stay open to every signed-in account. Every grant, revocation, ownership transfer
-    and removal is recorded: a library's admins read its access log from its *Sharing* page or
-    the Sharing section of its settings, and operators read every library's on the *Access log*
-    page (`/access-log`).
+### Library roles and sharing
 
-### Planned: teams
-
-The plan for teams is to share libraries with users or identity-provider groups, in four roles:
+Each library has four roles, granted to users and to identity-provider groups:
 
 | Role | Can |
 |---|---|
@@ -561,6 +552,20 @@ The plan for teams is to share libraries with users or identity-provider groups,
 | admin | also delete it and manage access |
 | creator | the single owner (whoever created it): also remove admins and transfer ownership |
 
-Who may create libraries will be an instance-level permission mapped from users or IdP groups. MCP
-tokens act as their user, so an agent will see exactly the libraries its user may view. See the
-[roadmap](https://github.com/SirCypkowskyy/ExactDocs#roadmap).
+A library you add makes you its creator. Share it from its **Share** button (the library's
+*Sharing* page) or with `PUT /api/v1/libraries/{owner}/{repo}/grants`. Only the creator gives or
+removes `admin` and hands the library over to another user (*Transfer ownership*), who becomes its
+creator while you stay an admin. Operators (admins) hold every library and manage the accounts.
+Libraries that existed before roles have no creator, so other accounts see them only once an
+operator shares them. The AI providers and instance settings stay open to every signed-in account.
+
+Every grant, revocation, ownership transfer and removal is recorded. A library's admins read its
+access log from its *Sharing* page or the Sharing section of its settings, and operators read every
+library's on the *Access log* page (`/access-log`).
+
+Every signed-in account may add libraries unless an operator limits that to chosen users or groups
+([Who may create libraries](configuration.md#who-may-create-libraries)). API tokens and MCP clients
+act as their user, so an agent sees exactly the libraries its user may view. A token can also be
+narrowed to chosen libraries: `--library` on `exactdocs token create`, or `library_ids` in the
+[REST API](rest-api.md). [Architecture](architecture.md#library-roles) explains how the roles are
+checked.

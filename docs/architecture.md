@@ -1349,8 +1349,8 @@ room for its 9 MB.)
 By default every index lives in ExactDocs' own database (SQLite FTS5 and sqlite-vec, or
 PostgreSQL full-text search, pg_search and pgvector). `EXACTDOCS_SEARCH_BACKEND` and
 `EXACTDOCS_VECTOR_BACKEND` move the search index or the vector index to an external backend
-(#352, epic E14: Elasticsearch/OpenSearch, Qdrant, Weaviate, Azure AI Search and others build on
-this). The rules:
+(#352). Epic E14 built twelve backends on it, each with its options in
+[Configuration](configuration.md#external-index-backends). The rules:
 
 - **Derived data.** The database stays the source of truth: it keeps every chunk, its search
   entries (the database's own index is still written, so switching back needs no reindex) and
@@ -1446,11 +1446,12 @@ request in, its JSON out) that each engine's module implements with its client; 
 engines differ (the vector field, the kNN query, the hybrid query) the engine's name decides. It
 imports neither client. Options, analysis and sizing: [Configuration](configuration.md#elasticsearch-and-opensearch).
 
-## AI retrieval (planned)
+## AI retrieval
 
-Mostly not built yet; decided in [AI retrieval decisions](decisions/ai-retrieval.md) (#240) for the
-*Next: AI retrieval* milestone. Built: **mode selection** (#89), **provider profiles** (#241),
-the **reranker** (#93), **hybrid search** (#92) and **agentic search** (#98).
+Decided in [AI retrieval decisions](decisions/ai-retrieval.md) (#240) for the *Next: AI retrieval*
+milestone, and built: **mode selection** (#89), **provider profiles** (#241), **hybrid search**
+(#92), **HyDE** (#94), the **reranker** (#93) and **LLM judge** (#96), **local models** (#245),
+**agentic search** (#98) with its **answer cache** (#100) and **repo guidance** (#101).
 
 **Profiles and roles (#241).** Retrieval's models hold a `ProviderProfile` (a named endpoint with a
 `kind`, validated per kind, never a plaintext key: a stored key is sealed, a file is named, an
@@ -1802,9 +1803,9 @@ so a server that reports no usage cannot switch off `UsageLimits` or the budgets
 guidance on for a library already imported is bootstrap's `SetRetrievalThenReprocess` (the REST
 setting): it queues a `reprocess`, which re-imports every version at its commit.
 
-Later modes plug in as pipelines; their models come through the ports below. The `[ai]`
-extra is declared and installed for development; the model-free test proves none of it is imported.
-How the rest fits the structure above:
+Every mode is a pipeline, and its models come through the ports below. The `[ai]` extra is
+declared and installed for development; the model-free test proves none of it is imported when no
+model is configured. How the rest fits the structure above:
 
 - **All in `retrieval`.** New driven ports: `Embeddings`, `Reranker`, `VectorIndex`, the
   `SpendLedger` (whose adapter also implements the harness `BatchSpendStore`), and ports for the HyDE writer, the judge and the
@@ -1817,8 +1818,8 @@ How the rest fits the structure above:
   Bootstrap implements retrieval's `ModelFactory` port (a resolved provider profile in, a callable
   model, embedder or reranker out), always with explicit URLs and keys, never the SDKs'
   environment variables. Retrieval declares its own secret-box port; the Fernet adapter that seals
-  repository credentials moves from ingestion to `bootstrap` first (#248), so no domain depends
-  on another's adapter.
+  repository credentials moved from ingestion to `bootstrap` (#248), so no domain depends on
+  another's adapter.
 - **Storage.** `retrieval_embedding_spaces` records each (model, dimensions, input format); its
   vectors sit in one adapter-managed table per space, keyed by `retrieval_chunks` row, searched
   exactly within the active manifest (sqlite-vec on SQLite, pgvector on PostgreSQL and Supabase).

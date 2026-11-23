@@ -2791,7 +2791,7 @@ Not planned as issues; revisit after Next.
 | Prebuilt, signed index snapshots and a public registry | Depends on the registry and a stable index format |
 | Backup LLM (model fallback), remote Monty sandbox worker | Only matters once agentic mode runs at scale |
 | Pattern-based prompt-injection flags on imported docs | Report-only nice-to-have |
-| reStructuredText, AsciiDoc, Jupyter notebooks | Markdown covers most repositories |
+| AsciiDoc, Jupyter notebooks (reStructuredText is done: Sphinx sources are imported since #435) | Markdown covers most repositories |
 
 ---
 
