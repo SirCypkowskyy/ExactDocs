@@ -5,6 +5,41 @@ into **domains** with hard boundaries. Inside every domain we follow **hexagonal
 (ports & adapters) with the dependency rule of clean architecture. The React client mirrors the
 same idea with **vertical slices**. All of this is enforced by tests, not by convention.
 
+## The system at a glance
+
+```mermaid
+flowchart TD
+    agent["AI agent<br/>Claude Code, Cursor, ChatGPT, ..."]
+    browser[Browser]
+    cli["exactdocs CLI"]
+    subgraph app ["ExactDocs (one image, one process, or several on PostgreSQL)"]
+        mcp["FastMCP<br/>/mcp (HTTP) or stdio"]
+        api["FastAPI<br/>/api/v1"]
+        ui["Web UI<br/>static build"]
+        retrieval["Retrieval<br/>version filter → BM25, vectors, rerank, agent"]
+        catalog["Catalog<br/>libraries, versions, manifests"]
+        importer["Ingestion and job worker<br/>fetch → parse → chunk → index → activate"]
+        identity["Identity<br/>accounts, sessions, API tokens"]
+        mcp --> retrieval & catalog
+        api --> retrieval & catalog & importer & identity
+        importer --> catalog & retrieval
+    end
+    db[("SQLite in the data directory<br/>or PostgreSQL")]
+    git[("Git hosts you configure<br/>GitHub, GitLab, Bitbucket, ...")]
+    models[/"Optional model endpoints or local models<br/>embeddings, reranker, LLM"/]
+    agent -->|MCP| mcp
+    browser --> ui
+    browser -->|REST| api
+    cli -->|REST| api
+    app --> db
+    importer -->|git fetch of the pinned commit| git
+    retrieval -.-> models
+```
+
+An import fetches only the pinned commit and only the selected files, splits every article at its
+headings and indexes it. A new version becomes visible in one step, once it is complete, and a
+re-sync of a branch re-chunks only the files that changed. [Flows](flows.md) draws each path.
+
 ## Repository layout
 
 | Path | What it is |
@@ -21,7 +56,7 @@ same idea with **vertical slices**. All of this is enforced by tests, not by con
 | `packages/exactdocs/tests/`, `packages/exactdocs/features/` | pytest (unit, integration, architecture) and behave (Gherkin acceptance scenarios) |
 | `packages/exactdocs/evals/` | the retrieval eval suite (Pydantic Evals), not shipped; see [Retrieval evals](evals.md) |
 | `web/` | React client (Vite, TanStack Router and Query, shadcn); see [web/README.md](https://github.com/SirCypkowskyy/ExactDocs/blob/develop/web/README.md) |
-| `deploy/` | Dockerfile, smoke test, size-budget check, Mermaid check, self-hosted runner scripts |
+| `deploy/` | Dockerfile, smoke test, size-budget check, Mermaid check, scripts for the self-hosted runners of the release and the manual workflows |
 | `e2e/` | the Playwright test of the whole loop in a browser |
 | `docs/` | this site (Zensical) |
 
@@ -451,6 +486,20 @@ only holds each process's git work folders and `known_hosts`. What changes:
 - Tests build a container on an empty temporary data directory (`tests/conftest.py` points
   `EXACTDOCS_DATA_DIR` at one for every test) and seed data through the repository, so the
   catalog starts empty in production.
+
+**libSQL (#474).** `EXACTDOCS_DATABASE_URL=libsql://host?authToken=...` puts the database on a
+libSQL server (`sqld`, or Turso) with no change to any adapter: `bootstrap/libsql_database.py`
+registers `sqlite+libsql`, SQLite's async dialect over Turso's `turso-serverless` DB-API driver
+(SQL over HTTP; the `libsql-database` extra, imported only there), run on a thread per
+connection through aiosqlite's `Connection` as `sqlite3` is. The engine's dialect is `sqlite`, so
+every SQLite adapter, revision and query applies; `is_libsql(engine)` tells it apart where
+something differs: the vector store searches with libSQL's `vector_distance_cos` instead of
+loading sqlite-vec (`SqliteVectorIndex(native=True)`), no PRAGMA but `foreign_keys` is set, and
+read-only access and `exactdocs backup` are refused. The driver's errors become `sqlite3`'s, and
+a statement outside a transaction is sent again once when the server had dropped the idle
+stream. CI runs the persistence contract tests' SQLite cases on a `sqld` server
+(`EXACTDOCS_TEST_LIBSQL_DATABASE_URL`, its own step). See *ExactDocs' own database on libSQL* in
+configuration.md for what an operator sees.
 
 ### Data model
 
@@ -1300,8 +1349,8 @@ room for its 9 MB.)
 By default every index lives in ExactDocs' own database (SQLite FTS5 and sqlite-vec, or
 PostgreSQL full-text search, pg_search and pgvector). `EXACTDOCS_SEARCH_BACKEND` and
 `EXACTDOCS_VECTOR_BACKEND` move the search index or the vector index to an external backend
-(#352, epic E14: Elasticsearch/OpenSearch, Qdrant, Weaviate, Azure AI Search and others build on
-this). The rules:
+(#352). Epic E14 built twelve backends on it, each with its options in
+[Configuration](configuration.md#external-index-backends). The rules:
 
 - **Derived data.** The database stays the source of truth: it keeps every chunk, its search
   entries (the database's own index is still written, so switching back needs no reindex) and
@@ -1328,6 +1377,7 @@ this). The rules:
 | `SearchBackend` | `put(manifest, entries)` (add or replace, page by page), `delete(manifest_ids)`, `held(library)` (versions and entry counts, for the drift check), `search(manifest_ids, query, tag_filter, limit)` and `count(...)`; the query comes as its text and its terms (`TextQuery`), never as syntax |
 | `VectorBackend` | `put(space, manifest, entries)`, `remove(space, manifest, chunk_ids)`, `delete(manifest_ids)`, `drop_space(space)`, `held(space, library)`, `nearest(space, manifest_ids, vector, tag_filter, limit)` with cosine distances |
 | `NativeHybrid` (optional) | `hybrid(space, manifest_ids, query, vector, tag_filter, limit)`: a vector backend that ranks words and vectors together itself. `RetrievalModule.build` checks for it (a `runtime_checkable` Protocol) and `HybridPipeline` then asks the backend once instead of fusing BM25 and the vectors with reciprocal rank fusion |
+| `NativeRerank` (optional, #473) | `hybrid_reranked(space, manifest_ids, query, vector, tag_filter, limit)` → `NativeRanking` (the hits, and how many of the first ones the backend's own ranker reordered): a `NativeHybrid` backend that also reranks with a ranker of its own (Azure AI Search's semantic ranker). `RetrievalModule.build` checks for it like `NativeHybrid`; `HybridPipeline` asks it instead of `hybrid` when the search asks for reranking (the rerank flag, `PipelineRequest.rerank`: a reranker is configured for the library). An answer it reranked (`reranked` > 0) says so (`reranked: true`) and `RetrievalModes.rerank` leaves it as it is; one it could not rerank (`reranked` 0) is reranked by ExactDocs' reranker. The filters to the version still apply (the backend filters before ranking, the domain drops any other manifest's hit). Backends without it keep today's behaviour: ExactDocs' own reranker, or none |
 
 The domain wraps them so that the use cases see the ports they always did: `ExternalSearchIndex`
 implements `SearchIndex` (the backend ranks; snippets are cut from the stored chunks) and
@@ -1364,7 +1414,7 @@ keeps the backends in step:
 | Name | Indexes | Adapter | Extra | Native hybrid |
 |---|---|---|---|---|
 | `memory` | search, vectors | `memory_index.py` (in process, tests only) | none | yes (RRF of term counts and cosine) |
-| `azure_search` | search, vectors | `azure_search_index.py`: a document per chunk and version, in `<index>` and one `<index>-space<id>` per space, made when missing (a schema mismatch is refused, naming the index); the words in three `whitespace`-analysed fields ranked with BM25 and a weighting scoring profile, an HNSW cosine vector field of the model's dimensions, `manifest_id` / `library` / `version_id` / `chunk_id` / `tags` filterable (OData, vectors pre-filtered); writes return once the index counts them; API key or Entra ID. No emulator: CI runs it on an in-process fake of the REST API, a manual workflow on a real service ([Configuration](configuration.md#azure-ai-search)) | `azure-search` | with `hybrid` (on by default): one Azure hybrid query (RRF); the semantic ranker is not used |
+| `azure_search` | search, vectors | `azure_search_index.py`: a document per chunk and version, in `<index>` and one `<index>-space<id>` per space, made when missing (a schema mismatch is refused, naming the index); the words in three `whitespace`-analysed fields ranked with BM25 and a weighting scoring profile, an HNSW cosine vector field of the model's dimensions, `manifest_id` / `library` / `version_id` / `chunk_id` / `tags` filterable (OData, vectors pre-filtered); writes return once the index counts them; API key or Entra ID. No emulator: CI runs it on an in-process fake of the REST API, a manual workflow on a real service ([Configuration](configuration.md#azure-ai-search)) | `azure-search` | with `hybrid` (on by default): one Azure hybrid query (RRF); with `semantic_configuration` also `NativeRerank`: a reranked search is that query reranked by Azure's semantic ranker (`semanticQuery`), the configuration made over plain-text `title` / `content` fields |
 | `chroma` | vectors | `chroma_index.py`: a collection per space (cosine, no embedding function: ExactDocs passes its vectors), scalar metadata `manifest_id` / `library` / one `tag:<tag>` key per tag, filtered in Chroma before ranking; the HTTP client (a server, Chroma Cloud) or the embedded persistent client, synchronous, in worker threads ([Configuration](configuration.md#chroma)) | `chroma` (HTTP only), `chroma-local` (embedded too) | no: ExactDocs fuses BM25 and Chroma's nearest vectors |
 | `duckdb` | search, vectors | `duckdb_index.py`: one embedded database file (#357); BM25 from the `fts` extension, loaded from the installed `duckdb-extension-fts` wheel, never downloaded; vectors scanned exactly with `array_cosine_distance` (no `vss`: HNSW persistence is still experimental); one process per file, a second is refused at open ([Configuration](configuration.md#duckdb)) | `duckdb` | no (ExactDocs fuses with RRF) |
 | `elasticsearch` | search, vectors | `elasticsearch_index.py` over `elastic_index.py` ([Configuration](configuration.md#elasticsearch-and-opensearch)) | `elasticsearch` | yes: the RRF retriever |
@@ -1386,7 +1436,7 @@ contract suites then run on it: `tests/retrieval/test_search_index.py` and
 `test_vector_index.py` (the `SearchIndex` and `VectorIndex` contracts every database adapter
 passes, through the domain's wrappers: put, delete and collect per version, version and library
 filters, top-k ordering, empty results, unknown versions) and `test_index_backends.py` (the
-backend ports themselves, native hybrid included when implemented). A factory takes the options
+backend ports themselves, native hybrid and native rerank included when implemented). A factory takes the options
 of `[index_backends.<name>]` (`EXACTDOCS_INDEX_BACKENDS__<NAME>__<OPTION>`) and raises
 `ValueError` for invalid ones; secrets come from the environment or `*_file` options.
 
@@ -1396,11 +1446,12 @@ request in, its JSON out) that each engine's module implements with its client; 
 engines differ (the vector field, the kNN query, the hybrid query) the engine's name decides. It
 imports neither client. Options, analysis and sizing: [Configuration](configuration.md#elasticsearch-and-opensearch).
 
-## AI retrieval (planned)
+## AI retrieval
 
-Mostly not built yet; decided in [AI retrieval decisions](decisions/ai-retrieval.md) (#240) for the
-*Next: AI retrieval* milestone. Built: **mode selection** (#89), **provider profiles** (#241),
-the **reranker** (#93), **hybrid search** (#92) and **agentic search** (#98).
+Decided in [AI retrieval decisions](decisions/ai-retrieval.md) (#240) for the *Next: AI retrieval*
+milestone, and built: **mode selection** (#89), **provider profiles** (#241), **hybrid search**
+(#92), **HyDE** (#94), the **reranker** (#93) and **LLM judge** (#96), **local models** (#245),
+**agentic search** (#98) with its **answer cache** (#100) and **repo guidance** (#101).
 
 **Profiles and roles (#241).** Retrieval's models hold a `ProviderProfile` (a named endpoint with a
 `kind`, validated per kind, never a plaintext key: a stored key is sealed, a file is named, an
@@ -1752,9 +1803,9 @@ so a server that reports no usage cannot switch off `UsageLimits` or the budgets
 guidance on for a library already imported is bootstrap's `SetRetrievalThenReprocess` (the REST
 setting): it queues a `reprocess`, which re-imports every version at its commit.
 
-Later modes plug in as pipelines; their models come through the ports below. The `[ai]`
-extra is declared and installed for development; the model-free test proves none of it is imported.
-How the rest fits the structure above:
+Every mode is a pipeline, and its models come through the ports below. The `[ai]` extra is
+declared and installed for development; the model-free test proves none of it is imported when no
+model is configured. How the rest fits the structure above:
 
 - **All in `retrieval`.** New driven ports: `Embeddings`, `Reranker`, `VectorIndex`, the
   `SpendLedger` (whose adapter also implements the harness `BatchSpendStore`), and ports for the HyDE writer, the judge and the
@@ -1767,8 +1818,8 @@ How the rest fits the structure above:
   Bootstrap implements retrieval's `ModelFactory` port (a resolved provider profile in, a callable
   model, embedder or reranker out), always with explicit URLs and keys, never the SDKs'
   environment variables. Retrieval declares its own secret-box port; the Fernet adapter that seals
-  repository credentials moves from ingestion to `bootstrap` first (#248), so no domain depends
-  on another's adapter.
+  repository credentials moved from ingestion to `bootstrap` (#248), so no domain depends on
+  another's adapter.
 - **Storage.** `retrieval_embedding_spaces` records each (model, dimensions, input format); its
   vectors sit in one adapter-managed table per space, keyed by `retrieval_chunks` row, searched
   exactly within the active manifest (sqlite-vec on SQLite, pgvector on PostgreSQL and Supabase).

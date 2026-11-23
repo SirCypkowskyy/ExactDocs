@@ -178,7 +178,7 @@ async def test_database_url_overrides_the_file_in_the_data_dir(
 
 
 def test_only_sqlite_and_postgresql_are_supported() -> None:
-    with pytest.raises(StartupError, match="use SQLite or PostgreSQL"):
+    with pytest.raises(StartupError, match="use SQLite, PostgreSQL"):
         Container.build(Settings(database_url="mysql://user:secret@host/db"))
 
 

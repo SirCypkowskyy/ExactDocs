@@ -26,7 +26,7 @@ over the TOML file, field by field.
 | Variable | Default | What it does |
 |---|---|---|
 | `EXACTDOCS_DATA_DIR` | `/data` in the Docker image, else the platform's user-data directory | Where ExactDocs keeps everything: the SQLite database, the generated secret key, `known_hosts`, fetch caches and `jobs.sqlite` (the durable steps of running imports). On PostgreSQL only `known_hosts` and fetch caches live here. Created if missing; the server refuses to start, naming the path, if it is not writable. `uvx` and stdio MCP use the same default path |
-| `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | A SQLite file, such as `sqlite:////srv/exactdocs.db` (opened in WAL mode), or a PostgreSQL database, `postgresql://user:password@host:5432/exactdocs` (psycopg 3; see [PostgreSQL](deployment.md#postgresql)). The schema is migrated on start, and `/api/health` reports its revision |
+| `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | A SQLite file, such as `sqlite:////srv/exactdocs.db` (opened in WAL mode), a PostgreSQL database, `postgresql://user:password@host:5432/exactdocs` (psycopg 3; see [PostgreSQL](deployment.md#postgresql)), or a libSQL server, `libsql://host?authToken=...` (the `libsql-database` extra; see [ExactDocs' own database on libSQL](#exactdocs-own-database-on-libsql)). The schema is migrated on start, and `/api/health` reports its revision |
 | `EXACTDOCS_DBOS_SYSTEM_SCHEMA` | `dbos` | PostgreSQL only: the schema of the same database where DBOS keeps the durable steps of jobs. SQLite keeps them in `<data dir>/jobs.sqlite` |
 | `EXACTDOCS_MODELS_DIR` | `<data dir>/models` | Where local models live; see [Local models](search.md#local-models) |
 
@@ -288,6 +288,7 @@ export EXACTDOCS_INDEX_BACKENDS__AZURE_SEARCH__API_KEY=...
 | `index_timeout` | `60` | Seconds a write waits for the index to return what it wrote (below); past it the write fails and its job is retried |
 | `hybrid` | `true` | Native hybrid search (below). The vector index only; `false` keeps the words out of the spaces' indexes |
 | `vector_search` | `approximate` | `approximate` (HNSW) or `exact` (every vector of the asked versions: exhaustive k-nearest-neighbours, exact and slower on large versions) |
+| `semantic_configuration` | unset | The name of a semantic configuration: Azure's **semantic ranker** reranks the hybrid searches that ask for reranking (below). Letters, digits, `_` and `-`, up to 128 characters; needs `hybrid = true`. Unset: the semantic ranker is never used |
 
 Both backends read the same table, so with both indexes in Azure AI Search they share the
 service.
@@ -339,9 +340,55 @@ to the version and the tags, fused by Azure with reciprocal rank fusion. With `h
 ExactDocs fuses its own search index (Azure AI Search's or the database's) with the nearest
 vectors itself. Turning it on later needs `exactdocs index rebuild` to write the words of the
 documents already there. The search across libraries (`search_all_docs`) always fuses in
-ExactDocs. The **semantic ranker** is not used: the native hybrid extension point has no rerank
-flag to map it onto yet (a follow-up); ExactDocs' own reranker, when configured, reorders the
-hybrid results as it does for every mode.
+ExactDocs.
+
+**Semantic ranker.** Azure's semantic ranker (#473) can rerank hybrid searches instead of
+ExactDocs' own reranker. Name a semantic configuration:
+
+```toml
+[index_backends.azure_search]
+endpoint = "https://contoso-docs.search.windows.net"
+semantic_configuration = "exactdocs-semantic"   # any name; ExactDocs makes it
+```
+
+and keep a reranker configured (`EXACTDOCS_AI__RERANKER__MODEL`, or a library's own): reranking
+is asked for as it always is, by the reranker role ([Reranker](search.md#reranker)). A hybrid
+search (`hybrid`, and `hybrid_hyde`'s native query) of a library that reranks is then one Azure
+request: the same hybrid query (the words, the vector, the filters to the version and the tags,
+before ranking), with `semanticConfiguration` and the query's own text as `semanticQuery`. Azure
+reranks its best 50 results; the result says `reranked: true`, its scores are the ranker's (0 to
+4), and ExactDocs' reranker is not called for that search (no cross-encoder or judge call, nothing
+recorded against ExactDocs' budgets; a budget that already turned the search's reranking off,
+`llm_budget_reached`, turns Azure's off too). Searches the semantic ranker does not answer are reranked
+as before by ExactDocs' reranker: `bm25` and `vector` searches, the search across libraries, and
+any hybrid search Azure could not rerank (the ranker over capacity: Azure answers in the hybrid
+order, `semanticErrorHandling = partial`; or the request refused, such as the Free plan's
+monthly requests used up: ExactDocs logs a warning and asks the hybrid query alone). Without a
+reranker configured nothing reranks, as today; without `semantic_configuration` the semantic
+ranker is never used.
+
+With the option, each space's documents also carry two plain-text fields the ranker reads,
+`title` (the section's headings, `Guide / Retries`) and `content` (its text, as written),
+searchable and retrievable as a semantic configuration needs but never searched by BM25 nor
+returned; the configuration ranks by them (`title` as its title field, `content` as its content
+field). A new space's index is made with them. An existing space's index without them gets them
+added in place (Azure adds fields and semantic configurations without a rebuild, and ExactDocs
+logs a warning): run `exactdocs index rebuild` once, so the documents written before carry the
+text. A configuration of that name over other fields, or a `title` / `content` field of another
+kind, is a schema mismatch: the write fails naming the index and what differs.
+
+**Setting it up.** The semantic ranker needs a region that offers it. Every service starts on
+its **Free** plan (any tier), which allows a monthly number of semantic requests (1,000 at the
+time of writing); once they are used up, semantic queries are refused until the next month.
+The **Standard** plan (the Basic tier or higher) bills each semantic request beyond the free
+ones, per 1,000 requests: see [Azure AI Search pricing](https://azure.microsoft.com/pricing/details/search/).
+Choose the plan in the portal (**Settings** > **Premium features** > **Semantic ranker**) or with
+the management API's `semanticSearch` property (`free` or `standard`). **What it costs:** every
+reranked hybrid search is one semantic request (a search that does not ask for reranking, or is
+not a native hybrid search, makes none), and the `content` field stores each chunk's text once
+more in every space's index (about what the chunks' text takes; see *Sizing*). The semantic
+ranker reads each document's first 2,000 or so tokens across `title` and `content`, more than
+ExactDocs' chunks hold.
 
 **Sizing.** One document per chunk of each version (the same section in two versions is two
 documents), so count the chunks of every indexed version. A vector takes 4 bytes per dimension
@@ -361,7 +408,8 @@ repository variable `AZURE_SEARCH_ENDPOINT` and, for `auth: api_key`, the enviro
 `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` of an app registration (or user-assigned identity) with a
 federated credential for `repo:<owner>/<repo>:environment:azure-search` and both roles above.
 Each test writes to indexes of its own (`exactdocs-test-<random>`) and deletes them, so a Free
-tier service will do. Locally:
+tier service will do. The `azure_search_semantic` cases run with a semantic configuration, so the
+service's region must offer the semantic ranker (its Free plan's requests are plenty). Locally:
 
 ```bash
 EXACTDOCS_TEST_AZURE_SEARCH_URL=https://<service>.search.windows.net \
@@ -557,7 +605,8 @@ The heading, path and text fields use an analyzer that keeps identifiers whole (
 `v1.4.0`, `client.retry.timeout`, `--dry-run`), lower-cased and ASCII-folded; an `identifiers`
 field holds their parts too (`retryPolicy` is also `retry` and `policy`), so `snake_case`,
 `camelCase` and dotted names are found whole and by their parts, with the same field weights as
-the database's own indexes. Vectors are `dense_vector` (Elasticsearch) or `knn_vector` with the
+the database's own indexes; each word of a query counts once, in the field it scores best in, so
+a section ranks as it does on the database. Vectors are `dense_vector` (Elasticsearch) or `knn_vector` with the
 Lucene engine (OpenSearch) fields, cosine similarity, HNSW without quantisation.
 
 **Native hybrid search.** With the vector index in the cluster, hybrid search asks the cluster
@@ -732,7 +781,7 @@ instead, which is exact and cheap for a version's few thousand chunks. Hybrid se
 libSQL's two halves in ExactDocs (reciprocal rank fusion), as with the database.
 
 **Several processes.** A libSQL server is what several ExactDocs processes or hosts share (with
-PostgreSQL as their database): each write is one transaction, which the server runs one after
+PostgreSQL, or this same libSQL server, as their database): each write is one transaction, which the server runs one after
 the other. A local file is for one host: processes there may share it (WAL, and a writer
 waits up to 5 seconds for another's lock), but never put it on a network filesystem. Embedded
 replicas (a local copy synced from a server) are not used.
@@ -766,25 +815,61 @@ tell vectors apart: for a model of fewer than about 256, use `float8`.
 
 ### ExactDocs' own database on libSQL
 
-Not supported yet: `EXACTDOCS_DATABASE_URL` takes SQLite or PostgreSQL. What was checked (#358):
+ExactDocs' own database can live on a **libSQL server** (`sqld`, self-hosted, or a Turso
+database) instead of a SQLite file (#474), so several ExactDocs processes and hosts share one
+SQLite-style database:
 
-- **The schema runs on libSQL.** Every Alembic revision runs on a local libSQL file and on a
-  libSQL server and gives the same schema as SQLite (`tests/bootstrap/test_libsql_migrations.py`,
-  through the sync `libsql` driver; libSQL is SQLite 3.45). On the server, a connection's
-  `PRAGMA`s (`foreign_keys=OFF` before the revisions) last one HTTP request only, and the server
-  re-spells a virtual table's `CREATE` statement.
-- **No driver for ExactDocs' database stack.** ExactDocs runs SQLite through async SQLAlchemy
-  (aiosqlite). There is no maintained async driver for libSQL: `sqlalchemy-libsql` is sync and
-  needs `libsql-experimental` (deprecated, no Python 3.14 wheels); `libsql` 0.1.11 (the latest,
-  2025-09) is sync, has no Linux ARM64 wheel (the images are built for ARM64 too), and its
-  connection lacks what ExactDocs' SQLite setup calls: `create_function`, `set_authorizer` (the AI
-  spend ledger's guard), `enable_load_extension` (`sqlite-vec`) and `backup` (`exactdocs backup`).
-  `pyturso` (Turso's rewrite) has wheels, but neither libSQL's vector index nor FTS5.
-- **The database's vector store needs `sqlite-vec`**, which a libSQL server cannot load: it would
-  need a store on libSQL's native vectors (this backend is one, for the copy it holds).
+```bash
+pip install 'exactdocs[libsql-database]'     # or: uvx --from 'exactdocs[libsql-database]' exactdocs serve
+export EXACTDOCS_DATABASE_URL='libsql://exactdocs-acme.turso.io?authToken=...'
+# a sqld on loopback or a private network, without TLS:
+export EXACTDOCS_DATABASE_URL='libsql://sqld:8080?tls=0&authToken=...'
+```
 
-So the existing SQLite persistence tests do not run on libSQL. Use libSQL as the search and
-vector backend above, with SQLite or PostgreSQL as the database.
+The URL names the server only (no path): `libsql://host[:port]`, over HTTPS unless `tls=0`, with
+its token (a JWT: a Turso database token, or one signed with the key given to `sqld
+--auth-jwt-key-file`) as `authToken`, as Turso writes it; a server without authentication takes
+none. Log lines and errors never show the token. The extra installs Turso's `turso-serverless`
+driver (pure Python, no dependency, so every platform); it is not in the images. ExactDocs runs
+SQLite's own SQLAlchemy dialect over it (`sqlite+libsql`, in `bootstrap/libsql_database.py`),
+each connection on a thread of its own as aiosqlite does, so every table, revision and query is
+SQLite's: the schema is migrated on start, and the search index is SQLite's FTS5. Tested against
+`ghcr.io/tursodatabase/libsql-server:v0.24.33`; CI runs the persistence contract tests' SQLite
+cases on it, and a scenario with two server processes.
+
+**Several processes.** Each process (and host) has a data directory of its own and uses the
+server for everything in the database. Writes take turns on the server: a transaction that asks
+for `BEGIN IMMEDIATE` (the first admin, activations, the search index) waits for the one before
+it, as on a file. Processes starting together migrate one after the other.
+
+**What differs from a SQLite file:**
+
+- **Vectors use libSQL's own functions.** The vector store keeps the same tables and BLOBs as on
+  SQLite and searches them exactly, with libSQL's `vector_distance_cos` instead of `sqlite-vec`,
+  which a server cannot load (`/api/health` names its requirement `libSQL vectors`). For an
+  approximate index on libSQL, add the [libSQL backend](#libsql) on the same server.
+- **No read-only access.** A libSQL server refuses `PRAGMA query_only` and has no authorizer, so
+  `serve --stdio` (and the commands that open the database read-only) refuse it: run `exactdocs
+  serve` and connect over HTTP (`/mcp`).
+- **`exactdocs backup` refuses it**: use the server's backups (a Turso database's point-in-time
+  restore, or copies of `sqld`'s data directory).
+- **Jobs stay with their process.** DBOS keeps each process's running jobs in `jobs.sqlite` in its
+  data directory, as on a file: a job runs on the process that took it, and every process sees
+  its state in the database. One server process per data directory, as on a file.
+- **The server keeps its own settings.** It refuses `journal_mode`, `busy_timeout`,
+  `synchronous`, `ANALYZE` and other PRAGMAs that set something; ExactDocs only switches
+  `foreign_keys` on for each connection (the server's default too). Without `ANALYZE` the query
+  planner has no statistics, so it may pick another of a table's indexes than on a file (the
+  answers are the same).
+- **Streams expire.** The server drops a connection's stream after a few seconds idle (`sqld`:
+  10 s). A statement outside a transaction is then sent again; a transaction left idle that long
+  is rolled back by the server and fails.
+- **Every statement is a round trip.** One HTTP request each (about 2 ms on loopback): a first
+  migration takes about a second, and an import is slower than on a local file, more so the
+  farther the server.
+- `REGEXP` is not available (ExactDocs does not use it), and an infinite float cannot be sent.
+- A **local libSQL file** is not a database option: it is the same format as SQLite, so use
+  `sqlite:///path` (libSQL's local file is for the [search and vector backend](#libsql)).
 
 ### Milvus
 

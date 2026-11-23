@@ -45,6 +45,7 @@ from exactdocs.retrieval.models import (
     ManifestStatus,
     ModelCheck,
     ModelRole,
+    NativeRanking,
     Outline,
     PendingChunks,
     PipelineAnswer,
@@ -1425,6 +1426,45 @@ class NativeHybrid(Protocol):
 
         Returns:
             The hits, best first (higher score is better).
+
+        Raises:
+            IndexBackendUnavailableError: The backend did not answer.
+        """
+        ...
+
+
+@runtime_checkable
+class NativeRerank(Protocol):
+    """Optional capability of a ``NativeHybrid`` backend: it reranks its own hybrid answer (#473).
+
+    A backend with a ranker of its own (Azure AI Search's semantic ranker) implements this, and
+    ``HybridPipeline`` asks it instead of ``hybrid`` when the search asks for reranking (the
+    rerank flag: a reranker is configured for the library). An answer it reranked is not reranked
+    again by ExactDocs; one it could not rerank (``reranked`` 0) is, as without this capability.
+    Backends without it keep today's behaviour: ExactDocs' own reranker, or none.
+    """
+
+    async def hybrid_reranked(
+        self,
+        space: EmbeddingSpace,
+        manifest_ids: Sequence[str],
+        query: TextQuery,
+        vector: Sequence[float],
+        tag_filter: TagFilter,
+        limit: int,
+    ) -> NativeRanking:
+        """Rank these versions' entries as ``hybrid`` does, then rerank the best with its ranker.
+
+        Args:
+            space: The space the vector belongs to.
+            manifest_ids: The versions searched.
+            query: The query and its terms; the ranker reads ``query.text``.
+            vector: The query's vector, from the space's model.
+            tag_filter: Which chunks may be returned; applied before ranking.
+            limit: The most hits.
+
+        Returns:
+            The hits, best first, and how many of the first ones the ranker reordered.
 
         Raises:
             IndexBackendUnavailableError: The backend did not answer.

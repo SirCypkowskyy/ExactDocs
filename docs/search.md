@@ -395,6 +395,13 @@ HTTP client closed under the call because its profile was edited, a partly insta
 With a `limit` above `top_n`, the reranked results come first and the rest follow in the mode's
 order, with the mode's scores, which are not comparable with the reranker's.
 
+A vector backend with a ranker of its own can rerank instead (#473): with Azure AI Search and a
+`semantic_configuration`, a hybrid search that reranks is reranked by Azure's semantic ranker in
+the same request (the query's text goes to Azure with it, which already holds the chunks), says
+`reranked: true`, and the reranker above is not called for it. Whatever Azure does not rerank
+(other modes, a ranker over capacity or refused) is reranked here as above. See
+[Azure AI Search](configuration.md#azure-ai-search).
+
 With any provider profile other than `local` configured, the provider SDKs are loaded in a worker
 thread at start, so the first search never waits for them. A load that fails is a warning, not a
 stop.

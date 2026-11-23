@@ -11,6 +11,8 @@ repo_url = "https://github.com/SirCypkowskyy/ExactDocs"
 repo_name = "SirCypkowskyy/ExactDocs"
 edit_uri = "edit/develop/docs/"
 extra_javascript = ["https://unpkg.com/mermaid@12.3.0/dist/mermaid.min.js"]
+# The web UI's colours, the logo swap for the dark scheme, and the home page's hero and grid.
+extra_css = ["stylesheets/extra.css"]
 docs_dir = "docs"
 site_dir = "site"
 nav = [
@@ -48,6 +50,12 @@ nav = [
 
 [project.theme]
 language = "en"
+# The station mark of the web UI (web/src/shared/ui/wordmark.tsx), drawn by docs/assets/logo/.
+logo = "assets/logo/exactdocs-mark-light.svg"
+favicon = "assets/logo/exactdocs-mark-light.svg"
+# The web UI's faces (web/DESIGN.md, "Typography").
+font.text = "IBM Plex Sans"
+font.code = "IBM Plex Mono"
 features = [
   "content.action.edit",
   "content.code.annotate",
@@ -66,18 +74,24 @@ features = [
 
 [[project.theme.palette]]
 media = "(prefers-color-scheme)"
+primary = "custom"
+accent = "custom"
 toggle.icon = "lucide/sun-moon"
 toggle.name = "Switch to light mode"
 
 [[project.theme.palette]]
 media = "(prefers-color-scheme: light)"
 scheme = "default"
+primary = "custom"
+accent = "custom"
 toggle.icon = "lucide/sun"
 toggle.name = "Switch to dark mode"
 
 [[project.theme.palette]]
 media = "(prefers-color-scheme: dark)"
 scheme = "slate"
+primary = "custom"
+accent = "custom"
 toggle.icon = "lucide/moon"
 toggle.name = "Switch to system preference"
 

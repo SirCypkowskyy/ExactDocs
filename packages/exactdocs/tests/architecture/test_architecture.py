@@ -28,7 +28,7 @@ OPTIONAL = {"errors", "constants"}
 LAYERS = ["constants", "errors", "models", "dtos", "ports", "use_cases", "module"]
 # Layers are optional per domain (e.g. `errors`) and may be a module or a package.
 _ALLOW_EMPTY = CheckOptions(allow_empty_tests=True)
-DATABASE_LIBRARIES = ["sqlalchemy*", "alembic*", "aiosqlite*"]
+DATABASE_LIBRARIES = ["sqlalchemy*", "alembic*", "aiosqlite*", "turso_serverless*"]
 FRAMEWORKS = [
     "fastapi*",
     "fastmcp*",

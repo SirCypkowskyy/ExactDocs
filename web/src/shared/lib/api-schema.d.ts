@@ -5232,7 +5232,9 @@ export interface components {
             readonly fallback_reason: components["schemas"]["FallbackReason"] | null;
             /**
              * Libraries Searched
-             * @description Libraries whose default version was searched.
+             * @description Libraries whose default version was searched for `libraries`' counts: every readable one
+             *     (up to a cap), the chosen ones included. With libraries chosen, `results` come from those
+             *     only, so this can count libraries that no result can come from.
              */
             readonly libraries_searched: number;
             /**

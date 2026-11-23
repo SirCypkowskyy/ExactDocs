@@ -1,8 +1,8 @@
 # Flows
 
-How the main paths through ExactDocs work as built in MVP-1 (v0.2.0). The structure behind them
-is in [Architecture](architecture.md); the endpoints are in the [REST API](rest-api.md). Planned
-stages are drawn dashed and labelled *planned*.
+How the main paths through ExactDocs work. The structure behind them is in
+[Architecture](architecture.md); the endpoints are in the [REST API](rest-api.md). Planned stages
+are drawn dashed and labelled *planned*.
 
 ## Importing a version
 
@@ -145,9 +145,9 @@ most recently imported version.
 
 ## Retrieval modes
 
-BM25, `hybrid` (BM25 and vectors fused with reciprocal rank fusion, #92) and reranking are
-built; the other
-modes are the design for the *Next: AI retrieval* milestone. Which mode answers is decided per
+Every mode is built: BM25, `vector`, `hybrid` (BM25 and vectors fused with reciprocal rank
+fusion, #92), `hybrid_hyde` (#94) and `agentic` (#98), and so is reranking (#93);
+[Search and AI models](search.md) describes each. Which mode answers is decided per
 call (RET-06): the call's `mode`, else the library's mode, else the instance's
 (`EXACTDOCS_AI__MODE`), else the best default the configured model roles allow. A mode becomes a
 default only once the eval suite shows it beats BM25 ([Retrieval evals](evals.md#gates)): `hybrid`
@@ -188,7 +188,7 @@ flowchart TD
     scored -->|yes| reorder["reorder the top N by score"] --> out
     scored -->|"no"| keep["keep the mode's order<br/>reranker_timeout / reranker_failed"] --> out
 
-    subgraph planned ["Planned: configured endpoints upgrade the pipeline"]
+    subgraph planned ["Planned: once the eval suite makes them defaults,<br/>configured endpoints upgrade the default mode"]
         direction TB
         start["query"] --> emb
         emb{"embedding model?"} -->|no| bm25p["BM25"]

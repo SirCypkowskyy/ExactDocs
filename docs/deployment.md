@@ -220,7 +220,8 @@ command is refused, naming the server's process, while it runs). See
 ## Backup and restore
 
 This section is about the SQLite database. On PostgreSQL, use `pg_dump` (see
-[PostgreSQL](#postgresql)); `exactdocs backup` refuses a non-SQLite `EXACTDOCS_DATABASE_URL`.
+[PostgreSQL](#postgresql)); on a libSQL server, its own backups. `exactdocs backup` refuses a
+non-SQLite `EXACTDOCS_DATABASE_URL`.
 
 `exactdocs backup` writes one archive of the instance while the server keeps serving. It holds:
 

@@ -17,12 +17,14 @@ fields as search documents, for the native hybrid query.
 
 **Identifiers.** The heading, path and text fields use the ``exactdocs_words`` analyzer: words
 of letters, digits, marks and ``-_.`` (``retry_policy``, ``v1.4.0``, ``--dry-run`` stay whole),
-lower case and ASCII-folded, leading dots and trailing dots/dashes trimmed. The ``identifiers``
+lower case and ASCII-folded, nothing trimmed (as FTS5's tokenizer). The ``identifiers``
 field holds ``identifier_tokens`` of the heading path and text (``retryPolicy`` is
 ``retrypolicy retry policy``), whitespace-separated, so camelCase, snake_case and dotted names
 are found by their whole and by their parts, as in the database's own indexes. The query is
-never parsed: its terms (``TextQuery.terms``) go to ``match`` queries, OR-ed, one per field, with
-the database engines' weights (``ELASTIC_FIELD_BOOSTS``).
+never parsed: each of its terms (``TextQuery.terms``) is a ``dis_max`` of one ``match`` per
+field, with the database engines' weights (``ELASTIC_FIELD_BOOSTS``), so a term counts in its
+best field as FTS5 saturates it once over all columns; the terms are OR-ed and their scores add
+up (#472).
 
 **Native hybrid.** Elasticsearch fuses the BM25 and kNN halves with its RRF retriever;
 OpenSearch with a ``hybrid`` query and a normalisation search pipeline (``<prefix>-hybrid``,
@@ -55,7 +57,7 @@ from exactdocs.retrieval.constants import (
     ELASTIC_PREFIX_PATTERN,
     ELASTIC_REFRESH,
     ELASTIC_REQUEST_TIMEOUT,
-    ELASTIC_TRIM_PATTERN,
+    ELASTIC_TIE_BREAKER,
     ELASTIC_WORDS_PATTERN,
     OPENSEARCH_BACKEND,
     OPENSEARCH_COMBINATION,
@@ -424,6 +426,9 @@ def _filters(manifest_ids: Sequence[str], tag_filter: TagFilter) -> list[Json]:
 def _text_query(manifest_ids: Sequence[str], query: TextQuery, tag_filter: TagFilter) -> Json:
     """Return the BM25 query: any term in any text field, weighted, within the versions.
 
+    Each term scores in its best field (``dis_max``, ``ELASTIC_TIE_BREAKER``), and the terms'
+    scores add up: a term in both a section's heading and its text is not counted twice.
+
     Args:
         manifest_ids: The versions searched.
         query: The query's terms (alternatives); its text is never parsed.
@@ -432,13 +437,20 @@ def _text_query(manifest_ids: Sequence[str], query: TextQuery, tag_filter: TagFi
     Returns:
         A ``bool`` query.
     """
-    words = " ".join(query.terms)
     return {
         "bool": {
             "filter": _filters(manifest_ids, tag_filter),
             "should": [
-                {"match": {name: {"query": words, "boost": boost}}}
-                for name, boost in ELASTIC_FIELD_BOOSTS.items()
+                {
+                    "dis_max": {
+                        "queries": [
+                            {"match": {name: {"query": term, "boost": boost}}}
+                            for name, boost in ELASTIC_FIELD_BOOSTS.items()
+                        ],
+                        "tie_breaker": ELASTIC_TIE_BREAKER,
+                    }
+                }
+                for term in query.terms
             ],
             "minimum_should_match": 1,
         }
@@ -470,19 +482,11 @@ def _settings(options: ElasticOptions, flavour: Flavour) -> Json:
                     "group": 0,
                 }
             },
-            "filter": {
-                "exactdocs_trim": {
-                    "type": "pattern_replace",
-                    "pattern": ELASTIC_TRIM_PATTERN,
-                    "replacement": "",
-                },
-                "exactdocs_nonempty": {"type": "length", "min": 1},
-            },
             "analyzer": {
                 "exactdocs_words": {
                     "type": "custom",
                     "tokenizer": "exactdocs_words",
-                    "filter": ["lowercase", "asciifolding", "exactdocs_trim", "exactdocs_nonempty"],
+                    "filter": ["lowercase", "asciifolding"],
                 },
                 "exactdocs_identifiers": {"type": "custom", "tokenizer": "whitespace"},
             },

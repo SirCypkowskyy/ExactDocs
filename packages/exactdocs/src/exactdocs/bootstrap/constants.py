@@ -233,6 +233,32 @@ POSTGRES_DRIVER: Final[str] = "postgresql+psycopg"
 """The one PostgreSQL driver: psycopg 3, async. DBOS already depends on it."""
 POSTGRES_DRIVERS: Final[frozenset[str]] = frozenset({"postgresql", POSTGRES_DRIVER})
 """How `EXACTDOCS_DATABASE_URL` may name PostgreSQL; both mean psycopg 3."""
+LIBSQL_SCHEME: Final[str] = "libsql"
+"""How `EXACTDOCS_DATABASE_URL` names a libSQL server (#474): ``libsql://host[:port]``."""
+LIBSQL_DRIVER: Final[str] = "sqlite+libsql"
+"""The SQLAlchemy dialect a libSQL server's URL becomes: SQLite's, over ``turso-serverless``."""
+LIBSQL_DIALECT_MODULE: Final[str] = "exactdocs.bootstrap.libsql_database"
+"""Where that dialect lives; SQLAlchemy imports it only when an engine names it."""
+LIBSQL_DIALECT_CLASS: Final[str] = "LibsqlDialect"
+"""The dialect's class in ``LIBSQL_DIALECT_MODULE``."""
+LIBSQL_DIALECT_NAME: Final[str] = "sqlite.libsql"
+"""The name SQLAlchemy's registry knows the dialect by (``LIBSQL_DRIVER``, with a dot)."""
+LIBSQL_DIALECT_DRIVER: Final[str] = "libsql"
+"""The dialect's ``driver``: how an engine on a libSQL server is told from one on a file."""
+LIBSQL_DRIVER_MODULE: Final[str] = "turso_serverless"
+"""Turso's DB-API driver for a libSQL server over HTTP (the ``libsql-database`` extra)."""
+LIBSQL_TOKEN_KEY: Final[str] = "authToken"  # ruff: ignore[hardcoded-password-string] (a name)
+"""The URL's query key that carries the server's token, as Turso spells it."""
+LIBSQL_TLS_KEY: Final[str] = "tls"
+"""The URL's query key that turns TLS off (``tls=0``: plain HTTP, for a server on loopback)."""
+LIBSQL_CHUNK_ROWS: Final[int] = 64
+"""Rows a cursor hands the event loop at a time (aiosqlite's ``iter_chunk_size``)."""
+LIBSQL_EXPIRED: Final[str] = "stream has expired"
+"""What the server answers when it dropped a connection's stream for inactivity (sqld: 10 s)."""
+LIBSQL_CLIENT_FUNCTIONS: Final[frozenset[str]] = frozenset({"regexp", "floor"})
+"""Functions SQLAlchemy's SQLite dialect registers on every connection: a server cannot call
+back into this process, so they are accepted and not registered (libSQL has ``floor``; ExactDocs
+never uses ``REGEXP``)."""
 SUPABASE_HOSTS: Final[tuple[str, ...]] = (".supabase.co", ".supabase.com")
 """Host suffixes of Supabase's databases and poolers (``db.<ref>.supabase.co``,
 ``aws-0-<region>.pooler.supabase.com``)."""

@@ -4,13 +4,15 @@ Every domain keeps its tables in this database (prefixed ``catalog_``, ``retriev
 its adapters receive the :class:`AsyncEngine`. Schema changes are Alembic revisions in
 ``migrations/versions``, owned by this package so no domain depends on another's schema.
 
-The database is a SQLite file in the data directory (the default) or PostgreSQL
-(``EXACTDOCS_DATABASE_URL=postgresql+psycopg://...``), which several server processes can share.
+The database is a SQLite file in the data directory (the default), PostgreSQL
+(``EXACTDOCS_DATABASE_URL=postgresql+psycopg://...``), which several server processes can share,
+or a libSQL server (``libsql://host``, #474: SQLite's dialect over ``libsql_database.py``).
 """
 
 import asyncio
 import contextlib
 import fcntl
+import importlib.util
 import logging
 import os
 import secrets
@@ -30,6 +32,7 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, event, text
+from sqlalchemy.dialects import registry
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor
 from sqlalchemy.exc import ArgumentError, OperationalError
@@ -41,6 +44,13 @@ from exactdocs.bootstrap.cancellation import being_cancelled
 from exactdocs.bootstrap.constants import (
     BUSY_TIMEOUT_MS,
     COLLATED_PREFIXES,
+    LIBSQL_DIALECT_CLASS,
+    LIBSQL_DIALECT_DRIVER,
+    LIBSQL_DIALECT_MODULE,
+    LIBSQL_DIALECT_NAME,
+    LIBSQL_DRIVER,
+    LIBSQL_DRIVER_MODULE,
+    LIBSQL_TOKEN_KEY,
     LOCK_NOT_AVAILABLE,
     MIGRATION_LOCK,
     MIGRATION_TURN_NOTICE_SECONDS,
@@ -65,6 +75,9 @@ from exactdocs.bootstrap.constants import (
 from exactdocs.bootstrap.settings import Settings
 
 logger = logging.getLogger(__name__)
+
+# `sqlite+libsql://` (#474): SQLAlchemy imports the dialect's module only when an engine names it.
+registry.register(LIBSQL_DIALECT_NAME, LIBSQL_DIALECT_MODULE, LIBSQL_DIALECT_CLASS)
 
 
 class ClosingQueuePool(QueuePool):
@@ -180,10 +193,12 @@ def open_database(settings: Settings, *, read_only: bool = False) -> AsyncEngine
         raise StartupError(message) from exc
     if url.get_backend_name() == "postgresql":
         return _open_postgres(url, settings, read_only=read_only)
+    if url.drivername == LIBSQL_DRIVER:
+        return _open_libsql(url, settings, read_only=read_only)
     if url.get_backend_name() != "sqlite":
         message = (
-            f"Unsupported database {url.get_backend_name()!r}: use SQLite or PostgreSQL "
-            "(postgresql+psycopg://...)."
+            f"Unsupported database {url.get_backend_name()!r}: use SQLite, PostgreSQL "
+            "(postgresql+psycopg://...) or a libSQL server (libsql://host)."
         )
         raise StartupError(message)
     _check_sqlite()
@@ -198,6 +213,77 @@ def open_database(settings: Settings, *, read_only: bool = False) -> AsyncEngine
     event.listen(engine.sync_engine, "connect", _configure_connection)
     event.listen(engine.sync_engine, "begin", _begin)
     return engine
+
+
+def _open_libsql(url: URL, settings: Settings, *, read_only: bool) -> AsyncEngine:
+    """Return an engine on a libSQL server, SQLite's dialect over Turso's driver (#474).
+
+    The server keeps WAL, ``synchronous`` and its own wait for the write lock (it refuses those
+    PRAGMAs); foreign keys are switched on for each connection, as on a SQLite file. Nothing
+    connects yet.
+
+    Args:
+        url: The database URL (``sqlite+libsql://host[:port][?tls=0&authToken=...]``).
+        settings: The instance's settings (the data directory is still prepared: git's work
+            folders, ``known_hosts`` and the job worker's ``jobs.sqlite`` live there).
+        read_only: Refused: a libSQL server cannot hold one connection to reads only.
+
+    Returns:
+        The engine.
+
+    Raises:
+        StartupError: Read-only access, a URL without a host, or the extra is not installed.
+    """
+    if read_only:
+        message = (
+            "A libSQL server cannot be opened read-only (`serve --stdio` and the read-only "
+            "commands): run `exactdocs serve` and connect over HTTP (/mcp) instead."
+        )
+        raise StartupError(message)
+    if not url.host or url.database:
+        message = (
+            "EXACTDOCS_DATABASE_URL must name the libSQL server only: "
+            "libsql://host[:port][?authToken=...], with ?tls=0 for plain HTTP."
+        )
+        raise StartupError(message)
+    if importlib.util.find_spec(LIBSQL_DRIVER_MODULE) is None:
+        message = (
+            "A libSQL database needs the libsql-database extra: "
+            "pip install 'exactdocs[libsql-database]' "
+            "(or uvx --from 'exactdocs[libsql-database]' exactdocs serve)."
+        )
+        raise StartupError(message)
+    _prepare_directory(settings.data_dir)
+    engine = create_async_engine(url)
+    event.listen(engine.sync_engine, "connect", _configure_libsql_connection)
+    event.listen(engine.sync_engine, "begin", _begin)
+    return engine
+
+
+def _configure_libsql_connection(dbapi_connection: DBAPIConnection, _: ConnectionPoolEntry) -> None:
+    """Switch foreign keys on for a new connection to a libSQL server (its default, made sure).
+
+    Args:
+        dbapi_connection: The new DB-API connection.
+        _: The pool's record of it (unused).
+    """
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA foreign_keys=ON")
+    finally:
+        cursor.close()
+
+
+def is_libsql(engine: AsyncEngine) -> bool:
+    """Tell whether the engine is on a libSQL server (#474).
+
+    Args:
+        engine: The database engine.
+
+    Returns:
+        ``True`` for libSQL, ``False`` for a SQLite file and for PostgreSQL.
+    """
+    return engine.dialect.driver == LIBSQL_DIALECT_DRIVER
 
 
 def _open_read_only(url: URL) -> AsyncEngine:
@@ -853,15 +939,17 @@ async def _session_is_lost(engine: AsyncEngine) -> bool:
 def shown_url(url: URL) -> str:
     """Render a database URL for a log line or an error, with every password hidden.
 
-    ``hide_password`` covers the userinfo only; libpq also reads a ``password`` query key.
+    ``hide_password`` covers the userinfo only; libpq also reads a ``password`` query key, and a
+    libSQL server's URL carries its token as ``authToken``.
 
     Args:
         url: The database URL.
 
     Returns:
-        The URL with ``***`` for the userinfo password and no ``password`` query key.
+        The URL with ``***`` for the userinfo password and no ``password`` or ``authToken`` key.
     """
-    return url.difference_update_query(["password"]).render_as_string(hide_password=True)
+    hidden = ["password", LIBSQL_TOKEN_KEY]
+    return url.difference_update_query(hidden).render_as_string(hide_password=True)
 
 
 def _upgrade_postgres(connection: Connection, location: Path) -> None:
