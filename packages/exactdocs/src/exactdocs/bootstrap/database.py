@@ -4,8 +4,9 @@ Every domain keeps its tables in this database (prefixed ``catalog_``, ``retriev
 its adapters receive the :class:`AsyncEngine`. Schema changes are Alembic revisions in
 ``migrations/versions``, owned by this package so no domain depends on another's schema.
 
-The database is a SQLite file in the data directory (the default) or PostgreSQL
-(``EXACTDOCS_DATABASE_URL=postgresql+psycopg://...``), which several server processes can share.
+The database is a SQLite file in the data directory (the default), PostgreSQL
+(``EXACTDOCS_DATABASE_URL=postgresql+psycopg://...``), which several server processes can share,
+or a libSQL server (``libsql://host``, #474: SQLite's dialect over ``libsql_database.py``).
 """
 
 import asyncio
@@ -196,8 +197,8 @@ def open_database(settings: Settings, *, read_only: bool = False) -> AsyncEngine
         return _open_libsql(url, settings, read_only=read_only)
     if url.get_backend_name() != "sqlite":
         message = (
-            f"Unsupported database {url.get_backend_name()!r}: use SQLite or PostgreSQL "
-            "(postgresql+psycopg://...)."
+            f"Unsupported database {url.get_backend_name()!r}: use SQLite, PostgreSQL "
+            "(postgresql+psycopg://...) or a libSQL server (libsql://host)."
         )
         raise StartupError(message)
     _check_sqlite()

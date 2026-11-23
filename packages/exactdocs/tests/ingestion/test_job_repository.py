@@ -343,8 +343,9 @@ async def test_a_library_s_unfinished_jobs_are_one_select_that_skips_its_finishe
     await repository.add(queued("job-1000", version="v1000").started(T0))
     await repository.add(queued("job-1001", version="v1001"))
     # With statistics the planner knows the library's rows are many. A libSQL server refuses
-    # ANALYZE (#474): its planner goes by the indexes alone, and still takes the partial one.
-    if backend == "sqlite" and not is_libsql(engine):
+    # ANALYZE (#474): without statistics its planner may take the library's index instead.
+    on_libsql = is_libsql(engine)
+    if backend == "sqlite" and not on_libsql:
         async with engine.begin() as connection:
             await connection.exec_driver_sql("ANALYZE")
     sent: list[tuple[str, list[object]]] = []
@@ -375,7 +376,12 @@ async def test_a_library_s_unfinished_jobs_are_one_select_that_skips_its_finishe
     assert others == []  # one query, not one per job or a second pass
     assert "state IN ('queued', 'running')" in statement  # literal: the partial index applies
     assert parameters == ["/acme/payments"]
-    if backend == "sqlite":  # the partial index alone: no finished job read, no sort
+    if backend == "sqlite" and on_libsql:  # an index on the library, either one (no ANALYZE)
+        assert plan[0] in {
+            "SEARCH ingestion_jobs USING INDEX ingestion_jobs_unfinished (library=?)",
+            "SEARCH ingestion_jobs USING INDEX ingestion_jobs_library_id (library=?)",
+        }, plan
+    elif backend == "sqlite":  # the partial index alone: no finished job read, no sort
         assert plan == ["SEARCH ingestion_jobs USING INDEX ingestion_jobs_unfinished (library=?)"]
 
 

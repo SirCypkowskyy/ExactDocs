@@ -828,8 +828,10 @@ class Settings(BaseSettings):
     database_url: str | None = None
     """Overrides the SQLite file in the data directory: another SQLite file
     (`sqlite:////srv/exactdocs.db`) or a PostgreSQL database
-    (`postgresql+psycopg://user:password@host:5432/exactdocs`, `postgresql://` means the same).
-    Several server processes can share a PostgreSQL database; a SQLite one has one server.
+    (`postgresql+psycopg://user:password@host:5432/exactdocs`, `postgresql://` means the same),
+    or a libSQL server (`libsql://host?authToken=...`, the `libsql-database` extra).
+    Several server processes can share a PostgreSQL database or a libSQL server; a SQLite file
+    has one server.
     """
     models_dir: Path | None = None
     """Where local models live (`exactdocs models pull` writes them, `local` profiles read them;
