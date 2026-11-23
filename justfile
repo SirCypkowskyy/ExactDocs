@@ -89,6 +89,10 @@ ingestion-bench *args:
 retrieval-bench *args:
     uv run python packages/exactdocs/evals/run_retrieval_bench.py {{ args }}
 
+# Text scorer: calibrate scoring from a result's text against chunk-ID scoring on BM25 (docs/evals.md)
+text-bench *args:
+    uv run python packages/exactdocs/evals/run_text_bench.py {{ args }}
+
 # Agent benchmark (never in CI): an agent with only the ExactDocs MCP tools answers the golden set (docs/evals.md); `just agent-bench run --offline`
 agent-bench *args:
     uv run python packages/exactdocs/evals/run_agent_bench.py {{ args }}
