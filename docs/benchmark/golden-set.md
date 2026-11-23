@@ -126,7 +126,8 @@ problem means: [Reviewing the golden set](../evals.md#reviewing-the-golden-set).
 <!-- /bench -->
 
 The sample is a stratified one with 10 to 12 cases per stratum, so the plain share of wrong cases
-above is within half a point of the share weighted by stratum size (25.3%). What the review found:
+above is within half a point of the share weighted by stratum size (25.3%). What the review found
+(three cases had two problems each):
 
 - **No case was wrong at its core.** No reference answer was wrong for its version, every expected
   section answers its question, and all 15 `unanswerable` cases held: none is answered anywhere in
