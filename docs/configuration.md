@@ -1042,9 +1042,10 @@ EXACTDOCS_VECTOR_BACKEND=pinecone EXACTDOCS_INDEX_BACKENDS__PINECONE__HOST=http:
 ```
 
 The contract tests run on it with `EXACTDOCS_TEST_PINECONE_URL=http://localhost:5081` (an index of
-at least 256 dimensions). Pinecone Local has no ARM64 image, so CI does not run them; the manual
-**Pinecone** workflow runs them, hybrid included, against a real index (repository secret
-`PINECONE_API_KEY`, its host as the workflow's input). CI never calls Pinecone.
+at least 256 dimensions). CI runs them on Pinecone Local (the image above, 256 dimensions,
+`dotproduct`), which ignores sparse values; the manual **Pinecone** workflow runs them, hybrid
+included, against a real index (repository secret `PINECONE_API_KEY`, its host as the workflow's
+input). CI never calls Pinecone itself.
 
 ### Qdrant
 

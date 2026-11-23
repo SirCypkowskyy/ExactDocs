@@ -1,8 +1,8 @@
 """#362: the Pinecone vector backend's own logic, without a server.
 
 The shared suites (``test_index_backends.py``, ``test_vector_index.py``) run the adapter against
-a real index or Pinecone Local when ``EXACTDOCS_TEST_PINECONE_URL`` is set; Pinecone Local has
-no ARM64 image and ignores sparse values, so this module checks what CI can check everywhere:
+a real index or Pinecone Local when ``EXACTDOCS_TEST_PINECONE_URL`` is set (CI: Pinecone
+Local); Pinecone Local ignores sparse values, so this module checks what it cannot, everywhere:
 the options, the vector IDs, the sparse vectors, the checks at start, and the sparse-dense query
 against a small stand-in for Pinecone's data plane (dot products and metadata filters).
 """

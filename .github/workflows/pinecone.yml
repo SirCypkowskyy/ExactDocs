@@ -1,10 +1,10 @@
 name: Pinecone contract tests (real index)
 
 # Manual only: it calls a hosted Pinecone index with the repository's key, so it never runs on a
-# push or a pull request (CI never calls Pinecone). Pinecone Local, the emulator, has no ARM64
-# image, so the runners cannot run it as a CI service (#362). This runs the shared vector
-# contract suites, the adapter's own tests and the Pinecone scenario against a real serverless
-# index:
+# push or a pull request (CI never calls Pinecone). CI runs the suites on Pinecone Local, the
+# emulator, which ignores sparse values (#362). This runs the shared vector contract suites, the
+# adapter's own tests and the Pinecone scenario against a real serverless index, sparse-dense
+# hybrid included:
 #
 #   repository variable   PINECONE_TEST_INDEX_HOST (or the `host` input): a serverless dense
 #                         index, metric dotproduct, at least 256 dimensions, used for tests only

@@ -129,6 +129,20 @@ jobs:
         options: >-
           --health-cmd "/usr/local/bin/runner healthcheck"
           --health-interval 2s --health-timeout 30s --health-retries 90
+      # #362: Pinecone Local's single-index emulator (amd64 only, so it runs since #468 moved CI
+      # to x86_64), for the Pinecone backend's contract tests and scenario
+      # (EXACTDOCS_TEST_PINECONE_URL). It ignores sparse values: native hybrid stays with the
+      # manual pinecone.yml workflow on a real index and the adapter's stand-in tests.
+      pinecone:
+        image: ghcr.io/pinecone-io/pinecone-index:v1.0.0.rc0@sha256:d60708292452e1e1d0740da86f653706a73b3682f302e1f0c18908f59e7ec7e0
+        env:
+          PORT: "5081"
+          INDEX_TYPE: serverless
+          VECTOR_TYPE: dense
+          DIMENSION: "256"
+          METRIC: dotproduct
+        ports:
+          - 5081/tcp
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
@@ -188,6 +202,7 @@ jobs:
           EXACTDOCS_REQUIRE_MILVUS: "1" # the Milvus server cases and scenario never skip here (#360)
           EXACTDOCS_TEST_MONGODB_URL: mongodb://127.0.0.1:${{ job.services.mongodb.ports['27017'] }}/?directConnection=true
           EXACTDOCS_REQUIRE_MONGODB: "1" # the MongoDB cases and scenario never skip here (#363)
+          EXACTDOCS_TEST_PINECONE_URL: http://127.0.0.1:${{ job.services.pinecone.ports['5081'] }}
         run: uv run pytest --cov=exactdocs --cov=exactdocs_kernel --cov-report=term-missing --junitxml=reports/pytest.xml
       - name: behave (acceptance)
         env:
@@ -209,6 +224,7 @@ jobs:
           EXACTDOCS_REQUIRE_MILVUS: "1"
           EXACTDOCS_TEST_MONGODB_URL: mongodb://127.0.0.1:${{ job.services.mongodb.ports['27017'] }}/?directConnection=true
           EXACTDOCS_REQUIRE_MONGODB: "1"
+          EXACTDOCS_TEST_PINECONE_URL: http://127.0.0.1:${{ job.services.pinecone.ports['5081'] }}
         run: uv run behave --format=progress --junit --junit-directory=reports/behave
       # The shared ranking suite again, on Supabase's image (postgres_fts: it has no pg_search).
       - name: Ranking suite on supabase/postgres
