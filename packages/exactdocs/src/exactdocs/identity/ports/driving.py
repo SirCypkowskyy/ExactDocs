@@ -4,7 +4,6 @@ from typing import Protocol
 
 from exactdocs.identity.dtos import (
     AccessLogPage,
-    AccountLinkStart,
     AccountProviders,
     AccountSummary,
     ApiTokenIdentity,

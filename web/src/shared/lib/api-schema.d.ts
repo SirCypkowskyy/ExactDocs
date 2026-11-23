@@ -104,14 +104,41 @@ export interface paths {
         };
         /**
          * Callback
-         * @description Finish signing in: the identity provider sends the browser here.
+         * @description Finish signing in (or linking): the identity provider sends the browser here.
          *
          *     The binding cookie is cleared whatever happens. Refusals go back to the sign-in page
          *     with `?error=` and one of `sign_in_failed`, `sign_in_cancelled`, `not_allowed`,
-         *     `account_disabled`, `username_unavailable` or `provider_unavailable`; no session is
-         *     created then.
+         *     `not_linked` (the provider creates no accounts, and nobody linked this identity),
+         *     `account_disabled`, `username_unavailable`, `provider_access_revoked` or
+         *     `provider_unavailable`; no session is created then. A link started from Account
+         *     settings goes back to where it started, with `?linked=<provider>` or
+         *     `?link_error=<code>`, and leaves the session as it was.
          */
         readonly get: operations["identity-callback"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/auth/{provider}/icon": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Icon
+         * @description Serve a provider's own icon, from this server (never from the provider's).
+         *
+         *     Only for a provider with an operator's `icon_file` (its `icon_url`); a built-in icon
+         *     (`icon`) is the web UI's own, and anything else is `no_icon` (404). The response may be
+         *     cached: its URL carries the icon's version, which is also its ETag.
+         */
+        readonly get: operations["identity-icon"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -280,6 +307,70 @@ export interface paths {
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/account/providers": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Providers
+         * @description List the signed-in account's ways to sign in: its password and every provider.
+         *
+         *     Each configured provider says whether an identity of it is linked and whether it may
+         *     be linked or unlinked now; an identity of a provider no longer configured is listed
+         *     last, to be unlinked.
+         */
+        readonly get: operations["identity-get_providers"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/account/providers/{provider}/link": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Link Provider
+         * @description Start linking an identity of this provider to the signed-in account. Answers `redirect_url`, where the browser goes next (the provider's sign-in), and sets the `exactdocs_sign_in` binding cookie, exactly as `GET /auth/{provider}/start` does; the attempt is also bound to this session. The provider then comes back to `GET /auth/{provider}/callback`, which links the identity to this account (no new session) and redirects to `return_to` with `?linked=<provider>`, or `?link_error=<code>`: `identity_linked_elsewhere`, `provider_linked`, `not_allowed`, `sign_in_failed`, `sign_in_cancelled`, `unauthenticated` (the session ended meanwhile) or `provider_unavailable`. Refused at once with `provider_linked` (409) when the account has an identity of the provider already, `unknown_provider` (404) for a provider not configured, and `provider_unavailable` (429) when it cannot be reached. Needs a session cookie (401 otherwise, an API token included).
+         */
+        readonly post: operations["identity-link_provider"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/account/providers/{provider}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete Provider
+         * @description Unlink the signed-in account's identity of this provider: it no longer signs the account in. Answers the account's providers as `GET /account/providers` does. Refused with `last_sign_in_method` (409) for the provider an account without a password was created through (its role, groups and access follow it, and it is the account's way in), and with `provider_not_linked` (404) when the account has no identity of this provider. Needs a session cookie.
+         */
+        readonly delete: operations["identity-delete_provider"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -1667,6 +1758,101 @@ export interface components {
              *     repository tokens use `x-token-auth`.
              */
             readonly username?: string | null;
+        };
+        /**
+         * AccountLinkStart
+         * @description A started link: send the browser to ``redirect_url`` (the binding cookie is set).
+         */
+        readonly AccountLinkStart: {
+            /**
+             * Redirect Url
+             * @description The identity provider's authorization URL: the browser goes there next.
+             */
+            readonly redirect_url: string;
+        };
+        /**
+         * AccountProvider
+         * @description A provider as the signed-in person's Account settings show it: linked or not.
+         */
+        readonly AccountProvider: {
+            /**
+             * Name
+             * @description The provider's name: sign in at `GET /api/v1/auth/{name}/start`.
+             */
+            readonly name: string;
+            /**
+             * Display Name
+             * @description What its sign-in button says.
+             */
+            readonly display_name: string;
+            /**
+             * Icon
+             * @description The built-in icon its button shows (the web UI ships these); `null` when it has none, or
+             *     an icon of its own (`icon_url`).
+             */
+            readonly icon?: ("discord" | "github" | "google" | "microsoft") | null;
+            /**
+             * Icon Url
+             * @description Where ExactDocs serves the provider's own icon, an operator's file (a same-origin path,
+             *     `/api/v1/auth/{name}/icon?v=<version>`, which changes with the icon); `null` when it has
+             *     none.
+             */
+            readonly icon_url?: string | null;
+            /**
+             * Configured
+             * @description `false` for an identity linked through a provider that is no longer configured (or
+             *     through Cloudflare Access): it signs nobody in, and only unlinking it is offered.
+             */
+            readonly configured: boolean;
+            /**
+             * Linked
+             * @description Whether an identity of this provider is linked to the account.
+             */
+            readonly linked: boolean;
+            /**
+             * Origin
+             * @description Whether the account was created through this provider. An account without a password
+             *     follows it (its role, groups and access) and always keeps it.
+             */
+            readonly origin: boolean;
+            /**
+             * Linked At
+             * @description When the person linked it here; `null` for the origin, and when it is not linked.
+             */
+            readonly linked_at: string | null;
+            /**
+             * Last Signed In At
+             * @description The latest sign-in through it (or when it was linked); `null` when it is not linked.
+             */
+            readonly last_signed_in_at: string | null;
+            /**
+             * Can Link
+             * @description Whether `POST /api/v1/account/providers/{name}/link` may start: configured, not linked.
+             */
+            readonly can_link: boolean;
+            /**
+             * Can Unlink
+             * @description Whether `DELETE /api/v1/account/providers/{name}` may unlink it: linked, and not the
+             *     account's only way to sign in.
+             */
+            readonly can_unlink: boolean;
+        };
+        /**
+         * AccountProviders
+         * @description The signed-in account's ways to sign in: its password and its providers.
+         */
+        readonly AccountProviders: {
+            /**
+             * Has Password
+             * @description Whether the account has a password (it always keeps that way in).
+             */
+            readonly has_password: boolean;
+            /**
+             * Providers
+             * @description Every configured provider, in configuration order, then every identity linked through a
+             *     provider no longer configured.
+             */
+            readonly providers: readonly components["schemas"]["AccountProvider"][];
         };
         /**
          * AccountSummary
@@ -5497,6 +5683,19 @@ export interface components {
              * @description What its sign-in button says.
              */
             readonly display_name: string;
+            /**
+             * Icon
+             * @description The built-in icon its button shows (the web UI ships these); `null` when it has none, or
+             *     an icon of its own (`icon_url`).
+             */
+            readonly icon?: ("discord" | "github" | "google" | "microsoft") | null;
+            /**
+             * Icon Url
+             * @description Where ExactDocs serves the provider's own icon, an operator's file (a same-origin path,
+             *     `/api/v1/auth/{name}/icon?v=<version>`, which changes with the icon); `null` when it has
+             *     none.
+             */
+            readonly icon_url?: string | null;
         };
         /**
          * SourceErrorOut
@@ -5712,6 +5911,18 @@ export interface components {
              * @description Calls whose model had no known price.
              */
             readonly unpriced_requests: number;
+        };
+        /**
+         * StartAccountLinkRequest
+         * @description Where to come back to once the provider linked the identity (or refused it).
+         */
+        readonly StartAccountLinkRequest: {
+            /**
+             * Return To
+             * @description A path on this server; default `/account`. `?linked=<provider>` or
+             *     `?link_error=<code>` is added to it.
+             */
+            readonly return_to?: string | null;
         };
         /**
          * SyncStatus
@@ -6891,8 +7102,95 @@ export interface operations {
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description Signed in, or back to the sign-in page with `?error=` */
+            /** @description Signed in, or back to the sign-in page with `?error=`; after a link, back to where it started, with `?linked=` or `?link_error=` */
             readonly 303: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-icon": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: {
+                readonly "if-none-match"?: string | null;
+            };
+            readonly path: {
+                readonly provider: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The icon (PNG, WebP or a sanitised SVG) */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "image/png": unknown;
+                    readonly "image/webp": unknown;
+                    readonly "image/svg+xml": unknown;
+                };
+            };
+            /** @description The browser's copy is current (`If-None-Match`) */
+            readonly 304: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -7626,6 +7924,247 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AccessLogPage"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-get_providers": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccountProviders"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-link_provider": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly provider: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["StartAccountLinkRequest"] | null;
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccountLinkStart"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    /** @description Seconds to wait before the next attempt. */
+                    readonly "Retry-After"?: number;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-delete_provider": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly provider: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccountProviders"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

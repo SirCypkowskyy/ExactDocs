@@ -171,6 +171,13 @@ first two letters (a token without a ``kid`` is tried with the keys of that type
 NUMERIC_DATE_CLAIMS: Final[tuple[str, ...]] = ("exp", "iat", "nbf")
 """The ID token's times: when present, each must be an integer (JSON booleans, fractions,
 ``NaN`` and infinities are refused)."""
+TENANT_PLACEHOLDER: Final[str] = "{tenantid}"
+"""Stands for the token's own ``tid`` in a multi-tenant issuer (Microsoft's ``common`` and
+``organizations`` discovery name ``https://login.microsoftonline.com/{tenantid}/v2.0``)."""
+TENANT_ID_PATTERN: Final[str] = (
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+"""What a token's ``tid`` must look like before it is put in a multi-tenant issuer: a GUID."""
 OIDC_TIMEOUT: Final[float] = 10.0
 """Seconds one call to an identity provider may take (discovery, JWKS, token, userinfo)."""
 MAX_PROVIDER_RESPONSE_BYTES: Final[int] = 1 * 2**20
@@ -307,15 +314,16 @@ loads nothing (it is sanitised already; this is the second line)."""
 LINK_PROVIDER_DESCRIPTION: Final[str] = (
     "Start linking an identity of this provider to the signed-in account. Answers "
     "`redirect_url`, where the browser goes next (the provider's sign-in), and sets the "
-    "`exactdocs_sign_in` binding cookie, exactly as `GET /auth/{provider}/start` does; the attempt "
-    "is also bound to this session. The provider then comes back to `GET /auth/{provider}/callback`, "
-    "which links the identity to this account (no new session) and redirects to `return_to` with "
-    "`?linked=<provider>`, or `?link_error=<code>`: `identity_linked_elsewhere`, "
-    "`provider_linked`, `not_allowed`, `sign_in_failed`, `sign_in_cancelled` or "
-    "`provider_unavailable`. Refused at once with `provider_linked` (409) when the account has an "
-    "identity of the provider already, `unknown_provider` (404) for a provider not configured, "
-    "and `provider_unavailable` (503) when it cannot be reached. Needs a session cookie (401 "
-    "otherwise, an API token included)."
+    "`exactdocs_sign_in` binding cookie, exactly as `GET /auth/{provider}/start` does; the "
+    "attempt is also bound to this session. The provider then comes back to "
+    "`GET /auth/{provider}/callback`, which links the identity to this account (no new session) "
+    "and redirects to `return_to` with `?linked=<provider>`, or `?link_error=<code>`: "
+    "`identity_linked_elsewhere`, `provider_linked`, `not_allowed`, `sign_in_failed`, "
+    "`sign_in_cancelled`, `unauthenticated` (the session ended meanwhile) or "
+    "`provider_unavailable`. Refused at once with `provider_linked` (409) when the account has "
+    "an identity of the provider already, `unknown_provider` (404) for a provider not "
+    "configured, and `provider_unavailable` (429) when it cannot be reached. Needs a session "
+    "cookie (401 otherwise, an API token included)."
 )
 """OpenAPI description of ``POST /account/providers/{provider}/link``."""
 UNLINK_PROVIDER_DESCRIPTION: Final[str] = (

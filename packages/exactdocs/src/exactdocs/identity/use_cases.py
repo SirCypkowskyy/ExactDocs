@@ -1745,7 +1745,9 @@ class FinishExternalSignInUseCase:
             logger.info("external sign-in through %s refused: not in an allowed group", policy.name)
             raise NotAllowedError
         if await _external_access_ended(self.externals, account, now):
-            logger.info("sign-in through linked %s refused: the account's access ended", policy.name)
+            logger.info(
+                "sign-in through linked %s refused: the account's access ended", policy.name
+            )
             raise ProviderAccessRevokedError
         await self.externals.record_linked_sign_in(link, now)
         return account
@@ -1897,7 +1899,7 @@ async def _account_providers(
 
 
 def _account_provider(
-    summary: dict[str, object], link: ExternalIdentity | None, *, configured: bool
+    summary: Mapping[str, object], link: ExternalIdentity | None, *, configured: bool
 ) -> AccountProvider:
     """Describe one provider for an account's settings.
 

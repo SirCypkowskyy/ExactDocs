@@ -106,6 +106,11 @@ to it, so the CLI and coding agents are unaffected.
   request; `github` reads the current user and applies the same organization/team checks and
   app-approval/SSO refusals as browser sign-in. Lost membership is refused at the next MCP request.
   Both use FastMCP `OAuthProxy` with the configured endpoints; OIDC/ADFS uses `OIDCProxy`.
+  The presets follow their protocol: `discord` is OAuth2, `google` and `microsoft` are OIDC (a
+  multi-tenant Microsoft provider checks each token against its own tenant's issuer). A provider
+  that creates no accounts (`auto_create_users = false`, the presets' default) refuses a person
+  whose identity no account has linked; a linked identity acts as its account, with the
+  account's own role and groups.
   GitHub `base_url`/`api_url` support GitHub.com, Enterprise Server and `*.ghe.com`, as in
   [GitHub setup](configuration.md#github-and-github-enterprise-sign-in). GitHub OAuth Apps accept
   one callback URL: use a separate OAuth App/provider for MCP with `/auth/callback` as its

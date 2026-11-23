@@ -2,8 +2,8 @@ from collections.abc import Sequence
 
 from exactdocs_kernel import (
     BusyError,
-    DomainError,
     ConflictError,
+    DomainError,
     ForbiddenError,
     NotFoundError,
     RateLimitedError,

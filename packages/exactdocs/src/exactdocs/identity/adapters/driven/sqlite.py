@@ -57,7 +57,7 @@ from exactdocs.identity.models import (
     Username,
     known_sign_ins_prefix,
 )
-from exactdocs.identity.ports.driven import LinkOutcome
+from exactdocs.identity.ports.driven import AttachOutcome, LinkOutcome
 
 # The identity tables, prefixed `identity_`. The schema itself is created by an Alembic revision
 # in `exactdocs.bootstrap`; this is only the adapter's query-side description of it.
@@ -111,12 +111,10 @@ external_identities = Table(
     metadata,
     Column("issuer", Text, primary_key=True),
     Column("subject", Text, primary_key=True),
+    # One identity per (account, provider), and one origin (`linked_at` NULL) per account: both
+    # are unique indexes of the revision, not described here.
     Column(
-        "account_id",
-        Text,
-        ForeignKey("identity_accounts.id", ondelete="CASCADE"),
-        nullable=False,
-        unique=True,
+        "account_id", Text, ForeignKey("identity_accounts.id", ondelete="CASCADE"), nullable=False
     ),
     Column("provider", Text, nullable=False),
     Column("sealed_tokens", Text),  # the refresh token, sealed; NULL when there is none
@@ -124,6 +122,7 @@ external_identities = Table(
     Column("checked_at", Text, nullable=False),
     Column("next_check_at", Text, nullable=False),
     Column("access_until", Text, nullable=False),
+    Column("linked_at", Text),  # see `_stamp`; NULL for the origin, the identity it was created by
 )
 account_groups = Table(
     "identity_account_groups",
@@ -154,6 +153,7 @@ sign_in_attempts = Table(
     Column("code_verifier", Text, nullable=False),
     Column("return_to", Text, nullable=False),
     Column("created_at", Text, nullable=False),  # see `_stamp`
+    Column("link_session_hash", Text),  # a link's session; NULL for a sign-in
 )
 access_events = Table(
     "identity_access_events",
@@ -175,6 +175,8 @@ known_sign_ins = Table(
     Column("key", Text, primary_key=True),  # `<username>@address:...`
     Column("signed_in_at", Text, nullable=False),  # see `_stamp`
 )
+# The identity an account was created through (the others were linked from Account settings).
+_origin = external_identities.c.linked_at.is_(None)
 # One statement takes every key's lock, in the order of the lock ids (not of the keys: two keys
 # whose `hashtext` collides share an id, and key order could then cross another attempt's).
 # PostgreSQL evaluates a volatile function in the select list after the sort.
@@ -1046,6 +1048,7 @@ class SqliteSignInAttemptRepository:
             "code_verifier": attempt.code_verifier,
             "return_to": attempt.return_to,
             "created_at": _stamp(attempt.created_at),
+            "link_session_hash": attempt.link_session_hash,
         }
         stale = delete(sign_in_attempts).where(
             sign_in_attempts.c.created_at < _stamp(expired_before)
@@ -1080,6 +1083,7 @@ class SqliteSignInAttemptRepository:
             code_verifier=row.code_verifier,
             return_to=row.return_to,
             created_at=datetime.fromisoformat(row.created_at),
+            link_session_hash=row.link_session_hash,
         )
 
 
@@ -1108,18 +1112,99 @@ class SqliteExternalIdentityRepository:
         return None if row is None else _identity(row)
 
     async def get_for_account(self, account_id: AccountId) -> ExternalIdentity | None:
-        """Return the link of this account, or ``None``.
+        """Return the account's origin, or ``None``.
 
         Args:
             account_id: The account's id.
 
         Returns:
-            The link, or ``None``.
+            The identity the account was created through, or ``None``.
         """
-        query = select(external_identities).where(external_identities.c.account_id == account_id)
+        query = select(external_identities).where(
+            external_identities.c.account_id == account_id, _origin
+        )
         async with self.engine.connect() as connection:
             row = (await connection.execute(query)).first()
         return None if row is None else _identity(row)
+
+    async def list_for_account(self, account_id: AccountId) -> list[ExternalIdentity]:
+        """Return every identity linked to the account: its origin first, then by provider.
+
+        Args:
+            account_id: The account's id.
+
+        Returns:
+            The identities.
+        """
+        query = (
+            select(external_identities)
+            .where(external_identities.c.account_id == account_id)
+            .order_by(external_identities.c.linked_at.is_not(None), external_identities.c.provider)
+        )
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(query)).all()
+        return [_identity(row) for row in rows]
+
+    async def link(self, identity: ExternalIdentity) -> AttachOutcome:
+        """Link an identity to an existing account in one ``INSERT``.
+
+        The primary key (issuer, subject) refuses an identity linked already, the unique
+        (account, provider) index a second identity of the provider; which one it was is read
+        again afterwards, so the answer holds whatever the dialect's error says.
+
+        Args:
+            identity: The identity, its ``account_id`` the account's.
+
+        Returns:
+            ``linked``, ``identity_taken`` or ``provider_taken``.
+        """
+        try:
+            async with self.engine.begin() as connection:
+                await connection.execute(
+                    insert(external_identities).values(_identity_values(identity))
+                )
+        except IntegrityError:
+            if await self.get(identity.issuer, identity.subject) is not None:
+                return "identity_taken"
+            return "provider_taken"
+        return "linked"
+
+    async def unlink(self, account_id: AccountId, provider: str) -> bool:
+        """Delete the account's identity of a provider, never its origin.
+
+        Args:
+            account_id: The account.
+            provider: The provider's name.
+
+        Returns:
+            ``True`` when a row was deleted.
+        """
+        statement = delete(external_identities).where(
+            external_identities.c.account_id == account_id,
+            external_identities.c.provider == provider,
+            external_identities.c.linked_at.is_not(None),
+        )
+        async with self.engine.begin() as connection:
+            return (await connection.execute(statement)).rowcount == 1
+
+    async def record_linked_sign_in(self, identity: ExternalIdentity, at: datetime) -> None:
+        """Note a sign-in through a linked identity (its times only).
+
+        Args:
+            identity: The identity.
+            at: When it signed in.
+        """
+        statement = (
+            update(external_identities)
+            .where(
+                external_identities.c.issuer == identity.issuer,
+                external_identities.c.subject == identity.subject,
+                external_identities.c.linked_at.is_not(None),
+            )
+            .values(signed_in_at=_stamp(at), checked_at=_stamp(at))
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(statement)
 
     async def create_linked_account(
         self, account: Account, identity: ExternalIdentity, groups: frozenset[str]
@@ -1234,7 +1319,7 @@ class SqliteExternalIdentityRepository:
         """
         statement = (
             update(external_identities)
-            .where(external_identities.c.account_id == account_id)
+            .where(external_identities.c.account_id == account_id, _origin)
             .values(access_until=_stamp(now), sealed_tokens=None)
         )
         async with self.engine.begin() as connection:
@@ -1249,7 +1334,7 @@ class SqliteExternalIdentityRepository:
         """
         statement = (
             update(external_identities)
-            .where(external_identities.c.account_id == account_id)
+            .where(external_identities.c.account_id == account_id, _origin)
             .values(sealed_tokens=None)
         )
         async with self.engine.begin() as connection:
@@ -1275,6 +1360,7 @@ class SqliteExternalIdentityRepository:
         query = (
             select(external_identities)
             .where(
+                _origin,
                 external_identities.c.sealed_tokens.is_not(None),
                 external_identities.c.next_check_at <= _stamp(now),
             )
@@ -1300,15 +1386,17 @@ class SqliteExternalIdentityRepository:
         return [_identity(row) for row in rows]
 
     async def groups_by_account(self) -> Mapping[AccountId, tuple[str, list[str]]]:
-        """Return the provider and the groups of every linked account.
+        """Return the provider and the groups of every account created through a provider.
 
         Returns:
-            For each linked account: its provider's name and its groups, sorted.
+            For each account with an origin: the origin's provider name and its groups, sorted.
         """
         async with self.engine.connect() as connection:
             links = (
                 await connection.execute(
-                    select(external_identities.c.account_id, external_identities.c.provider)
+                    select(external_identities.c.account_id, external_identities.c.provider).where(
+                        _origin
+                    )
                 )
             ).all()
             groups = (
@@ -1673,6 +1761,7 @@ def _identity_values(identity: ExternalIdentity) -> dict[str, Any]:
         "checked_at": _stamp(identity.checked_at),
         "next_check_at": _stamp(identity.next_check_at),
         "access_until": _stamp(identity.access_until),
+        "linked_at": None if identity.linked_at is None else _stamp(identity.linked_at),
     }
 
 
@@ -1695,6 +1784,7 @@ def _identity(row: Row[Any]) -> ExternalIdentity:
         checked_at=datetime.fromisoformat(row.checked_at),
         next_check_at=datetime.fromisoformat(row.next_check_at),
         access_until=datetime.fromisoformat(row.access_until),
+        linked_at=_moment(row.linked_at),
     )
 
 

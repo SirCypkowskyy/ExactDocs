@@ -16,7 +16,7 @@ What is accepted:
 
 import re
 from pathlib import Path
-from xml.etree import ElementTree  # ruff: ignore[suspicious-xml-etree-import] - see _parse_svg
+from xml.etree import ElementTree as ET  # ruff: ignore[suspicious-xml-etree-import] - see _parse_svg
 
 from exactdocs.identity.constants import (
     _PNG_HEADER_END,
@@ -154,15 +154,14 @@ def _sanitised_svg(content: bytes) -> tuple[bytes, tuple[int | None, int | None]
     if root.tag != f"{{{ICON_SVG_NAMESPACE}}}svg":
         message = f'an SVG icon\'s root must be <svg xmlns="{ICON_SVG_NAMESPACE}">'
         raise ValueError(message)
-    clean = _clean(root, depth=0) or ElementTree.Element(root.tag)  # the root is always kept
+    clean = _clean(root, depth=0)
+    if clean is None:  # never: the root is an allowed <svg>
+        clean = ET.Element("svg", {"xmlns": ICON_SVG_NAMESPACE})
     size = (_pixels(clean.get("width")), _pixels(clean.get("height")))
-    rebuilt = ElementTree.tostring(
-        clean, encoding="unicode", default_namespace=ICON_SVG_NAMESPACE
-    )
-    return rebuilt.encode(), size
+    return ET.tostring(clean, encoding="unicode").encode(), size
 
 
-def _parse_svg(content: bytes) -> ElementTree.Element:
+def _parse_svg(content: bytes) -> ET.Element:
     """Parse the SVG's XML, refusing a DOCTYPE first.
 
     Without a DOCTYPE there are no entities to expand (no billion laughs, no external entity),
@@ -187,13 +186,13 @@ def _parse_svg(content: bytes) -> ElementTree.Element:
         message = "an SVG icon may not have a DOCTYPE or entities"
         raise ValueError(message)
     try:
-        return ElementTree.fromstring(text)  # ruff: ignore[suspicious-xml-element-tree-usage] - no DOCTYPE
-    except ElementTree.ParseError:
+        return ET.fromstring(text)  # ruff: ignore[suspicious-xml-element-tree-usage] - no DOCTYPE
+    except ET.ParseError:
         message = "the icon is not a PNG, a WebP or a well-formed SVG"
         raise ValueError(message) from None
 
 
-def _clean(element: ElementTree.Element, *, depth: int) -> ElementTree.Element | None:
+def _clean(element: ET.Element, *, depth: int) -> ET.Element | None:
     """Copy an element, its allowed attributes and its allowed children.
 
     Args:
@@ -212,7 +211,8 @@ def _clean(element: ElementTree.Element, *, depth: int) -> ElementTree.Element |
     namespace, _, name = str(element.tag).rpartition("}")
     if namespace != f"{{{ICON_SVG_NAMESPACE}" or name not in ICON_ALLOWED_SVG_ELEMENTS:
         return None
-    copy = ElementTree.Element(element.tag)
+    # Unqualified names, the root declaring SVG's namespace as the default: what browsers read.
+    copy = ET.Element(name, {"xmlns": ICON_SVG_NAMESPACE} if depth == 0 else {})
     for attribute, value in element.attrib.items():
         if (kept := _attribute(attribute, value)) is not None:
             copy.set(*kept)
