@@ -809,7 +809,9 @@ it, as on a file. Processes starting together migrate one after the other.
   its state in the database. One server process per data directory, as on a file.
 - **The server keeps its own settings.** It refuses `journal_mode`, `busy_timeout`,
   `synchronous`, `ANALYZE` and other PRAGMAs that set something; ExactDocs only switches
-  `foreign_keys` on for each connection (the server's default too).
+  `foreign_keys` on for each connection (the server's default too). Without `ANALYZE` the query
+  planner has no statistics, so it may pick another of a table's indexes than on a file (the
+  answers are the same).
 - **Streams expire.** The server drops a connection's stream after a few seconds idle (`sqld`:
   10 s). A statement outside a transaction is then sent again; a transaction left idle that long
   is rolled back by the server and fails.
