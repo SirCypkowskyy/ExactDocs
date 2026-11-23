@@ -960,6 +960,9 @@ class Preferences:
     """The language of the interface."""
     library_logos: bool = True
     """Whether libraries show their logos (and generic icons where they have none)."""
+    leaderboard_opt_in: bool = False
+    """Whether the person agreed to be shown by name on the people leaderboard (#510), while the
+    operator has it on; nobody is shown without agreeing."""
 
     def __post_init__(self) -> None:
         """Check the text size.

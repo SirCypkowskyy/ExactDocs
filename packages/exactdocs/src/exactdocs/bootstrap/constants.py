@@ -295,7 +295,13 @@ MIGRATION_TURN_NOTICE_SECONDS: Final[float] = 5.0
 MIGRATION_TURN_REPEAT_SECONDS: Final[float] = 60.0
 """While the wait for another process's migration goes on, it is logged again this often, so a
 start stuck behind a hung migration stays visible in the logs."""
-COLLATED_PREFIXES: Final[tuple[str, ...]] = ("catalog_", "identity_", "ingestion_", "retrieval_")
+COLLATED_PREFIXES: Final[tuple[str, ...]] = (
+    "catalog_",
+    "identity_",
+    "ingestion_",
+    "retrieval_",
+    "usage_",
+)
 """Tables whose text columns get the "C" collation on PostgreSQL, so text compares and sorts by
 code point, as SQLite's BINARY collation does, whatever the database's locale."""
 
@@ -762,6 +768,13 @@ WINDOW_RESET_GRACE_SECONDS: Final[float] = 5.0
 REQUEUE_JITTER_SECONDS: Final[float] = 300.0
 """At most this many seconds more, at random, before the midnight re-queue: processes and
 instances sharing a provider do not all wake together."""
+USAGE_FLUSH_SECONDS: Final[float] = 10.0
+"""How often a serving process writes the usage counts it added up in memory (#510), so a
+request never waits for the database; a stop writes what is left. On PostgreSQL another
+process's counts reach the reports within this time."""
+USAGE_STOP_SECONDS: Final[float] = 3.0
+"""How long a stopping process waits for its last write of the usage counts; then it logs what
+it lost and stops."""
 UPKEEP_STOP_SECONDS: Final[float] = 5.0
 """How long a stopping server waits for its cancelled nightly upkeep (embedding queueing and
 cache pruning) to end; then it logs a warning and cancels it again (#308). Well under the 10 s

@@ -899,6 +899,10 @@ class InterfacePreferences(_Dto):
     library_logos: StrictBool
     """Whether libraries show their logos, and generic icons where they have none; `false` hides
     both. Default `true`."""
+    leaderboard_opt_in: StrictBool
+    """Whether the person agrees to be shown by name on the people leaderboard while the operator
+    has it on (`GET /stats/settings`). Without it they are on no people leaderboard, and nobody
+    sees their usage except as part of totals. Default `false`."""
 
     @classmethod
     def from_model(cls, preferences: Preferences) -> Self:
@@ -921,6 +925,7 @@ class InterfacePreferences(_Dto):
             large_targets=preferences.large_targets,
             language=preferences.language.value,
             library_logos=preferences.library_logos,
+            leaderboard_opt_in=preferences.leaderboard_opt_in,
         )
 
     def to_model(self) -> Preferences:
@@ -940,6 +945,7 @@ class InterfacePreferences(_Dto):
             large_targets=self.large_targets,
             language=Language(self.language),
             library_logos=self.library_logos,
+            leaderboard_opt_in=self.leaderboard_opt_in,
         )
 
 
@@ -982,3 +988,26 @@ class AccountPreferences(_Dto):
             saved=preferences is not None,
             preferences=InterfacePreferences.from_model(preferences or Preferences()),
         )
+
+
+class LeaderboardPeopleQuery(_Dto):
+    """Which of these accounts may be shown by name on the people leaderboard (#510)."""
+
+    account_ids: list[str]
+    """The accounts asked about (any number; unknown IDs are simply not among the answer)."""
+
+
+class LeaderboardPerson(_Dto):
+    """An account that agreed to be shown by name on the people leaderboard."""
+
+    id: str
+    """The account ID."""
+    username: str
+    """Its username, as everyone sees it."""
+
+
+class LeaderboardPeople(_Dto):
+    """The accounts among those asked about that may be shown by name."""
+
+    people: list[LeaderboardPerson]
+    """Existing, enabled accounts that opted in (`leaderboard_opt_in`), sorted by ID."""

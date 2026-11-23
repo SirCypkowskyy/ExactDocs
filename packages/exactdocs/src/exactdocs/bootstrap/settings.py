@@ -84,6 +84,7 @@ from exactdocs.retrieval.models import (
     RetrievalMode,
     ThinkingLevel,
 )
+from exactdocs.usage.constants import DEFAULT_RETENTION_MONTHS, MAX_RETENTION_MONTHS
 
 
 class ProviderSettings(BaseModel):
@@ -795,6 +796,19 @@ class AuthSettings(BaseModel):
         return value
 
 
+class UsageSettings(BaseModel):
+    """The ``usage`` section: daily usage counts and leaderboards (``EXACTDOCS_USAGE__...``)."""
+
+    model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
+
+    people_leaderboard: bool = False
+    """Turn the people leaderboard on: people who opted in (`leaderboard_opt_in`) are ranked by
+    name, and operators' usage reports name them. Off, nobody is named to anyone else. The
+    libraries leaderboard is always on."""
+    retention_months: int = Field(default=DEFAULT_RETENTION_MONTHS, ge=1, le=MAX_RETENTION_MONTHS)
+    """How many months of daily counts are kept; older days are deleted every night."""
+
+
 def _default_data_dir() -> Path:
     """Return the platform's user-data directory for ExactDocs.
 
@@ -946,6 +960,9 @@ class Settings(BaseSettings):
     auth: AuthSettings = Field(default_factory=AuthSettings)
     """Sign-in through identity providers (`[auth.providers.<name>]` in the
     `EXACTDOCS_CONFIG_FILE` TOML file, or `EXACTDOCS_AUTH__PROVIDERS__<NAME>__<FIELD>`)."""
+    usage: UsageSettings = Field(default_factory=UsageSettings)
+    """Usage counts and leaderboards (`[usage]` in the TOML file, or
+    `EXACTDOCS_USAGE__PEOPLE_LEADERBOARD` and `EXACTDOCS_USAGE__RETENTION_MONTHS`)."""
 
     mcp_oauth_provider: str | None = None
     """The sign-in provider (a name under `[auth.providers]`) MCP hosts that cannot paste an API

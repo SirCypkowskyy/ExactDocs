@@ -817,3 +817,15 @@ class PreferencesRepository(Protocol):
             preferences: Its new preferences.
         """
         ...
+
+    async def opted_in(self, account_ids: Collection[AccountId]) -> frozenset[AccountId]:
+        """Return the accounts among these that agreed to be on the people leaderboard (#510).
+
+        Args:
+            account_ids: The accounts to ask about.
+
+        Returns:
+            Those whose saved preferences say ``leaderboard_opt_in``; one that never saved any
+            has not agreed.
+        """
+        ...

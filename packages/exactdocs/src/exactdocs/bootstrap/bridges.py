@@ -106,6 +106,7 @@ from exactdocs.identity.dtos import (
     ClaimLibraryCommand,
     DropLibraryGrantsCommand,
     ExternalTokenIdentity,
+    LeaderboardPeopleQuery,
     LibraryCreationQuery,
     LibraryRolesQuery,
 )
@@ -113,6 +114,7 @@ from exactdocs.identity.ports.driving import (
     CanCreateLibrary,
     ClaimLibrary,
     DropLibraryGrants,
+    FindLeaderboardPeople,
     ResolveLibraryRoles,
 )
 from exactdocs.ingestion.constants import PARSER_VERSION
@@ -196,6 +198,7 @@ from exactdocs.retrieval.ports.driving import (
     RemoveChunks,
     RetagArticles,
 )
+from exactdocs.usage.models import Person
 from exactdocs_kernel import MAX_LIMIT, ForbiddenError, NotFoundError, ValidationError
 
 
@@ -1623,3 +1626,29 @@ class IdentityAccessPolicy:
         await self.drop_library_grants(
             DropLibraryGrantsCommand(library=library, actor_id=self.caller())
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IdentityLeaderboardPeople:
+    """Implements usage's ``People`` port with identity's accounts and their opt-in (#510).
+
+    Identity knows who opted in (``leaderboard_opt_in``) and who is enabled; whether the
+    people leaderboard is on is the usage domain's own setting.
+    """
+
+    find_leaderboard_people: FindLeaderboardPeople
+    """Identity's accounts that may be shown by name."""
+
+    async def shown(self, account_ids: Collection[str]) -> list[Person]:
+        """Return the accounts among these that may be shown by name, with their usernames.
+
+        Args:
+            account_ids: The accounts asked about.
+
+        Returns:
+            Those that exist, are enabled and opted in.
+        """
+        found = await self.find_leaderboard_people(
+            LeaderboardPeopleQuery(account_ids=sorted(account_ids))
+        )
+        return [Person(id=person.id, username=person.username) for person in found.people]

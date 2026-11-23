@@ -51,6 +51,9 @@ from exactdocs.identity.dtos import (
     FinishExternalSignInCommand,
     GetPreferencesQuery,
     GrantLibraryRoleCommand,
+    LeaderboardPeople,
+    LeaderboardPeopleQuery,
+    LeaderboardPerson,
     LibraryCreationQuery,
     LibraryGrantList,
     LibraryGrants,
@@ -2370,3 +2373,32 @@ class SavePreferencesUseCase:
         chosen = command.preferences.to_model()
         await self.preferences.put(AccountId(command.account_id), chosen)
         return AccountPreferences.from_model(chosen)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FindLeaderboardPeopleUseCase:
+    """Implements ``ports.driving.FindLeaderboardPeople``."""
+
+    preferences: PreferencesRepository
+    """Where each account's interface preferences are saved."""
+    accounts: AccountRepository
+    """The accounts, for their usernames and whether they are disabled."""
+
+    async def __call__(self, query: LeaderboardPeopleQuery) -> LeaderboardPeople:
+        """Return the accounts among those asked about that opted in, exist and are enabled.
+
+        One query finds who opted in; only those accounts are then read, one by one.
+
+        Args:
+            query: The accounts asked about.
+
+        Returns:
+            Those that may be shown by name, sorted by ID.
+        """
+        opted = await self.preferences.opted_in({AccountId(i) for i in query.account_ids})
+        people = []
+        for account_id in sorted(opted):
+            account = await self.accounts.get_by_id(account_id)
+            if account is not None and not account.is_disabled:
+                people.append(LeaderboardPerson(id=account.id, username=str(account.username)))
+        return LeaderboardPeople(people=people)

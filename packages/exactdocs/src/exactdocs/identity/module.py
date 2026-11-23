@@ -32,6 +32,7 @@ from exactdocs.identity.ports.driving import (
     CreateToken,
     CreateUser,
     DropLibraryGrants,
+    FindLeaderboardPeople,
     FinishExternalSignIn,
     GetPreferences,
     GetSessionState,
@@ -67,6 +68,7 @@ from exactdocs.identity.use_cases import (
     CreateTokenUseCase,
     CreateUserUseCase,
     DropLibraryGrantsUseCase,
+    FindLeaderboardPeopleUseCase,
     FinishExternalSignInUseCase,
     GetPreferencesUseCase,
     GetSessionStateUseCase,
@@ -168,6 +170,8 @@ class IdentityModule:
     """Return an account's interface preferences, or the defaults when it saved none."""
     save_preferences: SavePreferences
     """Save an account's interface preferences."""
+    find_leaderboard_people: FindLeaderboardPeople
+    """Tell which accounts may be shown by name on the people leaderboard (they opted in)."""
 
     @classmethod
     def build(
@@ -334,4 +338,7 @@ class IdentityModule:
             transfer_library=TransferLibraryUseCase(sharing=sharing),
             get_preferences=GetPreferencesUseCase(preferences=preferences),
             save_preferences=SavePreferencesUseCase(preferences=preferences),
+            find_leaderboard_people=FindLeaderboardPeopleUseCase(
+                preferences=preferences, accounts=repository
+            ),
         )
