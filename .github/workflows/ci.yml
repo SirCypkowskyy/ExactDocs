@@ -177,16 +177,18 @@ jobs:
           pattern: pytest-*
           path: reports
           merge-multiple: true
-      # coverage at the version uv.lock pins, without installing the project.
+      # coverage at the version uv.lock pins, on the project's Python (it parses the sources),
+      # without installing the project.
       - name: Coverage, all shards combined
         if: ${{ needs.pytest.result == 'success' }}
         env:
           COVERAGE_FILE: reports/coverage/.coverage
         run: |
           version=$(uv export --frozen --all-groups --no-hashes | sed -n 's/^coverage==\([^ ;]*\).*/\1/p')
-          uvx "coverage==$version" combine --keep reports/coverage
-          uvx "coverage==$version" report --show-missing --skip-covered
-          uvx "coverage==$version" report --format=total | xargs printf 'Total coverage: %s%%\n' \
+          coverage=(uvx --python "$(cat .python-version)" "coverage==$version")
+          "${coverage[@]}" combine --keep reports/coverage
+          "${coverage[@]}" report --show-missing --skip-covered
+          "${coverage[@]}" report --format=total | xargs printf 'Total coverage: %s%%\n' \
             | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
