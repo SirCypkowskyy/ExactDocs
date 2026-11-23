@@ -47,8 +47,11 @@ from exactdocs.retrieval.models import (
     VectorCoverage,
     VectorHit,
     VectorMetric,
+    as_float32,
 )
-from exactdocs.retrieval.ports import ChunkRepository, VectorIndex
+from exactdocs.retrieval.ports import ChunkRepository, StoredVectors, VectorIndex
+from exactdocs.retrieval.use_cases import ExternalIndexes, ExternalVectorIndex
+from index_backends import VECTOR_BACKEND_CASES
 
 T0 = datetime(2026, 11, 7, 12, 0, tzinfo=UTC)
 SMALL = EmbeddingSpec(profile_kind="openai", model="a", dimensions=3)
@@ -60,6 +63,7 @@ NO_TAGS = TagFilter()
 class World:
     chunks: ChunkRepository
     vectors: VectorIndex
+    store: StoredVectors  # the database's store, which keeps every vector
 
     async def index(
         self,
@@ -68,6 +72,7 @@ class World:
         *,
         tags: dict[str, tuple[str, ...]] | None = None,
         copies: int = 1,
+        library: str = "/acme/x",
     ) -> None:
         """Store a manifest with one article per blob; ``sets`` maps blob SHA to chunk count.
 
@@ -108,7 +113,7 @@ class World:
             for i in range(count)
         ]
         manifest = IndexedManifest(
-            manifest_id=manifest_id, version_id=f"/acme/x/{manifest_id}", library="/acme/x",
+            manifest_id=manifest_id, version_id=f"{library}/{manifest_id}", library=library,
             indexed_at=T0,
         )  # fmt: skip
         await self.chunks.add(manifest, chunk_sets, rows)
@@ -124,11 +129,28 @@ class World:
         return list(await self.vectors.nearest(space.id, manifest_id, query, tag_filter, limit))
 
 
-@pytest.fixture(params=["memory", *SQL_BACKENDS])
+@pytest.fixture(
+    params=["memory", *SQL_BACKENDS, *(f"external:{name}" for name in VECTOR_BACKEND_CASES)]
+)
 async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
+    if request.param.startswith("external:"):
+        # The domain's ExternalVectorIndex, as RetrievalModule wires it: the in-memory store
+        # keeps the vectors, the backend under test answers the searches.
+        case = VECTOR_BACKEND_CASES[request.param.removeprefix("external:")]
+        assert case.vectors is not None
+        async with case.vectors() as backend:
+            chunks = InMemoryChunkRepository()
+            store = InMemoryVectorIndex(chunks=chunks)
+            mirror = ExternalIndexes(chunks=chunks, vectors=backend, store=store, stored=store)
+            external = ExternalVectorIndex(
+                store=store, backend=backend, chunks=chunks, mirror=mirror
+            )
+            yield World(chunks, external, store)
+        return
     if request.param == "memory":
         chunks = InMemoryChunkRepository()
-        yield World(chunks, InMemoryVectorIndex(chunks=chunks))
+        store = InMemoryVectorIndex(chunks=chunks)
+        yield World(chunks, store, store)
         return
     if request.param == "postgres":
         request.getfixturevalue("on_postgres")
@@ -140,7 +162,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
             if request.param == "postgres"
             else SqliteVectorIndex(engine=engine)
         )
-        yield World(SqliteChunkRepository(engine=engine), vectors)
+        yield World(SqliteChunkRepository(engine=engine), vectors, vectors)
 
 
 def key(blob: str, position: int = 0) -> ChunkKey:
@@ -521,3 +543,66 @@ async def test_embedding_sources_read_the_text_heading_path_and_article(world: W
         )
     }
     assert await world.chunks.embedding_sources("m1", []) == {}
+
+
+# ---------------------------------------------------------------- per version (#352)
+
+
+async def test_removing_one_version_leaves_the_vectors_another_version_shares(
+    world: World,
+) -> None:
+    await world.index("v13", {"shared": 1, "old": 1})
+    await world.index("v14", {"shared": 1})
+    space = await world.vectors.create_space(SMALL, T0)
+    await world.vectors.upsert(space.id, {key("shared"): [0, 1, 0], key("old"): [1, 0, 0]})
+
+    await world.chunks.remove(["v13"])
+
+    assert await world.near(space, "v13", [0, 1, 0]) == []
+    assert ids(await world.near(space, "v14", [0, 1, 0])) == ["v14:shared:0"]
+
+
+async def test_versions_of_another_library_are_not_searched(world: World) -> None:
+    await world.index("a1", {"same": 1})
+    await world.index("b1", {"same": 1}, library="/other/lib")
+    space = await world.vectors.create_space(SMALL, T0)
+    await world.vectors.upsert(space.id, {key("same"): [0, 0, 1]})
+
+    assert ids(await world.near(space, "a1", [0, 0, 1])) == ["a1:same:0"]
+    assert ids(await world.near(space, "b1", [0, 0, 1])) == ["b1:same:0"]
+
+
+async def test_the_top_k_is_the_k_nearest_in_order(world: World) -> None:
+    await world.index("m", {"b": 5})
+    space = await world.vectors.create_space(SMALL, T0)
+    await world.vectors.upsert(space.id, {key("b", i): [1, 0.5 * i, 0] for i in range(5)})
+
+    hits = await world.near(space, "m", [1, 0, 0], limit=3)
+
+    assert ids(hits) == ["m:b:0", "m:b:1", "m:b:2"]
+    assert [h.distance for h in hits] == sorted(h.distance for h in hits)
+
+
+async def test_a_version_without_vectors_or_unknown_gets_an_empty_result(world: World) -> None:
+    space = await world.vectors.create_space(SMALL, T0)
+    assert await world.near(space, "m", [1, 0, 0]) == []  # nothing stored at all
+
+    await world.index("m", {"b": 2})
+
+    assert await world.near(space, "m", [1, 0, 0]) == []  # chunks, but no vector yet
+    assert await world.near(space, "unknown", [1, 0, 0]) == []
+
+
+async def test_stored_vectors_are_read_back_as_the_store_keeps_them(world: World) -> None:
+    await world.index("m", {"b": 2})
+    space = await world.vectors.create_space(SMALL, T0)
+    await world.vectors.upsert(space.id, {key("b", 0): [0.1, 0.2, 0.3]})
+
+    found = await world.store.stored(space.id, [key("b", 0), key("b", 1), key("zz")])
+
+    assert list(found) == [key("b", 0)]
+    assert found[key("b", 0)] == pytest.approx((0.1, 0.2, 0.3), abs=1e-7)  # float32
+    assert found[key("b", 0)] == as_float32(found[key("b", 0)])
+    await world.vectors.retire_space(space.id)
+    with pytest.raises(RetiredEmbeddingSpaceError):
+        await world.store.stored(space.id, [key("b", 0)])

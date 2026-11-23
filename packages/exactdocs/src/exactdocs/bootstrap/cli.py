@@ -71,8 +71,11 @@ from exactdocs.ingestion.adapters.driven.git_cli import GitCli
 from exactdocs.ingestion.errors import GitNotInstalledError
 from exactdocs.retrieval.dtos import (
     EmbeddingEstimateOut,
+    ExternalIndexScope,
+    IndexDriftOut,
     ModelChecksOut,
     RebuiltIndexOut,
+    RebuiltVersionsOut,
     SearchIndexStateOut,
 )
 from exactdocs_kernel import DomainError
@@ -1446,6 +1449,146 @@ def reindex() -> None:
         f"Search index rebuilt in format {rebuilt.format} ({was}): "
         f"{rebuilt.entries} chunks in {seconds:.1f} s.\n"
     )
+
+
+index = App(
+    name="index",
+    help="External search and vector indexes (local: reads this server's settings and database).",
+)
+app.command(index)
+
+type LibraryScope = Annotated[
+    str | None, Parameter(help="Only this library (/owner/repo); every library by default.")
+]
+type VersionScope = Annotated[
+    str | None, Parameter(help="Only this version (a ref) of --library, or of every library.")
+]
+
+
+@index.command(name="check")
+def index_check(*, library: LibraryScope = None, version: VersionScope = None) -> None:
+    """Compare the external search and vector backends with the stored chunks; list the drift.
+
+    Local: reads this server's settings (EXACTDOCS_SEARCH_BACKEND, EXACTDOCS_VECTOR_BACKEND,
+    [index_backends.<name>]) and database, so run it where the server runs (in Docker:
+    `docker exec <container> exactdocs index check`). Names every version a backend lost
+    (missing), holds in part (incomplete) or still holds after it was removed (orphaned). Exits 1
+    when anything drifted: `exactdocs index rebuild` writes it again.
+
+    Args:
+        library: Only this library (/owner/repo); every library by default.
+        version: Only this version (a ref) of --library, or of every library.
+
+    Raises:
+        SystemExit: Something drifted.
+    """
+    settings = Settings()
+    drift = _run(_index_check(settings, ExternalIndexScope(library=library, version=version)))
+    search, vectors = settings.search_backend, settings.vector_backend
+    if not drift.indexes:
+        sys.stdout.write(
+            "Every index lives in the database (EXACTDOCS_SEARCH_BACKEND and "
+            "EXACTDOCS_VECTOR_BACKEND are `database`): nothing to check.\n"
+        )
+        return
+    for row in drift.versions:
+        where = row.version_id or f"{row.library} (manifest {row.manifest_id})"
+        space = f" in space {row.space_id}" if row.space_id is not None else ""
+        sys.stdout.write(
+            f"{row.index.value}: {row.drift.value}  {where}{space}: "
+            f"{row.held} of {row.expected} entries\n"
+        )
+    backends = f"search: {search}, vectors: {vectors}"
+    if drift.clean:
+        sys.stdout.write(f"No drift ({backends}): {drift.checked} versions checked.\n")
+        return
+    sys.stdout.write(
+        f"{len(drift.versions)} versions drifted ({backends}) of {drift.checked} checked: "
+        "`exactdocs index rebuild` writes them again.\n"
+    )
+    raise SystemExit(EXIT_FAILED)
+
+
+async def _index_check(settings: Settings, scope: ExternalIndexScope) -> IndexDriftOut:
+    """Compare the backends with the local database.
+
+    Args:
+        settings: The server's settings.
+        scope: Which versions.
+
+    Returns:
+        What drifted.
+    """
+    container = _build(settings)
+    async with _started(container):
+        return await container.retrieval.check_external_indexes(scope)
+
+
+@index.command(name="rebuild")
+def index_rebuild(*, library: LibraryScope = None, version: VersionScope = None) -> None:
+    """Write the stored chunks and vectors to the external backends again; a server keeps serving.
+
+    Local: reads this server's settings and database, so run it where the server runs (in
+    Docker: `docker exec <container> exactdocs index rebuild`). Nothing is imported or embedded
+    again: every entry comes from the database. Without --library and --version, versions the
+    database no longer has are deleted from the backends too. Safe to repeat.
+
+    Args:
+        library: Only this library (/owner/repo); every library by default.
+        version: Only this version (a ref) of --library, or of every library.
+    """
+    settings = Settings()
+    started = time.monotonic()
+    rebuilt = _run(_index_rebuild(settings, ExternalIndexScope(library=library, version=version)))
+    seconds = time.monotonic() - started
+    if not rebuilt.indexes:
+        sys.stdout.write(
+            "Every index lives in the database: nothing to rebuild (`exactdocs reindex` "
+            "rebuilds the database's own search index).\n"
+        )
+        return
+    sys.stdout.write(
+        f"Rebuilt {rebuilt.versions} versions in the external indexes "
+        f"(search: {settings.search_backend}, vectors: {settings.vector_backend}): "
+        f"{rebuilt.search_entries} search entries, {rebuilt.vector_entries} vector entries, "
+        f"{rebuilt.orphans} removed versions deleted, in {seconds:.1f} s.\n"
+    )
+
+
+async def _index_rebuild(settings: Settings, scope: ExternalIndexScope) -> RebuiltVersionsOut:
+    """Write the local database's versions to the backends.
+
+    Args:
+        settings: The server's settings.
+        scope: Which versions.
+
+    Returns:
+        What was written.
+    """
+    container = _build(settings)
+    async with _started(container):
+        return await container.retrieval.rebuild_external_indexes(scope)
+
+
+@asynccontextmanager
+async def _started(container: Container) -> AsyncGenerator[None]:
+    """Run the container without its job worker; a start that fails ends with its message.
+
+    Args:
+        container: The container.
+
+    Yields:
+        Control while it runs.
+
+    Raises:
+        SystemExit: It cannot start (a backend that does not answer, an old database...).
+    """
+    try:
+        async with container.running(jobs=False):  # migrates first, as `serve` would
+            yield
+    except StartupError as exc:
+        message = f"exactdocs: {exc}"
+        raise SystemExit(message) from exc
 
 
 ai = App(name="ai", help="AI providers and model roles (local: reads this server's settings).")

@@ -12,6 +12,7 @@ from behave import given, then, when
 from behave.runner import Context
 
 from exactdocs.bootstrap.container import Container
+from exactdocs.bootstrap.index_backends import IndexBackends
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
 from exactdocs.catalog.dtos import ActivateManifestCommand, ArticleIn, StoreManifestCommand
 from exactdocs.catalog.models import HostKind, Library, LibraryId, RefKind, VersionRef
@@ -69,9 +70,14 @@ def read_version(context: Context, ref: str) -> tuple[str, list[tuple[str, str]]
 
 
 async def import_versions(
-    context: Context, refs: list[str], library: str = LIBRARY, title: str = "Docs repo"
+    context: Context,
+    refs: list[str],
+    library: str = LIBRARY,
+    title: str = "Docs repo",
+    *,
+    index_backends: IndexBackends | None = None,
 ) -> None:
-    container = Container.build(context.settings)
+    container = Container.build(context.settings, index_backends=index_backends)
     chunker = MarkdownChunker()
     async with container.running(jobs=False):
         await SqliteLibraryRepository(engine=container.engine).save(

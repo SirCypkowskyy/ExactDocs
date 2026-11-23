@@ -24,6 +24,7 @@ from exactdocs.retrieval.adapters.driven.memory import (
     InMemorySpendLedger,
     InMemoryVectorIndex,
 )
+from exactdocs.retrieval.adapters.driven.memory_index import InMemoryVectorBackend
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ChunkIn,
@@ -66,7 +67,7 @@ from exactdocs.retrieval.models import (
     reciprocal_rank_fusion,
 )
 from exactdocs.retrieval.module import RetrievalModule
-from exactdocs.retrieval.ports.driven import Reranker, RetrievalPipeline
+from exactdocs.retrieval.ports.driven import Reranker, RetrievalPipeline, VectorBackend
 from exactdocs.retrieval.use_cases import SearchDocsUseCase
 
 LIB = "/acme/payments"
@@ -332,6 +333,7 @@ def _world(
     reranker: bool = False,
     budgets: Budgets | None = None,
     local: bool = False,
+    vector_backend: VectorBackend | None = None,
 ) -> World:
     chunks = InMemoryChunkRepository()
     index = InMemorySearchIndex(chunks=chunks)
@@ -366,6 +368,8 @@ def _world(
         spend=ledger,
         budgets=budgets,
         query_embedding_timeout=wait,
+        vector_backend=vector_backend,
+        stored_vectors=vectors if vector_backend is not None else None,
     )
     return World(
         module=module,
@@ -432,8 +436,15 @@ async def _embedded_world(
     wait: float = 5.0,
     reranker: bool = False,
     budgets: Budgets | None = None,
+    vector_backend: VectorBackend | None = None,
 ) -> World:
-    world = _world(instance=instance, wait=wait, reranker=reranker, budgets=budgets)
+    world = _world(
+        instance=instance,
+        wait=wait,
+        reranker=reranker,
+        budgets=budgets,
+        vector_backend=vector_backend,
+    )
     await _import(world, "v1", "m1", OLD_GUIDE)
     await _import(world, "v2", "m2", GUIDE)
     await _embed(world, "v1")
@@ -826,3 +837,78 @@ async def test_the_term_hash_stand_in_puts_texts_sharing_terms_near() -> None:
         )
 
     assert cosine(retry, again) > cosine(retry, token)
+
+
+# ---------------------------------------------------------------- external vector backends (#352)
+
+
+@dataclass(slots=True)
+class FusedHere:
+    """A ``VectorBackend`` without ``NativeHybrid``: ExactDocs fuses its results itself."""
+
+    inner: InMemoryVectorBackend = field(default_factory=InMemoryVectorBackend)
+    name: str = "plain"
+
+    async def open(self) -> None:
+        await self.inner.open()
+
+    async def close(self) -> None:
+        await self.inner.close()
+
+    async def put(self, space, manifest, entries) -> None:
+        await self.inner.put(space, manifest, entries)
+
+    async def remove(self, space_id, manifest_id, chunk_ids) -> None:
+        await self.inner.remove(space_id, manifest_id, chunk_ids)
+
+    async def delete(self, manifest_ids) -> None:
+        await self.inner.delete(manifest_ids)
+
+    async def drop_space(self, space_id) -> None:
+        await self.inner.drop_space(space_id)
+
+    async def held(self, space_id, library):
+        return await self.inner.held(space_id, library)
+
+    async def nearest(self, space, manifest_ids, query, tag_filter, limit):
+        return await self.inner.nearest(space, manifest_ids, query, tag_filter, limit)
+
+
+async def test_a_vector_backend_answers_with_the_same_results_for_the_same_scores() -> None:
+    database = await _embedded_world()
+    external = await _embedded_world(vector_backend=FusedHere())
+
+    for query in ["repeat failed requests", "RetryPolicy", "token"]:
+        for mode in ["vector", "hybrid"]:
+            here = await _search(database, query, mode=mode)
+            there = await _search(external, query, mode=mode)
+            assert there.retrieval_mode.value == mode, there
+            assert [r.chunk_id for r in there.results] == [r.chunk_id for r in here.results]
+            assert [r.score for r in there.results] == pytest.approx(
+                [r.score for r in here.results], abs=1e-6
+            )
+
+
+async def test_a_native_hybrid_backend_ranks_the_hybrid_search_itself() -> None:
+    backend = InMemoryVectorBackend()
+    world = await _embedded_world(vector_backend=backend)
+
+    result = await _search(world, "repeat failed requests", limit=50)
+
+    assert (result.retrieval_mode, result.fallback_reason) == (RetrievalMode.HYBRID, None)
+    assert "Resilience/S1" in _texts(result)[:3]  # found by its vector alone, as with RRF
+    assert {r.commit_sha for r in result.results} == {"2" * 40}  # never the other version
+
+
+async def test_a_vector_backend_that_does_not_answer_falls_back_to_bm25() -> None:
+    backend = InMemoryVectorBackend()
+    world = await _embedded_world(vector_backend=backend)
+    backend.unavailable = True
+
+    for mode in ["hybrid", "vector"]:
+        result = await _search(world, "RetryPolicy", mode=mode)
+        assert (result.retrieval_mode, result.fallback_reason) == (
+            RetrievalMode.BM25,
+            FallbackReason.VECTOR_STORE_UNAVAILABLE,
+        )
+        assert _texts(result)[0] == "Resilience/S0"

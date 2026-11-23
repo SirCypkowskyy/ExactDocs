@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext, suppress
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
+from functools import partial
 from typing import NoReturn
 
 from exactdocs.retrieval.constants import (
@@ -23,6 +24,10 @@ from exactdocs.retrieval.constants import (
     DEFAULT_BM25_CACHE_THRESHOLD,
     DEFAULT_EMBEDDING_BATCH,
     DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
+    EXTERNAL_HIT_MARGIN,
+    EXTERNAL_PAGE,
+    EXTERNAL_WRITE_ATTEMPTS,
+    EXTERNAL_WRITE_RETRY_SECONDS,
     FOOTER_CHARS,
     FREE_PROFILE_KINDS,
     HYDE_ANSWER_CACHE,
@@ -84,11 +89,13 @@ from exactdocs.retrieval.dtos import (
     EmbeddingSpaceOut,
     EmbeddingSpaceProgressOut,
     EmbedVersionCommand,
+    ExternalIndexScope,
     FinishedEmbeddingOut,
     FinishEmbeddingCommand,
     ForgetLibraryCommand,
     GetChunkSetsQuery,
     GetLibraryRetrievalQuery,
+    IndexDriftOut,
     IndexedManifestOut,
     IndexManifestCommand,
     LibraryBudgets,
@@ -107,6 +114,7 @@ from exactdocs.retrieval.dtos import (
     QueryDocsResult,
     ReadChunkQuery,
     RebuiltIndexOut,
+    RebuiltVersionsOut,
     RemoveChunksCommand,
     RemovedChunks,
     ResolveLibraryIdQuery,
@@ -140,6 +148,7 @@ from exactdocs.retrieval.errors import (
     ChunkNotFoundError,
     EmbeddingFailedError,
     HypothesisCacheError,
+    IndexBackendUnavailableError,
     InvalidJudgmentError,
     InvalidProviderError,
     InvalidVectorError,
@@ -161,6 +170,7 @@ from exactdocs.retrieval.errors import (
     ThinkingUnsupportedError,
     UnavailableModeError,
     UnknownEmbeddingSpaceError,
+    UnknownIndexVersionError,
     UnknownLibraryError,
     UnknownProviderError,
     VectorDimensionError,
@@ -191,9 +201,11 @@ from exactdocs.retrieval.models import (
     Chunk,
     ChunkHeading,
     ChunkId,
+    ChunkKey,
     ChunkSet,
     ChunkSetKey,
     DocTarget,
+    DriftKind,
     EmbeddedTexts,
     EmbeddingSkip,
     EmbeddingSpace,
@@ -202,8 +214,11 @@ from exactdocs.retrieval.models import (
     EmbeddingTarget,
     FallbackReason,
     GuidanceFiles,
+    HeldVersion,
     HydeKey,
+    IndexDrift,
     IndexedManifest,
+    IndexKind,
     InstanceRoles,
     JudgedCandidate,
     KeySource,
@@ -228,13 +243,17 @@ from exactdocs.retrieval.models import (
     ProviderKind,
     ProviderProfile,
     ReachedBudget,
+    RebuiltIndex,
+    RebuiltVersions,
     RepoGuidance,
     RerankLimits,
     RerankWith,
     RetrievalMode,
     RoleBinding,
     SearchableVersion,
+    SearchEngine,
     SearchHit,
+    SearchIndexState,
     SearchText,
     SectionRef,
     SpaceState,
@@ -244,17 +263,22 @@ from exactdocs.retrieval.models import (
     StoredChunk,
     TagFilter,
     TagMatch,
+    TextQuery,
     ThinkingLevel,
     VectorCoverage,
     VectorHit,
+    VersionDrift,
     article_chunk_rows,
+    as_float32,
     bind_role,
     caller_audience,
+    checked_vector,
     current_space,
     embedding_spend,
     embedding_text,
     estimated_usd,
     fuse_across_manifests,
+    index_entry,
     judge_window,
     judged_scores,
     language_first,
@@ -289,11 +313,13 @@ from exactdocs.retrieval.ports.driven import (
     Explorer,
     HypotheticalAnswerCache,
     HypotheticalAnswers,
+    IndexBackend,
     InstructionFiles,
     Libraries,
     LibraryModes,
     ModelFactory,
     ModelRoles,
+    NativeHybrid,
     Prices,
     ProviderProfiles,
     RenamedPaths,
@@ -301,12 +327,15 @@ from exactdocs.retrieval.ports.driven import (
     RetrievalPipeline,
     RoleThinkingLevels,
     SearchableVersions,
+    SearchBackend,
     SearchIndex,
     SearchIndexMaintenance,
     SearchSpan,
     SearchTracer,
     SecretBox,
     SpendLedger,
+    StoredVectors,
+    VectorBackend,
     VectorIndex,
     VersionArticles,
 )
@@ -2459,11 +2488,16 @@ class IndexManifestUseCase:
     """Indexes the new chunk sets."""
     clock: Clock
     """Stamps the manifest's indexing time."""
+    external: ExternalIndexes | None = None
+    """Writes the version to the external backends; ``None``: every index is the database's."""
 
     async def __call__(self, command: IndexManifestCommand) -> IndexedManifestOut:
         """Compute the chunk IDs, store the rows plus the new chunk sets, and make them searchable.
 
-        Call it between the catalog's store (pending) and its activate, never after.
+        Call it between the catalog's store (pending) and its activate, never after. With
+        external backends the version is written to them too (also when it was already indexed:
+        a replay fills what a crash left out); a backend that does not take it fails the import,
+        so the version is never published without its external copy.
 
         Args:
             command: The manifest and its articles' chunks.
@@ -2484,6 +2518,8 @@ class IndexManifestUseCase:
         # below leaves sets without index entries, and indexing only fills gaps.
         for chunk_set in chunk_sets.values():
             await self.search.index(chunk_set)
+        if self.external is not None:
+            await self.external.put_version(manifest)
         ids: dict[str, list[str]] = {a.path: [] for a in command.articles}
         for row in rows:
             ids[row.article_path].append(row.chunk_id)
@@ -2788,18 +2824,25 @@ async def _removed(
     hypotheses: HypotheticalAnswerCache,
     doomed: Sequence[str],
     answers: AgentAnswerCache | None = None,
+    external: ExternalIndexes | None = None,
 ) -> RemovedChunks:
     """Remove manifests' chunks, then the cached answers for them (a changed version invalidates).
+
+    The external backends go first: if one does not answer, nothing is deleted and the job
+    fails, so the next collection finds the manifests again and retries.
 
     Args:
         chunks: The chunk store.
         hypotheses: HyDE's cached answers.
         doomed: The manifests to remove.
         answers: The agentic answer cache, if any.
+        external: The external backends, if any.
 
     Returns:
         What was removed.
     """
+    if external is not None:
+        await external.forget(doomed)
     removed = await chunks.remove(doomed)
     if doomed:
         await hypotheses.forget(doomed)
@@ -2822,6 +2865,8 @@ class DiscardPendingChunksUseCase:
     """HyDE's cached answers: those of a removed manifest go with its chunks."""
     answers: AgentAnswerCache = field(default_factory=NoAgentAnswerCache)
     """The agentic answer cache: the answers of a removed manifest go with its chunks."""
+    external: ExternalIndexes | None = None
+    """The external backends: a removed manifest is deleted from them first."""
 
     async def __call__(self, command: DiscardPendingChunksCommand) -> RemovedChunks:
         """Delete rows of matching manifests the catalog holds as pending, or dropped long ago.
@@ -2840,7 +2885,7 @@ class DiscardPendingChunksUseCase:
             indexed_before=None if older is None else now - timedelta(seconds=older),
         )
         doomed = await _confirmed_removals(self.manifests, candidates, now=now, pending_too=True)
-        return await _removed(self.chunks, self.hypotheses, doomed, self.answers)
+        return await _removed(self.chunks, self.hypotheses, doomed, self.answers, self.external)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2860,6 +2905,8 @@ class CollectChunksUseCase:
     """HyDE's cached answers: those of a removed manifest go with its chunks."""
     answers: AgentAnswerCache = field(default_factory=NoAgentAnswerCache)
     """The agentic answer cache: the answers of a removed manifest go with its chunks."""
+    external: ExternalIndexes | None = None
+    """The external backends: a removed manifest is deleted from them first."""
     prune: PruneHypothesesUseCase | None = None
     """Prunes HyDE's cache by age and model; without it the cache is not pruned here."""
 
@@ -2878,7 +2925,7 @@ class CollectChunksUseCase:
             manifest_id=None, library=None, indexed_before=cutoff
         )
         doomed = await _confirmed_removals(self.manifests, candidates, now=now, pending_too=False)
-        removed = await _removed(self.chunks, self.hypotheses, doomed, self.answers)
+        removed = await _removed(self.chunks, self.hypotheses, doomed, self.answers, self.external)
         if self.prune is not None:
             await self.prune()
         return removed
@@ -2959,6 +3006,8 @@ class RemoveChunksUseCase:
     """HyDE's cached answers: those of a removed manifest go with its chunks."""
     answers: AgentAnswerCache = field(default_factory=NoAgentAnswerCache)
     """The agentic answer cache: the answers of a removed manifest go with its chunks."""
+    external: ExternalIndexes | None = None
+    """The external backends: a removed manifest is deleted from them first."""
 
     async def __call__(self, command: RemoveChunksCommand) -> RemovedChunks:
         """Remove what the catalog has forgotten; keep every manifest it still knows.
@@ -2972,7 +3021,7 @@ class RemoveChunksUseCase:
         asked = list(dict.fromkeys(command.manifest_ids))
         known = await self.manifests.statuses(asked)
         gone = [i for i in asked if i not in known]
-        return await _removed(self.chunks, self.hypotheses, gone, self.answers)
+        return await _removed(self.chunks, self.hypotheses, gone, self.answers, self.external)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2981,9 +3030,14 @@ class RetagArticlesUseCase:
 
     chunks: ChunkRepository
     """Holds the chunk rows' tag copies."""
+    external: ExternalIndexes | None = None
+    """The external backends, whose entries carry the tags too."""
 
     async def __call__(self, command: RetagArticlesCommand) -> RetaggedChunks:
-        """Overwrite the tag copies of the named articles' chunk rows.
+        """Overwrite the tag copies of the named articles' chunk rows (and their external entries).
+
+        The external entries are written whether or not a row changed: a re-tag retried after a
+        backend failed finds the rows already changed, and must still write the entries.
 
         Args:
             command: The manifest and each article's current tags.
@@ -2992,7 +3046,10 @@ class RetagArticlesUseCase:
             How many chunk rows got other tags.
         """
         tags = {a.path: tuple(dict.fromkeys(a.tags)) for a in command.articles}
-        return RetaggedChunks(chunks=await self.chunks.set_tags(command.manifest_id, tags))
+        changed = await self.chunks.set_tags(command.manifest_id, tags)
+        if self.external is not None and tags:
+            await self.external.refresh(command.manifest_id, frozenset(tags))
+        return RetaggedChunks(chunks=changed)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -4662,6 +4719,9 @@ class HybridPipeline:
     """Times the query's embedding (``<search>.embed_query``), without the query text."""
     timeout: float = QUERY_EMBEDDING_TIMEOUT
     """Seconds to wait for the query's embedding before answering with BM25."""
+    native: NativeHybrid | None = None
+    """An external vector backend that fuses keyword and vector search itself (#352); it then
+    ranks instead of reciprocal rank fusion. ``None``: the two halves are fused here."""
 
     async def run(self, request: PipelineRequest) -> PipelineAnswer:
         """Fuse the BM25 and vector rankings of the version's chunks.
@@ -4691,6 +4751,8 @@ class HybridPipeline:
         Returns:
             The best fused hits, or BM25's with the reason the vectors were not used.
         """
+        if self.native is not None:
+            return await self._natively(self.native, request, embed, mode)
         manifest = request.version.manifest_id
         # One more than is fused tells whether the BM25 half was cut short.
         depth = max(RRF_DEPTH, request.limit) + 1
@@ -4699,6 +4761,62 @@ class HybridPipeline:
         if isinstance(near, FallbackReason):
             return _bm25_answer(found, request.limit, near)
         return await self._fused(request, found, near, mode)
+
+    async def _natively(
+        self, native: NativeHybrid, request: PipelineRequest, embed: str, mode: RetrievalMode
+    ) -> PipelineAnswer:
+        """Let the backend rank the query's words and its vector together.
+
+        The same fallbacks as ``fuse``: BM25 answers, with the reason, when there is no vector
+        (or the backend does not answer, ``vector_store_unavailable``).
+
+        Args:
+            native: The backend.
+            request: What to search; ``space`` is the space to search.
+            embed: The text whose embedding is searched by.
+            mode: The mode the answer is reported as.
+
+        Returns:
+            The backend's hits, or BM25's with the reason the backend was not used.
+        """
+        manifest = request.version.manifest_id
+        space = request.space
+        reason: FallbackReason = FallbackReason.EMBEDDING_UNAVAILABLE
+        if space is not None:
+            vector = await self._query_vector(request, space, embed, mode)
+            if not isinstance(vector, FallbackReason):
+                terms = tuple(search_terms(request.query))
+                try:
+                    ranked = await native.hybrid(
+                        space,
+                        [manifest],
+                        TextQuery(text=request.query, terms=terms),
+                        vector,
+                        request.tag_filter,
+                        request.limit + 1,  # one more tells whether the answer was cut short
+                    )
+                except IndexBackendUnavailableError:
+                    reason = FallbackReason.VECTOR_STORE_UNAVAILABLE
+                else:
+                    ranked = [h for h in ranked if h.manifest_id == manifest]
+                    stored = await self.chunks.get_many(manifest, [h.chunk_id for h in ranked])
+                    hits = [
+                        leading_hit(h.chunk_id, h.score, stored[h.chunk_id].chunk.content, terms)
+                        for h in ranked
+                        if h.chunk_id in stored
+                    ]
+                    return PipelineAnswer(
+                        mode=mode,
+                        hits=tuple(hits[: request.limit]),
+                        candidates=len(hits),
+                        reranked=0,
+                        complete=len(hits) <= request.limit,
+                    )
+            else:
+                reason = vector
+        depth = request.limit + 1
+        found = await self.search.search(manifest, request.query, request.tag_filter, depth)
+        return _bm25_answer(found, request.limit, reason)
 
     async def nearest_only(self, request: PipelineRequest) -> PipelineAnswer:
         """Rank the version's chunks by their vectors alone (``vector``): no BM25 half.
@@ -7034,3 +7152,815 @@ class GetEmbeddingProgressUseCase:
                 )
             )
         return EmbeddingProgressOut(model=model, spaces=progress)
+
+
+# ---------------------------------------------------------------- external indexes (#352)
+
+
+def _key(stored: StoredChunk) -> ChunkKey:
+    """Name the stored chunk a manifest row points at (what a vector is keyed by).
+
+    Args:
+        stored: The chunk with its row.
+
+    Returns:
+        (blob SHA, config hash, position).
+    """
+    return (stored.row.chunk_set[0], stored.row.chunk_set[1], stored.row.position)
+
+
+def _drifted(
+    kind: IndexKind,
+    manifests: Sequence[IndexedManifest],
+    expected: Mapping[str, int],
+    held: Sequence[HeldVersion],
+    *,
+    orphans: bool,
+    space_id: EmbeddingSpaceId | None = None,
+) -> list[VersionDrift]:
+    """Compare what a backend holds with what the stored chunks give.
+
+    Args:
+        kind: The index compared.
+        manifests: The versions in scope, as the database has them.
+        expected: Entries each version should have (a version without any is left out).
+        held: What the backend holds, in the same scope.
+        orphans: Also report versions only the backend holds (the scope is not one version).
+        space_id: The embedding space, for the vector index.
+
+    Returns:
+        Every version that drifted.
+    """
+    by_id = {h.manifest_id: h for h in held}
+    found: list[VersionDrift] = []
+    for manifest in manifests:
+        want = expected.get(manifest.manifest_id, 0)
+        have = by_id[manifest.manifest_id].entries if manifest.manifest_id in by_id else 0
+        if have >= want:
+            continue
+        found.append(
+            VersionDrift(
+                kind=kind,
+                drift=DriftKind.INCOMPLETE if have else DriftKind.MISSING,
+                manifest_id=manifest.manifest_id,
+                library=manifest.library,
+                version_id=manifest.version_id,
+                expected=want,
+                held=have,
+                space_id=space_id,
+            )
+        )
+    if orphans:
+        known = {m.manifest_id for m in manifests}
+        found += [
+            VersionDrift(
+                kind=kind,
+                drift=DriftKind.ORPHANED,
+                manifest_id=h.manifest_id,
+                library=h.library,
+                version_id=None,
+                expected=0,
+                held=h.entries,
+                space_id=space_id,
+            )
+            for h in held
+            if h.manifest_id not in known
+        ]
+    return found
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ExternalIndexes:
+    """Keeps the external search and vector backends in step with the stored chunks (#352).
+
+    The database is the source of truth: a backend holds a derived copy, one entry per chunk row
+    of each version (version isolation), written from the database and rebuilt from it. A write
+    the backend does not take is tried ``attempts`` times with doubling waits, inside the job
+    step that made it; then ``IndexBackendUnavailableError`` fails that job (an import, an
+    embedding batch, a removal or collection, a re-tag), whose retry writes it again, and the
+    drift check names whatever is still missing. Writes come before the database's own change
+    where losing them would go unnoticed: a removal deletes from the backends first, a vector
+    reaches the backend before the store takes it (else the embed job would find it done).
+    """
+
+    chunks: ChunkRepository
+    """The stored chunks: what every entry is made from."""
+    search: SearchBackend | None = None
+    """The external search backend; ``None``: search lives in the database."""
+    vectors: VectorBackend | None = None
+    """The external vector backend; ``None``: vectors live in the database alone."""
+    store: VectorIndex | None = None
+    """The database's vector store: its spaces and coverage (needed with ``vectors``)."""
+    stored: StoredVectors | None = None
+    """Reads the store's vectors back, for a version's copy (needed with ``vectors``)."""
+    attempts: int = EXTERNAL_WRITE_ATTEMPTS
+    """Tries of one write while the backend does not answer."""
+    retry_seconds: float = EXTERNAL_WRITE_RETRY_SECONDS
+    """The first wait between tries; it doubles each time."""
+    page_size: int = EXTERNAL_PAGE
+    """Chunks read and written per call."""
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+    """Waits between tries (tests: no wait)."""
+
+    @property
+    def kinds(self) -> tuple[IndexKind, ...]:
+        """The external indexes configured, search first."""
+        configured = ((IndexKind.SEARCH, self.search), (IndexKind.VECTORS, self.vectors))
+        return tuple(kind for kind, backend in configured if backend is not None)
+
+    async def write(self, backend: IndexBackend, call: Callable[[], Awaitable[None]]) -> None:
+        """Make one write, trying again with a growing wait while the backend does not answer.
+
+        The last try's ``IndexBackendUnavailableError`` is the caller's: it fails the job.
+
+        Args:
+            backend: The backend written to (named in the log).
+            call: Makes the write.
+        """
+        for attempt in range(self.attempts - 1):
+            try:
+                await call()
+            except IndexBackendUnavailableError as error:
+                logger.warning(
+                    "the index backend %r did not take a write (try %d of %d): %s",
+                    backend.name,
+                    attempt + 1,
+                    self.attempts,
+                    error.reason,
+                )
+                await self.sleep(self.retry_seconds * 2**attempt)
+            else:
+                return
+        await call()
+
+    async def live_spaces(self) -> list[EmbeddingSpace]:
+        """List the embedding spaces whose vectors the vector backend holds a copy of.
+
+        Returns:
+            Every space that is not retired; none without an external vector backend.
+        """
+        if self.vectors is None or self.store is None:
+            return []
+        return [s for s in await self.store.spaces() if s.state is not SpaceState.RETIRED]
+
+    async def put_version(
+        self, manifest: IndexedManifest, paths: Collection[str] | None = None
+    ) -> tuple[int, int]:
+        """Write a version's chunks, and their stored vectors in every space in use, page by page.
+
+        Adds or replaces entries, so it is safe to repeat (a replayed import, a rebuild).
+
+        Args:
+            manifest: The version.
+            paths: Only the chunks of these articles; every chunk when ``None``.
+
+        Returns:
+            The entries written to the search backend and to the vector backend.
+        """
+        if not self.kinds:
+            return (0, 0)
+        spaces = await self.live_spaces()
+        search, vectors = 0, 0
+        after: ChunkId | None = None
+        while read := await self.chunks.page(manifest.manifest_id, after, self.page_size):
+            after = read[-1].row.chunk_id
+            page = read if paths is None else [c for c in read if c.row.article_path in paths]
+            if page and self.search is not None:
+                backend = self.search
+                entries = [index_entry(manifest, c) for c in page]
+                await self.write(backend, partial(backend.put, manifest, entries))
+                search += len(entries)
+            for space in spaces if page else ():
+                vectors += await self._put_vectors(space, manifest, page)
+            if len(read) < self.page_size:
+                break
+        return (search, vectors)
+
+    async def _put_vectors(
+        self,
+        space: EmbeddingSpace,
+        manifest: IndexedManifest,
+        page: Sequence[StoredChunk],
+        vectors: Mapping[ChunkKey, tuple[float, ...]] | None = None,
+    ) -> int:
+        """Write the entries of these chunks that have a vector in the space.
+
+        Args:
+            space: The space.
+            manifest: The version.
+            page: Some of its chunks.
+            vectors: Their vectors; read from the store when not given.
+
+        Returns:
+            The entries written.
+        """
+        backend, store = self.vectors, self.stored
+        if backend is None or store is None:
+            return 0
+        if vectors is None:
+            try:
+                vectors = await store.stored(space.id, {_key(c) for c in page})
+            except UnknownEmbeddingSpaceError, RetiredEmbeddingSpaceError:
+                return 0  # retired meanwhile: its copy is dropped with it
+        entries = [index_entry(manifest, c, vectors[_key(c)]) for c in page if _key(c) in vectors]
+        if entries:
+            await self.write(backend, partial(backend.put, space, manifest, entries))
+        return len(entries)
+
+    async def copy_vectors(
+        self, space: EmbeddingSpace, vectors: Mapping[ChunkKey, tuple[float, ...]]
+    ) -> None:
+        """Copy vectors of stored chunks to every version that holds those chunks.
+
+        Args:
+            space: The space they belong to.
+            vectors: The checked, float32 vectors, by chunk.
+        """
+        if self.vectors is None or not vectors:
+            return
+        for manifest, rows in await self._by_manifest(await self.chunks.holding(list(vectors))):
+            await self._put_vectors(space, manifest, rows, vectors)
+
+    async def remove_vectors(self, space_id: EmbeddingSpaceId, keys: Collection[ChunkKey]) -> None:
+        """Delete the copies of these chunks' vectors from every version that holds them.
+
+        Args:
+            space_id: The space.
+            keys: The chunks.
+        """
+        backend = self.vectors
+        if backend is None or not keys:
+            return
+        grouped: dict[str, list[ChunkId]] = {}
+        for stored in await self.chunks.holding(list(keys)):
+            grouped.setdefault(stored.manifest_id, []).append(stored.row.chunk_id)
+        for manifest_id, chunk_ids in grouped.items():
+            await self.write(backend, partial(backend.remove, space_id, manifest_id, chunk_ids))
+
+    async def _by_manifest(
+        self, rows: Sequence[StoredChunk]
+    ) -> list[tuple[IndexedManifest, list[StoredChunk]]]:
+        """Group chunk rows by their manifest.
+
+        Args:
+            rows: Rows of any manifests.
+
+        Returns:
+            Each manifest still indexed, with its rows.
+        """
+        grouped: dict[str, list[StoredChunk]] = {}
+        for stored in rows:
+            grouped.setdefault(stored.manifest_id, []).append(stored)
+        found: list[tuple[IndexedManifest, list[StoredChunk]]] = []
+        for manifest_id, held in grouped.items():
+            manifests = await self.chunks.find_manifests(
+                manifest_id=manifest_id, library=None, indexed_before=None
+            )
+            found += [(m, held) for m in manifests]
+        return found
+
+    async def forget(self, manifest_ids: Collection[str]) -> None:
+        """Delete these versions from every backend (before the database deletes their chunks).
+
+        Args:
+            manifest_ids: The versions.
+        """
+        doomed = list(dict.fromkeys(manifest_ids))
+        if not doomed:
+            return
+        if (search := self.search) is not None:
+            await self.write(search, partial(search.delete, doomed))
+        if (vectors := self.vectors) is not None:
+            await self.write(vectors, partial(vectors.delete, doomed))
+
+    async def drop_space(self, space_id: EmbeddingSpaceId) -> None:
+        """Drop a retired space's copy.
+
+        Args:
+            space_id: The space.
+        """
+        if (vectors := self.vectors) is not None:
+            await self.write(vectors, partial(vectors.drop_space, space_id))
+
+    async def refresh(self, manifest_id: str, paths: Collection[str]) -> None:
+        """Write some articles of a version again, whose tags changed.
+
+        Args:
+            manifest_id: The version.
+            paths: The articles.
+        """
+        if not self.kinds:
+            return
+        for manifest in await self.chunks.find_manifests(
+            manifest_id=manifest_id, library=None, indexed_before=None
+        ):
+            await self.put_version(manifest, paths)
+
+    async def scoped(self, library: str | None, ref: str | None) -> list[IndexedManifest]:
+        """List the indexed versions in scope, in a stable order.
+
+        Args:
+            library: Only this library's (any letter case).
+            ref: Only this version.
+
+        Returns:
+            The versions, by version ID then manifest ID.
+        """
+        manifests = await self.chunks.find_manifests(
+            manifest_id=None,
+            library=None if library is None else library.lower(),
+            indexed_before=None,
+        )
+        if ref is not None:
+            manifests = [m for m in manifests if m.version_id == f"{m.library}/{ref}"]
+        return sorted(manifests, key=lambda m: (m.version_id, m.manifest_id))
+
+    async def drift(self, library: str | None, ref: str | None) -> IndexDrift:
+        """Compare every backend with the stored chunks of the versions in scope.
+
+        Args:
+            library: Only this library's (any letter case).
+            ref: Only this version (no orphans are reported then).
+
+        Returns:
+            Every version that drifted.
+        """
+        found: list[VersionDrift] = []
+        checked = 0
+        lib = None if library is None else library.lower()
+        if self.search is not None:
+            held = await self.search.held(lib)  # first: a version imported meanwhile is known
+            manifests = await self.scoped(library, ref)
+            counts = {
+                m.manifest_id: (await self.chunks.counts(m.manifest_id)).chunks for m in manifests
+            }
+            found += _drifted(IndexKind.SEARCH, manifests, counts, held, orphans=ref is None)
+            checked += len(manifests)
+        vectors, store = self.vectors, self.store
+        if vectors is not None and store is not None:
+            for space in await self.live_spaces():
+                held = await vectors.held(space.id, lib)
+                manifests = await self.scoped(library, ref)
+                coverage = await store.coverage_many(space.id, [m.manifest_id for m in manifests])
+                embedded = {m: c.embedded for m, c in coverage.items()}
+                found += _drifted(
+                    IndexKind.VECTORS,
+                    manifests,
+                    embedded,
+                    held,
+                    orphans=ref is None,
+                    space_id=space.id,
+                )
+                checked += len(manifests)
+        return IndexDrift(versions=tuple(found), checked=checked, kinds=self.kinds)
+
+    async def rebuild(self, library: str | None, ref: str | None) -> RebuiltVersions:
+        """Write the versions in scope again, then delete what only the backends still hold.
+
+        Args:
+            library: Only this library's (any letter case).
+            ref: Only this version (nothing is deleted then).
+
+        Returns:
+            What was written and deleted.
+
+        Raises:
+            UnknownIndexVersionError: ``ref`` names no indexed version in scope.
+        """
+        manifests = await self.scoped(library, ref)
+        if ref is not None and not manifests:
+            raise UnknownIndexVersionError(library, ref)
+        if not self.kinds:
+            return RebuiltVersions(versions=0, search_entries=0, vector_entries=0, orphans=0)
+        search, vectors = 0, 0
+        for manifest in manifests:
+            written = await self.put_version(manifest)
+            search, vectors = search + written[0], vectors + written[1]
+        orphans = 0 if ref is not None else await self._delete_orphans(library)
+        return RebuiltVersions(
+            versions=len(manifests), search_entries=search, vector_entries=vectors, orphans=orphans
+        )
+
+    async def _delete_orphans(self, library: str | None) -> int:
+        """Delete the versions only the backends hold, and the spaces the store retired.
+
+        What the backends hold is read before the database's versions, so a version imported
+        meanwhile (database first, then the backends) is never taken for an orphan.
+
+        Args:
+            library: Only this library's (any letter case).
+
+        Returns:
+            How many versions were deleted.
+        """
+        lib = None if library is None else library.lower()
+        held: set[str] = set()
+        if self.search is not None:
+            held |= {h.manifest_id for h in await self.search.held(lib)}
+        vectors, store = self.vectors, self.store
+        if vectors is not None:
+            for space in await self.live_spaces():
+                held |= {h.manifest_id for h in await vectors.held(space.id, lib)}
+        known = {m.manifest_id for m in await self.scoped(library, None)}
+        orphans = held - known
+        await self.forget(sorted(orphans))
+        if vectors is not None and store is not None and library is None:
+            for space in await store.spaces():
+                if space.state is SpaceState.RETIRED:
+                    await self.drop_space(space.id)
+        return len(orphans)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ExternalSearchIndex:
+    """Implements ``ports.driven.SearchIndex`` and ``SearchIndexMaintenance`` on a backend.
+
+    The backend ranks; the snippets are cut from the stored chunks (``leading_hit``), and a hit
+    the database no longer has (a removal the backend has not caught up with) is dropped. The
+    database's own index is still written, so switching back needs no reindex, and its format is
+    what ``exactdocs reindex`` keeps current; a rebuild also writes the backend again.
+    """
+
+    backend: SearchBackend
+    """The external search backend."""
+    chunks: ChunkRepository
+    """The stored chunks: snippets come from them."""
+    local: SearchIndex
+    """The database's own full-text index, still written."""
+    maintenance: SearchIndexMaintenance
+    """Reads and rebuilds the database's index."""
+    mirror: ExternalIndexes
+    """Writes the backend again on a rebuild."""
+
+    async def index(self, chunk_set: ChunkSet) -> None:
+        """Index a stored chunk set in the database's index (the import writes the backend).
+
+        Args:
+            chunk_set: The stored chunk set.
+        """
+        await self.local.index(chunk_set)
+
+    async def search(
+        self, manifest_id: str, query: str, tag_filter: TagFilter, limit: int
+    ) -> Sequence[SearchHit]:
+        """Return at most ``limit`` chunks of this manifest, best first.
+
+        Args:
+            manifest_id: The manifest searched.
+            query: The query text.
+            tag_filter: Which tags a chunk's article must carry.
+            limit: The most hits.
+
+        Returns:
+            The hits, best first.
+        """
+        return [f.hit for f in await self.search_many([manifest_id], query, tag_filter, limit)]
+
+    async def search_many(
+        self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter, limit: int
+    ) -> Sequence[ManifestHit]:
+        """Return at most ``limit`` chunks of any of these manifests, best first.
+
+        Args:
+            manifest_ids: The manifests searched.
+            query: The query text.
+            tag_filter: Which tags a chunk's article must carry.
+            limit: The most hits.
+
+        Returns:
+            The hits, best first, each naming its manifest.
+        """
+        terms = tuple(search_terms(query))
+        wanted = list(dict.fromkeys(manifest_ids))
+        if not terms or not wanted or limit < 1:
+            return []
+        hits = await self.backend.search(
+            wanted, TextQuery(text=query, terms=terms), tag_filter, limit + EXTERNAL_HIT_MARGIN
+        )
+        allowed = set(wanted)
+        hits = [h for h in hits if h.manifest_id in allowed]  # version isolation, whatever it did
+        asked: dict[str, list[ChunkId]] = {}
+        for hit in hits:
+            asked.setdefault(hit.manifest_id, []).append(hit.chunk_id)
+        stored = await self.chunks.get_across(asked)
+        return [
+            ManifestHit(
+                manifest_id=h.manifest_id,
+                hit=leading_hit(h.chunk_id, h.score, chunk.chunk.content, terms),
+            )
+            for h in hits
+            if (chunk := stored.get((h.manifest_id, h.chunk_id))) is not None
+        ][:limit]
+
+    async def count_many(
+        self, manifest_ids: Sequence[str], query: str, tag_filter: TagFilter
+    ) -> Mapping[str, int]:
+        """Return how many chunks of each manifest match, uncapped; zero counts are left out.
+
+        Args:
+            manifest_ids: The manifests searched.
+            query: The query text.
+            tag_filter: Which tags a chunk's article must carry.
+
+        Returns:
+            How many chunks match, by manifest ID.
+        """
+        terms = tuple(search_terms(query))
+        wanted = list(dict.fromkeys(manifest_ids))
+        if not terms or not wanted:
+            return {}
+        counts = await self.backend.count(wanted, TextQuery(text=query, terms=terms), tag_filter)
+        return {m: n for m, n in counts.items() if n and m in set(wanted)}
+
+    async def state(self) -> SearchIndexState:
+        """Report the database index's format, with the external engine as the one answering.
+
+        Returns:
+            The stored and current formats, and ``external``.
+        """
+        return replace(await self.maintenance.state(), engine=SearchEngine.EXTERNAL)
+
+    async def rebuild(self) -> RebuiltIndex:
+        """Rebuild the database's index, then write every version to the backend again.
+
+        Returns:
+            The database index's new format and how many chunks it holds.
+        """
+        rebuilt = await self.maintenance.rebuild()
+        await self.mirror.rebuild(None, None)
+        return rebuilt
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ExternalVectorIndex:
+    """Implements ``ports.driven.VectorIndex``: the database keeps the vectors, a backend searches.
+
+    Spaces, coverage and what is left to embed are the database store's; every vector it takes
+    is copied first to each version holding its chunk, and ``nearest`` asks the backend, keeping
+    only chunks the database still has. A backend that does not answer a search is
+    ``VectorStoreUnavailableError``: hybrid then answers with BM25 and says why.
+    """
+
+    store: VectorIndex
+    """The database's vector store: the source of every copy."""
+    backend: VectorBackend
+    """The external vector backend."""
+    chunks: ChunkRepository
+    """Tells which chunks of a version still exist."""
+    mirror: ExternalIndexes
+    """Copies the vectors to the backend."""
+
+    def requirement(self) -> str:
+        """Name what the database's store needs to keep vectors.
+
+        Returns:
+            The store's requirement.
+        """
+        return self.store.requirement()
+
+    async def available(self) -> bool:
+        """Say whether the database's store can keep the vectors the backend is copied from.
+
+        Returns:
+            The store's answer.
+        """
+        return await self.store.available()
+
+    async def spaces(self) -> Sequence[EmbeddingSpace]:
+        """List every space, retired ones too, oldest first.
+
+        Returns:
+            The store's spaces.
+        """
+        return await self.store.spaces()
+
+    async def create_space(self, spec: EmbeddingSpec, at: datetime) -> EmbeddingSpace:
+        """Create a space in the store (the backend makes its own on the first copy).
+
+        Args:
+            spec: The model and format its vectors will be made with.
+            at: When it is created.
+
+        Returns:
+            The new space.
+        """
+        return await self.store.create_space(spec, at)
+
+    async def activate_space(self, space_id: EmbeddingSpaceId, at: datetime) -> EmbeddingSpace:
+        """Mark the space active in the store.
+
+        Args:
+            space_id: The space.
+            at: When it became active.
+
+        Returns:
+            The space as it is now.
+        """
+        return await self.store.activate_space(space_id, at)
+
+    async def retire_space(self, space_id: EmbeddingSpaceId) -> None:
+        """Retire the space in the store, then drop the backend's copy.
+
+        Args:
+            space_id: The space.
+        """
+        await self.store.retire_space(space_id)
+        await self.mirror.drop_space(space_id)
+
+    async def upsert(
+        self, space_id: EmbeddingSpaceId, vectors: Mapping[ChunkKey, Sequence[float]]
+    ) -> int:
+        """Copy the vectors to every version holding their chunks, then store them.
+
+        Args:
+            space_id: The space.
+            vectors: The vector of each chunk.
+
+        Returns:
+            How many vectors the store took.
+        """
+        space = await self._live(space_id)
+        checked = {
+            k: as_float32(checked_vector(v, space.spec.dimensions)) for k, v in vectors.items()
+        }
+        await self.mirror.copy_vectors(space, checked)
+        return await self.store.upsert(space_id, checked)
+
+    async def delete(self, space_id: EmbeddingSpaceId, keys: Collection[ChunkKey]) -> int:
+        """Delete the backend's copies of these chunks' vectors, then the stored vectors.
+
+        Args:
+            space_id: The space.
+            keys: The chunks.
+
+        Returns:
+            How many stored vectors were deleted.
+        """
+        await self._live(space_id)
+        await self.mirror.remove_vectors(space_id, keys)
+        return await self.store.delete(space_id, keys)
+
+    async def nearest(
+        self,
+        space_id: EmbeddingSpaceId,
+        manifest_id: str,
+        query: Sequence[float],
+        tag_filter: TagFilter,
+        limit: int,
+    ) -> Sequence[VectorHit]:
+        """Ask the backend for the manifest's nearest chunks, keeping those the database has.
+
+        Args:
+            space_id: The space.
+            manifest_id: The version's manifest.
+            query: The query's vector.
+            tag_filter: Which chunks may be returned.
+            limit: How many hits to return at most.
+
+        Returns:
+            The nearest chunks, nearest first.
+
+        Raises:
+            VectorStoreUnavailableError: The backend did not answer.
+        """
+        space = await self._live(space_id)
+        vector = checked_vector(query, space.spec.dimensions)
+        try:
+            near = await self.backend.nearest(
+                space, [manifest_id], vector, tag_filter, limit + EXTERNAL_HIT_MARGIN
+            )
+        except IndexBackendUnavailableError as error:
+            raise VectorStoreUnavailableError(str(error)) from error
+        near = [h for h in near if h.manifest_id == manifest_id]
+        stored = await self.chunks.get_many(manifest_id, [h.chunk_id for h in near])
+        return [
+            VectorHit(chunk_id=h.chunk_id, distance=h.distance)
+            for h in near
+            if h.chunk_id in stored
+        ][:limit]
+
+    async def coverage(self, space_id: EmbeddingSpaceId, manifest_id: str) -> VectorCoverage:
+        """Count the manifest's chunks and those with a stored vector.
+
+        Args:
+            space_id: The space.
+            manifest_id: The version's manifest.
+
+        Returns:
+            The store's counts.
+        """
+        return await self.store.coverage(space_id, manifest_id)
+
+    async def coverage_many(
+        self, space_id: EmbeddingSpaceId, manifest_ids: Collection[str]
+    ) -> Mapping[str, VectorCoverage]:
+        """Count, for each manifest, its chunks and those with a stored vector.
+
+        Args:
+            space_id: The space.
+            manifest_ids: The versions' manifests.
+
+        Returns:
+            The store's counts per manifest.
+        """
+        return await self.store.coverage_many(space_id, manifest_ids)
+
+    async def missing(
+        self, space_id: EmbeddingSpaceId, manifest_id: str, limit: int
+    ) -> Sequence[ChunkKey]:
+        """Return chunks of the manifest the store has no vector for yet.
+
+        Args:
+            space_id: The space.
+            manifest_id: The version's manifest.
+            limit: How many keys at most.
+
+        Returns:
+            The store's answer.
+        """
+        return await self.store.missing(space_id, manifest_id, limit)
+
+    async def count_missing(self, space_id: EmbeddingSpaceId, manifest_id: str) -> int:
+        """Count the chunks ``missing`` would return without a limit.
+
+        Args:
+            space_id: The space.
+            manifest_id: The version's manifest.
+
+        Returns:
+            The store's count.
+        """
+        return await self.store.count_missing(space_id, manifest_id)
+
+    async def pending(
+        self, space_id: EmbeddingSpaceId | None, manifest_ids: Collection[str]
+    ) -> PendingChunks:
+        """Count the stored chunks of these manifests without a vector in the space.
+
+        Args:
+            space_id: The space; ``None`` counts every chunk.
+            manifest_ids: The manifests.
+
+        Returns:
+            The store's counts.
+        """
+        return await self.store.pending(space_id, manifest_ids)
+
+    async def _live(self, space_id: EmbeddingSpaceId) -> EmbeddingSpace:
+        """Read a space that is not retired.
+
+        Args:
+            space_id: The space.
+
+        Returns:
+            It.
+
+        Raises:
+            UnknownEmbeddingSpaceError: No space has this ID.
+            RetiredEmbeddingSpaceError: It was retired.
+        """
+        for space in await self.store.spaces():
+            if space.id == space_id:
+                if space.state is SpaceState.RETIRED:
+                    raise RetiredEmbeddingSpaceError(space_id)
+                return space
+        raise UnknownEmbeddingSpaceError(space_id)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CheckExternalIndexesUseCase:
+    """Implements ``ports.driving.CheckExternalIndexes``."""
+
+    external: ExternalIndexes
+    """Compares the backends with the stored chunks."""
+
+    async def __call__(self, scope: ExternalIndexScope) -> IndexDriftOut:
+        """Compare every external backend with the stored chunks of the versions in scope.
+
+        Args:
+            scope: Which versions.
+
+        Returns:
+            What drifted.
+        """
+        return IndexDriftOut.from_model(await self.external.drift(scope.library, scope.version))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RebuildExternalIndexesUseCase:
+    """Implements ``ports.driving.RebuildExternalIndexes``."""
+
+    external: ExternalIndexes
+    """Writes the backends from the stored chunks."""
+
+    async def __call__(self, scope: ExternalIndexScope) -> RebuiltVersionsOut:
+        """Write the versions in scope to every external backend again.
+
+        Args:
+            scope: Which versions.
+
+        Returns:
+            What was written.
+        """
+        rebuilt = await self.external.rebuild(scope.library, scope.version)
+        return RebuiltVersionsOut.from_model(rebuilt, self.external.kinds)

@@ -79,12 +79,24 @@ class Health(BaseModel):
     Null when the database could not tell."""
     search_engine: SearchEngine | None
     """The search engine that answers: `fts5` (SQLite), `pg_search` (ParadeDB's BM25 on
-    PostgreSQL) or `postgres_fts` (PostgreSQL full-text search, without `pg_search`). Null when the
-    database could not tell."""
+    PostgreSQL), `postgres_fts` (PostgreSQL full-text search, without `pg_search`) or `external`
+    (the backend `search_backend` names). Null when the database could not tell."""
     vector_store_missing: str | None = None
     """The database extension the vector store needs and cannot load here: `vector` (pgvector)
     on PostgreSQL, `sqlite-vec` on SQLite. Hybrid modes answer with BM25 until it is installed.
     Null when it loads, or when no embedding model is configured (it is not checked then)."""
+    search_backend: str | None = None
+    """Where full-text search runs: `database`, or the external backend
+    `EXACTDOCS_SEARCH_BACKEND` names. Null when the database could not tell."""
+    vector_backend: str | None = None
+    """Where vector searches run: `database`, or the external backend `EXACTDOCS_VECTOR_BACKEND`
+    names. Null when the database could not tell."""
+    index_versions_missing: int | None = None
+    """Versions an external backend lacks, holds in part, or still holds after their removal, as
+    the last comparison with the database found (at start, then every few minutes):
+    `exactdocs index check` names them, `exactdocs index rebuild` writes them again. Null with no
+    external backend, or before the first comparison ends. Drift never makes `/readyz` fail: a
+    lost version must not take the whole instance out of rotation."""
 
 
 class Readiness(BaseModel):
@@ -311,6 +323,7 @@ async def _database_details(container: Container) -> Health:
         vectors = await container.retrieval.get_vector_store_state()
     except SQLAlchemyError, OSError:
         return _unknown()
+    search_backend, vector_backend = container.index_backends.names
     return Health(
         status="ok",
         version=__version__,
@@ -320,6 +333,9 @@ async def _database_details(container: Container) -> Health:
         reindex_required=index.needs_rebuild,
         search_engine=index.engine,
         vector_store_missing=vectors.missing,
+        search_backend=search_backend,
+        vector_backend=vector_backend,
+        index_versions_missing=None if container.drift is None else container.drift.missing,
     )
 
 
