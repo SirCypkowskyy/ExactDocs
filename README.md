@@ -153,6 +153,8 @@ benchmark numbers. See [Search and AI models](docs/search.md).
   A backend is an optional extra behind one adapter; a backend that fuses keyword and vector
   search itself serves hybrid search natively. See
   [External index backends](docs/architecture.md#external-index-backends). Available:
+  - [Elasticsearch and OpenSearch](docs/configuration.md#elasticsearch-and-opensearch) for
+    either index (`exactdocs[elasticsearch]`, `exactdocs[opensearch]`), with native hybrid search.
   - [Qdrant](docs/configuration.md#qdrant) for the vector index (`exactdocs[qdrant]`),
     self-hosted or Qdrant Cloud, with optional native hybrid search.
 

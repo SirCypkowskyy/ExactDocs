@@ -1073,6 +1073,83 @@ _VECTOR_PENDING_ARTICLES: Final[str] = (
 _VECTOR_ABSENT: Final[str] = "AND c.id NOT IN (SELECT chunk_key FROM {table})"
 """Narrows ``_VECTOR_PENDING`` to chunks without a vector in one space's table."""
 
+# ---------------------------------------------------------------- adapters/driven/elastic_index
+ELASTICSEARCH_BACKEND: Final[str] = "elasticsearch"
+"""The registered name of the Elasticsearch backend (#354)."""
+OPENSEARCH_BACKEND: Final[str] = "opensearch"
+"""The registered name of the OpenSearch backend (#354)."""
+ELASTIC_INDEX_PREFIX: Final[str] = "exactdocs"
+"""Default ``index_prefix``: the search index is ``<prefix>-search``, each embedding space's
+``<prefix>-vectors-<space ID>``. Instances sharing a cluster need different prefixes."""
+ELASTIC_PREFIX_PATTERN: Final[re.Pattern[str]] = re.compile(r"[a-z0-9][a-z0-9_-]{0,99}")
+"""What an ``index_prefix`` may be: lower case, digits, ``_`` and ``-``, as index names allow
+(no wildcard, no ``.``-hidden or ``-``/``_``-leading name), short enough for every suffix."""
+ELASTIC_WORDS_PATTERN: Final[str] = r"[\p{L}\p{N}\p{M}_.\-]+"
+"""What a word is to the heading, path and text fields (a Java regular expression, the pattern
+tokenizer's ``group: 0`` keeps the matches): letters, digits, marks and ``-_.``, as
+``identifier_tokens`` cuts words and FTS5's ``unicode61 tokenchars '-_.'`` does, so
+``retry_policy``, ``v1.4.0`` and ``--dry-run`` stay whole."""
+ELASTIC_TRIM_PATTERN: Final[str] = r"^\.+|[.\-]+$"
+"""Stripped from each word (leading dots, trailing dots and dashes: ``.env`` is ``env``,
+``retried.`` is ``retried``), as ``identifier_tokens`` strips a whole word."""
+ELASTIC_FIELD_BOOSTS: Final[Mapping[str, float]] = MappingProxyType(
+    dict(zip(("heading", "path", "body", "identifiers"), PG_SEARCH_BOOSTS, strict=True))
+)
+"""Boost of each text field. Each field's BM25 score is multiplied by its boost and the fields'
+scores add up, as in Tantivy, so these are pg_search's boosts (FTS5's column weights, saturated):
+the ranking suite passes on every engine with the same weights."""
+ELASTIC_OPTIONS: Final[frozenset[str]] = frozenset(
+    {
+        "url",
+        "index_prefix",
+        "username",
+        "ca_certs",
+        "verify_certs",
+        "request_timeout",
+        "number_of_shards",
+        "number_of_replicas",
+        "num_candidates",
+        "refresh",
+    }
+)
+"""The options both engines take, secrets apart."""
+ELASTICSEARCH_SECRETS: Final[tuple[str, ...]] = ("api_key", "password", "token")
+"""Elasticsearch's secret options (each also as ``<secret>_file``)."""
+OPENSEARCH_SECRETS: Final[tuple[str, ...]] = ("password", "token")
+"""OpenSearch's secret options (each also as ``<secret>_file``): it has no API keys."""
+ELASTIC_PAGE: Final[int] = 1000
+"""Versions per page of the ``held`` composite aggregation, and IDs per delete request."""
+ELASTIC_REQUEST_TIMEOUT: Final[float] = 30.0
+"""Default ``request_timeout``: seconds before a request to the cluster gives up."""
+ELASTIC_MAX_RETRIES: Final[int] = 1
+"""Retries of a request the client could not send (another node, a timeout); the domain retries a
+write that still fails (``EXTERNAL_WRITE_ATTEMPTS``)."""
+ELASTIC_NUM_CANDIDATES: Final[int] = 100
+"""Default ``num_candidates``: the fewest HNSW candidates a kNN search considers per shard (at
+least ``k``); more is slower and closer to an exact search."""
+ELASTIC_MAX_CANDIDATES: Final[int] = 10_000
+"""The most candidates (and ``k``) a kNN search may ask for, as both engines cap them."""
+ELASTIC_REFRESH: Final[frozenset[str]] = frozenset({"wait_for", "true"})
+"""``refresh`` values: ``wait_for`` (the default) returns a write once the next refresh made it
+searchable; ``true`` refreshes at once (tests, small instances)."""
+ELASTIC_MIN_MAJOR: Final[Mapping[str, int]] = MappingProxyType(
+    {ELASTICSEARCH_BACKEND: 8, OPENSEARCH_BACKEND: 2}
+)
+"""The oldest major version of each engine the adapter works with (dense vectors with cosine
+similarity and filtered kNN)."""
+ELASTIC_ERROR_CHARS: Final[int] = 300
+"""Characters of a cluster's error reason kept in a message (never a credential: the cluster does
+not echo them)."""
+ELASTIC_DISTANCE_DECIMALS: Final[int] = 6
+"""Decimals of a cosine distance compared when breaking ties by chunk ID: engines compute scores
+in float32, so two vectors of the same direction may differ in the last bits."""
+OPENSEARCH_HYBRID_WEIGHTS: Final[tuple[float, float]] = (0.5, 0.5)
+"""Weights of the keyword and vector halves in OpenSearch's normalisation pipeline."""
+OPENSEARCH_NORMALIZATION: Final[str] = "min_max"
+"""How OpenSearch's normalisation pipeline brings each half's scores to 0..1."""
+OPENSEARCH_COMBINATION: Final[str] = "arithmetic_mean"
+"""How OpenSearch's normalisation pipeline combines the normalised halves."""
+
 # ---------------------------------------------------------------- adapters/driven/ai_embeddings
 LOCAL_MODEL_ERRORS: Final[tuple[type[Exception], ...]] = (
     RuntimeError,

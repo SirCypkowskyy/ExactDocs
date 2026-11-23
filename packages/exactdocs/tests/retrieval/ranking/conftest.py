@@ -11,9 +11,14 @@ term-hash stand-in (``offline_embedding``): the fusion must keep every expected 
 puts it. ``hybrid_pg`` is the same on PostgreSQL (full-text search and pgvector), when the server
 is set. An engine in ``VECTOR_ENGINES`` always has a vector half, so a case that expects no answer
 only asks that nothing of another version comes back (the eval's rule for ``hits: []``).
+``elasticsearch`` and ``opensearch`` (#354) put the search index in that cluster when
+``EXACTDOCS_TEST_<NAME>_URL`` is set, and ``hybrid_elasticsearch`` / ``hybrid_opensearch`` the
+vector index too (the engine's native hybrid query); each engine gets its own index prefix, its
+indexes deleted after the session.
 """
 
 import asyncio
+import importlib
 from collections.abc import AsyncIterator, Generator
 from contextlib import ExitStack
 from pathlib import Path
@@ -23,22 +28,33 @@ import pytest
 from databases import ADMIN_URL, PG_SEARCH, SECRET_KEY, postgres_database
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
+from exactdocs.retrieval.adapters.driven.elastic_index import ElasticSearchBackend
 from exactdocs.retrieval.ports.driving import SearchAllLibraries, SearchDocs
 from fixture_import import embed_fixture, import_fixture
 from fixture_repo import DocsRepo
+from index_backends import cluster_options, drop_indexes
 from offline_embedding import offline_container
 
+CLUSTERS = [name for name in ("elasticsearch", "opensearch") if cluster_options(name)]
+"""The external index backends with a test cluster (#354)."""
 ENGINES = [
     "fts5",
     "hybrid",
     *(["postgres_fts", "postgres_fts_c", "hybrid_pg"] if ADMIN_URL else []),
     *(["pg_search"] if PG_SEARCH else []),
+    *(engine for name in CLUSTERS for engine in (name, f"hybrid_{name}")),
 ]
-VECTOR_ENGINES = frozenset({"hybrid", "hybrid_pg"})
+VECTOR_ENGINES = frozenset({"hybrid", "hybrid_pg", *(f"hybrid_{name}" for name in CLUSTERS)})
 """Engines with a vector half: the nearest chunks come back even when no word matches."""
-SEARCH_ENGINES = {"hybrid": "fts5", "hybrid_pg": "postgres_fts", "postgres_fts_c": "postgres_fts"}
+SEARCH_ENGINES = {
+    "hybrid": "fts5",
+    "hybrid_pg": "postgres_fts",
+    "postgres_fts_c": "postgres_fts",
+    **{engine: "external" for name in CLUSTERS for engine in (name, f"hybrid_{name}")},
+}
 """The full-text engine the app must choose for an engine under test (by default its own name)."""
 _DATABASES: dict[str, str] = {}  # engine -> database URL, for the engines that have one
+_CLUSTERS: dict[str, dict[str, object]] = {}  # engine -> its test cluster's options
 
 
 def open_container(engine: str, data_dir: Path) -> Container:
@@ -47,6 +63,14 @@ def open_container(engine: str, data_dir: Path) -> Container:
     if engine in _DATABASES:
         settings = Settings(
             data_dir=data_dir, database_url=_DATABASES[engine], secret_key=SECRET_KEY
+        )
+    elif engine in _CLUSTERS:
+        name = engine.removeprefix("hybrid_")
+        settings = Settings(
+            data_dir=data_dir,
+            search_backend=name,
+            vector_backend=name if engine in VECTOR_ENGINES else "database",
+            index_backends={name: _CLUSTERS[engine]},
         )
     else:
         settings = Settings(data_dir=data_dir)
@@ -81,8 +105,25 @@ def imported(
                 c_locale=request.param.endswith("_c"), pg_search=request.param == "pg_search"
             )
             _DATABASES[request.param] = stack.enter_context(database).url
+        name = request.param.removeprefix("hybrid_")
+        if name in CLUSTERS:
+            options = cluster_options(name)
+            assert options is not None
+            _CLUSTERS[request.param] = options
+            stack.callback(lambda: asyncio.run(_drop_cluster_indexes(name, options)))
         asyncio.run(_import_all(request.param, data_dir, docs_repo))
         yield request.param, data_dir
+
+
+async def _drop_cluster_indexes(name: str, options: dict[str, object]) -> None:
+    """Delete the indexes an engine's session wrote to its test cluster."""
+    module = importlib.import_module(f"exactdocs.retrieval.adapters.driven.{name}_index")
+    backend: ElasticSearchBackend = module.search_backend(options)
+    await backend.cluster.open()
+    try:
+        await drop_indexes(backend)
+    finally:
+        await backend.close()
 
 
 @pytest.fixture

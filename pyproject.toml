@@ -16,7 +16,11 @@ dev = [
     # model-free tests prove it stays unimported until a `local` profile's role is configured.
     "exactdocs[local]",
     # The external index backends' clients (#351), so their adapters are type-checked and their
-    # contract tests run wherever a server is given (EXACTDOCS_TEST_<NAME>_URL).
+    # contract tests run wherever a server is given (EXACTDOCS_TEST_<NAME>_URL) or, for an
+    # embedded backend, everywhere; the architecture tests prove nothing but their adapter
+    # imports them.
+    "exactdocs[elasticsearch]",
+    "exactdocs[opensearch]",
     "exactdocs[qdrant]",
     "httpx>=0.28",
     # The retrieval eval suite (packages/exactdocs/evals, docs/decisions/ai-retrieval.md):

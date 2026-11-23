@@ -69,6 +69,37 @@ jobs:
           QDRANT__TELEMETRY_DISABLED: "true"
         ports:
           - 6333/tcp
+      # #354: the external index backends' contract suites, ranking suite and scenario run against
+      # these single-node clusters (EXACTDOCS_TEST_ELASTICSEARCH_URL / _OPENSEARCH_URL). Security
+      # is off (the adapters' TLS and sign-in options are the clients' own); Elasticsearch runs a
+      # trial licence so its RRF retriever (native hybrid) answers. 512 MB of heap each.
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:9.5.6@sha256:79b4f1de4c15e6eca824723086a51e5934406d614d410cc11be77748cafac537
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          xpack.license.self_generated.type: trial
+          xpack.ml.enabled: "false"
+          cluster.routing.allocation.disk.threshold_enabled: "false"
+          ES_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9200/tcp
+        options: >-
+          --health-cmd "curl -fs http://127.0.0.1:9200/_cluster/health?wait_for_status=yellow"
+          --health-interval 5s --health-timeout 5s --health-retries 40
+      opensearch:
+        image: opensearchproject/opensearch:3.8.0@sha256:fafe3fc3587088674669235575aa166228c48bdb940294a8cdbbc1da75236a40
+        env:
+          discovery.type: single-node
+          DISABLE_SECURITY_PLUGIN: "true"
+          DISABLE_INSTALL_DEMO_CONFIG: "true"
+          cluster.routing.allocation.disk.threshold_enabled: "false"
+          OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9200/tcp
+        options: >-
+          --health-cmd "curl -fs http://127.0.0.1:9200/_cluster/health?wait_for_status=yellow"
+          --health-interval 5s --health-timeout 5s --health-retries 40
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
@@ -102,6 +133,8 @@ jobs:
           EXACTDOCS_TEST_QDRANT_URL: http://127.0.0.1:${{ job.services.qdrant.ports['6333'] }}
           EXACTDOCS_TEST_QDRANT_API_KEY: exactdocs-ci
           EXACTDOCS_REQUIRE_QDRANT: "1" # the Qdrant cases and scenario never skip here (#355)
+          EXACTDOCS_TEST_ELASTICSEARCH_URL: http://127.0.0.1:${{ job.services.elasticsearch.ports['9200'] }}
+          EXACTDOCS_TEST_OPENSEARCH_URL: http://127.0.0.1:${{ job.services.opensearch.ports['9200'] }}
         run: uv run pytest --cov=exactdocs --cov=exactdocs_kernel --cov-report=term-missing --junitxml=reports/pytest.xml
       - name: behave (acceptance)
         env:
@@ -114,6 +147,8 @@ jobs:
           EXACTDOCS_TEST_QDRANT_URL: http://127.0.0.1:${{ job.services.qdrant.ports['6333'] }}
           EXACTDOCS_TEST_QDRANT_API_KEY: exactdocs-ci
           EXACTDOCS_REQUIRE_QDRANT: "1"
+          EXACTDOCS_TEST_ELASTICSEARCH_URL: http://127.0.0.1:${{ job.services.elasticsearch.ports['9200'] }}
+          EXACTDOCS_TEST_OPENSEARCH_URL: http://127.0.0.1:${{ job.services.opensearch.ports['9200'] }}
         run: uv run behave --format=progress --junit --junit-directory=reports/behave
       # The shared ranking suite again, on Supabase's image (postgres_fts: it has no pg_search).
       - name: Ranking suite on supabase/postgres

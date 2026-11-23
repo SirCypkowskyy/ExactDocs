@@ -1340,6 +1340,8 @@ keeps the backends in step:
 | Name | Indexes | Adapter | Extra | Native hybrid |
 |---|---|---|---|---|
 | `memory` | search, vectors | `memory_index.py` (in process, tests only) | none | yes (RRF of term counts and cosine) |
+| `elasticsearch` | search, vectors | `elasticsearch_index.py` over `elastic_index.py` ([Configuration](configuration.md#elasticsearch-and-opensearch)) | `elasticsearch` | yes: the RRF retriever |
+| `opensearch` | search, vectors | `opensearch_index.py` over `elastic_index.py` ([Configuration](configuration.md#elasticsearch-and-opensearch)) | `opensearch` | yes: a `hybrid` query and a normalisation pipeline |
 | `qdrant` | vectors | `qdrant_index.py`: a collection per space, payload-indexed `manifest_id` / `library` / `tags` ([Configuration](configuration.md#qdrant)) | `qdrant` | with `hybrid = true`: BM25-weighted sparse and dense prefetches fused by Qdrant (RRF) |
 
 **Adding a backend** is one adapter module in `retrieval/adapters/driven/` (the reference is
@@ -1354,6 +1356,12 @@ filters, top-k ordering, empty results, unknown versions) and `test_index_backen
 backend ports themselves, native hybrid included when implemented). A factory takes the options
 of `[index_backends.<name>]` (`EXACTDOCS_INDEX_BACKENDS__<NAME>__<OPTION>`) and raises
 `ValueError` for invalid ones; secrets come from the environment or `*_file` options.
+
+Elasticsearch and OpenSearch (#354) answer the same REST API for everything ExactDocs asks, so
+`elastic_index.py` builds the requests and reads the answers once, behind an `Engine` (one
+request in, its JSON out) that each engine's module implements with its client; where the
+engines differ (the vector field, the kNN query, the hybrid query) the engine's name decides. It
+imports neither client. Options, analysis and sizing: [Configuration](configuration.md#elasticsearch-and-opensearch).
 
 ## AI retrieval (planned)
 
