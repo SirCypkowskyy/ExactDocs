@@ -1,0 +1,12 @@
+{
+  "packages/exactdocs/features/access_log.feature": 8.23,
+  "packages/exactdocs/features/add_library.feature": 16.288,
+  "packages/exactdocs/features/add_version.feature": 18.121,
+  "packages/exactdocs/features/agentic_answer.feature": 22.848,
+  "packages/exactdocs/features/agentic_cache.feature": 13.271,
+  "packages/exactdocs/features/agentic_search.feature": 13.301,
+  "packages/exactdocs/features/ai_budgets.feature": 24.119,
+  "packages/exactdocs/features/ai_providers.feature": 12.534,
+  "packages/exactdocs/features/ai_settings.feature": 19.656,
+  "packages/exactdocs/features/api.feature": 2.59
+}
