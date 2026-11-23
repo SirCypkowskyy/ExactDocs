@@ -1,0 +1,84 @@
+name: Azure AI Search (real service)
+
+# Manual only (#353): Azure AI Search has no emulator, so CI runs the external index contract
+# suites against an in-process fake of its REST API; this runs the same suites against a real
+# service, with the repository's credentials (docs/configuration.md#azure-ai-search):
+#
+#   repository variable   AZURE_SEARCH_ENDPOINT    https://<service>.search.windows.net
+#   environment secret    AZURE_SEARCH_API_KEY     an admin key (auth: api_key)
+#   repository variables  AZURE_CLIENT_ID, AZURE_TENANT_ID (auth: entra): an app registration or
+#                         user-assigned identity with a federated credential for this
+#                         repository's `azure-search` environment, holding the Search Service
+#                         Contributor and Search Index Data Contributor roles on the service
+#
+# Each test writes to indexes of its own (exactdocs-test-<random>) and deletes them afterwards.
+
+on:
+  workflow_dispatch:
+    inputs:
+      auth:
+        description: How ExactDocs signs in to the service
+        type: choice
+        options: [api_key, entra]
+        default: api_key
+
+concurrency:
+  group: azure-search
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # the GitHub OIDC token Entra ID exchanges (auth: entra)
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  contract:
+    name: Contract suites against Azure AI Search
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    timeout-minutes: 30
+    environment: azure-search # its protection rules decide who may use the service's key
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked
+      # Entra ID without the Azure CLI: the job's OIDC token, in the file the workload identity
+      # credential of DefaultAzureCredential reads (AZURE_FEDERATED_TOKEN_FILE).
+      - name: Federated token for Entra ID
+        if: inputs.auth == 'entra'
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+        run: |
+          token_file="$RUNNER_TEMP/azure-federated-token"
+          curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["value"], end="")' \
+            > "$token_file"
+          chmod 600 "$token_file"
+          {
+            echo "AZURE_FEDERATED_TOKEN_FILE=$token_file"
+            echo "AZURE_CLIENT_ID=$AZURE_CLIENT_ID"
+            echo "AZURE_TENANT_ID=$AZURE_TENANT_ID"
+          } >> "$GITHUB_ENV"
+      # The key is given to this step only, not to `uv sync` or the other steps of the runner.
+      - name: Contract suites (search index, vector index, backend ports)
+        env:
+          EXACTDOCS_TEST_AZURE_SEARCH_URL: ${{ vars.AZURE_SEARCH_ENDPOINT }}
+          EXACTDOCS_REQUIRE_AZURE_SEARCH: "1" # no endpoint: fail, never skip
+          EXACTDOCS_TEST_AZURE_SEARCH_KEY: ${{ inputs.auth == 'api_key' && secrets.AZURE_SEARCH_API_KEY || '' }}
+        run: >-
+          uv run pytest -v
+          packages/exactdocs/tests/retrieval/test_index_backends.py
+          packages/exactdocs/tests/retrieval/test_search_index.py
+          packages/exactdocs/tests/retrieval/test_vector_index.py
+          -k "azure_search and not fake"
+      - name: Forget the federated token
+        if: always() && inputs.auth == 'entra'
+        run: rm -f "$RUNNER_TEMP/azure-federated-token"

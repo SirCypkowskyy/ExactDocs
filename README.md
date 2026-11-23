@@ -153,6 +153,9 @@ benchmark numbers. See [Search and AI models](docs/search.md).
   A backend is an optional extra behind one adapter; a backend that fuses keyword and vector
   search itself serves hybrid search natively. See
   [External index backends](docs/architecture.md#external-index-backends). Available:
+  - [Azure AI Search](docs/configuration.md#azure-ai-search) for the search and vector indexes
+    (`exactdocs[azure-search]`), with native hybrid search (Azure's hybrid query) and API key or
+    Entra ID (managed identity) sign-in.
   - [Chroma](docs/configuration.md#chroma) for the vector index (`exactdocs[chroma]` for a
     server or Chroma Cloud, `exactdocs[chroma-local]` embedded in a local directory), with
     ExactDocs' own embeddings.

@@ -437,6 +437,17 @@ async def _pinecone_vectors() -> AsyncGenerator[VectorBackend]:
                 await index.delete(delete_all=True, namespace=namespace)
 
 
+def _azure_search_cases() -> list[BackendCase]:
+    """Azure AI Search (#353): always on the in-process fake of its REST API (there is no
+    emulator), and on a real service too when ``EXACTDOCS_TEST_AZURE_SEARCH_URL`` is set."""
+    import azure_search_server  # ruff: ignore[import-outside-top-level] -- the extra's client
+
+    return [
+        BackendCase(name=name, search=search, vectors=vectors)
+        for name, search, vectors in azure_search_server.cases()
+    ]
+
+
 EXTERNAL_BACKENDS: list[BackendCase] = [
     BackendCase(name="memory", search=_memory_search, vectors=_memory_vectors, counts_terms=True),
     *_qdrant_cases(),
@@ -463,6 +474,7 @@ EXTERNAL_BACKENDS: list[BackendCase] = [
     *_mongodb_cases(),
     *_libsql_cases(),
     *([BackendCase(name="pinecone", vectors=_pinecone_vectors)] if PINECONE_URL else []),
+    *_azure_search_cases(),
 ]
 """Every external backend the suites run on here. Add yours (see the module docstring)."""
 

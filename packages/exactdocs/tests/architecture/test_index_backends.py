@@ -25,22 +25,29 @@ def _module_path(module: str) -> Path:
 
 
 def _imported(path: Path) -> set[str]:
-    """The top-level packages a module imports (``import a.b`` and ``from a.b import c``: a)."""
+    """The modules a module imports, and each of their parents (``from a.b import c``: a, a.b)."""
     names: set[str] = set()
     for node in ast.walk(ast.parse(path.read_text("utf-8"))):
         if isinstance(node, ast.Import):
-            names |= {alias.name.split(".")[0] for alias in node.names}
+            modules = [alias.name for alias in node.names]
         elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
-            names.add(node.module.split(".")[0])
+            modules = [node.module]
+        else:
+            continue
+        for module in modules:
+            parts = module.split(".")
+            names |= {".".join(parts[: n + 1]) for n in range(len(parts))}
     return names
 
 
 def _importers(package: str) -> list[Path]:
+    """The modules importing a package, or a namespace's sub-package (``azure.search``)."""
     return sorted(p for p in SRC.rglob("*.py") if package in _imported(p))
 
 
 def test_the_scanner_finds_importers() -> None:
     assert _module_path("exactdocs.bootstrap.database") in _importers("sqlalchemy")
+    assert _module_path("exactdocs.bootstrap.ai_sdk") in _importers("azure.identity")
 
 
 @pytest.mark.parametrize("kind", KINDS, ids=[k.name for k in KINDS])
