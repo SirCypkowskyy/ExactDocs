@@ -161,6 +161,8 @@ ignore = [
 "deploy/check_sqlite_vec.py" = ["implicit-namespace-package"]
 # Runs inside the `-local` image (python - < file) to prove it searches with no network (#246).
 "deploy/smoke_local.py" = ["implicit-namespace-package"]
+# CI's behave shards (#507): a standalone stdlib script that prints a group's feature files.
+"deploy/behave_shards.py" = ["implicit-namespace-package", "print"]
 # The CI upgrade test is a standalone stdlib script that runs two releases and reports on stdout.
 "deploy/upgrade_check.py" = ["implicit-namespace-package", "suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path", "print", "undocumented-public-function", "undocumented-public-method"]
 # Runs the app in a fresh interpreter to see which modules it imports.

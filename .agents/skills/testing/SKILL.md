@@ -63,9 +63,9 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   `skipif` on a missing variable: with the switch on, a test whose variable is unset is skipped
   naming it, and CI's fast jobs point every variable at a dead port, so an unmarked test that
   reaches a service fails there.
-- **Pull request CI runs the fast suite only**, in parallel shards (`pytest-split`, balanced by
-  `.test_durations`; refresh it with `just test-durations` when many tests were added or became
-  slower). The integration jobs run on a PR labelled `run integration`, on a manual CI run with
+- **Pull request CI runs the fast suite only**, in parallel shards (pytest by `pytest-split`,
+  behave by feature file, balanced by `.test_durations` and `.behave_durations`; refresh them with
+  `just test-durations` / `just bdd-durations` when many tests were added or became slower). The integration jobs run on a PR labelled `run integration`, on a manual CI run with
   the input `integration`, and in every release ([docs/releasing.md](../../../docs/releasing.md#fast-and-integration-tests)).
   Add the label when the change touches an adapter on a server, PostgreSQL, the Dockerfile,
   the wheel or the end-to-end flow.

@@ -13,8 +13,8 @@ name: CI
 # (Settings -> Secrets and variables -> Actions -> Variables):
 #   hybrid (default, also when unset): every job on GitHub-hosted ubuntu-24.04 (amd64).
 #   self-hosted (when the GitHub-hosted minutes ran out): every job on the self-hosted ARM64
-#     runner [self-hosted, linux, ARM64, exactdocs], and pytest in two shards instead of six:
-#     there are two runners.
+#     runner [self-hosted, linux, ARM64, exactdocs], with fewer shards (pytest two instead of six,
+#     behave one instead of three): there are two runners.
 on:
   pull_request:
   push:
@@ -115,11 +115,17 @@ jobs:
           include-hidden-files: true # the coverage data file
           retention-days: 3
 
-  # The scenarios that need no service; the @integration ones are left out (features/environment.py).
+  # The scenarios that need no service (the @integration ones are left out: features/environment.py),
+  # the feature files in groups of about the same time (deploy/behave_shards.py, by the times in
+  # .behave_durations; refresh them with `just bdd-durations`).
   behave:
-    name: behave (no service)
+    name: behave (${{ matrix.group }}/${{ strategy.job-total }})
     runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        group: ${{ fromJSON(vars.RUNNER_MODE == 'self-hosted' && '[1]' || '[1, 2, 3]') }}
     env:
       EXACTDOCS_TEST_POSTGRES_URL: postgresql://exactdocs:unused@127.0.0.1:9/exactdocs
       EXACTDOCS_TEST_PG_SEARCH: "1"
@@ -143,11 +149,15 @@ jobs:
       - name: Install
         run: uv sync --locked
       - name: behave (acceptance)
-        run: uv run behave --format=progress --junit --junit-directory=reports/behave
+        run: |
+          mapfile -t features < <(python3 deploy/behave_shards.py --splits ${{ strategy.job-total }} --group ${{ matrix.group }})
+          [ "${#features[@]}" -gt 0 ] || { echo "::error::no feature file in this group"; exit 1; }
+          echo "${#features[@]} feature files"
+          uv run behave --format=progress --junit --junit-directory=reports/behave "${features[@]}"
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
-          name: behave
+          name: behave-${{ matrix.group }}
           path: reports/
           retention-days: 3
 

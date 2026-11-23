@@ -77,6 +77,12 @@ arch:
 bdd *args:
     uv run behave {{ args }}
 
+# Refresh .behave_durations, which CI's behave shards are balanced by (every scenario but the @integration ones, timed)
+bdd-durations:
+    rm -rf reports/behave-durations
+    uv run behave --format=progress --junit --junit-directory=reports/behave-durations
+    uv run python deploy/behave_shards.py --store reports/behave-durations
+
 # Acceptance scenarios with the @integration ones too (their services: docs/releasing.md); `just bdd-integration --tags=@integration`: only them
 bdd-integration *args:
     EXACTDOCS_INTEGRATION=1 uv run behave {{ args }}
