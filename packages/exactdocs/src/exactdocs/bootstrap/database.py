@@ -11,6 +11,7 @@ The database is a SQLite file in the data directory (the default) or PostgreSQL
 import asyncio
 import contextlib
 import fcntl
+import importlib.util
 import logging
 import os
 import secrets
@@ -33,6 +34,7 @@ from sqlalchemy import Connection, event, text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor
 from sqlalchemy.exc import ArgumentError, OperationalError
+from sqlalchemy.dialects import registry
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import ConnectionPoolEntry, QueuePool
 from sqlalchemy.util import await_
@@ -41,6 +43,12 @@ from exactdocs.bootstrap.cancellation import being_cancelled
 from exactdocs.bootstrap.constants import (
     BUSY_TIMEOUT_MS,
     COLLATED_PREFIXES,
+    LIBSQL_DIALECT_CLASS,
+    LIBSQL_DIALECT_DRIVER,
+    LIBSQL_DIALECT_MODULE,
+    LIBSQL_DIALECT_NAME,
+    LIBSQL_DRIVER,
+    LIBSQL_DRIVER_MODULE,
     LOCK_NOT_AVAILABLE,
     MIGRATION_LOCK,
     MIGRATION_TURN_NOTICE_SECONDS,
@@ -65,6 +73,9 @@ from exactdocs.bootstrap.constants import (
 from exactdocs.bootstrap.settings import Settings
 
 logger = logging.getLogger(__name__)
+
+# `sqlite+libsql://` (#474): SQLAlchemy imports the dialect's module only when an engine names it.
+registry.register(LIBSQL_DIALECT_NAME, LIBSQL_DIALECT_MODULE, LIBSQL_DIALECT_CLASS)
 
 
 class ClosingQueuePool(QueuePool):
@@ -180,6 +191,8 @@ def open_database(settings: Settings, *, read_only: bool = False) -> AsyncEngine
         raise StartupError(message) from exc
     if url.get_backend_name() == "postgresql":
         return _open_postgres(url, settings, read_only=read_only)
+    if url.drivername == LIBSQL_DRIVER:
+        return _open_libsql(url, settings, read_only=read_only)
     if url.get_backend_name() != "sqlite":
         message = (
             f"Unsupported database {url.get_backend_name()!r}: use SQLite or PostgreSQL "
@@ -198,6 +211,77 @@ def open_database(settings: Settings, *, read_only: bool = False) -> AsyncEngine
     event.listen(engine.sync_engine, "connect", _configure_connection)
     event.listen(engine.sync_engine, "begin", _begin)
     return engine
+
+
+def _open_libsql(url: URL, settings: Settings, *, read_only: bool) -> AsyncEngine:
+    """Return an engine on a libSQL server, SQLite's dialect over Turso's driver (#474).
+
+    The server keeps WAL, ``synchronous`` and its own wait for the write lock (it refuses those
+    PRAGMAs); foreign keys are switched on for each connection, as on a SQLite file. Nothing
+    connects yet.
+
+    Args:
+        url: The database URL (``sqlite+libsql://host[:port][?tls=0&authToken=...]``).
+        settings: The instance's settings (the data directory is still prepared: git's work
+            folders, ``known_hosts`` and the job worker's ``jobs.sqlite`` live there).
+        read_only: Refused: a libSQL server cannot hold one connection to reads only.
+
+    Returns:
+        The engine.
+
+    Raises:
+        StartupError: Read-only access, a URL without a host, or the extra is not installed.
+    """
+    if read_only:
+        message = (
+            "A libSQL server cannot be opened read-only (`serve --stdio` and the read-only "
+            "commands): run `exactdocs serve` and connect over HTTP (/mcp) instead."
+        )
+        raise StartupError(message)
+    if not url.host or url.database:
+        message = (
+            "EXACTDOCS_DATABASE_URL must name the libSQL server only: "
+            "libsql://host[:port][?authToken=...], with ?tls=0 for plain HTTP."
+        )
+        raise StartupError(message)
+    if importlib.util.find_spec(LIBSQL_DRIVER_MODULE) is None:
+        message = (
+            "A libSQL database needs the libsql-database extra: "
+            "pip install 'exactdocs[libsql-database]' "
+            "(or uvx --from 'exactdocs[libsql-database]' exactdocs serve)."
+        )
+        raise StartupError(message)
+    _prepare_directory(settings.data_dir)
+    engine = create_async_engine(url)
+    event.listen(engine.sync_engine, "connect", _configure_libsql_connection)
+    event.listen(engine.sync_engine, "begin", _begin)
+    return engine
+
+
+def _configure_libsql_connection(dbapi_connection: DBAPIConnection, _: ConnectionPoolEntry) -> None:
+    """Switch foreign keys on for a new connection to a libSQL server (its default, made sure).
+
+    Args:
+        dbapi_connection: The new DB-API connection.
+        _: The pool's record of it (unused).
+    """
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA foreign_keys=ON")
+    finally:
+        cursor.close()
+
+
+def is_libsql(engine: AsyncEngine) -> bool:
+    """Tell whether the engine is on a libSQL server (#474).
+
+    Args:
+        engine: The database engine.
+
+    Returns:
+        ``True`` for libSQL, ``False`` for a SQLite file and for PostgreSQL.
+    """
+    return engine.dialect.driver == LIBSQL_DIALECT_DRIVER
 
 
 def _open_read_only(url: URL) -> AsyncEngine:

@@ -34,6 +34,8 @@ from exactdocs.bootstrap.constants import (
     INDEX_BACKENDS,
     LOCAL_HOSTS,
     MODELS_SUBDIR,
+    LIBSQL_DRIVER,
+    LIBSQL_SCHEME,
     POSTGRES_DRIVER,
     POSTGRES_DRIVERS,
     SECRETS_REFUSED_IN_FILE,
@@ -1198,14 +1200,17 @@ class Settings(BaseSettings):
         """``EXACTDOCS_DATABASE_URL``, or a SQLite file in the data directory.
 
         SQLite runs on aiosqlite, PostgreSQL on psycopg 3: ``postgresql://`` and
-        ``postgresql+psycopg://`` both name it. Any other driver is left as written, and
-        ``open_database`` refuses it.
+        ``postgresql+psycopg://`` both name it. A libSQL server (``libsql://host``, #474) runs
+        on SQLite's dialect over Turso's driver (``sqlite+libsql``). Any other driver is left as
+        written, and ``open_database`` refuses it.
         """
         if self.database_url:
             url = make_url(self.database_url)
         else:
             url = URL.create("sqlite", database=(self.data_dir / "exactdocs.db").as_posix())
-        if url.get_backend_name() == "sqlite":
+        if url.drivername in {LIBSQL_SCHEME, LIBSQL_DRIVER}:
+            url = url.set(drivername=LIBSQL_DRIVER)
+        elif url.get_backend_name() == "sqlite":
             url = url.set(drivername="sqlite+aiosqlite")
         elif url.drivername in POSTGRES_DRIVERS:
             url = url.set(drivername=POSTGRES_DRIVER)
