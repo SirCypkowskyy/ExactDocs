@@ -212,6 +212,11 @@ command line both open its directory: on a local directory they take turns writi
 it), so the rebuild above is safe while serving; with an object-store URI (`single_writer = true`)
 stop the server before `exactdocs index rebuild`. See [LanceDB](configuration.md#lancedb).
 
+A **DuckDB** file is the exception to "while the server keeps serving": it is open in one process
+only, so stop the server, run `exactdocs index check` or `rebuild`, and start it again (the
+command is refused, naming the server's process, while it runs). See
+[DuckDB](configuration.md#duckdb).
+
 ## Backup and restore
 
 This section is about the SQLite database. On PostgreSQL, use `pg_dump` (see

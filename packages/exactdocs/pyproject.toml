@@ -61,6 +61,12 @@ opensearch = ["opensearch-py==3.2.0"]
 # Exact pin: 0.41.0 (2026-10-29) has manylinux_2_28 wheels for x86_64 and aarch64 (abi3; checked
 # by tests/retrieval/test_lancedb_index.py), and the adapter relies on its FTS and RRF reranker.
 lancedb = ["lancedb==0.41.0"]
+# DuckDB as the search and vector backend (#357): EXACTDOCS_SEARCH_BACKEND / _VECTOR_BACKEND=duckdb.
+# Imported only when a backend names it. The `fts` extension ships as a wheel (the signed binary
+# DuckDB publishes, repackaged per DuckDB release) and is loaded from that file, never downloaded:
+# DuckDB checks its signature at LOAD. Both pins move together: the extension's wheel requires the
+# exact DuckDB release it was built for.
+duckdb = ["duckdb==2.0.0", "duckdb-extension-fts==2.0.0"]
 
 [project.scripts]
 exactdocs = "exactdocs.bootstrap.cli:main"

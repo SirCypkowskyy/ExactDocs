@@ -153,6 +153,8 @@ benchmark numbers. See [Search and AI models](docs/search.md).
   A backend is an optional extra behind one adapter; a backend that fuses keyword and vector
   search itself serves hybrid search natively. See
   [External index backends](docs/architecture.md#external-index-backends). Available:
+  - [DuckDB](docs/configuration.md#duckdb) for the search and vector indexes
+    (`exactdocs[duckdb]`), one embedded database file, no server.
   - [Elasticsearch and OpenSearch](docs/configuration.md#elasticsearch-and-opensearch) for
     either index (`exactdocs[elasticsearch]`, `exactdocs[opensearch]`), with native hybrid search.
   - [LanceDB](docs/configuration.md#lancedb) for the search and vector indexes

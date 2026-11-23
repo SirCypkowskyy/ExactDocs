@@ -19,6 +19,7 @@ dev = [
     # contract tests run wherever a server is given (EXACTDOCS_TEST_<NAME>_URL) or, for an
     # embedded backend, everywhere; the architecture tests prove nothing but their adapter
     # imports them.
+    "exactdocs[duckdb]",
     "exactdocs[elasticsearch]",
     "exactdocs[lancedb]",
     "exactdocs[opensearch]",

@@ -27,6 +27,7 @@ from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
 from types import ModuleType
 
 from exactdocs.retrieval.adapters.driven.elastic_index import (
@@ -192,6 +193,34 @@ def _lancedb_cases() -> list[BackendCase]:
     return [BackendCase(name="lancedb", search=_lancedb_search, vectors=_lancedb_vectors)]
 
 
+DUCKDB_MODULE = "exactdocs.retrieval.adapters.driven.duckdb_index"  # only with the extra
+
+
+@asynccontextmanager
+async def _duckdb_search() -> AsyncGenerator[SearchBackend]:
+    """DuckDB is embedded: a fresh database file in a temporary folder, no server."""
+    build = importlib.import_module(DUCKDB_MODULE).search_backend
+    with tempfile.TemporaryDirectory(prefix="exactdocs-duckdb-") as folder:
+        backend = build({"path": str(Path(folder) / "index.duckdb"), "threads": 2})
+        await backend.open()
+        try:
+            yield backend
+        finally:
+            await backend.close()
+
+
+@asynccontextmanager
+async def _duckdb_vectors() -> AsyncGenerator[VectorBackend]:
+    build = importlib.import_module(DUCKDB_MODULE).vector_backend
+    with tempfile.TemporaryDirectory(prefix="exactdocs-duckdb-") as folder:
+        backend = build({"path": str(Path(folder) / "index.duckdb"), "threads": 2})
+        await backend.open()
+        try:
+            yield backend
+        finally:
+            await backend.close()
+
+
 EXTERNAL_BACKENDS: list[BackendCase] = [
     BackendCase(name="memory", search=_memory_search, vectors=_memory_vectors, counts_terms=True),
     *_qdrant_cases(),
@@ -205,6 +234,13 @@ EXTERNAL_BACKENDS: list[BackendCase] = [
         if cluster_options(name) is not None
     ),
     *_lancedb_cases(),
+    # Embedded: no server, so no EXACTDOCS_TEST_DUCKDB_URL; left out only without the extra
+    # (the dev group installs it, so CI runs it).
+    *(
+        [BackendCase(name="duckdb", search=_duckdb_search, vectors=_duckdb_vectors)]
+        if importlib.util.find_spec("duckdb") is not None
+        else []
+    ),
 ]
 """Every external backend the suites run on here. Add yours (see the module docstring)."""
 
