@@ -370,11 +370,7 @@ def build_account_router(
         """
         return await list_account_providers(account)
 
-    @router.post(
-        "/account/providers/{provider}/link",
-        responses=_THROTTLED,
-        description=LINK_PROVIDER_DESCRIPTION,
-    )
+    @router.post("/account/providers/{provider}/link", description=LINK_PROVIDER_DESCRIPTION)
     async def link_provider(
         provider: str,
         account: caller,
