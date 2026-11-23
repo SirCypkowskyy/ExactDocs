@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { LogOut } from "lucide-react";
+import { CircleAlert, LogOut } from "lucide-react";
 import { useState } from "react";
 import { useMessages } from "@/shared/lib/i18n";
 import { Button, buttonVariants } from "@/shared/ui/button";
@@ -60,9 +60,14 @@ export function SignOutButton({ onSignedOut }: { onSignedOut: () => void }) {
       <p
         id="sign-out-error"
         role="alert"
-        className="absolute top-full left-0 z-10 sm:right-0 sm:left-auto mt-1 whitespace-nowrap rounded-md bg-card px-3 py-1.5 text-body font-medium text-destructive shadow-float empty:hidden"
+        className="absolute top-full left-0 z-10 sm:right-0 sm:left-auto mt-1 flex items-center gap-2 whitespace-nowrap rounded-md bg-card px-3 py-1.5 text-body font-medium text-destructive shadow-float empty:hidden"
       >
-        {failed && t.signOut.failed}
+        {failed && (
+          <>
+            <CircleAlert aria-hidden="true" data-icon-motion="alert" className="size-4 shrink-0" />
+            {t.signOut.failed}
+          </>
+        )}
       </p>
     </div>
   );

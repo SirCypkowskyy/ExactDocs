@@ -10,7 +10,8 @@ import { messages } from "./-messages";
 type AccountSearch = ReturnType<typeof parseTokensView> & { tab?: "interface" | undefined };
 
 export const Route = createFileRoute("/_app/account")({
-  // The URL holds the tab and the token list's search and sort, so a reload keeps them.
+  // The URL holds the tab and the token table's view (search, filters, sort, page, size), so a
+  // reload keeps them.
   validateSearch: (search: Record<string, unknown>): AccountSearch => ({
     ...parseTokensView(search),
     ...(search.tab === "interface" ? { tab: "interface" as const } : {}),
@@ -34,19 +35,16 @@ export const Route = createFileRoute("/_app/account")({
         >
           <TabsList aria-label={t.tabs}>
             <TabsTrigger value="tokens">
-              <KeyRound aria-hidden="true" />
+              <KeyRound aria-hidden="true" data-icon-motion="tilt" />
               {t.tokens}
             </TabsTrigger>
             <TabsTrigger value="interface">
-              <SlidersHorizontal aria-hidden="true" />
+              <SlidersHorizontal aria-hidden="true" data-icon-motion="cog" />
               {t.interface}
             </TabsTrigger>
           </TabsList>
           <TabsContent value="tokens" className="pt-8 outline-none">
-            <TokensSection
-              view={view}
-              onView={(next) => void navigate({ search: { ...next }, replace: true })}
-            />
+            <TokensSection />
           </TabsContent>
           <TabsContent value="interface" className="pt-8 outline-none">
             <InterfaceSettings status={status} />

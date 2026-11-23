@@ -1,7 +1,5 @@
 import type { ReactNode } from "react";
-import { defineMessages, formatNumber, plural } from "@/shared/lib/i18n";
-
-type SortDirection = false | "asc" | "desc";
+import { defineMessages, plural } from "@/shared/lib/i18n";
 
 const characters = (n: number) => plural.pl(n, { one: "# znak", few: "# znaki", many: "# znaków" });
 
@@ -36,52 +34,38 @@ export const messages = defineMessages(
       disableDescription:
         "They are signed out at once, their API tokens are revoked, and they can't sign in until you enable them again.",
       disable: "Disable",
-      loading: "Loading users",
+      count: (n: number) => plural.en(n, { one: "# account", other: "# accounts" }),
+      loadFailed: "Couldn't load the accounts.",
     },
     row: {
       you: "You",
-      signsInWith: (provider: string) => `Signs in with ${provider}`,
       password: "Password",
-      groups: "Groups: ",
-      noGroups: "No groups at the identity provider",
       active: "Active",
       disabled: "Disabled",
-      created: "Created ",
-      resetNamed: (name: string) => `Reset the password of ${name}`,
-      reset: "Reset password",
-      enableNamed: (name: string) => `Enable ${name}`,
-      enable: "Enable",
-      disableNamed: (name: string) => `Disable ${name}`,
-      disable: "Disable",
     },
     /** A role as the list, its filter and the create form name it. */
     roles: { user: "User", admin: "Admin" },
     list: {
       columns: { account: "Account", role: "Role", status: "Status", created: "Created" },
-      sortBy: (column: string, dir: SortDirection) =>
-        `Sort by ${column}${dir ? `, sorted ${dir === "asc" ? "ascending" : "descending"}` : ""}`,
       find: "Find an account",
       usernamePlaceholder: "Username",
       role: "Role",
-      anyRole: "Any",
       status: "Status",
-      anyStatus: "Any",
       active: "Active",
       disabled: "Disabled",
-      sortLabel: "Sort by",
-      sort: {
-        oldest: "Oldest first",
-        newest: "Newest first",
-        nameAsc: "Name, A to Z",
-        nameDesc: "Name, Z to A",
-        adminsFirst: "Admins first",
-      },
       noMatchTitle: "No accounts match",
       noMatch: "Nothing matches these filters.",
-      clearFilters: "Clear filters",
       label: "User accounts",
-      showing: (shown: number, total: number) => `Showing ${shown} of ${total}`,
-      loadMore: "Load more",
+      signIn: "Sign-in",
+      groups: "Groups",
+      moreGroups: (n: number, name: string) =>
+        `${plural.en(n, { one: "# more group", other: "# more groups" })} of ${name}`,
+      allGroups: (name: string) => `Groups of ${name}`,
+    },
+    actions: {
+      reset: "Reset password…",
+      disable: "Disable…",
+      enable: "Enable",
     },
     create: {
       title: "New user",
@@ -158,52 +142,37 @@ export const messages = defineMessages(
       disableDescription:
         "Wszystkie sesje tego konta zostaną od razu zakończone, a jego tokeny API unieważnione. Zalogowanie się będzie niemożliwe, dopóki ponownie nie włączysz konta.",
       disable: "Wyłącz",
-      loading: "Wczytywanie użytkowników",
+      count: (n) => plural.pl(n, { one: "# konto", few: "# konta", many: "# kont" }),
+      loadFailed: "Nie udało się wczytać kont.",
     },
     row: {
       you: "Ty",
-      signsInWith: (provider) => `Logowanie przez ${provider}`,
       password: "Hasło",
-      groups: "Grupy: ",
-      noGroups: "Brak grup u dostawcy tożsamości",
       active: "Aktywne",
       disabled: "Wyłączone",
-      created: "Utworzono ",
-      resetNamed: (name) => `Zresetuj hasło użytkownika ${name}`,
-      reset: "Zresetuj hasło",
-      enableNamed: (name) => `Włącz konto ${name}`,
-      enable: "Włącz",
-      disableNamed: (name) => `Wyłącz konto ${name}`,
-      disable: "Wyłącz",
     },
     roles: { user: "Użytkownik", admin: "Administrator" },
     list: {
       columns: { account: "Konto", role: "Rola", status: "Status", created: "Utworzono" },
-      sortBy: (column, dir) =>
-        `Sortuj według: ${column}${dir ? `, sortowanie ${dir === "asc" ? "rosnące" : "malejące"}` : ""}`,
       find: "Znajdź konto",
       usernamePlaceholder: "Nazwa użytkownika",
       role: "Rola",
-      anyRole: "Dowolna",
       status: "Status",
-      anyStatus: "Dowolny",
       active: "Aktywne",
       disabled: "Wyłączone",
-      sortLabel: "Sortuj według",
-      sort: {
-        oldest: "Od najstarszych",
-        newest: "Od najnowszych",
-        nameAsc: "Nazwa, od A do Z",
-        nameDesc: "Nazwa, od Z do A",
-        adminsFirst: "Najpierw administratorzy",
-      },
       noMatchTitle: "Brak pasujących kont",
       noMatch: "Nic nie pasuje do tych filtrów.",
-      clearFilters: "Wyczyść filtry",
       label: "Konta użytkowników",
-      showing: (shown, total) =>
-        `Wyświetlono ${formatNumber(shown, "pl")} z ${formatNumber(total, "pl")}`,
-      loadMore: "Wczytaj więcej",
+      signIn: "Logowanie",
+      groups: "Grupy",
+      moreGroups: (n, name) =>
+        `${plural.pl(n, { one: "Jeszcze # grupa", few: "Jeszcze # grupy", many: "Jeszcze # grup" })} użytkownika ${name}`,
+      allGroups: (name) => `Grupy użytkownika ${name}`,
+    },
+    actions: {
+      reset: "Zresetuj hasło…",
+      disable: "Wyłącz…",
+      enable: "Włącz",
     },
     create: {
       title: "Nowy użytkownik",

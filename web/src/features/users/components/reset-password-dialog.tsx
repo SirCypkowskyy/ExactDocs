@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from "react";
 import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { Button } from "@/shared/ui/button";
+import { restoreRowFocus } from "@/shared/ui/data-table/row-actions";
 import { DialogContent, DialogDescription, DialogRoot, DialogTitle } from "@/shared/ui/dialog";
 import { Field } from "@/shared/ui/field";
 import { FormAlert } from "@/shared/ui/form-alert";
@@ -24,7 +25,8 @@ interface Props {
 export function ResetPasswordDialog({ user, onClose, onReset }: Props) {
   return (
     <DialogRoot open={user !== undefined} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent>
+      {/* Opened from a row's menu: focus goes back to that row when it closes. */}
+      <DialogContent onCloseAutoFocus={restoreRowFocus}>
         {user && <Body user={user} onClose={onClose} onReset={() => onReset(user)} />}
       </DialogContent>
     </DialogRoot>

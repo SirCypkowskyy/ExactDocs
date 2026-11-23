@@ -1,35 +1,61 @@
-/** The users list's view state: what the URL holds and what the API is asked for. */
-const SORT_FIELDS = ["username", "role", "created_at"] as const;
+import {
+  parseFacet,
+  parseTableSearch,
+  type TableConfig,
+  type TableSearch,
+} from "@/shared/ui/data-table/table-search";
 
-export interface UsersView {
-  q?: string | undefined;
-  /** An API `sort` value: a field, `-` in front for descending. */
-  sort?: string | undefined;
-  role?: "admin" | "user" | undefined;
-  status?: "active" | "disabled" | undefined;
+/** The users table's view state: what the URL holds and what `GET /v1/users` is asked for. */
+export const USER_ROLES = ["admin", "user"] as const;
+export const USER_STATUSES = ["active", "disabled"] as const;
+
+/** The users table (DataTable v2): sorted by the API's fields, oldest first as the API does. */
+export const USERS_TABLE: TableConfig = {
+  id: "users",
+  sortFields: ["username", "role", "created_at"],
+  defaultSort: "created_at",
+};
+
+export interface UsersView extends TableSearch {
+  role?: (typeof USER_ROLES)[number][] | undefined;
+  status?: (typeof USER_STATUSES)[number][] | undefined;
 }
 
 /** Anything unknown in a shared or hand-edited URL is dropped, never sent to the API. */
 export function parseUsersView(search: Record<string, unknown>): UsersView {
-  const q = typeof search.q === "string" ? search.q.trim().slice(0, 256) : "";
-  const sort = typeof search.sort === "string" ? search.sort : "";
   return {
-    q: q || undefined,
-    sort: (SORT_FIELDS as readonly string[]).includes(sort.replace(/^-/, "")) ? sort : undefined,
-    role: search.role === "admin" || search.role === "user" ? search.role : undefined,
-    status: search.status === "active" || search.status === "disabled" ? search.status : undefined,
+    ...parseTableSearch(search, USERS_TABLE),
+    role: parseFacet(search.role, USER_ROLES),
+    status: parseFacet(search.status, USER_STATUSES),
   };
 }
 
-export const isFiltered = (v: UsersView) => Boolean(v.q || v.role || v.status);
+/** What `GET /v1/users` filters and sorts by: the view without its page and size. */
+export interface UsersFilters {
+  q?: string;
+  role?: readonly string[];
+  /** Absent with both states picked: that is no filter at all. */
+  disabled?: boolean;
+  sort?: string;
+}
 
-/** The query string of `GET /v1/users` for a view and a page cursor. */
-export function usersParams(view: UsersView, cursor?: string | null): string {
-  const p = new URLSearchParams({ limit: "50" });
-  if (view.q) p.set("q", view.q);
-  if (view.sort) p.set("sort", view.sort);
-  if (view.role) p.set("role", view.role);
-  if (view.status) p.set("disabled", String(view.status === "disabled"));
+export function usersFilters(view: UsersView): UsersFilters {
+  const status = view.status?.length === 1 ? view.status[0] : undefined;
+  return {
+    ...(view.q && { q: view.q }),
+    ...(view.role && view.role.length < USER_ROLES.length && { role: view.role }),
+    ...(status && { disabled: status === "disabled" }),
+    ...(view.sort && { sort: view.sort }),
+  };
+}
+
+/** The query string of `GET /v1/users` for some filters and one request's `limit` and cursor. */
+export function usersParams(filters: UsersFilters, limit: number, cursor?: string | null): string {
+  const p = new URLSearchParams({ limit: String(limit) });
+  if (filters.q) p.set("q", filters.q);
+  for (const role of filters.role ?? []) p.append("role", role);
+  if (filters.disabled !== undefined) p.set("disabled", String(filters.disabled));
+  if (filters.sort) p.set("sort", filters.sort);
   if (cursor) p.set("cursor", cursor);
   return p.toString();
 }

@@ -468,6 +468,21 @@ describe("in Polish", () => {
     expect(await screen.findByText("Wpisz nazwę użytkownika.")).toBeInTheDocument();
   });
 
+  it("names the account and its role in Polish on the account page", () => {
+    setPreferences({ language: "pl" });
+    const client = new QueryClient();
+    client.setQueryData(["session"], { state: "signed_in", account });
+    render(
+      <QueryClientProvider client={client}>
+        <AccountPanel onSignedOut={() => {}} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
+    const identity = screen.getByRole("region", { name: "Zalogowano jako" });
+    expect(identity).toHaveTextContent(/Nazwa użytkownika\s*ADada/);
+    expect(identity).toHaveTextContent(/Administrator/);
+  });
+
   it("counts characters and seconds with Polish plurals", () => {
     expect(validateSetup({ username: "a", password: "x", confirm: "x" }, "pl").password).toBe(
       "Użyj co najmniej 12 znaków.",

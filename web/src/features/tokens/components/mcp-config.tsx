@@ -1,4 +1,4 @@
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, Plug } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { common, useMessages } from "@/shared/lib/i18n";
@@ -47,14 +47,21 @@ export function McpConfig({ className }: { className?: string }) {
   return (
     <div className={className}>
       <div className="flex items-center justify-between gap-3">
-        <h3 className="text-body font-medium">{t.heading}</h3>
+        <h3 className="flex items-center gap-2 text-body font-medium">
+          <Plug aria-hidden="true" className="size-4 text-muted-foreground" />
+          {t.heading}
+        </h3>
         <Button
           variant="outline"
           size="sm"
           aria-label={copied ? t.copied : t.copyConfig}
           onClick={copy}
         >
-          {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+          {copied ? (
+            <Check aria-hidden="true" data-icon-motion="draw" />
+          ) : (
+            <Copy aria-hidden="true" data-icon-motion="pop" />
+          )}
           {copied ? c.copied : c.copy}
         </Button>
       </div>

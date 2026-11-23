@@ -20,9 +20,6 @@ export function expiresAt(choice: ExpiryChoice, now = Date.now()): string | unde
   return choice === "never" ? undefined : new Date(now + Number(choice) * 86_400_000).toISOString();
 }
 
-export const isExpired = (t: Token, now = Date.now()) =>
-  t.expires_at !== null && Date.parse(t.expires_at) <= now;
-
 export function explainTokenError(error: unknown, language: Language = currentLanguage()): string {
   const t = messages[language].errors;
   if (!(error instanceof HttpError)) return t.offline;
