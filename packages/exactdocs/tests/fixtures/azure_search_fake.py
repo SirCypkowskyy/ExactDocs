@@ -37,6 +37,7 @@ import io
 import json
 import math
 import re
+import threading
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -469,6 +470,8 @@ class FakeSearchService:
     unavailable: bool = False
     requests: list[tuple[str, str]] = field(default_factory=list)
     bodies: list[Doc] = field(default_factory=list)
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    """Requests come from worker threads (the transport runs requests in an executor)."""
 
     def transport(self) -> AsyncHttpTransport:
         """An azure-core transport whose requests this service answers (one per call)."""
@@ -482,13 +485,20 @@ class FakeSearchService:
 
     def flush(self) -> None:
         """Make every pending write visible."""
-        for index in self.indexes.values():
-            while index.pending:
-                index.tick()
+        with self.lock:
+            for index in self.indexes.values():
+                while index.pending:
+                    index.tick()
 
     # ------------------------------------------------------------ routing
 
-    def handle(  # ruff: ignore[complex-structure, too-many-return-statements]
+    def handle(
+        self, method: str, url: str, headers: Mapping[str, str], body: bytes | None
+    ) -> tuple[int, Doc | None]:
+        with self.lock:
+            return self.handle_locked(method, url, headers, body)
+
+    def handle_locked(  # ruff: ignore[complex-structure, too-many-return-statements]
         self, method: str, url: str, headers: Mapping[str, str], body: bytes | None
     ) -> tuple[int, Doc | None]:
         if self.unavailable:
