@@ -49,6 +49,7 @@ from exactdocs.bootstrap.constants import (
     LIBSQL_DIALECT_NAME,
     LIBSQL_DRIVER,
     LIBSQL_DRIVER_MODULE,
+    LIBSQL_TOKEN_KEY,
     LOCK_NOT_AVAILABLE,
     MIGRATION_LOCK,
     MIGRATION_TURN_NOTICE_SECONDS,
@@ -937,15 +938,17 @@ async def _session_is_lost(engine: AsyncEngine) -> bool:
 def shown_url(url: URL) -> str:
     """Render a database URL for a log line or an error, with every password hidden.
 
-    ``hide_password`` covers the userinfo only; libpq also reads a ``password`` query key.
+    ``hide_password`` covers the userinfo only; libpq also reads a ``password`` query key, and a
+    libSQL server's URL carries its token as ``authToken``.
 
     Args:
         url: The database URL.
 
     Returns:
-        The URL with ``***`` for the userinfo password and no ``password`` query key.
+        The URL with ``***`` for the userinfo password and no ``password`` or ``authToken`` key.
     """
-    return url.difference_update_query(["password"]).render_as_string(hide_password=True)
+    hidden = ["password", LIBSQL_TOKEN_KEY]
+    return url.difference_update_query(hidden).render_as_string(hide_password=True)
 
 
 def _upgrade_postgres(connection: Connection, location: Path) -> None:

@@ -181,6 +181,14 @@ jobs:
           echo "EXACTDOCS_TEST_LIBSQL_URL=$url" >> "$GITHUB_ENV"
           echo "EXACTDOCS_TEST_LIBSQL_AUTH_TOKEN=$token" >> "$GITHUB_ENV"
           echo "EXACTDOCS_REQUIRE_LIBSQL=1" >> "$GITHUB_ENV" # the libSQL server cases never skip here
+      # #474: a second libSQL server, empty, for ExactDocs' own database: the persistence suite runs
+      # on it below (each SQLite case wipes it), apart from the index backend's tables above.
+      - name: Start libSQL server (database)
+        run: |
+          { read -r url; read -r token; } < <(deploy/libsql-test-server.sh "exactdocs-libsql-db-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}")
+          echo "::add-mask::$token"
+          echo "LIBSQL_DATABASE_URL=$url" >> "$GITHUB_ENV"
+          echo "LIBSQL_DATABASE_TOKEN=$token" >> "$GITHUB_ENV"
       - name: ruff format
         run: uv run ruff format --check --diff .
       - name: ruff check
@@ -216,6 +224,8 @@ jobs:
           EXACTDOCS_REQUIRE_PGBOUNCER: "1" # the pooler tests and scenario never skip here
           EXACTDOCS_TEST_PG_SEARCH: "1"
           EXACTDOCS_REQUIRE_SUPABASE: "1" # the @supabase scenarios never skip here
+          EXACTDOCS_TEST_LIBSQL_DATABASE_URL: ${{ env.LIBSQL_DATABASE_URL }} # the @libsql_database scenario (#474)
+          EXACTDOCS_TEST_LIBSQL_DATABASE_AUTH_TOKEN: ${{ env.LIBSQL_DATABASE_TOKEN }}
           EXACTDOCS_TEST_QDRANT_URL: http://127.0.0.1:${{ job.services.qdrant.ports['6333'] }}
           EXACTDOCS_TEST_QDRANT_API_KEY: exactdocs-ci
           EXACTDOCS_REQUIRE_QDRANT: "1"
@@ -236,6 +246,22 @@ jobs:
           EXACTDOCS_TEST_POSTGRES_URL="$EXACTDOCS_TEST_SUPABASE_URL" EXACTDOCS_REQUIRE_POSTGRES=1 \
             uv run pytest packages/exactdocs/tests/retrieval/ranking -k postgres_fts \
             --junitxml=reports/pytest-supabase-ranking.xml
+      # #474: the persistence contract suite again, its SQLite cases on a libSQL server (sqld) as
+      # ExactDocs' database (EXACTDOCS_TEST_LIBSQL_DATABASE_URL; the known differences are skipped
+      # there, naming why).
+      - name: Persistence suite on libSQL
+        env:
+          EXACTDOCS_TEST_LIBSQL_DATABASE_URL: ${{ env.LIBSQL_DATABASE_URL }}
+          EXACTDOCS_TEST_LIBSQL_DATABASE_AUTH_TOKEN: ${{ env.LIBSQL_DATABASE_TOKEN }}
+        run: |
+          uv run pytest -k sqlite --junitxml=reports/pytest-libsql-database.xml \
+            packages/exactdocs/tests/catalog packages/exactdocs/tests/identity \
+            packages/exactdocs/tests/ingestion packages/exactdocs/tests/retrieval \
+            packages/exactdocs/tests/bootstrap/test_secret_box.py \
+            packages/exactdocs/tests/bootstrap/test_cancel_real_backend.py \
+            packages/exactdocs/tests/bootstrap/test_identity_lists_api.py \
+            packages/exactdocs/tests/bootstrap/test_sources_texts_backends.py \
+            packages/exactdocs/tests/bootstrap/test_libsql_database.py
       - name: Stop supabase/postgres
         if: ${{ always() }}
         run: docker rm -f "exactdocs-supabase-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null || true
@@ -245,6 +271,9 @@ jobs:
       - name: Stop libSQL server
         if: ${{ always() }}
         run: docker rm -f "exactdocs-libsql-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null || true
+      - name: Stop libSQL server (database)
+        if: ${{ always() }}
+        run: docker rm -f "exactdocs-libsql-db-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null || true
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:

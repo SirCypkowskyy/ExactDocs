@@ -114,6 +114,8 @@ def _as_sqlite_errors() -> Iterator[None]:
     module = driver()
     try:
         yield
+    except (TypeError, ValueError) as error:  # a parameter the protocol cannot carry
+        raise sqlite3.ProgrammingError(str(error)) from error
     except module.Error as error:
         kind = getattr(sqlite3, type(error).__name__, sqlite3.DatabaseError)
         if not isinstance(kind, type) or not issubclass(kind, sqlite3.Error):
@@ -128,6 +130,32 @@ def _as_sqlite_errors() -> Iterator[None]:
                 translated.sqlite_errorname = code  # ty: ignore[unresolved-attribute] -- likewise
                 break
         raise translated from error
+
+
+def _value(value: object) -> object:
+    """Adapt one parameter as ``sqlite3`` would: a ``memoryview`` (SQLAlchemy's BLOBs) is bytes.
+
+    Args:
+        value: The parameter.
+
+    Returns:
+        What the driver can send.
+    """
+    return bytes(value) if isinstance(value, memoryview) else value
+
+
+def _adapted(parameters: Parameters) -> Parameters:
+    """Adapt a statement's parameters (``_value``), positional or named.
+
+    Args:
+        parameters: The parameters.
+
+    Returns:
+        The adapted parameters, of the same shape.
+    """
+    if isinstance(parameters, Mapping):
+        return {name: _value(value) for name, value in parameters.items()}
+    return [_value(value) for value in parameters]
 
 
 def _expired(error: sqlite3.Error) -> bool:
@@ -197,15 +225,16 @@ class _Cursor:
         Raises:
             sqlite3.Error: The server refused the statement.
         """
+        values = _adapted(parameters)
         retry = not self._connection.in_transaction
         try:
             with _as_sqlite_errors():
-                self._inner.execute(sql, parameters)
+                self._inner.execute(sql, values)
         except sqlite3.OperationalError as error:
             if not (retry and _expired(error)):
                 raise
             with _as_sqlite_errors():
-                self._inner.execute(sql, parameters)
+                self._inner.execute(sql, values)
         return self
 
     def executemany(self, sql: str, parameters: Iterable[Parameters]) -> "_Cursor":
@@ -221,7 +250,7 @@ class _Cursor:
         Raises:
             sqlite3.Error: The server refused the statement.
         """
-        rows = list(parameters)
+        rows = [_adapted(row) for row in parameters]
         retry = not self._connection.in_transaction
         try:
             with _as_sqlite_errors():

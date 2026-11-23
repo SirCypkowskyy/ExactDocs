@@ -1791,6 +1791,15 @@ _VECTOR_NEAREST: Final[str] = (
 )
 """Exact cosine search over one manifest's chunks; tags filter before the ORDER BY. Rounding
 can make the distance of a vector to itself a hair below zero: it is clamped to 0."""
+_LIBSQL_VECTOR_NEAREST: Final[str] = _VECTOR_NEAREST.replace(
+    "vec_distance_cosine", "vector_distance_cos"
+)
+"""``_VECTOR_NEAREST`` on a libSQL database (#474): libSQL's own cosine distance, which reads the
+same little-endian float32 BLOBs, instead of sqlite-vec's (a libSQL server loads no extension)."""
+_LIBSQL_VECTOR_PROBE: Final[str] = "SELECT vector_distance_cos(vector32('[1]'), vector32('[1]'))"
+"""Answers on a libSQL database, fails on SQLite: whether the vector store can search there."""
+LIBSQL_VECTORS: Final[str] = "libSQL vectors"
+"""What the vector store needs to search on a libSQL database, as `/api/health` names it."""
 _VECTOR_COVERAGE: Final[str] = (
     "SELECT count(*) AS chunks, count(v.chunk_key) AS embedded"
     + _VECTOR_JOIN
