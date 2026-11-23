@@ -5,7 +5,8 @@ The operator's settings name the backend (``EXACTDOCS_SEARCH_BACKEND``,
 key from the environment); every container of the scenario builds its backends from those
 options through the adapter's factories, with the fake service's transport in place of the
 network (there is no emulator to run). The steps look into the fake service to see what Azure
-holds and was asked.
+holds and was asked. A search asks for reranking as an operator makes it: a reranker role, on the
+fake gateway (#473); with a semantic configuration Azure's semantic ranker reranks instead.
 """
 
 import asyncio
@@ -19,7 +20,7 @@ from behave.runner import Context
 from fastapi.testclient import TestClient
 from fastmcp import Client
 
-from azure_search_fake import API_KEY, ENDPOINT, FakeSearchService, documents_of
+from azure_search_fake import API_KEY, ENDPOINT, FakeSearchService, documents_of, semantic_score
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.index_backends import IndexBackends
@@ -34,6 +35,8 @@ from steps.search_steps import LIBRARY, import_versions
 INDEX = "team-docs"
 QUERY = "how do I retry failed calls"
 FIELDS = {"id", "manifest_id", "library", "version_id", "chunk_id", "tags", "body"}
+SEMANTIC = "docs-semantic"
+"""The operator's ``semantic_configuration`` (#473)."""
 
 
 def _backends(context: Context) -> IndexBackends:
@@ -149,3 +152,127 @@ def step_azure_answered(context: Context) -> None:
         index.documents.clear()
     for mode in ("bm25", "vector", "hybrid"):
         assert _search_docs(context, ref, mode)["results"] == [], mode
+
+
+# ---------------------------------------------------------------- the semantic ranker (#473)
+
+
+def _with_guide(context: Context, *, semantic: bool) -> None:
+    """The Azure AI Search instance, with or without a semantic configuration, both versions in."""
+    step_azure_instance(context)
+    if semantic:
+        options = context.settings.index_backends["azure_search"]
+        context.settings = context.settings.model_copy(
+            update={
+                "index_backends": {"azure_search": options | {"semantic_configuration": SEMANTIC}}
+            }
+        )
+    step_azure_import_and_embed(context, "v1.3.0", "v1.4.0", "v1.4.0")
+
+
+def _with_reranker(context: Context) -> None:
+    """Ask for reranking as an operator does: a reranker role (here on the fake gateway)."""
+    ai = AiSettings.model_validate(
+        {
+            "mode": "hybrid",
+            "providers": {
+                "corp": {"kind": "openai-compatible", "base_url": context.endpoint.v1},
+                "rr": {
+                    "kind": "openai-compatible",
+                    "base_url": context.endpoint.url + "/v2",
+                    "api_key": "rr-key",
+                },
+            },
+            "embedding": {"model": "corp:terms"},
+            "reranker": {"model": "rr:rerank-v3.5"},
+        }
+    )
+    context.settings = context.settings.model_copy(update={"ai": ai})
+
+
+def _reranker_calls(context: Context) -> int:
+    """How many rerank calls ExactDocs' own reranker made on the fake gateway."""
+    return sum(1 for seen in context.endpoint.seen if seen.path.endswith("/rerank"))
+
+
+def _reranked_search(context: Context) -> dict[str, Any]:
+    """A hybrid ``search_docs`` of the embedded version; Azure's requests and reranks counted."""
+    context.azure.bodies.clear()
+    context.reranker_calls = _reranker_calls(context)
+    return _search_docs(context, context.search_ref, "hybrid")
+
+
+@given("the vector backend is Azure AI Search with a semantic configuration")
+def step_azure_semantic(context: Context) -> None:
+    _with_guide(context, semantic=True)
+
+
+@given("the search on Azure AI Search asks for reranking")
+def step_azure_rerank_asked(context: Context) -> None:
+    _with_reranker(context)
+
+
+@when("an agent searches a version on Azure AI Search in hybrid mode")
+def step_azure_hybrid_search(context: Context) -> None:
+    context.found = _reranked_search(context)
+
+
+@then("Azure's semantic ranker orders the results, filtered to that version")
+def step_azure_semantic_order(context: Context) -> None:
+    service, ref, found = context.azure, context.search_ref, context.found
+    manifests = {c["version_id"]: c["manifest_id"] for c in documents_of(service, INDEX)}
+    wanted = manifests[f"{LIBRARY}/{ref}"]
+    (asked,) = [b for b in service.bodies if "semanticQuery" in b]  # one request, ranked by Azure
+    assert asked["semanticConfiguration"] == SEMANTIC, asked
+    assert asked["semanticQuery"] == QUERY, asked  # the query as the agent wrote it
+    assert asked["vectorQueries"], asked  # a hybrid query (words and vector), reranked
+    assert asked["search"], asked
+    assert f"'{wanted}'" in asked["filter"], asked  # the version, before ranking
+    assert not any(f"'{m}'" in asked["filter"] for m in set(manifests.values()) - {wanted})
+    results = found["results"]
+    assert results, found
+    assert {r["commit_sha"] for r in results} == {context.commits[ref]}, results
+    # The order is the semantic ranker's: its scores, best first (the fake's stand-in ranker).
+    chunks = {
+        d["chunk_id"]: f"{d['title']} {d['content']}"
+        for d in documents_of(service, f"{INDEX}-space1")
+        if d["manifest_id"] == wanted
+    }
+    scores = [r["score"] for r in results]
+    assert scores == [semantic_score(QUERY, chunks[r["chunk_id"]]) for r in results], results
+    assert scores == sorted(scores, reverse=True), scores
+    assert _reranker_calls(context) == context.reranker_calls  # ExactDocs' did not rerank again
+
+
+@then("the result says it was reranked by Azure")
+def step_azure_reranked(context: Context) -> None:
+    found = context.found
+    assert found["reranked"] is True, found
+    # The candidates Azure reranked: the reranker's top N, of which the agent sees the best.
+    assert found["coverage"]["reranked"] >= len(found["results"]) > 0, found
+
+
+@given("the Azure AI Search index has no semantic configuration")
+def step_azure_no_semantic(context: Context) -> None:
+    _with_guide(context, semantic=False)
+
+
+@when("a reranked search runs on Azure AI Search")
+def step_azure_reranked_search(context: Context) -> None:
+    context.unreranked = _reranked_search(context)  # nothing asks for reranking yet
+    _with_reranker(context)
+    context.found = _reranked_search(context)
+
+
+@then("ExactDocs' own reranker reranks Azure's results, or none does, as today")
+def step_azure_exactdocs_reranks(context: Context) -> None:
+    service, found, unreranked = context.azure, context.found, context.unreranked
+    definition = service.indexes[f"{INDEX}-space1"].definition
+    assert definition["semantic"] is None, definition  # no semantic configuration made
+    assert not any(k.startswith("semantic") for b in service.bodies for k in b), service.bodies
+    assert _reranker_calls(context) == context.reranker_calls + 1  # ExactDocs' own reranker
+    assert found["reranked"] is True, found
+    assert unreranked["reranked"] is False, unreranked  # no reranker: none reranks
+    assert [r["chunk_id"] for r in found["results"]] != [
+        r["chunk_id"] for r in unreranked["results"]
+    ]

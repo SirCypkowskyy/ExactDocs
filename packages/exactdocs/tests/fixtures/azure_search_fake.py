@@ -632,6 +632,12 @@ def _words(text: str) -> set[str]:
     return set(re.findall(r"\w+", text.casefold()))
 
 
+def semantic_score(query: str, text: str) -> float:
+    """The stand-in ranker's score of a text: 4 times the share of the query's words it holds."""
+    asked = _words(query)
+    return round(4.0 * len(asked & _words(text)) / len(asked), 6) if asked else 0.0
+
+
 def _semantic_rerank(
     configuration: Doc, query: str, ordered: list[Doc], key: str
 ) -> tuple[list[Doc], dict[str, float]]:
@@ -642,7 +648,6 @@ def _semantic_rerank(
     best ``SEMANTIC_DEPTH`` follow, not reranked.
     """
     names = _prioritized_names(configuration)
-    asked = _words(query)
     head = ordered[:SEMANTIC_DEPTH]
     scores: dict[str, float] = {}
     for document in head:
@@ -650,8 +655,7 @@ def _semantic_rerank(
         text = " ".join(
             " ".join(v) if isinstance(v, list) else str(v) for v in values if v is not None
         )
-        shared = len(asked & _words(text))
-        scores[document[key]] = round(4.0 * shared / len(asked), 6) if asked else 0.0
+        scores[document[key]] = semantic_score(query, text)
     reranked = sorted(head, key=lambda d: -scores[d[key]])  # stable: ties keep the query's order
     return [*reranked, *ordered[SEMANTIC_DEPTH:]], scores
 
