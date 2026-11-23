@@ -48,7 +48,7 @@ env:
 jobs:
   bench:
     name: Agent benchmark with real providers
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     environment: eval-providers # its protection rules decide who may spend the keys
     env:
@@ -70,7 +70,7 @@ jobs:
       - name: Install
         run: uv sync --locked
       # The keys are given to this step only, not to `uv sync` (third-party build backends) or the
-      # other steps of this persistent runner.
+      # other steps of the job.
       - name: Agent benchmark (just agent-bench run)
         env:
           EXACTDOCS_AI__PROVIDERS__EVAL__API_KEY: ${{ secrets.EVAL_PROVIDER_API_KEY }}

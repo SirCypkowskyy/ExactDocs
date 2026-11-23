@@ -40,7 +40,7 @@ permissions:
 jobs:
   contract:
     name: Pinecone contract tests
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: pinecone # its protection rules decide who may spend the key
     env:
@@ -64,7 +64,7 @@ jobs:
             exit 1
           fi
       # The key is given to the steps that call Pinecone only, not to `uv sync` (third-party
-      # build backends) or the other steps of this persistent runner.
+      # build backends) or the other steps of the job.
       - name: Contract suites and adapter tests
         env:
           EXACTDOCS_TEST_PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}

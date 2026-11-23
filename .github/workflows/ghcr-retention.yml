@@ -40,7 +40,9 @@ jobs:
   # with `(?!sha256[:-])`, or it would match every digest and the pass would delete nothing.
   # packages/exactdocs/tests/bootstrap/test_ghcr_retention.py checks them on sample tags.
   cleanup:
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    # After a release only: a manual Release run is a dry run that pushes nothing (#478).
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-24.04
     strategy:
       max-parallel: 1 # one deletion at a time on the same package
       matrix:
@@ -77,7 +79,7 @@ jobs:
 
   leftovers:
     needs: cleanup
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: ubuntu-24.04
     steps:
       - name: Untagged leftovers, orphaned signatures and partial images
         uses: dataaxiom/ghcr-cleanup-action@v1.2.2

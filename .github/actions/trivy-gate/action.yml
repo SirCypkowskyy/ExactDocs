@@ -22,8 +22,8 @@ runs:
       env:
         IMAGE: ${{ inputs.image }}
         REPORT: ${{ inputs.report-name }}
-        # Trivy v0.70.0
-        TRIVY: ghcr.io/aquasecurity/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e
+        # Trivy v0.76.2
+        TRIVY: ghcr.io/aquasecurity/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
       run: |
         set -euo pipefail
         cache="$HOME/.cache/trivy"; mkdir -p "$cache"
