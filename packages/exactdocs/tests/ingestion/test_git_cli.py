@@ -412,13 +412,23 @@ async def test_transports_that_run_commands_are_refused_by_git_itself(
 async def test_a_local_repository_owned_by_someone_else_can_still_be_listed(
     docs_repo: DocsRepo, tmp_path: Path
 ) -> None:
-    # git's own test switch makes every repository look foreign-owned (no second user needed)
-    foreign = fake_git(tmp_path, f'GIT_TEST_ASSUME_DIFFERENT_OWNER=1 exec "{GIT.git}" "$@"\n')
+    # git's own test switch makes every repository look foreign-owned (no second user needed).
+    # No system config: GitHub-hosted runners set `safe.directory = *` there (#468), which would
+    # hide the problem; the user's global config is left out of the probe for the same reason.
+    foreign = fake_git(
+        tmp_path,
+        f'GIT_CONFIG_NOSYSTEM=1 GIT_TEST_ASSUME_DIFFERENT_OWNER=1 exec "{GIT.git}" "$@"\n',
+    )
     probe = await asyncio.create_subprocess_exec(
         GIT.git,
         "ls-remote",
         docs_repo.file_url,
-        env={**os.environ, "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"},
+        env={
+            **os.environ,
+            "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+        },
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
     )
