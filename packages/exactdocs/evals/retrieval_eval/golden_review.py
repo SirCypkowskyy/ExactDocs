@@ -166,7 +166,8 @@ def review_problems(review: Review, cases: Sequence[tuple[str, GoldenCase]]) -> 
 
     A ``correct`` or ``fixed`` case is in the set, a ``removed`` one is not; a case is reviewed
     once; ``correct`` names no problem and the other verdicts name at least one and say why;
-    every stratum (kind and project) holds ``per_stratum`` entries.
+    every stratum (kind and project) holds ``per_stratum`` entries, or all its cases when it has
+    fewer (its cases now, plus the ones the review removed from it).
 
     Args:
         review: The review.
@@ -184,13 +185,15 @@ def review_problems(review: Review, cases: Sequence[tuple[str, GoldenCase]]) -> 
         seen.add(entry.case)
         problems.extend(f"{entry.case}: {p}" for p in _entry_problems(entry, names))
     strata: Counter[tuple[str, str]] = Counter((e.project, e.kind) for e in review.entries)
-    want = review.sample.per_stratum
-    problems.extend(
-        f"{project} {kind}: {strata[project, kind]} entries, not the sample's {want}"
-        for project in sorted({project for project, _ in cases})
-        for kind in KINDS
-        if strata[project, kind] != want
+    sizes: Counter[tuple[str, str]] = Counter(
+        (project, case.metadata.kind if case.metadata else "") for project, case in cases
     )
+    sizes.update((e.project, e.kind) for e in review.entries if e.verdict == "removed")
+    for project in sorted({project for project, _ in cases}):
+        for kind in KINDS:
+            want = min(review.sample.per_stratum, sizes[project, kind])
+            if (n := strata[project, kind]) != want:
+                problems.append(f"{project} {kind}: {n} entries, not {want}")
     return problems
 
 
@@ -1111,6 +1114,16 @@ def sheet_markdown(
     return "\n".join(lines) + "\n"
 
 
+def _fence(text: str) -> str:
+    """A code fence longer than any run of backticks in a text, so the text cannot close it.
+
+    Returns:
+        Three backticks or more.
+    """
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    return "`" * max(3, longest + 1)
+
+
 def _evidence(
     case: GoldenCase, project: Project, texts: Mapping[tuple[str, str], Sequence[Section]]
 ) -> list[str]:
@@ -1131,7 +1144,8 @@ def _evidence(
     lines = []
     for s in sections:
         if s.key in wanted:
-            lines += ["", f"#### Expected: {_shown(s)}", "", "```text", s.text.strip(), "```"]
+            fence = _fence(s.text)
+            lines += ["", f"#### Expected: {_shown(s)}", "", f"{fence}text", s.text.strip(), fence]
     idx = index(sections)
     query = terms(f"{case.inputs.query} {(expected.reference or '') if expected else ''}")
     close = [(c, i) for c, i in idx.ranked(query) if sections[i].key not in wanted][:5]
