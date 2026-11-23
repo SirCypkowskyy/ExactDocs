@@ -68,7 +68,8 @@ jobs:
   pytest:
     name: pytest (${{ matrix.group }}/${{ strategy.job-total }})
     runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
-    timeout-minutes: 30
+    # About 6 minutes each of six on GitHub-hosted runners; the margin is for two in self-hosted mode.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -121,7 +122,8 @@ jobs:
   behave:
     name: behave (${{ matrix.group }}/${{ strategy.job-total }})
     runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
-    timeout-minutes: 30
+    # About 7 minutes each of three on GitHub-hosted runners; one does them all in self-hosted mode.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
