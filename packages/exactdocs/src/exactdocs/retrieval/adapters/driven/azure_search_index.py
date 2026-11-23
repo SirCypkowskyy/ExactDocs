@@ -639,7 +639,7 @@ class _Service:
             await credential.close()
         transport, self._transport = self._transport, None
         if transport is not None:
-            await transport.close()
+            await transport.__aexit__(None, None, None)  # its close is sync on some transports
 
     def _client_options(self) -> Document:
         """Return the keywords every client is made with.
@@ -767,10 +767,7 @@ class _Service:
         Args:
             index: The index.
         """
-        self._ready.discard(index)
-        client = self._clients.pop(index, None)
-        if client is not None:
-            await client.close()
+        self._ready.discard(index)  # its client stays: closing one closes the shared transport
         await self.call(self.indexes.delete_index(index))
 
     async def index_names(self) -> list[str]:
