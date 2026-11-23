@@ -52,6 +52,8 @@ _URL: Final[re.Pattern[str]] = re.compile(r"\b(?:https?|ftp)://[^\s<>()\[\]`'\"]
 """A bare URL: a tool may keep or drop it."""
 _TAG: Final[re.Pattern[str]] = re.compile(r"</?[A-Za-z][\w.:-]*(?:\s[^<>]*)?/?>")
 """An HTML or JSX tag (``<Tabs>``, ``<a href=...>``, ``</div>``), which a rendering drops."""
+_EPSILON: Final[float] = 1e-9
+"""Float noise tolerated when comparing a share with the threshold."""
 _WORD: Final[re.Pattern[str]] = re.compile(r"[^\W_]+")
 """A word: a run of letters and digits (``on_startup`` is two words, as ``on startup``)."""
 
@@ -165,6 +167,8 @@ class _Unit:
     """Its distinct shingles."""
     lineage: tuple[int, ...]
     """Its own index and those of the sections it is nested in, innermost first."""
+    content: str
+    """Its Markdown, as the chunker cut it."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -175,6 +179,8 @@ class SectionIndex:
     """Each heading's own text, in corpus order."""
     postings: Mapping[str, tuple[int, ...]]
     """The units holding each shingle."""
+    occurrences: Mapping[Section, tuple[int, ...]]
+    """The units of each section (a heading path may occur more than once in an article)."""
     threshold: float = MATCH_THRESHOLD
     """The share of shingles that must agree."""
 
@@ -213,18 +219,25 @@ class SectionIndex:
                             ),
                             size=len(own),
                             lineage=lineage,
+                            content=chunk.content,
                         )
                     )
                     for shingle in own:
                         postings.setdefault(shingle, []).append(index)
+        occurrences: dict[Section, list[int]] = {}
+        for index, unit in enumerate(units):
+            occurrences.setdefault(unit.section, []).append(index)
         return cls(
             units=tuple(units),
             postings={s: tuple(ids) for s, ids in postings.items()},
+            occurrences={s: tuple(ids) for s, ids in occurrences.items()},
             threshold=threshold,
         )
 
     @classmethod
-    def of_project(cls, project: Project, repo: Path, *, threshold: float = MATCH_THRESHOLD) -> Self:
+    def of_project(
+        cls, project: Project, repo: Path, *, threshold: float = MATCH_THRESHOLD
+    ) -> Self:
         """Index every pinned version of a project from its cached repository.
 
         Args:
@@ -254,7 +267,30 @@ class SectionIndex:
         Returns:
             A copy sharing the shingles.
         """
-        return type(self)(units=self.units, postings=self.postings, threshold=threshold)
+        return type(self)(
+            units=self.units,
+            postings=self.postings,
+            occurrences=self.occurrences,
+            threshold=threshold,
+        )
+
+    def text_of(self, section: Section) -> str:
+        """Return a section's text with its subsections, as the article has it.
+
+        Args:
+            section: The section.
+
+        Returns:
+            The text of every occurrence of its heading path, each with the sections nested in
+            it; empty when the index has no such section.
+        """
+        parts = []
+        for start in self.occurrences.get(section, ()):
+            for unit in self.units[start:]:
+                if start not in unit.lineage:
+                    break
+                parts.append(unit.content)
+        return "".join(parts)
 
     def match(self, text: str) -> TextMatch:
         """Find every section a text result answers.
@@ -274,7 +310,7 @@ class SectionIndex:
             units = self.postings.get(shingle, ())
             held.update(units)
             within.update({i for unit in units for i in self.units[unit].lineage})
-        need = self.threshold - 1e-9
+        need = self.threshold - _EPSILON
         found = {i for i, n in held.items() if n / self.units[i].size >= need}
         found |= {i for i, n in within.items() if n / len(own) >= need}
         return TextMatch(sections=frozenset(self.units[i].section for i in found))
