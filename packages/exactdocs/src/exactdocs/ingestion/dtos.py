@@ -12,6 +12,8 @@ from exactdocs.ingestion.constants import (
     DEFAULT_CHUNKER,
     DEFAULT_INTERVAL_MINUTES,
     DEFAULT_KEEP_LAST,
+    DEFAULT_MAX_CHARS,
+    DEFAULT_SPLIT_LEVEL,
     ERROR_CODE,
     FULL_SHA,
     JOB_SORT_FIELDS,
@@ -914,19 +916,20 @@ class SyncedLibrary(_Dto):
 
 
 class ChunkingIn(_Dto):
-    """How a library's articles are cut into chunks (the defaults: one chunk per heading)."""
+    """How a library's articles are cut into chunks (defaults: `#` to `###`, 4,000 characters)."""
 
-    split_level: int = Field(default=MAX_HEADING_LEVEL, ge=1, le=MAX_HEADING_LEVEL)
-    """The deepest heading that starts a chunk: 2 cuts at `#` and `##` only."""
+    split_level: int = Field(default=DEFAULT_SPLIT_LEVEL, ge=1, le=MAX_HEADING_LEVEL)
+    """The deepest heading that starts a chunk: 2 cuts at `#` and `##` only, 6 at every heading."""
     min_chars: int = Field(default=0, ge=0, le=MAX_CHUNK_CHARS)
     """A chunk shorter than this is merged with the next one (the last with the one before), within
     `max_chars`; the text before the first heading is never merged. At most 8,000 when sent: no
     chunk is longer.
     """
-    max_chars: int | None = Field(default=None, ge=1, le=MAX_CHUNK_CHARS)
+    max_chars: int | None = Field(default=DEFAULT_MAX_CHARS, ge=1, le=MAX_CHUNK_CHARS)
     """A chunk longer than this is cut again at its deeper headings; never inside a code block or
-    table. Null: no bound. At least `min_chars`, and at most 8,000 when sent: whatever the
-    settings, a section longer than 8,000 characters is split between its top-level blocks.
+    table. Left out: 4,000; null: no bound. At least `min_chars`, and at most 8,000 when sent:
+    whatever the settings, a section longer than 8,000 characters is split between its top-level
+    blocks.
     """
     chunker: Literal["markdown"] = Field(default=DEFAULT_CHUNKER)
     """`markdown`: cuts at headings with markdown-it-py (the only one supported)."""

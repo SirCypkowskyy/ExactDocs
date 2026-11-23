@@ -83,6 +83,11 @@ headings, and `min_chars` merges tiny ones; settings left out keep the stored ch
 version is then chunked again from the stored text, without fetching anything, and keeps serving
 its old chunks until the new ones are in place.
 
+A library added without chunking settings gets split level `h3` and `max_chars` 4,000, the
+chunking the [retrieval benchmark](benchmark/defaults.md) recommends (#381). The library stores
+it, so a later change of the default changes no existing library: one added with ExactDocs 0.4 or
+earlier keeps split level `h6` and no bound until its settings say otherwise.
+
 Whatever the settings, a section longer than 8,000 characters (about 2,000 tokens) is split between
 its top-level blocks, never inside a code block, table or MDX component, into parts that keep its
 heading path. A `max_chars` or `min_chars` above 8,000 is refused (422).

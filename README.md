@@ -129,6 +129,24 @@ mode with a `fallback_reason` instead of failing. BM25 remains the default until
 [Recommended defaults](docs/benchmark/defaults.md) has the
 benchmark numbers. See [Search and AI models](docs/search.md).
 
+### Chunking
+
+Articles are cut at their Markdown headings, never inside a code block or table. A new library
+gets the chunking the [retrieval benchmark](docs/benchmark/defaults.md) recommends: headings `#`
+to `###` start a chunk, and a chunk longer than 4,000 characters is cut again at its deeper
+headings (`split_level` 3, `max_chars` 4,000). BM25 finds the right section in the top 5 for
+81.7% of the golden set's questions with it, against 79.8% when every heading starts a chunk.
+Each library can choose its own split level and sizes, when it is added or later in its settings
+([Chunks and tags](docs/search.md#chunks-and-tags)).
+
+A library keeps the chunking it was added with. Libraries added with ExactDocs 0.4 or earlier
+store the default of then (every heading starts a chunk, no size bound): upgrading changes and
+re-chunks none of them.
+To move one to the new default, set its chunking to `split_level` 3 and `max_chars` 4,000; its
+versions are then re-chunked from the stored text, without fetching anything. A settings call or
+sources file that sends `chunking` but leaves out `split_level` or `max_chars` gets the new
+values for them, and `sources plan` shows such a change before `apply` makes it.
+
 ### The rest
 
 - A web UI to add libraries (with a preview of the files), browse rendered articles, switch

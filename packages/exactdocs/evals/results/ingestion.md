@@ -4,17 +4,72 @@ The golden corpus (starlette, pydantic, tanstack-query, zod, electron; every pin
 
 | configuration | coverage | held | cut fence / table / list | lost chars | tokens p50 / p95 / max | small | multi-top | empty / wrong path | headings missed / extra | BM25 recall@5 (exact) | MRR |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `default` | 100.0% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 88 / 516 / 8645 | 32.2% | 0.0% | 723 / 103 | 60 / 3 | 79.8% (79.8%) | 0.626 |
+| `default` | 91.3% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 114 / 738 / 8645 | 23.1% | 0.0% | 723 / 102 | 60 / 3 | 81.7% (76.8%) | 0.651 |
+| `h6` | 100.0% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 88 / 516 / 8645 | 32.2% | 0.0% | 723 / 103 | 60 / 3 | 79.8% (79.8%) | 0.626 |
 | `h2` | 51.8% | 367/367 | 3 / 0 / 0 | 11446 of 7940351 | 179 / 1699 / 8645 | 14.3% | 0.6% | 726 / 95 | 60 / 3 | 76.0% (39.3%) | 0.626 |
-| `h3-max-4000` | 91.3% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 114 / 738 / 8645 | 23.1% | 0.0% | 723 / 102 | 60 / 3 | 81.7% (76.8%) | 0.651 |
 | `merge-400` | 77.1% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 183 / 654 / 8645 | 3.0% | 5.1% | 723 / 88 | 60 / 3 | 74.2% (65.2%) | 0.602 |
 
-- `default`: today's default: every heading starts a chunk; nothing is merged or bounded.
+- `default`: today's default (#381): # to ### start a chunk; one over 4,000 characters is cut again at deeper headings.
+- `h6`: every heading starts a chunk; nothing is merged or bounded (the default before #381).
 - `h2`: only # and ## start a chunk; deeper sections stay inside their parent.
-- `h3-max-4000`: # to ### start a chunk; one over 4,000 characters is cut again at deeper headings.
 - `merge-400`: every heading starts a chunk, then one under 400 characters is merged with the next while the result stays within 4,000.
 
 ## `default` per version
+
+| project | version | articles (no chunk) | chunks | coverage | cut fence | lost chars | tokens p50 / p95 / max | small | empty / wrong path | headings missed / extra | no H1 | includes | MkDocs blocks as code |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| starlette | 0.27.0 | 23 (0) | 299 | 89.5% | 0 | 0 | 69 / 569 / 900 | 40.5% | 20 / 0 | 0 / 0 | 21 | 0 | 9 |
+| starlette | 0.52.1 | 25 (0) | 390 | 87.0% | 0 | 0 | 69 / 540 / 932 | 39.0% | 20 / 0 | 0 / 0 | 21 | 0 | 14 |
+| starlette | 1.10.0 | 25 (0) | 396 | 85.7% | 0 | 0 | 69 / 561 / 989 | 38.1% | 21 / 0 | 0 / 0 | 22 | 0 | 20 |
+| pydantic | v1.10.22 | 25 (0) | 233 | 93.8% | 0 | 0 | 153 / 641 / 3017 | 10.7% | 23 / 0 | 0 / 0 | 23 | 113 | 67 |
+| pydantic | v2.5.3 | 67 (1) | 537 | 91.7% | 0 | 0 | 138 / 832 / 3017 | 12.1% | 56 / 40 | 0 / 0 | 56 | 0 | 118 |
+| pydantic | v2.14.3 | 91 (0) | 644 | 91.4% | 0 | 0 | 160 / 910 / 2762 | 10.2% | 77 / 59 | 0 / 0 | 79 | 0 | 204 |
+| tanstack-query | v4.36.1 | 140 (27) | 475 | 95.2% | 0 | 0 | 140 / 585 / 3424 | 14.5% | 103 / 0 | 0 / 0 | 113 | 0 | 0 |
+| tanstack-query | v5.0.0 | 147 (25) | 550 | 100.0% | 0 | 0 | 152 / 637 / 3269 | 12.4% | 110 / 0 | 0 / 0 | 122 | 0 | 0 |
+| tanstack-query | v5.90.3 | 327 (67) | 1253 | 100.0% | 0 | 0 | 81 / 528 / 3571 | 38.1% | 211 / 0 | 0 / 0 | 170 | 0 | 0 |
+| zod | v3.23.8 | 1 (0) | 97 | 72.2% | 2 | 0 | 157 / 814 / 996 | 13.4% | 1 / 0 | 0 / 1 | 1 | 0 | 0 |
+| zod | v4.0.17 | 17 (0) | 243 | 100.0% | 1 | 5289 | 169 / 630 / 2306 | 14.0% | 17 / 0 | 27 / 1 | 17 | 0 | 0 |
+| zod | v4.6.7 | 24 (0) | 351 | 100.0% | 1 | 6157 | 183 / 684 / 8645 | 12.5% | 24 / 3 | 33 / 1 | 24 | 0 | 0 |
+| electron | v30.0.0 | 239 (0) | 1852 | 84.6% | 0 | 0 | 103 / 765 / 2493 | 24.2% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
+| electron | v38.0.0 | 264 (0) | 2099 | 92.3% | 0 | 0 | 110 / 824 / 3582 | 22.3% | 14 / 0 | 0 / 0 | 37 | 0 | 0 |
+| electron | v45.3.2 | 301 (0) | 2329 | 82.1% | 0 | 0 | 120 / 828 / 3582 | 21.8% | 14 / 0 | 0 / 0 | 40 | 0 | 0 |
+
+Sections that start no chunk under `default`:
+
+- electron v30.0.0:docs/tutorial/esm.md [ES Modules (ESM) in Electron > Main process > Caveats > You must use await generously before the app's ready event] (held)
+- electron v30.0.0:docs/tutorial/esm.md [ES Modules (ESM) in Electron > Preload scripts > Caveats > Sandboxed preload scripts can't use ESM imports] (held)
+- electron v30.0.0:docs/tutorial/launch-app-from-url-in-another-app.md [Deep Links > Examples > Main Process (main.js) > Windows and Linux code:] (held)
+- electron v30.0.0:docs/tutorial/security.md [Security > Checklist: Security recommendations > 14. Disable or limit creation of new windows > How?] (held)
+- electron v38.0.0:docs/api/navigation-history.md [Class: NavigationHistory > Instance Methods > navigationHistory.restore(options)] (held)
+- electron v38.0.0:docs/tutorial/security.md [Security > Checklist: Security recommendations > 19. Check which fuses you can change > Why?] (held)
+- electron v45.3.2:docs/api/base-window.md [BaseWindow > Class: BaseWindow > Instance Events > Event: 'persisted-state-restored'] (held)
+- electron v45.3.2:docs/api/base-window.md [BaseWindow > Class: BaseWindow > Static Methods > BaseWindow.clearPersistedState(name)] (held)
+- electron v45.3.2:docs/api/session.md [session > Class: Session > Instance Methods > ses.registerLocalAIHandler(handler) Experimental] (held)
+- electron v45.3.2:docs/tutorial/offscreen-rendering.md [Offscreen Rendering > Overview > Rendering Modes > GPU accelerated] (held)
+- electron v45.3.2:docs/tutorial/offscreen-rendering.md [Offscreen Rendering > Overview > Rendering Modes > Software output device] (held)
+- pydantic v1.10.22:docs/mypy_plugin.md [Plugin Capabilities > Respect Config.allow_mutation] (held)
+- pydantic v2.14.3:docs/concepts/alias.md [Alias Configuration > ConfigDict Settings > Validation] (held)
+- pydantic v2.14.3:docs/concepts/alias.md [Alias Configuration > Runtime Settings > Validation] (held)
+- pydantic v2.14.3:docs/concepts/experimental.md [Experimental Features > Partial Validation > Limitations of Partial Validation > TypeAdapter only] (held)
+- pydantic v2.5.3:docs/migration.md [Migration guide > Changes to Handling of Standard Types > Required, optional, and nullable fields] (held)
+- pydantic v2.5.3:docs/migration.md [Migration guide > Changes to validators > @validator and @root_validator are deprecated] (held)
+- starlette 0.27.0:docs/middleware.md [Pure ASGI Middleware > Gotchas > ASGI middleware should be stateless] (held)
+- starlette 0.27.0:docs/requests.md [Request > Client Address] (held)
+- starlette 0.52.1:docs/middleware.md [CORSMiddleware > Private Network Access (PNA)] (held)
+- starlette 0.52.1:docs/release-notes.md [0.39.0 (September 23, 2024) > Added] (held)
+- starlette 0.52.1:docs/requests.md [Request > Other state] (held)
+- starlette 1.10.0:docs/release-notes.md [1.0.0rc1 (February 23, 2026) > Fixed] (held)
+- starlette 1.10.0:docs/release-notes.md [1.2.0 (May 28, 2026) > Added] (held)
+- starlette 1.10.0:docs/release-notes.md [1.5.0 (August 8, 2026) > Fixed] (held)
+- starlette 1.10.0:docs/responses.md [Response > Delete Cookie] (held)
+- tanstack-query v4.36.1:docs/react/guides/migrating-to-react-query-4.md [Breaking Changes > The idle state has been removed > disabled queries] (held)
+- zod v3.23.8:README.md [Schema methods > .pipe > You can use .pipe() to fix common issues with z.coerce.] (held)
+- zod v3.23.8:README.md [Schema methods > .refine > Arguments] (held)
+- zod v3.23.8:README.md [Schema methods > .refine > Customize error path] (held)
+- zod v3.23.8:README.md [Schema methods > .superRefine > Abort early] (held)
+- zod v3.23.8:README.md [Schema methods > .transform > Chaining order] (held)
+
+## `h6` per version
 
 | project | version | articles (no chunk) | chunks | coverage | cut fence | lost chars | tokens p50 / p95 / max | small | empty / wrong path | headings missed / extra | no H1 | includes | MkDocs blocks as code |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -233,61 +288,6 @@ Sections that start no chunk under `h2`:
 - zod v4.6.7:packages/docs/content/json-schema.mdx [z.toJSONSchema() > metadata] (held)
 - zod v4.6.7:packages/docs/content/metadata.mdx [Metadata > .meta()] (held)
 - zod v4.6.7:packages/docs/content/v4/changelog.mdx [z.object() > changes z.unknown() optionality] (held)
-
-## `h3-max-4000` per version
-
-| project | version | articles (no chunk) | chunks | coverage | cut fence | lost chars | tokens p50 / p95 / max | small | empty / wrong path | headings missed / extra | no H1 | includes | MkDocs blocks as code |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| starlette | 0.27.0 | 23 (0) | 299 | 89.5% | 0 | 0 | 69 / 569 / 900 | 40.5% | 20 / 0 | 0 / 0 | 21 | 0 | 9 |
-| starlette | 0.52.1 | 25 (0) | 390 | 87.0% | 0 | 0 | 69 / 540 / 932 | 39.0% | 20 / 0 | 0 / 0 | 21 | 0 | 14 |
-| starlette | 1.10.0 | 25 (0) | 396 | 85.7% | 0 | 0 | 69 / 561 / 989 | 38.1% | 21 / 0 | 0 / 0 | 22 | 0 | 20 |
-| pydantic | v1.10.22 | 25 (0) | 233 | 93.8% | 0 | 0 | 153 / 641 / 3017 | 10.7% | 23 / 0 | 0 / 0 | 23 | 113 | 67 |
-| pydantic | v2.5.3 | 67 (1) | 537 | 91.7% | 0 | 0 | 138 / 832 / 3017 | 12.1% | 56 / 40 | 0 / 0 | 56 | 0 | 118 |
-| pydantic | v2.14.3 | 91 (0) | 644 | 91.4% | 0 | 0 | 160 / 910 / 2762 | 10.2% | 77 / 59 | 0 / 0 | 79 | 0 | 204 |
-| tanstack-query | v4.36.1 | 140 (27) | 475 | 95.2% | 0 | 0 | 140 / 585 / 3424 | 14.5% | 103 / 0 | 0 / 0 | 113 | 0 | 0 |
-| tanstack-query | v5.0.0 | 147 (25) | 550 | 100.0% | 0 | 0 | 152 / 637 / 3269 | 12.4% | 110 / 0 | 0 / 0 | 122 | 0 | 0 |
-| tanstack-query | v5.90.3 | 327 (67) | 1253 | 100.0% | 0 | 0 | 81 / 528 / 3571 | 38.1% | 211 / 0 | 0 / 0 | 170 | 0 | 0 |
-| zod | v3.23.8 | 1 (0) | 97 | 72.2% | 2 | 0 | 157 / 814 / 996 | 13.4% | 1 / 0 | 0 / 1 | 1 | 0 | 0 |
-| zod | v4.0.17 | 17 (0) | 243 | 100.0% | 1 | 5289 | 169 / 630 / 2306 | 14.0% | 17 / 0 | 27 / 1 | 17 | 0 | 0 |
-| zod | v4.6.7 | 24 (0) | 351 | 100.0% | 1 | 6157 | 183 / 684 / 8645 | 12.5% | 24 / 3 | 33 / 1 | 24 | 0 | 0 |
-| electron | v30.0.0 | 239 (0) | 1852 | 84.6% | 0 | 0 | 103 / 765 / 2493 | 24.2% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
-| electron | v38.0.0 | 264 (0) | 2099 | 92.3% | 0 | 0 | 110 / 824 / 3582 | 22.3% | 14 / 0 | 0 / 0 | 37 | 0 | 0 |
-| electron | v45.3.2 | 301 (0) | 2329 | 82.1% | 0 | 0 | 120 / 828 / 3582 | 21.8% | 14 / 0 | 0 / 0 | 40 | 0 | 0 |
-
-Sections that start no chunk under `h3-max-4000`:
-
-- electron v30.0.0:docs/tutorial/esm.md [ES Modules (ESM) in Electron > Main process > Caveats > You must use await generously before the app's ready event] (held)
-- electron v30.0.0:docs/tutorial/esm.md [ES Modules (ESM) in Electron > Preload scripts > Caveats > Sandboxed preload scripts can't use ESM imports] (held)
-- electron v30.0.0:docs/tutorial/launch-app-from-url-in-another-app.md [Deep Links > Examples > Main Process (main.js) > Windows and Linux code:] (held)
-- electron v30.0.0:docs/tutorial/security.md [Security > Checklist: Security recommendations > 14. Disable or limit creation of new windows > How?] (held)
-- electron v38.0.0:docs/api/navigation-history.md [Class: NavigationHistory > Instance Methods > navigationHistory.restore(options)] (held)
-- electron v38.0.0:docs/tutorial/security.md [Security > Checklist: Security recommendations > 19. Check which fuses you can change > Why?] (held)
-- electron v45.3.2:docs/api/base-window.md [BaseWindow > Class: BaseWindow > Instance Events > Event: 'persisted-state-restored'] (held)
-- electron v45.3.2:docs/api/base-window.md [BaseWindow > Class: BaseWindow > Static Methods > BaseWindow.clearPersistedState(name)] (held)
-- electron v45.3.2:docs/api/session.md [session > Class: Session > Instance Methods > ses.registerLocalAIHandler(handler) Experimental] (held)
-- electron v45.3.2:docs/tutorial/offscreen-rendering.md [Offscreen Rendering > Overview > Rendering Modes > GPU accelerated] (held)
-- electron v45.3.2:docs/tutorial/offscreen-rendering.md [Offscreen Rendering > Overview > Rendering Modes > Software output device] (held)
-- pydantic v1.10.22:docs/mypy_plugin.md [Plugin Capabilities > Respect Config.allow_mutation] (held)
-- pydantic v2.14.3:docs/concepts/alias.md [Alias Configuration > ConfigDict Settings > Validation] (held)
-- pydantic v2.14.3:docs/concepts/alias.md [Alias Configuration > Runtime Settings > Validation] (held)
-- pydantic v2.14.3:docs/concepts/experimental.md [Experimental Features > Partial Validation > Limitations of Partial Validation > TypeAdapter only] (held)
-- pydantic v2.5.3:docs/migration.md [Migration guide > Changes to Handling of Standard Types > Required, optional, and nullable fields] (held)
-- pydantic v2.5.3:docs/migration.md [Migration guide > Changes to validators > @validator and @root_validator are deprecated] (held)
-- starlette 0.27.0:docs/middleware.md [Pure ASGI Middleware > Gotchas > ASGI middleware should be stateless] (held)
-- starlette 0.27.0:docs/requests.md [Request > Client Address] (held)
-- starlette 0.52.1:docs/middleware.md [CORSMiddleware > Private Network Access (PNA)] (held)
-- starlette 0.52.1:docs/release-notes.md [0.39.0 (September 23, 2024) > Added] (held)
-- starlette 0.52.1:docs/requests.md [Request > Other state] (held)
-- starlette 1.10.0:docs/release-notes.md [1.0.0rc1 (February 23, 2026) > Fixed] (held)
-- starlette 1.10.0:docs/release-notes.md [1.2.0 (May 28, 2026) > Added] (held)
-- starlette 1.10.0:docs/release-notes.md [1.5.0 (August 8, 2026) > Fixed] (held)
-- starlette 1.10.0:docs/responses.md [Response > Delete Cookie] (held)
-- tanstack-query v4.36.1:docs/react/guides/migrating-to-react-query-4.md [Breaking Changes > The idle state has been removed > disabled queries] (held)
-- zod v3.23.8:README.md [Schema methods > .pipe > You can use .pipe() to fix common issues with z.coerce.] (held)
-- zod v3.23.8:README.md [Schema methods > .refine > Arguments] (held)
-- zod v3.23.8:README.md [Schema methods > .refine > Customize error path] (held)
-- zod v3.23.8:README.md [Schema methods > .superRefine > Abort early] (held)
-- zod v3.23.8:README.md [Schema methods > .transform > Chaining order] (held)
 
 ## `merge-400` per version
 
