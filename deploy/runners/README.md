@@ -1,11 +1,14 @@
 # Self-hosted runners (GB10)
 
-> **Not used by any workflow since #478.** CI and the docs moved to GitHub-hosted runners in
-> #468, the release, GHCR retention and the manual provider workflows in #478, after these
-> runners stopped taking jobs (docs/releasing.md, *CI/CD and runners*). This page is kept for
-> the day they come back; a workflow that should use them again names the labels below.
+> **What runs here (#478)** depends on the repository variable `RUNNER_MODE`
+> (docs/releasing.md, *CI/CD and runners*). In `hybrid` (the default): the release's eval, web
+> and Python builds and its arm64 image legs, GHCR retention, and the manual workflows
+> (`eval-providers.yml`, `agent-bench.yml`, `azure-search.yml`, `pinecone.yml`); CI and the docs
+> run on GitHub-hosted runners. In `self-hosted` (when the GitHub-hosted minutes ran out): every
+> job of every workflow, including CI and the release's amd64 image legs, which are cross-built
+> here with QEMU.
 
-CI and releases ran on our own hardware: two LXD **virtual machines** on the Dell Pro Max GB10
+Jobs run on our own hardware: two LXD **virtual machines** on the Dell Pro Max GB10
 (`dellpromaxgb10`, Ubuntu 24.04, ARM64). VMs, not containers or host services, because the host
 runs other production containers and a job with Docker access on the host could reach them.
 

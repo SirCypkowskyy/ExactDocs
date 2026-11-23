@@ -37,6 +37,17 @@ Watch it: `gh run watch $(gh run list --workflow release.yml --limit 1 --json da
 release workflow, the Dockerfile, the eval or a dependency changed: the eval and the arm64 size
 budgets and scans do not run on pull requests.
 
+## Runners
+
+`RUNNER_MODE` (repository variable) decides where jobs run (docs/releasing.md, *CI/CD and
+runners*). `hybrid` (default, or unset): the release's eval, web, Python and arm64 image jobs on the
+self-hosted ARM64 runner `[self-hosted, linux, ARM64, exactdocs]`, its amd64 image jobs and the
+publishing jobs on `ubuntu-24.04`; CI and docs on `ubuntu-24.04`. `self-hosted`: everything on
+the self-hosted runner (amd64 images cross-built, checked with `check_artifacts.py --no-python`;
+CI skips Pinecone Local). Never change the variable yourself: tell the maintainer when a job
+fails with *"recent account payments have failed or your spending limit needs to be
+increased"*, and that they flip it in *Settings → Secrets and variables → Actions → Variables*.
+
 ## If it fails
 
 - A tag runs the workflow file **of the tagged commit**, and *Re-run* reuses it: after a workflow

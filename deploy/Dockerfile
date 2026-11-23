@@ -180,7 +180,8 @@ RUN : "$DEBIAN_REFRESH" \
 
 # --- runtime. apt needs RUN, so in a cross build this stage runs under QEMU (binfmt, e.g.
 # docker/setup-qemu-action); only apt-get, dpkg, rm and find run there, never Python (which
-# crashes under QEMU). The release builds each architecture natively on its own runner (#478).
+# crashes under QEMU). The release builds each architecture natively on its own runner, except
+# in RUNNER_MODE self-hosted, where it cross-builds amd64 this way on the ARM64 runner (#478).
 FROM python:3.14-slim-trixie@sha256:f1b121a95d6295f7291a0fda8280f747efd657bd055e7c1f156936ed2dc5a112 AS runtime-tools
 # Debian package versions are not pinned (hadolint DL3008): security fixes arrive with each build.
 # git and openssh-client are for the importer, tini is PID 1 (reaps git children, forwards signals).
