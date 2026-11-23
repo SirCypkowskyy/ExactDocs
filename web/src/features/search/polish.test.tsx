@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { TestRouter } from "@/shared/lib/test-router";
@@ -152,7 +152,10 @@ describe("search in Polish", () => {
     expect(screen.getByRole("button", { name: "Usuń filtr tagów" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /^Zamiast tego szukaj w\sv2$/ })).toBeInTheDocument();
     expect(screen.getByRole("searchbox", { name: "Szukaj w v1" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Wyczyść wyszukiwanie" })).toBeInTheDocument();
+    // An icon-only control: its tooltip repeats its name.
+    const clear = screen.getByRole("button", { name: "Wyczyść wyszukiwanie" });
+    act(() => clear.focus());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Wyczyść wyszukiwanie");
     expect(screen.getByRole("button", { name: "Dowolny tag" })).toHaveAttribute(
       "aria-pressed",
       "true",

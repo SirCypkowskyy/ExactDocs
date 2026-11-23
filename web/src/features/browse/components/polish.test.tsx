@@ -132,6 +132,7 @@ describe("browse in Polish", () => {
     expect(screen.getByText(/^Zaimportowano/)).toBeInTheDocument();
     expect(screen.getByText("Przeczytaj artykuł")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Artykuły" })).toBeInTheDocument();
+    expect(await screen.findByText("2 artykuły")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: /Ścieżka/ })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: /Rozmiar/ })).toBeInTheDocument();
     // Sizes are written the Polish way: a decimal comma.
