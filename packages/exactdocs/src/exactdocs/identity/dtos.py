@@ -101,6 +101,10 @@ class AccountSummary(_Dto):
     """The login name, normalised (NFKC, trimmed, case-folded): `Admin` signs in as `admin`."""
     role: str
     """What the account may do: `admin` (an operator, who also manages accounts) or `user`."""
+    has_password: bool = False
+    """Whether the account has a local password: it signs in with it and may change it
+    (`PUT /api/v1/account/password`). `false` for an account that only signs in through an
+    identity provider (or Cloudflare Access), which has no password to change."""
 
     @classmethod
     def from_model(cls, account: Account) -> Self:
@@ -112,7 +116,12 @@ class AccountSummary(_Dto):
         Returns:
             Its summary.
         """
-        return cls(id=account.id, username=account.username.value, role=account.role.value)
+        return cls(
+            id=account.id,
+            username=account.username.value,
+            role=account.role.value,
+            has_password=not account.is_external,
+        )
 
 
 class ApiTokenIdentity(AccountSummary, _LibrarySelection):
@@ -221,6 +230,20 @@ class NewPassword(_Dto):
     """The new password; its schema description names the length limits."""
 
 
+class ChangePasswordCommand(_Dto):
+    """A signed-in person's own password change: the current password, then the new one."""
+
+    current_password: SecretStr = Field(max_length=MAX_PASSWORD_LENGTH)
+    """The account's password now; a wrong one is refused with `wrong_password` (403) and
+    counts against the sign-in throttle like a failed sign-in."""
+    new_password: SecretStr = Field(
+        min_length=MIN_PASSWORD_LENGTH,
+        max_length=MAX_PASSWORD_LENGTH,
+        description=f"The new password, {NEW_PASSWORD_DESCRIPTION}",
+    )
+    """The new password; its schema description names the length limits (those of the setup)."""
+
+
 class SetUserDisabledCommand(_OneAccount):
     """Disable an account (it is locked out at once) or enable it again."""
 
@@ -276,6 +299,7 @@ class UserSummary(AccountSummary):
             id=account.id,
             username=account.username.value,
             role=account.role.value,
+            has_password=not account.is_external,
             created_at=account.created_at,
             disabled=account.is_disabled,
             provider=provider,
