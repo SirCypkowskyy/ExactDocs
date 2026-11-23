@@ -30,6 +30,7 @@ from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Se
 from contextlib import contextmanager
 from types import ModuleType
 from typing import Any, cast
+from urllib.error import HTTPError
 
 import aiosqlite
 from sqlalchemy import pool
@@ -126,6 +127,7 @@ def _as_sqlite_errors() -> Generator[None]:
         if not isinstance(kind, type) or not issubclass(kind, sqlite3.Error):
             kind = sqlite3.DatabaseError
         translated = kind(str(error))
+        _close_responses(error)
         # The driver raises its DB-API error `from None`; the server's error stays its context.
         server = error.__context__
         for code in (getattr(server, "extended_code", None), getattr(server, "code", None)):
@@ -134,6 +136,22 @@ def _as_sqlite_errors() -> Generator[None]:
                 translated.sqlite_errorname = code
                 break
         raise translated from error
+
+
+def _close_responses(error: BaseException) -> None:
+    """Close the HTTP error responses behind a driver error, so none is left to the collector.
+
+    The driver raises its error inside the handler of ``urllib``'s ``HTTPError``, which holds the
+    response's body open until it is closed.
+
+    Args:
+        error: The driver's error.
+    """
+    seen: BaseException | None = error
+    while seen is not None:
+        if isinstance(seen, HTTPError):
+            seen.close()
+        seen = seen.__context__
 
 
 def _value(value: object) -> object:

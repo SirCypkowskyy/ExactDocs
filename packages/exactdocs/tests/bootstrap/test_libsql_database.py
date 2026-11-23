@@ -188,7 +188,8 @@ async def test_a_constraint_error_on_the_server_is_sqlites(monkeypatch: pytest.M
             async with engine.begin() as connection:
                 await connection.execute(text("INSERT INTO test_unique VALUES (1)"))
         assert isinstance(raised.value.orig, sqlite3.IntegrityError)
-        assert raised.value.orig.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY
+        # sqld sends the primary code only (SQLITE_CONSTRAINT), no extended one.
+        assert raised.value.orig.sqlite_errorcode & 0xFF == sqlite3.SQLITE_CONSTRAINT
     finally:
         await engine.dispose()
 

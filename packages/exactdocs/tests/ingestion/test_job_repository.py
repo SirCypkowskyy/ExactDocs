@@ -12,7 +12,7 @@ from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from databases import ADMIN_URL, SQL_BACKENDS, PostgresDatabase
-from exactdocs.bootstrap.database import migrate, open_database
+from exactdocs.bootstrap.database import is_libsql, migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
 from exactdocs.ingestion.adapters.driven.sqlite import SqliteJobRepository, jobs
@@ -342,7 +342,9 @@ async def test_a_library_s_unfinished_jobs_are_one_select_that_skips_its_finishe
         )
     await repository.add(queued("job-1000", version="v1000").started(T0))
     await repository.add(queued("job-1001", version="v1001"))
-    if backend == "sqlite":  # with statistics the planner knows the library's rows are many
+    # With statistics the planner knows the library's rows are many. A libSQL server refuses
+    # ANALYZE (#474): its planner goes by the indexes alone, and still takes the partial one.
+    if backend == "sqlite" and not is_libsql(engine):
         async with engine.begin() as connection:
             await connection.exec_driver_sql("ANALYZE")
     sent: list[tuple[str, list[object]]] = []
