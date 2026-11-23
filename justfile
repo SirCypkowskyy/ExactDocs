@@ -81,6 +81,10 @@ golden-validate *args:
 golden-import *args:
     uv run python packages/exactdocs/evals/run_golden.py import {{ args }}
 
+# Golden set review: `sample` draws the seeded review sample and its sheet, `checks` measures the whole set's wording, `summary` (docs/evals.md)
+golden-review *args:
+    uv run python packages/exactdocs/evals/run_golden_review.py {{ args }}
+
 # Ingestion benchmark: chunking configurations measured on the golden corpus, with BM25 recall (docs/evals.md)
 ingestion-bench *args:
     uv run python packages/exactdocs/evals/run_ingestion_bench.py {{ args }}

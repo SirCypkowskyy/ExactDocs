@@ -138,6 +138,7 @@ ignore = [
 # The eval runner script sits beside its package, outside any package, like e2e/run.py.
 "packages/exactdocs/evals/run_retrieval_eval.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_golden.py" = ["implicit-namespace-package"]
+"packages/exactdocs/evals/run_golden_review.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_ingestion_bench.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_retrieval_bench.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_agent_bench.py" = ["implicit-namespace-package"]
