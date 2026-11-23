@@ -28,7 +28,7 @@ OPTIONAL = {"errors", "constants"}
 LAYERS = ["constants", "errors", "models", "dtos", "ports", "use_cases", "module"]
 # Layers are optional per domain (e.g. `errors`) and may be a module or a package.
 _ALLOW_EMPTY = CheckOptions(allow_empty_tests=True)
-DATABASE_LIBRARIES = ["sqlalchemy*", "alembic*", "aiosqlite*"]
+DATABASE_LIBRARIES = ["sqlalchemy*", "alembic*", "aiosqlite*", "turso_serverless*"]
 FRAMEWORKS = [
     "fastapi*",
     "fastmcp*",
@@ -37,6 +37,8 @@ FRAMEWORKS = [
     "httpx*",
     "dbos*",
     "argon2*",
+    # MCP Apps UI (#115): built by the MCP adapters only.
+    "prefab_ui*",
     *DATABASE_LIBRARIES,
     # The AI stack (the `[ai]` and `[local]` extras): adapters and bootstrap only, imported once
     # a model is configured (docs/decisions/ai-retrieval.md, "Where the code lives").

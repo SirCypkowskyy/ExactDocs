@@ -12,7 +12,7 @@ from http import HTTPStatus
 from typing import Any
 
 import httpx
-from behave import given, then
+from behave import given, then, when
 from behave.runner import Context
 
 from exactdocs.bootstrap.constants import DATABASE_MEMBER
@@ -164,6 +164,12 @@ def step_can_read(context: Context, username: str) -> None:
     assert not found.get("isError"), found
     shown = _mcp(context, username, "read_article", {"library": library, "path": article})
     assert not shown.get("isError"), shown
+    for tool, arguments in [  # the MCP App tools: the same reads, as UI
+        ("view_search", {"library": library, "query": "retry_policy"}),
+        ("view_article", {"library": library, "path": article}),
+    ]:
+        viewed = _mcp(context, username, tool, arguments)
+        assert not viewed.get("isError"), viewed
 
 
 @then('"{username}" is refused when searching and reading it in the UI and over MCP')
@@ -180,6 +186,8 @@ def step_refused_reading(context: Context, username: str) -> None:
     for tool, arguments in [
         ("search_docs", {"library": "/fixture/docs-repo", "query": "retry_policy"}),
         ("list_articles", {"library": "/fixture/docs-repo"}),
+        ("view_search", {"library": "/fixture/docs-repo", "query": "retry_policy"}),
+        ("view_article", {"library": "/fixture/docs-repo", "path": "docs/guide/install.md"}),
     ]:
         refused = _mcp(context, username, tool, arguments)
         assert refused["isError"], refused
@@ -250,6 +258,13 @@ def step_cannot_discover(context: Context, username: str, library: str) -> None:
         context, username, "resolve-library-id", {"libraryName": "docs-repo", "query": "retry"}
     )
     assert library not in str(resolved)
+    for tool, arguments in [  # the MCP App tools are scoped like the rest
+        ("view_search", {"library": library, "query": "retry_policy"}),
+        ("view_article", {"library": library, "path": "docs/guide/install.md"}),
+    ]:
+        refused = _mcp(context, username, tool, arguments)
+        assert refused["isError"], refused
+        assert "not_found" in json.dumps(refused), refused
 
 
 @then('"{username}" sees the same query error for a hidden and a missing library')
@@ -262,3 +277,112 @@ def step_hidden_query(context: Context, username: str) -> None:
     ]
     assert all(answer.get("isError") and "not_found" in str(answer) for answer in answers), answers
     assert str(answers[0]).replace(hidden, missing) == str(answers[1]), answers
+
+
+@given('"{username}" is a contributor of "{library}"')
+def step_contributor_of(context: Context, username: str, library: str) -> None:
+    get_person(context, username)
+    _grant(context, library, "user", username, "contributor")
+
+
+@when(
+    'the operator lists the viewers and contributors of "{library}" by name from Z to A, '
+    "{limit:d} at a time"
+)
+def step_list_grants(context: Context, library: str, limit: int) -> None:
+    context.grant_pages = []
+    params: dict[str, Any] = {"role": ["viewer", "contributor"], "sort": "-subject", "limit": limit}
+    while True:
+        response = send_as(
+            context, "GET", f"{_library_path(library)}/grants", session=DEMO_COOKIE, params=params
+        )
+        assert response.status_code == HTTPStatus.OK, response.text
+        context.grant_pages.append(response.json())
+        if response.json()["next_cursor"] is None:
+            break
+        params["cursor"] = response.json()["next_cursor"]
+
+
+@then('the grant pages show "{first}" then "{second}", each counting {total:d} grants')
+def step_grant_pages(context: Context, first: str, second: str, total: int) -> None:
+    shown = [[g["subject"] for g in page["grants"]] for page in context.grant_pages]
+    assert shown == [[first], [second]], shown
+    assert {page["total"] for page in context.grant_pages} == {total}
+
+
+@then('"{username}" asking for the grants is refused before any page')
+def step_grants_refused(context: Context, username: str) -> None:
+    session = get_person(context, username)["session"]
+    path = f"{_library_path('/fixture/docs-repo')}/grants"
+    response = send_as(context, "GET", path, session=session, params={"limit": 1})
+    assert response.status_code == HTTPStatus.FORBIDDEN, response.text
+    assert "total" not in response.json(), response.text
+
+
+@given('"{username}" is the creator of "{library}"')
+def step_creator(context: Context, username: str, library: str) -> None:
+    person = get_person(context, username)
+    # As when that account adds the library: the fixture is imported without a creator.
+    with closing(sqlite3.connect(context.settings.data_dir / DATABASE_MEMBER)) as database:
+        database.execute(
+            "INSERT INTO identity_library_grants (library, kind, subject, role) "
+            "VALUES (?, 'user', ?, 'creator')",
+            (library.casefold(), person["id"]),
+        )
+        database.commit()
+    context.creator = username
+
+
+@given('"{username}" is an admin of "{library}"')
+def step_admin_of(context: Context, username: str, library: str) -> None:
+    get_person(context, username)
+    _grant(context, library, "user", username, "admin")
+
+
+def _transfer(context: Context, username: str, library: str, to: str) -> httpx.Response:
+    get_person(context, to)
+    return send_as(
+        context,
+        "POST",
+        f"{_library_path(library)}/transfer",
+        session=get_person(context, username)["session"],
+        json={"username": to},
+    )
+
+
+def _take_admin_role(context: Context, username: str, subject: str) -> httpx.Response:
+    path = f"{_library_path('/fixture/docs-repo')}/grants/user/{subject}"
+    return send_as(context, "DELETE", path, session=get_person(context, username)["session"])
+
+
+@when('the creator transfers "{library}" to "{username}"')
+def step_transfer(context: Context, library: str, username: str) -> None:
+    response = _transfer(context, context.creator, library, username)
+    assert response.status_code == HTTPStatus.OK, response.text
+    context.library = library
+
+
+@then('"{username}" is the creator and the previous owner becomes admin')
+def step_transferred(context: Context, username: str) -> None:
+    session = get_person(context, username)["session"]
+    listed = send_as(context, "GET", f"{_library_path(context.library)}/grants", session=session)
+    assert listed.status_code == HTTPStatus.OK, listed.text
+    page = listed.json()
+    roles = {g["subject"]: g["role"] for g in page["grants"] if g["kind"] == "user"}
+    assert roles == {username: "creator", context.creator: "admin"}, page
+    assert (page["creator"], page["caller_role"]) == (username, "creator"), page
+
+
+@then('"{username}" may neither transfer "{library}" nor take "{subject}"\'s admin role away')
+def step_admin_refused(context: Context, username: str, library: str, subject: str) -> None:
+    moved = _transfer(context, username, library, "carol")
+    assert (moved.status_code, moved.json()["error"]) == (403, "forbidden"), moved.text
+    taken = _take_admin_role(context, username, subject)
+    assert (taken.status_code, taken.json()["error"]) == (403, "forbidden"), taken.text
+
+
+@then('"{username}" may take "{subject}"\'s admin role away')
+def step_creator_takes_admin(context: Context, username: str, subject: str) -> None:
+    taken = _take_admin_role(context, username, subject)
+    assert taken.status_code == HTTPStatus.OK, taken.text
+    assert subject not in {g["subject"] for g in taken.json()["grants"]}, taken.text

@@ -1,7 +1,9 @@
 import { Link } from "@tanstack/react-router";
+import { History, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { cn } from "@/shared/lib/utils";
+import { buttonVariants } from "@/shared/ui/button";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { LibraryBullet } from "@/shared/ui/route";
 import type { Activity, JobViews, SettingsLibrary } from "../model/settings";
@@ -22,7 +24,7 @@ interface Props {
 }
 
 const crumb =
-  "-ml-1 inline-flex min-h-11 items-center rounded px-1 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-7";
+  "-ml-1 inline-flex min-h-11 items-center rounded px-1 outline-none transition-colors duration-(--dur-fast) hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-7";
 
 /** [heading id, label, the id its form reports unsaved edits under]. */
 const SECTIONS = [
@@ -31,6 +33,7 @@ const SECTIONS = [
   ["versions-heading", "Versions", "versions"],
   ["ai-heading", "Retrieval and AI", "ai"],
   ["sync-heading", "Re-sync", "sync"],
+  ["sharing-heading", "Sharing", "sharing"],
   ["danger-heading", "Remove library", "danger"],
 ] as const;
 
@@ -177,6 +180,30 @@ export function LibrarySettingsPage({ owner, repo, library, jobs }: Props) {
               activity={activity}
               onStart={start("sync")}
             />
+            <SettingsSection
+              id="sharing"
+              title="Sharing"
+              description="Who can find, read, change and manage this library. Its admins share it; its creator hands it over. The access log records every change."
+            >
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  to="/libraries/$owner/$repo/sharing"
+                  params={{ owner, repo }}
+                  className={buttonVariants({ variant: "outline" })}
+                >
+                  <Users aria-hidden="true" />
+                  Manage sharing
+                </Link>
+                <Link
+                  to="/libraries/$owner/$repo/access-log"
+                  params={{ owner, repo }}
+                  className={buttonVariants({ variant: "outline" })}
+                >
+                  <History aria-hidden="true" />
+                  Access log
+                </Link>
+              </div>
+            </SettingsSection>
             <DangerSection owner={owner} repo={repo} library={library} onStart={start("danger")} />
           </div>
         </div>

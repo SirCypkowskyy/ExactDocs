@@ -156,3 +156,22 @@ def step_mcp_anonymous(context: Context) -> None:
 @then("an MCP client with a made-up token is refused")
 def step_mcp_made_up(context: Context) -> None:
     assert _mcp_status(context, "exd_made-up") == HTTPStatus.UNAUTHORIZED
+
+
+@given('the admin created tokens named "{first}", "{second}" and "{third}"')
+def step_created_tokens(context: Context, first: str, second: str, third: str) -> None:
+    for name in (first, second, third):
+        step_created(context, name)
+
+
+@when('the admin lists the tokens matching "{needle}", by name from Z to A')
+def step_list_tokens(context: Context, needle: str) -> None:
+    context.response = context.client.get("/api/v1/tokens", params={"q": needle, "sort": "-name"})
+    assert context.response.status_code == HTTPStatus.OK, context.response.text
+
+
+@then('the token list shows "{names}" and counts {total:d} tokens')
+def step_token_list(context: Context, names: str, total: int) -> None:
+    body = context.response.json()
+    assert ", ".join(t["name"] for t in body["tokens"]) == names, body
+    assert (body["total"], body["next_cursor"]) == (total, None), body

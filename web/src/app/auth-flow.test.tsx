@@ -50,8 +50,8 @@ describe("the session guard", () => {
   it("keeps the Libraries tab lit on the add-library screen, and only there", async () => {
     const api = (url: string) =>
       json(
-        url.endsWith("/tokens")
-          ? { tokens: [] }
+        url.includes("/tokens?")
+          ? { tokens: [], next_cursor: null, total: 0 }
           : url.endsWith("/libraries")
             ? libraries
             : signedIn,
@@ -106,7 +106,7 @@ describe("the session guard", () => {
 
   it("returns to sign-in when the session ends while a page is open", async () => {
     const { client, router } = mount("/account", (url) =>
-      json(url.endsWith("/tokens") ? { tokens: [] } : signedIn),
+      json(url.includes("/tokens?") ? { tokens: [], next_cursor: null, total: 0 } : signedIn),
     );
     expect(await screen.findByRole("heading", { name: "Account" })).toBeInTheDocument();
     await act(async () => client.setQueryData(["session"], signedOut));
@@ -118,7 +118,7 @@ describe("the session guard", () => {
     const { router } = mount("/account", (_url, init) =>
       init?.method === "DELETE"
         ? new Response(null, { status: 204 })
-        : json(_url.endsWith("/tokens") ? { tokens: [] } : signedIn),
+        : json(_url.includes("/tokens?") ? { tokens: [], next_cursor: null, total: 0 } : signedIn),
     );
     await screen.findByRole("heading", { name: "Account" });
     const { default: userEvent } = await import("@testing-library/user-event");
@@ -145,7 +145,7 @@ describe("route errors", () => {
 
   it("sends a 401 from a page's own data to sign-in", async () => {
     const { router } = mount("/", (url) =>
-      url.endsWith("/libraries")
+      url.includes("/libraries?")
         ? json({ error: "not_authenticated", detail: "no session", fields: [] }, 401)
         : json(signedIn),
     );

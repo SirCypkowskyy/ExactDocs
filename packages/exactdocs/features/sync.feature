@@ -26,8 +26,11 @@ Feature: A branch version re-syncs on demand and re-processes only what changed
     Then only "docs/guide/install.md" is parsed and every other article is taken from the catalog
     And every other article reads as it did before the sync
 
+  # Cut at every heading, as before #381. With h1-h3 the held "Guide > Install" chunk also holds
+  # its subsections, the commit's new "## Upgrading" becomes a chunk of its own, and the held ID
+  # stays valid: nothing would be stale.
   Scenario: A changed section's old chunk ID is stale
-    Given "/fixture/docs-repo/next" is imported
+    Given "/fixture/docs-repo/next" is imported with a chunk at every heading
     And an agent holds the chunk ID of a section of "docs/guide/install.md"
     And a commit changed "docs/guide/install.md" on branch "next"
     And the user syncs the library

@@ -65,8 +65,8 @@ def _username_of(
 def _include_session_routers(v1: APIRouter, container: Container) -> identity_http.CurrentCaller:
     """Add the routes that take a signed-in session and never an API token.
 
-    ``/tokens`` (a leaked token must not mint its own successor) and ``/users`` (nor create
-    accounts; operators only).
+    ``/tokens`` (a leaked token must not mint its own successor), ``/users`` (nor create
+    accounts; operators only) and ``/access-log`` (operators only).
 
     Args:
         v1: The ``/api/v1`` router.
@@ -94,6 +94,11 @@ def _include_session_routers(v1: APIRouter, container: Container) -> identity_ht
             set_user_disabled=container.identity.set_user_disabled,
             reset_password=container.identity.reset_password,
             session_caller=session_caller,
+        )
+    )
+    v1.include_router(
+        identity_http.build_access_log_router(
+            list_access_log=container.identity.list_access_log, session_caller=session_caller
         )
     )
     return session_caller
@@ -148,6 +153,8 @@ def _protected_router(
             list_grants=container.identity.list_library_grants,
             grant_role=container.identity.grant_library_role,
             revoke_role=container.identity.revoke_library_role,
+            list_access_log=container.identity.list_library_access_log,
+            transfer=container.identity.transfer_library,
             caller=current_caller,
             require_library=require_library,
         )

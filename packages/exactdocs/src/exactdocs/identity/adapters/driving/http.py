@@ -13,6 +13,7 @@ from exactdocs.identity.constants import (
     _THROTTLED,
     ACCESS_ASSERTION_HEADER,
     ACCESS_COOKIE,
+    ACCESS_LOG_ACTION,
     COOKIE_ATTRS,
     CREATE_TOKEN_DESCRIPTION,
     LOGIN_FOR_TOKEN_DESCRIPTION,
@@ -23,6 +24,8 @@ from exactdocs.identity.constants import (
     USERS_DESCRIPTION,
 )
 from exactdocs.identity.dtos import (
+    AccessLogPage,
+    AccessLogQuery,
     AccountSummary,
     AuthenticateQuery,
     CreateFirstAdminCommand,
@@ -30,8 +33,14 @@ from exactdocs.identity.dtos import (
     CreateUserCommand,
     FinishExternalSignInCommand,
     GrantLibraryRoleCommand,
+    GrantListQuery,
+    LibraryAccessLogQuery,
+    LibraryGrantList,
     LibraryGrantRequest,
     LibraryGrants,
+    LibraryTransferRequest,
+    ListAccessLogQuery,
+    ListLibraryAccessLogQuery,
     ListLibraryGrantsQuery,
     LoginForTokenCommand,
     NewPassword,
@@ -43,7 +52,10 @@ from exactdocs.identity.dtos import (
     StartExternalSignInCommand,
     TokenGrant,
     TokenList,
+    TokenListQuery,
+    TransferLibraryCommand,
     UserList,
+    UserListQuery,
     UserSummary,
 )
 from exactdocs.identity.errors import (
@@ -63,6 +75,8 @@ from exactdocs.identity.ports.driving import (
     IdentifyAccessCaller,
     IdentifyCaller,
     IdentifyToken,
+    ListAccessLog,
+    ListLibraryAccessLog,
     ListLibraryGrants,
     ListTokens,
     ListUsers,
@@ -74,6 +88,7 @@ from exactdocs.identity.ports.driving import (
     SignIn,
     SignOut,
     StartExternalSignIn,
+    TransferLibrary,
 )
 from exactdocs_kernel import DomainError
 
@@ -266,16 +281,19 @@ def build_tokens_router(
         return await create_token(account, command)
 
     @router.get("/tokens")
-    async def list_all(account: caller) -> TokenList:
+    async def list_all(account: caller, query: Annotated[TokenListQuery, Query()]) -> TokenList:
         """List the signed-in account's API tokens, newest first, without their secrets.
+
+        A page at a time; filter with `q`, order with `sort`; `total` counts every match.
 
         Args:
             account: The signed-in account.
+            query: The filter, the sort, the page size and the cursor of the previous page.
 
         Returns:
-            The tokens.
+            The page of tokens, its next cursor and the total.
         """
-        return await list_tokens(account)
+        return await list_tokens(account, query)
 
     @router.delete("/tokens/{token_id}", status_code=204)
     async def revoke(token_id: str, account: caller) -> None:
@@ -344,16 +362,20 @@ def build_users_router(
 
     @router.get(
         "/users",
-        description=f"List every local account, disabled ones included, oldest first. "
-        f"{USERS_DESCRIPTION}",
+        description=f"List the local accounts, disabled ones included, oldest first unless "
+        f"`sort` says otherwise, a page at a time. Filter with `q`, `role` and `disabled`; "
+        f"`total` counts every match. {USERS_DESCRIPTION}",
     )
-    async def get_users() -> UserList:
-        """List every local account, disabled ones included, oldest first.
+    async def get_users(query: Annotated[UserListQuery, Query()]) -> UserList:
+        """List a page of the local accounts, disabled ones included.
+
+        Args:
+            query: The filters, the sort, the page size and the cursor of the previous page.
 
         Returns:
-            The accounts.
+            The page of accounts, its next cursor and the total.
         """
-        return await list_users()
+        return await list_users(query)
 
     @router.post("/users", status_code=201)
     async def add_user(command: CreateUserCommand) -> UserSummary:
@@ -414,6 +436,49 @@ def build_users_router(
             The account, and what became of its sign-in throttle count.
         """
         return await reset_password(ResetPasswordCommand(id=user_id, password=body.password))
+
+    return router
+
+
+def build_access_log_router(
+    *, list_access_log: ListAccessLog, session_caller: CurrentCaller
+) -> APIRouter:
+    """Expose ``/access-log``: the operator's log of every library's access changes.
+
+    It needs a signed-in session of an ``admin`` (an API token is refused with 401, as for
+    ``/users``); anyone else gets 403. Removed libraries' events stay in it.
+
+    Args:
+        list_access_log: The driving port that reads the log.
+        session_caller: The dependency that requires a signed-in session.
+
+    Returns:
+        The router.
+    """
+    operator = build_operator(caller=session_caller, action=ACCESS_LOG_ACTION)
+    router = APIRouter(tags=["identity"], dependencies=[Depends(operator)])
+    account = Annotated[AccountSummary, Depends(session_caller)]
+
+    @router.get("/access-log", name="list_access_log")
+    async def get_access_log(
+        who: account, query: Annotated[AccessLogQuery, Query()]
+    ) -> AccessLogPage:
+        """List the access changes of every library, newest first. Operators only.
+
+        Creations, grants (a new role, or another one), revocations, ownership transfers and
+        removals, each with who made it and when; a removed library's events stay. Filter with
+        `library` and `change`; `total` counts every match.
+
+        Args:
+            who: The caller.
+            query: The filters, the page size and the cursor of the previous page.
+
+        Returns:
+            The page of events, its next cursor and the total.
+        """
+        return await list_access_log(
+            ListAccessLogQuery(caller_id=who.id, **query.model_dump(exclude_unset=True))
+        )
 
     return router
 
@@ -741,19 +806,25 @@ def build_grants_router(
     list_grants: ListLibraryGrants,
     grant_role: GrantLibraryRole,
     revoke_role: RevokeLibraryRole,
+    list_access_log: ListLibraryAccessLog,
+    transfer: TransferLibrary,
     caller: CurrentCaller,
     require_library: Callable[[str], Awaitable[None]],
 ) -> APIRouter:
-    """Expose ``/libraries/{owner}/{repo}/grants``: who holds which role on a library.
+    """Expose ``/libraries/{owner}/{repo}/grants``, ``.../transfer`` and ``.../access-log``.
+
+    Who holds which role, handing the library over, and who changed its access and when.
 
     Every route needs the ``admin`` role on the library (an instance operator holds it on all of
-    them). Giving or taking the ``admin`` role needs the ``creator`` role. A session or an API
-    token may call them: a token acts as its account.
+    them). Giving or taking the ``admin`` role, and handing the library over, needs the
+    ``creator`` role. A session or an API token may call them: a token acts as its account.
 
     Args:
         list_grants: The driving port that lists the grants.
         grant_role: The driving port that gives a role.
         revoke_role: The driving port that takes a role away.
+        list_access_log: The driving port that reads the library's access log.
+        transfer: The driving port that hands a library over to a new creator.
         caller: The dependency that names the calling account.
         require_library: Verifies live catalog presence and credential read access.
 
@@ -764,20 +835,30 @@ def build_grants_router(
     account = Annotated[AccountSummary, Depends(caller)]
 
     @router.get("/libraries/{owner}/{repo}/grants", name="list_library_grants")
-    async def get_grants(owner: str, repo: str, who: account) -> LibraryGrants:
+    async def get_grants(
+        owner: str, repo: str, who: account, query: Annotated[GrantListQuery, Query()]
+    ) -> LibraryGrantList:
         """List who holds a role on the library: users first, then groups. Library admins only.
+
+        A page at a time; filter with `q`, `kind` and `role`, order with `sort`; `total` counts
+        every match.
 
         Args:
             owner: The library's owner segment.
             repo: The library's repository segment.
             who: The caller.
+            query: The filters, the sort, the page size and the cursor of the previous page.
 
         Returns:
-            The grants.
+            The page of grants, its next cursor and the total.
         """
         await require_library(f"/{owner}/{repo}")
         return await list_grants(
-            ListLibraryGrantsQuery(caller_id=who.id, library=f"/{owner}/{repo}")
+            ListLibraryGrantsQuery(
+                caller_id=who.id,
+                library=f"/{owner}/{repo}",
+                **query.model_dump(exclude_unset=True),
+            )
         )
 
     @router.put("/libraries/{owner}/{repo}/grants", name="grant_library_role")
@@ -828,6 +909,60 @@ def build_grants_router(
         return await revoke_role(
             RevokeLibraryRoleCommand(
                 caller_id=who.id, library=f"/{owner}/{repo}", kind=kind, subject=subject
+            )
+        )
+
+    @router.post("/libraries/{owner}/{repo}/transfer", name="transfer_library")
+    async def post_transfer(
+        owner: str, repo: str, request: LibraryTransferRequest, who: account
+    ) -> LibraryGrants:
+        """Hand the library over to another user: they become its creator.
+
+        Only the library's `creator` (or an operator) may. The creator before stays an `admin`
+        of the library. A user who is already the creator is a 422 `invalid_grant`.
+
+        Args:
+            owner: The library's owner segment.
+            repo: The library's repository segment.
+            request: The new creator.
+            who: The caller.
+
+        Returns:
+            The library's grants now.
+        """
+        await require_library(f"/{owner}/{repo}")
+        return await transfer(
+            TransferLibraryCommand(
+                caller_id=who.id, library=f"/{owner}/{repo}", **request.model_dump()
+            )
+        )
+
+    @router.get("/libraries/{owner}/{repo}/access-log", name="list_library_access_log")
+    async def get_access_log(
+        owner: str, repo: str, who: account, query: Annotated[LibraryAccessLogQuery, Query()]
+    ) -> AccessLogPage:
+        """List who changed the library's access, how and when, newest first. Library admins only.
+
+        Its creation, grants (a new role, or another one), revocations and ownership transfers,
+        each with who made it and when. Operators see every event under the library's ID;
+        anyone else only those since it was last removed. Filter with `change`; `total` counts
+        every match.
+
+        Args:
+            owner: The library's owner segment.
+            repo: The library's repository segment.
+            who: The caller.
+            query: The filter, the page size and the cursor of the previous page.
+
+        Returns:
+            The page of events, its next cursor and the total.
+        """
+        await require_library(f"/{owner}/{repo}")
+        return await list_access_log(
+            ListLibraryAccessLogQuery(
+                caller_id=who.id,
+                library=f"/{owner}/{repo}",
+                **query.model_dump(exclude_unset=True),
             )
         )
 

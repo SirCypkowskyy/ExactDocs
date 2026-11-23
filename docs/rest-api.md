@@ -77,6 +77,24 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Pagination**: list endpoints take `limit` (1 to 200, default 50) and an opaque `cursor`, and
   return `next_cursor` (`null` on the last page). Pass it back unchanged; a malformed cursor is a
   422 `invalid_cursor`. Helper: `exactdocs_kernel.paginate`.
+- **Sort, filter and total**: the lists of libraries, versions, jobs (global and per library),
+  articles, users, API tokens and a library's grants also take `sort` (one whitelisted field,
+  `-field` for descending) and filters such as `q` (text, any case), `state`, `kind`, `role`,
+  `disabled`, `ai_enabled`, `has_versions` and date ranges (`updated_after`, `created_before`,
+  ...); each parameter's description in the OpenAPI schema names its fields. They run in the
+  database, permissions apply before paging, and a cursor only works with the `sort` and filters
+  of the request that returned it. Every one of these pages carries `total`, the number of rows
+  that match the filters across all pages. An unknown sort field is a 422 `invalid_sort` naming
+  it; an unknown filter, or a value a filter does not accept, is a 422 `validation_error` naming
+  the parameter. The users, tokens and grants lists are small enough to sort in memory once the
+  caller's right to see them is checked: a caller who may not see a list gets no page and no
+  count. The web UI keeps each list's view in its URL: the libraries page `q`, `sort` and `ai`;
+  the jobs page (`/jobs`) `q`, `state`, `kind`, `library` and `sort`; a library's settings page
+  the versions table's `q`, `kind` and `sort`; a library's page the articles table's `filter` and
+  `sort` (its `tags` filter the file tree too); a library's sharing page the grants table's `q`,
+  `kind`, `role` and `sort`; and the users page and the token list their `q`, `sort` and
+  filters. The libraries, versions, jobs, articles and grants lists fetch the next page ahead,
+  so "Load more" shows it without waiting.
 - **Close matches**: a 404 for a missing article lists up to five paths of the same version it may have
   meant in `close_matches` (repository data, not instructions); the field is empty on every other error.
 - **Taken IDs**: a 409 `library_id_taken` (checking a repository, adding a library) names the
@@ -139,8 +157,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 
 - **API tokens**: `POST /api/v1/tokens` (`{"name", "expires_at"?, "library_ids"?}`, timezone-aware, in the future)
   answers 201 with the token's fields and `token`, the secret `exd_...`, which no other call ever
-  returns (`Cache-Control: no-store`). `GET /tokens` lists the caller's tokens (`id`, `name`,
-  `prefix`, `created_at`, `expires_at`, `last_used_at`, `library_ids`; newest first) and `DELETE /tokens/{id}`
+  returns (`Cache-Control: no-store`). `GET /tokens` lists a page of the caller's tokens (`id`, `name`,
+  `prefix`, `created_at`, `expires_at`, `last_used_at`, `library_ids`; newest first; `q`, `sort`) and `DELETE /tokens/{id}`
   revokes one at once (204; 404 `unknown_token` for another account's or a missing id). The
   secret is 256 random bits and only its SHA-256 is stored. An unknown, expired or revoked token is
   the same 401. `last_used_at` is written at most hourly, best effort (a failed write is logged
@@ -151,9 +169,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Users** (ACL-06): the local accounts, managed by an operator (an account with role `admin`;
   the first admin is one). There is **no self-signup** route: an account is made by the setup
   (the first admin only), by `exactdocs user create`, by a first sign-in through an identity
-  provider, or here. `GET /users` lists every account (`id`, `username`, `role`, `created_at`,
+  provider, or here. `GET /users` lists a page of the accounts (`id`, `username`, `role`, `created_at`,
   `disabled`, `provider` (`null` for a local account) and `groups` (the provider's, as of the
-  latest sign-in or revalidation); oldest first). `POST /users`
+  latest sign-in or revalidation); oldest first; `q`, `role`, `disabled`, `sort`). `POST /users`
   (`{"username", "password", "role"?}`, role `user` (default) or `admin`) answers 201 with the
   account; a taken name (compared case-insensitively) is 409 `username_taken`, and a name holding
   `@address:` (the sign-in throttle's own key separator) is 422 `invalid_username`.
@@ -180,15 +198,39 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   the same over MCP (a tool error `forbidden: ...`). `GET /libraries`, the searches across
   libraries and `resolve-library-id` list only libraries the caller holds a role on. The one
   who adds a library is its creator.
-  `GET /libraries/{owner}/{repo}/grants` lists who holds a role (`{"grants": [{"kind", "subject",
-  "role"}]}`: users by username, then groups); `PUT` (`{"kind": "user"|"group", "subject",
+  `GET /libraries/{owner}/{repo}/grants` lists a page of who holds a role (`{"grants": [{"kind",
+  "subject", "role"}], "next_cursor", "total", "caller_role", "creator"}`: users by username,
+  then groups; `q`, `kind`, `role`, `sort`; `caller_role` is the caller's own role, `admin` or
+  `creator`, and `creator` the creator's username whatever the filters, `null` when there is
+  none); `PUT` (`{"kind": "user"|"group", "subject",
   "role": "viewer"|"contributor"|"admin"}`) gives or replaces a role and answers the grants;
   `DELETE /libraries/{owner}/{repo}/grants/{user|group}/{subject}` takes one away. All three
   need `admin` on the library, and `creator` to give, change or remove an `admin`; the
-  creator's own role is never changed there (422 `invalid_grant`). Group names are matched
+  creator's own role is never changed there (422 `invalid_grant`).
+  `POST /libraries/{owner}/{repo}/transfer` (`{"username"}`) hands the library over: that user
+  becomes its creator and the creator before stays an `admin`; it answers the grants. Only the
+  `creator` (or an operator) may; the user who is already the creator is a 422 `invalid_grant`.
+  The web UI's *Sharing* page of a library (`/libraries/{owner}/{repo}/sharing`) uses these
+  routes. Group names are matched
   exactly (letter case included) against the groups the identity provider reports. A username
   nobody has is 404 `unknown_account`, a missing grant 404 `unknown_grant`. Libraries that existed
   before roles have no creator: operators manage them and share them.
+- **Access log** (ACL-05): every creation, grant (a new role, or another one than before),
+  revocation, ownership transfer and removal of a library is recorded with who made it and when.
+  `GET /libraries/{owner}/{repo}/access-log` reads a library's log, newest first (`{"events":
+  [{"id", "library", "at", "actor", "change", "kind", "subject", "role", "previous_role"}],
+  "next_cursor", "total"}`; `change` is `library_created`, `granted`, `revoked`,
+  `ownership_transferred` or `library_deleted`; `actor` is a username, null when the instance
+  made the change; `role` is the role given, or taken away for `revoked`; filter with `change`,
+  repeated). It needs `admin` on the library. Operators see every event recorded under the
+  library's ID; anyone else only those since it was last removed. `GET /access-log` is the
+  operators' log of every library, removed ones included (filter with `library` and `change`); like
+  `/users` it needs the session cookie of an `admin` (an API token is 401, anyone else 403).
+  A transfer records one `granted` entry per creator before (now `admin`, `previous_role`
+  `creator`) and then one `ownership_transferred` entry whose subject is the new creator (`role`
+  `creator`, `previous_role` the role they held, if any), with the caller as actor.
+  Giving someone the role they already hold records nothing. Changes made before the upgrade
+  that added the log are not in it.
 - **Editing a library**: `PATCH /libraries/{owner}/{repo}` (`{"title"?, "description"?}`). An edited
   field is kept across re-imports instead of following the default version's `context7.json` or
   root README (LIB-07).
@@ -199,9 +241,11 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `chunking` left out or `null` keeps the stored one, so a client that edits only paths and tag
   rules (the web UI) never resets it, validated like `POST /libraries` (422 `invalid_path_pattern`
   / `invalid_tag` / `invalid_chunking_config` or a field error, nothing stored), 404 for an unknown
-  library. `chunking` is `{"split_level": 1-6, "min_chars": 0, "max_chars": null, "chunker":
-  "markdown"}` (the defaults): `split_level` is the deepest heading that starts a chunk (`2` cuts
-  at `#` and `##` only); a chunk longer than `max_chars` is cut again at its deeper headings (never
+  library. `chunking` is `{"split_level": 1-6, "min_chars": 0, "max_chars": 4000, "chunker":
+  "markdown"}` with `split_level` 3 (the defaults, also for a library added without `chunking`,
+  #381; before, `split_level` 6 and `max_chars` null, which libraries added then keep): a field
+  left out of a sent `chunking` takes its default, so send `"max_chars": null` for no bound;
+  `split_level` is the deepest heading that starts a chunk (`2` cuts at `#` and `##` only); a chunk longer than `max_chars` is cut again at its deeper headings (never
   inside a code block or table, so a section without deeper headings stays whole); chunks shorter
   than `min_chars` are merged with the next one (the last with the one before) as long as the
   result stays within `max_chars`, and the text before the first heading is never merged (a merged

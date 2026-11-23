@@ -1,15 +1,28 @@
-import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BROWSE_KEY } from "@/shared/lib/query-keys";
+import { usePrefetchedPages } from "@/shared/lib/use-prefetched-pages";
 import {
   latestJobsQueryOptions,
   librariesKeys,
   librariesQueryOptions,
 } from "../api/libraries-query";
 import { type LatestJob, type Library, type Sync, syncOf } from "../model/library";
+import type { ListView } from "../model/list-view";
 
-export function useLibraries() {
-  return useSuspenseQuery(librariesQueryOptions());
+/**
+ * The pages shown so far, flattened, with the server's total for the current filters. The next
+ * page is fetched ahead, so "Load more" shows it at once.
+ */
+export function useLibraries(view: ListView) {
+  const query = useInfiniteQuery(librariesQueryOptions(view));
+  const paged = usePrefetchedPages(query, view);
+  return {
+    query,
+    ...paged,
+    libraries: paged.pages.flatMap((p) => p.libraries),
+    total: paged.pages.at(-1)?.total ?? 0,
+  };
 }
 
 export type SyncState = { status: "pending" } | { status: "error" } | Sync;

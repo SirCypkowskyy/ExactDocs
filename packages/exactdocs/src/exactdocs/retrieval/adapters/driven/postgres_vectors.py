@@ -43,6 +43,7 @@ from exactdocs.retrieval.constants import (
     _PG_VECTOR_INLINE,
     _PG_VECTOR_NEAREST,
     _PG_VECTOR_PENDING,
+    _PG_VECTOR_READ,
     _PG_VECTOR_UPSERT,
     _VECTOR_ABSENT,
     _VECTOR_COVERAGE,
@@ -76,6 +77,7 @@ from exactdocs.retrieval.models import (
     TagFilter,
     VectorCoverage,
     VectorHit,
+    as_float32,
     checked_vector,
 )
 
@@ -299,6 +301,34 @@ class PostgresVectorIndex:
                 batch = ids[start : start + VECTOR_BATCH]
                 gone += (await connection.execute(statement, {"keys": batch})).rowcount
         return gone
+
+    async def stored(
+        self, space_id: EmbeddingSpaceId, keys: Collection[ChunkKey]
+    ) -> Mapping[ChunkKey, tuple[float, ...]]:
+        """Read back the vectors of these chunks (what an external copy is written from).
+
+        Args:
+            space_id: The space.
+            keys: The chunks.
+
+        Returns:
+            Each vector found, by chunk, as ``real`` (float32) values.
+        """
+        statement = text(_PG_VECTOR_READ.format(table=vector_table(space_id))).bindparams(
+            bindparam("keys", expanding=True)
+        )
+        async with self.engine.connect() as connection:
+            await self._live(connection, space_id)
+            ids = await chunk_ids(connection, list(set(keys)))
+            by_id = {row_id: key for key, row_id in ids.items()}
+            found: dict[ChunkKey, tuple[float, ...]] = {}
+            listed = list(by_id)
+            for start in range(0, len(listed), VECTOR_BATCH):
+                batch = listed[start : start + VECTOR_BATCH]
+                for row in await connection.execute(statement, {"keys": batch}):
+                    # `real` comes back as its shortest decimal: round to the float32 kept
+                    found[by_id[row.chunk_key]] = as_float32([float(v) for v in row.embedding])
+        return found
 
     async def nearest(
         self,

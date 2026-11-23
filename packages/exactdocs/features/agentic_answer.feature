@@ -28,6 +28,28 @@ Feature: An agent answers a question from chosen libraries, with its sources
     Then there is no answer, with the reason "agent_limit_reached"
     And every source is from a chosen library's default version, with a link to its article
 
+  Scenario: The agent stops when the budget is used up
+    Given an LLM that answers from what it reads is configured, with its daily token budget used up
+    When a user asks "how do I retry failed calls" over all libraries
+    Then there is no answer, with the reason "llm_budget_reached", and no model was called
+
+  Scenario: The agent stops when the caller is over the LLM search rate limit
+    Given an LLM that answers from what it reads is configured, limited to 2 LLM searches per minute
+    And a user has already asked "how do I retry failed calls" over all libraries 2 times
+    When a user asks "how do I retry failed calls" over all libraries
+    Then there is no answer, with the reason "llm_rate_limited", and no model was called
+
+  Scenario: A token limited to one library reaches only that library
+    Given an LLM that answers from what it reads is configured
+    And an API token limited to "/fixture/docs-repo"
+    When the token searches all libraries for "retry"
+    Then every result of the token is from "/fixture/docs-repo"
+    When the token asks "how do I retry failed calls" over all libraries
+    Then the answer is written and lists its sources
+    And no source is from "/other/guide"
+    And asking over "/other/guide" with the token is refused as not found, like a library that does not exist
+    And searching "/other/guide" with the token is refused as not found, like a library that does not exist
+
   Scenario: A source outside the chosen libraries is never returned
     Given an LLM that also cites a chunk of "/other/guide" is configured
     When a user asks "how do I retry failed calls" over "/fixture/docs-repo"

@@ -221,6 +221,23 @@ async def test_fetch_files_writes_only_the_named_files_of_a_directory_full_of_ot
             pass
 
 
+async def test_a_directory_include_leaves_media_and_binaries_out(
+    work: Path, tmp_path: Path
+) -> None:
+    """Big media next to the articles is neither written nor counted against the bound (#442)."""
+    tree: dict[str, str | bytes] = {f"docs/media/{n}.png": os.urandom(100_000) for n in range(30)}
+    tree |= {"docs/data.bin": os.urandom(100_000), "docs/small.inc": "included\n"}
+    tree |= {"docs/a.md": "# a\n", "docs/sub/b.md": "# b\n", "README.md": "# r\n"}
+    origin, pinned = commit_tree(tmp_path, tree)
+    git("config", "uploadpack.allowFilter", "true", cwd=origin)
+    tight = GitCli(git=GitCli.locate().git, work_root=work, max_fetch_bytes=200_000)
+
+    async with tight.fetch(
+        repository(origin.as_uri()), pinned, PathSelection.of(["docs/"])
+    ) as folder:
+        assert files(folder) == {"docs/a.md", "docs/sub/b.md", "docs/small.inc", "README.md"}
+
+
 @pytest.mark.parametrize(
     ("url", "commit"),
     [("-x", "1" * 40), ("file:///a b\n", "1" * 40), ("file:///x", "main"), ("file:///x", "--all")],
@@ -322,18 +339,28 @@ async def test_missing_git_refuses() -> None:
             pass
 
 
+HEAVY = sparse_patterns(PathSelection.of())[
+    3:-1
+]  # the media and binaries every checkout leaves out
+
+
+def test_media_and_binaries_are_left_out_of_every_checkout() -> None:
+    assert {"!*.png", "!*.bin", "!*.zip"} <= set(HEAVY)
+    assert not {"!*.md", "!*.yml", "!*.inc"} & set(HEAVY)
+
+
 def test_sparse_patterns_follow_the_selection() -> None:
     selection = PathSelection.of(["docs/", "guide/*.md", "{a,b}/x", "[z]", "{}"], ["docs/archive/"])
 
     assert sparse_patterns(selection) == [
         "/docs/", "/guide/*.md", "/a/x", "/b/x", "/\\[z]",
-        "/README.md", "/README.mdx", "!/docs/archive/", "/context7.json",
+        "/README.md", "/README.mdx", "!/docs/archive/", *HEAVY, "/context7.json",
     ]  # fmt: skip
 
 
 def test_no_include_means_every_file() -> None:
     assert sparse_patterns(PathSelection.of()) == [
-        "/*", "/README.md", "/README.mdx", "/context7.json",
+        "/*", "/README.md", "/README.mdx", *HEAVY, "/context7.json",
     ]  # fmt: skip
 
 
@@ -386,6 +413,26 @@ async def test_content_stays_verbatim_whatever_gitattributes_say(
         for name, content in tree.items():
             if name.startswith("docs/"):
                 assert (d / name).read_bytes() == content, name
+
+
+async def test_the_file_and_byte_limits_count_restructuredtext_files_as_well(
+    tmp_path: Path,
+) -> None:
+    tree: dict[str, str | bytes] = {f"doc/build/{n}.rst": f"T{n}\n===\n" for n in range(6)}
+    origin, pinned = commit_tree(tmp_path, tree)
+    selection = PathSelection.of(["doc/build/"])
+
+    work = tmp_path / "work"
+    for gateway, message in (
+        (GitCli(git=GitCli.locate().git, work_root=work, max_fetch_files=3), "more than 3 files"),
+        (
+            GitCli(git=GitCli.locate().git, work_root=work, max_fetch_bytes=20),
+            "larger than 20 bytes",
+        ),
+    ):
+        with pytest.raises(RepositoryTooLargeError, match=message):
+            async with gateway.fetch(repository(origin.as_uri()), pinned, selection):
+                pass
 
 
 @pytest.mark.parametrize(
@@ -518,19 +565,19 @@ def test_brace_overflow_drops_an_exclusion_but_widens_an_include() -> None:
     many = "{a,b,c,d,e,f,g,h,i}{a,b,c,d,e,f,g,h,i}/x.md"
 
     assert sparse_patterns(PathSelection.of(["docs/"], [many])) == [
-        "/docs/", "/README.md", "/README.mdx", "/context7.json",
+        "/docs/", "/README.md", "/README.mdx", *HEAVY, "/context7.json",
     ]  # fmt: skip
     assert sparse_patterns(PathSelection.of([many])) == [
-        "/*", "/README.md", "/README.mdx", "/context7.json",
+        "/*", "/README.md", "/README.mdx", *HEAVY, "/context7.json",
     ]  # fmt: skip
 
 
 def test_an_include_that_matches_nothing_fetches_only_the_readme_and_context7_json() -> None:
     assert sparse_patterns(PathSelection.of(["{}"])) == [
-        "/README.md", "/README.mdx", "/context7.json",
+        "/README.md", "/README.mdx", *HEAVY, "/context7.json",
     ]  # fmt: skip
     assert sparse_patterns(PathSelection.of(["{}", "docs/"])) == [
-        "/docs/", "/README.md", "/README.mdx", "/context7.json",
+        "/docs/", "/README.md", "/README.mdx", *HEAVY, "/context7.json",
     ]  # fmt: skip
 
 

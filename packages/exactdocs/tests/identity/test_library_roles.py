@@ -8,6 +8,7 @@ import pytest
 from pydantic import SecretStr
 
 from exactdocs.identity.adapters.driven.memory import (
+    InMemoryAccessLog,
     InMemoryAccountRepository,
     InMemoryExternalIdentityRepository,
     InMemoryFailedSignInLog,
@@ -28,6 +29,7 @@ from exactdocs.identity.dtos import (
     ListLibraryGrantsQuery,
     RevokeLibraryRoleCommand,
     SetUserDisabledCommand,
+    TransferLibraryCommand,
 )
 from exactdocs.identity.errors import (
     InvalidGrantError,
@@ -107,6 +109,7 @@ async def world() -> World:
         failures=InMemoryFailedSignInLog(),
         externals=externals,
         library_grants=InMemoryLibraryGrantRepository(),
+        access_log=InMemoryAccessLog(),
         attempts=InMemorySignInAttemptRepository(),
         box=_NoBox(),
         clock=SystemClock(),
@@ -318,6 +321,117 @@ async def test_the_grants_are_listed_with_usernames_users_first(world: World) ->
         ("user", "carol", "contributor"),
         ("group", "corp:payments", "viewer"),
     ]
+
+
+async def test_the_grants_are_filtered_sorted_by_role_and_paged_with_a_total(world: World) -> None:
+    await world.grant("ada", "corp:payments", "viewer", kind="group")
+    await world.grant("ada", "carol", "contributor")
+    await world.grant("ada", "bob", "viewer")
+    await world.grant("ada", "dave", "admin")
+    query: dict[str, object] = {"caller_id": world.ids["ada"], "library": LIBRARY}
+    query |= {"kind": ["user"], "sort": "-role", "limit": 2}
+
+    first = await world.identity.list_library_grants(ListLibraryGrantsQuery.model_validate(query))
+    second = await world.identity.list_library_grants(
+        ListLibraryGrantsQuery.model_validate({**query, "cursor": first.next_cursor})
+    )
+
+    assert [g.subject for g in first.grants] == ["dave", "carol"]
+    assert ([g.subject for g in second.grants], second.next_cursor) == (["bob"], None)
+    assert (first.total, second.total) == (3, 3)
+
+
+async def test_the_grants_text_filter_matches_users_and_groups(world: World) -> None:
+    await world.grant("ada", "corp:payments", "viewer", kind="group")
+    await world.grant("ada", "bob", "viewer")
+
+    shown = await world.identity.list_library_grants(
+        ListLibraryGrantsQuery(caller_id=world.ids["ada"], library=LIBRARY, q="PAY")
+    )
+
+    assert ([g.subject for g in shown.grants], shown.total) == (["corp:payments"], 1)
+
+
+async def test_a_caller_who_may_not_see_the_grants_gets_no_page_and_no_count(
+    world: World,
+) -> None:
+    await world.grant("ada", "bob", "viewer")
+
+    with pytest.raises(LibraryRoleRequiredError):
+        await world.identity.list_library_grants(
+            ListLibraryGrantsQuery(caller_id=world.ids["bob"], library=LIBRARY, q="bob", limit=1)
+        )
+
+
+async def test_the_grants_page_names_the_callers_role_and_the_creator_whatever_the_filters(
+    world: World,
+) -> None:
+    await world.identity.claim_library(
+        ClaimLibraryCommand(account_id=world.ids["carol"], library=LIBRARY)
+    )
+    await world.grant("ada", "bob", "admin")
+
+    as_bob = await world.identity.list_library_grants(
+        ListLibraryGrantsQuery(caller_id=world.ids["bob"], library=LIBRARY, q="bob")
+    )
+    as_operator = await world.identity.list_library_grants(
+        ListLibraryGrantsQuery(caller_id=world.ids["ada"], library="/acme/ledger")
+    )
+
+    assert (as_bob.caller_role, as_bob.creator, as_bob.total) == ("admin", "carol", 1)
+    assert (as_operator.caller_role, as_operator.creator) == ("creator", None)
+
+
+async def transfer(world: World, caller: str, to: str) -> list[tuple[str, str]]:
+    shown = await world.identity.transfer_library(
+        TransferLibraryCommand(caller_id=world.ids[caller], library=LIBRARY, username=to)
+    )
+    return [(g.subject, g.role) for g in shown.grants]
+
+
+async def test_transferring_makes_the_user_the_creator_and_the_creator_before_an_admin(
+    world: World,
+) -> None:
+    await world.identity.claim_library(
+        ClaimLibraryCommand(account_id=world.ids["bob"], library=LIBRARY)
+    )
+    await world.grant("bob", "carol", "viewer")
+
+    shown = await transfer(world, "bob", "carol")
+
+    assert shown == [("bob", "admin"), ("carol", "creator")]
+    assert (await world.role("bob"), await world.role("carol")) == ("admin", "creator")
+    with pytest.raises(LibraryRoleRequiredError, match="creator"):
+        await transfer(world, "bob", "dave")  # the creator before is only an admin now
+
+
+async def test_only_the_creator_or_an_operator_transfers_a_library(world: World) -> None:
+    await world.grant("ada", "bob", "admin")
+    await world.grant("ada", "dave", "contributor")
+
+    for caller in ("bob", "dave", "carol"):
+        with pytest.raises(LibraryRoleRequiredError):
+            await transfer(world, caller, "carol")
+    # A library added before roles has no creator: an operator hands it over.
+    assert await transfer(world, "ada", "carol") == [
+        ("bob", "admin"),
+        ("carol", "creator"),
+        ("dave", "contributor"),
+    ]
+
+
+async def test_a_transfer_to_the_creator_or_to_a_username_nobody_has_is_refused(
+    world: World,
+) -> None:
+    await world.identity.claim_library(
+        ClaimLibraryCommand(account_id=world.ids["bob"], library=LIBRARY)
+    )
+
+    with pytest.raises(InvalidGrantError):
+        await transfer(world, "bob", "bob")
+    with pytest.raises(UnknownAccountError):
+        await transfer(world, "bob", "zed")
+    assert await world.role("bob") == "creator"
 
 
 @pytest.mark.parametrize("linked", [True, False])

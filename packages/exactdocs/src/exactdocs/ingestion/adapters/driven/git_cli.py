@@ -99,6 +99,7 @@ from exactdocs.ingestion.constants._git import (
     _GIT_OVERHEAD,
     _GONE,
     _HEADS,
+    _HEAVY_PATTERNS,
     _HOST_KEY_CHANGED,
     _KEY_FILE,
     _KEYGEN_SECONDS,
@@ -1506,7 +1507,10 @@ def sparse_patterns(selection: PathSelection) -> list[str]:
         includes = ["/*"]
     # An overflowing exclusion is dropped: over-fetching is safe, `selects` runs again later.
     excludes = [f"!{p}" for e in selection.exclude if (part := _anchored(e)) for p in part]
-    return [*includes, *_ROOT_README, *excludes, _ROOT_CONTEXT7]
+    # Media and binaries are never articles: left out, they cannot trip the size bound. An image an
+    # article names is fetched on its own, within its own bounds.
+    heavy = [f"!{suffix_pattern}" for suffix_pattern in _HEAVY_PATTERNS]
+    return [*includes, *_ROOT_README, *excludes, *heavy, _ROOT_CONTEXT7]
 
 
 def _literal(path: str) -> str | None:

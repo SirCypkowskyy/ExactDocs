@@ -14,6 +14,8 @@ from exactdocs.catalog.constants import (
     _SEGMENT,
     _SHORT_SHA,
     _STABLE_SEMVER,
+    DEFAULT_MAX_CHARS,
+    DEFAULT_SPLIT_LEVEL,
     IMAGE_TYPES,
     MAX_CLOSE_MATCHES,
     MAX_INSTRUCTION_FILE_CHARS,
@@ -263,13 +265,18 @@ class TagSelection:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ChunkingConfig:
-    """How articles are cut: new chunk at headings up to `split_level` (1-6), size bounds."""
+    """How articles are cut: new chunk at headings up to `split_level` (1-6), size bounds.
 
-    split_level: int = _HEADING_LEVELS
+    The defaults are a new library's (#381): `#` to `###` start a chunk, and one longer than 4,000
+    characters is cut again. Stored settings hold every field, so a library added with the defaults
+    before #381 (split level 6, no bound) keeps them.
+    """
+
+    split_level: int = DEFAULT_SPLIT_LEVEL
     """Deepest heading level that starts a new chunk."""
     min_chars: int = 0
     """A chunk shorter than this is merged with the next one, within ``max_chars``."""
-    max_chars: int | None = None
+    max_chars: int | None = DEFAULT_MAX_CHARS
     """A chunk longer than this is cut again at deeper headings; ``None``: no bound."""
     chunker: str = "markdown"
     """Which chunker cuts; the importer knows which ones exist."""

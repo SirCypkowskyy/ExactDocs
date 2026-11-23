@@ -40,6 +40,15 @@ _MAX_STEP_OUTPUT: Final[int] = 1024 * 1024
 """Most output read from one step of a fetch, in bytes."""
 _MAX_BRACE_EXPANSIONS: Final[int] = 64
 """Most paths one ``{a,b}`` pattern may expand to for a sparse checkout."""
+_HEAVY_SUFFIXES: Final[tuple[str, ...]] = (
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".bmp", ".tif", ".tiff", ".avif",
+    ".mp4", ".mov", ".webm", ".avi", ".mp3", ".wav", ".ogg", ".pdf", ".zip", ".gz", ".tgz", ".tar",
+    ".bz2", ".xz", ".7z", ".jar", ".whl", ".exe", ".dll", ".so", ".dylib", ".wasm", ".bin",
+    ".woff", ".woff2", ".ttf", ".otf", ".eot", ".psd", ".docx", ".xlsx", ".pptx",
+)  # fmt: skip
+"""Suffixes of media and binaries: the checkout leaves them out of every folder pattern."""
+_HEAVY_PATTERNS: Final[tuple[str, ...]] = tuple(f"*{suffix}" for suffix in _HEAVY_SUFFIXES)
+"""The sparse-checkout patterns of ``_HEAVY_SUFFIXES``."""
 _DRAIN_SECONDS: Final[float] = (
     2.0  # for a killed process's pipes to reach EOF and its exit to be seen
 )

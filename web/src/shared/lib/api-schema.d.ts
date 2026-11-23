@@ -130,6 +130,8 @@ export interface paths {
         /**
          * List All
          * @description List the signed-in account's API tokens, newest first, without their secrets.
+         *
+         *     A page at a time; filter with `q`, order with `sort`; `total` counts every match.
          */
         readonly get: operations["identity-list_all"];
         readonly put?: never;
@@ -173,7 +175,7 @@ export interface paths {
         };
         /**
          * Get Users
-         * @description List every local account, disabled ones included, oldest first. Operators only (`admin`): any other signed-in account is refused with `forbidden` (403). Needs a signed-in session; an API token is refused (401), so a leaked token cannot create accounts. There is no self-signup: accounts are created here, by `exactdocs user create` or, for the first admin, by the setup.
+         * @description List the local accounts, disabled ones included, oldest first unless `sort` says otherwise, a page at a time. Filter with `q`, `role` and `disabled`; `total` counts every match. Operators only (`admin`): any other signed-in account is refused with `forbidden` (403). Needs a signed-in session; an API token is refused (401), so a leaked token cannot create accounts. There is no self-signup: accounts are created here, by `exactdocs user create` or, for the first admin, by the setup.
          */
         readonly get: operations["identity-get_users"];
         readonly put?: never;
@@ -259,6 +261,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/access-log": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List Access Log
+         * @description List the access changes of every library, newest first. Operators only.
+         *
+         *     Creations, grants (a new role, or another one), revocations, ownership transfers and
+         *     removals, each with who made it and when; a removed library's events stay. Filter with
+         *     `library` and `change`; `total` counts every match.
+         */
+        readonly get: operations["identity-list_access_log"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries/{owner}/{repo}/grants": {
         readonly parameters: {
             readonly query?: never;
@@ -269,6 +295,9 @@ export interface paths {
         /**
          * List Library Grants
          * @description List who holds a role on the library: users first, then groups. Library admins only.
+         *
+         *     A page at a time; filter with `q`, `kind` and `role`, order with `sort`; `total` counts
+         *     every match.
          */
         readonly get: operations["identity-list_library_grants"];
         /**
@@ -302,6 +331,54 @@ export interface paths {
          * @description Take a role away from a user or a group. Needs `admin`, and `creator` for an admin's.
          */
         readonly delete: operations["identity-revoke_library_role"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/libraries/{owner}/{repo}/transfer": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Transfer Library
+         * @description Hand the library over to another user: they become its creator.
+         *
+         *     Only the library's `creator` (or an operator) may. The creator before stays an `admin`
+         *     of the library. A user who is already the creator is a 422 `invalid_grant`.
+         */
+        readonly post: operations["identity-transfer_library"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/libraries/{owner}/{repo}/access-log": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List Library Access Log
+         * @description List who changed the library's access, how and when, newest first. Library admins only.
+         *
+         *     Its creation, grants (a new role, or another one), revocations and ownership transfers,
+         *     each with who made it and when. Operators see every event under the library's ID;
+         *     anyone else only those since it was last removed. Filter with `change`; `total` counts
+         *     every match.
+         */
+        readonly get: operations["identity-list_library_access_log"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -1473,6 +1550,82 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AccessEventSummary
+         * @description One entry of the access log as the outside world sees it.
+         */
+        readonly AccessEventSummary: {
+            /**
+             * Id
+             * @description The event's ID.
+             */
+            readonly id: string;
+            /**
+             * Library
+             * @description The library ID (`/owner/repo`, lower-case).
+             */
+            readonly library: string;
+            /**
+             * At
+             * Format: date-time
+             * @description When it happened.
+             */
+            readonly at: string;
+            /**
+             * Actor
+             * @description The username of who made the change; null when the instance did (CLI, a job).
+             */
+            readonly actor: string | null;
+            /**
+             * Change
+             * @description What happened: `library_created`, `granted` (a new role, or another one than before),
+             *     `revoked`, `ownership_transferred` or `library_deleted`.
+             * @enum {string}
+             */
+            readonly change: "library_created" | "granted" | "revoked" | "ownership_transferred" | "library_deleted";
+            /**
+             * Kind
+             * @description Whether `subject` is a username or a group name; null for a deletion.
+             */
+            readonly kind: ("user" | "group") | null;
+            /**
+             * Subject
+             * @description The username or group name the change is about; null for a deletion. An
+             *     `ownership_transferred` event names the new creator.
+             */
+            readonly subject: string | null;
+            /**
+             * Role
+             * @description The role given, or the role taken away (`revoked`); null for a deletion.
+             */
+            readonly role: string | null;
+            /**
+             * Previous Role
+             * @description The role the subject held before; null when it held none.
+             */
+            readonly previous_role: string | null;
+        };
+        /**
+         * AccessLogPage
+         * @description A page of the access log, newest first.
+         */
+        readonly AccessLogPage: {
+            /**
+             * Events
+             * @description The events of this page.
+             */
+            readonly events: readonly components["schemas"]["AccessEventSummary"][];
+            /**
+             * Next Cursor
+             * @description Pass as `cursor` to get the next (older) page; null on the last page.
+             */
+            readonly next_cursor: string | null;
+            /**
+             * Total
+             * @description How many events match the filters, across every page.
+             */
+            readonly total: number;
+        };
+        /**
          * AccessTokenIn
          * @description An HTTPS access token for a private repository. Write-only: no response repeats it.
          */
@@ -2602,13 +2755,13 @@ export interface components {
         };
         /**
          * ChunkingIn
-         * @description How a library's articles are cut into chunks (the defaults: one chunk per heading).
+         * @description How a library's articles are cut into chunks (defaults: `#` to `###`, 4,000 characters).
          */
         readonly ChunkingIn: {
             /**
              * Split Level
-             * @description The deepest heading that starts a chunk: 2 cuts at `#` and `##` only.
-             * @default 6
+             * @description The deepest heading that starts a chunk: 2 cuts at `#` and `##` only, 6 at every heading.
+             * @default 3
              */
             readonly split_level: number;
             /**
@@ -2622,10 +2775,12 @@ export interface components {
             /**
              * Max Chars
              * @description A chunk longer than this is cut again at its deeper headings; never inside a code block or
-             *     table. Null: no bound. At least `min_chars`, and at most 8,000 when sent: whatever the
-             *     settings, a section longer than 8,000 characters is split between its top-level blocks.
+             *     table. Left out: 4,000; null: no bound. At least `min_chars`, and at most 8,000 when sent:
+             *     whatever the settings, a section longer than 8,000 characters is split between its top-level
+             *     blocks.
+             * @default 4000
              */
-            readonly max_chars?: number | null;
+            readonly max_chars: number | null;
             /**
              * Chunker
              * @description `markdown`: cuts at headings with markdown-it-py (the only one supported).
@@ -3456,6 +3611,40 @@ export interface components {
             readonly matches: number;
         };
         /**
+         * LibraryGrantList
+         * @description A page of a library's grants: users first, then groups, by name unless sorted otherwise.
+         */
+        readonly LibraryGrantList: {
+            /**
+             * Grants
+             * @description The grants of this page.
+             */
+            readonly grants: readonly components["schemas"]["LibraryGrantSummary"][];
+            /**
+             * Next Cursor
+             * @description Pass as `cursor` to get the next page; null on the last page.
+             */
+            readonly next_cursor: string | null;
+            /**
+             * Total
+             * @description How many of the library's grants match the filters, across every page.
+             */
+            readonly total: number;
+            /**
+             * Caller Role
+             * @description The caller's own role on the library. Only a `creator` (or an operator) gives, changes
+             *     or removes an `admin` and transfers the library.
+             * @enum {string}
+             */
+            readonly caller_role: "admin" | "creator";
+            /**
+             * Creator
+             * @description The username of the library's creator, whatever the filters; null for a library that has
+             *     none (one added before roles, which operators manage).
+             */
+            readonly creator: string | null;
+        };
+        /**
          * LibraryGrantRequest
          * @description Give a user or a group a role on a library (replacing the role they had).
          */
@@ -3969,6 +4158,17 @@ export interface components {
              * @description When any version was last imported; null while none is.
              */
             readonly last_imported_at: string | null;
+        };
+        /**
+         * LibraryTransferRequest
+         * @description Hand a library over to another user: they become its creator.
+         */
+        readonly LibraryTransferRequest: {
+            /**
+             * Username
+             * @description The username of the new creator. The creator before becomes an `admin` of the library.
+             */
+            readonly username: string;
         };
         /**
          * LibraryUpdateOut
@@ -5032,7 +5232,9 @@ export interface components {
             readonly fallback_reason: components["schemas"]["FallbackReason"] | null;
             /**
              * Libraries Searched
-             * @description Libraries whose default version was searched.
+             * @description Libraries whose default version was searched for `libraries`' counts: every readable one
+             *     (up to a cap), the chosen ones included. With libraries chosen, `results` come from those
+             *     only, so this can count libraries that no result can come from.
              */
             readonly libraries_searched: number;
             /**
@@ -5754,14 +5956,24 @@ export interface components {
         };
         /**
          * TokenList
-         * @description The caller's tokens, newest first.
+         * @description A page of the caller's tokens, newest first unless sorted otherwise.
          */
         readonly TokenList: {
             /**
              * Tokens
-             * @description The tokens, newest first.
+             * @description The tokens of this page.
              */
             readonly tokens: readonly components["schemas"]["TokenSummary"][];
+            /**
+             * Next Cursor
+             * @description Pass as `cursor` to get the next page; null on the last page.
+             */
+            readonly next_cursor: string | null;
+            /**
+             * Total
+             * @description How many of the caller's tokens match the filters, across every page.
+             */
+            readonly total: number;
         };
         /**
          * TokenSummary
@@ -5876,14 +6088,24 @@ export interface components {
         };
         /**
          * UserList
-         * @description Every local account, oldest first.
+         * @description A page of the accounts, oldest first unless sorted otherwise.
          */
         readonly UserList: {
             /**
              * Users
-             * @description The accounts, oldest first.
+             * @description The accounts of this page.
              */
             readonly users: readonly components["schemas"]["UserSummary"][];
+            /**
+             * Next Cursor
+             * @description Pass as `cursor` to get the next page; null on the last page.
+             */
+            readonly next_cursor: string | null;
+            /**
+             * Total
+             * @description How many accounts match the filters, across every page.
+             */
+            readonly total: number;
         };
         /**
          * UserSummary
@@ -6679,7 +6901,22 @@ export interface operations {
     };
     readonly "identity-list_all": {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                /** @description How many items per page. */
+                readonly limit?: number;
+                /**
+                 * @description Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
+                 *     `sort` and filters of the request that returned it.
+                 */
+                readonly cursor?: string | null;
+                /**
+                 * @description Only items whose name contains this text, any case: a user's username, a token's name, a
+                 *     grant's username or group.
+                 */
+                readonly q?: string | null;
+                /** @description Sort by one of created_at, name, expires_at, last_used_at; prefix `-` for descending. Default: `-created_at`. A token that never expires or was never used sorts first by `expires_at` or `last_used_at`. An unknown field is a 422. */
+                readonly sort?: string | null;
+            };
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
@@ -6905,7 +7142,26 @@ export interface operations {
     };
     readonly "identity-get_users": {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                /** @description How many items per page. */
+                readonly limit?: number;
+                /**
+                 * @description Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
+                 *     `sort` and filters of the request that returned it.
+                 */
+                readonly cursor?: string | null;
+                /**
+                 * @description Only items whose name contains this text, any case: a user's username, a token's name, a
+                 *     grant's username or group.
+                 */
+                readonly q?: string | null;
+                /** @description Sort by one of created_at, username, role; prefix `-` for descending. Default: `created_at`. An unknown field is a 422. */
+                readonly sort?: string | null;
+                /** @description Only accounts with one of these roles; repeat for several. */
+                readonly role?: readonly ("admin" | "user")[] | null;
+                /** @description `true`: only disabled accounts; `false`: only enabled ones. */
+                readonly disabled?: boolean | null;
+            };
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
@@ -7287,9 +7543,114 @@ export interface operations {
             };
         };
     };
+    readonly "identity-list_access_log": {
+        readonly parameters: {
+            readonly query?: {
+                /** @description How many events per page. */
+                readonly limit?: number;
+                /**
+                 * @description Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
+                 *     filters of the request that returned it.
+                 */
+                readonly cursor?: string | null;
+                /** @description Only events of these changes; repeat for several. */
+                readonly change?: readonly ("library_created" | "granted" | "revoked" | "ownership_transferred" | "library_deleted")[] | null;
+                /** @description Only the events of this library (`/owner/repo`, any case), removed ones included. */
+                readonly library?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccessLogPage"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     readonly "identity-list_library_grants": {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                /** @description How many items per page. */
+                readonly limit?: number;
+                /**
+                 * @description Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
+                 *     `sort` and filters of the request that returned it.
+                 */
+                readonly cursor?: string | null;
+                /**
+                 * @description Only items whose name contains this text, any case: a user's username, a token's name, a
+                 *     grant's username or group.
+                 */
+                readonly q?: string | null;
+                /** @description Sort by one of kind, subject, role; prefix `-` for descending. Default: `kind` (users, then groups, by name). `role` sorts from `viewer` up to `creator`. An unknown field is a 422. */
+                readonly sort?: string | null;
+                /** @description Only grants to users or to groups; repeat for both. */
+                readonly kind?: readonly ("user" | "group")[] | null;
+                /** @description Only grants of one of these roles; repeat for several. */
+                readonly role?: readonly ("viewer" | "contributor" | "admin" | "creator")[] | null;
+            };
             readonly header?: never;
             readonly path: {
                 readonly owner: string;
@@ -7305,7 +7666,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["LibraryGrants"];
+                    readonly "application/json": components["schemas"]["LibraryGrantList"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */
@@ -7466,6 +7827,174 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["LibraryGrants"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-transfer_library": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LibraryTransferRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LibraryGrants"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-list_library_access_log": {
+        readonly parameters: {
+            readonly query?: {
+                /** @description How many events per page. */
+                readonly limit?: number;
+                /**
+                 * @description Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
+                 *     filters of the request that returned it.
+                 */
+                readonly cursor?: string | null;
+                /** @description Only events of these changes; repeat for several. */
+                readonly change?: readonly ("library_created" | "granted" | "revoked" | "ownership_transferred" | "library_deleted")[] | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccessLogPage"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

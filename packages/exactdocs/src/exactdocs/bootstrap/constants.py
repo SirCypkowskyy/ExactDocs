@@ -5,10 +5,14 @@ Each is ``Final`` and documented; see *Python conventions* in docs/architecture.
 
 import re
 import sqlite3
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Final
 
+from exactdocs.bootstrap.index_kinds import IndexBackendKind
 from exactdocs.catalog.models import ManifestState
+from exactdocs.retrieval.errors import IndexBackendUnavailableError
 from exactdocs.retrieval.models import ManifestStatus
 from exactdocs_kernel import (
     BusyError,
@@ -38,6 +42,8 @@ LOCAL_COMMANDS: Final[frozenset[str]] = frozenset(
         "user reset-password",
         "ai check",
         "ai estimate",
+        "index check",
+        "index rebuild",
         "models pull",
     }
 )
@@ -227,6 +233,32 @@ POSTGRES_DRIVER: Final[str] = "postgresql+psycopg"
 """The one PostgreSQL driver: psycopg 3, async. DBOS already depends on it."""
 POSTGRES_DRIVERS: Final[frozenset[str]] = frozenset({"postgresql", POSTGRES_DRIVER})
 """How `EXACTDOCS_DATABASE_URL` may name PostgreSQL; both mean psycopg 3."""
+LIBSQL_SCHEME: Final[str] = "libsql"
+"""How `EXACTDOCS_DATABASE_URL` names a libSQL server (#474): ``libsql://host[:port]``."""
+LIBSQL_DRIVER: Final[str] = "sqlite+libsql"
+"""The SQLAlchemy dialect a libSQL server's URL becomes: SQLite's, over ``turso-serverless``."""
+LIBSQL_DIALECT_MODULE: Final[str] = "exactdocs.bootstrap.libsql_database"
+"""Where that dialect lives; SQLAlchemy imports it only when an engine names it."""
+LIBSQL_DIALECT_CLASS: Final[str] = "LibsqlDialect"
+"""The dialect's class in ``LIBSQL_DIALECT_MODULE``."""
+LIBSQL_DIALECT_NAME: Final[str] = "sqlite.libsql"
+"""The name SQLAlchemy's registry knows the dialect by (``LIBSQL_DRIVER``, with a dot)."""
+LIBSQL_DIALECT_DRIVER: Final[str] = "libsql"
+"""The dialect's ``driver``: how an engine on a libSQL server is told from one on a file."""
+LIBSQL_DRIVER_MODULE: Final[str] = "turso_serverless"
+"""Turso's DB-API driver for a libSQL server over HTTP (the ``libsql-database`` extra)."""
+LIBSQL_TOKEN_KEY: Final[str] = "authToken"  # ruff: ignore[hardcoded-password-string] (a name)
+"""The URL's query key that carries the server's token, as Turso spells it."""
+LIBSQL_TLS_KEY: Final[str] = "tls"
+"""The URL's query key that turns TLS off (``tls=0``: plain HTTP, for a server on loopback)."""
+LIBSQL_CHUNK_ROWS: Final[int] = 64
+"""Rows a cursor hands the event loop at a time (aiosqlite's ``iter_chunk_size``)."""
+LIBSQL_EXPIRED: Final[str] = "stream has expired"
+"""What the server answers when it dropped a connection's stream for inactivity (sqld: 10 s)."""
+LIBSQL_CLIENT_FUNCTIONS: Final[frozenset[str]] = frozenset({"regexp", "floor"})
+"""Functions SQLAlchemy's SQLite dialect registers on every connection: a server cannot call
+back into this process, so they are accepted and not registered (libSQL has ``floor``; ExactDocs
+never uses ``REGEXP``)."""
 SUPABASE_HOSTS: Final[tuple[str, ...]] = (".supabase.co", ".supabase.com")
 """Host suffixes of Supabase's databases and poolers (``db.<ref>.supabase.co``,
 ``aws-0-<region>.pooler.supabase.com``)."""
@@ -311,6 +343,10 @@ CLIENTS: Final[tuple[str, ...]] = ("claude", "claude-desktop", "cursor", "vscode
 """MCP clients ``exactdocs mcp-config`` writes a configuration for."""
 SKILL_PATH: Final[Path] = Path(__file__).parent / "skill" / "SKILL.md"
 """The agent skill the server ships and serves as an MCP resource."""
+APP_RENDERER_URI: Final[str] = "ui://exactdocs/renderer.html"
+"""The MCP Apps UI resource of ``view_article`` and ``view_search``: Prefab's renderer, bundled
+into one page, so a host loads nothing from a third party (FastMCP's own ``app=True`` renderer
+loads Prefab from a CDN)."""
 NAME: Final[str] = "exactdocs"
 """Name of the server in MCP client configurations."""
 STDIO: Final[dict[str, str | list[str]]] = {
@@ -334,8 +370,10 @@ _STATUS_BY_ERROR: Final[dict[type[DomainError], int]] = {
     BusyError: 429,
     ValidationError: 422,
     RateLimitedError: 429,
+    IndexBackendUnavailableError: 503,
 }
-"""HTTP status of each kernel error class; any other domain error is a 400."""
+"""HTTP status of each kernel error class (and of an external index backend that does not answer:
+503); any other domain error is a 400."""
 SETUP_EXEMPT: Final[frozenset[tuple[str, ...]]] = frozenset(
     {("POST", f"{V1_PREFIX}/setup"), ("GET", f"{V1_PREFIX}/session"), ("GET", OPENAPI_PATH)}
 )
@@ -392,6 +430,139 @@ _OWNER_ONLY: Final[int] = 0o600
 # ---------------------------------------------------------------- settings
 LOCAL_HOSTS: Final[tuple[str, ...]] = ("localhost", "127.0.0.1", "::1")
 """Hosts every instance accepts; anything else must be listed in EXACTDOCS_ALLOWED_HOSTS."""
+
+# ---------------------------------------------------------------- index_backends (#352)
+DATABASE_BACKEND: Final[str] = "database"
+"""``EXACTDOCS_SEARCH_BACKEND`` / ``EXACTDOCS_VECTOR_BACKEND`` for ExactDocs' own database (the
+default): SQLite FTS5 and sqlite-vec, or PostgreSQL full-text search, pg_search and pgvector."""
+INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
+    {
+        "memory": IndexBackendKind(
+            name="memory",
+            module="exactdocs.retrieval.adapters.driven.memory_index",
+            search="search_backend",
+            vectors="vector_backend",
+            production=False,
+        ),
+        "azure_search": IndexBackendKind(
+            name="azure_search",
+            module="exactdocs.retrieval.adapters.driven.azure_search_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="azure-search",
+            # `azure` is a namespace shared with the `ai` extra's azure-identity (sync): only
+            # this module imports the search SDK.
+            packages=("azure.search",),
+        ),
+        "chroma": IndexBackendKind(
+            name="chroma",
+            module="exactdocs.retrieval.adapters.driven.chroma_index",
+            search=None,
+            vectors="vector_backend",
+            extra="chroma",
+            packages=("chromadb",),
+        ),
+        "duckdb": IndexBackendKind(
+            name="duckdb",
+            module="exactdocs.retrieval.adapters.driven.duckdb_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="duckdb",
+            packages=("duckdb", "duckdb_extension_fts"),
+        ),
+        "elasticsearch": IndexBackendKind(
+            name="elasticsearch",
+            module="exactdocs.retrieval.adapters.driven.elasticsearch_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="elasticsearch",
+            packages=("elasticsearch", "elastic_transport"),
+        ),
+        "lancedb": IndexBackendKind(
+            name="lancedb",
+            module="exactdocs.retrieval.adapters.driven.lancedb_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="lancedb",
+            packages=("lancedb", "pyarrow"),
+        ),
+        "libsql": IndexBackendKind(
+            name="libsql",
+            module="exactdocs.retrieval.adapters.driven.libsql_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="libsql",
+            packages=("libsql",),
+        ),
+        "milvus": IndexBackendKind(
+            name="milvus",
+            module="exactdocs.retrieval.adapters.driven.milvus_index",
+            search=None,
+            vectors="vector_backend",
+            extra="milvus",
+            packages=("pymilvus", "milvus_lite"),
+        ),
+        "mongodb": IndexBackendKind(
+            name="mongodb",
+            module="exactdocs.retrieval.adapters.driven.mongodb_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="mongodb",
+            packages=("pymongo", "bson", "gridfs"),
+        ),
+        "opensearch": IndexBackendKind(
+            name="opensearch",
+            module="exactdocs.retrieval.adapters.driven.opensearch_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="opensearch",
+            packages=("opensearchpy",),
+        ),
+        "pinecone": IndexBackendKind(
+            name="pinecone",
+            module="exactdocs.retrieval.adapters.driven.pinecone_index",
+            search=None,
+            vectors="vector_backend",
+            extra="pinecone",
+            packages=("pinecone",),
+        ),
+        "qdrant": IndexBackendKind(
+            name="qdrant",
+            module="exactdocs.retrieval.adapters.driven.qdrant_index",
+            search=None,
+            vectors="vector_backend",
+            extra="qdrant",
+            packages=("qdrant_client",),
+        ),
+        "redis": IndexBackendKind(
+            name="redis",
+            module="exactdocs.retrieval.adapters.driven.redis_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="redis",
+            packages=("redis",),
+        ),
+    }
+)
+"""The external index backends, by name. Adding one is one adapter module in
+``retrieval/adapters/driven``, its optional extra in ``pyproject.toml``, one entry here, and its
+case in the shared contract suites (``tests/fixtures/index_backends.py``)."""
+INDEX_BACKEND_SECRET_SUFFIXES: Final[tuple[str, ...]] = (
+    "api_key",
+    "apikey",
+    "key",
+    "password",
+    "secret",
+    "token",
+    "credentials",
+)
+"""``[index_backends.<name>]`` options the TOML file may not hold: secrets come from the
+environment (``EXACTDOCS_INDEX_BACKENDS__<NAME>__<OPTION>``) or an option ending in ``_file``."""
+INDEX_DRIFT_CHECK_SECONDS: Final[float] = 300.0
+"""How often a server compares its external indexes with the database (first at start);
+``/healthz`` reports what the last check found."""
+INDEX_DRIFT_LOGGED: Final[int] = 10
+"""Drifted versions a check names in the log; the rest are counted."""
 
 # ---------------------------------------------------------------- exit codes of the CLI
 EXIT_FAILED: Final[int] = 1

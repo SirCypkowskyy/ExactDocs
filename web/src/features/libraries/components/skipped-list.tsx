@@ -20,7 +20,7 @@ function Group({ group }: { group: SkipGroup }) {
       <ul className="mt-1.5 space-y-1">
         {files.map((f) => (
           <li key={`${f.code}:${f.path}`} className="text-body [overflow-wrap:anywhere]">
-            <span className="font-mono text-[13px]">{f.path}</span>
+            <span className="font-mono text-mono">{f.path}</span>
             {!group.known && (
               <span className="text-muted-foreground max-sm:mt-0.5 max-sm:block sm:ml-2">
                 {f.reason}
@@ -107,7 +107,7 @@ export function SkippedList({ summary }: { summary: ProblemSummary }) {
           <ul className="mt-3 space-y-2">
             {notes.map((n) => (
               <li key={`${n.code}:${n.path}`} className="text-body [overflow-wrap:anywhere]">
-                <span className="font-mono text-[13px]">{n.path}</span>
+                <span className="font-mono text-mono">{n.path}</span>
                 <span className="mt-0.5 block text-muted-foreground">{n.reason}</span>
               </li>
             ))}

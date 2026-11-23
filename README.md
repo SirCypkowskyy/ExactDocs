@@ -1,68 +1,113 @@
-# ExactDocs
+<p align="center">
+  <a href="https://sircypkowskyy.github.io/ExactDocs/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo/exactdocs-wordmark-dark.svg">
+      <img src="docs/assets/logo/exactdocs-wordmark-light.svg" alt="ExactDocs" width="300">
+    </picture>
+  </a>
+</p>
 
-**Self-hosted, version-accurate documentation for AI coding agents.**
+<h3 align="center">Documentation, word for word.</h3>
 
-Point ExactDocs at a git repository, choose the Markdown docs you care about, and your AI agent can
-search and read them over MCP, pinned to the exact tag, branch or commit you imported. People get
-the same docs in a web UI. It is a self-hosted, drop-in alternative to context7.
+<p align="center">
+  A self-hosted MCP server that gives coding agents the docs of the library version you actually
+  use, verbatim, with the file and commit they came from.
+</p>
 
-[Documentation](https://sircypkowskyy.github.io/ExactDocs/) ·
-[Getting started](docs/getting-started.md) ·
-[MCP](docs/mcp.md) ·
-[Configuration](docs/configuration.md) ·
-[Deployment](docs/deployment.md)
+<p align="center">
+  <a href="https://pypi.org/project/exactdocs/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/exactdocs?label=pypi&color=0b6677"></a>
+  <a href="https://github.com/SirCypkowskyy/ExactDocs/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/SirCypkowskyy/ExactDocs/actions/workflows/ci.yml/badge.svg?branch=develop"></a>
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-0b6677"></a>
+  <a href="https://www.python.org/"><img alt="Python 3.14" src="https://img.shields.io/badge/python-3.14-0b6677?logo=python&logoColor=white"></a>
+  <a href="docs/deployment.md"><img alt="Docker image on ghcr.io" src="https://img.shields.io/badge/docker-ghcr.io%2Fsircypkowskyy%2Fexactdocs-0b6677?logo=docker&logoColor=white"></a>
+  <a href="https://sircypkowskyy.github.io/ExactDocs/"><img alt="Documentation" src="https://img.shields.io/badge/docs-sircypkowskyy.github.io%2FExactDocs-0b6677"></a>
+</p>
+
+<p align="center">
+  <a href="https://sircypkowskyy.github.io/ExactDocs/"><b>Documentation</b></a> |
+  <a href="#quick-start"><b>Quick start</b></a> |
+  <a href="docs/mcp.md"><b>MCP tools</b></a> |
+  <a href="docs/benchmark/index.md"><b>Benchmark</b></a> |
+  <a href="https://github.com/SirCypkowskyy/ExactDocs/releases"><b>Releases and changelog</b></a> |
+  <a href="CONTRIBUTING.md"><b>Contributing</b></a>
+</p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/reader-dark.webp">
+  <img src="docs/assets/screenshots/reader-light.webp" alt="The ExactDocs reader showing the Resilience article of Acme Payments v1.4.0: the version picker with commit 3fb0656, the file tree, the rendered article with a Python code block and a table, and the article's headings on the right.">
+</picture>
+
+Coding agents answer from whatever documentation they can reach, and it is often written for a
+different version than the one in your lockfile. ExactDocs imports the Markdown docs of your git
+repositories at the tags, branches or commits you choose, and serves them to your agent over MCP
+and to your team in a web UI. Ask about `v1.3` and you get the text of `v1.3`, word for word,
+with its path and commit, or an explicit "no result". You never get a plausible paragraph from
+`v1.4`.
+
+It runs on your laptop or your own server, so private docs stay on your network. Its MCP tools and
+library IDs match context7's, so an agent already set up for context7 only needs a new URL.
 
 > [!NOTE]
-> The latest release is **v0.2.0** (MVP-1): one admin account and no external services, with the
-> whole loop working in the web UI, over REST and over MCP. This README describes the `develop`
-> branch, which also has the MVP-2 polish, the AI retrieval modes, PostgreSQL, local user accounts,
-> sign-in through OIDC, webhooks, a sources file and observability; they ship in the next release. Anything marked *planned* is not
-> built yet (see the [roadmap](#roadmap)).
+> The newest release is **v0.2.0** ([PyPI](https://pypi.org/project/exactdocs/), ghcr.io). This
+> README describes the `develop` branch. AI retrieval, PostgreSQL, user accounts and sign-in,
+> library sharing, webhooks, the sources file and the newer CLI commands ship in the next release.
 
 ## Why ExactDocs
 
-Coding agents answer from whatever documentation they can find, and that is often the wrong
-version. ExactDocs gives them your docs, at the version you use:
+- The version is a hard filter. Every library version is a git ref resolved to a commit SHA, and
+  every search runs inside one version. In every configuration of the
+  [benchmark](docs/benchmark/index.md), none of the 321 questions got a chunk of another version.
+- Results are the original text. Markdown and MDX come back as written (Sphinx
+  reStructuredText is converted to Markdown on import), with the file path, the heading, the
+  commit SHA and a link to the file on your git host.
+- It reads your repositories, public or private: GitHub, GitLab, Bitbucket, Gitea or any git
+  server. You choose the folders and files, and it imports only those.
+- It is light by default. The standard image bundles no model and runs a BM25 server on SQLite.
+  Embeddings, rerankers and LLMs are optional, hosted or on your CPU.
+- Nothing phones home. There is no telemetry, and the only outbound connections go to the git
+  hosts, model endpoints and trace collector you configure. A test checks this.
 
-- It reads your docs from your repositories on GitHub, GitLab, Bitbucket, Gitea or any git
-  server, public or private. You choose the folders and files, and it imports only those.
-- The version is a hard filter. Every library version is a git ref resolved to a commit SHA.
-  Ask about `v1.3` and you get `v1.3` or an explicit "no result", never a plausible answer from
-  `v1.4`.
-- Results are the original Markdown, verbatim, with its path, heading, commit SHA and a link to
-  the file on your git host. Nothing is paraphrased.
-- Sphinx documentation in reStructuredText (`.rst`, as SQLAlchemy, behave or CPython write it)
-  imports like Markdown: headings, code blocks with their language, tables, admonitions,
-  `include` / `literalinclude` and cross-references. It is parsed with docutils; nothing is built
-  or executed.
-- It is light by default. The standard image bundles no model: it is a fast BM25 server on SQLite.
-  Embeddings, rerankers and LLMs are optional, either hosted or running locally on the CPU.
-- It is context7-compatible. The MCP tools and library IDs are the same, so switching is a URL
-  change.
-- It stays private. There is no telemetry and no phone-home. The only outbound connections go to the git hosts,
-  model endpoints and (opt-in) trace collector you configure, and a test proves it.
+## What it looks like
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/mcp-dark.webp">
+  <img src="docs/assets/screenshots/mcp-light.webp" alt="Two query-docs calls over MCP with the same question, How do I start the sandbox with Docker, one for /acme/payments/v1.3.0 and one for v1.4.0. Each reply's first chunk is shown verbatim. The lines that differ are highlighted: the source file is docs/guide/setup.md in v1.3.0 and docs/guide/install.md in v1.4.0, and the image tag is acme/payments:1.3 in one and acme/payments:1.4 in the other.">
+</picture>
+
+<sub>An agent asks two versions of the same library one question over MCP. Both replies are real
+`query-docs` output from the test fixture library; the highlighted lines are the ones that
+differ.</sub>
+
+<table>
+  <tr>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/libraries-dark.webp">
+        <img width="100%" src="docs/assets/screenshots/libraries-light.webp" alt="The libraries page: Acme Payments with versions v1.4.0, v1.3.0 and next, and ExactDocs with v0.4.0, v0.3.1 and v0.2.0, each default version shown with its commit.">
+      </picture>
+      <br><sub>Each library with its imported versions; the default one shows its commit.</sub>
+    </td>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/playground-dark.webp">
+        <img width="100%" src="docs/assets/screenshots/playground-light.webp" alt="The search playground with the query how do I retry failed calls, ranked by hybrid search and by BM25 side by side, each result with its BM25 and vector rank.">
+      </picture>
+      <br><sub>The search playground ranks one query in two retrieval modes side by side.</sub>
+    </td>
+  </tr>
+</table>
 
 ## Quick start
 
 ```bash
-docker run -d --name exactdocs -p 3000:3000 -v exactdocs-data:/data \
-  ghcr.io/sircypkowskyy/exactdocs:latest
+docker run -d --name exactdocs -p 3000:3000 -v exactdocs-data:/data ghcr.io/sircypkowskyy/exactdocs:latest
 # or, without Docker (needs git on your PATH)
 uvx exactdocs serve
 ```
 
-1. Open <http://localhost:3000> and create the admin account. Until it exists, every API request
-   is refused with `403 setup_required`. From a terminal, `docker exec -it exactdocs exactdocs admin create`
-   (or `uvx exactdocs admin create`) does the same.
-2. Choose **Add library**, give a git URL, a ref and the paths to import, and wait for the import
-   job to finish. **Preview** shows which files would be imported first.
-3. Connect your agent. `exactdocs config` prints a ready-to-paste snippet:
-
-   ```bash
-   uvx exactdocs config --client claude --new-token   # claude, claude-desktop, cursor, vscode, codex
-   ```
-
-   Or configure it by hand with an API token from the **Account** page:
+1. Open <http://localhost:3000> and create the admin account.
+2. Choose **Add library**, paste a git URL, then pick a tag or branch and the folders to import.
+3. Create an API token on the **Account** page and add the server to your agent:
 
    ```json
    {
@@ -75,150 +120,81 @@ uvx exactdocs serve
    }
    ```
 
-4. Ask your agent something. It finds the library with `resolve-library-id` and reads it with
-   `query-docs`, as it would with context7.
+Then ask your agent something. It finds the library with `resolve-library-id` and reads it with
+`query-docs`, the same way it would with context7.
 
-[Getting started](docs/getting-started.md) walks through the
-same steps over REST, and covers the command line, private repositories, the sources file,
-webhooks, user accounts and sign-in through an identity provider.
+On `develop`, `exactdocs config --client claude --new-token` prints this snippet for Claude Code,
+Claude Desktop, Cursor, VS Code or Codex, with a token made for that client. A local agent that
+only reads can run `uvx exactdocs serve --stdio` instead, with no token and no port.
+[Getting started](docs/getting-started.md) covers the rest: the CLI, private repositories, the
+sources file, webhooks, accounts and sign-in through an identity provider.
 
-> [!NOTE]
-> Web hosts that cannot paste a token (Claude, ChatGPT) connect with OAuth through one of your
-> sign-in providers: set `EXACTDOCS_MCP_OAUTH_PROVIDER` ([MCP](docs/mcp.md#oauth-for-web-hosts)).
+## Features
 
-> [!TIP]
-> For a local agent that only reads, `uvx exactdocs serve --stdio` needs no token, no port and no
-> `git`. It opens an existing database read-only, so run `exactdocs serve` (or `admin create`) once
-> first.
+### For agents
 
-## What you get
+The context7-compatible `resolve-library-id` and `query-docs`, plus tools to list,
+browse, read and search one version: `list_libraries`, `list_articles`, `read_article`,
+`article_outline`, `search_docs`, `search_all_docs` and `read_chunk`. In hosts with MCP Apps
+(Claude, ChatGPT), `view_article` and `view_search` show an article or search results as UI.
+Agents connect over Streamable HTTP with an API token or OAuth, or over stdio. Every tool is
+read-only and marks what it returns as untrusted content. See [MCP](docs/mcp.md).
 
-### MCP tools
+### Search
 
-| Tool | What it does |
-|---|---|
-| `resolve-library-id` | context7-compatible: finds a library ID such as `/acme/payments` |
-| `query-docs` | context7-compatible: whole chunks that answer a question, best first, within a size budget, from the default version or exactly the one named |
-| `list_libraries` | libraries and their imported versions |
-| `list_articles` | the article tree of a version |
-| `read_article` | a whole article, verbatim |
-| `article_outline` | an article's headings with their chunk IDs, without the text |
-| `search_docs` | searches one version, in the retrieval mode you ask for |
-| `search_all_docs` | searches the default version of every library at once |
-| `read_chunk` | one chunk verbatim, such as a neighbour of a search result |
+BM25 by default, with identifiers indexed whole and by their parts (`camelCase`,
+`snake_case`, `pkg.mod.fn`). Hybrid search, HyDE, a reranker (a cross-encoder or an LLM judge) and
+an agentic mode, where an LLM browses the version and picks the chunks, are optional. Each mode
+stays inside the version and its budgets, and falls back to a cheaper mode with a reason instead
+of failing. Articles are cut at their headings, never inside a code block or a table. See
+[Search and AI models](docs/search.md).
 
-Articles are also MCP resources (`exactdocs://{owner}/{repo}/{path*}{?ref}`), and the two context7
-operations are available over REST for integrations that do not speak MCP. Every tool is
-read-only, and everything it returns is marked as external content, never instructions.
-[MCP](docs/mcp.md) has the full reference.
+### For the people who run it
 
-### Retrieval
-
-| Mode | Needs | How it searches |
-|---|---|---|
-| `bm25` (default) | nothing | full-text search, with identifiers indexed whole and by their parts (`camelCase`, `snake_case`, `pkg.mod.fn`) |
-| `hybrid` | an embedding model | BM25 and vector search fused with reciprocal rank fusion |
-| `hybrid_hyde` | an embedding model and an LLM | the LLM writes a hypothetical answer, whose embedding drives the vector half |
-| `agentic` | an LLM | a pydantic-ai agent browses the version's tree in a sandbox and returns the chunks that answer, each with a reason |
-
-A cross-encoder (hosted, TEI or local) or an LLM judge can rerank the results of any mode. Every
-mode stays pinned to the version, stays within the budgets you set, and falls back to a cheaper
-mode with a `fallback_reason` instead of failing. BM25 remains the default until the
-[eval suite](docs/evals.md) shows that another mode beats it;
-[Recommended defaults](docs/benchmark/defaults.md) has the
-benchmark numbers. See [Search and AI models](docs/search.md).
-
-### The rest
-
-- A web UI to add libraries (with a preview of the files), browse rendered articles, switch
-  versions, search, manage tokens, users and AI settings.
-- A command line that is a client of the REST API (`login`, `add`, `sync`, `remove`, `token`,
-  `config`), plus `ctx7`-style `library` and `docs` commands.
+- A web UI to add libraries with a preview of the files, read rendered articles, switch versions,
+  search and compare retrieval modes.
+- Local accounts, sign-in through OpenID Connect, OAuth2 or GitHub, and libraries shared with
+  viewer, contributor, admin and creator roles that hold in the UI, over REST and over MCP.
+- Branches kept fresh by hand, on a schedule or by a webhook from GitHub, GitLab or Bitbucket. New
+  tags can be imported as they appear.
 - Libraries declared in an `exactdocs.sources.yaml` that you review like code: `sources plan`
-  shows the diff, `sources apply` makes it.
-- Local accounts managed by an admin, and sign-in through any OpenID Connect provider (Keycloak,
-  Entra ID, Okta, Google, ADFS), OAuth2-only providers, or GitHub/GitHub Enterprise, with access
-  and roles that follow verified groups and organization/team membership. See
-  [GitHub setup](docs/configuration.md#github-and-github-enterprise-sign-in).
-- Branch versions kept fresh by hand, on a schedule or by a webhook from GitHub, GitLab or
-  Bitbucket; new tags imported automatically if you want.
-- `context7.json` support, custom chunking, tags from front matter, path rules or by hand, images
-  and relative links.
+  shows the diff and `sources apply` makes it.
 - SQLite or PostgreSQL (with several server processes), backups, health probes, OpenTelemetry
   traces and Prometheus metrics.
+- Search and vector indexes in ExactDocs' own database, or in Azure AI Search, Chroma, DuckDB,
+  Elasticsearch, OpenSearch, LanceDB, libSQL, Milvus, MongoDB, Pinecone, Qdrant or Redis. See
+  [External index backends](docs/architecture.md#external-index-backends).
+
+## Benchmark
+
+ExactDocs is measured on a [golden set](docs/benchmark/golden-set.md) of 321 questions about the
+docs of Starlette, Pydantic, TanStack Query, Zod and Electron, at three pinned versions each. With
+no model at all, BM25 puts the section that answers in the top 5 for 81.7% of the 267 answerable
+questions, at 57 ms p95. Hybrid search on a small local embedding model (bge-small) reaches up
+to 84.6%. Hosted models and the agent benchmark have not run yet. [Benchmark](docs/benchmark/index.md) has
+the method, every table and the known weak spots.
 
 ## How it works
 
-```mermaid
-flowchart TD
-    agent["AI agent<br/>Claude Code, Cursor, ChatGPT, ..."]
-    browser[Browser]
-    cli["exactdocs CLI"]
-    subgraph app ["ExactDocs (one image, one process, or several on PostgreSQL)"]
-        mcp["FastMCP<br/>/mcp (HTTP) or stdio"]
-        api["FastAPI<br/>/api/v1"]
-        ui["Web UI<br/>static build"]
-        retrieval["Retrieval<br/>version filter → BM25, vectors, rerank, agent"]
-        catalog["Catalog<br/>libraries, versions, manifests"]
-        importer["Ingestion and job worker<br/>fetch → parse → chunk → index → activate"]
-        identity["Identity<br/>accounts, sessions, API tokens"]
-        mcp --> retrieval & catalog
-        api --> retrieval & catalog & importer & identity
-        importer --> catalog & retrieval
-    end
-    db[("SQLite in the data directory<br/>or PostgreSQL")]
-    git[("Git hosts you configure<br/>GitHub, GitLab, Bitbucket, ...")]
-    models[/"Optional model endpoints or local models<br/>embeddings, reranker, LLM"/]
-    agent -->|MCP| mcp
-    browser --> ui
-    browser -->|REST| api
-    cli -->|REST| api
-    app --> db
-    importer -->|git fetch of the pinned commit| git
-    retrieval -.-> models
-```
-
 An import fetches only the pinned commit and only the selected files, splits every article at its
-headings and indexes it. A new version becomes visible in one step, once it is complete, and a
-re-sync of a branch re-chunks only the files that changed. The backend is a modular monolith with
-ports and adapters; [Architecture](docs/architecture.md) and
-[Flows](docs/flows.md) explain it.
+headings and indexes it. A new version becomes visible in one step once it is complete, and a
+re-sync of a branch re-chunks only the files that changed. The backend is a Python modular
+monolith (FastAPI, FastMCP, pydantic-ai, DBOS for durable jobs) and the React UI is served by the
+same process. [Architecture](docs/architecture.md) and [Flows](docs/flows.md) explain it.
 
-## Deploying it
-
-The image comes in three variants, built from one Dockerfile. All of them start as a BM25 server
-until a model role is configured.
-
-| Tag | Holds | For |
-|---|---|---|
-| `:<version>`, `:latest` | BM25 on SQLite or PostgreSQL; no model, no ML library | most installs |
-| `:<version>-ai`, `:latest-ai` | the hosted and self-hosted model providers, sqlite-vec, pgvector | AI providers over the network |
-| `:<version>-local`, `:latest-local` | the above plus two small local models (an embedding model and a cross-encoder) | air-gapped instances: hybrid search and reranking with no network |
-
-A hardened single container, the way CI runs it:
-
-```yaml
-services:
-  exactdocs:
-    image: ghcr.io/sircypkowskyy/exactdocs:latest
-    ports: ["3000:3000"]
-    read_only: true
-    tmpfs: [/tmp]
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
-    volumes: ["exactdocs-data:/data"]
-volumes:
-  exactdocs-data:
-```
-
-> [!IMPORTANT]
-> Behind a reverse proxy, set `EXACTDOCS_ALLOWED_HOSTS` to the public host name and
-> `EXACTDOCS_FORWARDED_ALLOW_IPS` to the proxy's own address. Otherwise the server refuses the
-> host name, and every client looks like the proxy to the sign-in throttle.
-
-[Deployment](docs/deployment.md) covers reverse proxies, health
-checks, upgrades, backups, PostgreSQL and Supabase, and observability.
+The image comes in three variants: `:latest` (BM25, no model), `:latest-ai` (hosted and
+self-hosted model providers) and `:latest-local` (two small local models, for instances with no
+network). [Deployment](docs/deployment.md) covers a hardened container, reverse proxies, health
+checks, upgrades, backups, PostgreSQL, Supabase and observability, and
 [Configuration](docs/configuration.md) lists every setting.
+
+## Roadmap
+
+v0.2.0 (MVP-1) has the main loop for one admin with no external services: import from any git
+URL, heading-based chunking, BM25 pinned to a version, the web UI and the MCP tools. `develop` adds
+everything this README lists beyond that. Later: `llms.txt` and website crawling, docs resolved
+from package registries and lockfiles, prebuilt index snapshots, and AsciiDoc and notebooks. The
+[user stories](docs/user-stories.md) and the [delivery plan](docs/plan.md) have the details.
 
 ## Development
 
@@ -232,66 +208,21 @@ just dev          # API and MCP on :3000, UI on :5173
 just check        # everything CI runs
 ```
 
-The backend is Python (FastAPI, FastMCP, pydantic-ai, DBOS for durable jobs) and the web UI is React
-(TanStack Router and Query, shadcn/ui). The production image serves the built frontend from the
-backend, so there is a single service to run.
-
 | Path | What |
 |---|---|
 | `packages/exactdocs/` | the app: one folder per domain, plus `bootstrap` (the composition root) |
 | `packages/exactdocs-kernel/` | the shared kernel every domain uses |
-| `web/` | the React UI, in vertical slices |
+| `web/` | the React UI (TanStack Router and Query, shadcn/ui), in vertical slices |
 | `deploy/` | Dockerfile, smoke test, size budgets, self-hosted runner scripts |
 | `docs/` | the documentation site (Zensical) |
 | `.agents/skills/` | how agents work on issues, test and release |
 
-Read [docs/architecture.md](docs/architecture.md) (modular monolith, ports and adapters) and
-[docs/releasing.md](docs/releasing.md) (branches, versions, tags) before contributing.
-
-## Roadmap
-
-**MVP-1**, released as v0.2.0: the main loop for one admin user, with no external services.
-
-- [x] First-run admin account, sessions, API tokens
-- [x] Add a library from any git URL (public or private), choose the ref and paths, import it
-- [x] Heading-based chunking, front-matter and path-rule tags, BM25 search pinned to a version
-- [x] Web UI: setup and sign-in, library list, article tree, rendered Markdown, version switcher, search, tokens
-- [x] MCP tools, including the context7-compatible `resolve-library-id` and `query-docs`
-- [x] Re-sync, removal, sync failures that keep serving, one-command Docker or `uvx` start
-
-**MVP-2**, polish (on `develop`, not released yet):
-
-- [x] Import preview, `context7.json`, custom chunking, manual tags, images, relative links
-- [x] Search across all libraries, auto-import of new tags, resumable imports, upgrades without re-import
-- [x] The CLI as a REST client (`login`, `add`, `sync`, `token`), `ctx7`-style commands and REST equivalents, `exactdocs config --client`
-
-**Next** (partly on `develop`):
-
-- [x] Optional embeddings (hybrid search), rerankers (cross-encoder or LLM judge), HyDE
-- [x] Agentic retrieval with a pydantic-ai agent, and a cache for re-asked questions
-- [x] Retrieval eval suite comparing modes, and published benchmarks
-- [x] Local embedding and reranking models for air-gapped instances
-- [x] PostgreSQL with several server processes, and Supabase
-- [x] Local user accounts created, disabled and reset by an operator (no self-signup)
-- [x] OpenTelemetry traces and metrics to your own collector, Prometheus metrics
-- [x] Webhooks that sync a library on push
-- [x] Sign-in through OIDC with groups from the identity provider
-- [x] Libraries declared in an `exactdocs.sources.yaml` and applied with a dry-run diff
-- [x] Sign-in through OAuth2-only providers and GitHub, with organization and team checks
-- [ ] Sharing libraries with viewer, contributor, admin and creator roles, enforced in the UI, REST and MCP
-- [ ] MCP Apps: articles and results rendered as UI in hosts that support them (Claude, ChatGPT)
-
-**Later**
-
-- [ ] `llms.txt` and website crawling, package-registry and lockfile resolution
-- [ ] Prebuilt index snapshots, more formats (reST, AsciiDoc, notebooks)
-
-The [user stories](docs/user-stories.md) and the
-[delivery plan](docs/plan.md) have the details.
+Read [Architecture](docs/architecture.md) (modular monolith, ports and adapters) and
+[Branching and releases](docs/releasing.md) before contributing.
 
 ## Contributing
 
-Contributions are welcome. Please open an issue (Feature or Bug template) before large changes,
+Contributions are welcome. Please open an issue (Feature or Bug template) before a large change,
 and see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License

@@ -15,6 +15,7 @@ from pydantic import (
 )
 
 from exactdocs.identity.constants import (
+    GRANT_SORT_FIELDS,
     MAX_PASSWORD_LENGTH,
     MAX_RETURN_TO_LENGTH,
     MAX_TOKEN_NAME_INPUT,
@@ -23,14 +24,36 @@ from exactdocs.identity.constants import (
     NEW_PASSWORD_DESCRIPTION,
     NEW_USERNAME_DESCRIPTION,
     TOKEN_NAME_DESCRIPTION,
+    TOKEN_SORT_FIELDS,
+    USER_SORT_FIELDS,
     USERNAME_DESCRIPTION,
 )
-from exactdocs.identity.models import Account, ApiToken, LibraryGrant, LibraryRole, SignInPolicy
-from exactdocs_kernel import LIBRARY_ID_PATTERN, MAX_NAME
+from exactdocs.identity.models import (
+    AccessEvent,
+    Account,
+    ApiToken,
+    LibraryGrant,
+    LibraryRole,
+    SignInPolicy,
+)
+from exactdocs_kernel import DEFAULT_LIMIT, LIBRARY_ID_PATTERN, MAX_LIMIT, MAX_NAME, Page
 
 
 class _Dto(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", use_attribute_docstrings=True)
+
+
+class _PageQuery(_Dto):
+    """One page of a list: ``limit`` items after the opaque ``cursor`` of the previous page."""
+
+    limit: Annotated[int, Field(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT
+    """How many items per page."""
+    cursor: str | None = None
+    """Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
+    `sort` and filters of the request that returned it."""
+    q: str | None = Field(default=None, max_length=MAX_NAME)
+    """Only items whose name contains this text, any case: a user's username, a token's name, a
+    grant's username or group."""
 
 
 _LibraryId = Annotated[str, Field(pattern=LIBRARY_ID_PATTERN, max_length=MAX_NAME)]
@@ -260,11 +283,47 @@ class UserSummary(AccountSummary):
         )
 
 
+class UserListQuery(_PageQuery):
+    """How the users list is filtered, sorted and paged."""
+
+    sort: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description=(
+            f"Sort by one of {', '.join(USER_SORT_FIELDS)}; prefix `-` for descending. "
+            "Default: `created_at`. An unknown field is a 422."
+        ),
+    )
+    """The sort field; its schema description names ``USER_SORT_FIELDS``."""
+    role: list[Literal["admin", "user"]] | None = Field(
+        default=None, description="Only accounts with one of these roles; repeat for several."
+    )
+    """Only accounts with one of these roles."""
+    disabled: bool | None = None
+    """`true`: only disabled accounts; `false`: only enabled ones."""
+
+
 class UserList(_Dto):
-    """Every local account, oldest first."""
+    """A page of the accounts, oldest first unless sorted otherwise."""
 
     users: list[UserSummary]
-    """The accounts, oldest first."""
+    """The accounts of this page."""
+    next_cursor: str | None
+    """Pass as `cursor` to get the next page; null on the last page."""
+    total: int
+    """How many accounts match the filters, across every page."""
+
+    @classmethod
+    def from_page(cls, page: Page[UserSummary]) -> Self:
+        """Wrap a page of accounts.
+
+        Args:
+            page: The accounts and the cursor of the next page.
+
+        Returns:
+            The page at the boundary.
+        """
+        return cls(users=list(page.items), next_cursor=page.next_cursor, total=page.total or 0)
 
 
 ThrottleReset = Literal["cleared", "busy", "failed"]
@@ -440,11 +499,42 @@ class TokenSummary(_LibrarySelection):
         )
 
 
+class TokenListQuery(_PageQuery):
+    """How the caller's token list is filtered, sorted and paged."""
+
+    sort: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description=(
+            f"Sort by one of {', '.join(TOKEN_SORT_FIELDS)}; prefix `-` for descending. "
+            "Default: `-created_at`. A token that never expires or was never used sorts first "
+            "by `expires_at` or `last_used_at`. An unknown field is a 422."
+        ),
+    )
+    """The sort field; its schema description names ``TOKEN_SORT_FIELDS``."""
+
+
 class TokenList(_Dto):
-    """The caller's tokens, newest first."""
+    """A page of the caller's tokens, newest first unless sorted otherwise."""
 
     tokens: list[TokenSummary]
-    """The tokens, newest first."""
+    """The tokens of this page."""
+    next_cursor: str | None
+    """Pass as `cursor` to get the next page; null on the last page."""
+    total: int
+    """How many of the caller's tokens match the filters, across every page."""
+
+    @classmethod
+    def from_page(cls, page: Page[TokenSummary]) -> Self:
+        """Wrap a page of tokens.
+
+        Args:
+            page: The tokens and the cursor of the next page.
+
+        Returns:
+            The page at the boundary.
+        """
+        return cls(tokens=list(page.items), next_cursor=page.next_cursor, total=page.total or 0)
 
 
 class TokenGrant(TokenSummary):
@@ -501,6 +591,8 @@ class DropLibraryGrantsCommand(_Dto):
 
     library: str
     """The library ID."""
+    actor_id: str | None = None
+    """The account that removed the library; ``None`` when the instance did (CLI, a job)."""
 
 
 class LibraryGrantRequest(_Dto):
@@ -536,7 +628,46 @@ class RevokeLibraryRoleCommand(_Dto):
     """The username or the group's name."""
 
 
-class ListLibraryGrantsQuery(_Dto):
+class LibraryTransferRequest(_Dto):
+    """Hand a library over to another user: they become its creator."""
+
+    username: str = Field(min_length=1, max_length=256)
+    """The username of the new creator. The creator before becomes an `admin` of the library."""
+
+
+class TransferLibraryCommand(LibraryTransferRequest):
+    """A transfer of a library's ownership, made by a caller."""
+
+    caller_id: str
+    """The account that hands the library over."""
+    library: str
+    """The library ID."""
+
+
+class GrantListQuery(_PageQuery):
+    """How a library's grants are filtered, sorted and paged."""
+
+    sort: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description=(
+            f"Sort by one of {', '.join(GRANT_SORT_FIELDS)}; prefix `-` for descending. "
+            "Default: `kind` (users, then groups, by name). `role` sorts from `viewer` up to "
+            "`creator`. An unknown field is a 422."
+        ),
+    )
+    """The sort field; its schema description names ``GRANT_SORT_FIELDS``."""
+    kind: list[Literal["user", "group"]] | None = Field(
+        default=None, description="Only grants to users or to groups; repeat for both."
+    )
+    """Only grants of these kinds."""
+    role: list[Literal["viewer", "contributor", "admin", "creator"]] | None = Field(
+        default=None, description="Only grants of one of these roles; repeat for several."
+    )
+    """Only grants of these roles."""
+
+
+class ListLibraryGrantsQuery(GrantListQuery):
     """List who may do what with a library, asked by a caller."""
 
     caller_id: str
@@ -576,6 +707,49 @@ class LibraryGrants(_Dto):
     """The grants: users first, then groups, by name."""
 
 
+class LibraryGrantList(_Dto):
+    """A page of a library's grants: users first, then groups, by name unless sorted otherwise."""
+
+    grants: list[LibraryGrantSummary]
+    """The grants of this page."""
+    next_cursor: str | None
+    """Pass as `cursor` to get the next page; null on the last page."""
+    total: int
+    """How many of the library's grants match the filters, across every page."""
+    caller_role: Literal["admin", "creator"]
+    """The caller's own role on the library. Only a `creator` (or an operator) gives, changes
+    or removes an `admin` and transfers the library."""
+    creator: str | None
+    """The username of the library's creator, whatever the filters; null for a library that has
+    none (one added before roles, which operators manage)."""
+
+    @classmethod
+    def from_page(
+        cls,
+        page: Page[LibraryGrantSummary],
+        *,
+        caller_role: Literal["admin", "creator"],
+        creator: str | None,
+    ) -> Self:
+        """Wrap a page of grants.
+
+        Args:
+            page: The grants and the cursor of the next page.
+            caller_role: The caller's role on the library.
+            creator: The creator's username, if the library has one.
+
+        Returns:
+            The page at the boundary.
+        """
+        return cls(
+            grants=list(page.items),
+            next_cursor=page.next_cursor,
+            total=page.total or 0,
+            caller_role=caller_role,
+            creator=creator,
+        )
+
+
 class LibraryCreationQuery(_Dto):
     """Ask whether an authenticated caller may create libraries on this instance."""
 
@@ -583,3 +757,105 @@ class LibraryCreationQuery(_Dto):
     """The stable account ID."""
     external_identity: ExternalTokenIdentity | None = None
     """Trusted verified request identity; never client arguments."""
+
+
+_Change = Literal[
+    "library_created", "granted", "revoked", "ownership_transferred", "library_deleted"
+]
+
+
+class LibraryAccessLogQuery(_Dto):
+    """How a page of one library's access log is filtered and paged (newest first)."""
+
+    limit: Annotated[int, Field(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT
+    """How many events per page."""
+    cursor: str | None = None
+    """Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
+    filters of the request that returned it."""
+    change: list[_Change] | None = Field(
+        default=None, description="Only events of these changes; repeat for several."
+    )
+    """Only events of these changes."""
+
+
+class AccessLogQuery(LibraryAccessLogQuery):
+    """How a page of the instance's access log is filtered and paged (newest first)."""
+
+    library: _LibraryId | None = None
+    """Only the events of this library (`/owner/repo`, any case), removed ones included."""
+
+
+class ListLibraryAccessLogQuery(LibraryAccessLogQuery):
+    """Read one library's access log, asked by a caller."""
+
+    caller_id: str
+    """The account that asks."""
+    library: str
+    """The library ID."""
+
+
+class ListAccessLogQuery(AccessLogQuery):
+    """Read the instance's access log, asked by a caller."""
+
+    caller_id: str
+    """The account that asks."""
+
+
+class AccessEventSummary(_Dto):
+    """One entry of the access log as the outside world sees it."""
+
+    id: str
+    """The event's ID."""
+    library: str
+    """The library ID (`/owner/repo`, lower-case)."""
+    at: datetime
+    """When it happened."""
+    actor: str | None
+    """The username of who made the change; null when the instance did (CLI, a job)."""
+    change: _Change
+    """What happened: `library_created`, `granted` (a new role, or another one than before),
+    `revoked`, `ownership_transferred` or `library_deleted`."""
+    kind: Literal["user", "group"] | None
+    """Whether `subject` is a username or a group name; null for a deletion."""
+    subject: str | None
+    """The username or group name the change is about; null for a deletion. An
+    `ownership_transferred` event names the new creator."""
+    role: str | None
+    """The role given, or the role taken away (`revoked`); null for a deletion."""
+    previous_role: str | None
+    """The role the subject held before; null when it held none."""
+
+    @classmethod
+    def from_model(cls, event: AccessEvent, *, actor: str | None, subject: str | None) -> Self:
+        """Map an event to its boundary representation.
+
+        Args:
+            event: The event.
+            actor: What to show as its actor (a username, not an account ID).
+            subject: What to show as its subject (a user's name, not its ID).
+
+        Returns:
+            Its summary.
+        """
+        return cls(
+            id=event.id,
+            library=event.library,
+            at=event.at,
+            actor=actor,
+            change=event.change.value,
+            kind=None if event.kind is None else event.kind.value,
+            subject=subject,
+            role=None if event.role is None else event.role.value,
+            previous_role=None if event.previous_role is None else event.previous_role.value,
+        )
+
+
+class AccessLogPage(_Dto):
+    """A page of the access log, newest first."""
+
+    events: list[AccessEventSummary]
+    """The events of this page."""
+    next_cursor: str | None
+    """Pass as `cursor` to get the next (older) page; null on the last page."""
+    total: int
+    """How many events match the filters, across every page."""

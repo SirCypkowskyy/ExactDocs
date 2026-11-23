@@ -51,7 +51,7 @@ function Versions({ library }: { library: Library }) {
             <span
               className={cn(
                 pill,
-                "h-6 max-w-full gap-1.5 pr-2.5 pl-2 font-mono text-[12px]",
+                "h-6 max-w-full gap-1.5 pr-2.5 pl-2 font-mono text-small",
                 isDefault ? pillTone.route : "bg-secondary text-foreground",
               )}
             >
@@ -130,7 +130,7 @@ export function LibraryRow({ library, sync, now }: LibraryRowProps) {
               </Link>
             </h2>
             {library.title && (
-              <p className="font-mono text-[13px] text-muted-foreground [overflow-wrap:anywhere]">
+              <p className="font-mono text-mono text-muted-foreground [overflow-wrap:anywhere]">
                 <Id id={library.id} />
               </p>
             )}
@@ -179,16 +179,12 @@ export function LibraryRow({ library, sync, now }: LibraryRowProps) {
         </div>
       </div>
       {failed && (
-        <div
-          id={panel}
-          className={cn(
-            "relative z-10 grid transition-[grid-template-rows] duration-(--dur) ease-(--ease-out) motion-reduce:transition-none",
-            open ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+        <div id={panel} className="relative z-10">
+          {open && (
+            <div className="reveal">
+              <FailureDetail job={failed.job} open={open} />
+            </div>
           )}
-        >
-          <div className="overflow-hidden" inert={!open}>
-            <FailureDetail job={failed.job} open={open} />
-          </div>
         </div>
       )}
     </li>

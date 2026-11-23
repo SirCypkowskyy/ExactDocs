@@ -2,7 +2,7 @@
 export function Pending() {
   return (
     <main className="pending-in grid min-h-dvh place-items-center">
-      <p role="status" className="text-xl text-muted-foreground">
+      <p role="status" className="text-section text-muted-foreground">
         <span className="sr-only">Loading </span>
         ExactDocs
       </p>

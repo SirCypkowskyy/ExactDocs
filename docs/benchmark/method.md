@@ -16,13 +16,16 @@ gives the definitions the result pages rely on.
 
 | Name | Settings | What it does |
 |---|---|---|
-| `default` | split level 6, no merging, no bound | today's default: every heading starts a chunk |
-| `h2` | split level 2 | only `#` and `##` start a chunk; deeper sections stay inside their parent |
-| `h3-max-4000` | split level 3, `max_chars` 4,000 | `#` to `###` start a chunk; a longer one is cut again at deeper headings |
-| `merge-400` | `min_chars` 400, `max_chars` 4,000 | every heading starts a chunk, then a chunk under 400 characters is merged with the next while the result stays within 4,000 |
+| `default` | split level 3, `max_chars` 4,000 | today's default (#381): `#` to `###` start a chunk; a longer one is cut again at deeper headings |
+| `h6` | split level 6, no merging, no bound | every heading starts a chunk (the default before #381) |
+| `h2` | split level 2, no bound | only `#` and `##` start a chunk; deeper sections stay inside their parent |
+| `merge-400` | split level 6, `min_chars` 400, `max_chars` 4,000 | every heading starts a chunk, then a chunk under 400 characters is merged with the next while the result stays within 4,000 |
 
-The golden set names sections as `default` cuts them. A configuration that cuts coarser or finer
-would lose every hit to a heading path that no longer exists, so a returned chunk of the right
+`default` is what a new library gets, so it follows the shipped default; until #381 it was
+`h6`, and the recorded runs took the new names when it changed.
+
+The golden set names sections as `h6` cuts them: every heading. A configuration that cuts
+coarser or finer would lose every hit to a heading path that no longer exists, so a returned chunk of the right
 version and article answers an expected section when its heading path is the expected one, when
 it is a section inside the expected one (a finer cut), or when it is a parent of the expected one
 and holds its heading (a coarser cut). The ingestion results also show recall@5 with exact paths
@@ -49,6 +52,49 @@ Answerable cases are the 267 cases that name sections; unanswerable cases are th
 recall@k and MRR count the first expected section only, as the fixture eval suite does, so their
 numbers stay comparable across the three benchmarks; section recall and nDCG@10 count every
 expected section.
+
+## Intervals and significance
+
+The golden set has a few hundred cases, so a difference of a few points between two
+configurations can be noise. Every number a benchmark reports is a mean over cases (a rate is the
+mean of a hit or a miss), and each comes with a 95% interval, and each comparison with a paired
+test (#489). The code is `packages/exactdocs/evals/retrieval_eval/stats.py`.
+
+- **Intervals**: a percentile bootstrap over the cases. 10,000 times, the cases are drawn again
+  with replacement (as many as there are) and the metric recomputed; the interval runs from the
+  2.5th to the 97.5th percentile of those values. The draws come from Python's
+  `random.Random(489)` and depend only on the seed and the number of cases, so every
+  configuration that answered the same cases is resampled with the same draws (a paired
+  bootstrap), and a rerun gives the same intervals. The report records the seed, the number of
+  resamples, the confidence and the significance level (`statistics`). A rate that is the same
+  for every case (a wrong-version rate of 0) gets an interval of no width; the bootstrap cannot
+  say more than the cases do.
+- **Hit-or-miss outcomes** (recall@k, agent accuracy): McNemar's test on the cases where the two
+  configurations disagree, in its mid-p version. With *n* disagreements and *k* the smaller of
+  "only A found it" and "only B found it", the p-value is 2 P(X < *k*) + P(X = *k*) for X ~
+  Binomial(*n*, ½): the exact test counts P(X = *k*) twice and is conservative, the mid-p version
+  keeps close to the nominal level (Fagerland, Lydersen and Laake, 2013).
+- **Graded outcomes** (MRR, nDCG@10): a paired sign-flip permutation test. Under no difference,
+  each case's difference is as likely to have either sign; 10,000 random sign patterns (same
+  seed) give the p-value, the share of patterns whose mean difference is at least as far from 0
+  as the observed one (counting the observed one). This is the randomization test Smucker, Allan
+  and Carterette (2007) recommend for comparing retrieval systems.
+- Each test also gives the difference with its paired bootstrap interval. A difference is
+  **significant** when its p-value is under 5%.
+
+Each result of the retrieval benchmark is tested against its budget's default, on the
+answerable cases both answered; the table is under *Against the budget's default* on
+[Retrieval results](retrieval.md). In the agent benchmark each agent model's accuracy under a
+retrieval configuration is tested against its accuracy under the run's first configuration.
+
+**Small groups are wide.** A question kind or a project holds about 50 cases, a fifth of the
+answerable ones, so its intervals are about twice as wide as the whole set's: at 80% recall,
+roughly ±11 points against ±5. Differences per kind or per project of a few points say little.
+
+A result can be tested only when the report kept every case's outcome (`rows`). The recorded
+retrieval run of #347 kept aggregates only; BM25 was run again for #489 and its rows added (its
+quality numbers matched the recorded ones exactly), but the model configurations show intervals
+and tests only after the next recorded run.
 
 ## Ingestion metrics
 
@@ -89,11 +135,15 @@ budget:
    chosen with the configuration.
 3. It becomes the budget's default only when its recall@5 beats the cheaper budget's default by
    **at least 5 points** (`DEFAULT_MARGIN_POINTS`, the same margin the eval suite asks of any new
-   default mode). Otherwise the cheaper default stays, and the reason says how far the dearer one
-   fell short.
+   default mode) **and** the difference is **significant**: McNemar's test (mid-p) of the two on
+   the same cases gives a p-value under 5% ([Intervals and
+   significance](#intervals-and-significance)). Otherwise the cheaper default stays, and the
+   reason says which it missed: how far the dearer one fell short of the margin, or its p-value.
+   A dearer configuration recorded without its per-case outcomes cannot be tested, so it does not
+   become a default either.
 
-A budget nothing of which ran is "not measured yet". The margin applies between budgets; between
-chunkings of one budget the best one wins outright.
+A budget nothing of which ran is "not measured yet". The margin and the test apply between
+budgets; between chunkings of one budget the best one wins outright.
 
 ## What runs where
 
@@ -113,13 +163,14 @@ No CI or release run calls a hosted model or needs a secret.
 
 Each JSON report records what a rerun needs. `retrieval.json` holds the golden set's
 fingerprint, every pinned commit, the ExactDocs commit, the machine, the library versions, each
-model with its Hub revision, and the AI settings of each configuration
+model with its Hub revision, the AI settings of each configuration, every case's outcome, and
+the seed and resamples of the intervals
 ([Reproducing a result](../evals.md#reproducing-a-result)). The commands:
 
 ```bash
 just ingestion-bench --offline --out packages/exactdocs/evals/results
 EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
-  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@default,bm25+ce@h2,hybrid:bge-small-en-v1.5+ce@default,hybrid:snowflake-arctic-embed-s@default,*+judge,*:hosted*' \
+  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@h6,bm25+ce@h2,hybrid:bge-small-en-v1.5+ce@h6,hybrid:snowflake-arctic-embed-s@h6,*+judge,*:hosted*' \
   --out packages/exactdocs/evals/results
 ```
 

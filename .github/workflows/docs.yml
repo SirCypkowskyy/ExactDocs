@@ -1,4 +1,9 @@
 # Builds the Zensical site from docs/ and publishes it to GitHub Pages.
+#
+# Runners (docs/releasing.md "CI/CD and runners"), switched by the repository variable RUNNER_MODE
+# (Settings -> Secrets and variables -> Actions -> Variables): GitHub-hosted ubuntu-24.04 in
+# `hybrid` (the default, also when unset), the self-hosted ARM64 runner [self-hosted, linux, ARM64,
+# exactdocs] in `self-hosted` (when the GitHub-hosted minutes ran out).
 name: Docs
 
 on:
@@ -39,7 +44,7 @@ concurrency:
 jobs:
   build:
     name: Build site
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
@@ -65,7 +70,7 @@ jobs:
     name: Deploy to GitHub Pages
     if: github.event_name != 'pull_request'
     needs: build
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     permissions:
       pages: write
       id-token: write

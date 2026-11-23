@@ -38,6 +38,7 @@ from agent_bench.report import (
     CorpusCommit,
     QuestionResult,
     RunMeta,
+    against_reference,
     markdown,
     results_of,
     summarize,
@@ -53,6 +54,7 @@ from retrieval_eval.golden import (
     load_cases,
     load_corpus,
 )
+from retrieval_eval.stats import DEFAULT as DEFAULT_STATS
 
 REPORT: Final[Path] = Path("reports/evals/agent-bench.json")
 """Where ``run`` writes the JSON report by default (the Markdown goes next to it)."""
@@ -207,7 +209,12 @@ async def run_bench(
         prompt=PROMPT,
         corpus=commits,
     )
-    return BenchReport(meta=meta, cells=cells, questions=rows)
+    return BenchReport(
+        meta=meta,
+        cells=against_reference(cells, rows, DEFAULT_STATS),
+        questions=rows,
+        statistics=DEFAULT_STATS,
+    )
 
 
 def _parser() -> argparse.ArgumentParser:

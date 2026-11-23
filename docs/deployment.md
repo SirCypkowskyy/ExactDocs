@@ -187,10 +187,41 @@ docker exec exactdocs exactdocs reindex     # or: uvx exactdocs reindex
 It builds the new index from the stored chunks next to the one that answers, then swaps them in one
 step, so the server keeps serving throughout. Running it when nothing changed is harmless.
 
+### External index backends
+
+With `EXACTDOCS_SEARCH_BACKEND` or `EXACTDOCS_VECTOR_BACKEND` set to an external backend (see
+[Configuration](configuration.md#search-and-ai)), the backend holds a copy of each version that
+the database can always write again. The server compares the two at start and every five
+minutes, logs what drifted, and `/healthz` reports how many versions did
+(`index_versions_missing`). After the backend lost data (a reset, a deleted index), or when you
+move an index to a backend for the first time, run where the server runs:
+
+```bash
+docker exec exactdocs exactdocs index check     # names what is missing; exits 1 if anything is
+docker exec exactdocs exactdocs index rebuild   # or --library /owner/repo [--version v1.2.0]
+```
+
+The rebuild writes every version from the stored chunks and vectors (nothing is imported or
+embedded again) while the server keeps serving, and deletes the versions the database no longer
+has. A backend that does not answer at start stops the server, naming it.
+
+A backend's client is an optional extra that the images do not carry: install ExactDocs with it
+(`pip install 'exactdocs[lancedb]'`, `uvx --from 'exactdocs[lancedb]' exactdocs serve`), or in
+an image of your own that installs that extra. **LanceDB** is embedded, so the server and the
+command line both open its directory: on a local directory they take turns writing (a lock file in
+it), so the rebuild above is safe while serving; with an object-store URI (`single_writer = true`)
+stop the server before `exactdocs index rebuild`. See [LanceDB](configuration.md#lancedb).
+
+A **DuckDB** file is the exception to "while the server keeps serving": it is open in one process
+only, so stop the server, run `exactdocs index check` or `rebuild`, and start it again (the
+command is refused, naming the server's process, while it runs). See
+[DuckDB](configuration.md#duckdb).
+
 ## Backup and restore
 
 This section is about the SQLite database. On PostgreSQL, use `pg_dump` (see
-[PostgreSQL](#postgresql)); `exactdocs backup` refuses a non-SQLite `EXACTDOCS_DATABASE_URL`.
+[PostgreSQL](#postgresql)); on a libSQL server, its own backups. `exactdocs backup` refuses a
+non-SQLite `EXACTDOCS_DATABASE_URL`.
 
 `exactdocs backup` writes one archive of the instance while the server keeps serving. It holds:
 

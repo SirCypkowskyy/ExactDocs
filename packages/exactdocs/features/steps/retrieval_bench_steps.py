@@ -16,8 +16,19 @@ from behave.runner import Context
 from retrieval_bench_stand_ins import HOSTED, stand_in_container, tiny_corpus
 from retrieval_eval.golden import fetch, load_corpus, load_golden
 from retrieval_eval.ingestion_cli import CONFIGURATIONS
-from retrieval_eval.retrieval_bench import Budget, markdown
+from retrieval_eval.retrieval_bench import (
+    Budget,
+    ConfigResult,
+    Row,
+    markdown,
+    paired_tests,
+    recommend,
+)
 from retrieval_eval.retrieval_bench_cli import bench, matrix
+from retrieval_eval.stats import ALPHA
+from retrieval_eval.suite import DEFAULT_MARGIN_POINTS
+
+_SHOWN = ("recall_at_1", "recall_at_5", "recall_at_10", "mrr", "ndcg_at_10")
 
 
 @given("a golden corpus with an answerable and an unanswerable question")
@@ -43,7 +54,7 @@ def step_run(context: Context) -> None:
             corpus.projects,
             repos,
             load_golden(tmp / "cases"),
-            CONFIGURATIONS[:2],
+            [c for c in CONFIGURATIONS if c.name in {"default", "h2"}],
             matrix(["BAAI/bge-small-en-v1.5"]),
             hosted=context.hosted,
             models_dir=tmp / "models",
@@ -129,3 +140,94 @@ def step_cost(context: Context) -> None:
         if pick.configuration is not None:
             assert pick.usd_per_1000_questions is not None
             assert f"${pick.usd_per_1000_questions:.4f}" in context.summary
+
+
+# ---------------------------------------------------------------- intervals and significance (#489)
+
+
+@given("a recorded retrieval run on the golden set")
+def step_recorded(context: Context) -> None:
+    step_run(context)
+
+
+@when("the report is rendered")
+def step_render(context: Context) -> None:
+    context.summary = markdown(context.report)
+
+
+@then("recall@k, MRR and nDCG@10 of each configuration show a 95% confidence interval")
+def step_intervals(context: Context) -> None:
+    assert f"{context.report.statistics.confidence:.0%}" == "95%"
+    assert "the 95% interval" in context.summary
+    lines = context.summary.splitlines()
+    for result in context.ran:
+        m = result.metrics
+        for name in _SHOWN:
+            spread = m.intervals[name]
+            assert spread.low <= getattr(m, name) <= spread.high, (result.configuration, name)
+        # its row in the table of every configuration (budget, then status)
+        prefix = f"| `{result.configuration}` | `{result.chunking}` | {result.budget} | ran |"
+        (line,) = [line for line in lines if line.startswith(prefix)]
+        assert line.count(" [") >= len(_SHOWN), line
+
+
+@then("the report records the seed and the number of resamples")
+def step_seed(context: Context) -> None:
+    method = context.report.statistics
+    assert (method.seed, method.resamples) == (489, 10_000)
+    assert "10,000 resamples, seed 489" in context.summary
+
+
+def _rows(hits: int, cases: int) -> list[Row]:
+    return [
+        Row(
+            case=f"case {i:02}",
+            kind="how-to",
+            project="demo",
+            answerable=True,
+            rank=1 if i < hits else None,
+            ndcg=1.0 if i < hits else 0.0,
+            sections=1,
+            section_ranks=(1,) if i < hits else (),
+            wrong_version=False,
+            empty=False,
+            search_ms=1.0,
+            tokens=0,
+            usd=0.0,
+        )
+        for i in range(cases)
+    ]
+
+
+def _result(name: str, budget: Budget, rows: list[Row]) -> ConfigResult:
+    return ConfigResult(
+        configuration=name, chunking="default", budget=budget, mode="bm25", status="ran"
+    ).with_breakdowns(rows)
+
+
+@given("configuration B beats the budget default A by more than the margin on recall@5")
+def step_dearer(context: Context) -> None:
+    # 20 cases: A finds 10, B the same 10 and 2 more, 10 points of recall@5 above A
+    context.cheap = _result("A", Budget.NONE, _rows(10, 20))
+    context.dear = _result("B", Budget.LOCAL, _rows(12, 20))
+    gain = (context.dear.metrics.recall_at_5 - context.cheap.metrics.recall_at_5) * 100
+    assert gain > DEFAULT_MARGIN_POINTS, gain
+
+
+@given("the paired test of B against A on the same cases is not significant at 5%")
+def step_not_significant(context: Context) -> None:
+    test = paired_tests(context.cheap, context.dear)["recall_at_5"]
+    assert test.p_value >= ALPHA, test
+    assert not test.significant
+
+
+@when("the defaults are chosen")
+def step_choose(context: Context) -> None:
+    context.picks = recommend([context.cheap, context.dear])
+
+
+@then("A stays the default and the reason says the difference is not significant")
+def step_stays(context: Context) -> None:
+    local = next(p for p in context.picks if p.budget is Budget.LOCAL)
+    assert local.configuration == "A", local
+    assert "the difference is not significant" in " ".join(local.reasons), local.reasons

@@ -26,7 +26,7 @@ interface FileTreeProps {
 const INDENT = 12;
 const MAX_INDENT_LEVELS = 6;
 const rowBase =
-  "flex min-h-11 w-full cursor-pointer items-center gap-1.5 rounded-md pr-2 text-left text-[15px] outline-none transition-colors duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring lg:min-h-8 lg:text-body";
+  "flex min-h-11 w-full cursor-pointer items-center gap-1.5 rounded-md pr-2 text-left text-body outline-none transition-colors duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring lg:min-h-8 lg:text-body";
 const hoverable = "[@media(hover:hover)]:hover:bg-accent";
 
 const indent = (depth: number) => ({
@@ -177,7 +177,7 @@ function File({
       <span className="min-w-0">
         <span className="block truncate leading-snug">{row.title}</span>
         {showFileName(row.title, row.name) && (
-          <span className="block truncate font-mono text-[11px] leading-snug text-muted-foreground">
+          <span className="block truncate font-mono text-small leading-snug text-muted-foreground">
             <span className="sr-only">File </span>
             {row.name}
           </span>

@@ -5,14 +5,19 @@ so the agent, Code Mode, its sandbox and its limits run for real and nothing lea
 """
 
 import json
+from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Any
 
 from behave import given, then, when
 from behave.runner import Context
 
+from exactdocs.retrieval.adapters.driven.sqlite import SqliteSpendLedger
+from exactdocs.retrieval.models import SpendEntry, SpendWindow
 from scripted_explorer import answering, greedy, scripted_ai
 from steps.agentic_search_steps import serve_scripted
+from steps.http_steps import DEMO_COOKIE
+from steps.library_roles_steps import send_as
 from steps.search_all_steps import DEFAULTS
 
 ANSWER = "/api/v1/answer"
@@ -48,6 +53,55 @@ def step_citing_other(context: Context, library: str) -> None:
     serve_scripted(context, answering(extra=extra), scripted_ai(None))
 
 
+DAILY_TOKENS = 1000
+
+
+@given("an LLM that answers from what it reads is configured, with its daily token budget used up")
+def step_answering_over_budget(context: Context) -> None:
+    ai = scripted_ai(None) | {"budgets": {"daily_tokens": DAILY_TOKENS}}
+    serve_scripted(context, answering(), ai)
+    now = datetime.now(UTC)
+    entry = SpendEntry(
+        scope_kind="instance",
+        scope_id="",
+        window=SpendWindow.DAY,
+        window_start=SpendWindow.DAY.start(now),
+        input_tokens=DAILY_TOKENS,
+        requests=1,
+    )
+    ledger = SqliteSpendLedger(engine=context.container.engine)
+    context.client.portal.call(ledger.add, [entry])
+
+
+@given(
+    "an LLM that answers from what it reads is configured, "
+    "limited to {limit:d} LLM searches per minute"
+)
+def step_answering_rate_limited(context: Context, limit: int) -> None:
+    ai = scripted_ai(None) | {"budgets": {"llm_searches_per_minute": limit}}
+    serve_scripted(context, answering(), ai)
+
+
+@given('a user has already asked "{question}" over all libraries {times:d} times')
+def step_asked_before(context: Context, question: str, times: int) -> None:
+    for _ in range(times):
+        step_ask(context, question, "all libraries")
+        assert _body(context)["fallback_reason"] is None, context.response.text
+
+
+@given('an API token limited to "{library}"')
+def step_limited_token(context: Context, library: str) -> None:
+    made = send_as(
+        context,
+        "POST",
+        "/api/v1/tokens",
+        session=DEMO_COOKIE,
+        json={"name": "limited", "library_ids": [library]},
+    )
+    assert made.status_code == HTTPStatus.CREATED, made.text
+    context.token = made.json()["token"]
+
+
 @given("answers are limited to {calls:d} tool calls")
 def step_answers_limited(context: Context, calls: int) -> None:
     serve_scripted(context, greedy(calls + 10), scripted_ai(None, {"max_tool_calls": calls}))
@@ -68,6 +122,25 @@ def step_ask_streaming(context: Context, question: str, libraries: str) -> None:
             elif line.startswith("data: "):
                 events.append((name or "", json.loads(line.removeprefix("data: "))))
     context.events = events
+
+
+@when('the token asks "{question}" over {libraries}')
+def step_token_ask(context: Context, question: str, libraries: str) -> None:
+    context.chosen = _libraries(libraries)
+    context.response = send_as(
+        context,
+        "POST",
+        ANSWER,
+        token=context.token,
+        json={"question": question, "libraries": context.chosen},
+    )
+
+
+@when('the token searches all libraries for "{query}"')
+def step_token_search(context: Context, query: str) -> None:
+    context.response = send_as(
+        context, "GET", "/api/v1/search", token=context.token, params={"q": query}
+    )
 
 
 @when('a user asks "{question}" over {libraries}')
@@ -159,3 +232,52 @@ def step_refused(context: Context, question: str, code: str) -> None:
     response = context.client.post(ANSWER, json={"question": question})
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, response.text
     assert response.json()["error"] == code, response.text
+
+
+@then('there is no answer, with the reason "{reason}", and no model was called')
+def step_refused_before_the_model(context: Context, reason: str) -> None:
+    body = _body(context)
+    assert (body["answer"], body["fallback_reason"]) == ("", reason), body
+    assert body["usage"]["requests"] == body["usage"]["tool_calls"] == 0, body
+
+
+@then('every result of the token is from "{library}"')
+def step_results_from(context: Context, library: str) -> None:
+    results = _body(context)["results"]
+    assert results, "the token's library answered"
+    assert {r["library"] for r in results} == {library}, results
+
+
+def _not_found_like_missing(context: Context, library: str, call: str) -> None:
+    missing = "/missing/guide"
+    outcomes = []
+    for target in (library, missing):
+        if call == "answer":
+            body = {"question": "how do I retry failed calls", "libraries": [target]}
+            response = send_as(context, "POST", ANSWER, token=context.token, json=body)
+        else:
+            params = {"q": "retry", "library": target}
+            response = send_as(context, "GET", "/api/v1/search", token=context.token, params=params)
+        outcomes.append(response)
+    hidden, absent = outcomes
+    assert hidden.status_code == absent.status_code == HTTPStatus.NOT_FOUND, (
+        hidden.text,
+        absent.text,
+    )
+    assert hidden.text.replace(library, missing) == absent.text, (hidden.text, absent.text)
+
+
+@then(
+    'asking over "{library}" with the token is refused as not found, '
+    "like a library that does not exist"
+)
+def step_answer_hidden(context: Context, library: str) -> None:
+    _not_found_like_missing(context, library, "answer")
+
+
+@then(
+    'searching "{library}" with the token is refused as not found, '
+    "like a library that does not exist"
+)
+def step_search_hidden(context: Context, library: str) -> None:
+    _not_found_like_missing(context, library, "search")

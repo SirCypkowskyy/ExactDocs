@@ -780,6 +780,80 @@ class LibraryGrant:
     """The role given."""
 
 
+class AccessChange(StrEnum):
+    """What changed about who may do what with a library (ACL-05)."""
+
+    LIBRARY_CREATED = "library_created"
+    """A person created the library and became its ``creator``."""
+    GRANTED = "granted"
+    """A user or a group got a role on the library, or another role than the one they had."""
+    REVOKED = "revoked"
+    """A user or a group lost their role on the library."""
+    OWNERSHIP_TRANSFERRED = "ownership_transferred"
+    """The ``creator`` role went to another account (the subject).
+
+    The creators before, now admins, each get a ``granted`` event of their own.
+    """
+    LIBRARY_DELETED = "library_deleted"
+    """The library was removed, and every grant on it with it."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AccessEvent:
+    """One entry of the access log: who changed which library's access, how and when.
+
+    A ``library_deleted`` event has no subject or role. Every other change names the user or
+    group it is about and the role it holds afterwards (``revoked``: the role taken away). An
+    ``ownership_transferred`` event names the new ``creator`` as its subject.
+    """
+
+    id: str
+    """Unique, and sorts in the order the events were recorded (a UUIDv7)."""
+    library: str
+    """The library ID (``/owner/repo``), lower-case."""
+    at: datetime
+    """When it happened."""
+    actor: AccountId | None
+    """The account that made the change; ``None`` when the instance did (CLI, a job)."""
+    change: AccessChange
+    """What happened."""
+    kind: SubjectKind | None = None
+    """Whether ``subject`` is an account ID or a group name; ``None`` for a deletion."""
+    subject: str | None = None
+    """The account ID or group name the change is about; ``None`` for a deletion."""
+    role: LibraryRole | None = None
+    """The role given, or the role taken away; ``None`` for a deletion."""
+    previous_role: LibraryRole | None = None
+    """The role the subject held before a ``granted`` or ``ownership_transferred`` change."""
+
+    def __post_init__(self) -> None:
+        """Check that the event names a subject and a role exactly when it is about one.
+
+        Raises:
+            ValueError: A deletion names a subject or role, or another change lacks one.
+        """
+        about_someone = self.change is not AccessChange.LIBRARY_DELETED
+        named = (self.kind, self.subject, self.role)
+        if about_someone and None in named:
+            message = f"a {self.change.value} event needs a subject and a role"
+            raise ValueError(message)
+        if not about_someone and (any(v is not None for v in named) or self.previous_role):
+            message = "a library_deleted event names no subject or role"
+            raise ValueError(message)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AccessLogFilter:
+    """Which access events a page of the log is taken from."""
+
+    library: str | None = None
+    """Only this library's events (lower-case); ``None`` for every library."""
+    changes: frozenset[AccessChange] | None = None
+    """Only events of these changes; ``None`` for all."""
+    newer_than: str | None = None
+    """Only events recorded after the one with this ID."""
+
+
 def effective_role(grants: Iterable[LibraryGrant]) -> LibraryRole | None:
     """Return the highest role of the grants.
 

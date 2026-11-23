@@ -51,7 +51,9 @@ const job = (over: Record<string, unknown> = {}) => ({
 /** `jobs` is what `/jobs/latest` answers; a function lets a test change it between polls. */
 function serve(libraries: unknown[], jobs: unknown[] | (() => unknown[]) = []) {
   const fetchMock = vi.fn(async (url: string) => {
-    if (url.endsWith("/v1/libraries")) return Response.json({ libraries, next_cursor: null });
+    if (url.includes("/v1/libraries?")) {
+      return Response.json({ libraries, next_cursor: null, total: libraries.length });
+    }
     if (url.endsWith("/v1/jobs/latest")) {
       return Response.json({ jobs: typeof jobs === "function" ? jobs() : jobs });
     }
@@ -115,7 +117,7 @@ describe("libraries slice", () => {
     ]);
     expect(within(row).getByText("3 days ago")).toBeInTheDocument();
     expect(await within(row).findByText(/Synced/)).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/libraries", expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/libraries?limit=50", expect.anything());
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/jobs/latest", expect.anything());
     // One request for every library's sync, never one per library.
     expect(fetchMock.mock.calls.filter(([u]) => String(u).includes("jobs"))).toHaveLength(1);
@@ -299,10 +301,58 @@ describe("libraries slice", () => {
     expect(screen.getByRole("status")).toHaveTextContent("1 importing");
   });
 
+  describe("cancelling a job from the list (#432)", () => {
+    const live = (over: Record<string, unknown>) =>
+      job({
+        state: "running",
+        done: 12,
+        total: 40,
+        finished_at: null,
+        cancelled_at: null,
+        cancellable: true,
+        ...over,
+      });
+
+    it.each(["running", "queued"])("cancels a %s job after a confirmation", async (state) => {
+      const latest = serve([library()], [live({ state })]);
+      const calls: string[] = [];
+      vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          calls.push(url);
+          return Response.json(live({ state, cancelled_at: "2026-11-01T10:00:05Z" }));
+        }
+        return latest(url);
+      });
+      renderPage();
+
+      await userEvent.click(await screen.findByRole("button", { name: /cancel the sync/i }));
+      expect(calls).toEqual([]);
+      await userEvent.click(screen.getByRole("button", { name: "Yes, cancel" }));
+
+      expect(calls).toEqual(["/api/v1/jobs/j1/cancel"]);
+      expect(await screen.findByText(/Cancelling after the current step/)).toBeInTheDocument();
+    });
+
+    it("hides the button from a caller without the role", async () => {
+      serve([library()], [live({ cancellable: false })]);
+      renderPage();
+
+      expect(await screen.findByText("Importing 12 of 40")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /cancel/i })).not.toBeInTheDocument();
+    });
+
+    it("says who cancelled a sync", async () => {
+      serve([library()], [job({ state: "cancelled", cancelled_by: "admin", cancellable: false })]);
+      renderPage();
+
+      expect(await screen.findByText("Sync cancelled by admin")).toBeInTheDocument();
+    });
+  });
+
   it("keeps the list when only the job status is unavailable", async () => {
     const fetchMock = vi.fn(async (url: string) =>
-      url.endsWith("/v1/libraries")
-        ? Response.json({ libraries: [library()], next_cursor: null })
+      url.includes("/v1/libraries?")
+        ? Response.json({ libraries: [library()], next_cursor: null, total: 1 })
         : new Response("{}", { status: 500 }),
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -348,7 +398,11 @@ describe("libraries slice", () => {
       state = "succeeded";
       await act(() => vi.advanceTimersByTimeAsync(2100));
       await screen.findByText("Synced");
-      await waitFor(() => expect(count("/v1/libraries")).toBe(2));
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.filter(([u]) => String(u).includes("/v1/libraries?")).length,
+        ).toBe(2),
+      );
 
       const polled = count("/jobs/latest");
       await act(() => vi.advanceTimersByTimeAsync(6000));

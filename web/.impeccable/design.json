@@ -1,0 +1,518 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-21T20:46:14.517558+00:00",
+  "title": "Design System: ExactDocs",
+  "extensions": {
+    "colorMeta": {
+      "route": {
+        "role": "primary",
+        "displayName": "Deep Route Teal",
+        "canonical": "oklch(0.47 0.08 215)",
+        "tonalRamp": [
+          "oklch(0.20 0.051 215)",
+          "oklch(0.30 0.061 215)",
+          "oklch(0.40 0.070 215)",
+          "oklch(0.50 0.080 215)",
+          "oklch(0.62 0.068 215)",
+          "oklch(0.74 0.057 215)",
+          "oklch(0.86 0.045 215)",
+          "oklch(0.95 0.037 215)"
+        ]
+      },
+      "ink": {
+        "role": "primary",
+        "displayName": "Ink",
+        "canonical": "oklch(0.2 0.006 250)",
+        "tonalRamp": [
+          "oklch(0.20 0.004 250)",
+          "oklch(0.30 0.005 250)",
+          "oklch(0.40 0.005 250)",
+          "oklch(0.50 0.006 250)",
+          "oklch(0.62 0.005 250)",
+          "oklch(0.74 0.004 250)",
+          "oklch(0.86 0.003 250)",
+          "oklch(0.95 0.003 250)"
+        ]
+      },
+      "frame": {
+        "role": "neutral",
+        "displayName": "Cool Frame",
+        "canonical": "oklch(0.965 0.006 230)",
+        "tonalRamp": [
+          "oklch(0.20 0.004 230)",
+          "oklch(0.30 0.005 230)",
+          "oklch(0.40 0.005 230)",
+          "oklch(0.50 0.006 230)",
+          "oklch(0.62 0.005 230)",
+          "oklch(0.74 0.004 230)",
+          "oklch(0.86 0.003 230)",
+          "oklch(0.95 0.003 230)"
+        ]
+      },
+      "sheet": {
+        "role": "neutral",
+        "displayName": "White Sheet",
+        "canonical": "oklch(1 0 0)",
+        "tonalRamp": [
+          "oklch(0.20 0.000 0)",
+          "oklch(0.30 0.000 0)",
+          "oklch(0.40 0.000 0)",
+          "oklch(0.50 0.000 0)",
+          "oklch(0.62 0.000 0)",
+          "oklch(0.74 0.000 0)",
+          "oklch(0.86 0.000 0)",
+          "oklch(0.95 0.000 0)"
+        ]
+      },
+      "raised": {
+        "role": "neutral",
+        "displayName": "Raised Panel",
+        "canonical": "oklch(0.973 0.004 240)",
+        "tonalRamp": [
+          "oklch(0.20 0.003 240)",
+          "oklch(0.30 0.003 240)",
+          "oklch(0.40 0.004 240)",
+          "oklch(0.50 0.004 240)",
+          "oklch(0.62 0.003 240)",
+          "oklch(0.74 0.003 240)",
+          "oklch(0.86 0.002 240)",
+          "oklch(0.95 0.002 240)"
+        ]
+      },
+      "ink-muted": {
+        "role": "neutral",
+        "displayName": "Muted Ink",
+        "canonical": "oklch(0.47 0.005 250)",
+        "tonalRamp": [
+          "oklch(0.20 0.003 250)",
+          "oklch(0.30 0.004 250)",
+          "oklch(0.40 0.004 250)",
+          "oklch(0.50 0.005 250)",
+          "oklch(0.62 0.004 250)",
+          "oklch(0.74 0.004 250)",
+          "oklch(0.86 0.003 250)",
+          "oklch(0.95 0.002 250)"
+        ]
+      },
+      "positive": {
+        "role": "secondary",
+        "displayName": "Positive Green",
+        "canonical": "oklch(0.5 0.11 155)",
+        "tonalRamp": [
+          "oklch(0.20 0.070 155)",
+          "oklch(0.30 0.084 155)",
+          "oklch(0.40 0.097 155)",
+          "oklch(0.50 0.110 155)",
+          "oklch(0.62 0.094 155)",
+          "oklch(0.74 0.078 155)",
+          "oklch(0.86 0.062 155)",
+          "oklch(0.95 0.051 155)"
+        ]
+      },
+      "warning": {
+        "role": "secondary",
+        "displayName": "Warning Amber",
+        "canonical": "oklch(0.47 0.12 55)",
+        "tonalRamp": [
+          "oklch(0.20 0.077 55)",
+          "oklch(0.30 0.091 55)",
+          "oklch(0.40 0.106 55)",
+          "oklch(0.50 0.120 55)",
+          "oklch(0.62 0.103 55)",
+          "oklch(0.74 0.085 55)",
+          "oklch(0.86 0.068 55)",
+          "oklch(0.95 0.055 55)"
+        ]
+      },
+      "destructive": {
+        "role": "secondary",
+        "displayName": "Destructive Red",
+        "canonical": "oklch(0.52 0.19 27)",
+        "tonalRamp": [
+          "oklch(0.20 0.122 27)",
+          "oklch(0.30 0.144 27)",
+          "oklch(0.40 0.167 27)",
+          "oklch(0.50 0.190 27)",
+          "oklch(0.62 0.163 27)",
+          "oklch(0.74 0.135 27)",
+          "oklch(0.86 0.108 27)",
+          "oklch(0.95 0.087 27)"
+        ]
+      },
+      "line-1": {
+        "role": "tertiary",
+        "displayName": "Line 1 Teal",
+        "canonical": "oklch(0.47 0.08 215)",
+        "tonalRamp": [
+          "oklch(0.20 0.051 215)",
+          "oklch(0.30 0.061 215)",
+          "oklch(0.40 0.070 215)",
+          "oklch(0.50 0.080 215)",
+          "oklch(0.62 0.068 215)",
+          "oklch(0.74 0.057 215)",
+          "oklch(0.86 0.045 215)",
+          "oklch(0.95 0.037 215)"
+        ]
+      },
+      "line-2": {
+        "role": "tertiary",
+        "displayName": "Line 2 Blue",
+        "canonical": "oklch(0.47 0.15 255)",
+        "tonalRamp": [
+          "oklch(0.20 0.096 255)",
+          "oklch(0.30 0.114 255)",
+          "oklch(0.40 0.132 255)",
+          "oklch(0.50 0.150 255)",
+          "oklch(0.62 0.128 255)",
+          "oklch(0.74 0.107 255)",
+          "oklch(0.86 0.085 255)",
+          "oklch(0.95 0.069 255)"
+        ]
+      },
+      "line-3": {
+        "role": "tertiary",
+        "displayName": "Line 3 Green",
+        "canonical": "oklch(0.48 0.11 155)",
+        "tonalRamp": [
+          "oklch(0.20 0.070 155)",
+          "oklch(0.30 0.084 155)",
+          "oklch(0.40 0.097 155)",
+          "oklch(0.50 0.110 155)",
+          "oklch(0.62 0.094 155)",
+          "oklch(0.74 0.078 155)",
+          "oklch(0.86 0.062 155)",
+          "oklch(0.95 0.051 155)"
+        ]
+      },
+      "line-4": {
+        "role": "tertiary",
+        "displayName": "Line 4 Red",
+        "canonical": "oklch(0.5 0.17 27)",
+        "tonalRamp": [
+          "oklch(0.20 0.109 27)",
+          "oklch(0.30 0.129 27)",
+          "oklch(0.40 0.150 27)",
+          "oklch(0.50 0.170 27)",
+          "oklch(0.62 0.146 27)",
+          "oklch(0.74 0.121 27)",
+          "oklch(0.86 0.097 27)",
+          "oklch(0.95 0.078 27)"
+        ]
+      },
+      "line-5": {
+        "role": "tertiary",
+        "displayName": "Line 5 Ochre",
+        "canonical": "oklch(0.47 0.1 70)",
+        "tonalRamp": [
+          "oklch(0.20 0.064 70)",
+          "oklch(0.30 0.076 70)",
+          "oklch(0.40 0.088 70)",
+          "oklch(0.50 0.100 70)",
+          "oklch(0.62 0.086 70)",
+          "oklch(0.74 0.071 70)",
+          "oklch(0.86 0.057 70)",
+          "oklch(0.95 0.046 70)"
+        ]
+      },
+      "line-6": {
+        "role": "tertiary",
+        "displayName": "Line 6 Magenta",
+        "canonical": "oklch(0.48 0.14 350)",
+        "tonalRamp": [
+          "oklch(0.20 0.090 350)",
+          "oklch(0.30 0.106 350)",
+          "oklch(0.40 0.123 350)",
+          "oklch(0.50 0.140 350)",
+          "oklch(0.62 0.120 350)",
+          "oklch(0.74 0.100 350)",
+          "oklch(0.86 0.080 350)",
+          "oklch(0.95 0.064 350)"
+        ]
+      },
+      "line-7": {
+        "role": "tertiary",
+        "displayName": "Line 7 Olive",
+        "canonical": "oklch(0.48 0.09 120)",
+        "tonalRamp": [
+          "oklch(0.20 0.058 120)",
+          "oklch(0.30 0.068 120)",
+          "oklch(0.40 0.079 120)",
+          "oklch(0.50 0.090 120)",
+          "oklch(0.62 0.077 120)",
+          "oklch(0.74 0.064 120)",
+          "oklch(0.86 0.051 120)",
+          "oklch(0.95 0.041 120)"
+        ]
+      },
+      "line-8": {
+        "role": "tertiary",
+        "displayName": "Line 8 Slate",
+        "canonical": "oklch(0.45 0.02 250)",
+        "tonalRamp": [
+          "oklch(0.20 0.013 250)",
+          "oklch(0.30 0.015 250)",
+          "oklch(0.40 0.018 250)",
+          "oklch(0.50 0.020 250)",
+          "oklch(0.62 0.017 250)",
+          "oklch(0.74 0.014 250)",
+          "oklch(0.86 0.011 250)",
+          "oklch(0.95 0.009 250)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "small": {
+        "displayName": "Small",
+        "purpose": "Meta, helper text, table headers, pills, key hints, bullets."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Refs, paths, IDs, SHAs beside 14px text."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "UI text, cells, labels, descriptions."
+      },
+      "section": {
+        "displayName": "Section",
+        "purpose": "Section headings and list titles."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "The page h1, one per page."
+      },
+      "figure": {
+        "displayName": "Figure",
+        "purpose": "The one figure that answers a screen's question."
+      },
+      "reader-title": {
+        "displayName": "Reader Title",
+        "purpose": "The article's own title in the reader."
+      },
+      "reader-body": {
+        "displayName": "Reader Body",
+        "purpose": "Article prose, 68ch measure."
+      }
+    },
+    "shadows": [
+      {
+        "name": "focus-ring",
+        "value": "outline: 2px solid var(--ring); outline-offset: 2px",
+        "purpose": "Focus on every interactive element."
+      },
+      {
+        "name": "floating-overlay",
+        "value": "Tailwind shadow-md / shadow-lg",
+        "purpose": "Menus, popovers and dialogs only; nothing at rest has a shadow."
+      }
+    ],
+    "motion": [
+      {
+        "name": "dur-fast",
+        "value": "120ms",
+        "purpose": "Hover, press, colour changes."
+      },
+      {
+        "name": "dur",
+        "value": "180ms",
+        "purpose": "Menus, rows arriving, notices, route change."
+      },
+      {
+        "name": "dur-slow",
+        "value": "240ms",
+        "purpose": "Sheets, the route rule drawing in."
+      },
+      {
+        "name": "ease-out",
+        "value": "cubic-bezier(0.23, 1, 0.32, 1)",
+        "purpose": "Everything that arrives."
+      },
+      {
+        "name": "ease-in-out",
+        "value": "cubic-bezier(0.65, 0, 0.35, 1)",
+        "purpose": "Defined token for symmetric moves."
+      },
+      {
+        "name": "reveal",
+        "value": "opacity 0 + translateY(-4px) to rest, var(--dur)",
+        "purpose": "Something appearing in place; replaces height animation."
+      },
+      {
+        "name": "route-draw",
+        "value": "scaleX(0) to 1 from left, var(--dur-slow)",
+        "purpose": "The route rule draws from bullet to new station."
+      },
+      {
+        "name": "row-in",
+        "value": "opacity 0 + translateY(-4px) to rest, var(--dur)",
+        "purpose": "A new row in a list."
+      },
+      {
+        "name": "page-in",
+        "value": "opacity 0 + translateY(4px) to rest, var(--dur)",
+        "purpose": "Sheet cross-fade on route change (View Transitions)."
+      },
+      {
+        "name": "sweep",
+        "value": "translateX(-100%) to 300%, 1.4s infinite",
+        "purpose": "Progress with no total yet."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      },
+      {
+        "name": "xl",
+        "value": "1280px"
+      }
+    ],
+    "darkTheme": {
+      "frame": "oklch(0.13 0.002 250)",
+      "sheet": "oklch(0.175 0.003 250)",
+      "ink": "oklch(0.95 0.002 250)",
+      "ink-muted": "oklch(0.74 0.004 250)",
+      "raised": "oklch(0.205 0.003 250)",
+      "border": "oklch(0.27 0.003 250)",
+      "route": "oklch(0.75 0.09 210)",
+      "route-soft": "oklch(0.27 0.035 215)",
+      "primary": "oklch(0.95 0.002 250)",
+      "positive": "oklch(0.75 0.14 155)",
+      "warning": "oklch(0.8 0.13 75)",
+      "destructive": "oklch(0.7 0.17 22)"
+    }
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one primary action per screen.",
+      "html": "<button class=\"ds-btn-primary\">Add library</button>",
+      "css": ".ds-btn-primary{font-family:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;font-size:14px;display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border-radius:6px;font-weight:500;cursor:pointer;transition:background-color 120ms cubic-bezier(0.23,1,0.32,1),transform 120ms cubic-bezier(0.23,1,0.32,1);border:0;background:oklch(0.2 0.006 250);color:oklch(0.99 0 0)}.ds-btn-primary:hover{background:oklch(0.2 0.006 250 / .88)}.ds-btn-primary:active{transform:scale(.97)}.ds-btn-primary:focus-visible{outline:2px solid oklch(0.55 0.1 215);outline-offset:2px}"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "Secondary action on the sheet.",
+      "html": "<button class=\"ds-btn-outline\">Cancel</button>",
+      "css": ".ds-btn-outline{font-family:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;font-size:14px;display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border-radius:6px;font-weight:500;cursor:pointer;transition:background-color 120ms cubic-bezier(0.23,1,0.32,1),transform 120ms cubic-bezier(0.23,1,0.32,1);border:1px solid oklch(0.84 0.005 250);background:#fff;color:oklch(0.2 0.006 250)}.ds-btn-outline:hover{background:oklch(0.948 0.004 240)}.ds-btn-outline:active{transform:scale(.97)}.ds-btn-outline:focus-visible{outline:2px solid oklch(0.55 0.1 215);outline-offset:2px}"
+    },
+    {
+      "name": "Destructive Button",
+      "kind": "button",
+      "refersTo": "button-destructive",
+      "description": "Removal, outlined in the destructive colour.",
+      "html": "<button class=\"ds-btn-danger\">Remove version</button>",
+      "css": ".ds-btn-danger{font-family:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;font-size:14px;display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border-radius:6px;font-weight:500;cursor:pointer;transition:background-color 120ms cubic-bezier(0.23,1,0.32,1),transform 120ms cubic-bezier(0.23,1,0.32,1);border:1px solid oklch(0.52 0.19 27 / .4);background:#fff;color:oklch(0.52 0.19 27)}.ds-btn-danger:hover{background:oklch(0.965 0.025 27);border-color:oklch(0.52 0.19 27)}.ds-btn-danger:active{transform:scale(.97)}.ds-btn-danger:focus-visible{outline:2px solid oklch(0.55 0.1 215);outline-offset:2px}"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "White control with a hairline border and a soft teal focus ring.",
+      "html": "<input class=\"ds-input\" placeholder=\"Search docs\" />",
+      "css": ".ds-input{font-family:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;font-size:14px;width:240px;height:36px;padding:0 12px;border:1px solid oklch(0.84 0.005 250);border-radius:6px;background:#fff;color:oklch(0.2 0.006 250);outline:none;transition:border-color 120ms,box-shadow 120ms}.ds-input:hover{border-color:oklch(0.47 0.005 250 / .45)}.ds-input:focus-visible{border-color:oklch(0.55 0.1 215);box-shadow:0 0 0 3px oklch(0.55 0.1 215 / .25)}.ds-input::placeholder{color:oklch(0.47 0.005 250)}"
+    },
+    {
+      "name": "Status Pill",
+      "kind": "chip",
+      "refersTo": "pill-positive",
+      "description": "A status beside a value; soft ground, ink text.",
+      "html": "<span class=\"ds-pill\">Synced</span>",
+      "css": ".ds-pill{font-family:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;font-size:14px;display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:9999px;font-size:12px;font-weight:500;background:oklch(0.96 0.04 155);color:oklch(0.3 0.07 155)}"
+    },
+    {
+      "name": "Library Bullet",
+      "kind": "custom",
+      "refersTo": "library-bullet",
+      "description": "A library's round bullet in its line colour, two initials.",
+      "html": "<span class=\"ds-bullet\">DR</span>",
+      "css": ".ds-bullet{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:9999px;background:oklch(0.47 0.15 255);color:#fff;font-family:'IBM Plex Sans',sans-serif;font-size:12px;font-weight:600;letter-spacing:-0.025em}"
+    },
+    {
+      "name": "Route Strip",
+      "kind": "nav",
+      "refersTo": "library-bullet",
+      "description": "Library, drawn rule, version station, short SHA: the identity line.",
+      "html": "<div class=\"ds-route\"><span class=\"ds-r-b\">DR</span><span class=\"ds-r-name\">docs-repo</span><span class=\"ds-r-rule\"></span><span class=\"ds-r-st\"></span><span class=\"ds-r-ver\">v1.3.0</span><span class=\"ds-r-rule\"></span><span class=\"ds-r-sha\">a1b2c3d</span></div>",
+      "css": ".ds-route{display:flex;align-items:center;gap:8px;font-family:'IBM Plex Sans',sans-serif;font-size:14px;color:oklch(0.2 0.006 250)}.ds-r-b{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:9999px;background:oklch(0.47 0.15 255);color:#fff;font-size:12px;font-weight:600}.ds-r-name{font-weight:500}.ds-r-rule{width:16px;height:2px;border-radius:9999px;background:oklch(0.47 0.08 215 / .6)}.ds-r-st{width:10px;height:10px;border-radius:9999px;border:2px solid oklch(0.47 0.08 215);background:oklch(0.47 0.08 215);box-sizing:border-box}.ds-r-ver{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:500}.ds-r-sha{font-family:'IBM Plex Mono',monospace;font-size:12px;color:oklch(0.47 0.005 250)}"
+    },
+    {
+      "name": "Code Well",
+      "kind": "custom",
+      "refersTo": "code-well",
+      "description": "Literal text shown as it is.",
+      "html": "<pre class=\"ds-code\">exactdocs serve --port 3000</pre>",
+      "css": ".ds-code{margin:0;padding:10px 12px;border-radius:6px;background:oklch(0.973 0.004 240);color:oklch(0.2 0.006 250);font-family:'IBM Plex Mono',monospace;font-size:13px;line-height:20px;overflow-wrap:anywhere}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Wayfinding Line",
+    "overview": "**Every screen says exactly where you are on the line.** ExactDocs serves text at an exact library, version and commit, so the UI is set like a wayfinding system:\n\nAround that, the product is a quiet working tool. A cool tinted **frame** (the top band and the window's margin) holds a white **sheet** where the work happens. The text is ink with two greys. One **route hue** (deep teal) marks place, selection and progress. Nothing else is coloured unless it is a state or a library's line.\n\nBuilt from shadcn/ui and these free shadcnblocks.com blocks (no premium code): `application-shell3` (the band, mobile sheet and user menu), `login2` (the auth card), `blogpost2` (the reader's sticky contents column), `changelog1` (the version rail) and `data-table1` (the server-side tables, #434).\n\n",
+    "keyCharacteristics": [
+      "Cool tinted frame around a white sheet; the sheet is inset 16px-rounded from `md` up.",
+      "Ink plus two greys for all words; one deep-teal route hue; eight line colours only on library bullets.",
+      "IBM Plex Sans for everything, IBM Plex Mono for versions, SHAs, paths, IDs, tokens and code.",
+      "Flat: depth is tonal (frame, sheet, raised) and by hairline borders, not shadows.",
+      "Motion is composite-only (transform and opacity) and explains state."
+    ],
+    "rules": [
+      {
+        "name": "The Three Percent Rule",
+        "body": "Colour is under about 3% of a screen. A delta or status is coloured only when it means good or bad. Zero is grey.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Route Hue Rule",
+        "body": "Teal means place, selection and progress, nothing else. Line colours live only on library bullets. Violet, indigo, gradients and glows are not used anywhere.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two Greys Rule",
+        "body": "Words are ink or `muted-foreground`. No third grey for text.",
+        "section": "colors"
+      },
+      {
+        "name": "The Literal Is Mono Rule",
+        "body": "If a reader could copy it into a terminal or a config (version, SHA, path, ID, token), it is Plex Mono; nothing else is.",
+        "section": "typography"
+      },
+      {
+        "name": "The Closed Scale Rule",
+        "body": "Only the sizes above exist. A new size is added to the tokens and this file first.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat-At-Rest Rule",
+        "body": "Surfaces never carry a shadow at rest; only floating layers (menu, popover, dialog) do.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** name library, version and commit with `LibraryBullet`, `VersionStation` and `Commit` wherever they appear.",
+      "**Do** use only the named tokens, sizes, durations and recipes; add to the tokens first.",
+      "**Do** keep one primary button per screen and start every page with `PageHeader`.",
+      "**Do** set literal text (versions, SHAs, paths, tokens) in Plex Mono.",
+      "**Do** animate transform and opacity only, with `--dur-*` and `--ease-out`."
+    ],
+    "donts": [
+      "**Don't** colour more than about 3% of a screen, or use a delta colour for anything but good or bad.",
+      "**Don't** use violet, indigo, gradients or glows; line colours belong on library bullets only.",
+      "**Don't** put `frame` behind content, or use navy in dark mode.",
+      "**Don't** use raw colours, `text-[13px]`, the default `text-sm`, tracked capitals or ad hoc durations.",
+      "**Don't** animate a height, a width or `grid-template-rows`.",
+      "**Don't** use a dialog except for confirmations and for showing a secret once."
+    ]
+  }
+}

@@ -8,7 +8,15 @@ from urllib.parse import urlsplit
 
 from croniter import croniter
 from platformdirs import user_data_path
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import (
     BaseSettings,
     InitSettingsSource,
@@ -21,6 +29,11 @@ from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError
 
 from exactdocs.bootstrap.constants import (
+    DATABASE_BACKEND,
+    INDEX_BACKEND_SECRET_SUFFIXES,
+    INDEX_BACKENDS,
+    LIBSQL_DRIVER,
+    LIBSQL_SCHEME,
     LOCAL_HOSTS,
     MODELS_SUBDIR,
     POSTGRES_DRIVER,
@@ -815,8 +828,10 @@ class Settings(BaseSettings):
     database_url: str | None = None
     """Overrides the SQLite file in the data directory: another SQLite file
     (`sqlite:////srv/exactdocs.db`) or a PostgreSQL database
-    (`postgresql+psycopg://user:password@host:5432/exactdocs`, `postgresql://` means the same).
-    Several server processes can share a PostgreSQL database; a SQLite one has one server.
+    (`postgresql+psycopg://user:password@host:5432/exactdocs`, `postgresql://` means the same),
+    or a libSQL server (`libsql://host?authToken=...`, the `libsql-database` extra).
+    Several server processes can share a PostgreSQL database or a libSQL server; a SQLite file
+    has one server.
     """
     models_dir: Path | None = None
     """Where local models live (`exactdocs models pull` writes them, `local` profiles read them;
@@ -873,6 +888,22 @@ class Settings(BaseSettings):
     ai: AiSettings = Field(default_factory=AiSettings)
     """AI retrieval (`EXACTDOCS_AI__...`, or `[ai]` in the `EXACTDOCS_CONFIG_FILE` TOML file;
     docs/decisions/ai-retrieval.md): the instance mode, provider profiles and model roles.
+    """
+    search_backend: str = DATABASE_BACKEND
+    """Where full-text search runs: `database` (the default: SQLite FTS5, or PostgreSQL's
+    full-text search or pg_search) or a registered external backend (`memory` is for tests).
+    The database keeps every chunk; the backend holds a copy that `exactdocs index rebuild`
+    writes again. A configured backend that cannot be reached stops the start, naming it.
+    """
+    vector_backend: str = DATABASE_BACKEND
+    """Where vector searches run: `database` (the default: sqlite-vec, or pgvector) or a
+    registered external backend. The database's store still keeps every vector (an embedding is
+    paid once); the backend holds a copy per version.
+    """
+    index_backends: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    """Each external backend's options (`[index_backends.<name>]` in the TOML file, or
+    `EXACTDOCS_INDEX_BACKENDS__<NAME>__<OPTION>`): its URL, index names... Keys, tokens and
+    passwords come from the environment or an option ending in `_file`, never the file.
     """
     telemetry: Literal["off", "otlp"] = "off"
     """`otlp`: traces and metrics over OTLP/HTTP to the collector the standard
@@ -973,6 +1004,53 @@ class Settings(BaseSettings):
                 "the seconds first (e.g. '0 * * * * *', every minute)"
             )
             raise ValueError(message)
+        return value
+
+    @field_validator("search_backend", "vector_backend", mode="before")
+    @classmethod
+    def _known_backend(cls, value: object, info: ValidationInfo) -> object:
+        """Refuse a backend name that is not registered, or cannot hold that index.
+
+        Args:
+            value: The raw setting.
+            info: Which setting it is.
+
+        Returns:
+            The name in lower case; ``database`` when blank.
+
+        Raises:
+            ValueError: No backend has this name, or it cannot hold this index.
+        """
+        if not isinstance(value, str):
+            return value
+        name = value.strip().lower() or DATABASE_BACKEND
+        role = "search" if info.field_name == "search_backend" else "vectors"
+        variable = f"EXACTDOCS_{(info.field_name or '').upper()}"
+        if name == DATABASE_BACKEND:
+            return name
+        kind = INDEX_BACKENDS.get(name)
+        if kind is None:
+            known = ", ".join([DATABASE_BACKEND, *sorted(INDEX_BACKENDS)])
+            message = f"{variable}={value!r} is not a known index backend (known: {known})"
+            raise ValueError(message)
+        if (kind.search if role == "search" else kind.vectors) is None:
+            message = f"{variable}: the {name} backend cannot hold the {role} index"
+            raise ValueError(message)
+        return name
+
+    @field_validator("index_backends", mode="before")
+    @classmethod
+    def _lower_case_backends(cls, value: object) -> object:
+        """Name each backend's options table in lower case, as the backend settings are.
+
+        Args:
+            value: The raw tables.
+
+        Returns:
+            The tables, keyed in lower case.
+        """
+        if isinstance(value, dict):
+            return {str(k).lower(): v for k, v in value.items()}
         return value
 
     @field_validator("secret_key", "secret_key_previous", "models_dir", mode="before")
@@ -1124,14 +1202,17 @@ class Settings(BaseSettings):
         """``EXACTDOCS_DATABASE_URL``, or a SQLite file in the data directory.
 
         SQLite runs on aiosqlite, PostgreSQL on psycopg 3: ``postgresql://`` and
-        ``postgresql+psycopg://`` both name it. Any other driver is left as written, and
-        ``open_database`` refuses it.
+        ``postgresql+psycopg://`` both name it. A libSQL server (``libsql://host``, #474) runs
+        on SQLite's dialect over Turso's driver (``sqlite+libsql``). Any other driver is left as
+        written, and ``open_database`` refuses it.
         """
         if self.database_url:
             url = make_url(self.database_url)
         else:
             url = URL.create("sqlite", database=(self.data_dir / "exactdocs.db").as_posix())
-        if url.get_backend_name() == "sqlite":
+        if url.drivername in {LIBSQL_SCHEME, LIBSQL_DRIVER}:
+            url = url.set(drivername=LIBSQL_DRIVER)
+        elif url.get_backend_name() == "sqlite":
             url = url.set(drivername="sqlite+aiosqlite")
         elif url.drivername in POSTGRES_DRIVERS:
             url = url.set(drivername=POSTGRES_DRIVER)
@@ -1179,15 +1260,39 @@ def read_config_file(path: Path) -> dict[str, Any]:
     found = sorted(SECRETS_REFUSED_IN_FILE & data.keys())
     found += _secrets_in(data, "ai", "api_key")
     found += _secrets_in(data, "auth", "client_secret")
+    found += _backend_secrets_in(data)
     if found:
         message = (
             f"{path} holds secrets ({', '.join(found)}): keep keys out of the configuration file; "
-            "use api_key_file / client_secret_file or the environment "
-            "(EXACTDOCS_AI__PROVIDERS__<NAME>__API_KEY, "
-            "EXACTDOCS_AUTH__PROVIDERS__<NAME>__CLIENT_SECRET)"
+            "use api_key_file / client_secret_file (or an index backend's *_file option) or the "
+            "environment (EXACTDOCS_AI__PROVIDERS__<NAME>__API_KEY, "
+            "EXACTDOCS_AUTH__PROVIDERS__<NAME>__CLIENT_SECRET, "
+            "EXACTDOCS_INDEX_BACKENDS__<NAME>__<OPTION>)"
         )
         raise SettingsError(message)
     return data
+
+
+def _backend_secrets_in(data: dict[str, Any]) -> list[str]:
+    """Return where the file's ``[index_backends.<name>]`` tables hold a secret.
+
+    Args:
+        data: The parsed file.
+
+    Returns:
+        The dotted paths of the options that look like keys, tokens or passwords.
+    """
+    tables = data.get("index_backends", {})
+    if not isinstance(tables, dict):
+        return []
+    return [
+        f"index_backends.{name}.{option}"
+        for name, options in tables.items()
+        if isinstance(options, dict)
+        for option in options
+        if not option.lower().endswith("_file")
+        and option.lower().endswith(INDEX_BACKEND_SECRET_SUFFIXES)
+    ]
 
 
 def _secrets_in(data: dict[str, Any], section: str, secret: str) -> list[str]:

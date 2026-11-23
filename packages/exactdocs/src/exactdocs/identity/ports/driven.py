@@ -6,6 +6,8 @@ from typing import Literal, Protocol
 
 from exactdocs.identity.models import (
     AccessClaims,
+    AccessEvent,
+    AccessLogFilter,
     Account,
     AccountId,
     ApiToken,
@@ -730,10 +732,63 @@ class LibraryGrantRepository(Protocol):
         """
         ...
 
+    async def transfer(self, library: str, account_id: AccountId) -> list[AccountId]:
+        """Make the account the library's creator in one step; the creators before become admins.
+
+        The account's earlier grant on the library, if any, is replaced.
+
+        Args:
+            library: The library ID, lower-case.
+            account_id: The new creator.
+
+        Returns:
+            The accounts that were the library's creator before (none for a library that had
+            no creator).
+        """
+        ...
+
     async def clear(self, library: str) -> None:
         """Delete every grant on a library.
 
         Args:
             library: The library ID, lower-case.
+        """
+        ...
+
+
+class AccessLog(Protocol):
+    """The access log: grants, revocations, ownership transfers and deletions (append-only)."""
+
+    async def record(self, event: AccessEvent) -> None:
+        """Append an event.
+
+        Args:
+            event: What changed, by whom and when.
+        """
+        ...
+
+    async def newest(
+        self, where: AccessLogFilter, *, older_than: str | None, limit: int
+    ) -> list[AccessEvent]:
+        """Return the newest events that match, newest first.
+
+        Args:
+            where: Which events.
+            older_than: Only events recorded before the one with this ID (a page's cursor).
+            limit: Most events returned.
+
+        Returns:
+            Up to ``limit`` events, by ID descending.
+        """
+        ...
+
+    async def count(self, where: AccessLogFilter) -> int:
+        """Count the events that match.
+
+        Args:
+            where: Which events.
+
+        Returns:
+            How many there are.
         """
         ...

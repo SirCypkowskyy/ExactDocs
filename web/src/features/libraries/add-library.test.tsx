@@ -784,8 +784,8 @@ describe("entry points", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) =>
-        url.endsWith("/v1/libraries")
-          ? Response.json({ libraries: [], next_cursor: null })
+        url.includes("/v1/libraries?")
+          ? Response.json({ libraries: [], next_cursor: null, total: 0 })
           : Response.json({ jobs: [] }),
       ),
     );

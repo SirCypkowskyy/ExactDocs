@@ -546,6 +546,43 @@ class VectorStoreUnavailableError(DomainError):
         self.reason = reason
 
 
+class IndexBackendUnavailableError(DomainError):
+    """An external search or vector backend did not answer (unreachable, refused, timed out).
+
+    The database still holds every chunk and vector: a write that failed is retried by the job
+    that made it, and ``exactdocs index rebuild`` restores whatever the backend lost.
+    """
+
+    code = "index_backend_unavailable"
+
+    def __init__(self, backend: str, reason: str) -> None:
+        """Name the backend and what went wrong.
+
+        Args:
+            backend: The backend's registered name (``qdrant``, ``memory``...).
+            reason: A short reason (an error type, a status), never a credential.
+        """
+        super().__init__(f"the index backend {backend!r} is unavailable: {_data(reason)}")
+        self.backend = backend
+        self.reason = reason
+
+
+class UnknownIndexVersionError(NotFoundError):
+    """``exactdocs index rebuild --version`` named a version retrieval holds no chunks of."""
+
+    code = "unknown_version"
+
+    def __init__(self, library: str | None, ref: str) -> None:
+        """Name what was asked for.
+
+        Args:
+            library: The library, if one was given.
+            ref: The version.
+        """
+        where = f" of {_data(library)}" if library else ""
+        super().__init__(f"no indexed version {_data(ref)}{where}")
+
+
 class EmbeddingFailedError(DomainError):
     """The embedding model did not answer as expected; the embedding job stops and can be rerun."""
 

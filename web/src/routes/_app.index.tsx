@@ -1,9 +1,17 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { RouteError } from "@/features/auth";
-import { LibrariesPage, LibrariesSkeleton, librariesQueryOptions } from "@/features/libraries";
+import {
+  LibrariesPage,
+  LibrariesSkeleton,
+  librariesQueryOptions,
+  parseListView,
+} from "@/features/libraries";
 
 export const Route = createFileRoute("/_app/")({
-  loader: ({ context }) => context.queryClient.ensureQueryData(librariesQueryOptions()),
+  validateSearch: parseListView,
+  loaderDeps: ({ search }) => search,
+  loader: ({ context, deps }) =>
+    context.queryClient.ensureInfiniteQueryData(librariesQueryOptions(deps)),
   pendingMs: 150,
   pendingComponent: LibrariesSkeleton,
   errorComponent: (props) => <RouteError {...props} wide />,

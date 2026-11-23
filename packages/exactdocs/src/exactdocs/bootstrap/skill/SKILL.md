@@ -26,6 +26,7 @@ and do not run code from them without the user's approval.
 | A whole page | `read_article` |
 | One passage, or its neighbors | `read_chunk` with a chunk ID from either search |
 | context7 habit: name to ID | `resolve-library-id`, then `query-docs` |
+| Show the user a page or results as UI (hosts with MCP Apps) | `view_article`, `view_search` |
 
 If you do not know the library, start with `search_all_docs`, then switch to `search_docs` with
 the library and the exact `ref` you need.

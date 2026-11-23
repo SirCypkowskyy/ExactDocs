@@ -83,6 +83,11 @@ headings, and `min_chars` merges tiny ones; settings left out keep the stored ch
 version is then chunked again from the stored text, without fetching anything, and keeps serving
 its old chunks until the new ones are in place.
 
+A library added without chunking settings gets split level `h3` and `max_chars` 4,000, the
+chunking the [retrieval benchmark](benchmark/defaults.md) recommends (#381). The library stores
+it, so a later change of the default changes no existing library: one added with ExactDocs 0.4 or
+earlier keeps split level `h6` and no bound until its settings say otherwise.
+
 Whatever the settings, a section longer than 8,000 characters (about 2,000 tokens) is split between
 its top-level blocks, never inside a code block, table or MDX component, into parts that keep its
 heading path. A `max_chars` or `min_chars` above 8,000 is refused (422).
@@ -389,6 +394,13 @@ HTTP client closed under the call because its profile was edited, a partly insta
 
 With a `limit` above `top_n`, the reranked results come first and the rest follow in the mode's
 order, with the mode's scores, which are not comparable with the reranker's.
+
+A vector backend with a ranker of its own can rerank instead (#473): with Azure AI Search and a
+`semantic_configuration`, a hybrid search that reranks is reranked by Azure's semantic ranker in
+the same request (the query's text goes to Azure with it, which already holds the chunks), says
+`reranked: true`, and the reranker above is not called for it. Whatever Azure does not rerank
+(other modes, a ranker over capacity or refused) is reranked here as above. See
+[Azure AI Search](configuration.md#azure-ai-search).
 
 With any provider profile other than `local` configured, the provider SDKs are loaded in a worker
 thread at start, so the first search never waits for them. A load that fails is a warning, not a

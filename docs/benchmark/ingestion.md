@@ -8,7 +8,8 @@ set on the chunks it produced. No model is involved. The metrics are defined in
 The recorded run is `packages/exactdocs/evals/results/ingestion.json`, recorded on 13 November
 2026 with #346 on every pinned version of the five projects (the commits are on the
 [Golden set](golden-set.md#the-corpus) page). The report does not record the ExactDocs commit or
-the machine. The lists of sections that start no chunk, and examples of each problem, are in
+the machine. #381 changed the default chunking and ran it again: the numbers are the same, under
+new names (`default` is what was `h3-max-4000`, and `h6` what was `default`). The lists of sections that start no chunk, and examples of each problem, are in
 [`results/ingestion.md`](https://github.com/SirCypkowskyy/ExactDocs/blob/develop/packages/exactdocs/evals/results/ingestion.md).
 
 What it shows:
@@ -17,8 +18,9 @@ What it shows:
   chunk, and the same 11,446 source characters (from Zod v4's symlinked README) are missing in all
   four.
 - Coarser chunking trades coverage for size: `h2` starts a chunk for only half the expected
-  sections and its largest chunks pass 20,000 tokens; `h3-max-4000` keeps 91.3% coverage with a
-  p95 of 727 tokens.
+  sections and its largest chunks pass 20,000 tokens; `default` (split level 3, 4,000
+  characters, a new library's chunking since #381) keeps 91.3% coverage with a p95 of 727
+  tokens, against 100% and 507 tokens at `h6`, the default before.
 - The problems found here are the importer's, not a configuration's: Zod v4's MDX fences hide 60
   headings, Pydantic keeps `{#id}` attributes in heading paths, MkDocs admonitions and tabs read
   as code blocks, and Pydantic v1's includes stay unexpanded.
@@ -29,17 +31,37 @@ What it shows:
 <!-- bench:ingestion -->
 | configuration | coverage | held | cut fence / table / list | lost chars | tokens p50 / p95 / max | small | multi-top | empty / wrong path | headings missed / extra | BM25 recall@5 (exact) | MRR |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `default` | 100.0% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 88 / 516 / 8645 | 32.2% | 0.0% | 723 / 103 | 60 / 3 | 79.8% (79.8%) | 0.626 |
+| `default` | 91.3% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 114 / 738 / 8645 | 23.1% | 0.0% | 723 / 102 | 60 / 3 | 81.7% (76.8%) | 0.651 |
+| `h6` | 100.0% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 88 / 516 / 8645 | 32.2% | 0.0% | 723 / 103 | 60 / 3 | 79.8% (79.8%) | 0.626 |
 | `h2` | 51.8% | 367/367 | 3 / 0 / 0 | 11446 of 7940351 | 179 / 1699 / 8645 | 14.3% | 0.6% | 726 / 95 | 60 / 3 | 76.0% (39.3%) | 0.626 |
-| `h3-max-4000` | 91.3% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 114 / 738 / 8645 | 23.1% | 0.0% | 723 / 102 | 60 / 3 | 81.7% (76.8%) | 0.651 |
 | `merge-400` | 77.1% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 183 / 654 / 8645 | 3.0% | 5.1% | 723 / 88 | 60 / 3 | 74.2% (65.2%) | 0.602 |
 
-- `default`: today's default: every heading starts a chunk; nothing is merged or bounded.
+- `default`: today's default (#381): # to ### start a chunk; one over 4,000 characters is cut again at deeper headings.
+- `h6`: every heading starts a chunk; nothing is merged or bounded (the default before #381).
 - `h2`: only # and ## start a chunk; deeper sections stay inside their parent.
-- `h3-max-4000`: # to ### start a chunk; one over 4,000 characters is cut again at deeper headings.
 - `merge-400`: every heading starts a chunk, then one under 400 characters is merged with the next while the result stays within 4,000.
 
 ## `default` per version
+
+| project | version | articles (no chunk) | chunks | coverage | cut fence | lost chars | tokens p50 / p95 / max | small | empty / wrong path | headings missed / extra | no H1 | includes | MkDocs blocks as code |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| starlette | 0.27.0 | 23 (0) | 299 | 89.5% | 0 | 0 | 69 / 569 / 900 | 40.5% | 20 / 0 | 0 / 0 | 21 | 0 | 9 |
+| starlette | 0.52.1 | 25 (0) | 390 | 87.0% | 0 | 0 | 69 / 540 / 932 | 39.0% | 20 / 0 | 0 / 0 | 21 | 0 | 14 |
+| starlette | 1.10.0 | 25 (0) | 396 | 85.7% | 0 | 0 | 69 / 561 / 989 | 38.1% | 21 / 0 | 0 / 0 | 22 | 0 | 20 |
+| pydantic | v1.10.22 | 25 (0) | 233 | 93.8% | 0 | 0 | 153 / 641 / 3017 | 10.7% | 23 / 0 | 0 / 0 | 23 | 113 | 67 |
+| pydantic | v2.5.3 | 67 (1) | 537 | 91.7% | 0 | 0 | 138 / 832 / 3017 | 12.1% | 56 / 40 | 0 / 0 | 56 | 0 | 118 |
+| pydantic | v2.14.3 | 91 (0) | 644 | 91.4% | 0 | 0 | 160 / 910 / 2762 | 10.2% | 77 / 59 | 0 / 0 | 79 | 0 | 204 |
+| tanstack-query | v4.36.1 | 140 (27) | 475 | 95.2% | 0 | 0 | 140 / 585 / 3424 | 14.5% | 103 / 0 | 0 / 0 | 113 | 0 | 0 |
+| tanstack-query | v5.0.0 | 147 (25) | 550 | 100.0% | 0 | 0 | 152 / 637 / 3269 | 12.4% | 110 / 0 | 0 / 0 | 122 | 0 | 0 |
+| tanstack-query | v5.90.3 | 327 (67) | 1253 | 100.0% | 0 | 0 | 81 / 528 / 3571 | 38.1% | 211 / 0 | 0 / 0 | 170 | 0 | 0 |
+| zod | v3.23.8 | 1 (0) | 97 | 72.2% | 2 | 0 | 157 / 814 / 996 | 13.4% | 1 / 0 | 0 / 1 | 1 | 0 | 0 |
+| zod | v4.0.17 | 17 (0) | 243 | 100.0% | 1 | 5289 | 169 / 630 / 2306 | 14.0% | 17 / 0 | 27 / 1 | 17 | 0 | 0 |
+| zod | v4.6.7 | 24 (0) | 351 | 100.0% | 1 | 6157 | 183 / 684 / 8645 | 12.5% | 24 / 3 | 33 / 1 | 24 | 0 | 0 |
+| electron | v30.0.0 | 239 (0) | 1852 | 84.6% | 0 | 0 | 103 / 765 / 2493 | 24.2% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
+| electron | v38.0.0 | 264 (0) | 2099 | 92.3% | 0 | 0 | 110 / 824 / 3582 | 22.3% | 14 / 0 | 0 / 0 | 37 | 0 | 0 |
+| electron | v45.3.2 | 301 (0) | 2329 | 82.1% | 0 | 0 | 120 / 828 / 3582 | 21.8% | 14 / 0 | 0 / 0 | 40 | 0 | 0 |
+
+## `h6` per version
 
 | project | version | articles (no chunk) | chunks | coverage | cut fence | lost chars | tokens p50 / p95 / max | small | empty / wrong path | headings missed / extra | no H1 | includes | MkDocs blocks as code |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -78,26 +100,6 @@ What it shows:
 | electron | v30.0.0 | 239 (0) | 742 | 34.6% | 0 | 0 | 220 / 1906 / 2493 | 10.0% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
 | electron | v38.0.0 | 264 (0) | 871 | 26.9% | 0 | 0 | 238 / 1931 / 3582 | 9.4% | 14 / 0 | 0 / 0 | 37 | 0 | 0 |
 | electron | v45.3.2 | 301 (0) | 965 | 17.9% | 0 | 0 | 265 / 1929 / 3582 | 8.8% | 14 / 0 | 0 / 0 | 40 | 0 | 0 |
-
-## `h3-max-4000` per version
-
-| project | version | articles (no chunk) | chunks | coverage | cut fence | lost chars | tokens p50 / p95 / max | small | empty / wrong path | headings missed / extra | no H1 | includes | MkDocs blocks as code |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| starlette | 0.27.0 | 23 (0) | 299 | 89.5% | 0 | 0 | 69 / 569 / 900 | 40.5% | 20 / 0 | 0 / 0 | 21 | 0 | 9 |
-| starlette | 0.52.1 | 25 (0) | 390 | 87.0% | 0 | 0 | 69 / 540 / 932 | 39.0% | 20 / 0 | 0 / 0 | 21 | 0 | 14 |
-| starlette | 1.10.0 | 25 (0) | 396 | 85.7% | 0 | 0 | 69 / 561 / 989 | 38.1% | 21 / 0 | 0 / 0 | 22 | 0 | 20 |
-| pydantic | v1.10.22 | 25 (0) | 233 | 93.8% | 0 | 0 | 153 / 641 / 3017 | 10.7% | 23 / 0 | 0 / 0 | 23 | 113 | 67 |
-| pydantic | v2.5.3 | 67 (1) | 537 | 91.7% | 0 | 0 | 138 / 832 / 3017 | 12.1% | 56 / 40 | 0 / 0 | 56 | 0 | 118 |
-| pydantic | v2.14.3 | 91 (0) | 644 | 91.4% | 0 | 0 | 160 / 910 / 2762 | 10.2% | 77 / 59 | 0 / 0 | 79 | 0 | 204 |
-| tanstack-query | v4.36.1 | 140 (27) | 475 | 95.2% | 0 | 0 | 140 / 585 / 3424 | 14.5% | 103 / 0 | 0 / 0 | 113 | 0 | 0 |
-| tanstack-query | v5.0.0 | 147 (25) | 550 | 100.0% | 0 | 0 | 152 / 637 / 3269 | 12.4% | 110 / 0 | 0 / 0 | 122 | 0 | 0 |
-| tanstack-query | v5.90.3 | 327 (67) | 1253 | 100.0% | 0 | 0 | 81 / 528 / 3571 | 38.1% | 211 / 0 | 0 / 0 | 170 | 0 | 0 |
-| zod | v3.23.8 | 1 (0) | 97 | 72.2% | 2 | 0 | 157 / 814 / 996 | 13.4% | 1 / 0 | 0 / 1 | 1 | 0 | 0 |
-| zod | v4.0.17 | 17 (0) | 243 | 100.0% | 1 | 5289 | 169 / 630 / 2306 | 14.0% | 17 / 0 | 27 / 1 | 17 | 0 | 0 |
-| zod | v4.6.7 | 24 (0) | 351 | 100.0% | 1 | 6157 | 183 / 684 / 8645 | 12.5% | 24 / 3 | 33 / 1 | 24 | 0 | 0 |
-| electron | v30.0.0 | 239 (0) | 1852 | 84.6% | 0 | 0 | 103 / 765 / 2493 | 24.2% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
-| electron | v38.0.0 | 264 (0) | 2099 | 92.3% | 0 | 0 | 110 / 824 / 3582 | 22.3% | 14 / 0 | 0 / 0 | 37 | 0 | 0 |
-| electron | v45.3.2 | 301 (0) | 2329 | 82.1% | 0 | 0 | 120 / 828 / 3582 | 21.8% | 14 / 0 | 0 / 0 | 40 | 0 | 0 |
 
 ## `merge-400` per version
 

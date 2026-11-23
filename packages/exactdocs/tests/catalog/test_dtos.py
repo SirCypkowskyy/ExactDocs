@@ -3,6 +3,7 @@
 from typing import Any
 
 from fastmcp import FastMCP
+from fastmcp.apps.config import AppConfig
 from pydantic import BaseModel
 
 from exactdocs.catalog import CatalogModule
@@ -57,6 +58,7 @@ async def test_list_articles_tags_description_agrees_with_its_schema() -> None:
         list_libraries=catalog.list_libraries,
         list_articles=catalog.list_articles,
         get_article=catalog.get_article,
+        app=AppConfig(resource_uri="ui://test/renderer.html"),
     )
     tool = await mcp.get_tool("list_articles")
     assert tool is not None

@@ -3,6 +3,7 @@
 from typing import Protocol
 
 from exactdocs.identity.dtos import (
+    AccessLogPage,
     AccountSummary,
     ApiTokenIdentity,
     AuthenticateQuery,
@@ -17,9 +18,12 @@ from exactdocs.identity.dtos import (
     FinishExternalSignInCommand,
     GrantLibraryRoleCommand,
     LibraryCreationQuery,
+    LibraryGrantList,
     LibraryGrants,
     LibraryRoles,
     LibraryRolesQuery,
+    ListAccessLogQuery,
+    ListLibraryAccessLogQuery,
     ListLibraryGrantsQuery,
     LoginForTokenCommand,
     PasswordReset,
@@ -33,7 +37,10 @@ from exactdocs.identity.dtos import (
     StartExternalSignInCommand,
     TokenGrant,
     TokenList,
+    TokenListQuery,
+    TransferLibraryCommand,
     UserList,
+    UserListQuery,
     UserSummary,
 )
 
@@ -176,11 +183,14 @@ class GetSessionState(Protocol):
 class ListUsers(Protocol):
     """Every local account, for an operator."""
 
-    async def __call__(self) -> UserList:
+    async def __call__(self, query: UserListQuery) -> UserList:
         """Run the use case.
 
+        Args:
+            query: The filters, the sort and the page.
+
         Returns:
-            The accounts, oldest first.
+            A page of the accounts, oldest first unless sorted otherwise.
         """
         ...
 
@@ -276,14 +286,15 @@ class LoginForToken(Protocol):
 class ListTokens(Protocol):
     """The account's tokens, never their secrets."""
 
-    async def __call__(self, account: AccountSummary) -> TokenList:
+    async def __call__(self, account: AccountSummary, query: TokenListQuery) -> TokenList:
         """Run the use case.
 
         Args:
             account: The account whose tokens to list.
+            query: The filters, the sort and the page.
 
         Returns:
-            The tokens, newest first.
+            A page of the tokens, newest first unless sorted otherwise.
         """
         ...
 
@@ -474,17 +485,72 @@ class RevokeLibraryRole(Protocol):
         ...
 
 
-class ListLibraryGrants(Protocol):
-    """List who holds a role on a library; needs the ``admin`` role on it."""
+class TransferLibrary(Protocol):
+    """Hand a library over to another user: they become its creator, the creator an ``admin``.
 
-    async def __call__(self, query: ListLibraryGrantsQuery) -> LibraryGrants:
+    Only the library's ``creator`` (or an operator) may (``LibraryRoleRequiredError``).
+    ``UnknownAccountError`` for a username nobody has, ``InvalidGrantError`` when the user is
+    already its creator.
+    """
+
+    async def __call__(self, command: TransferLibraryCommand) -> LibraryGrants:
         """Run the use case.
 
         Args:
-            query: The caller and the library.
+            command: The caller, the library and the new creator's username.
 
         Returns:
-            The grants.
+            The library's grants now.
+        """
+        ...
+
+
+class ListLibraryGrants(Protocol):
+    """List who holds a role on a library; needs the ``admin`` role on it."""
+
+    async def __call__(self, query: ListLibraryGrantsQuery) -> LibraryGrantList:
+        """Run the use case.
+
+        Args:
+            query: The caller, the library, the filters, the sort and the page.
+
+        Returns:
+            A page of the grants.
+        """
+        ...
+
+
+class ListLibraryAccessLog(Protocol):
+    """Read one library's access log, newest first; needs the ``admin`` role on it.
+
+    An instance operator sees every event recorded under the library's ID; anyone else only the
+    events since the library was last removed (a library created again under an old ID does not
+    show who had access to the one before).
+    """
+
+    async def __call__(self, query: ListLibraryAccessLogQuery) -> AccessLogPage:
+        """Run the use case.
+
+        Args:
+            query: The caller, the library, the filters and the page.
+
+        Returns:
+            A page of the events.
+        """
+        ...
+
+
+class ListAccessLog(Protocol):
+    """Read the access log of every library, removed ones included; instance operators only."""
+
+    async def __call__(self, query: ListAccessLogQuery) -> AccessLogPage:
+        """Run the use case.
+
+        Args:
+            query: The caller, the filters and the page.
+
+        Returns:
+            A page of the events.
         """
         ...
 

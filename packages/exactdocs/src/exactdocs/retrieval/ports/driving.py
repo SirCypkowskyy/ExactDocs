@@ -21,11 +21,13 @@ from exactdocs.retrieval.dtos import (
     EmbeddingProgressOut,
     EmbeddingSpaceOut,
     EmbedVersionCommand,
+    ExternalIndexScope,
     FinishedEmbeddingOut,
     FinishEmbeddingCommand,
     ForgetLibraryCommand,
     GetChunkSetsQuery,
     GetLibraryRetrievalQuery,
+    IndexDriftOut,
     IndexedManifestOut,
     IndexManifestCommand,
     LibraryRetrievalOut,
@@ -39,6 +41,7 @@ from exactdocs.retrieval.dtos import (
     QueryDocsResult,
     ReadChunkQuery,
     RebuiltIndexOut,
+    RebuiltVersionsOut,
     RemoveChunksCommand,
     RemovedChunks,
     ResolveLibraryIdQuery,
@@ -379,6 +382,49 @@ class RebuildSearchIndex(Protocol):
 
         Returns:
             The format the index is now in and how many chunks it holds.
+        """
+        ...
+
+
+class CheckExternalIndexes(Protocol):
+    """Compare the external search and vector backends with the stored chunks (#352).
+
+    Reports every version a backend lost (``missing``), holds only in part (``incomplete``) or
+    still holds after the database removed it (``orphaned``). Nothing is checked, and nothing
+    drifts, when every index lives in the database.
+    """
+
+    async def __call__(self, scope: ExternalIndexScope) -> IndexDriftOut:
+        """Run the use case.
+
+        Args:
+            scope: Which versions to check.
+
+        Returns:
+            What drifted.
+        """
+        ...
+
+
+class RebuildExternalIndexes(Protocol):
+    """Write the stored chunks (and their stored vectors) to the external backends again (#352).
+
+    Every indexed version, or one library's, or one version's; versions the database no longer
+    has are deleted from the backends when nothing narrows the scope. Nothing is imported or
+    embedded again: everything comes from the database. Safe while serving and to repeat.
+    """
+
+    async def __call__(self, scope: ExternalIndexScope) -> RebuiltVersionsOut:
+        """Run the use case.
+
+        Args:
+            scope: Which versions to write.
+
+        Returns:
+            What was written.
+
+        Raises:
+            UnknownIndexVersionError: ``scope.version`` names no indexed version.
         """
         ...
 

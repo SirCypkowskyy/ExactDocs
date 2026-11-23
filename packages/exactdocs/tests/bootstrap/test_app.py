@@ -134,10 +134,10 @@ async def test_a_library_is_shown_with_its_default_version(client: httpx.AsyncCl
         "v1.3.0": False,
         "v1.4.0": True,
     }
-    assert body["settings"]["chunking"] == {
-        "split_level": 6,
+    assert body["settings"]["chunking"] == {  # a new library's default (#381)
+        "split_level": 3,
         "min_chars": 0,
-        "max_chars": None,
+        "max_chars": 4000,
         "chunker": "markdown",
     }
 
@@ -259,6 +259,8 @@ async def test_mcp_exposes_read_only_tools(container: Container) -> None:
         "article_outline",
         "resolve-library-id",
         "query-docs",
+        "view_article",
+        "view_search",
     }
     assert all(tool.annotations and tool.annotations.read_only_hint for tool in tools.values())
     assert result.structured_content is not None

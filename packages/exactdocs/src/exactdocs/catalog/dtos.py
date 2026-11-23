@@ -15,9 +15,12 @@ from pydantic import (
 )
 
 from exactdocs.catalog.constants import (
+    _HEADING_LEVELS,
     _PINNED,
     ARTICLE_SORT_FIELDS,
     DEFAULT_GRACE_SECONDS,
+    DEFAULT_MAX_CHARS,
+    DEFAULT_SPLIT_LEVEL,
     LIBRARY_SORT_FIELDS,
     MAX_DESCRIPTION,
     MAX_INSTRUCTION_FILE_CHARS,
@@ -1577,11 +1580,11 @@ class Removal(_Dto):
 class ChunkingIn(_Dto):
     """How articles are cut (validated by the importer, which knows the chunkers)."""
 
-    split_level: int = Field(default=6, ge=1, le=6)
+    split_level: int = Field(default=DEFAULT_SPLIT_LEVEL, ge=1, le=_HEADING_LEVELS)
     """The deepest heading that starts a chunk."""
     min_chars: int = Field(default=0, ge=0)
     """A chunk shorter than this is merged with the next one."""
-    max_chars: int | None = Field(default=None, ge=1)
+    max_chars: int | None = Field(default=DEFAULT_MAX_CHARS, ge=1)
     """A chunk longer than this is cut again; null: no bound."""
     chunker: str = Field(default="markdown", min_length=1, max_length=64)
     """Which chunker cuts."""

@@ -64,6 +64,10 @@ or an API token; anyone else gets 403 (CLI exit code 5).
   `requirements.txt`. Both formats in one library are imported into the same version. Files that
   reStructuredText `include` / `literalinclude` must be inside the selected paths to be read;
   one that is not is listed as a `markup` problem and the article is imported without it.
+- `chunking` takes the fields of the library settings' `chunking` as a whole set: what it leaves
+  out takes its default, `split_level` 3 and `max_chars` 4,000 since #381 (6 and no bound before).
+  A file that declares only `split_level: 2` therefore means `max_chars` 4,000 now, and `plan`
+  shows the change for a library stored without a bound; declare `max_chars: null` to keep none.
 - `auto_sync` takes the fields of `PUT /libraries/{owner}/{repo}/auto-sync` as a whole set (what
   it leaves out takes its default), or `false` to turn the check off. `auto` versions belong to
   the check and are never listed.

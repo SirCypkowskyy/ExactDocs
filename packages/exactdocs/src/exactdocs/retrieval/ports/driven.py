@@ -3,7 +3,7 @@
 from collections.abc import Collection, Mapping, Sequence
 from contextlib import AbstractContextManager
 from datetime import date, datetime
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from exactdocs.retrieval.models import (
     Access,
@@ -14,6 +14,8 @@ from exactdocs.retrieval.models import (
     AnswerDraft,
     ArticleEntry,
     ArticleText,
+    BackendHit,
+    BackendNeighbour,
     BudgetLimit,
     CachedAgentAnswer,
     CatalogLibrary,
@@ -27,9 +29,11 @@ from exactdocs.retrieval.models import (
     EmbeddingSpace,
     EmbeddingSpaceId,
     EmbeddingSpec,
+    HeldVersion,
     HydeKey,
     HypotheticalAnswer,
     IndexedManifest,
+    IndexEntry,
     InstructionFile,
     JudgedCandidate,
     JudgeVerdict,
@@ -41,6 +45,7 @@ from exactdocs.retrieval.models import (
     ManifestStatus,
     ModelCheck,
     ModelRole,
+    NativeRanking,
     Outline,
     PendingChunks,
     PipelineAnswer,
@@ -59,6 +64,7 @@ from exactdocs.retrieval.models import (
     SpendKey,
     StoredChunk,
     TagFilter,
+    TextQuery,
     ThinkingLevel,
     VectorCoverage,
     VectorHit,
@@ -347,6 +353,36 @@ class ChunkRepository(Protocol):
 
         Returns:
             How many rows were changed.
+        """
+        ...
+
+    async def page(
+        self, manifest_id: str, after: ChunkId | None, limit: int
+    ) -> Sequence[StoredChunk]:
+        """Return the manifest's chunks with their content, by chunk ID, a page at a time.
+
+        What an external index is written (and rebuilt) from.
+
+        Args:
+            manifest_id: The manifest; an unknown one has no chunks.
+            after: Only chunks whose ID sorts after this one; ``None`` from the first.
+            limit: The most chunks returned.
+
+        Returns:
+            At most ``limit`` chunks, ordered by chunk ID.
+        """
+        ...
+
+    async def holding(self, keys: Collection[ChunkKey]) -> Sequence[StoredChunk]:
+        """Return every manifest's row of these stored chunks, with the content.
+
+        A chunk shared by several manifests (one blob in several versions) has a row in each.
+
+        Args:
+            keys: The stored chunks.
+
+        Returns:
+            One entry per (manifest, row) holding one of them, in no particular order.
         """
         ...
 
@@ -1107,6 +1143,331 @@ class VectorIndex(Protocol):
         Raises:
             UnknownEmbeddingSpaceError: No space has this ID.
             RetiredEmbeddingSpaceError: The space was retired.
+        """
+        ...
+
+
+class StoredVectors(Protocol):
+    """Reads back the vectors the database's vector store holds (what external copies come from).
+
+    Implemented by the database's own ``VectorIndex`` adapters next to that port.
+    """
+
+    async def stored(
+        self, space_id: EmbeddingSpaceId, keys: Collection[ChunkKey]
+    ) -> Mapping[ChunkKey, tuple[float, ...]]:
+        """Return the stored vectors of these chunks in the space, as the store keeps them.
+
+        Args:
+            space_id: The space.
+            keys: The chunks; those without a vector are left out.
+
+        Returns:
+            Each vector found, by chunk (float32 values, as stored).
+
+        Raises:
+            UnknownEmbeddingSpaceError: No space has this ID.
+            RetiredEmbeddingSpaceError: The space was retired.
+        """
+        ...
+
+
+class IndexBackend(Protocol):
+    """What every external index backend has: a name, and a connection opened at start.
+
+    An adapter is one module in ``adapters/driven`` (its client library behind an optional
+    extra), registered in ``bootstrap/index_backends.py``, passing the shared contract suites
+    (``tests/retrieval/test_search_index.py``, ``test_vector_index.py``,
+    ``test_index_backends.py``). It holds derived data only: everything in it is rebuilt from
+    the database by ``exactdocs index rebuild``.
+    """
+
+    @property
+    def name(self) -> str:
+        """The backend's registered name (``memory``, ``qdrant``...), for messages."""
+        ...
+
+    async def open(self) -> None:
+        """Connect and check the backend answers; called once when the instance starts.
+
+        Raises:
+            IndexBackendUnavailableError: It cannot be reached (startup then fails, naming it).
+        """
+        ...
+
+    async def close(self) -> None:
+        """Release the connection; called once when the instance stops."""
+        ...
+
+
+class SearchBackend(IndexBackend, Protocol):
+    """An external full-text index: every version's chunks, each version apart (#352).
+
+    Version isolation: every entry carries its manifest ID and every search names the manifests
+    it may look at; nothing of another version is ever returned. Every method may raise
+    ``IndexBackendUnavailableError``; the domain retries a write, then fails the job.
+    """
+
+    async def put(self, manifest: IndexedManifest, entries: Sequence[IndexEntry]) -> None:
+        """Add or replace these entries of the version (keyed by manifest and chunk ID).
+
+        Idempotent: putting the same entries again changes nothing. Called once per page of a
+        version (``EXTERNAL_PAGE`` entries), so it never replaces the version's other entries.
+
+        Args:
+            manifest: The version.
+            entries: Some of its entries, all of this manifest.
+
+        Raises:
+            IndexBackendUnavailableError: The backend did not take them.
+        """
+        ...
+
+    async def delete(self, manifest_ids: Collection[str]) -> None:
+        """Delete every entry of these versions; unknown ones are ignored.
+
+        Args:
+            manifest_ids: The versions.
+
+        Raises:
+            IndexBackendUnavailableError: The backend did not delete them.
+        """
+        ...
+
+    async def held(self, library: str | None) -> Sequence[HeldVersion]:
+        """List the versions the backend holds entries of, and how many (the drift check).
+
+        Args:
+            library: Only this library's (lower case); every library's when ``None``.
+
+        Returns:
+            One entry per version held.
+
+        Raises:
+            IndexBackendUnavailableError: The backend did not answer.
+        """
+        ...
+
+    async def search(
+        self, manifest_ids: Sequence[str], query: TextQuery, tag_filter: TagFilter, limit: int
+    ) -> Sequence[BackendHit]:
+        """Return at most ``limit`` entries of these versions that match, best first.
+
+        The tag filter applies before ranking. Ties are broken by chunk ID, then manifest ID.
+        An entry of two versions (one blob) is a hit for each, with the same score.
+
+        Args:
+            manifest_ids: The versions searched; none gives no hits.
+            query: The query and its terms.
+            tag_filter: Which tags a chunk's article must carry.
+            limit: The most hits.
+
+        Returns:
+            The hits, best first.
+
+        Raises:
+            IndexBackendUnavailableError: The backend did not answer.
+        """
+        ...
+
+    async def count(
+        self, manifest_ids: Sequence[str], query: TextQuery, tag_filter: TagFilter
+    ) -> Mapping[str, int]:
+        """Return how many entries of each version match, uncapped; zero counts are left out.
+
+        Args:
+            manifest_ids: The versions searched.
+            query: The query and its terms.
+            tag_filter: Which tags a chunk's article must carry.
+
+        Returns:
+            How many entries match, by manifest ID.
+
+        Raises:
+            IndexBackendUnavailableError: The backend did not answer.
+        """
+        ...
+
+
+class VectorBackend(IndexBackend, Protocol):
+    """An external vector index: each embedding space's vectors, per version (#352).
+
+    The database's store keeps every vector (the embedding is paid once); the backend holds a
+    copy per version and answers ``nearest``. Spaces never mix: a search names its space.
+    """
+
+    async def put(
+        self, space: EmbeddingSpace, manifest: IndexedManifest, entries: Sequence[IndexEntry]
+    ) -> None:
+        """Add or replace these entries (each with its vector) of the version in the space.
+
+        The space's dimensions and metric are in ``space.spec``; a backend creates what it needs
+        for a space on its first put.
+
+        Args:
+            space: The space.
+            manifest: The version.
+            entries: Some of its entries, each with a vector of the space's dimensions.
+
+        Raises:
+            IndexBackendUnavailableError: The backend did not take them.
+        """
+        ...
+
+    async def remove(
+        self, space_id: EmbeddingSpaceId, manifest_id: str, chunk_ids: Collection[ChunkId]
+    ) -> None:
+        """Delete some entries of one version in one space; unknown ones are ignored.
+
+        Args:
+            space_id: The space.
+            manifest_id: The version.
+            chunk_ids: The chunks.
+
+        Raises:
+            IndexBackendUnavailableError: The backend did not delete them.
+        """
+        ...
+
+    async def delete(self, manifest_ids: Collection[str]) -> None:
+        """Delete every entry of these versions, in every space.
+
+        Args:
+            manifest_ids: The versions.
+
+        Raises:
+            IndexBackendUnavailableError: The backend did not delete them.
+        """
+        ...
+
+    async def drop_space(self, space_id: EmbeddingSpaceId) -> None:
+        """Delete a retired space and every entry in it; a no-op for an unknown space.
+
+        Args:
+            space_id: The space.
+
+        Raises:
+            IndexBackendUnavailableError: The backend did not drop it.
+        """
+        ...
+
+    async def held(self, space_id: EmbeddingSpaceId, library: str | None) -> Sequence[HeldVersion]:
+        """List the versions the space holds entries of, and how many (the drift check).
+
+        Args:
+            space_id: The space.
+            library: Only this library's (lower case); every library's when ``None``.
+
+        Returns:
+            One entry per version held; empty for an unknown space.
+
+        Raises:
+            IndexBackendUnavailableError: The backend did not answer.
+        """
+        ...
+
+    async def nearest(
+        self,
+        space: EmbeddingSpace,
+        manifest_ids: Sequence[str],
+        query: Sequence[float],
+        tag_filter: TagFilter,
+        limit: int,
+    ) -> Sequence[BackendNeighbour]:
+        """Return the entries of these versions nearest to ``query``, nearest first.
+
+        Exact or approximate, as the backend does it; ties are broken by chunk ID. The tag
+        filter applies before ranking; an unknown space or version gives no hits.
+
+        Args:
+            space: The space; ``query`` comes from its model and has its dimensions.
+            manifest_ids: The versions searched.
+            query: The query's vector.
+            tag_filter: Which chunks may be returned.
+            limit: How many hits at most.
+
+        Returns:
+            The nearest entries with their cosine distances.
+
+        Raises:
+            IndexBackendUnavailableError: The backend did not answer.
+        """
+        ...
+
+
+@runtime_checkable
+class NativeHybrid(Protocol):
+    """Optional capability of a ``VectorBackend``: it fuses keyword and vector search itself.
+
+    Its entries carry the chunk text (``IndexEntry.content``), so a backend that can rank both
+    (Weaviate, Elasticsearch, Azure AI Search...) implements this and ``hybrid`` asks it once
+    instead of fusing BM25 and the vectors with reciprocal rank fusion. Without it, ExactDocs
+    fuses the two halves itself, as with the database.
+    """
+
+    async def hybrid(
+        self,
+        space: EmbeddingSpace,
+        manifest_ids: Sequence[str],
+        query: TextQuery,
+        vector: Sequence[float],
+        tag_filter: TagFilter,
+        limit: int,
+    ) -> Sequence[BackendHit]:
+        """Rank these versions' entries by the query's words and its vector together.
+
+        Args:
+            space: The space the vector belongs to.
+            manifest_ids: The versions searched.
+            query: The query and its terms.
+            vector: The query's vector, from the space's model.
+            tag_filter: Which chunks may be returned; applied before ranking.
+            limit: The most hits.
+
+        Returns:
+            The hits, best first (higher score is better).
+
+        Raises:
+            IndexBackendUnavailableError: The backend did not answer.
+        """
+        ...
+
+
+@runtime_checkable
+class NativeRerank(Protocol):
+    """Optional capability of a ``NativeHybrid`` backend: it reranks its own hybrid answer (#473).
+
+    A backend with a ranker of its own (Azure AI Search's semantic ranker) implements this, and
+    ``HybridPipeline`` asks it instead of ``hybrid`` when the search asks for reranking (the
+    rerank flag: a reranker is configured for the library). An answer it reranked is not reranked
+    again by ExactDocs; one it could not rerank (``reranked`` 0) is, as without this capability.
+    Backends without it keep today's behaviour: ExactDocs' own reranker, or none.
+    """
+
+    async def hybrid_reranked(
+        self,
+        space: EmbeddingSpace,
+        manifest_ids: Sequence[str],
+        query: TextQuery,
+        vector: Sequence[float],
+        tag_filter: TagFilter,
+        limit: int,
+    ) -> NativeRanking:
+        """Rank these versions' entries as ``hybrid`` does, then rerank the best with its ranker.
+
+        Args:
+            space: The space the vector belongs to.
+            manifest_ids: The versions searched.
+            query: The query and its terms; the ranker reads ``query.text``.
+            vector: The query's vector, from the space's model.
+            tag_filter: Which chunks may be returned; applied before ranking.
+            limit: The most hits.
+
+        Returns:
+            The hits, best first, and how many of the first ones the ranker reordered.
+
+        Raises:
+            IndexBackendUnavailableError: The backend did not answer.
         """
         ...
 

@@ -207,7 +207,7 @@
   --font-mono:
     "IBM Plex Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 
-  /* Type scale (DESIGN.md): 12 / 14 / 16 / 22 / 28, plus the reader's 17. */
+  /* Type scale (DESIGN.md): 12 / 13 mono / 14 / 16 / 22 / 28, plus the reader's 17 and 30. */
   --text-small: 0.75rem;
   --text-small--line-height: 1.125rem;
   --text-body: 0.875rem;
@@ -218,6 +218,12 @@
   --text-title--line-height: 1.75rem;
   --text-figure: 1.75rem;
   --text-figure--line-height: 2.125rem;
+  /* Monospace beside 14 px text: refs, paths, IDs, code. */
+  --text-mono: 0.8125rem;
+  --text-mono--line-height: 1.25rem;
+  /* The article's own title in the reader. */
+  --text-reader-title: 1.875rem;
+  --text-reader-title--line-height: 1.2;
 
   --ease-out: var(--ease-out);
   --ease-in-out: var(--ease-in-out);
@@ -260,7 +266,7 @@
 html.theme-fade::view-transition-old(root),
 html.theme-fade::view-transition-new(root) {
   animation-duration: 180ms;
-  animation-timing-function: ease-out;
+  animation-timing-function: var(--ease-out);
 }
 
 /*
@@ -287,24 +293,39 @@ html:not(.theme-fade)::view-transition-new(root) {
   ::view-transition-new(*) {
     animation: none !important;
   }
+  /* Dialogs, sheets and menus (shadcn, via tw-animate-css): the fade stays, the slide and zoom go. */
+  [data-state] {
+    /* biome-ignore lint/complexity/noImportantStyles: beats the utility classes that set the same variable */
+    --tw-enter-translate-x: 0 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: beats the utility classes that set the same variable */
+    --tw-enter-translate-y: 0 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: beats the utility classes that set the same variable */
+    --tw-enter-scale: 1 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: beats the utility classes that set the same variable */
+    --tw-exit-translate-x: 0 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: beats the utility classes that set the same variable */
+    --tw-exit-translate-y: 0 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: beats the utility classes that set the same variable */
+    --tw-exit-scale: 1 !important;
+  }
 }
 
 @media (prefers-reduced-motion: no-preference) {
   /* One entrance for the auth form; elsewhere pages arrive through the view transition. */
   .rise {
-    animation: rise 260ms var(--ease-out) backwards;
-    animation-delay: calc(var(--i, 0) * 50ms);
+    animation: rise var(--dur-slow) var(--ease-out) backwards;
+    animation-delay: calc(var(--i, 0) * 30ms);
   }
   .fade-in {
-    animation: fade-in var(--dur) ease-out;
+    animation: fade-in var(--dur) var(--ease-out);
   }
   /* A row that just arrived in a list. */
   .row-in {
     animation: row-in var(--dur) var(--ease-out) backwards;
   }
-  /* A notice that eases open instead of shoving the page down: pair with a `grid` wrapper. */
-  .expand-in {
-    animation: expand-in var(--dur) var(--ease-out) backwards;
+  /* Something that appears in place (a notice, a form): a fade with a short rise. */
+  .reveal {
+    animation: reveal var(--dur) var(--ease-out) backwards;
   }
   .spin {
     animation: spin 700ms linear infinite;
@@ -320,8 +341,15 @@ html:not(.theme-fade)::view-transition-new(root) {
   }
 }
 
-/* Reduced motion: no rotation, but the busy ring still breathes so it never looks broken. */
+/* Reduced motion: no rotation, but the busy ring still breathes so it never looks broken, and what
+   appears in place still fades in (opacity only) so a new row or notice does not just pop. */
 @media (prefers-reduced-motion: reduce) {
+  .fade-in,
+  .reveal,
+  .row-in,
+  .rise {
+    animation: fade-in var(--dur) var(--ease-out) backwards;
+  }
   .spin,
   .sweep {
     animation: breathe 1.2s ease-in-out infinite;
@@ -330,13 +358,13 @@ html:not(.theme-fade)::view-transition-new(root) {
 
 /* The cold-load screen stays invisible for 150ms so a fast session check never flashes it. */
 .pending-in {
-  animation: fade-in 200ms ease-out 150ms backwards;
+  animation: fade-in var(--dur) var(--ease-out) 150ms backwards;
 }
 
 @keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(4px);
   }
 }
 
@@ -360,10 +388,10 @@ html:not(.theme-fade)::view-transition-new(root) {
   }
 }
 
-@keyframes expand-in {
+@keyframes reveal {
   from {
-    grid-template-rows: 0fr;
     opacity: 0;
+    transform: translateY(-4px);
   }
 }
 

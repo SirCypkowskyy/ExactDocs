@@ -207,6 +207,7 @@ ACTIONS = [
     Action("remove a version", "admin", "DELETE", f"{PATH}/versions/v1.3.0", {}),
     Action("remove it", "creator", "DELETE", PATH, {}),
     Action("list who may do what", "admin", "GET", f"{PATH}/grants", {}),
+    Action("hand it over", "creator", "POST", f"{PATH}/transfer", {"json": {"username": "bob"}}),
 ]
 
 
@@ -300,7 +301,13 @@ async def test_grants_are_given_listed_and_revoked_over_rest(instance: Instance)
         await ada.put(f"{PATH}/grants", json={"kind": "user", "subject": "bob", "role": "viewer"})
         assert (await bob.get(PATH)).status_code == 200
         listed = await ada.get(f"{PATH}/grants")
-        assert listed.json() == {"grants": [{"kind": "user", "subject": "bob", "role": "viewer"}]}
+        assert listed.json() == {
+            "grants": [{"kind": "user", "subject": "bob", "role": "viewer"}],
+            "next_cursor": None,
+            "total": 1,
+            "caller_role": "creator",
+            "creator": None,
+        }
 
         revoked = await ada.delete(f"{PATH}/grants/user/bob")
         assert revoked.json() == {"grants": []}
@@ -315,6 +322,29 @@ async def test_grants_are_given_listed_and_revoked_over_rest(instance: Instance)
             f"{PATH}/grants", json={"kind": "user", "subject": "bob", "role": "creator"}
         )
         assert creator.status_code == 422
+
+
+async def test_the_creator_hands_the_library_over_and_stays_an_admin(instance: Instance) -> None:
+    await instance.give("bob", "creator")
+    async with instance.signed_in("bob") as bob, instance.signed_in("carol") as carol:
+        moved = await bob.post(f"{PATH}/transfer", json={"username": "carol"})
+        assert moved.status_code == 200, moved.text
+        assert moved.json() == {
+            "grants": [
+                {"kind": "user", "subject": "bob", "role": "admin"},
+                {"kind": "user", "subject": "carol", "role": "creator"},
+            ]
+        }
+        listed = (await carol.get(f"{PATH}/grants")).json()
+        assert (listed["caller_role"], listed["creator"]) == ("creator", "carol")
+        again = await bob.post(f"{PATH}/transfer", json={"username": "bob"})
+        assert (again.status_code, again.json()["error"]) == (403, "forbidden")
+        same = await carol.post(f"{PATH}/transfer", json={"username": "carol"})
+        assert (same.status_code, same.json()["error"]) == (422, "invalid_grant")
+        unknown = await carol.post(f"{PATH}/transfer", json={"username": "zed"})
+        assert (unknown.status_code, unknown.json()["error"]) == (404, "unknown_account")
+        # Only the creator takes an admin's role away: now carol may.
+        assert (await carol.delete(f"{PATH}/grants/user/bob")).status_code == 200
 
 
 async def test_the_operator_manages_every_library_as_its_creator(instance: Instance) -> None:
@@ -358,6 +388,49 @@ async def test_a_new_library_is_created_by_its_caller_and_removing_it_drops_its_
     assert await role(bob) is None
 
 
+async def test_creating_sharing_and_removing_a_library_is_in_its_access_log(
+    instance: Instance,
+) -> None:
+    catalog = instance.container.catalog
+    new = "/acme/ledger-three"
+    bind_caller(instance.accounts["bob"].id)
+    await catalog.create_library(
+        CreateLibraryCommand(
+            id=new, title="Ledger three", source_url="https://example.com/a/c.git", host="git"
+        )
+    )
+    async with instance.signed_in("bob") as bob, instance.signed_in("ada") as ada:
+        path = "/api/v1/libraries/acme/ledger-three"
+        shared = await bob.put(
+            f"{path}/grants", json={"kind": "user", "subject": "carol", "role": "admin"}
+        )
+        assert shared.status_code == 200, shared.text
+        log = (await bob.get(f"{path}/access-log")).json()
+        assert [(e["actor"], e["change"], e["subject"], e["role"]) for e in log["events"]] == [
+            ("bob", "granted", "carol", "admin"),
+            ("bob", "library_created", "bob", "creator"),
+        ]
+        assert log["total"] == 2
+
+        await catalog.remove_library(RemoveLibraryCommand(library=new))  # still bob's call
+        assert (await bob.get(f"{path}/access-log")).status_code == 404
+        every = await ada.get("/api/v1/access-log", params={"library": new})
+        newest = every.json()["events"][0]
+        assert (newest["actor"], newest["change"], newest["library"]) == (
+            "bob",
+            "library_deleted",
+            new,
+        )
+        refused = await bob.get("/api/v1/access-log")
+        assert (refused.status_code, refused.json()["error"]) == (403, "forbidden")
+    token = await instance.token("ada")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=instance.app), base_url="http://localhost"
+    ) as agent:
+        answer = await agent.get("/api/v1/access-log", headers={"authorization": f"Bearer {token}"})
+        assert answer.status_code == 401  # like /users: a session, never an API token
+
+
 def mcp_client(app: FastAPI, token: str) -> Client[StreamableHttpTransport]:
     """A FastMCP client that talks to the app in-process, over the real HTTP transport."""
 
@@ -391,6 +464,8 @@ async def test_a_viewer_reads_over_mcp_and_a_caller_without_a_role_is_refused(
     reads = [
         ("list_articles", {"library": LIBRARY}),
         ("search_docs", {"library": LIBRARY, "query": "retry"}),
+        ("view_search", {"library": LIBRARY, "query": "retry"}),
+        ("view_article", {"library": LIBRARY, "path": "plan.md"}),
     ]
     async with mcp_client(instance.app, await instance.token("bob")) as viewer:
         for tool, arguments in reads:

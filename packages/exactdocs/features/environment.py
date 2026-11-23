@@ -32,6 +32,7 @@ report for that run."""
 
 fixture_repo = import_module("fixture_repo")
 databases = import_module("databases")  # raises when CI requires PostgreSQL and has none
+index_backends = import_module("index_backends")
 
 
 def before_all(context: Context) -> None:
@@ -70,9 +71,16 @@ def before_scenario(context: Context, scenario: Scenario) -> None:
     # one and sets EXACTDOCS_REQUIRE_SUPABASE=1, so there they can never be skipped.
     elif "supabase" in scenario.effective_tags and databases.SUPABASE_URL is None:
         scenario.skip("needs the supabase/postgres image: set EXACTDOCS_TEST_SUPABASE_URL")
+    # ExactDocs' database on libSQL (#474) needs a libSQL server of its own; CI starts one.
+    elif "libsql_database" in scenario.effective_tags and databases.LIBSQL_DATABASE_URL is None:
+        scenario.skip("needs a libSQL server: set EXACTDOCS_TEST_LIBSQL_DATABASE_URL")
     # Pooler scenarios need PgBouncer in transaction mode (EXACTDOCS_TEST_PGBOUNCER_URL, #279);
     # CI runs one and sets EXACTDOCS_REQUIRE_PGBOUNCER=1, so there they can never be skipped.
     elif "pgbouncer" in scenario.effective_tags and (
         databases.ADMIN_URL is None or databases.PGBOUNCER_URL is None
     ):
         scenario.skip("needs PgBouncer in transaction mode: set EXACTDOCS_TEST_PGBOUNCER_URL")
+    # Elasticsearch and OpenSearch scenarios (#354) need a test cluster; CI runs both.
+    for cluster in ("elasticsearch", "opensearch"):
+        if cluster in scenario.effective_tags and index_backends.cluster_options(cluster) is None:
+            scenario.skip(f"needs a test cluster: set EXACTDOCS_TEST_{cluster.upper()}_URL")

@@ -4,7 +4,7 @@ import { Skeleton as Bar } from "@/shared/ui/skeleton";
 import type { SearchHit } from "../model/search";
 import { isCut, type Span, snippetBlocks } from "../model/snippet";
 
-const inlineCode = "rounded-[3px] bg-code px-0.5 font-mono text-[0.92em]";
+const inlineCode = "rounded-[3px] bg-code px-0.5 font-mono text-mono";
 
 function Spans({ spans }: { spans: readonly Span[] }) {
   // No horizontal padding on a match: one inside a word ("RetryPolicy") must not open a gap in it.
@@ -57,7 +57,7 @@ export function Snippet({ hit }: { hit: Pick<SearchHit, "snippet" | "highlights"
         }
         if (block.kind === "quote") {
           return (
-            <p key={block.key} className="border-l border-input pl-3 text-muted-foreground">
+            <p key={block.key} className="rounded-md bg-raised px-3 py-1.5 text-muted-foreground">
               {block.label && (
                 <span className="mr-1.5 font-medium text-foreground">{block.label}:</span>
               )}

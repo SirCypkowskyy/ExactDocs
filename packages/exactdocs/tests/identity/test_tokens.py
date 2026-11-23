@@ -18,6 +18,8 @@ from exactdocs.identity.dtos import (
     CreateFirstAdminCommand,
     CreateTokenCommand,
     ResetPasswordCommand,
+    TokenListQuery,
+    TokenSummary,
 )
 from exactdocs.identity.errors import (
     InvalidTokenError,
@@ -28,6 +30,7 @@ from exactdocs.identity.errors import (
 )
 from exactdocs.identity.models import hash_token
 from exactdocs.identity.module import IdentityModule
+from exactdocs_kernel import InvalidCursorError
 from identity_stand_ins import no_external_sign_in
 
 START = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
@@ -56,6 +59,12 @@ class World:
     tokens: InMemoryTokenRepository
     ada: AccountSummary
     clock: MovableClock = field(default_factory=MovableClock)
+
+
+async def tokens_of(world: World, **query: object) -> list[TokenSummary]:
+    return (
+        await world.identity.list_tokens(world.ada, TokenListQuery.model_validate(query))
+    ).tokens
 
 
 @pytest.fixture
@@ -87,7 +96,7 @@ async def test_a_token_is_recognizable_shown_once_and_stored_only_hashed(world: 
     assert stored.token_hash == hash_token(grant.token)
     assert grant.token not in repr(stored)
     assert grant.token not in str(stored)
-    listed = (await world.identity.list_tokens(world.ada)).tokens
+    listed = await tokens_of(world)
     assert [t.id for t in listed] == [grant.id]
     assert grant.token not in listed[0].model_dump_json()
 
@@ -98,16 +107,16 @@ async def test_a_token_acts_as_its_account_and_records_when_it_was_used(world: W
     assert (await world.identity.identify_token(grant.token)).model_dump(
         include={"id", "username", "role"}
     ) == world.ada.model_dump()
-    listed = (await world.identity.list_tokens(world.ada)).tokens[0]
+    listed = (await tokens_of(world))[0]
     assert listed.last_used_at == START
 
     world.clock.current += TOUCH_INTERVAL / 2  # too soon for another write
     await world.identity.identify_token(grant.token)
-    assert (await world.identity.list_tokens(world.ada)).tokens[0].last_used_at == START
+    assert (await tokens_of(world))[0].last_used_at == START
 
     world.clock.current += TOUCH_INTERVAL
     await world.identity.identify_token(grant.token)
-    last_used = (await world.identity.list_tokens(world.ada)).tokens[0].last_used_at
+    last_used = (await tokens_of(world))[0].last_used_at
     assert last_used is not None
     assert last_used > START
 
@@ -150,7 +159,7 @@ async def test_a_revoked_token_stops_working_at_once(world: World) -> None:
 
     with pytest.raises(InvalidTokenError):
         await world.identity.identify_token(grant.token)
-    assert (await world.identity.list_tokens(world.ada)).tokens == []
+    assert await tokens_of(world) == []
     with pytest.raises(UnknownTokenError):
         await world.identity.revoke_token(world.ada, grant.id)
 
@@ -159,7 +168,7 @@ async def test_nobody_revokes_or_sees_the_tokens_of_another_account(world: World
     grant = await world.identity.create_token(world.ada, CreateTokenCommand(name="laptop"))
     stranger = AccountSummary(id="someone-else", username="eve", role="admin")
 
-    assert (await world.identity.list_tokens(stranger)).tokens == []
+    assert (await world.identity.list_tokens(stranger, TokenListQuery())).tokens == []
     with pytest.raises(UnknownTokenError):
         await world.identity.revoke_token(stranger, grant.id)
     await world.identity.identify_token(grant.token)  # still works
@@ -182,7 +191,7 @@ async def test_a_password_reset_revokes_the_accounts_tokens(world: World) -> Non
 
     with pytest.raises(InvalidTokenError):
         await world.identity.identify_token(grant.token)
-    assert (await world.identity.list_tokens(world.ada)).tokens == []
+    assert await tokens_of(world) == []
 
 
 async def test_creating_a_token_purges_the_expired_ones(world: World) -> None:
@@ -192,7 +201,7 @@ async def test_creating_a_token_purges_the_expired_ones(world: World) -> None:
 
     await world.identity.create_token(world.ada, CreateTokenCommand(name="new"))
 
-    assert [t.name for t in (await world.identity.list_tokens(world.ada)).tokens] == ["new"]
+    assert [t.name for t in await tokens_of(world)] == ["new"]
 
 
 async def test_an_account_holds_a_limited_number_of_tokens(world: World) -> None:
@@ -246,4 +255,39 @@ async def test_token_selection_is_canonical_and_does_not_change_its_user(
     assert principal.token_id == grant.id
     assert principal.library_ids == expected
     assert grant.library_ids == expected
-    assert (await world.identity.list_tokens(world.ada)).tokens[0].library_ids == expected
+    assert (await tokens_of(world))[0].library_ids == expected
+
+
+async def test_tokens_are_filtered_sorted_and_paged_with_a_total(world: World) -> None:
+    for name in ("laptop", "ci-main", "ci-nightly", "CI-old"):
+        world.clock.current += timedelta(minutes=1)
+        await world.identity.create_token(world.ada, CreateTokenCommand(name=name))
+    query = TokenListQuery(q="ci", sort="name", limit=2)
+
+    first = await world.identity.list_tokens(world.ada, query)
+    second = await world.identity.list_tokens(
+        world.ada, query.model_copy(update={"cursor": first.next_cursor})
+    )
+
+    assert [t.name for t in first.tokens] == ["ci-main", "ci-nightly"]
+    assert ([t.name for t in second.tokens], second.next_cursor) == (["CI-old"], None)
+    assert (first.total, second.total) == (3, 3)
+    assert (await tokens_of(world))[0].name == "CI-old"  # newest first by default
+
+
+async def test_a_never_used_token_sorts_first_by_last_use(world: World) -> None:
+    used = await world.identity.create_token(world.ada, CreateTokenCommand(name="used"))
+    await world.identity.create_token(world.ada, CreateTokenCommand(name="idle"))
+    await world.identity.identify_token(used.token)
+
+    assert [t.name for t in await tokens_of(world, sort="last_used_at")] == ["idle", "used"]
+    assert [t.name for t in await tokens_of(world, sort="-last_used_at")] == ["used", "idle"]
+
+
+async def test_a_cursor_of_another_token_sort_is_refused(world: World) -> None:
+    for name in ("a", "b"):
+        await world.identity.create_token(world.ada, CreateTokenCommand(name=name))
+    page = await world.identity.list_tokens(world.ada, TokenListQuery(sort="name", limit=1))
+
+    with pytest.raises(InvalidCursorError):
+        await tokens_of(world, sort="-name", cursor=page.next_cursor)

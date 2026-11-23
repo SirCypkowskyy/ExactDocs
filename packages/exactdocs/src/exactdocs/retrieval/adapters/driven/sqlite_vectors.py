@@ -6,6 +6,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
+from itertools import batched
 
 import aiosqlite
 from sqlalchemy import bindparam, insert, select, text, update
@@ -21,6 +22,8 @@ from exactdocs.retrieval.adapters.driven.vector_tables import (
 )
 from exactdocs.retrieval.constants import (
     _DIMENSIONS,
+    _LIBSQL_VECTOR_NEAREST,
+    _LIBSQL_VECTOR_PROBE,
     _LOADED,
     _VECTOR_ABSENT,
     _VECTOR_COVERAGE,
@@ -33,7 +36,9 @@ from exactdocs.retrieval.constants import (
     _VECTOR_NEAREST,
     _VECTOR_PENDING,
     _VECTOR_PENDING_ARTICLES,
+    _VECTOR_READ,
     _VECTOR_UPSERT,
+    LIBSQL_VECTORS,
     SQLITE_VEC_EXTENSION,
     SQLITE_VEC_MODULE,
     TAG_CONDITIONS,
@@ -95,12 +100,17 @@ class SqliteVectorIndex:
     ``available`` is asked), never before: an instance without embeddings never loads it. That
     connection also gets ``mmap_size`` (``VECTOR_MMAP_BYTES``), and remembers in its ``info`` that
     it is loaded and the dimensions of the spaces it searched, so a search costs one query.
+
+    On a libSQL database (``native``, #474) nothing is loaded: libSQL's own
+    ``vector_distance_cos`` reads the same BLOBs, so the tables and the search are the same.
     """
 
     engine: AsyncEngine
     """The application database."""
     extension: Callable[[], str] = _sqlite_vec_path
     """Returns the path of sqlite-vec's loadable extension (raises when it is not installed)."""
+    native: bool = False
+    """The database is libSQL: search with its own vector functions, never load sqlite-vec."""
     _loads: dict[str, bool] = field(default_factory=dict)
     """Whether sqlite-vec loaded, once ``available`` found out (key ``"loads"``)."""
 
@@ -108,9 +118,9 @@ class SqliteVectorIndex:
         """Name what searching needs.
 
         Returns:
-            ``sqlite-vec``.
+            ``sqlite-vec``, or libSQL's vectors on a libSQL database.
         """
-        return SQLITE_VEC_EXTENSION
+        return LIBSQL_VECTORS if self.native else SQLITE_VEC_EXTENSION
 
     async def available(self) -> bool:
         """Load sqlite-vec into a connection once, and remember whether it worked.
@@ -256,6 +266,32 @@ class SqliteVectorIndex:
                 gone += (await connection.execute(statement, {"keys": batch})).rowcount
         return gone
 
+    async def stored(
+        self, space_id: EmbeddingSpaceId, keys: Collection[ChunkKey]
+    ) -> Mapping[ChunkKey, tuple[float, ...]]:
+        """Read back the vectors of these chunks (what an external copy is written from).
+
+        Args:
+            space_id: The space.
+            keys: The chunks.
+
+        Returns:
+            Each vector found, by chunk.
+        """
+        statement = text(_VECTOR_READ.format(table=vector_table(space_id))).bindparams(
+            bindparam("keys", expanding=True)
+        )
+        async with self.engine.connect() as connection:
+            await self._live(connection, space_id)
+            ids = await chunk_ids(connection, list(set(keys)))
+            by_id = {row_id: key for key, row_id in ids.items()}
+            found: dict[ChunkKey, tuple[float, ...]] = {}
+            for batch in batched(list(by_id), VECTOR_BATCH, strict=False):
+                for row in await connection.execute(statement, {"keys": list(batch)}):
+                    blob: bytes = row.embedding
+                    found[by_id[row.chunk_key]] = struct.unpack(f"<{len(blob) // 4}f", blob)
+        return found
+
     async def nearest(
         self,
         space_id: EmbeddingSpaceId,
@@ -281,7 +317,8 @@ class SqliteVectorIndex:
                 raises ``RetiredEmbeddingSpaceError`` instead).
         """
         tags = TAG_CONDITIONS[tag_filter.match if tag_filter.tags else None]
-        statement = text(_VECTOR_NEAREST.format(table=vector_table(space_id), tags=tags))
+        nearest = _LIBSQL_VECTOR_NEAREST if self.native else _VECTOR_NEAREST
+        statement = text(nearest.format(table=vector_table(space_id), tags=tags))
         async with self.engine.connect() as connection:
             dimensions = await self._dimensions(connection, space_id)
             params: dict[str, object] = {
@@ -467,6 +504,8 @@ class SqliteVectorIndex:
     async def _load(self, connection: AsyncConnection) -> None:
         """Load sqlite-vec into this pooled connection, unless it already has it.
 
+        On libSQL (``native``) there is nothing to load: one query proves its vector functions.
+
         Extension loading is switched on only for the call and off again right after.
 
         Args:
@@ -477,6 +516,13 @@ class SqliteVectorIndex:
                 extensions, or the extension does not load.
         """
         if connection.info.get(_LOADED):
+            return
+        if self.native:
+            try:
+                await connection.exec_driver_sql(_LIBSQL_VECTOR_PROBE)
+            except OperationalError as exc:  # not libSQL after all
+                raise VectorStoreUnavailableError from exc
+            connection.info[_LOADED] = True
             return
         try:
             path = self.extension()

@@ -75,6 +75,7 @@ from exactdocs.bootstrap.database import (
     ClosingQueuePool,
     StartupError,
     check_schema_is_current,
+    is_libsql,
     is_postgres,
     migrate,
     open_database,
@@ -83,6 +84,7 @@ from exactdocs.bootstrap.database import (
 )
 from exactdocs.bootstrap.embedding import SaveProviderThenEmbed, requeue_daily
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
+from exactdocs.bootstrap.index_backends import DriftWatch, IndexBackends, build_index_backends
 from exactdocs.bootstrap.library_filters import ListLibrariesByAi
 from exactdocs.bootstrap.library_texts import CatalogLibraryTexts
 from exactdocs.bootstrap.local_models import LocalModels
@@ -117,6 +119,7 @@ from exactdocs.identity import IdentityModule
 from exactdocs.identity.adapters.driven.argon2id import Argon2idPasswordHasher
 from exactdocs.identity.adapters.driven.memory import InMemoryFailedSignInLog
 from exactdocs.identity.adapters.driven.sqlite import (
+    SqliteAccessLog,
     SqliteAccountRepository,
     SqliteExternalIdentityRepository,
     SqliteFailedSignInLog,
@@ -446,6 +449,7 @@ def _identity(settings: Settings, engine: AsyncEngine, stand_ins: SignInStandIns
         else InMemoryFailedSignInLog(),
         externals=SqliteExternalIdentityRepository(engine=engine),
         library_grants=SqliteLibraryGrantRepository(engine=engine),
+        access_log=SqliteAccessLog(engine=engine),
         attempts=SqliteSignInAttemptRepository(engine=engine),
         box=_secret_box(settings, SIGN_IN_TOKENS_PURPOSE),
         clock=clock,
@@ -551,6 +555,8 @@ def vector_index(
 ) -> PostgresVectorIndex | SqliteVectorIndex:
     """Pick the vector store of the database: pgvector on PostgreSQL, sqlite-vec on SQLite.
 
+    On a libSQL server the SQLite store searches with libSQL's own vector functions.
+
     Neither loads anything here: the store is asked whether it can search only once an embedding
     model is configured.
 
@@ -563,6 +569,8 @@ def vector_index(
     """
     if is_postgres(engine):
         return PostgresVectorIndex(engine=engine)
+    if is_libsql(engine):  # libSQL's own vectors: a server loads no extension (#474)
+        return SqliteVectorIndex(engine=engine, native=True)
     if sqlite_extension is None:
         return SqliteVectorIndex(engine=engine)
     return SqliteVectorIndex(engine=engine, extension=sqlite_extension)
@@ -592,6 +600,8 @@ class _ReadSide:
     """Runs the ``local`` profiles' models."""
     local_roles: LocalRoles
     """The instance roles on local profiles, loaded at start."""
+    index_backends: IndexBackends
+    """The external search and vector backends (#352), not opened yet."""
 
 
 def _build_read_side(
@@ -611,6 +621,7 @@ def _build_read_side(
     clock: Clock | None = None,
     agent_reads: AgentReads | None = None,
     access: IdentityAccessPolicy | OpenAccess | None = None,
+    index_backends: IndexBackends | None = None,
 ) -> _ReadSide:
     """Build the catalog and retrieval modules: everything the read-only MCP tools use.
 
@@ -636,11 +647,15 @@ def _build_read_side(
             default span events when telemetry is on, else nothing.
         access: The library roles of catalog and retrieval (``IdentityAccessPolicy``); none:
             everyone may do everything (a process the owner runs).
+        index_backends: The external search and vector backends (#352); by default those the
+            settings name.
 
     Returns:
-        The two modules (``StartupError`` when the AI configuration is invalid), and on
-        PostgreSQL the search engine to choose at start.
+        The two modules (``StartupError`` when the AI configuration is invalid, or a backend
+        is unknown, its extra missing or its options invalid), on PostgreSQL the search engine
+        to choose at start, and the external backends.
     """
+    backends = index_backends or build_index_backends(settings)
     local = LocalModels(models_dir=settings.effective_models_dir)
     ai = _ai_configuration(settings, local, model_factory)
     access = access or OpenAccess()
@@ -739,6 +754,9 @@ def _build_read_side(
             get_instruction_files=catalog.get_instruction_files
         ),
         access=access,
+        search_backend=backends.search,
+        vector_backend=backends.vectors,
+        stored_vectors=vectors,
     )
     return _ReadSide(
         catalog=catalog,
@@ -746,6 +764,7 @@ def _build_read_side(
         search_choice=choice,
         local=local,
         local_roles=_local_roles(ai),
+        index_backends=backends,
     )
 
 
@@ -911,6 +930,8 @@ class ReadOnlyContainer:
     """Runs the ``local`` profiles' models."""
     local_roles: LocalRoles = field(default=(), repr=False)
     """The instance roles on local profiles, loaded at start."""
+    index_backends: IndexBackends = field(default_factory=IndexBackends, repr=False)
+    """The external search and vector backends, opened in ``running()``."""
     _run: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     """Held for the duration of ``running()``, which runs once at a time."""
 
@@ -924,6 +945,7 @@ class ReadOnlyContainer:
         Returns:
             The container, not running yet.
         """
+        backends = build_index_backends(settings)  # an unusable one stops here, before the files
         engine = open_database(settings, read_only=True)
         spend_engine = open_spend_ledger_database(settings)
         # Opens the provider keys stored over the REST API when a key exists; never creates one.
@@ -936,6 +958,7 @@ class ReadOnlyContainer:
             agent_cache_key=_agent_cache_key(settings, create=False),
             read_only=True,
             spend_engine=spend_engine,
+            index_backends=backends,
         )
         return cls(
             settings=settings,
@@ -946,6 +969,7 @@ class ReadOnlyContainer:
             search_choice=read.search_choice,
             local=read.local,
             local_roles=read.local_roles,
+            index_backends=backends,
         )
 
     @asynccontextmanager
@@ -967,11 +991,13 @@ class ReadOnlyContainer:
             await check_schema_is_current(self.engine)
             if self.search_choice is not None:  # it may not make the BM25 index: it only reads
                 await self.search_choice.choose(create=False)
+            await self.index_backends.open()
             await _warm_ai(self.retrieval, self.local, self.local_roles)
             yield
         finally:
             try:
                 self.local.close()  # queued local model calls are dropped, not waited for
+                await self.index_backends.close()
                 try:
                     await self.engine.dispose()
                 finally:
@@ -1016,6 +1042,11 @@ class Container:
     """The instance roles on local profiles, loaded at start."""
     sign_in_client: httpx2.AsyncClient | None = field(default=None, repr=False)
     """Calls the identity providers; ``None`` when none is configured. Closed by ``running()``."""
+    index_backends: IndexBackends = field(default_factory=IndexBackends, repr=False)
+    """The external search and vector backends (#352), opened in ``running()``."""
+    drift: DriftWatch | None = field(default=None, repr=False)
+    """Compares the external backends with the database while the server runs; ``None`` when
+    every index lives in the database."""
     _run: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     """Held for the duration of ``running()``: a lock, so a run in another thread (a
     TestClient's event loop) is refused as well.
@@ -1040,6 +1071,7 @@ class Container:
         clock: Clock | None = None,
         agent_reads: AgentReads | None = None,
         sign_in: SignInStandIns | None = None,
+        index_backends: IndexBackends | None = None,
     ) -> Self:
         """Choose driven adapters and connect domains through bridges.
 
@@ -1069,6 +1101,8 @@ class Container:
             clock: Decides retrieval's spend windows.
             agent_reads: Records the agentic explorer's reads (the eval suite's trace check).
             sign_in: Replace the identity domain's time and the identity providers' network.
+            index_backends: Replace the external backends the settings name (tests: several
+                containers sharing one in-memory backend).
 
         Returns:
             The container, not running yet.
@@ -1099,6 +1133,7 @@ class Container:
             embedding_models=embedding_models,
             clock=clock,
             agent_reads=agent_reads,
+            index_backends=index_backends,
         )
         index = RetrievalChunkIndex(
             index_manifest=read.retrieval.index_manifest,
@@ -1209,6 +1244,10 @@ class Container:
             engine=engine,
             work_owner=work_owner,
             sign_in_client=identity.client,
+            index_backends=read.index_backends,
+            drift=DriftWatch(check=read.retrieval.check_external_indexes)
+            if read.index_backends.search is not None or read.index_backends.vectors is not None
+            else None,
             search_choice=read.search_choice,
             local=read.local,
             local_roles=read.local_roles,
@@ -1283,6 +1322,29 @@ class Container:
             elif not queueing.cancelled() and (error := queueing.exception()) is not None:
                 logger.warning("the nightly upkeep failed while it stopped", exc_info=error)
 
+    @asynccontextmanager
+    async def _drift_watched(self) -> AsyncGenerator[None]:
+        """Compare the external backends with the database in the background while serving.
+
+        Stopping cancels the check and waits for it at most ``UPKEEP_STOP_SECONDS``, so its
+        connection is back before the engine is disposed.
+
+        Yields:
+            Nothing: the block runs while the checks go on.
+        """
+        if self.drift is None:
+            yield
+            return
+        watching = asyncio.create_task(self.drift.run())
+        try:
+            yield
+        finally:
+            watching.cancel()
+            done, _ = await asyncio.wait({watching}, timeout=UPKEEP_STOP_SECONDS)
+            if not done:
+                watching.add_done_callback(_log_late_failure)
+                logger.warning("the external index check did not stop; the server stops without it")
+
     async def _queue_embedding_daily(self) -> None:
         """Run the nightly upkeep now, then after every UTC midnight (one process does)."""
         await self.nightly()
@@ -1349,6 +1411,7 @@ class Container:
             await warn_unless_session(self.engine)  # a transaction-mode pooler (#279)
             if self.search_choice is not None:
                 await self.search_choice.choose(create=True)
+            await self.index_backends.open()  # one that does not answer stops the start
             await _warm_ai(self.retrieval, self.local, self.local_roles)
             index = await self.retrieval.get_search_index_state()
             if index.needs_rebuild:
@@ -1376,6 +1439,7 @@ class Container:
                             self.identity.revalidate_external_accounts,
                             every=self.settings.auth.revalidate_poll_seconds,
                         ),
+                        self._drift_watched(),
                     ):
                         yield
                 else:
@@ -1385,6 +1449,7 @@ class Container:
                 self.local.close()  # queued local model calls are dropped, not waited for
                 if self.sign_in_client is not None:
                     await self.sign_in_client.aclose()
+                await self.index_backends.close()
                 await self.engine.dispose()
             finally:
                 self._run.release()

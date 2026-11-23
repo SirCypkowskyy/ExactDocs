@@ -1,0 +1,5 @@
+# actionlint (https://github.com/rhysd/actionlint): the self-hosted runner's custom label
+# (deploy/runners/README.md).
+self-hosted-runner:
+  labels:
+    - exactdocs

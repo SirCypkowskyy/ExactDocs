@@ -19,7 +19,11 @@ export function AccountPanel({
   const heading = usePageTitle("Account");
   return (
     <Page>
-      <PageHeader title="Account" headingRef={heading} />
+      <PageHeader
+        title="Account"
+        headingRef={heading}
+        description="Who you are signed in as, and the tokens that let an agent read documentation for you."
+      />
       <div className="grid items-start gap-10 lg:grid-cols-[18rem_minmax(0,1fr)] lg:gap-12">
         <section
           aria-labelledby="identity-heading"
@@ -34,7 +38,11 @@ export function AccountPanel({
             <dt className="text-muted-foreground">Role</dt>
             <dd>
               <span
-                className={cn(pill, account?.role === "admin" ? pillTone.route : pillTone.neutral)}
+                className={cn(
+                  pill,
+                  "capitalize",
+                  account?.role === "admin" ? pillTone.route : pillTone.neutral,
+                )}
               >
                 {account?.role}
               </span>

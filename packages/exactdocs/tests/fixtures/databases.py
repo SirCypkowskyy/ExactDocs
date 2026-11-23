@@ -13,8 +13,10 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlencode, urlsplit
 
 import psycopg
+import turso_serverless
 from psycopg import sql
 from sqlalchemy.engine import make_url
 
@@ -242,3 +244,46 @@ def through_pgbouncer(database: PostgresDatabase) -> str:
         .set(host=pooler.host, port=pooler.port)
         .render_as_string(hide_password=False)
     )
+
+
+LIBSQL_DATABASE_URL = os.environ.get("EXACTDOCS_TEST_LIBSQL_DATABASE_URL") or None
+"""A libSQL server the SQLite persistence tests run on instead of a file (#474). CI starts one of
+its own (``deploy/libsql-test-server.sh``) and runs the persistence suite again with it: every
+SQLite case of a test parametrized on the database then starts on an empty server. Never point it
+at a server that holds anything else."""
+LIBSQL_DATABASE_TOKEN = os.environ.get("EXACTDOCS_TEST_LIBSQL_DATABASE_AUTH_TOKEN") or None
+"""That server's token, if it needs one."""
+
+
+def libsql_database_url() -> str:
+    """``EXACTDOCS_DATABASE_URL`` for the test server: ``libsql://host:port?tls=...&authToken=...``.
+
+    Returns:
+        The URL.
+    """
+    assert LIBSQL_DATABASE_URL is not None, "EXACTDOCS_TEST_LIBSQL_DATABASE_URL is not set"
+    parts = urlsplit(LIBSQL_DATABASE_URL)
+    query = {"tls": "0" if parts.scheme == "http" else "1"}
+    if LIBSQL_DATABASE_TOKEN:
+        query["authToken"] = LIBSQL_DATABASE_TOKEN
+    return f"libsql://{parts.netloc}?{urlencode(query)}"
+
+
+def empty_libsql_database() -> None:
+    """Drop every trigger, view and table of the test server (but libSQL's and SQLite's own)."""
+    assert LIBSQL_DATABASE_URL is not None, "EXACTDOCS_TEST_LIBSQL_DATABASE_URL is not set"
+    connection = turso_serverless.connect(
+        LIBSQL_DATABASE_URL, auth_token=LIBSQL_DATABASE_TOKEN, isolation_level=None
+    )
+    try:
+        connection.execute("PRAGMA foreign_keys=OFF")
+        found = connection.execute(
+            "SELECT type, name, upper(coalesce(sql, '')) LIKE 'CREATE VIRTUAL%' FROM sqlite_master"
+            " WHERE type IN ('trigger', 'view', 'table') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'"
+            " AND name NOT LIKE 'libsql\\_%' ESCAPE '\\'"
+        ).fetchall()
+        # Triggers and views, then virtual tables (which drop their shadow tables), then tables.
+        for kind, name, _ in sorted(found, key=lambda row: (row[0] == "table", not row[2])):
+            connection.execute(f'DROP {kind.upper()} IF EXISTS "{name}"')
+    finally:
+        connection.close()

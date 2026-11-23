@@ -4,7 +4,9 @@ Retrieval modes are compared with numbers before one becomes a default. The eval
 dataset of questions through every retrieval mode this build can run, on the fixture docs
 repository imported for real, and reports per mode how often the right section comes back, how
 often anything of another version does, what it cost and how long it took. The decisions behind
-it are in [AI retrieval decisions](decisions/ai-retrieval.md#evaluation).
+it are in [AI retrieval decisions](decisions/ai-retrieval.md#evaluation). The fixture is imported
+with every heading starting a chunk (`split_level` 6, no bound), because the dataset names its
+`####` sections; a new library's default since #381 would hold them inside their parent.
 
 The results of the benchmarks below (the golden set, ingestion, retrieval and agent) and the
 defaults they recommend are published in the [Benchmark](benchmark/index.md) section; this page
@@ -334,8 +336,8 @@ Every case file must load as the dataset's models, and every case must:
   it is; name sections of the case's own version only; for `cross-page`, of two articles or more;
 - name only sections that exist **at the pinned commit**: the article is read from the cache,
   must be selected by the project's docs paths, and its heading path must be one of the chunks the
-  importer's own parser and chunker (`parse_article`, `MarkdownChunker`, default settings) cut it
-  into. So a case can only name a section ExactDocs produces, and moving the pins (or changing how
+  importer's own parser and chunker (`parse_article`, `MarkdownChunker` with no settings, which
+  cuts at every heading) cut it into. So a case can only name a section ExactDocs produces, and moving the pins (or changing how
   articles are cut) shows every case that no longer holds.
 
 It prints every broken case (`<case>: <problem>`, with the closest existing sections when only
@@ -415,12 +417,16 @@ quick tests (`tests/evals/test_ingestion.py`, `ingestion_bench.feature`) on a ti
 
 | Name | Settings | What it does |
 |---|---|---|
-| `default` | split level 6, no merging, no bound | today's default: every heading starts a chunk |
-| `h2` | split level 2 | only `#` and `##` start a chunk; deeper sections stay inside their parent |
-| `h3-max-4000` | split level 3, `max_chars` 4,000 | `#` to `###` start a chunk; a longer one is cut again at deeper headings |
-| `merge-400` | `min_chars` 400, `max_chars` 4,000 | every heading starts a chunk, then a chunk under 400 characters is merged with the next while the result stays within 4,000 |
+| `default` | split level 3, `max_chars` 4,000 | today's default (#381): `#` to `###` start a chunk; a longer one is cut again at deeper headings |
+| `h6` | split level 6, no merging, no bound | every heading starts a chunk (the default before #381) |
+| `h2` | split level 2, no bound | only `#` and `##` start a chunk; deeper sections stay inside their parent |
+| `merge-400` | split level 6, `min_chars` 400, `max_chars` 4,000 | every heading starts a chunk, then a chunk under 400 characters is merged with the next while the result stays within 4,000 |
 
-They are `CONFIGURATIONS` in `retrieval_eval/ingestion_cli.py`. The section ceiling of #141
+They are `CONFIGURATIONS` in `retrieval_eval/ingestion_cli.py`. `default` is whatever a new
+library gets, so it follows the shipped default; the others name every setting. When the default
+changed in #381, `h3-max-4000` became `default` and the old `default` became `h6`: the ingestion
+run was measured again (the same numbers under the new names) and the retrieval run relabelled.
+The section ceiling of #141
 (splitting a long section at block boundaries) is not one of them yet: it is not exposed in the
 library settings.
 
@@ -519,7 +525,7 @@ of another version, read outside its version (agentic traces), or failed on a qu
 | `hyde:hosted` | hosted | the hosted embedding model and `EXACTDOCS_AI__LLM__MODEL` |
 | `agentic:hosted` | hosted | `EXACTDOCS_AI__LLM__MODEL` |
 
-Each runs at every chunking configuration (`default`, `h2`, `h3-max-4000`, `merge-400`;
+Each runs at every chunking configuration (`default`, `h6`, `h2`, `merge-400`;
 `--chunkings`). `--configs` takes names or shell patterns (`'hybrid:*+ce'`). A configuration that
 cannot run is listed with the reason: a local model that was not pulled (`unavailable`, with the
 `exactdocs models pull` command), a hosted role that is not configured, or a hosted configuration
@@ -579,10 +585,31 @@ answerable one by the result list today.
 For each budget, cheapest first, the candidates are the results that ran with no wrong version,
 no read outside the version, no error and no reranker fallback. The best of a budget, by recall@5,
 then nDCG@10, MRR, lower USD and lower p95, becomes its default only when its recall@5 beats the
-cheaper budget's default by 5 points (the suite's `DEFAULT_MARGIN_POINTS`); otherwise the cheaper
-default stays, and the reason says by how much the dearer one fell short. Each recommendation
-gives its USD per 1000 questions and its numbers. A budget nothing of which ran is "not measured
-yet"; for hosted models that means a real-providers run is needed.
+cheaper budget's default by 5 points (the suite's `DEFAULT_MARGIN_POINTS`) **and** McNemar's test
+(mid-p) of its recall@5 against that default, on the answerable cases both answered, is
+significant at 5% (#489). Otherwise the cheaper default stays, and the reason says which it
+missed: by how much the dearer one fell short of the margin, or that the difference is not
+significant, with its p-value. A result without per-case outcomes (`rows`) cannot be tested and
+does not become a default. Each recommendation gives its USD per 1000 questions, its numbers and
+the test (`test`). A budget nothing of which ran is "not measured yet"; for hosted models that
+means a real-providers run is needed.
+
+### Intervals and paired tests
+
+Every rate and mean of `metrics`, `by_kind` and `by_project` (recall@k, MRR, nDCG@10, section
+recall, the wrong-version, clean, no-answer and empty rates, tokens and USD per question; not the
+latency percentiles) has a 95% interval in `intervals`: a percentile bootstrap over the cases,
+10,000 resamples drawn from `random.Random(489)`. The draws depend only on the seed and the
+number of cases, and the rows are taken in case order, so every configuration that answered the
+same cases is resampled with the same draws (paired). Each result is then tested against its
+budget's default (`versus_default`) on the answerable cases both answered: McNemar's test (mid-p)
+for recall@1, @5 and @10, and a paired sign-flip permutation test (10,000 random sign patterns,
+same seed) for MRR and nDCG@10, each with the difference and its paired bootstrap interval. The
+summary shows the intervals in brackets and the tests under *Against the budget's default*.
+The definitions, and why mid-p and a permutation test, are in
+[Intervals and significance](benchmark/method.md#intervals-and-significance); the code is
+`retrieval_eval/stats.py`, tested on synthetic runs with known answers in
+`tests/evals/test_stats.py`.
 
 ### Reproducing a result
 
@@ -598,14 +625,21 @@ yet"; for hosted models that means a real-providers run is needed.
   `reason`; `models` (each role's `<profile>:<model>`, the profile's `kind` and `base_url`, and for
   a local model the Hub `revision` it was pulled at and its `dimensions`); `settings` (the `ai`
   settings it ran with: the roles, `rerank_with`, the reranker's `top_n` and timeout, the judge's
-  timeout, HyDE and agentic limits; never a key); `metrics`, `by_kind`, `by_project`, `index`,
-  `fallbacks`, `reranked`, `rerank_fallbacks`, `misses`, `errors`, `wrong_version_cases`,
-  `left_version_cases`;
-- `recommendations`: per `budget`, the `configuration`, `chunking`, `usd_per_1000_questions` and
-  the `reasons`.
+  timeout, HyDE and agentic limits; never a key); `metrics`, `by_kind`, `by_project` (each with
+  its `intervals`), `index`, `fallbacks`, `reranked`, `rerank_fallbacks`, `misses`, `errors`,
+  `wrong_version_cases`, `left_version_cases`; `rows`, every case's outcome by case name (its
+  kind, project, rank, nDCG, section ranks, wrong version, empty, search time, tokens and USD),
+  from which the metrics, intervals and tests can be recomputed; `rows_from`, set when the rows
+  come from a later run than the metrics (below); and `versus_default`, the paired tests
+  against its budget's default;
+- `recommendations`: per `budget`, the `configuration`, `chunking`, `usd_per_1000_questions`,
+  the `reasons` and the recall@5 `test` against the cheaper default;
+- `statistics`: how the intervals and tests were computed (`seed`, `resamples`, `confidence`,
+  `alpha` and the methods).
 
 The recorded run is `packages/exactdocs/evals/results/retrieval.json` and `retrieval.md`.
-`schema_version` changes when a field is renamed or removed.
+`schema_version` changes when a field is renamed or removed; #489 only added fields, so it is
+still 1, and a report without them still reads.
 
 ### The recorded run
 
@@ -614,24 +648,35 @@ Measured on an Apple M-series laptop (10 cores) with no network, on the whole go
 at four chunkings) would take about six hours on that CPU, so it ran on this subset:
 
 - `bm25` and `hybrid:bge-small-en-v1.5` at every chunking configuration;
-- `bm25+ce` at `default` and `h2`; `hybrid:bge-small-en-v1.5+ce` at `default`;
-- `hybrid:snowflake-arctic-embed-s` at `default` (the second local embedding model);
+- `bm25+ce` at `h6` and `h2`; `hybrid:bge-small-en-v1.5+ce` at `h6`;
+- `hybrid:snowflake-arctic-embed-s` at `h6` (the second local embedding model);
 - `hybrid:bge-base-en-v1.5` did not run (about 50 minutes of embedding per chunking there);
 - every hosted configuration is listed as skipped: it needs a real-providers run.
 
 ```bash
 EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
-  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@default,bm25+ce@h2,hybrid:bge-small-en-v1.5+ce@default,hybrid:snowflake-arctic-embed-s@default,*+judge,*:hosted*' \
+  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@h6,bm25+ce@h2,hybrid:bge-small-en-v1.5+ce@h6,hybrid:snowflake-arctic-embed-s@h6,*+judge,*:hosted*' \
   --out packages/exactdocs/evals/results
 ```
 
-Embedding the whole corpus took 17 minutes with bge-small at `default` (8 at `h2`, 13 at
-`h3-max-4000`, 11 at `merge-400`) and 16 with arctic-embed-s; the cross-encoder adds about
-1.4 s per question (32 candidates). What it found: BM25 is best at `h3-max-4000` (recall@5 81.7%);
-hybrid on bge-small reaches 84.6% at `default`, 3 points more, under the 5-point margin, so BM25
-stays the default for both the no-model and the local budget; the cross-encoder adds as much as
-hybrid at `default` and loses recall at `h2`, whose chunks are longer than its window;
-arctic-embed-s is below BM25 (75.3%).
+The run predates #381, so its `default` was today's `h6`; the report was relabelled when the
+default changed (the commands above name today's chunkings). Embedding the whole corpus took 17
+minutes with bge-small at `h6` (8 at `h2`, 13 at `default`, 11 at `merge-400`) and 16 with
+arctic-embed-s; the cross-encoder adds about 1.4 s per question (32 candidates). What it found:
+BM25 is best at `default`, split level 3 and 4,000 characters (recall@5 81.7%, against 79.8% at
+`h6`), which #381 made the default for new libraries; hybrid on bge-small reaches 84.6% at `h6`,
+3 points more, under the 5-point margin, so BM25 stays the default for both the no-model and the
+local budget; the cross-encoder adds as much as hybrid at `h6` and loses recall at `h2`, whose
+chunks are longer than its window; arctic-embed-s is below BM25 (75.3%).
+
+The run kept aggregates only, so it had no per-case outcomes for intervals and tests (#489).
+BM25 was run again at every chunking for #489 (`just retrieval-bench --offline --configs bm25`,
+on Linux x86_64 with 4 CPUs); its recall@k, MRR, nDCG@10, section recall and rates matched the
+recorded ones exactly overall, per kind and per project, so its `rows` were added to the four
+recorded BM25 results, with `rows_from` saying where they come from (their `search_ms` are that
+re-run's; the recorded latencies stay), and the intervals, tests and recommendation were derived
+again. The model configurations were not run again: they have no rows, so no interval and no
+test, until the next recorded run, which keeps rows for every result.
 
 ### Running it with local models
 
@@ -752,8 +797,16 @@ one cell per agent model and retrieval configuration:
   its facts are stated;
 - *Read another version*: questions where the agent read something of the asked library at
   another version;
-- tool calls, tokens and USD per question, median wall time, and how the searches were answered.
+- tool calls, tokens and USD per question, median wall time, and how the searches were answered;
+- the 95% interval of accuracy (overall, per kind and per project), of *Read the answer* and of
+  the means per question (`intervals`, a percentile bootstrap over the questions as in
+  [Intervals and paired tests](#intervals-and-paired-tests));
+- for each retrieval configuration but the run's first, McNemar's test (mid-p) of its accuracy
+  against the first configuration's, for the same agent model and the questions both asked
+  (`reference`, `versus_reference`), shown under *Against the first retrieval configuration*.
+  Put the baseline first (`--retrieval`), e.g. BM25 when comparing models.
 
+`statistics` records the seed, resamples, confidence and level of the intervals and tests.
 `meta` holds what a rerun needs: the agent models, the judge model, each configuration's
 settings, the limits, the instructions and prompt, the ExactDocs version and repository commit,
 and every imported version with its pinned and recorded commit. `questions` holds every question's

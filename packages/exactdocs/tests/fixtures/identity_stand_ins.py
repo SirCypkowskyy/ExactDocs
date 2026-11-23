@@ -3,6 +3,7 @@
 from typing import Any
 
 from exactdocs.identity.adapters.driven.memory import (
+    InMemoryAccessLog,
     InMemoryAccountRepository,
     InMemoryExternalIdentityRepository,
     InMemoryLibraryGrantRepository,
@@ -25,6 +26,7 @@ def no_external_sign_in() -> dict[str, Any]:
     return {
         "externals": InMemoryExternalIdentityRepository(accounts=InMemoryAccountRepository()),
         "library_grants": InMemoryLibraryGrantRepository(),
+        "access_log": InMemoryAccessLog(),
         "attempts": InMemorySignInAttemptRepository(),
         "box": _NoBox(),
     }

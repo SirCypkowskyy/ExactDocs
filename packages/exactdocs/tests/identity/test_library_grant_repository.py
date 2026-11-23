@@ -107,3 +107,29 @@ async def test_clearing_drops_one_librarys_grants(grants: LibraryGrantRepository
 
     assert await grants.for_library(LIBRARY) == []
     assert len(await grants.for_library(OTHER)) == 1
+
+
+async def test_transferring_makes_one_creator_and_the_creators_before_admins(
+    grants: LibraryGrantRepository,
+) -> None:
+    await grants.put(grant(LibraryRole.CREATOR, "ada"))
+    await grants.put(grant(LibraryRole.VIEWER, "bob"))
+    await grants.put(grant(LibraryRole.VIEWER, "payments", SubjectKind.GROUP))
+    await grants.put(grant(LibraryRole.CREATOR, "ada", library=OTHER))
+
+    previous = await grants.transfer(LIBRARY, AccountId("bob"))
+
+    assert previous == [AccountId("ada")]
+    assert await grants.for_library(LIBRARY) == [
+        grant(LibraryRole.ADMIN, "ada"),
+        grant(LibraryRole.CREATOR, "bob"),
+        grant(LibraryRole.VIEWER, "payments", SubjectKind.GROUP),
+    ]
+    assert await grants.for_library(OTHER) == [grant(LibraryRole.CREATOR, "ada", library=OTHER)]
+
+
+async def test_transferring_a_library_without_a_creator_has_no_creator_before(
+    grants: LibraryGrantRepository,
+) -> None:
+    assert await grants.transfer(LIBRARY, AccountId("bob")) == []
+    assert await grants.for_library(LIBRARY) == [grant(LibraryRole.CREATOR, "bob")]

@@ -5,6 +5,7 @@ import hmac
 import json
 import math
 import re
+import struct
 import unicodedata
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
@@ -852,6 +853,199 @@ class SearchEngine(StrEnum):
     """PostgreSQL without `pg_search`: its full-text search, ranked with `ts_rank_cd`."""
     MEMORY = "memory"
     """The in-memory reference index (tests only)."""
+    EXTERNAL = "external"
+    """An external search backend (``EXACTDOCS_SEARCH_BACKEND``); ``/healthz`` names it."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TextQuery:
+    """A full-text query as an external backend gets it: the text and the terms it matches by.
+
+    ``terms`` are ``search_terms(text)``: the words whole and by their identifier parts, lower
+    case. A backend matches any of them (they are alternatives) and never parses ``text`` as
+    syntax. ``search`` and ``count`` never get a query without terms; ``hybrid`` may (only its
+    vector counts then).
+    """
+
+    text: str
+    """The query as the caller typed it."""
+    terms: tuple[str, ...]
+    """The distinct terms it is matched by, in order; never empty."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IndexEntry:
+    """One chunk of one version, as an external index holds it (derived from the stored chunks).
+
+    Entries are per version, never shared: the same blob in two versions is two entries, so a
+    search scoped to a version can only ever return that version's chunks (version isolation).
+    """
+
+    manifest_id: str
+    """The version's manifest: the key every search, put and delete is scoped by."""
+    library: str
+    """The library ID, lower case."""
+    version_id: str
+    """``<library>/<ref>``."""
+    chunk_id: ChunkId
+    """The chunk's ID in the version; unique within the manifest."""
+    article_path: str
+    """The article's path in the version."""
+    heading_path: tuple[str, ...]
+    """The chunk's heading and every heading above it."""
+    content: str
+    """The chunk's text, verbatim."""
+    tags: tuple[str, ...]
+    """The article's tags; a search's tag filter is applied to them before ranking."""
+    vector: tuple[float, ...] | None = None
+    """The chunk's vector in the space it is put in (vector backends); ``None`` for search."""
+
+
+def index_entry(
+    manifest: IndexedManifest, stored: StoredChunk, vector: tuple[float, ...] | None = None
+) -> IndexEntry:
+    """Make the external index entry of a stored chunk.
+
+    Args:
+        manifest: The chunk's manifest.
+        stored: The chunk with its row.
+        vector: Its vector, for a vector backend.
+
+    Returns:
+        The entry.
+    """
+    return IndexEntry(
+        manifest_id=manifest.manifest_id,
+        library=manifest.library,
+        version_id=manifest.version_id,
+        chunk_id=stored.row.chunk_id,
+        article_path=stored.row.article_path,
+        heading_path=stored.chunk.heading_path,
+        content=stored.chunk.content,
+        tags=stored.row.tags,
+        vector=vector,
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BackendHit:
+    """A chunk an external backend ranked: higher ``score`` is better, within one search."""
+
+    manifest_id: str
+    """The manifest (version) the chunk is in."""
+    chunk_id: ChunkId
+    """The chunk."""
+    score: float
+    """Higher is better; only comparable within one search."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class NativeRanking:
+    """A hybrid answer an external backend reranked with its own ranker (``NativeRerank``)."""
+
+    hits: tuple[BackendHit, ...]
+    """The hits, best first: the reranked ones (scored by the backend's ranker), then the rest
+    in the hybrid order."""
+    reranked: int
+    """How many of the first ``hits`` the backend's ranker reordered; 0 when it could not rerank
+    this time (the hits then keep the hybrid order)."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BackendNeighbour:
+    """A chunk an external vector backend found near a query vector."""
+
+    manifest_id: str
+    """The manifest (version) the chunk is in."""
+    chunk_id: ChunkId
+    """The chunk."""
+    distance: float
+    """Cosine distance, 0 to 2: smaller is nearer, never below 0."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class HeldVersion:
+    """A version an external index holds entries of, and how many."""
+
+    manifest_id: str
+    """The version's manifest."""
+    library: str
+    """The library ID, lower case."""
+    entries: int
+    """How many entries the backend holds for it."""
+
+
+class IndexKind(StrEnum):
+    """Which external index: the full-text one or the vector one."""
+
+    SEARCH = "search"
+    """``EXACTDOCS_SEARCH_BACKEND``: full-text search."""
+    VECTORS = "vectors"
+    """``EXACTDOCS_VECTOR_BACKEND``: the embeddings of each space."""
+
+
+class DriftKind(StrEnum):
+    """How a version in the external index differs from the stored chunks."""
+
+    MISSING = "missing"
+    """Stored in the database, absent from the backend (lost, or never written)."""
+    INCOMPLETE = "incomplete"
+    """The backend holds fewer entries than the database has chunks (or vectors) for it."""
+    ORPHANED = "orphaned"
+    """The backend holds a version the database no longer has (a removal it never got)."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class VersionDrift:
+    """One version whose external copy is not what the stored chunks say it should be."""
+
+    kind: IndexKind
+    """The index that drifted."""
+    drift: DriftKind
+    """How."""
+    manifest_id: str
+    """The version's manifest."""
+    library: str
+    """The library ID, lower case."""
+    version_id: str | None
+    """``<library>/<ref>``; ``None`` for an orphan the database no longer knows."""
+    expected: int
+    """Entries the stored chunks give it (0 for an orphan)."""
+    held: int
+    """Entries the backend holds for it."""
+    space_id: int | None = None
+    """The embedding space, for the vector index."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IndexDrift:
+    """What a check found: every version whose external copy drifted, and what it looked at."""
+
+    versions: tuple[VersionDrift, ...]
+    """The versions that drifted, by index then library and version."""
+    checked: int
+    """Versions (and spaces) compared."""
+    kinds: tuple[IndexKind, ...]
+    """The external indexes checked; empty when every index lives in the database."""
+
+    @property
+    def clean(self) -> bool:
+        """Whether every external index holds exactly what the stored chunks give."""
+        return not self.versions
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RebuiltVersions:
+    """What a rebuild of the external indexes wrote."""
+
+    versions: int
+    """Versions written."""
+    search_entries: int
+    """Entries written to the search backend."""
+    vector_entries: int
+    """Entries written to the vector backend (every live space)."""
+    orphans: int
+    """Versions deleted from a backend because the database no longer has them."""
 
 
 class ManifestStatus(StrEnum):
@@ -2841,6 +3035,21 @@ def checked_vector(values: Sequence[float], dimensions: int) -> tuple[float, ...
     if not all(math.isfinite(v) and abs(v) <= MAX_FLOAT32 for v in vector) or not any(vector):
         raise InvalidVectorError
     return vector
+
+
+def as_float32(vector: Sequence[float]) -> tuple[float, ...]:
+    """Round a checked vector to 32-bit floats, as every vector store keeps it.
+
+    An external copy written from these values equals what the database stores, so a rebuild
+    from the database finds the same distances.
+
+    Args:
+        vector: The values (finite, within float32's range).
+
+    Returns:
+        The values a store reads back.
+    """
+    return struct.unpack(f"<{len(vector)}f", struct.pack(f"<{len(vector)}f", *vector))
 
 
 # ---------------------------------------------------------------- embedding jobs

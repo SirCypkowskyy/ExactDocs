@@ -11,16 +11,12 @@ import {
   validateCredential,
 } from "@/shared/lib/credentials";
 import { type RefChoice, refToSend } from "@/shared/lib/refs";
-import { absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
-import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import { CredentialField } from "@/shared/ui/credential-field";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { RefPicker } from "@/shared/ui/ref-picker";
-import { Commit, VersionStation } from "@/shared/ui/route";
 import { accessQueryOptions, addVersion, refreshLibraries, removeVersion } from "../api/settings";
-import { useNow } from "../hooks/use-now";
 import {
   type Activity,
   type AddedVersion,
@@ -34,6 +30,7 @@ import {
 } from "../model/settings";
 import { SettingsSection } from "./settings-section";
 import { TypedConfirm } from "./typed-confirm";
+import { VersionsTable } from "./versions-table";
 
 interface Props {
   owner: string;
@@ -42,49 +39,6 @@ interface Props {
   Import: JobViews["Import"];
   activity: Activity;
   onStart: () => void;
-}
-
-function VersionRow({
-  version,
-  now,
-  onRemove,
-}: {
-  version: SettingsVersion;
-  now: number;
-  onRemove: (version: SettingsVersion, trigger: HTMLElement) => void;
-}) {
-  return (
-    <li className="relative flex flex-wrap items-start justify-between gap-x-4 gap-y-1 py-3 before:absolute before:top-0 before:bottom-0 before:left-1 before:w-0.5 before:bg-route/40 first:before:top-6 last:before:bottom-auto last:before:h-6 only:before:hidden">
-      <div className="min-w-0">
-        <p className="flex flex-wrap items-center gap-x-3">
-          <VersionStation
-            version={version.ref}
-            isDefault={version.is_default}
-            className="relative text-body [&_span:last-child]:text-body [&_span:last-child]:[overflow-wrap:anywhere]"
-          />
-          {version.is_default && <span className="text-small font-medium text-route">default</span>}
-        </p>
-        <p className="mt-0.5 pl-4 text-body text-muted-foreground">
-          {version.kind !== "tag" && <span className="capitalize">{version.kind} · </span>}
-          <Commit sha={version.commit_sha} />
-          <span className="sr-only"> commit</span>
-          <span aria-hidden="true"> · </span>
-          <time dateTime={version.imported_at} title={absoluteTimeWithZone(version.imported_at)}>
-            imported {relativeTime(version.imported_at, now)}
-          </time>
-        </p>
-      </div>
-      <Button
-        type="button"
-        variant="ghost"
-        aria-label={`Remove version ${version.ref}`}
-        onClick={(e) => onRemove(version, e.currentTarget)}
-        className="-mr-3 shrink-0 text-muted-foreground hover:bg-destructive-soft hover:text-destructive focus-visible:text-destructive"
-      >
-        Remove
-      </Button>
-    </li>
-  );
 }
 
 /** A refusal's words, with the way out when the answer is elsewhere on this page. */
@@ -310,11 +264,9 @@ const defaultNote = (v: SettingsVersion | undefined) =>
 
 /** The imported versions, an add form, and a typed-confirmation remove per version. */
 export function VersionsSection(props: Props) {
-  const { owner, repo, library, activity, onStart } = props;
+  const { owner, repo, activity, onStart } = props;
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
-  // The card stays mounted while its row collapses, so it does not vanish before the space does.
-  const [mounted, setMounted] = useState(false);
   const [removing, setRemoving] = useState<SettingsVersion>();
   const [notice, setNotice] = useState("");
   const [problem, setProblem] = useState<Problem>();
@@ -322,7 +274,6 @@ export function VersionsSection(props: Props) {
   const addButton = useRef<HTMLButtonElement>(null);
   const trigger = useRef<HTMLElement | null>(null);
   const removedOk = useRef(false);
-  const now = useNow();
   const focusAfterRender = useFocusAfterRender();
 
   const remove = useMutation({
@@ -356,12 +307,8 @@ export function VersionsSection(props: Props) {
     },
   });
 
-  const versions = library.versions;
-
   function closeAdd() {
     setAdding(false);
-    // `transitionend` unmounts the card; without a transition (reduced motion) nothing fires it.
-    setTimeout(() => setMounted(false), 300);
     // The button sits outside the card, so it is on screen in the commit that closes it.
     focusAfterRender(() => addButton.current);
   }
@@ -383,7 +330,6 @@ export function VersionsSection(props: Props) {
           onClick={() => {
             setNotice("");
             if (adding) return closeAdd();
-            setMounted(true);
             setAdding(true);
           }}
         >
@@ -391,23 +337,12 @@ export function VersionsSection(props: Props) {
         </Button>
       </div>
 
-      <div
-        id="add-version"
-        onTransitionEnd={(e) => {
-          if (e.target === e.currentTarget && !adding) setMounted(false);
-        }}
-        className={cn(
-          "grid transition-[grid-template-rows] duration-(--dur) ease-(--ease-out) motion-reduce:transition-none",
-          adding ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+      <div id="add-version">
+        {adding && (
+          <div className="reveal mb-4 rounded-lg bg-raised p-4 sm:p-5">
+            <AddVersionForm {...props} onClose={closeAdd} />
+          </div>
         )}
-      >
-        <div className="overflow-hidden" inert={!adding}>
-          {mounted && (
-            <div className="mb-4 rounded-lg bg-raised p-4 sm:p-5">
-              <AddVersionForm {...props} onClose={closeAdd} />
-            </div>
-          )}
-        </div>
       </div>
 
       <p role="status" className="min-h-5 text-body">
@@ -420,30 +355,18 @@ export function VersionsSection(props: Props) {
       </p>
 
       <div className="mt-2">
-        {versions.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-input px-4 py-5 text-body text-muted-foreground">
-            No versions yet. Add one, or wait for the first import to finish.
-          </p>
-        ) : (
-          // No bottom rule: the next section brings its own.
-          <ul aria-label="Imported versions" className="divide-y divide-rule">
-            {versions.map((v) => (
-              <VersionRow
-                key={v.ref}
-                version={v}
-                now={now}
-                onRemove={(version, el) => {
-                  trigger.current = el;
-                  removedOk.current = false;
-                  remove.reset();
-                  setProblem(undefined);
-                  onStart();
-                  setRemoving(version);
-                }}
-              />
-            ))}
-          </ul>
-        )}
+        <VersionsTable
+          owner={owner}
+          repo={repo}
+          onRemove={(version, el) => {
+            trigger.current = el;
+            removedOk.current = false;
+            remove.reset();
+            setProblem(undefined);
+            onStart();
+            setRemoving(version);
+          }}
+        />
       </div>
 
       <TypedConfirm
@@ -453,7 +376,7 @@ export function VersionsSection(props: Props) {
         }}
         title={
           <>
-            Remove <span className="font-mono text-[0.9em]">{removing?.ref ?? "version"}</span>?
+            Remove <span className="font-mono">{removing?.ref ?? "version"}</span>?
           </>
         }
         loss="Its articles disappear from browse, search and agents now."

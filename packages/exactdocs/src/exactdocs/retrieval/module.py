@@ -7,6 +7,7 @@ from exactdocs.retrieval.constants import (
     DEFAULT_AGENT_CACHE_TTL_DAYS,
     DEFAULT_EMBEDDING_BATCH,
     DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
+    EXTERNAL_WRITE_RETRY_SECONDS,
     HYDE_CACHE_TTL_DAYS,
     HYDE_TIMEOUT,
     QUERY_EMBEDDING_TIMEOUT,
@@ -43,23 +44,29 @@ from exactdocs.retrieval.ports.driven import (
     LibraryModes,
     ModelFactory,
     ModelRoles,
+    NativeHybrid,
+    NativeRerank,
     Prices,
     ProviderProfiles,
     RenamedPaths,
     RetrievalPipeline,
     RoleThinkingLevels,
     SearchableVersions,
+    SearchBackend,
     SearchIndex,
     SearchIndexMaintenance,
     SearchTracer,
     SecretBox,
     SpendLedger,
+    StoredVectors,
+    VectorBackend,
     VectorIndex,
     VersionArticles,
 )
 from exactdocs.retrieval.ports.driving import (
     AnswerQuestion,
     ArticleOutline,
+    CheckExternalIndexes,
     CheckProvider,
     CheckRoles,
     CollectChunks,
@@ -86,6 +93,7 @@ from exactdocs.retrieval.ports.driving import (
     PruneHypotheses,
     QueryDocs,
     ReadChunk,
+    RebuildExternalIndexes,
     RebuildSearchIndex,
     RemoveChunks,
     ResolveLibraryId,
@@ -104,6 +112,7 @@ from exactdocs.retrieval.use_cases import (
     AnswerQuestionUseCase,
     ArticleOutlineUseCase,
     Bm25Pipeline,
+    CheckExternalIndexesUseCase,
     CheckProviderUseCase,
     CheckRolesUseCase,
     CollectChunksUseCase,
@@ -112,6 +121,9 @@ from exactdocs.retrieval.use_cases import (
     EmbedBatchUseCase,
     EmbeddingRuns,
     EstimateEmbeddingUseCase,
+    ExternalIndexes,
+    ExternalSearchIndex,
+    ExternalVectorIndex,
     FinishEmbeddingUseCase,
     ForgetLibraryUseCase,
     GetAiUsageUseCase,
@@ -141,6 +153,7 @@ from exactdocs.retrieval.use_cases import (
     PruneHypothesesUseCase,
     QueryDocsUseCase,
     ReadChunkUseCase,
+    RebuildExternalIndexesUseCase,
     RebuildSearchIndexUseCase,
     RemoveChunksUseCase,
     Reranking,
@@ -191,6 +204,97 @@ _open_access = _EveryoneMayDoAnything()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class _Backends:
+    """The indexes the use cases see once the external backends (#352) are wrapped around."""
+
+    search: SearchIndex
+    """The full-text index: the backend's when one is configured."""
+    maintenance: SearchIndexMaintenance
+    """Reads and rebuilds it."""
+    vectors: VectorIndex | None
+    """The vector store: searched through the backend when one is configured."""
+    external: ExternalIndexes
+    """Keeps the backends in step (it does nothing without one)."""
+    native: NativeHybrid | None
+    """The vector backend, when it ranks hybrid searches by itself."""
+    reranks: NativeRerank | None = None
+    """The vector backend, when it also reranks its hybrid answers itself (#473)."""
+
+    @property
+    def mirror(self) -> ExternalIndexes | None:
+        """``external`` when a backend is configured, for the use cases that write to it."""
+        return self.external if self.external.kinds else None
+
+    @classmethod
+    def wrap(
+        cls,
+        *,
+        chunks: ChunkRepository,
+        search: SearchIndex,
+        maintenance: SearchIndexMaintenance,
+        vectors: VectorIndex | None,
+        search_backend: SearchBackend | None,
+        vector_backend: VectorBackend | None,
+        stored_vectors: StoredVectors | None,
+        retry_seconds: float,
+    ) -> Self:
+        """Put the external backends in front of the database's indexes.
+
+        Args:
+            chunks: The stored chunks.
+            search: The database's full-text index.
+            maintenance: Reads and rebuilds it.
+            vectors: The database's vector store.
+            search_backend: The external full-text backend, if any.
+            vector_backend: The external vector backend, if any.
+            stored_vectors: Reads the store's vectors back.
+            retry_seconds: The first wait before a failed write is tried again.
+
+        Returns:
+            The indexes the use cases see.
+
+        Raises:
+            TypeError: ``vector_backend`` without ``vectors`` and ``stored_vectors``.
+        """
+        if vector_backend is not None and (vectors is None or stored_vectors is None):
+            message = "vector_backend needs the database's vector store: vectors and stored_vectors"
+            raise TypeError(message)
+        external = ExternalIndexes(
+            chunks=chunks,
+            search=search_backend,
+            vectors=vector_backend,
+            store=vectors,
+            stored=stored_vectors,
+            retry_seconds=retry_seconds,
+        )
+        if search_backend is not None:
+            search = maintenance = ExternalSearchIndex(
+                backend=search_backend,
+                chunks=chunks,
+                local=search,
+                maintenance=maintenance,
+                mirror=external,
+            )
+        if vector_backend is not None and vectors is not None:
+            vectors = ExternalVectorIndex(
+                store=vectors, backend=vector_backend, chunks=chunks, mirror=external
+            )
+        return cls(
+            search=search,
+            maintenance=maintenance,
+            vectors=vectors,
+            external=external,
+            native=vector_backend if isinstance(vector_backend, NativeHybrid) else None,
+            reranks=(
+                vector_backend
+                if isinstance(vector_backend, NativeHybrid)
+                and isinstance(vector_backend, NativeRerank)
+                else None
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RetrievalModule:
     """Retrieval's driving ports, ready to be exposed by driving adapters."""
 
@@ -224,6 +328,10 @@ class RetrievalModule:
     """Whether the vector store can search, once an embedding model is configured."""
     rebuild_search_index: RebuildSearchIndex
     """Rebuilds the full-text index in the current format."""
+    check_external_indexes: CheckExternalIndexes
+    """Compares the external search and vector backends with the stored chunks (#352)."""
+    rebuild_external_indexes: RebuildExternalIndexes
+    """Writes the stored chunks and vectors to the external backends again (#352)."""
     get_library_retrieval: GetLibraryRetrieval
     """A library's retrieval mode and the one its searches use now."""
     set_library_retrieval: SetLibraryRetrieval
@@ -327,6 +435,10 @@ class RetrievalModule:
         agent_cache_ttl: timedelta = timedelta(days=DEFAULT_AGENT_CACHE_TTL_DAYS),
         instruction_files: InstructionFiles | None = None,
         access: AccessPolicy = _open_access,
+        search_backend: SearchBackend | None = None,
+        vector_backend: VectorBackend | None = None,
+        stored_vectors: StoredVectors | None = None,
+        external_retry_seconds: float = EXTERNAL_WRITE_RETRY_SECONDS,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -401,10 +513,33 @@ class RetrievalModule:
             instruction_files: Reads a manifest's ``AGENTS.md`` / ``CLAUDE.md`` files for a
                 library with repo guidance on (RET-08).
             access: Library roles: what the caller may do with a library; everything by default.
+            search_backend: An external full-text backend (#352): it answers searches, and the
+                imports, removals and re-tags keep it in step; ``search`` (the database's index)
+                is still written.
+            vector_backend: An external vector backend (#352): it answers the vector searches
+                of ``vectors``' spaces, which keep every vector; a ``NativeHybrid`` one also
+                ranks ``hybrid`` by itself, and a ``NativeRerank`` one reranks it too when the
+                search asks for reranking.
+            stored_vectors: Reads ``vectors``' stored vectors back; needed with
+                ``vector_backend``.
+            external_retry_seconds: The first wait before a write a backend did not take is
+                tried again (tests: none).
 
         Returns:
-            The module, its driving ports wired.
+            The module, its driving ports wired (``TypeError`` for a ``vector_backend`` without
+            ``vectors`` and ``stored_vectors``).
         """
+        backends = _Backends.wrap(
+            chunks=chunks,
+            search=search,
+            maintenance=maintenance,
+            vectors=vectors,
+            search_backend=search_backend,
+            vector_backend=vector_backend,
+            stored_vectors=stored_vectors,
+            retry_seconds=external_retry_seconds,
+        )
+        search, maintenance, vectors = backends.search, backends.maintenance, backends.vectors
         clock = clock or SystemClock()
         tracer = tracer or UntracedSearches()
         providers = AiProviders(
@@ -437,7 +572,6 @@ class RetrievalModule:
             dimensions=embedding_dimensions,
             batch_size=embedding_batch_size,
         )
-        hypotheses_cached = hypothesis_cache or NoHypothesisCache()
         # The store is always wired, so its rows are forgotten and pruned even with the cache
         # off; only looking up and storing need it on and a key.
         answers: AgentAnswerCache = agent_answer_cache or NoAgentAnswerCache()
@@ -453,7 +587,7 @@ class RetrievalModule:
                 timeout=query_embedding_timeout,
             )
         prune_hypotheses = PruneHypothesesUseCase(
-            hypotheses=hypotheses_cached,
+            hypotheses=hypothesis_cache or NoHypothesisCache(),
             providers=providers,
             clock=clock,
             ttl=hyde_cache_ttl,
@@ -472,6 +606,8 @@ class RetrievalModule:
                 runs=runs,
                 tracer=tracer,
                 timeout=query_embedding_timeout,
+                native=backends.native,
+                reranks=backends.reranks,
             )
             built[RetrievalMode.HYBRID] = hybrid
             built[RetrievalMode.VECTOR] = VectorPipeline(hybrid=hybrid)
@@ -480,7 +616,9 @@ class RetrievalModule:
                     hybrid=hybrid,
                     providers=providers,
                     writer=hypotheses,
-                    cache=hypotheses_cached if hyde_cache_key is not None else NoHypothesisCache(),
+                    cache=prune_hypotheses.hypotheses
+                    if hyde_cache_key is not None
+                    else NoHypothesisCache(),
                     cache_key=hyde_cache_key or b"",
                     spend=ai_spend,
                     tracer=tracer,
@@ -547,7 +685,9 @@ class RetrievalModule:
             get_answer_availability=GetAnswerAvailabilityUseCase(
                 providers=providers, answerer=answerer, bounds=agent_bounds or AgentBounds()
             ),
-            index_manifest=IndexManifestUseCase(chunks=chunks, search=search, clock=clock),
+            index_manifest=IndexManifestUseCase(
+                chunks=chunks, search=search, clock=clock, external=backends.mirror
+            ),
             get_chunk_sets=GetChunkSetsUseCase(chunks=chunks),
             read_chunk=ReadChunkUseCase(
                 versions=searchable,
@@ -579,25 +719,33 @@ class RetrievalModule:
                 manifests=manifests,
                 chunks=chunks,
                 clock=clock,
-                hypotheses=hypotheses_cached,
+                hypotheses=prune_hypotheses.hypotheses,
                 answers=answers,
+                external=backends.mirror,
             ),
             collect_chunks=CollectChunksUseCase(
                 manifests=manifests,
                 chunks=chunks,
                 clock=clock,
-                hypotheses=hypotheses_cached,
+                hypotheses=prune_hypotheses.hypotheses,
                 answers=answers,
+                external=backends.mirror,
                 prune=prune_hypotheses,
             ),
             prune_hypotheses=prune_hypotheses,
             remove_chunks=RemoveChunksUseCase(
-                manifests=manifests, chunks=chunks, hypotheses=hypotheses_cached, answers=answers
+                manifests=manifests,
+                chunks=chunks,
+                hypotheses=prune_hypotheses.hypotheses,
+                answers=answers,
+                external=backends.mirror,
             ),
-            retag_articles=RetagArticlesUseCase(chunks=chunks),
+            retag_articles=RetagArticlesUseCase(chunks=chunks, external=backends.mirror),
             get_search_index_state=GetSearchIndexStateUseCase(maintenance=maintenance),
             get_vector_store_state=GetVectorStoreStateUseCase(modes=modes),
             rebuild_search_index=RebuildSearchIndexUseCase(maintenance=maintenance),
+            check_external_indexes=CheckExternalIndexesUseCase(external=backends.external),
+            rebuild_external_indexes=RebuildExternalIndexesUseCase(external=backends.external),
             get_library_retrieval=GetLibraryRetrievalUseCase(
                 libraries=libraries, modes=modes, access=access
             ),

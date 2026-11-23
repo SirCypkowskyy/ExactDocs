@@ -26,6 +26,7 @@ from exactdocs.ingestion.adapters.driven.memory import (
 from exactdocs.ingestion.adapters.driven.restructuredtext import RestructuredTextConverter
 from exactdocs.ingestion.constants import (
     IMPORT_JOB,
+    MAX_INCLUDES,
     MAX_INSTRUCTION_DIRS,
     MAX_INSTRUCTION_FILE_BYTES,
     MAX_JOB_NOTES,
@@ -2220,3 +2221,110 @@ async def test_without_a_converter_restructuredtext_is_skipped_with_a_reason(
     assert [(p, c) for p, c, _ in world.progress.problems] == [
         ("docs/a.rst", ProblemCode.UNREADABLE)
     ]
+
+
+async def test_a_restructuredtext_file_over_the_article_cap_is_skipped_like_markdown(
+    tmp_path: Path,
+) -> None:
+    big = b"Big\n===\n\n" + b"x" * 100
+    world = build_world(
+        tmp_path,
+        {"docs/ok.rst": b"Ok\n==\n", "docs/big.rst": big, "docs/big.md": b"x" * 100},
+        max_bytes=50,
+        converter=RestructuredTextConverter(),
+    )
+
+    await world.run(make_job(), world.progress)
+
+    assert [a.path for a in world.catalog.stored[0].articles] == ["docs/ok.rst"]
+    assert {(p, c) for p, c, _ in world.progress.problems} == {
+        ("docs/big.rst", ProblemCode.TOO_LARGE),
+        ("docs/big.md", ProblemCode.TOO_LARGE),
+    }
+
+
+async def test_restructuredtext_files_count_toward_the_import_byte_budget(tmp_path: Path) -> None:
+    world = build_world(
+        tmp_path,
+        {"docs/a.rst": b"A\n=\n\n" + b"a" * 60, "docs/b.rst": b"B\n=\n\n" + b"b" * 60},
+        max_import_bytes=100,
+        converter=RestructuredTextConverter(),
+    )
+
+    with pytest.raises(ImportTooLargeError):
+        await world.run(make_job(), world.progress)
+
+    assert world.log == []
+
+
+async def test_an_article_includes_at_most_max_includes_files(tmp_path: Path) -> None:
+    extra = 5
+    parts = {f"docs/p{n}.rst": f"Part {n}.\n".encode() for n in range(MAX_INCLUDES + extra)}
+    page = b"Page\n====\n\n" + b"".join(
+        f".. include:: p{n}.rst\n\n".encode() for n in range(MAX_INCLUDES + extra)
+    )
+    world = _rst_world(
+        tmp_path, {"docs/page.rst": page, **parts}, selection=PathSelection.of(["docs/page.rst"])
+    )
+
+    await world.run(make_job(), world.progress)
+
+    (article,) = world.catalog.stored[0].articles
+    assert f"Part {MAX_INCLUDES - 1}." in article.content
+    assert f"Part {MAX_INCLUDES}." not in article.content
+    (problem,) = [reason for _, c, reason in world.progress.problems if c == ProblemCode.MARKUP]
+    assert f"more than {MAX_INCLUDES} files included" in problem
+
+
+async def test_an_include_over_the_article_cap_is_a_problem_not_a_failure(
+    tmp_path: Path,
+) -> None:
+    page = b"Page\n====\n\n.. include:: big.rst\n\nAfter.\n"
+    world = build_world(
+        tmp_path,
+        {"docs/page.rst": page, "docs/big.rst": b"x" * 200},
+        selection=PathSelection.of(["docs/page.rst"]),
+        max_bytes=100,
+        converter=RestructuredTextConverter(),
+    )
+
+    await world.run(make_job(), world.progress)
+
+    (article,) = world.catalog.stored[0].articles
+    assert "After." in article.content
+    assert "xxx" not in article.content
+    assert any("larger than 100 bytes" in r for _, c, r in world.progress.problems)
+
+
+async def test_the_includes_of_one_article_share_its_byte_budget(tmp_path: Path) -> None:
+    page = b"Page\n====\n\n.. include:: one.rst\n\n.. include:: two.rst\n"
+    world = build_world(
+        tmp_path,
+        {"docs/page.rst": page, "docs/one.rst": b"One " * 20, "docs/two.rst": b"Two " * 20},
+        selection=PathSelection.of(["docs/page.rst"]),
+        max_bytes=100,
+        converter=RestructuredTextConverter(),
+    )
+
+    await world.run(make_job(), world.progress)
+
+    (article,) = world.catalog.stored[0].articles
+    assert "One One" in article.content
+    assert "Two" not in article.content
+    assert any("add up to more than 100 bytes" in r for _, c, r in world.progress.problems)
+
+
+async def test_a_markdown_only_import_is_the_same_with_or_without_the_converter(
+    tmp_path: Path,
+) -> None:
+    """The retrieval eval's corpus is Markdown: the reStructuredText converter changes nothing."""
+    files = {"docs/auth.md": AUTH.encode(), "docs/install.md": INSTALL.encode()}
+    (tmp_path / "with").mkdir()
+    (tmp_path / "without").mkdir()
+    with_converter = _rst_world(tmp_path / "with", files, selection=PathSelection.of(["docs/"]))
+    without = build_world(tmp_path / "without", files)
+
+    for world in (with_converter, without):
+        await world.run(make_job(), world.progress)
+
+    assert with_converter.catalog.stored[0].articles == without.catalog.stored[0].articles

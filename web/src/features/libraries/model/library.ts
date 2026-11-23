@@ -4,6 +4,7 @@ import { HttpError } from "@/shared/lib/http";
 export type Library = components["schemas"]["LibrarySummary"];
 export type LibrariesResponse = components["schemas"]["LibraryList"];
 export type Job = components["schemas"]["JobSummary"];
+export type JobList = components["schemas"]["JobList"];
 /** The newest job of one version, without its skipped files (see `/jobs/{id}`). */
 export type LatestJob = components["schemas"]["LatestJob"];
 export type LatestJobs = components["schemas"]["LatestJobs"];

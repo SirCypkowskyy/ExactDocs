@@ -4,11 +4,18 @@ The shared guarantee is scoping to a manifest, escaping, tags, limits, highlight
 clear winner (a heading match beats body matches) and cleanup with the chunks. How good BM25
 ranks otherwise (length normalisation, ties, scale) is the ranking suite's job (E5-04); the
 memory reference only counts terms, so those cases run on SQLite alone.
+
+External backends (#352) run the same suite through the domain's ``ExternalSearchIndex``
+(``external:<name>``): an adapter PR adds its case to ``tests/fixtures/index_backends.py`` and
+nothing here. Their entries are per version (version isolation), so the one case about a chunk
+set shared by two versions counts two entries there.
 """
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Collection
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Collection
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import partial
 
 import pytest
 from sqlalchemy import text
@@ -33,6 +40,7 @@ from exactdocs.retrieval.dtos import (
     ChunkIn,
     CollectChunksCommand,
     IndexManifestCommand,
+    RemoveChunksCommand,
 )
 from exactdocs.retrieval.models import (
     DocTarget,
@@ -43,7 +51,9 @@ from exactdocs.retrieval.models import (
     TagMatch,
 )
 from exactdocs.retrieval.module import RetrievalModule
-from exactdocs.retrieval.ports import ChunkRepository, SearchIndex
+from exactdocs.retrieval.ports import ChunkRepository, SearchBackend, SearchIndex
+from exactdocs.retrieval.use_cases import ExternalIndexes, ExternalSearchIndex
+from index_backends import SEARCH_BACKEND_CASES
 
 T0 = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 LIB = "/acme/payments"
@@ -107,6 +117,9 @@ class World:
     punch_gap: Callable[[], Awaitable[None]]  # lose one index entry, as a crash could
     engine: str
     age_index: Callable[[], Awaitable[None]]  # record an older format, as an older build left it
+    counts_terms: bool = False  # the memory reference ranks: no BM25 length normalisation
+    shares_entries: bool = True  # a chunk set of two versions is one entry (else one each)
+    stale_statistics: bool = False  # deleted entries count in its term statistics for a while
 
     async def index(
         self,
@@ -116,11 +129,12 @@ class World:
         *,
         tags: list[str] | None = None,
         tagged: dict[str, list[str]] | None = None,
+        library: str = LIB,
     ) -> None:
         await self.retrieval.index_manifest(
             IndexManifestCommand(
                 manifest_id=manifest_id,
-                library=LIB,
+                library=library,
                 ref=ref,
                 config_hash="cfg",
                 articles=[
@@ -161,26 +175,81 @@ async def _sql_index(
     return index
 
 
-@pytest.fixture(params=["memory", *SEARCH_BACKENDS])
-async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
-    clock = Clock()
+def _module(
+    clock: Clock,
+    chunks: ChunkRepository,
+    search: InMemorySearchIndex | SqliteSearchIndex | PostgresSearchIndex | PgSearchIndex,
+    backend: SearchBackend | None = None,
+) -> RetrievalModule:
+    return RetrievalModule.build(
+        defaults=InMemoryDefaultVersions(),
+        libraries=InMemoryLibraries(),
+        searchable=Gone(),
+        manifests=Gone(),
+        chunks=chunks,
+        search=search,
+        maintenance=search,
+        library_modes=InMemoryLibraryModes(),
+        clock=clock,
+        search_backend=backend,
+    )
 
-    def build(
-        chunks: ChunkRepository,
-        search: InMemorySearchIndex | SqliteSearchIndex | PostgresSearchIndex | PgSearchIndex,
-    ) -> RetrievalModule:
-        return RetrievalModule.build(
-            defaults=InMemoryDefaultVersions(),
-            libraries=InMemoryLibraries(),
-            searchable=Gone(),
-            manifests=Gone(),
-            chunks=chunks,
-            search=search,
-            maintenance=search,
-            library_modes=InMemoryLibraryModes(),
-            clock=clock,
+
+@asynccontextmanager
+async def _external_world(
+    param: str,
+    clock: Clock,
+    build: Callable[[ChunkRepository, InMemorySearchIndex, SearchBackend], RetrievalModule],
+) -> AsyncGenerator[World]:
+    """An external backend (#352) behind the domain, over in-memory chunks."""
+    case = SEARCH_BACKEND_CASES[param.removeprefix("external:")]
+    assert case.search is not None
+    async with case.search() as backend:
+        memory = InMemoryChunkRepository()
+        local = InMemorySearchIndex(chunks=memory)
+
+        async def held() -> int:
+            return sum(h.entries for h in await backend.held(None))
+
+        async def lose_one() -> None:  # a backend reset loses at least one entry
+            first = min(h.manifest_id for h in await backend.held(None))
+            await backend.delete([first])
+
+        async def age_local() -> None:  # the database's own index still has its format
+            local.stored_format = 0
+
+        # What the module wires: the same backend, searched the way the use cases search it.
+        searched = ExternalSearchIndex(
+            backend=backend,
+            chunks=memory,
+            local=local,
+            maintenance=local,
+            mirror=ExternalIndexes(chunks=memory, search=backend),
+        )
+        yield World(
+            build(memory, local, backend),
+            searched,
+            clock,
+            held,
+            lose_one,
+            param,
+            age_local,
+            counts_terms=case.counts_terms,
+            shares_entries=False,
+            stale_statistics=case.stale_statistics,
         )
 
+
+@pytest.fixture(
+    params=["memory", *SEARCH_BACKENDS, *(f"external:{name}" for name in SEARCH_BACKEND_CASES)]
+)
+async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
+    clock = Clock()
+    build = partial(_module, clock)
+    if request.param.startswith("external:"):
+        async with _external_world(request.param, clock, build) as external:
+            yield external
+        return
     if request.param == "memory":
         memory = InMemoryChunkRepository()
         memory_index = InMemorySearchIndex(chunks=memory)
@@ -198,7 +267,14 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
             memory_index.stored_format = 0
 
         yield World(
-            build(memory, memory_index), memory_index, clock, entries, forget, "memory", age
+            build(memory, memory_index),
+            memory_index,
+            clock,
+            entries,
+            forget,
+            "memory",
+            age,
+            counts_terms=True,
         )
         return
     postgres = request.param != "sqlite"
@@ -268,7 +344,9 @@ async def test_a_chunk_set_shared_by_two_manifests_is_indexed_once_and_found_fro
     before = await world.index_entries()
     await world.index("m13b", "v1.3.1", V13)
 
-    assert await world.index_entries() == before == 1
+    # One entry for both in the database; one per version in an external index.
+    assert await world.index_entries() == (1 if world.shares_entries else 2)
+    assert before == 1
     old_ids = {h.chunk_id for h in await world.find("m13", "retried")}
     new_ids = {h.chunk_id for h in await world.find("m13b", "retried")}
     assert len(old_ids) == len(new_ids) == 1
@@ -446,6 +524,66 @@ async def test_collecting_a_manifest_takes_its_index_entries_with_it(world: Worl
     assert await world.find("m14", "retry_policy") == []
 
 
+async def test_removing_one_version_leaves_the_others_entries(world: World) -> None:
+    await world.index("m13", "v1.3.0", V13)
+    await world.index("m13b", "v1.3.1", V13)  # the same chunk set: shared or not, m13b keeps it
+    await world.index("m14", "v1.4.0", V14)
+
+    removed = await world.retrieval.remove_chunks(RemoveChunksCommand(manifest_ids=["m13"]))
+
+    assert removed.manifests == 1
+    assert await world.find("m13", "retried") == []
+    assert len(await world.find("m13b", "retried")) == 1
+    assert len(await world.find("m14", "retry_policy")) == 2
+
+
+async def test_versions_of_another_library_are_not_searched(world: World) -> None:
+    # The same blob, the same ref, in two libraries: a search scoped to one finds only its own.
+    await world.index("a1", "v1", V13)
+    await world.index("b1", "v1", V13, library="/other/lib")
+
+    found = await world.search.search_many(["a1"], "retried", TagFilter(), 10)
+
+    assert [f.manifest_id for f in found] == ["a1"]
+    assert {
+        f.manifest_id
+        for f in await world.search.search_many(["a1", "b1"], "retried", TagFilter(), 10)
+    } == {"a1", "b1"}
+    assert await world.search.count_many(["b1"], "retried", TagFilter()) == {"b1": 1}
+
+
+async def test_the_top_k_is_ordered_best_first_and_cut_at_k(world: World) -> None:
+    articles = {
+        f"g/{n}.md": (f"blob-{n}", [section(f"Part {n}", " ".join(["retry"] * n))])
+        for n in range(1, 6)
+    }
+    await world.index("m", "v1", articles)
+
+    found = await world.search.search("m", "retry", TagFilter(), 3)
+
+    assert len(found) == 3
+    assert [h.score for h in found] == sorted((h.score for h in found), reverse=True)
+    assert found[0].snippet == "retry retry retry retry retry"
+
+
+async def test_nothing_matching_gives_an_empty_result(world: World) -> None:
+    await world.index("m14", "v1.4.0", V14)
+
+    assert await world.find("m14", "kubernetes") == []
+    assert await world.search.search_many(["m14"], "kubernetes", TagFilter(), 10) == []
+    assert await world.search.count_many(["m14"], "kubernetes", TagFilter()) == {}
+    assert await world.find("m14", "tokens", ("nowhere",)) == []  # nothing passes the filter
+
+
+async def test_an_unknown_version_gives_nothing_and_does_not_fail(world: World) -> None:
+    assert await world.find("never-indexed", "retried") == []  # nothing indexed at all
+
+    await world.index("m13", "v1.3.0", V13)
+
+    assert await world.search.search_many(["nope"], "retried", TagFilter(), 10) == []
+    assert await world.search.count_many(["nope"], "retried", TagFilter()) == {}
+
+
 async def test_indexing_again_adds_nothing_twice(world: World) -> None:
     await world.index("m14", "v1.4.0", V14)
     before = await world.index_entries()
@@ -477,6 +615,10 @@ async def test_a_rebuild_finds_the_same_and_fills_lost_entries(world: World) -> 
 
     assert rebuilt.entries == await world.index_entries() == 4
     after = [await world.find(m, q) for m in ("m13", "m14") for q in ("retry_policy", "retried")]
+    if world.stale_statistics:  # the lost entry's ghost still counts in the IDF: scores move
+        before, after = (
+            [[(h.chunk_id, h.snippet) for h in hits] for hits in r] for r in (before, after)
+        )
     assert after == before
     assert await world.find("m13", "retry_policy") == []  # still version-exact
 
@@ -529,7 +671,7 @@ async def test_a_heading_match_outranks_many_body_matches(world: World) -> None:
 
 
 async def test_a_section_naming_a_term_outranks_the_sub_sections_under_it(world: World) -> None:
-    if world.engine == "memory":
+    if world.counts_terms:
         pytest.skip("the memory reference does not weigh a heading's ancestors")
     child = ChunkIn(
         heading_path=["Guide", "Docker", "Troubleshooting"],
@@ -555,7 +697,7 @@ async def test_a_section_naming_a_term_outranks_the_sub_sections_under_it(world:
 
 
 async def test_bm25_prefers_the_shorter_chunk_with_the_same_term(world: World) -> None:
-    if world.engine == "memory":
+    if world.counts_terms:
         pytest.skip("the memory reference only counts terms; the database engines normalise length")
     await world.index(
         "m1",

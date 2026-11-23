@@ -42,6 +42,84 @@ local = [
     "fastembed==0.9.1",
     "onnxruntime==1.31.0",
 ]
+# Qdrant as the vector backend (#355, EXACTDOCS_VECTOR_BACKEND=qdrant): imported only by
+# `retrieval/adapters/driven/qdrant_index.py`, and only once an operator names the backend. Not in
+# the image. Exact pin, tested against the `qdrant/qdrant` server of the same minor (CI service).
+qdrant = ["qdrant-client==1.20.0"]
+# External index backends (#354): imported only by their adapter module, and only when
+# EXACTDOCS_SEARCH_BACKEND / EXACTDOCS_VECTOR_BACKEND names the backend. The 8.x client talks to
+# Elasticsearch 8 and 9 (9 accepts its `compatible-with=8` requests; the 9.x client refuses 8)
+# and goes through elastic-transport's httpx node; the OpenSearch adapter runs opensearch-py's
+# synchronous (urllib3) client in worker threads. Neither extra adds aiohttp.
+elasticsearch = ["elasticsearch==8.19.3"]
+opensearch = ["opensearch-py==3.2.0"]
+# LanceDB as the search and vector backend (#356, EXACTDOCS_SEARCH_BACKEND / EXACTDOCS_VECTOR_BACKEND
+# = lancedb): embedded, a directory or an object-store URI, no server. Imported only by
+# `retrieval/adapters/driven/lancedb_index.py`, and only once an operator names the backend. Not
+# in any image (lancedb and pyarrow take about 350 MB installed, near the base image's whole
+# budget): `pip install 'exactdocs[lancedb]'` or `uvx --from 'exactdocs[lancedb]' exactdocs`.
+# Exact pin: 0.41.0 (2026-10-29) has manylinux_2_28 wheels for x86_64 and aarch64 (abi3; checked
+# by tests/retrieval/test_lancedb_index.py), and the adapter relies on its FTS and RRF reranker.
+lancedb = ["lancedb==0.41.0"]
+# DuckDB as the search and vector backend (#357): EXACTDOCS_SEARCH_BACKEND / _VECTOR_BACKEND=duckdb.
+# Imported only when a backend names it. The `fts` extension ships as a wheel (the signed binary
+# DuckDB publishes, repackaged per DuckDB release) and is loaded from that file, never downloaded:
+# DuckDB checks its signature at LOAD. Both pins move together: the extension's wheel requires the
+# exact DuckDB release it was built for.
+duckdb = ["duckdb==2.0.0", "duckdb-extension-fts==2.0.0"]
+# Chroma as the vector backend (#361, EXACTDOCS_VECTOR_BACKEND=chroma): imported only by
+# `retrieval/adapters/driven/chroma_index.py`, and only once an operator names the backend. Not in
+# any image. `chroma` is the HTTP-only client (a Chroma server or Chroma Cloud: no onnxruntime, no
+# tokenizers, no model download); `chroma-local` is the full package, for the embedded persistent
+# client (`path = ...`), which also speaks HTTP. Both install the `chromadb` module, so they
+# conflict ([tool.uv] conflicts in the workspace root). Exact pins, tested against the
+# `chromadb/chroma` server of the same version (CI service). ExactDocs never uses Chroma's
+# embedding functions: it passes its own vectors.
+chroma = ["chromadb-client==1.5.9"]
+chroma-local = ["chromadb==1.5.9"]
+# Redis (Query Engine) as the search and vector backend (#364, EXACTDOCS_SEARCH_BACKEND /
+# EXACTDOCS_VECTOR_BACKEND=redis): imported only by `retrieval/adapters/driven/redis_index.py`,
+# and only once an operator names the backend. Not in the image. Exact pin, tested against the
+# official `redis` 8 server image (CI service).
+redis = ["redis==8.1.0"]
+# Milvus as the vector backend (#360, EXACTDOCS_VECTOR_BACKEND=milvus): imported only by
+# `retrieval/adapters/driven/milvus_index.py`, and only once an operator names the backend. Not in
+# any image. `milvus` is the client alone (a Milvus server or Zilliz Cloud); `milvus-lite` adds
+# Milvus Lite, the embedded engine on a local `.db` directory (pure Python with faiss-cpu: wheels
+# for Linux x86_64 and ARM64, macOS). Exact pins (pymilvus 3.0.2 of 2026-09-18, milvus-lite 3.2.2
+# of 2026-10-13, both more than 14 days old when taken), tested against the
+# `milvusdb/milvus` standalone server in CI and Milvus Lite on a temporary directory.
+milvus = ["pymilvus==3.0.2"]
+milvus-lite = ["pymilvus==3.0.2", "milvus-lite==3.2.2"]
+# MongoDB (Atlas Search and Atlas Vector Search, or MongoDB Community with `mongot`) as the search
+# and vector backend (#363, EXACTDOCS_SEARCH_BACKEND / EXACTDOCS_VECTOR_BACKEND=mongodb): pymongo's
+# own async API, imported only by `retrieval/adapters/driven/mongodb_index.py`, and only once an
+# operator names the backend. Not in the image. Exact pin, tested against the
+# `mongodb/mongodb-atlas-local` image (CI service).
+mongodb = ["pymongo==4.20.0"]
+# libSQL as the search and vector backend (#358, EXACTDOCS_SEARCH_BACKEND / EXACTDOCS_VECTOR_BACKEND
+# = libsql): only a *local file* needs it (libSQL embedded in the process); a libSQL server is
+# reached over its HTTP API with httpx2, so it works without this extra. Imported only by
+# `retrieval/adapters/driven/libsql_index.py`. Not in the images. Exact pin: 0.1.11 (2025-09-02)
+# is the latest release; for Python 3.14 it has a wheel for Linux x86_64 only (other platforms
+# build it from source, which needs Rust).
+libsql = ["libsql==0.1.11"]
+# ExactDocs' own database on a libSQL server (#474, EXACTDOCS_DATABASE_URL=libsql://host): Turso's
+# DB-API driver for SQL over HTTP, pure Python on the standard library (no dependency, so every
+# platform), imported only by `bootstrap/libsql_database.py`, and only once the URL names libSQL.
+# Not in the images. Exact pin: 0.1.0 (2026-07-27) is the first and latest release; tested against
+# `ghcr.io/tursodatabase/libsql-server` (deploy/libsql-test-server.sh).
+libsql-database = ["turso-serverless==0.1.0"]
+# Pinecone as the vector index (#362, EXACTDOCS_VECTOR_BACKEND=pinecone): imported only when the
+# operator names it. The 10.x SDK speaks HTTP (httpx, msgspec, orjson): no grpcio or protobuf.
+pinecone = ["pinecone==10.3.0"]
+# Azure AI Search as the search and vector backend (#353, EXACTDOCS_SEARCH_BACKEND /
+# EXACTDOCS_VECTOR_BACKEND=azure_search): the SDK's async client, imported only by
+# `retrieval/adapters/driven/azure_search_index.py`, and only once an operator names the backend.
+# Not in the image. Requests go through azure-core's `AsyncioRequestsTransport` (requests, already
+# an azure-core dependency), so no aiohttp; Entra ID through the sync `azure-identity`
+# credentials (the same pin as the `ai` extra). Exact pins: 12.0.0 speaks the 2026-04-01 API.
+azure-search = ["azure-search-documents==12.0.0", "azure-identity==1.27.0"]
 
 [project.scripts]
 exactdocs = "exactdocs.bootstrap.cli:main"
@@ -76,7 +154,9 @@ dependencies = [
     # Exact pin: the converter maps its node classes and directive API.
     "docutils==0.23",
     "fastapi>=0.120",
-    "fastmcp>=4",
+    # MCP Apps (#115): view_article and view_search return Prefab UI. Exact pin: Prefab is pre-1.0
+    # and its renderer and wire format change between minor versions (FastMCP says to pin it).
+    "fastmcp[apps]>=4",
     "httpx2>=2",
     "joserfc>=1.8.0",
     "markdown-it-py>=4",
@@ -89,6 +169,7 @@ dependencies = [
     "opentelemetry-exporter-prometheus>=0.66b1,<1",
     "opentelemetry-sdk>=1.45.1,<2",
     "platformdirs>=4",
+    "prefab-ui==0.21.1",
     # PostgreSQL (EXACTDOCS_DATABASE_URL=postgresql://...): psycopg 3, async. DBOS needs it too,
     # so it adds nothing to the image.
     "psycopg[binary]>=3.2",

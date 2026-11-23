@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { HttpError } from "@/shared/lib/http";
-import { cn } from "@/shared/lib/utils";
+import { Button } from "@/shared/ui/button";
 import { cancelJob } from "../api/cancel-job";
 import { librariesKeys } from "../api/libraries-query";
 
@@ -12,9 +12,6 @@ interface Cancellable {
   cancellable?: boolean;
   cancelled_at?: string | null;
 }
-
-const quiet =
-  "inline-flex min-h-11 items-center rounded-md px-2 text-sm font-medium outline-none transition-colors duration-150 hover:bg-secondary focus-visible:ring-2 focus-visible:ring-ring md:min-h-8";
 
 function explain(error: unknown): string {
   if (!(error instanceof HttpError)) return "Can't reach the server. Try again.";
@@ -40,39 +37,46 @@ export function CancelJob({ job, label }: { job: Cancellable; label: string }) {
   const live = job.state === "queued" || job.state === "running";
   if (!live) return null;
   if (job.cancelled_at || cancel.isSuccess) {
-    return <p className="text-sm text-muted-foreground">Cancelling after the current step…</p>;
+    return (
+      <p role="status" className="text-body text-muted-foreground">
+        Cancelling after the current step…
+      </p>
+    );
   }
   if (!job.cancellable) return null;
   return (
-    <div className="mt-1 text-sm">
+    <div className="mt-1 text-body">
       {asking ? (
-        <fieldset aria-label={`Cancel ${label}?`} className="flex items-center gap-2">
-          <span>
+        <fieldset
+          aria-label={`Cancel ${label}?`}
+          className="fade-in flex flex-wrap items-center gap-2"
+        >
+          <span className="max-w-[56ch]">
             {job.state === "queued"
               ? "Cancel this job? It will not start."
               : "Cancel this job? It stops after the current step and keeps what it finished."}
           </span>
-          <button
-            type="button"
-            aria-busy={cancel.isPending}
+          <Button
+            variant="destructive"
+            size="sm"
+            pending={cancel.isPending}
             onClick={() => {
               if (!cancel.isPending) cancel.mutate();
             }}
-            className={cn(quiet, "text-destructive")}
           >
             Yes, cancel
-          </button>
-          <button type="button" onClick={() => setAsking(false)} className={quiet}>
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setAsking(false)}>
             Keep it
-          </button>
+          </Button>
         </fieldset>
       ) : (
-        <button type="button" onClick={() => setAsking(true)} className={cn(quiet, "-ml-2")}>
+        <Button variant="ghost" size="sm" className="-ml-3" onClick={() => setAsking(true)}>
           Cancel <span className="sr-only">{label}</span>
-        </button>
+        </Button>
       )}
       {cancel.isError && (
-        <p role="alert" className="text-destructive">
+        <p role="alert" className="mt-1 font-medium text-destructive">
           {explain(cancel.error)}
         </p>
       )}

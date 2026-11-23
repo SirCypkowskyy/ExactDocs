@@ -711,91 +711,6 @@
       }
     },
     "/api/v1/tokens": {
-      "get": {
-        "tags": [
-          "identity"
-        ],
-        "summary": "List All",
-        "description": "List the signed-in account's API tokens, newest first, without their secrets.",
-        "operationId": "identity-list_all",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TokenList"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "The request cannot be processed (error code in `error`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "The thing does not exist or is not visible to the caller.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The request conflicts with the current state.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "SessionCookie": []
-          }
-        ]
-      },
       "post": {
         "tags": [
           "identity"
@@ -803,15 +718,20 @@
         "summary": "Create",
         "description": "Create an API token for the signed-in account. The secret is in this response only. An account holds at most 50 tokens; one more is refused with `too_many_tokens` (409) until one is revoked.",
         "operationId": "identity-create",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CreateTokenCommand"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "201": {
@@ -884,12 +804,164 @@
               }
             }
           }
-        },
+        }
+      },
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "List All",
+        "description": "List the signed-in account's API tokens, newest first, without their secrets.\n\nA page at a time; filter with `q`, order with `sort`; `total` counts every match.",
+        "operationId": "identity-list_all",
         "security": [
           {
             "SessionCookie": []
           }
-        ]
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "How many items per page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "How many items per page."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it.",
+              "title": "Cursor"
+            },
+            "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only items whose name contains this text, any case: a user's username, a token's name, a\ngrant's username or group.",
+              "title": "Q"
+            },
+            "description": "Only items whose name contains this text, any case: a user's username, a token's name, a\ngrant's username or group."
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort by one of created_at, name, expires_at, last_used_at; prefix `-` for descending. Default: `-created_at`. A token that never expires or was never used sorts first by `expires_at` or `last_used_at`. An unknown field is a 422.",
+              "title": "Sort"
+            },
+            "description": "Sort by one of created_at, name, expires_at, last_used_at; prefix `-` for descending. Default: `-created_at`. A token that never expires or was never used sorts first by `expires_at` or `last_used_at`. An unknown field is a 422."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/tokens/{token_id}": {
@@ -989,8 +1061,128 @@
           "identity"
         ],
         "summary": "Get Users",
-        "description": "List every local account, disabled ones included, oldest first. Operators only (`admin`): any other signed-in account is refused with `forbidden` (403). Needs a signed-in session; an API token is refused (401), so a leaked token cannot create accounts. There is no self-signup: accounts are created here, by `exactdocs user create` or, for the first admin, by the setup.",
+        "description": "List the local accounts, disabled ones included, oldest first unless `sort` says otherwise, a page at a time. Filter with `q`, `role` and `disabled`; `total` counts every match. Operators only (`admin`): any other signed-in account is refused with `forbidden` (403). Needs a signed-in session; an API token is refused (401), so a leaked token cannot create accounts. There is no self-signup: accounts are created here, by `exactdocs user create` or, for the first admin, by the setup.",
         "operationId": "identity-get_users",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "How many items per page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "How many items per page."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it.",
+              "title": "Cursor"
+            },
+            "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only items whose name contains this text, any case: a user's username, a token's name, a\ngrant's username or group.",
+              "title": "Q"
+            },
+            "description": "Only items whose name contains this text, any case: a user's username, a token's name, a\ngrant's username or group."
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort by one of created_at, username, role; prefix `-` for descending. Default: `created_at`. An unknown field is a 422.",
+              "title": "Sort"
+            },
+            "description": "Sort by one of created_at, username, role; prefix `-` for descending. Default: `created_at`. An unknown field is a 422."
+          },
+          {
+            "name": "role",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "admin",
+                      "user"
+                    ],
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only accounts with one of these roles; repeat for several.",
+              "title": "Role"
+            },
+            "description": "Only accounts with one of these roles; repeat for several."
+          },
+          {
+            "name": "disabled",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`true`: only disabled accounts; `false`: only enabled ones.",
+              "title": "Disabled"
+            },
+            "description": "`true`: only disabled accounts; `false`: only enabled ones."
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -1062,12 +1254,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "SessionCookie": []
-          }
-        ]
+        }
       },
       "post": {
         "tags": [
@@ -1076,15 +1263,20 @@
         "summary": "Add User",
         "description": "Create a local account with a password the operator passes on to its owner.\n\nOperators only, with a session (see `GET /users`).",
         "operationId": "identity-add_user",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CreateUserCommand"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "201": {
@@ -1157,12 +1349,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "SessionCookie": []
-          }
-        ]
+        }
       }
     },
     "/api/v1/users/{user_id}/disable": {
@@ -1469,13 +1656,182 @@
         }
       }
     },
+    "/api/v1/access-log": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "List Access Log",
+        "description": "List the access changes of every library, newest first. Operators only.\n\nCreations, grants (a new role, or another one), revocations, ownership transfers and\nremovals, each with who made it and when; a removed library's events stay. Filter with\n`library` and `change`; `total` counts every match.",
+        "operationId": "identity-list_access_log",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "How many events per page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "How many events per page."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\nfilters of the request that returned it.",
+              "title": "Cursor"
+            },
+            "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\nfilters of the request that returned it."
+          },
+          {
+            "name": "change",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "library_created",
+                      "granted",
+                      "revoked",
+                      "ownership_transferred",
+                      "library_deleted"
+                    ],
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events of these changes; repeat for several.",
+              "title": "Change"
+            },
+            "description": "Only events of these changes; repeat for several."
+          },
+          {
+            "name": "library",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256,
+                  "pattern": "^/[^/]+/[^/]+$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only the events of this library (`/owner/repo`, any case), removed ones included.",
+              "title": "Library"
+            },
+            "description": "Only the events of this library (`/owner/repo`, any case), removed ones included."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessLogPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/libraries/{owner}/{repo}/grants": {
       "get": {
         "tags": [
           "identity"
         ],
         "summary": "List Library Grants",
-        "description": "List who holds a role on the library: users first, then groups. Library admins only.",
+        "description": "List who holds a role on the library: users first, then groups. Library admins only.\n\nA page at a time; filter with `q`, `kind` and `role`, order with `sort`; `total` counts\nevery match.",
         "operationId": "identity-list_library_grants",
         "security": [
           {
@@ -1503,6 +1859,128 @@
               "type": "string",
               "title": "Repo"
             }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "How many items per page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "How many items per page."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it.",
+              "title": "Cursor"
+            },
+            "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only items whose name contains this text, any case: a user's username, a token's name, a\ngrant's username or group.",
+              "title": "Q"
+            },
+            "description": "Only items whose name contains this text, any case: a user's username, a token's name, a\ngrant's username or group."
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort by one of kind, subject, role; prefix `-` for descending. Default: `kind` (users, then groups, by name). `role` sorts from `viewer` up to `creator`. An unknown field is a 422.",
+              "title": "Sort"
+            },
+            "description": "Sort by one of kind, subject, role; prefix `-` for descending. Default: `kind` (users, then groups, by name). `role` sorts from `viewer` up to `creator`. An unknown field is a 422."
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "user",
+                      "group"
+                    ],
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only grants to users or to groups; repeat for both.",
+              "title": "Kind"
+            },
+            "description": "Only grants to users or to groups; repeat for both."
+          },
+          {
+            "name": "role",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "viewer",
+                      "contributor",
+                      "admin",
+                      "creator"
+                    ],
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only grants of one of these roles; repeat for several.",
+              "title": "Role"
+            },
+            "description": "Only grants of one of these roles; repeat for several."
           }
         ],
         "responses": {
@@ -1511,7 +1989,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LibraryGrants"
+                  "$ref": "#/components/schemas/LibraryGrantList"
                 }
               }
             }
@@ -1762,6 +2240,296 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LibraryGrants"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/libraries/{owner}/{repo}/transfer": {
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Transfer Library",
+        "description": "Hand the library over to another user: they become its creator.\n\nOnly the library's `creator` (or an operator) may. The creator before stays an `admin`\nof the library. A user who is already the creator is a 422 `invalid_grant`.",
+        "operationId": "identity-transfer_library",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryTransferRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryGrants"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/libraries/{owner}/{repo}/access-log": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "List Library Access Log",
+        "description": "List who changed the library's access, how and when, newest first. Library admins only.\n\nIts creation, grants (a new role, or another one), revocations and ownership transfers,\neach with who made it and when. Operators see every event under the library's ID;\nanyone else only those since it was last removed. Filter with `change`; `total` counts\nevery match.",
+        "operationId": "identity-list_library_access_log",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "How many events per page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "How many events per page."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\nfilters of the request that returned it.",
+              "title": "Cursor"
+            },
+            "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\nfilters of the request that returned it."
+          },
+          {
+            "name": "change",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "library_created",
+                      "granted",
+                      "revoked",
+                      "ownership_transferred",
+                      "library_deleted"
+                    ],
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events of these changes; repeat for several.",
+              "title": "Change"
+            },
+            "description": "Only events of these changes; repeat for several."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessLogPage"
                 }
               }
             }
@@ -9776,6 +10544,155 @@
   },
   "components": {
     "schemas": {
+      "AccessEventSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The event's ID."
+          },
+          "library": {
+            "type": "string",
+            "title": "Library",
+            "description": "The library ID (`/owner/repo`, lower-case)."
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "At",
+            "description": "When it happened."
+          },
+          "actor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor",
+            "description": "The username of who made the change; null when the instance did (CLI, a job)."
+          },
+          "change": {
+            "type": "string",
+            "enum": [
+              "library_created",
+              "granted",
+              "revoked",
+              "ownership_transferred",
+              "library_deleted"
+            ],
+            "title": "Change",
+            "description": "What happened: `library_created`, `granted` (a new role, or another one than before),\n`revoked`, `ownership_transferred` or `library_deleted`."
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "group"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind",
+            "description": "Whether `subject` is a username or a group name; null for a deletion."
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject",
+            "description": "The username or group name the change is about; null for a deletion. An\n`ownership_transferred` event names the new creator."
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role",
+            "description": "The role given, or the role taken away (`revoked`); null for a deletion."
+          },
+          "previous_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Role",
+            "description": "The role the subject held before; null when it held none."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "library",
+          "at",
+          "actor",
+          "change",
+          "kind",
+          "subject",
+          "role",
+          "previous_role"
+        ],
+        "title": "AccessEventSummary",
+        "description": "One entry of the access log as the outside world sees it."
+      },
+      "AccessLogPage": {
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/AccessEventSummary"
+            },
+            "type": "array",
+            "title": "Events",
+            "description": "The events of this page."
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Pass as `cursor` to get the next (older) page; null on the last page."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "How many events match the filters, across every page."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "events",
+          "next_cursor",
+          "total"
+        ],
+        "title": "AccessLogPage",
+        "description": "A page of the access log, newest first."
+      },
       "AccessTokenIn": {
         "properties": {
           "kind": {
@@ -11632,8 +12549,8 @@
             "maximum": 6.0,
             "minimum": 1.0,
             "title": "Split Level",
-            "description": "The deepest heading that starts a chunk: 2 cuts at `#` and `##` only.",
-            "default": 6
+            "description": "The deepest heading that starts a chunk: 2 cuts at `#` and `##` only, 6 at every heading.",
+            "default": 3
           },
           "min_chars": {
             "type": "integer",
@@ -11655,7 +12572,8 @@
               }
             ],
             "title": "Max Chars",
-            "description": "A chunk longer than this is cut again at its deeper headings; never inside a code block or\ntable. Null: no bound. At least `min_chars`, and at most 8,000 when sent: whatever the\nsettings, a section longer than 8,000 characters is split between its top-level blocks."
+            "description": "A chunk longer than this is cut again at its deeper headings; never inside a code block or\ntable. Left out: 4,000; null: no bound. At least `min_chars`, and at most 8,000 when sent:\nwhatever the settings, a section longer than 8,000 characters is split between its top-level\nblocks.",
+            "default": 4000
           },
           "chunker": {
             "type": "string",
@@ -11668,7 +12586,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "ChunkingIn",
-        "description": "How a library's articles are cut into chunks (the defaults: one chunk per heading)."
+        "description": "How a library's articles are cut into chunks (defaults: `#` to `###`, 4,000 characters)."
       },
       "ChunkingOut": {
         "properties": {
@@ -13030,6 +13948,67 @@
         "title": "LibraryFacetOut",
         "description": "How many chunks of one library's default version match the query."
       },
+      "LibraryGrantList": {
+        "properties": {
+          "grants": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryGrantSummary"
+            },
+            "type": "array",
+            "title": "Grants",
+            "description": "The grants of this page."
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Pass as `cursor` to get the next page; null on the last page."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "How many of the library's grants match the filters, across every page."
+          },
+          "caller_role": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "creator"
+            ],
+            "title": "Caller Role",
+            "description": "The caller's own role on the library. Only a `creator` (or an operator) gives, changes\nor removes an `admin` and transfers the library."
+          },
+          "creator": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Creator",
+            "description": "The username of the library's creator, whatever the filters; null for a library that has\nnone (one added before roles, which operators manage)."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "grants",
+          "next_cursor",
+          "total",
+          "caller_role",
+          "creator"
+        ],
+        "title": "LibraryGrantList",
+        "description": "A page of a library's grants: users first, then groups, by name unless sorted otherwise."
+      },
       "LibraryGrantRequest": {
         "properties": {
           "kind": {
@@ -13950,6 +14929,24 @@
         ],
         "title": "LibrarySummary",
         "description": "A library and its imported versions."
+      },
+      "LibraryTransferRequest": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Username",
+            "description": "The username of the new creator. The creator before becomes an `admin` of the library."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "username"
+        ],
+        "title": "LibraryTransferRequest",
+        "description": "Hand a library over to another user: they become its creator."
       },
       "LibraryUpdateOut": {
         "properties": {
@@ -15978,7 +16975,7 @@
           "libraries_searched": {
             "type": "integer",
             "title": "Libraries Searched",
-            "description": "Libraries whose default version was searched."
+            "description": "Libraries whose default version was searched for `libraries`' counts: every readable one\n(up to a cap), the chosen ones included. With libraries chosen, `results` come from those\nonly, so this can count libraries that no result can come from."
           },
           "libraries_omitted": {
             "type": "integer",
@@ -17166,16 +18163,35 @@
             },
             "type": "array",
             "title": "Tokens",
-            "description": "The tokens, newest first."
+            "description": "The tokens of this page."
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Pass as `cursor` to get the next page; null on the last page."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "How many of the caller's tokens match the filters, across every page."
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "tokens"
+          "tokens",
+          "next_cursor",
+          "total"
         ],
         "title": "TokenList",
-        "description": "The caller's tokens, newest first."
+        "description": "A page of the caller's tokens, newest first unless sorted otherwise."
       },
       "TokenSummary": {
         "properties": {
@@ -17376,16 +18392,35 @@
             },
             "type": "array",
             "title": "Users",
-            "description": "The accounts, oldest first."
+            "description": "The accounts of this page."
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Pass as `cursor` to get the next page; null on the last page."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "How many accounts match the filters, across every page."
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "users"
+          "users",
+          "next_cursor",
+          "total"
         ],
         "title": "UserList",
-        "description": "Every local account, oldest first."
+        "description": "A page of the accounts, oldest first unless sorted otherwise."
       },
       "UserSummary": {
         "properties": {

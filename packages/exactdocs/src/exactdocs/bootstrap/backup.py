@@ -294,7 +294,8 @@ def database_path(settings: Settings) -> Path:
         The database file.
 
     Raises:
-        BackupError: The database is not a SQLite file (PostgreSQL: use ``pg_dump``).
+        BackupError: The database is not a SQLite file (PostgreSQL: use ``pg_dump``; a libSQL
+            server: its own backups).
     """
     try:
         url = make_url(settings.effective_database_url)
@@ -304,7 +305,8 @@ def database_path(settings: Settings) -> Path:
     if url.get_backend_name() != "sqlite" or not url.database or url.database == ":memory:":
         message = (
             "exactdocs backup copies a SQLite database file; back up other databases with their "
-            "own tools (PostgreSQL: pg_dump)."
+            "own tools (PostgreSQL: pg_dump; a libSQL server: its own backups, or a Turso "
+            "database's point-in-time restore)."
         )
         raise BackupError(message)
     return Path(url.database)
