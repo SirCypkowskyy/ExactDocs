@@ -16,6 +16,7 @@ from pydantic import (
 
 from exactdocs.identity.constants import (
     GRANT_SORT_FIELDS,
+    ICON_PATH,
     MAX_PASSWORD_LENGTH,
     MAX_RETURN_TO_LENGTH,
     MAX_TOKEN_NAME_INPUT,
@@ -387,6 +388,13 @@ class SignInProviderSummary(_Dto):
     """The provider's name: sign in at `GET /api/v1/auth/{name}/start`."""
     display_name: str
     """What its sign-in button says."""
+    icon: Literal["discord", "github", "google", "microsoft"] | None = None
+    """The built-in icon its button shows (the web UI ships these); `null` when it has none, or
+    an icon of its own (`icon_url`)."""
+    icon_url: str | None = None
+    """Where ExactDocs serves the provider's own icon, an operator's file (a same-origin path,
+    `/api/v1/auth/{name}/icon?v=<version>`, which changes with the icon); `null` when it has
+    none."""
 
     @classmethod
     def from_model(cls, policy: SignInPolicy) -> Self:
@@ -396,9 +404,82 @@ class SignInProviderSummary(_Dto):
             policy: The provider's policy.
 
         Returns:
-            Its name and display name.
+            Its name, display name and icon.
         """
-        return cls(name=policy.name, display_name=policy.display_name)
+        icon_url = None
+        if policy.icon_file is not None:
+            icon_url = f"{ICON_PATH.format(name=policy.name)}?v={policy.icon_file.version}"
+        return cls(
+            name=policy.name,
+            display_name=policy.display_name,
+            icon=None if policy.icon is None else policy.icon.value,
+            icon_url=icon_url,
+        )
+
+
+class AccountProvider(SignInProviderSummary):
+    """A provider as the signed-in person's Account settings show it: linked or not."""
+
+    configured: bool
+    """`false` for an identity linked through a provider that is no longer configured (or
+    through Cloudflare Access): it signs nobody in, and only unlinking it is offered."""
+    linked: bool
+    """Whether an identity of this provider is linked to the account."""
+    origin: bool
+    """Whether the account was created through this provider. An account without a password
+    follows it (its role, groups and access) and always keeps it."""
+    linked_at: datetime | None
+    """When the person linked it here; `null` for the origin, and when it is not linked."""
+    last_signed_in_at: datetime | None
+    """The latest sign-in through it (or when it was linked); `null` when it is not linked."""
+    can_link: bool
+    """Whether `POST /api/v1/account/providers/{name}/link` may start: configured, not linked."""
+    can_unlink: bool
+    """Whether `DELETE /api/v1/account/providers/{name}` may unlink it: linked, and not the
+    account's only way to sign in."""
+
+
+class AccountProviders(_Dto):
+    """The signed-in account's ways to sign in: its password and its providers."""
+
+    has_password: bool
+    """Whether the account has a password (it always keeps that way in)."""
+    providers: list[AccountProvider]
+    """Every configured provider, in configuration order, then every identity linked through a
+    provider no longer configured."""
+
+
+class StartAccountLinkRequest(_Dto):
+    """Where to come back to once the provider linked the identity (or refused it)."""
+
+    return_to: str | None = Field(default=None, max_length=4 * MAX_RETURN_TO_LENGTH)
+    """A path on this server; default `/account`. `?linked=<provider>` or
+    `?link_error=<code>` is added to it."""
+
+
+class StartAccountLinkCommand(StartAccountLinkRequest):
+    """Start linking an identity of a provider to the signed-in account."""
+
+    provider: str
+    """The provider's name."""
+
+
+class AccountLinkStart(_Dto):
+    """A started link: send the browser to ``redirect_url`` (the binding cookie is set)."""
+
+    redirect_url: str
+    """The identity provider's authorization URL: the browser goes there next."""
+
+
+class ProviderIconFile(_Dto):
+    """A provider's own icon, as ExactDocs serves it."""
+
+    media_type: Literal["image/png", "image/webp", "image/svg+xml"]
+    """Its type, checked from its content."""
+    content: bytes = Field(repr=False)
+    """The file's bytes (an SVG's sanitised)."""
+    version: str
+    """A short digest of the content, its ETag."""
 
 
 class SessionState(_Dto):
@@ -455,12 +536,14 @@ class FinishExternalSignInCommand(_Dto):
 
 
 class ExternalSignInResult(_Dto):
-    """A finished external sign-in: the new session, and where the browser goes now."""
+    """A finished external sign-in or link: the new session, and where the browser goes now."""
 
-    session: SessionGrant
-    """The new session."""
+    session: SessionGrant | None
+    """The new session; ``None`` after a link (the person stays signed in as they were)."""
     return_to: str
-    """The same-origin path the sign-in was started for."""
+    """The same-origin path the sign-in or link was started for."""
+    linked: str | None = None
+    """After a link, the provider the identity was linked through; ``None`` after a sign-in."""
 
 
 class RevalidationReport(_Dto):

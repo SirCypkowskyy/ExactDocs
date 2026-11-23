@@ -525,12 +525,19 @@ LinkOutcome = Literal["created", "username_taken", "already_linked"]
 """What became of storing a new account with its link: stored, refused because the username is
 taken, or refused because another sign-in linked the identity first."""
 
+AttachOutcome = Literal["linked", "identity_taken", "provider_taken"]
+"""What became of linking an identity to an existing account: stored, refused because the
+identity is linked already (to whichever account), or refused because the account has an identity
+of the provider already."""
+
 
 class ExternalIdentityRepository(Protocol):
     """Links between external identities and accounts, with each account's groups.
 
     Shares the accounts' storage: creating a linked account and recording a sign-in change the
-    account (its row, its role) in the same transaction as the link.
+    account (its row, its role) in the same transaction as the link. An account has at most one
+    identity per provider, and at most one *origin* (the identity it was created through,
+    ``linked_at`` unset); the role, the groups and the access are the origin's alone.
     """
 
     async def get(self, issuer: str, subject: str) -> ExternalIdentity | None:
@@ -546,13 +553,59 @@ class ExternalIdentityRepository(Protocol):
         ...
 
     async def get_for_account(self, account_id: AccountId) -> ExternalIdentity | None:
-        """Return the link of this account, or ``None`` (a local account has none).
+        """Return the account's origin, or ``None`` (a local account has none).
 
         Args:
             account_id: The account's id.
 
         Returns:
-            The link, or ``None``.
+            The identity the account was created through, or ``None``.
+        """
+        ...
+
+    async def list_for_account(self, account_id: AccountId) -> list[ExternalIdentity]:
+        """Return every identity linked to the account: its origin first, then by provider.
+
+        Args:
+            account_id: The account's id.
+
+        Returns:
+            The identities.
+        """
+        ...
+
+    async def link(self, identity: ExternalIdentity) -> AttachOutcome:
+        """Link an identity to an existing account (``linked_at`` set), atomically.
+
+        Args:
+            identity: The identity, its ``account_id`` the account's.
+
+        Returns:
+            ``linked``; ``identity_taken`` when the identity is linked already (to any account);
+            ``provider_taken`` when the account has an identity of the provider (nothing is
+            stored then).
+        """
+        ...
+
+    async def unlink(self, account_id: AccountId, provider: str) -> bool:
+        """Remove the account's identity of a provider, never its origin.
+
+        Args:
+            account_id: The account.
+            provider: The provider's name.
+
+        Returns:
+            ``True`` when one was removed; ``False`` when the account has none of the provider
+            that is not its origin.
+        """
+        ...
+
+    async def record_linked_sign_in(self, identity: ExternalIdentity, at: datetime) -> None:
+        """Note a sign-in through an identity linked from Account settings (its time only).
+
+        Args:
+            identity: The identity.
+            at: When it signed in.
         """
         ...
 
@@ -615,7 +668,7 @@ class ExternalIdentityRepository(Protocol):
         ...
 
     async def revoke(self, account_id: AccountId, now: datetime) -> None:
-        """End the account's access at ``now`` and drop its sealed tokens and groups.
+        """End the account's access at ``now`` (its origin's) and drop its sealed tokens and groups.
 
         Args:
             account_id: The account.
@@ -650,10 +703,10 @@ class ExternalIdentityRepository(Protocol):
         ...
 
     async def groups_by_account(self) -> Mapping[AccountId, tuple[str, list[str]]]:
-        """Return the provider and the groups of every linked account.
+        """Return the provider and the groups of every account created through a provider.
 
         Returns:
-            For each linked account: its provider's name and its groups, sorted.
+            For each account with an origin: the origin's provider name and its groups, sorted.
         """
         ...
 
