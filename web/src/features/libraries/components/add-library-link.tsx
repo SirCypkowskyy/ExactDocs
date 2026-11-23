@@ -8,7 +8,7 @@ export function AddLibraryLink() {
   const t = useMessages(listMessages);
   return (
     <Link to="/libraries/new" className={buttonVariants()}>
-      <Plus aria-hidden="true" className="size-4" />
+      <Plus aria-hidden="true" data-icon-motion="turn" />
       {t.addLibrary}
     </Link>
   );

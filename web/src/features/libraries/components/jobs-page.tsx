@@ -12,6 +12,7 @@ import {
   LibraryCell,
   Progress,
   RelativeTime,
+  STATE_LOOKS,
   StateBadge,
   VersionCell,
 } from "@/shared/ui/data-table/cells";
@@ -210,7 +211,11 @@ const filtersOf = (t: JobsMessages): TableFilter[] => [
   {
     id: "state",
     title: t.state,
-    options: JOB_STATES.map((s) => ({ value: s, label: t.states[s] })),
+    options: JOB_STATES.map((s) => ({
+      value: s,
+      label: t.states[s],
+      ...(STATE_LOOKS[s] && { icon: STATE_LOOKS[s].icon }),
+    })),
   },
   {
     id: "kind",
@@ -299,6 +304,7 @@ export function JobsPage() {
     <Page width="wide">
       <PageHeader
         title={t.title}
+        icon={<Activity />}
         headingRef={heading}
         description={
           model.total !== undefined && (

@@ -78,6 +78,7 @@ export const jobsMessages = defineMessages(
       body: "Nothing matches these filters.",
     },
     loadFailed: "Couldn't load jobs.",
+    loading: "Loading jobs",
   },
   {
     title: "Zadania",
@@ -155,5 +156,6 @@ export const jobsMessages = defineMessages(
       body: "Nic nie pasuje do tych filtrów.",
     },
     loadFailed: "Nie udało się wczytać zadań.",
+    loading: "Wczytywanie zadań",
   },
 );

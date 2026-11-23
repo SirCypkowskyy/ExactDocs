@@ -1,4 +1,4 @@
-import { FileText, Folder, Info } from "lucide-react";
+import { Eye, FileText, Folder, Info, RotateCcw } from "lucide-react";
 import { useState } from "react";
 import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { lines } from "@/shared/lib/path-selection";
@@ -209,18 +209,13 @@ function PreviewButton({ pending, onClick }: { pending: boolean; onClick: () => 
   return (
     <Button
       variant="outline"
+      pending={pending}
       aria-disabled={pending}
-      aria-busy={pending}
       aria-describedby="preview-hint"
       onClick={onClick}
       className="w-fit"
     >
-      {pending && (
-        <span
-          aria-hidden="true"
-          className="spin size-4 rounded-full border-2 border-foreground/30 border-t-foreground"
-        />
-      )}
+      {!pending && <Eye aria-hidden="true" data-icon-motion="pop" />}
       {pending ? t.pending : t.button}
     </Button>
   );
@@ -368,6 +363,7 @@ export function ExtraVersions({
                       onRetry(x.tag);
                     }}
                   >
+                    <RotateCcw aria-hidden="true" data-icon-motion="refresh" />
                     {c.retry}
                   </Button>
                 )}
