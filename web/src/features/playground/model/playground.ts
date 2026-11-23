@@ -52,6 +52,19 @@ export function rankLabels(hit: Pick<PlaygroundHit, "bm25_rank" | "vector_rank">
   return labels;
 }
 
+/**
+ * How many libraries a search ranked its results from: the chosen ones, or every one searched
+ * when none is chosen. `libraries_searched` alone is not it: it counts every library whose
+ * matches are counted, and those counts are never narrowed to the chosen libraries (#479).
+ */
+export function librariesRanked(
+  chosen: readonly string[],
+  data: Pick<PlaygroundResults, "libraries_searched">,
+): number {
+  if (chosen.length === 0) return data.libraries_searched;
+  return new Set(chosen.map((id) => id.toLowerCase())).size; // the API takes each library once
+}
+
 /** Libraries that can be searched: those with a default version, by ID. */
 export function searchableLibraries(libraries: readonly LibrarySummary[]): string[] {
   return libraries

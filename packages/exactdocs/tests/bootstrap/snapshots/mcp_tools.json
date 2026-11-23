@@ -1156,7 +1156,7 @@
           "type": "integer"
         },
         "libraries_searched": {
-          "description": "Libraries whose default version was searched.",
+          "description": "Libraries whose default version was searched for `libraries`' counts: every readable one\n(up to a cap), the chosen ones included. With libraries chosen, `results` come from those\nonly, so this can count libraries that no result can come from.",
           "type": "integer"
         },
         "libraries_without_vectors": {
