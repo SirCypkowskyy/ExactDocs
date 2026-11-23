@@ -337,6 +337,109 @@ function AddFrame({
   );
 }
 
+type Field<T> = readonly [T, (value: T) => void];
+
+/**
+ * What the form asks once the repository answered: the library ID, the version, the advanced
+ * paths and tag rules, and the preview. Editing a field clears its error.
+ */
+function CheckedFields({
+  checked,
+  errors,
+  clear,
+  focusAfterRender,
+  preview,
+  libraryId: [libraryId, setLibraryId],
+  choice: [choice, setChoice],
+  typedRef: [typedRef, setTypedRef],
+  onUnavailable,
+  advanced: [advanced, setAdvanced],
+  include: [include, setInclude],
+  exclude: [exclude, setExclude],
+  rules: [rules, setRules],
+  showRuleErrors,
+}: {
+  checked: Checked;
+  errors: { [K in AddField]?: string | undefined };
+  clear: (field: AddField) => void;
+  focusAfterRender: ReturnType<typeof useFocusAfterRender>;
+  preview: ReturnType<typeof usePreview>;
+  libraryId: Field<string>;
+  choice: Field<RefChoice>;
+  typedRef: Field<string>;
+  onUnavailable: () => void;
+  advanced: Field<boolean>;
+  include: Field<string>;
+  exclude: Field<string>;
+  rules: Field<TagRuleDraft[]>;
+  showRuleErrors: boolean;
+}) {
+  return (
+    <div className="fade-in flex flex-col gap-6">
+      <LibraryIdField
+        value={libraryId}
+        error={errors.id}
+        onChange={(v) => {
+          setLibraryId(v);
+          clear("id");
+        }}
+      />
+      <RefPicker
+        url={checked.url}
+        credential={checked.credential}
+        choice={choice}
+        typed={typedRef}
+        error={errors.ref}
+        onChoice={(c) => {
+          setChoice(c);
+          clear("ref");
+          // A new field appears for a typed ref: the user's next move is to type.
+          if (c.kind === "other") {
+            focusAfterRender(() => document.getElementById("ref-typed"));
+          }
+        }}
+        onUnavailable={onUnavailable}
+        onTyped={(v) => {
+          setTypedRef(v);
+          clear("ref");
+        }}
+      />
+      <AdvancedOptions
+        open={advanced}
+        onOpen={setAdvanced}
+        include={include}
+        exclude={exclude}
+        rules={rules}
+        pathError={errors.paths}
+        tagError={errors.tags}
+        showRuleErrors={showRuleErrors}
+        onInclude={(v) => {
+          setInclude(v);
+          clear("paths");
+        }}
+        onExclude={(v) => {
+          setExclude(v);
+          clear("paths");
+        }}
+        onRules={(r) => {
+          setRules(r);
+          clear("tags");
+        }}
+      />
+      <PreviewPanel
+        preview={preview}
+        form={{
+          url: checked.url,
+          ref: refToSend(choice, typedRef),
+          include,
+          exclude,
+          credential: checked.credential,
+        }}
+      />
+    </div>
+  );
+}
+
 export function AddLibraryPage() {
   const queryClient = useQueryClient();
   const language = useLanguage();
@@ -571,68 +674,22 @@ export function AddLibraryPage() {
           />
 
           {checked && (
-            <div className="fade-in flex flex-col gap-6">
-              <LibraryIdField
-                value={libraryId}
-                error={errors.id}
-                onChange={(v) => {
-                  setLibraryId(v);
-                  clear("id");
-                }}
-              />
-              <RefPicker
-                url={checked.url}
-                credential={checked.credential}
-                choice={choice}
-                typed={typedRef}
-                error={errors.ref}
-                onChoice={(c) => {
-                  setChoice(c);
-                  clear("ref");
-                  // A new field appears for a typed ref: the user's next move is to type.
-                  if (c.kind === "other") {
-                    focusAfterRender(() => document.getElementById("ref-typed"));
-                  }
-                }}
-                onUnavailable={unavailable}
-                onTyped={(v) => {
-                  setTypedRef(v);
-                  clear("ref");
-                }}
-              />
-              <AdvancedOptions
-                open={advanced}
-                onOpen={setAdvanced}
-                include={include}
-                exclude={exclude}
-                rules={rules}
-                pathError={errors.paths}
-                tagError={errors.tags}
-                showRuleErrors={showRuleErrors}
-                onInclude={(v) => {
-                  setInclude(v);
-                  clear("paths");
-                }}
-                onExclude={(v) => {
-                  setExclude(v);
-                  clear("paths");
-                }}
-                onRules={(r) => {
-                  setRules(r);
-                  clear("tags");
-                }}
-              />
-              <PreviewPanel
-                preview={preview}
-                form={{
-                  url: checked.url,
-                  ref: refToSend(choice, typedRef),
-                  include,
-                  exclude,
-                  credential: checked.credential,
-                }}
-              />
-            </div>
+            <CheckedFields
+              checked={checked}
+              errors={errors}
+              clear={clear}
+              focusAfterRender={focusAfterRender}
+              preview={preview}
+              libraryId={[libraryId, setLibraryId]}
+              choice={[choice, setChoice]}
+              typedRef={[typedRef, setTypedRef]}
+              onUnavailable={unavailable}
+              advanced={[advanced, setAdvanced]}
+              include={[include, setInclude]}
+              exclude={[exclude, setExclude]}
+              rules={[rules, setRules]}
+              showRuleErrors={showRuleErrors}
+            />
           )}
 
           <FormActions pending={pending} checked={Boolean(checked)} />

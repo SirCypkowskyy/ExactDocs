@@ -7,7 +7,7 @@ import {
 } from "@tanstack/react-table";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { type ReactNode, useEffect, useEffectEvent, useId, useMemo, useState } from "react";
-import { type Language, useLanguage, useMessages } from "@/shared/lib/i18n";
+import { useLanguage, useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
@@ -15,15 +15,10 @@ import { EmptyState } from "@/shared/ui/page";
 import { SelectField } from "@/shared/ui/select-field";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { messages } from "../messages";
+import { columnsFor } from "../model/columns";
 import type { UsersView } from "../model/list-view";
 import type { User } from "../model/user";
 
-// Account | Role | Status | Created | Actions. Below `md` the pills sit under the name.
-// Polish names the admin role "Administrator", which needs a wider role column than "Admin".
-export const columnsFor = (language: Language) =>
-  language === "pl"
-    ? "md:grid md:grid-cols-[minmax(0,1fr)_6.75rem_6rem_7.5rem_auto] md:items-center md:gap-x-4"
-    : "md:grid md:grid-cols-[minmax(0,1fr)_5rem_6rem_7.5rem_auto] md:items-center md:gap-x-4";
 const sortingOf = (sort: string | undefined): SortingState =>
   sort ? [{ id: sort.replace(/^-/, ""), desc: sort.startsWith("-") }] : [];
 

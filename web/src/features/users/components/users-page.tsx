@@ -20,11 +20,12 @@ import { pill, pillTone } from "@/shared/ui/recipes";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { setUserDisabled, usersKey, usersQueryOptions } from "../api/users-query";
 import { messages } from "../messages";
+import { columnsFor } from "../model/columns";
 import { isFiltered, type UsersView } from "../model/list-view";
 import { explainUserError, type Role, type User } from "../model/user";
 import { CreateUserDialog } from "./create-user-dialog";
 import { ResetPasswordDialog } from "./reset-password-dialog";
-import { columnsFor, UsersList } from "./users-list";
+import { UsersList } from "./users-list";
 
 const NO_VIEW: UsersView = {};
 const ignore = () => {};

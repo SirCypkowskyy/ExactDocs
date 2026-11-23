@@ -1,11 +1,11 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { HttpError } from "@/shared/lib/http";
 import { common, useMessages } from "@/shared/lib/i18n";
 import { Button } from "@/shared/ui/button";
 import { cancelJob } from "../api/cancel-job";
 import { librariesKeys } from "../api/libraries-query";
 import { progressMessages } from "../messages/progress";
+import { explainCancel } from "../model/cancel";
 
 /** The fields of a job (full or latest) that decide whether and how it can be cancelled. */
 interface Cancellable {
@@ -13,16 +13,6 @@ interface Cancellable {
   state: string;
   cancellable?: boolean;
   cancelled_at?: string | null;
-}
-
-type CancelMessages = (typeof progressMessages)["en"]["cancel"];
-
-/** Why a cancel did not happen, in words (the jobs table's confirmation says the same). */
-export function explainCancel(error: unknown, t: CancelMessages): string {
-  if (!(error instanceof HttpError)) return t.offline;
-  if (error.status === 403) return t.forbidden;
-  if (error.status === 409) return t.ended;
-  return t.server(error.status);
 }
 
 /**

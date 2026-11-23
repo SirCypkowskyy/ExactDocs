@@ -24,6 +24,7 @@ import { TokenList } from "./token-list";
 
 const NO_VIEW: TokensView = {};
 const ignore = () => {};
+const useTokens = (view: TokensView) => useInfiniteQuery(tokensQueryOptions(view));
 
 /** API tokens: the account's list, create-once-and-copy, and confirmed revoke. */
 export function TokensSection({
@@ -38,8 +39,7 @@ export function TokensSection({
   const language = useLanguage();
   const t = useMessages(messages).section;
   const c = useMessages(common);
-  const tokens = useInfiniteQuery(tokensQueryOptions(view));
-  const loaded = tokens.data?.pages.flatMap((p) => p.tokens) ?? [];
+  const tokens = useTokens(view);
   const total = tokens.data?.pages.at(-1)?.total ?? 0;
   const [creating, setCreating] = useState(false);
   const [revoking, setRevoking] = useState<Token>();
@@ -100,44 +100,13 @@ export function TokensSection({
           {announcement}
         </p>
 
-        {tokens.isPending ? (
-          <TokenSkeleton />
-        ) : tokens.isError && !tokens.data ? (
-          <div
-            role="alert"
-            className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg bg-destructive-soft py-1.5 pr-1.5 pl-4"
-          >
-            <p className="text-body font-medium text-destructive-ink">
-              {explainTokenError(tokens.error, language)}
-            </p>
-            <Button variant="ghost" onClick={() => tokens.refetch()}>
-              {c.retry}
-            </Button>
-          </div>
-        ) : total === 0 && !view.q ? (
-          <EmptyState
-            icon={<KeyRound aria-hidden="true" />}
-            title={t.emptyTitle}
-            action={
-              <Button variant="outline" onClick={() => setCreating(true)}>
-                {t.createFirst}
-              </Button>
-            }
-          >
-            {t.emptyBody}
-          </EmptyState>
-        ) : (
-          <TokenList
-            tokens={loaded}
-            view={view}
-            onView={onView}
-            total={total}
-            hasMore={tokens.hasNextPage}
-            loadingMore={tokens.isFetchingNextPage}
-            onLoadMore={() => void tokens.fetchNextPage()}
-            onRevoke={setRevoking}
-          />
-        )}
+        <TokensBody
+          tokens={tokens}
+          view={view}
+          onView={onView}
+          onCreate={() => setCreating(true)}
+          onRevoke={setRevoking}
+        />
       </div>
 
       <McpConfig />
@@ -202,6 +171,69 @@ export function TokensSection({
         </ConfirmContent>
       </ConfirmRoot>
     </section>
+  );
+}
+
+/** The list, or what stands in for it: loading, a failure with Retry, or the first-token prompt. */
+function TokensBody({
+  tokens,
+  view,
+  onView,
+  onCreate,
+  onRevoke,
+}: {
+  tokens: ReturnType<typeof useTokens>;
+  view: TokensView;
+  onView: (view: TokensView) => void;
+  onCreate: () => void;
+  onRevoke: (token: Token) => void;
+}) {
+  const language = useLanguage();
+  const t = useMessages(messages).section;
+  const c = useMessages(common);
+  const total = tokens.data?.pages.at(-1)?.total ?? 0;
+  if (tokens.isPending) return <TokenSkeleton />;
+  if (tokens.isError && !tokens.data) {
+    return (
+      <div
+        role="alert"
+        className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg bg-destructive-soft py-1.5 pr-1.5 pl-4"
+      >
+        <p className="text-body font-medium text-destructive-ink">
+          {explainTokenError(tokens.error, language)}
+        </p>
+        <Button variant="ghost" onClick={() => tokens.refetch()}>
+          {c.retry}
+        </Button>
+      </div>
+    );
+  }
+  if (total === 0 && !view.q) {
+    return (
+      <EmptyState
+        icon={<KeyRound aria-hidden="true" />}
+        title={t.emptyTitle}
+        action={
+          <Button variant="outline" onClick={onCreate}>
+            {t.createFirst}
+          </Button>
+        }
+      >
+        {t.emptyBody}
+      </EmptyState>
+    );
+  }
+  return (
+    <TokenList
+      tokens={tokens.data?.pages.flatMap((p) => p.tokens) ?? []}
+      view={view}
+      onView={onView}
+      total={total}
+      hasMore={tokens.hasNextPage}
+      loadingMore={tokens.isFetchingNextPage}
+      onLoadMore={() => void tokens.fetchNextPage()}
+      onRevoke={onRevoke}
+    />
   );
 }
 

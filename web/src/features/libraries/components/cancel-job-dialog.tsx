@@ -8,8 +8,8 @@ import { cancelJob } from "../api/cancel-job";
 import { librariesKeys } from "../api/libraries-query";
 import { jobsMessages } from "../messages/jobs";
 import { progressMessages } from "../messages/progress";
+import { explainCancel } from "../model/cancel";
 import type { Job } from "../model/library";
-import { explainCancel } from "./cancel-job";
 
 /**
  * Cancelling a job from the jobs table, behind a confirmation (DESIGN.md, "Confirm with
