@@ -157,7 +157,9 @@ comes in three variants, the build targets of one `deploy/Dockerfile` (#246; dec
 release's *Scan image* jobs; the sizes land in the job summary). Since #468 the CI jobs run on GitHub-hosted
 `ubuntu-24.04` (amd64), where the images come out smaller than on arm64 (353.0 MB against 387.1 MB
 for `base` before MCP Apps), so the arm64 figures below come from the release's builds and earlier
-CI runs:
+CI runs. Since #478 the release checks both architectures, each natively; arm64 is the one that
+gets close to a budget, and a pull request that adds a dependency only finds out in the release
+(or a [dry run](#dry-run)):
 
 | Artifact | Budget | Now | Also checked |
 |---|---|---|---|
@@ -185,8 +187,8 @@ choice.
 - **The `-local` models are baked in, not pulled at first start.** The image must work with
   `--network none`, so the build runs `exactdocs models pull`, which fetches each default model at
   its pinned Hub revision (`PINNED_MODEL_REVISIONS`), into a BuildKit cache mount (a rebuild
-  contacts no Hub) natively on the build platform (the files are the same for amd64 and arm64; a
-  multi-arch build runs the stage once per platform, the second time from the cache), and copies
+  contacts no Hub) natively on the build platform (the files are the same for amd64 and arm64; the
+  release builds each architecture on its own runner, so each pulls them once), and copies
   the two folders into the image, owned by root and read-only. The check then compares their ONNX
   files with the sha256 the Hub records for them at the pinned revisions (`MODEL_SHA256` in
   `deploy/check_artifacts.py`; update it with `PINNED_MODEL_REVISIONS`), so a build is verified
@@ -209,9 +211,9 @@ choice.
   imports the fixture, waits for the version to be embedded, and the search must answer with
   `retrieval_mode` `hybrid` and `reranked: true`.
 - **CI time.** The variants are built, checked, scanned and smoke-tested in their own job, in
-  parallel with the base image's (2 min 20 s on a warm VM); `local` builds on the `ai` stages, and
-  the runner VM's BuildKit keeps their layers and the models' cache mount between jobs. The job
-  removes its two images at the end (`if: always()`), so they do not pile up on the VM's disk.
+  parallel with the base image's; `local` builds on the `ai` stages in the same BuildKit. On
+  GitHub-hosted runners nothing is cached between runs, so every run builds from scratch and
+  pulls the models. The job removes its two images at the end (`if: always()`).
 - **Locally:** `just docker-build 0.0.0.dev0 ai` (or `local`) builds `exactdocs:build-ai` (`exactdocs:build-local`), and
   `just docker-check ai` runs the same check.
 
@@ -281,7 +283,8 @@ image variant with
 [Trivy](https://trivy.dev) and lints `deploy/Dockerfile` with hadolint (CI only; its one accepted
 rule, with the reason, is in `.hadolint.yaml`). The scan **fails on a CRITICAL or HIGH
 vulnerability that has a fix** (`--ignore-unfixed`); the table is in the job log and in the
-`trivy-report` artifact (`trivy-report-ai`, `trivy-report-local`, and per variant in a release).
+`trivy-report` artifact (`trivy-report-ai`, `trivy-report-local`, and in a release
+`trivy-report-<variant>-<arch>`).
 No image of a release is pushed while the scan of any variant fails.
 
 When it fails:
@@ -294,9 +297,9 @@ When it fails:
    `libc6`, `dpkg`, ...): `apt-get install` leaves installed packages alone, so a finding in one
    of those is fixed by a newer base digest or, until one ships the fix, by an explicit
    `apt-get install --only-upgrade <package>` in the `runtime-tools` stage (as for `zlib1g`,
-   #275; remove it once the base digest catches up). Each runner VM caches its own Trivy DB, so the
-   same image can pass on one runner and fail on the other until both DBs know the advisory;
-   the failing run is the real result.
+   #275; remove it once the base digest catches up). Each job downloads a fresh Trivy DB, so a
+   scan that passed yesterday can fail today on an advisory published since; the failing run is
+   the real result.
    Because the week is part of the cache key, the first Docker build of each ISO week (Monday)
    re-runs the apt steps and is about a minute slower; that is expected, not a cache bug.
 2. If the fix is a Python dependency, update it in `uv.lock`; for a web dependency, `pnpm-lock.yaml`.
@@ -312,29 +315,39 @@ read: bump `hadolint/hadolint` (`.github/workflows/ci.yml`, job *image*) and
 `ghcr.io/aquasecurity/trivy` (`.github/actions/trivy-gate/action.yml`) by hand at every release, or
 a stale scanner stops finding new vulnerabilities.
 
-The CI Docker job uses the runner VM's own BuildKit (`driver: docker`), so layers and cache mounts
-persist between jobs on the same VM (see `deploy/runners/README.md`); the release uses the GitHub
-Actions cache instead (`scope=exactdocs-<variant>`), because it builds multi-arch with a throwaway builder.
+The CI Docker jobs use the runner's own BuildKit (`driver: docker`) on a fresh GitHub-hosted VM,
+so nothing is cached between runs. The release uses the GitHub Actions cache (one scope per
+variant and architecture, `scope=exactdocs-<variant>-<arch>`), which hands the scanned layers to
+the build that pushes them.
 
 ## CI/CD and runners
 
-Every workflow runs on two LXD virtual machines on the GB10 host (see `deploy/runners/README.md`),
-matched by the labels `self-hosted, linux, ARM64, exactdocs`.
+Every workflow runs on GitHub-hosted runners: `ubuntu-24.04` (amd64), and `ubuntu-24.04-arm` for
+the arm64 half of the release's images. The two self-hosted LXD VMs on the GB10 host
+(`deploy/runners/README.md`, labels `self-hosted, linux, ARM64, exactdocs`) are no longer used by
+any workflow: CI and the docs moved in #468, the release, GHCR retention and the manual
+provider workflows (`eval-providers.yml`, `agent-bench.yml`, `azure-search.yml`, `pinecone.yml`)
+in #478, after the runners stopped taking jobs.
+
+Arm64 standard runners are available to private repositories
+([changelog, 2026-01-29](https://github.blog/changelog/2026-01-29-arm64-standard-runners-are-now-available-in-private-repositories)),
+with 2 vCPUs there, and count towards the plan's free minutes like the amd64 ones. Two limits
+follow from hosted runners: a job runs for at most 6 hours (the provider benchmark of
+`eval-providers.yml` with every chunking may not fit; narrow it with `--chunkings`), and each VM
+starts with a few tens of GB of free disk, so the image jobs first delete unused SDKs.
 
 ```mermaid
 flowchart LR
     gh["GitHub<br/>PR, push to main or develop, tag v*"]
-    subgraph gb10 ["Dell Pro Max GB10 (ARM64)"]
-        subgraph vms ["LXD runner VMs: exactdocs-runner-1, -2"]
-            ci["CI<br/>python, web, image, image variants, uvx + browser e2e"]
-            docs["Docs<br/>Mermaid check, zensical build --strict"]
-            rel["Release<br/>meta, eval, web, python, pypi-kernel, pypi, image-scan, image, github-release"]
-            ret["GHCR retention"]
-        end
+    subgraph hosted ["GitHub-hosted runners"]
+        ci["CI (ubuntu-24.04)<br/>python, web, image, image variants, uvx + browser e2e"]
+        docs["Docs (ubuntu-24.04)<br/>Mermaid check, zensical build --strict"]
+        rel["Release (ubuntu-24.04, ubuntu-24.04-arm)<br/>meta, eval, web, python, pypi-kernel, pypi,<br/>image-scan, image, image-publish, github-release"]
+        ret["GHCR retention (ubuntu-24.04)"]
     end
     gh -->|PR and push| ci
     gh -->|"docs/**, zensical.toml (PRs: any .md)"| docs
-    gh -->|tag| rel
+    gh -->|"tag (manual run: dry run)"| rel
     rel -->|after each release, weekly, on demand| ret
     docs -->|"push to main, release tag, manual run"| pages["GitHub Pages"]
     rel --> pypi["PyPI (trusted publishing)"]
@@ -345,27 +358,56 @@ flowchart LR
 
 ## What the release workflow does
 
-`.github/workflows/release.yml`, on the self-hosted GB10 runners:
+`.github/workflows/release.yml`, on GitHub-hosted runners:
 
 1. **meta**: validates tag shape and branch, derives version/channel.
 2. **eval**: the retrieval eval ([Retrieval evals](evals.md#when-it-runs)), which pull requests
    do not run: the model-free gates on SQLite and on ParadeDB's pg_search against the
-   `baseline.json` of the tagged tree, the suite's end-to-end tests (`pytest -m eval`), then
-   hybrid and rerank on the default local models, report-only. `pypi-kernel` and `image` need
-   it, so a failing gate publishes nothing.
+   `baseline.json` of the tagged tree, the suite's end-to-end tests (`pytest -m eval`), the
+   ingestion and retrieval benchmarks against their recorded runs, then hybrid and rerank on the
+   default local models, report-only. `pypi-kernel` and `image` need it, so a failing gate
+   publishes nothing.
 3. **web**: `pnpm build`.
 4. **python**: bundles the UI into the wheel, `uv build --all-packages`, `twine check`, runs the
    wheel the way `uvx` would.
 5. **pypi-kernel**, then **pypi**: `uv publish` with **trusted publishing** (OIDC, no stored token).
-6. **image-scan**, then **image**, once per variant (`base`, `ai`, `local`): each variant is
-   built natively, checked against its size budget (`deploy/check_artifacts.py`) and scanned
-   (see *Image scan*); only when all three pass, each is built multi-arch (`linux/amd64`,
-   `linux/arm64`), pushed with its tags (suffix `-ai` / `-local`), with SBOM + provenance
-   attestations and a keyless **cosign** signature. Only the runtime stage's `apt-get` runs under
-   QEMU for amd64; the Python stages cross-build natively, and the `-local` models are pulled
-   natively (once per platform, the second from the build's cache mount). `DEBIAN_REFRESH` (the
-   date) is set once in **meta**, so the push rebuilds exactly the layers that were scanned. Each variant has its own GitHub Actions cache scope (`exactdocs-<variant>`).
-7. **github-release**: creates or updates the release with the distributions.
+6. **image-scan** (six jobs: `base`, `ai`, `local` × `amd64`, `arm64`): each variant is built
+   natively on a runner of its architecture (`ubuntu-24.04`, `ubuntu-24.04-arm`), checked against
+   its size budget (`deploy/check_artifacts.py`) and scanned (see *Image scan*), so both
+   architectures are checked and scanned, not only the build host's.
+7. **image** (the same six), only when all six scans and the eval pass: each is built again from
+   the scan's cache (the same build arguments: `DEBIAN_REFRESH`, the date, and `CREATED` are set
+   once in **meta**, so these are the layers that were scanned), with SBOM + provenance
+   attestations, and pushed **by digest only**, without a tag.
+8. **image-publish**, once per variant: `docker buildx imagetools create` joins the amd64 and
+   arm64 images (with their attestations) into one multi-arch index, tags it (suffix `-ai` /
+   `-local`), puts the title, description and licenses on it as annotations, checks it holds
+   exactly `linux/amd64` and `linux/arm64`, and signs it with a keyless **cosign** signature.
+   Nothing runs under QEMU: the Dockerfile still cross-builds when asked
+   (`docker buildx build --platform linux/amd64,linux/arm64` with QEMU for the runtime stage's
+   `apt-get`), but the release does not need it.
+9. **github-release**: creates or updates the release with the distributions.
+
+Pushing a tag runs the workflow file **of the tagged commit**, and so does *Re-run jobs* on an
+old run: a tag made before a workflow fix keeps failing the old way. Release from a new tag on a
+commit that has the fix.
+
+### Dry run
+
+A manual run is a dry run, from any branch, and publishes nothing:
+
+```bash
+gh workflow run release.yml --ref develop     # or a feature branch with workflow changes
+```
+
+It builds version `0.0.0.dev<run number>` and runs **meta** (without the tag checks), **eval**,
+**web**, **python** and all twelve image jobs (the six **image** builds with `push=false`, no
+registry login). **pypi-kernel**, **pypi**, **image-publish** and **github-release** are skipped
+(`if: github.event_name == 'push'`), and GHCR retention does not start after it. Run one before
+tagging when the release workflow, the Dockerfile, the eval or a size budget changed: the gates
+that pull requests do not run (the eval, arm64 budgets and scans) fail here instead of on the tag.
+The one thing it cannot check is the publishing itself (PyPI trusted publishing, the index, the
+signature).
 
 ## One-time setup
 

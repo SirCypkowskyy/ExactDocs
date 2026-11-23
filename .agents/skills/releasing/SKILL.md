@@ -30,8 +30,17 @@ git tag v0.4.0.dev1 && git push origin v0.4.0.dev1
 
 Watch it: `gh run watch $(gh run list --workflow release.yml --limit 1 --json databaseId --jq '.[0].databaseId')`.
 
+## Dry run first
+
+`gh workflow run release.yml --ref develop` runs everything but the publishing (version
+`0.0.0.dev<run number>`; no PyPI, no ghcr.io push, no GitHub Release). Do it before tagging when the
+release workflow, the Dockerfile, the eval or a dependency changed: the eval and the arm64 size
+budgets and scans do not run on pull requests.
+
 ## If it fails
 
+- A tag runs the workflow file **of the tagged commit**, and *Re-run* reuses it: after a workflow
+  fix, release from a new tag on a commit that has the fix, never by re-running the old run.
 - **"neither vX.Y.Z nor vX.Y.Z.devN"** or **"must point at a commit on main/develop"**: wrong tag.
   Delete it (`git push origin :refs/tags/vX` and `git tag -d vX`) and tag the right commit.
   Never delete a tag whose packages already reached PyPI; PyPI versions are immutable. Bump instead.
