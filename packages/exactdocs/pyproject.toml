@@ -42,6 +42,10 @@ local = [
     "fastembed==0.9.1",
     "onnxruntime==1.31.0",
 ]
+# Qdrant as the vector backend (#355, EXACTDOCS_VECTOR_BACKEND=qdrant): imported only by
+# `retrieval/adapters/driven/qdrant_index.py`, and only once an operator names the backend. Not in
+# the image. Exact pin, tested against the `qdrant/qdrant` server of the same minor (CI service).
+qdrant = ["qdrant-client==1.20.0"]
 
 [project.scripts]
 exactdocs = "exactdocs.bootstrap.cli:main"

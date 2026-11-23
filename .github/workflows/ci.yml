@@ -59,6 +59,16 @@ jobs:
         options: >-
           --health-cmd "pg_isready -h 127.0.0.1 -U exactdocs -d exactdocs"
           --health-interval 2s --health-timeout 5s --health-retries 30
+      # #355: Qdrant, the vector backend's contract tests and scenario (EXACTDOCS_TEST_QDRANT_URL),
+      # pinned to the version the `qdrant` extra's client is tested with. It requires an API key,
+      # so the key is used on every call (and refused when wrong). Up long before the tests run.
+      qdrant:
+        image: qdrant/qdrant:v1.20.0@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2
+        env:
+          QDRANT__SERVICE__API_KEY: exactdocs-ci
+          QDRANT__TELEMETRY_DISABLED: "true"
+        ports:
+          - 6333/tcp
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
@@ -89,6 +99,9 @@ jobs:
           EXACTDOCS_TEST_PGBOUNCER_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.pgbouncer.ports['5432'] }}/exactdocs
           EXACTDOCS_REQUIRE_PGBOUNCER: "1" # the pooler tests and scenario never skip here
           EXACTDOCS_TEST_PG_SEARCH: "1" # the server has pg_search: the BM25 variants run (#104)
+          EXACTDOCS_TEST_QDRANT_URL: http://127.0.0.1:${{ job.services.qdrant.ports['6333'] }}
+          EXACTDOCS_TEST_QDRANT_API_KEY: exactdocs-ci
+          EXACTDOCS_REQUIRE_QDRANT: "1" # the Qdrant cases and scenario never skip here (#355)
         run: uv run pytest --cov=exactdocs --cov=exactdocs_kernel --cov-report=term-missing --junitxml=reports/pytest.xml
       - name: behave (acceptance)
         env:
@@ -98,6 +111,9 @@ jobs:
           EXACTDOCS_REQUIRE_PGBOUNCER: "1" # the pooler tests and scenario never skip here
           EXACTDOCS_TEST_PG_SEARCH: "1"
           EXACTDOCS_REQUIRE_SUPABASE: "1" # the @supabase scenarios never skip here
+          EXACTDOCS_TEST_QDRANT_URL: http://127.0.0.1:${{ job.services.qdrant.ports['6333'] }}
+          EXACTDOCS_TEST_QDRANT_API_KEY: exactdocs-ci
+          EXACTDOCS_REQUIRE_QDRANT: "1"
         run: uv run behave --format=progress --junit --junit-directory=reports/behave
       # The shared ranking suite again, on Supabase's image (postgres_fts: it has no pg_search).
       - name: Ranking suite on supabase/postgres
