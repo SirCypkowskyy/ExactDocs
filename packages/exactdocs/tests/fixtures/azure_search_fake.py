@@ -111,7 +111,7 @@ def _tokens(text: str) -> list[tuple[str, str]]:
     tokens: list[tuple[str, str]] = []
     position = 0
     while position < len(text):
-        if text[position:].strip() == "":
+        if not text[position:].strip():
             break
         match = _TOKEN.match(text, position)
         if match is None:
@@ -175,7 +175,7 @@ class _FilterParser:
         return self._primary()
 
     def _primary(self) -> Predicate:
-        kind, token = self._peek()
+        _, token = self._peek()
         if token == "(":
             self._take("(")
             inner = self._or()
@@ -246,14 +246,14 @@ class _FilterParser:
 
         def holds(d: Doc, env: Mapping[str, Any]) -> bool:
             values = d.get(name) or []
-            test = lambda v: body(d, {**env, variable: v})
-            return any(map(test, values)) if quantifier == "any" else all(map(test, values))
+            tests = (body(d, {**env, variable: v}) for v in values)
+            return any(tests) if quantifier == "any" else all(tests)
 
         return holds
 
     def _getter(self, name: str, *, collection_ok: bool) -> Callable[[Doc, Mapping[str, Any]], Any]:
         if name in self.variables:
-            return lambda d, env: env[name]
+            return lambda _, env: env[name]
         spec = self.fields.get(name)
         if spec is None:
             raise FakeError(400, f"Invalid expression: Could not find a property named '{name}'")
@@ -261,7 +261,7 @@ class _FilterParser:
             raise FakeError(400, f"Invalid expression: the field '{name}' is not filterable")
         if spec["type"].startswith("Collection(") and not collection_ok:
             raise FakeError(400, f"Invalid expression: '{name}' is a collection: use any or all")
-        return lambda d, env: d.get(name)
+        return lambda d, _: d.get(name)
 
 
 def parse_filter(text: str, fields: Mapping[str, Doc]) -> Predicate:
@@ -407,7 +407,7 @@ def _normalised(definition: Doc) -> Doc:
     }
 
 
-def _check_definition(definition: Doc) -> Doc:
+def _check_definition(definition: Doc) -> Doc:  # ruff: ignore[complex-structure, too-many-branches]
     name = definition.get("name", "")
     if not INDEX_NAME.fullmatch(name):
         raise FakeError(400, f"Invalid index name '{name}'", "InvalidRequestParameter")
@@ -488,11 +488,12 @@ class FakeSearchService:
 
     # ------------------------------------------------------------ routing
 
-    def handle(
+    def handle(  # ruff: ignore[complex-structure, too-many-return-statements]
         self, method: str, url: str, headers: Mapping[str, str], body: bytes | None
     ) -> tuple[int, Doc | None]:
         if self.unavailable:
-            raise requests.ConnectionError("the fake service is switched off")
+            message = "the fake service is switched off"
+            raise requests.ConnectionError(message)
         parts = urlsplit(url)
         query = parse_qs(parts.query)
         path = unquote(parts.path)
@@ -578,12 +579,13 @@ class FakeSearchService:
                         400,
                         f"The property '{prop}' does not exist on type 'search.documentFields'.",
                     )
-                if spec["type"] == "Collection(Edm.Single)" and value is not None:
-                    if len(value) != spec["dimensions"]:
-                        raise FakeError(
-                            400,
-                            f"The vector field '{prop}' expects {spec['dimensions']} dimensions, not {len(value)}",
-                        )
+                vector = spec["type"] == "Collection(Edm.Single)"
+                if vector and value is not None and len(value) != spec["dimensions"]:
+                    wanted = spec["dimensions"]
+                    message = (
+                        f"The vector field '{prop}' expects {wanted} dimensions, not {len(value)}"
+                    )
+                    raise FakeError(400, message)
         known = set(index.documents) | {
             a[key] for _, batch in index.pending for a in batch if a["@search.action"] != "delete"
         }
@@ -603,7 +605,9 @@ class FakeSearchService:
 
     # ------------------------------------------------------------ search
 
-    def _search(self, index: FakeIndex, body: Doc) -> Doc:
+    def _search(  # ruff: ignore[complex-structure, too-many-branches, too-many-locals]
+        self, index: FakeIndex, body: Doc
+    ) -> Doc:
         unknown = set(body) - SEARCH_KEYS
         if unknown:
             raise FakeError(400, f"the fake does not implement {sorted(unknown)}")
@@ -662,7 +666,7 @@ class FakeSearchService:
         ]
         return result
 
-    def _bm25(
+    def _bm25(  # ruff: ignore[complex-structure, too-many-locals]
         self, index: FakeIndex, documents: list[Doc], passing: list[Doc], text: str, body: Doc
     ) -> dict[str, float]:
         fields = index.fields
@@ -725,8 +729,8 @@ class FakeSearchService:
                 400, f"the fake implements vector queries only, not {query.get('kind')!r}"
             )
         fields = index.fields
-        name = query.get("fields")
-        spec = fields.get(name or "")
+        name = str(query.get("fields") or "")
+        spec = fields.get(name)
         if spec is None or spec["type"] != "Collection(Edm.Single)":
             raise FakeError(400, f"The field '{name}' is not a vector field")
         vector = query.get("vector") or []
@@ -805,7 +809,7 @@ class _Reversed:
 
     value: Any
 
-    def __lt__(self, other: "_Reversed") -> bool:
+    def __lt__(self, other: _Reversed) -> bool:
         return self.value > other.value
 
     def __eq__(self, other: object) -> bool:
@@ -813,6 +817,10 @@ class _Reversed:
 
     def __hash__(self) -> int:
         return hash(self.value)
+
+
+def _text_headers(headers: Mapping[str, str | bytes]) -> dict[str, str]:
+    return {k: v.decode() if isinstance(v, bytes) else v for k, v in headers.items()}
 
 
 class _Adapter(BaseAdapter):
@@ -831,11 +839,13 @@ class _Adapter(BaseAdapter):
         cert: Any = None,
         proxies: Any = None,
     ) -> requests.Response:
+        del stream, timeout, verify, cert, proxies  # nothing to do without a socket
         body = request.body
         data = body.encode() if isinstance(body, str) else body
+        assert data is None or isinstance(data, bytes), type(data)
         try:
             status, payload = self.service.handle(
-                request.method or "GET", request.url or "", request.headers, data
+                request.method or "GET", request.url or "", _text_headers(request.headers), data
             )
         except FakeError as error:
             status, payload = (

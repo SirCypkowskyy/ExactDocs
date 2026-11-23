@@ -25,7 +25,7 @@ from exactdocs.retrieval.adapters.driven.azure_search_index import (
 from exactdocs.retrieval.ports import SearchBackend, VectorBackend
 
 URL_VARIABLE = "EXACTDOCS_TEST_AZURE_SEARCH_URL"
-KEY_VARIABLE = "EXACTDOCS_TEST_AZURE_SEARCH_KEY"  # noqa: S105 -- the variable's name
+KEY_VARIABLE = "EXACTDOCS_TEST_AZURE_SEARCH_KEY"
 REQUIRE_VARIABLE = "EXACTDOCS_REQUIRE_AZURE_SEARCH"
 
 type Factory[T] = Callable[[], AbstractAsyncContextManager[T]]

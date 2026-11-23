@@ -564,6 +564,11 @@ class _ThreadedCredential:
             await asyncio.to_thread(close)
 
     async def __aenter__(self) -> Self:
+        """Enter: nothing to open.
+
+        Returns:
+            The credential.
+        """
         return self
 
     async def __aexit__(
@@ -572,6 +577,13 @@ class _ThreadedCredential:
         exc_value: BaseException | None = None,
         traceback: TracebackType | None = None,
     ) -> None:
+        """Release the credential.
+
+        Args:
+            exc_type: The exception's type, if one is leaving the block.
+            exc_value: The exception.
+            traceback: Its traceback.
+        """
         await self.close()
 
 
