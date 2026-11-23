@@ -1,8 +1,10 @@
 import { useCallback } from "react";
+import { common, useMessages } from "@/shared/lib/i18n";
 import { Button } from "@/shared/ui/button";
 import { Skeleton as Bar } from "@/shared/ui/skeleton";
 import type { VersionArgs } from "../api/browse-queries";
 import { useTree } from "../hooks/use-tree";
+import { messages } from "../messages";
 import { FileTree } from "./file-tree";
 
 interface TreePaneProps {
@@ -24,9 +26,10 @@ const bars = [
 ] as const;
 
 function TreeSkeleton() {
+  const t = useMessages(messages).tree;
   return (
     <div role="status" aria-busy="true" className="py-2">
-      <span className="sr-only">Loading files</span>
+      <span className="sr-only">{t.loadingFiles}</span>
       <ul aria-hidden="true" className="space-y-1">
         {bars.map(([id, w], i) => (
           <li
@@ -45,6 +48,8 @@ function TreeSkeleton() {
 
 /** The files of one version and tag filter. Mount it with a `key`, so changing either starts afresh. */
 export function TreePane({ target, tagsParam, selected, onClearTags, onOpen }: TreePaneProps) {
+  const t = useMessages(messages).tree;
+  const c = useMessages(common);
   const { owner, repo, ref, sha } = target;
   const tree = useTree({ owner, repo, ref, sha, tags: tagsParam, selected });
   const { scopes, loadMore } = tree;
@@ -61,9 +66,9 @@ export function TreePane({ target, tagsParam, selected, onClearTags, onOpen }: T
   if (tree.status === "error") {
     return (
       <div role="alert" className="py-3 text-body">
-        <p className="text-muted-foreground">Couldn't load the files of {ref}.</p>
+        <p className="text-muted-foreground">{t.filesFailed(ref)}</p>
         <Button variant="outline" size="sm" className="mt-2" onClick={() => loadMore("")}>
-          Try again
+          {c.retry}
         </Button>
       </div>
     );
@@ -71,17 +76,13 @@ export function TreePane({ target, tagsParam, selected, onClearTags, onOpen }: T
   if (tree.rows.length === 0) {
     return (
       <div className="py-3 text-body">
-        <p className="font-medium">
-          {tags.length > 0 ? `No articles tagged ${tags.join(" or ")}` : "Nothing imported here"}
-        </p>
+        <p className="font-medium">{tags.length > 0 ? t.noneTagged(tags) : t.nothingHere}</p>
         <p className="mt-1 text-muted-foreground">
-          {tags.length > 0
-            ? `${ref} has no article with ${tags.length > 1 ? "any of these tags" : "this tag"}.`
-            : `${ref} has no articles. Its import may have skipped every file.`}
+          {tags.length > 0 ? t.noneWithTags(ref, tags.length) : t.noArticles(ref)}
         </p>
         {tags.length > 0 && (
           <Button variant="outline" size="sm" className="mt-2" onClick={onClearTags}>
-            Show all articles
+            {t.showAll}
           </Button>
         )}
       </div>
@@ -96,7 +97,7 @@ export function TreePane({ target, tagsParam, selected, onClearTags, onOpen }: T
       selected={selected}
       rows={tree.rows}
       scopeState={scopeState}
-      label={`Files of ${ref}`}
+      label={t.filesOf(ref)}
       onToggle={tree.toggle}
       onMore={loadMore}
       onOpen={onOpen}

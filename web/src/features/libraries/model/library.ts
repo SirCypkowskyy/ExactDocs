@@ -1,5 +1,7 @@
 import type { components } from "@/shared/lib/api-schema";
 import { HttpError } from "@/shared/lib/http";
+import { currentLanguage, type Language } from "@/shared/lib/i18n";
+import { listMessages } from "../messages/list";
 
 export type Library = components["schemas"]["LibrarySummary"];
 export type LibrariesResponse = components["schemas"]["LibraryList"];
@@ -11,48 +13,39 @@ export type LatestJobs = components["schemas"]["LatestJobs"];
 export type ReimportedVersion = components["schemas"]["ReimportedVersion"];
 
 /** Why confirming a moved tag queued nothing; `final` refusals will not change on a retry. */
-export function explainReimport(error: unknown): {
+export function explainReimport(
+  error: unknown,
+  language: Language = currentLanguage(),
+): {
   message: string;
   tone?: "info";
   final?: boolean;
 } {
-  const kept = "The version keeps serving what it had.";
-  if (!(error instanceof HttpError)) {
-    return { message: "Can't reach the server. Check your connection and try again." };
-  }
-  if (error.status === 401) return { message: "Your session ended. Sign in and try again." };
-  if (error.status === 403) return { message: "Your account isn't allowed to change libraries." };
+  const t = listMessages[language].reimport;
+  const kept = (why: string) => `${why} ${t.kept}`;
+  if (!(error instanceof HttpError)) return { message: t.offline };
+  if (error.status === 401) return { message: t.sessionEnded };
+  if (error.status === 403) return { message: t.forbidden };
   switch (error.code) {
     case "not_found":
-      return { message: "This version no longer exists.", final: true };
+      return { message: t.notFound, final: true };
     case "tag_not_moved":
-      return {
-        tone: "info",
-        final: true,
-        message: "The tag points at the commit this version serves again: nothing to re-import.",
-      };
+      return { tone: "info", final: true, message: t.tagNotMoved };
     case "ref_deleted":
-      return { final: true, message: `The tag is gone from the repository now. ${kept}` };
+      return { final: true, message: kept(t.refDeleted) };
     case "version_importing":
-      return { tone: "info", message: "This version is being imported right now." };
+      return { tone: "info", message: t.importing };
     case "not_a_tag":
-      return {
-        final: true,
-        message: "Only a tag is re-imported this way: a branch is updated with a sync.",
-      };
+      return { final: true, message: t.notATag };
     case "host_key_changed":
-      return {
-        message: `The SSH host key of the repository's server has changed, so nothing was fetched. ${kept}`,
-      };
+      return { message: kept(t.hostKeyChanged) };
     case "credentials_required":
     case "repository_auth_required":
-      return { message: `The stored credentials were refused or can't be read. ${kept}` };
+      return { message: kept(t.credentials) };
     default:
       return error.status === 422
-        ? { message: `The repository couldn't be read, so nothing changed. ${kept}` }
-        : {
-            message: `Something went wrong on the server (${error.status}). Try again in a moment.`,
-          };
+        ? { message: kept(t.unreadable) }
+        : { message: t.server(error.status) };
   }
 }
 

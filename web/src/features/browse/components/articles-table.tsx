@@ -2,6 +2,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useId, useMemo } from "react";
+import { useMessages } from "@/shared/lib/i18n";
 import { parseTags } from "@/shared/lib/tags";
 import { usePrefetchedPages } from "@/shared/lib/use-prefetched-pages";
 import {
@@ -12,6 +13,7 @@ import {
   useServerTable,
 } from "@/shared/ui/data-table";
 import { articlesTableQueryOptions } from "../api/browse-queries";
+import { messages } from "../messages";
 import type { ArticleSummary, BrowseSearch } from "../model/browse";
 
 interface Props {
@@ -23,11 +25,9 @@ interface Props {
   search: BrowseSearch;
 }
 
-const sizeOf = (bytes: number) =>
-  bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(bytes < 10_240 ? 1 : 0)} KB`;
-
 /** Every article of the version as a table, sorted and filtered by the server (path, title, tags). */
 export function ArticlesTable({ owner, repo, versionRef, sha, search }: Props) {
+  const t = useMessages(messages).table;
   const navigate = useNavigate();
   const onView = (next: Pick<BrowseSearch, "filter" | "sort">) =>
     void navigate({
@@ -59,7 +59,7 @@ export function ArticlesTable({ owner, repo, versionRef, sha, search }: Props) {
     () => [
       {
         accessorKey: "path",
-        header: "Path",
+        header: t.path,
         enableHiding: false,
         cell: ({ row }) => (
           <Link
@@ -72,10 +72,10 @@ export function ArticlesTable({ owner, repo, versionRef, sha, search }: Props) {
           </Link>
         ),
       },
-      { accessorKey: "title", header: "Title", meta: { className: "max-md:hidden" } },
+      { accessorKey: "title", header: t.title, meta: { className: "max-md:hidden" } },
       {
         accessorKey: "tags",
-        header: "Tags",
+        header: t.tags,
         enableSorting: false,
         meta: { className: "max-lg:hidden" },
         cell: ({ row }) => (
@@ -84,13 +84,13 @@ export function ArticlesTable({ owner, repo, versionRef, sha, search }: Props) {
       },
       {
         accessorKey: "size",
-        header: "Size",
+        header: t.size,
         sortDescFirst: true,
         meta: { className: "num whitespace-nowrap" },
-        cell: ({ row }) => sizeOf(row.original.size),
+        cell: ({ row }) => t.bytes(row.original.size),
       },
     ],
-    [owner, repo, version, tagsParam],
+    [owner, repo, version, tagsParam, t],
   );
   const table = useServerTable({
     data: articles,
@@ -103,13 +103,13 @@ export function ArticlesTable({ owner, repo, versionRef, sha, search }: Props) {
   return (
     <section aria-labelledby={`${id}-h`} className="mt-8 border-t border-rule pt-5">
       <h2 id={`${id}-h`} className="text-section font-semibold">
-        Articles
+        {t.articles}
       </h2>
       <search className="mt-3 mb-3 flex flex-wrap items-end gap-3">
         <SearchFilter
           id={`${id}-q`}
-          label="Find an article"
-          placeholder="Path or title"
+          label={t.findArticle}
+          placeholder={t.pathOrTitle}
           value={search.filter}
           onCommit={(filter) => onView({ filter })}
         />
@@ -117,22 +117,26 @@ export function ArticlesTable({ owner, repo, versionRef, sha, search }: Props) {
       </search>
       {query.isError && !query.data ? (
         <p role="alert">
-          Couldn't load articles.{" "}
+          {t.loadFailed}{" "}
           <button
             type="button"
             onClick={() => void query.refetch()}
             className="cursor-pointer font-medium underline"
           >
-            Retry
+            {t.retry}
           </button>
         </p>
       ) : query.data && articles.length === 0 ? (
         <p className="rounded-lg border border-dashed border-input px-4 py-5 text-body text-muted-foreground">
-          {search.filter || tags.length ? "No articles match these filters." : "No articles."}
+          {search.filter || tags.length ? t.noMatch : t.none}
         </p>
       ) : (
         <>
-          <DataTable table={table} label="Articles" loadingMore={loadingMore || query.isPending} />
+          <DataTable
+            table={table}
+            label={t.articles}
+            loadingMore={loadingMore || query.isPending}
+          />
           {query.data && (
             <ListFooter
               shown={articles.length}

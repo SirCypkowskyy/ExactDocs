@@ -1,8 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { EMPTY_CREDENTIAL } from "@/shared/lib/credentials";
+import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { Button } from "./button";
+import { CredentialField } from "./credential-field";
 import { FormAlert } from "./form-alert";
 import { TagChips } from "./tag-chips";
 
@@ -102,5 +105,44 @@ describe("TagChips", () => {
   it("shows flat skeleton bars, not buttons, while the counts load", () => {
     render(<Chips loading />);
     expect(screen.queryAllByRole("button")).toHaveLength(0);
+  });
+});
+
+describe("shared components in Polish", () => {
+  afterEach(() => resetPreferences());
+
+  it("labels the tag filter in Polish and formats counts the Polish way", () => {
+    setPreferences({ language: "pl" });
+    render(
+      <TagChips
+        facets={[{ tag: "api", count: 12345 }]}
+        value={undefined}
+        loading={false}
+        truncated
+        onChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("group", { name: "Filtruj według tagu" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^api/ })).toHaveTextContent(/12\s345/);
+    expect(screen.getByText("Widoczne są tylko najczęściej używane tagi.")).toBeInTheDocument();
+  });
+
+  it("names a deploy key field and its file picker in Polish", () => {
+    setPreferences({ language: "pl" });
+    render(
+      <CredentialField id="cred" kind="ssh_key" draft={EMPTY_CREDENTIAL} onChange={vi.fn()} />,
+    );
+    expect(screen.getByLabelText("Klucz wdrożeniowy")).toHaveAttribute(
+      "placeholder",
+      "Wklej klucz prywatny",
+    );
+    expect(screen.getByRole("button", { name: "Wybierz plik klucza" })).toBeInTheDocument();
+  });
+
+  it("keeps the English words when English is chosen", () => {
+    setPreferences({ language: "en" });
+    render(<CredentialField id="cred" kind="token" draft={EMPTY_CREDENTIAL} onChange={vi.fn()} />);
+    expect(screen.getByLabelText("Access token")).toHaveAttribute("placeholder", "Paste the token");
+    expect(screen.getByLabelText("User name (optional)")).toBeInTheDocument();
   });
 });

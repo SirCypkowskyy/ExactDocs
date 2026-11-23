@@ -1,4 +1,6 @@
 import { HttpError } from "@/shared/lib/http";
+import { currentLanguage, type Language } from "@/shared/lib/i18n";
+import { messages } from "../messages";
 import type { FieldErrors } from "./session";
 
 export interface FormProblem {
@@ -13,42 +15,46 @@ export interface FormProblem {
  * Why an external sign-in came back refused (`/sign-in?error=<code>`), in words a person can act
  * on. Only known codes are shown: the query string is not trusted to say anything else.
  */
-export function explainSignInRefusal(code: unknown): string | undefined {
+export function explainSignInRefusal(
+  code: unknown,
+  language: Language = currentLanguage(),
+): string | undefined {
+  const t = messages[language].refusal;
   if (typeof code === "string") {
     const github =
       /^(github_app_not_approved|github_sso_required|github_access_denied):([a-zA-Z0-9][a-zA-Z0-9-]{0,99})$/.exec(
         code,
       );
     if (github) {
-      const organization = github[2];
+      const organization = github[2] ?? "";
       if (github[1] === "github_app_not_approved") {
-        return `The organization ${organization} has not approved this app. Ask an organization owner to approve the ExactDocs OAuth App in GitHub settings.`;
+        return t.appNotApproved(organization);
       }
       if (github[1] === "github_sso_required") {
-        return `Please authorize SSO for ${organization}. Authorize the ExactDocs OAuth App for your organization in GitHub settings, then try again.`;
+        return t.ssoRequired(organization);
       }
-      return `The organization ${organization} refused access. Ask an organization owner to check the ExactDocs OAuth App permissions.`;
+      return t.orgDenied(organization);
     }
   }
   switch (code) {
     case "github_team_required":
-      return "You are not a member of an allowed team. Ask an organization owner to add you to a team allowed to use this server.";
+      return t.teamRequired;
     case "github_org_required":
-      return "You are not a member of an allowed organization. Ask an organization owner to check your membership.";
+      return t.orgRequired;
     case "provider_access_revoked":
-      return "Your identity provider revoked this sign-in. Sign in again to authorize access.";
+      return t.revoked;
     case "not_allowed":
-      return "Your identity provider signed you in, but you are not in a group allowed to use this server. Ask an admin to add you.";
+      return t.notAllowed;
     case "account_disabled":
-      return "Your account is disabled. Ask an admin to enable it.";
+      return t.disabled;
     case "username_unavailable":
-      return "No account could be created for you: your username is taken. Ask an admin for help.";
+      return t.usernameTaken;
     case "provider_unavailable":
-      return "Your identity provider can't be reached right now. Try again in a moment, or sign in with a password.";
+      return t.providerDown;
     case "sign_in_cancelled":
-      return "Your identity provider did not sign you in. Try again.";
+      return t.cancelled;
     case "sign_in_failed":
-      return "The sign-in could not be completed. Start it again from this page.";
+      return t.failed;
     default:
       return undefined;
   }
@@ -63,38 +69,26 @@ export class AdminCreated extends Error {
 }
 
 /** Turn a failed request into words a person can act on. */
-export function explainError(error: unknown): FormProblem {
+export function explainError(error: unknown, language: Language = currentLanguage()): FormProblem {
+  const t = messages[language].errors;
   if (error instanceof AdminCreated) {
-    return {
-      message: "The admin account was created, but signing in failed.",
-      link: { href: "/sign-in", label: "Sign in" },
-    };
+    return { message: t.adminCreated, link: { href: "/sign-in", label: t.signIn } };
   }
   if (!(error instanceof HttpError)) {
-    return { message: "Can't reach the server. Check your connection and try again." };
+    return { message: t.unreachable };
   }
   if (error.code === "invalid_credentials") {
-    return { message: "That username and password don't match." };
+    return { message: t.invalidCredentials };
   }
   if (error.code === "rate_limited") {
     const wait = error.retryAfter;
-    const when =
-      wait === undefined
-        ? "Wait a little, then try again."
-        : `Try again in ${wait} ${wait === 1 ? "second" : "seconds"}.`;
-    return { message: `Too many failed sign-ins. ${when}` };
+    return { message: t.tooMany(wait === undefined ? t.waitLittle : t.tryAgainIn(wait)) };
   }
   if (error.code === "already_set_up") {
-    return {
-      message: "This server already has an admin.",
-      link: { href: "/sign-in", label: "Sign in instead" },
-    };
+    return { message: t.alreadySetUp, link: { href: "/sign-in", label: t.signInInstead } };
   }
   if (error.code === "setup_required") {
-    return {
-      message: "This server has no admin yet.",
-      link: { href: "/setup", label: "Set it up" },
-    };
+    return { message: t.setupRequired, link: { href: "/setup", label: t.setItUp } };
   }
   if (error.code === "invalid_username") return { fields: { username: error.message } };
   if (error.status === 422 && error.fields.length > 0) {
@@ -105,7 +99,5 @@ export function explainError(error: unknown): FormProblem {
     }
     if (Object.keys(fields).length > 0) return { fields };
   }
-  return {
-    message: `Something went wrong on the server (${error.status}). Try again in a moment.`,
-  };
+  return { message: t.server(error.status) };
 }

@@ -1,19 +1,29 @@
 import { useEffect, useId, useState } from "react";
 import { HttpError } from "@/shared/lib/http";
-import { streamAnswer } from "../api/answer-stream";
+import { useLanguage, useMessages } from "@/shared/lib/i18n";
+import { STREAM_ENDED, streamAnswer } from "../api/answer-stream";
+import { messages, type PlaygroundMessages } from "../messages";
 import {
   type AnswerProgress,
   type AnswerResult,
   type AnswerSource,
   noAnswerSentence,
-  spendSentence,
 } from "../model/playground";
 import { Notice, ResultHead, ResultsSkeleton, resultCard, resultList } from "./parts";
 
 type State =
   | { status: "running"; progress: AnswerProgress | null }
   | { status: "done"; result: AnswerResult }
-  | { status: "failed"; message: string };
+  | { status: "failed"; error: unknown };
+
+/** What a failed run says: the server's words, marked when the mode is unavailable. */
+function failure(error: unknown, t: PlaygroundMessages): string {
+  if (error instanceof HttpError && error.code === STREAM_ENDED) return t.agent.streamEnded;
+  const message = error instanceof Error ? error.message : t.agent.failed;
+  return error instanceof HttpError && error.code === "mode_unavailable"
+    ? t.results.unavailable(message)
+    : message;
+}
 
 /** Runs the agent for a question over the libraries; leaving the page or a new run cancels it. */
 function useAnswer(q: string, libraries: readonly string[]): State {
@@ -29,14 +39,7 @@ function useAnswer(q: string, libraries: readonly string[]): State {
       .then((result) => setState({ status: "done", result }))
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
-        const message = error instanceof Error ? error.message : "The agent failed.";
-        setState({
-          status: "failed",
-          message:
-            error instanceof HttpError && error.code === "mode_unavailable"
-              ? `Unavailable: ${message}`
-              : message,
-        });
+        setState({ status: "failed", error });
       });
     return () => controller.abort();
   }, [q, libraries]);
@@ -64,12 +67,14 @@ function Source({ source }: { source: AnswerSource }) {
 }
 
 function Answered({ result }: { result: AnswerResult }) {
+  const t = useMessages(messages);
+  const language = useLanguage();
   const { usage } = result;
   return (
     <>
       {result.fallback_reason ? (
         <Notice tone="note">
-          No answer: {noAnswerSentence(result.fallback_reason)}{" "}
+          {t.agent.noAnswer(noAnswerSentence(result.fallback_reason, language))}{" "}
           <span className="font-mono text-mono">({result.fallback_reason})</span>
         </Notice>
       ) : (
@@ -79,18 +84,18 @@ function Answered({ result }: { result: AnswerResult }) {
       )}
       {result.libraries_without_ai.length > 0 && (
         <p className="text-body text-muted-foreground">
-          Not read (AI is off for them): {result.libraries_without_ai.join(", ")}
+          {t.agent.notRead(result.libraries_without_ai.join(", "))}
         </p>
       )}
       <p className="text-body text-muted-foreground tabular-nums">
-        {usage.tool_calls} of {usage.max_tool_calls} tool calls · {spendSentence(usage)}
+        {t.agent.toolCalls(usage.tool_calls, usage.max_tool_calls)} · {t.agent.spend(usage)}
       </p>
       {result.sources.length > 0 && (
         <>
           <h3 className="pt-2 text-section font-semibold">
-            {result.fallback_reason ? "Read before it stopped" : "Sources"}
+            {result.fallback_reason ? t.agent.readBeforeStop : t.agent.sources}
           </h3>
-          <ol aria-label="Sources" className={resultList}>
+          <ol aria-label={t.agent.sources} className={resultList}>
             {result.sources.map((source) => (
               <Source key={`${source.library}:${source.chunk_id}`} source={source} />
             ))}
@@ -107,6 +112,7 @@ function Answered({ result }: { result: AnswerResult }) {
  * and what the run spent.
  */
 export function AgentAnswer({ q, libraries }: { q: string; libraries: readonly string[] }) {
+  const t = useMessages(messages);
   const headingId = useId();
   const state = useAnswer(q, libraries);
   return (
@@ -116,19 +122,19 @@ export function AgentAnswer({ q, libraries }: { q: string; libraries: readonly s
       className="min-w-0 space-y-3"
     >
       <h2 id={headingId} className="text-section font-semibold">
-        Agent answer
+        {t.agent.heading}
       </h2>
       {state.status === "running" && (
         <>
           <p role="status" className="text-body text-muted-foreground">
             {state.progress
-              ? `The agent has made ${state.progress.toolCalls} of ${state.progress.maxToolCalls} tool calls…`
-              : "The agent is starting…"}
+              ? t.agent.progress(state.progress.toolCalls, state.progress.maxToolCalls)
+              : t.agent.starting}
           </p>
           <ResultsSkeleton />
         </>
       )}
-      {state.status === "failed" && <Notice tone="error">{state.message}</Notice>}
+      {state.status === "failed" && <Notice tone="error">{failure(state.error, t)}</Notice>}
       {state.status === "done" && <Answered result={state.result} />}
     </section>
   );

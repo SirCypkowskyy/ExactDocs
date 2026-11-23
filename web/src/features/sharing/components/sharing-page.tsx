@@ -10,6 +10,7 @@ import { ArrowRightLeft, History, Lock, UserPlus } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { HttpError } from "@/shared/lib/http";
+import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { usePrefetchedPages } from "@/shared/lib/use-prefetched-pages";
 import { Button, buttonVariants } from "@/shared/ui/button";
@@ -25,15 +26,13 @@ import { EmptyState, Page, PageHeader } from "@/shared/ui/page";
 import { LibraryBullet } from "@/shared/ui/route";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { grantsQueryOptions, putGrant, revokeGrant, sharingKey } from "../api/grants";
+import { messages } from "../messages";
 import {
   explainSharingError,
   type Grant,
   type GrantedRole,
   type GrantList,
   grantKey,
-  ROLE_LABELS,
-  who,
-  whoFirst,
 } from "../model/grant";
 import { type SharingView, sharingFiltered } from "../model/grants-view";
 import { GrantsTable } from "./grants-table";
@@ -66,7 +65,9 @@ export function SharingPage({
   view = NO_VIEW,
   onView = ignore,
 }: Props) {
-  const heading = usePageTitle(`Sharing ${title || libraryId}`);
+  const t = useMessages(messages);
+  const language = useLanguage();
+  const heading = usePageTitle(t.page.documentTitle(title || libraryId));
   const queryClient = useQueryClient();
   const query = useInfiniteQuery(grantsQueryOptions(owner, repo, view));
   const first = query.data?.pages[0];
@@ -84,9 +85,9 @@ export function SharingPage({
   const change = useMutation({
     mutationFn: ({ grant, role }: { grant: Grant; role: GrantedRole }) =>
       putGrant(owner, repo, { kind: grant.kind, subject: grant.subject, role }),
-    onSuccess: (_, { grant, role }) => say(`${whoFirst(grant)} is now ${article(role)}.`),
+    onSuccess: (_, { grant, role }) => say(t.done.nowRole(grant, role)),
     onError: (error, { grant }) =>
-      toast.error(`Couldn't change the role of ${who(grant)}. ${explainSharingError(error)}`),
+      toast.error(t.done.roleFailed(grant, explainSharingError(error, language))),
     onSettled: refresh,
   });
 
@@ -94,10 +95,8 @@ export function SharingPage({
     <Page>
       <PageHeader
         headingRef={heading}
-        title="Sharing"
-        description={
-          first ? <Owner creator={first.creator} /> : "Who can find, read, change and manage it."
-        }
+        title={t.page.title}
+        description={first ? <Owner creator={first.creator} /> : t.page.description}
         actions={
           caller && (
             <>
@@ -107,17 +106,17 @@ export function SharingPage({
                 className={buttonVariants({ variant: "ghost" })}
               >
                 <History aria-hidden="true" />
-                Access log
+                {t.page.accessLog}
               </Link>
               {caller === "creator" && (
                 <Button variant="outline" onClick={() => setTransferring(true)}>
                   <ArrowRightLeft aria-hidden="true" />
-                  Transfer ownership
+                  {t.page.transfer}
                 </Button>
               )}
               <Button onClick={() => setSharing(true)}>
                 <UserPlus aria-hidden="true" />
-                Share
+                {t.page.share}
               </Button>
             </>
           )
@@ -154,7 +153,7 @@ export function SharingPage({
           onOpenChange={setSharing}
           onShared={(kind, subject, role) => {
             void refresh();
-            say(`${whoFirst({ kind, subject })} is now ${article(role)}.`);
+            say(t.done.nowRole({ kind, subject }, role));
           }}
         />
       )}
@@ -167,7 +166,7 @@ export function SharingPage({
           onOpenChange={setTransferring}
           onTransferred={(username) => {
             void refresh();
-            say(`${username} is now the creator of ${libraryId}.`);
+            say(t.done.nowCreator(username, libraryId));
           }}
         />
       )}
@@ -179,7 +178,7 @@ export function SharingPage({
         onRemoved={(grant) => {
           setRemoving(undefined);
           void refresh();
-          say(`${whoFirst(grant)} no longer has access.`);
+          say(t.done.noAccess(grant));
         }}
       />
     </Page>
@@ -206,6 +205,9 @@ function GrantsBody({
   onShare: () => void;
   children: (grants: LoadedGrants) => ReactNode;
 }) {
+  const t = useMessages(messages);
+  const c = useMessages(common);
+  const language = useLanguage();
   const { pages, hasMore, loadingMore, loadMore } = usePrefetchedPages(query, view);
   const total = pages.at(-1)?.total ?? 0;
   if (query.isPending) return <GrantsSkeleton />;
@@ -213,11 +215,10 @@ function GrantsBody({
     return (
       <EmptyState
         icon={<Lock aria-hidden="true" />}
-        title="Only the library's admins manage its sharing"
+        title={t.page.adminsOnlyTitle}
         className="max-w-2xl"
       >
-        Ask its creator or an operator to make you an admin, or to share it with the people you have
-        in mind.
+        {t.page.adminsOnly}
       </EmptyState>
     );
   }
@@ -228,10 +229,10 @@ function GrantsBody({
         className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg bg-destructive-soft py-1.5 pr-1.5 pl-4"
       >
         <p className="text-body font-medium text-destructive-ink">
-          {explainSharingError(query.error)}
+          {explainSharingError(query.error, language)}
         </p>
         <Button variant="ghost" onClick={() => query.refetch()}>
-          Try again
+          {c.retry}
         </Button>
       </div>
     );
@@ -240,12 +241,11 @@ function GrantsBody({
     return (
       <EmptyState
         icon={<UserPlus aria-hidden="true" />}
-        title="Not shared with anyone yet"
+        title={t.page.emptyTitle}
         className="max-w-2xl"
-        action={<Button onClick={onShare}>Share</Button>}
+        action={<Button onClick={onShare}>{t.page.share}</Button>}
       >
-        Only operators can see it for now. Share it with people or identity-provider groups as
-        viewers, contributors or admins.
+        {t.page.empty}
       </EmptyState>
     );
   }
@@ -272,6 +272,9 @@ function RemoveDialog({
   onClose: () => void;
   onRemoved: (grant: Grant) => void;
 }) {
+  const t = useMessages(messages);
+  const c = useMessages(common);
+  const language = useLanguage();
   const remove = useMutation({
     mutationFn: (g: Grant) => revokeGrant(owner, repo, g.kind, g.subject),
     onSuccess: (_, g) => onRemoved(g),
@@ -287,21 +290,20 @@ function RemoveDialog({
       }}
     >
       <ConfirmContent>
-        <ConfirmTitle>Remove {grant && who(grant)}?</ConfirmTitle>
+        <ConfirmTitle>{t.remove.title(grant)}</ConfirmTitle>
         <ConfirmDescription>
-          {grant && `${whoFirst(grant)} loses the ${roleName(grant.role)} role. `}
-          Access ends at once, on the web and over MCP, unless another grant or a group still gives
-          one.
+          {grant && t.remove.loses(grant, grant.role)}
+          {t.remove.description}
         </ConfirmDescription>
         <p
           role="alert"
           className="mt-4 rounded-md bg-destructive-soft px-3 py-2.5 text-body font-medium text-destructive-ink empty:hidden"
         >
-          {remove.isError && explainSharingError(remove.error)}
+          {remove.isError && explainSharingError(remove.error, language)}
         </p>
         <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <ConfirmCancel asChild>
-            <Button variant="ghost">Cancel</Button>
+            <Button variant="ghost">{c.cancel}</Button>
           </ConfirmCancel>
           <ConfirmAction asChild>
             <Button
@@ -312,7 +314,7 @@ function RemoveDialog({
                 if (grant && !remove.isPending) remove.mutate(grant);
               }}
             >
-              Remove
+              {c.remove}
             </Button>
           </ConfirmAction>
         </div>
@@ -330,12 +332,13 @@ function Breadcrumb({
   repo: string;
   libraryId: string;
 }) {
+  const t = useMessages(messages);
   return (
-    <nav aria-label="Breadcrumb" className="text-body text-muted-foreground">
+    <nav aria-label={t.page.breadcrumb} className="text-body text-muted-foreground">
       <ol className="flex flex-wrap items-center gap-x-1.5">
         <li>
           <Link to="/" className={crumb}>
-            Libraries
+            {t.page.libraries}
           </Link>
         </li>
         <li aria-hidden="true">/</li>
@@ -351,7 +354,7 @@ function Breadcrumb({
         </li>
         <li aria-hidden="true">/</li>
         <li aria-current="page" className="text-foreground">
-          Sharing
+          {t.page.title}
         </li>
       </ol>
     </nav>
@@ -359,26 +362,16 @@ function Breadcrumb({
 }
 
 function Owner({ creator }: { creator: string | null }) {
-  if (creator === null) {
-    return <>No creator: it was added before library roles, so operators manage it.</>;
-  }
-  return (
-    <>
-      Created by <span className="font-medium text-foreground">{creator}</span>, who alone makes or
-      removes admins and can hand it over.
-    </>
-  );
+  const t = useMessages(messages);
+  if (creator === null) return <>{t.page.noCreator}</>;
+  return <>{t.page.createdBy(<span className="font-medium text-foreground">{creator}</span>)}</>;
 }
 
-const roleName = (role: string) => (ROLE_LABELS[role] ?? role).toLowerCase();
-/** "a viewer", "an admin". */
-const article = (role: string) =>
-  `${/^[aeiou]/.test(roleName(role)) ? "an" : "a"} ${roleName(role)}`;
-
 function GrantsSkeleton() {
+  const t = useMessages(messages);
   return (
     <div aria-busy="true">
-      <span className="sr-only">Loading who has access</span>
+      <span className="sr-only">{t.page.loading}</span>
       <div aria-hidden="true" className="divide-y divide-rule border-y border-border">
         {[0, 1, 2].map((i) => (
           <div key={i} className="flex items-center justify-between gap-4 py-4">

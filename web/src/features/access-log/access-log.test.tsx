@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
+import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { TestRouter } from "@/shared/lib/test-router";
 import { AccessLogPage, LibraryAccessLogPage, parseAccessLogView } from "./index";
 import { type AccessEvent, describeEvent, explainAccessLogError } from "./model/access-log";
@@ -166,5 +167,74 @@ describe("a library's access log", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Only the library's admins and the server's operators can read its access log.",
     );
+  });
+});
+
+describe("access log in Polish", () => {
+  beforeEach(() => setPreferences({ language: "pl" }));
+  afterEach(() => {
+    resetPreferences();
+    vi.unstubAllGlobals();
+  });
+
+  const polish = (e: AccessEvent) =>
+    describeEvent(e, "pl")
+      .map((p) => p.text)
+      .join("");
+
+  it("says who did what with verbs that agree and roles in Polish", () => {
+    expect(polish(event({}))).toBe("Użytkownik alice nadał użytkownikowi bob rolę czytelnik");
+    expect(polish(event({ role: "contributor", previous_role: "viewer" }))).toBe(
+      "Użytkownik alice zmienił użytkownikowi bob rolę z czytelnik na współtwórca",
+    );
+    expect(polish(event({ change: "revoked", kind: "group", subject: "corp:docs" }))).toBe(
+      "Użytkownik alice odebrał rolę czytelnik grupie corp:docs",
+    );
+    expect(polish(event({ change: "ownership_transferred", subject: "carol" }))).toBe(
+      "Użytkownik alice przekazał własność użytkownikowi carol",
+    );
+    expect(
+      polish(
+        event({ change: "library_deleted", actor: null, kind: null, subject: null, role: null }),
+      ),
+    ).toBe(
+      "ExactDocs (wiersz poleceń lub zadanie) usunął bibliotekę i wszystkie przypisane do niej role",
+    );
+    // A role the client does not know shows as the server sent it.
+    expect(polish(event({ role: "auditor" }))).toMatch(/rolę auditor$/);
+    const parts = describeEvent(
+      event({ role: "admin", previous_role: "viewer", kind: "group" }),
+      "pl",
+    );
+    expect(new Set(parts.map((p) => p.key)).size).toBe(parts.length);
+  });
+
+  it("renders the operators' log in Polish", async () => {
+    stubApi([event({})]);
+    render(withClient(<AccessLogPage />));
+    expect(await screen.findByRole("heading", { name: "Dziennik dostępu" })).toBeInTheDocument();
+    const list = await screen.findByRole("list", { name: "Zmiany dostępu, od najnowszych" });
+    expect(list).toHaveTextContent("Użytkownik alice nadał użytkownikowi bob rolę czytelnik");
+    expect(within(list).getByText(/22 lis/)).toHaveAttribute("datetime", "2026-11-22T10:00:00Z");
+    expect(screen.getByText("Wyświetlono 1 z 1")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Usunięcia bibliotek" })).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Biblioteka"), "nie-id");
+    expect(
+      screen.getByText("Wpisz identyfikator biblioteki w postaci /owner/repo."),
+    ).toBeInTheDocument();
+  });
+
+  it("explains a refusal in Polish", async () => {
+    stubApi([], 403);
+    render(
+      withClient(
+        <TestRouter pages={{ "/": () => <LibraryAccessLogPage owner="acme" repo="payments" /> }} />,
+      ),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Dziennik dostępu biblioteki mogą przeglądać tylko jej administratorzy i operatorzy serwera.",
+    );
+    expect(screen.getByRole("link", { name: "Udostępnianie" })).toBeInTheDocument();
+    expect(document.title).toBe("Dziennik dostępu /acme/payments - ExactDocs");
   });
 });

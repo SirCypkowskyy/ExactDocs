@@ -9,5 +9,6 @@ export { SetupPage } from "./components/setup-page";
 export { SignInPage } from "./components/sign-in-page";
 export { SignOutButton } from "./components/sign-out-button";
 export { guard } from "./guard";
+export { usePreferencesStatus } from "./hooks/use-preferences-sync";
 export { useSession } from "./hooks/use-session";
 export { resolveGuard, safeNext } from "./model/session";

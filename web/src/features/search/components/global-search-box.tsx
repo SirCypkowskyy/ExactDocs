@@ -1,9 +1,12 @@
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { Search, X } from "lucide-react";
 import { type KeyboardEvent, useEffect, useEffectEvent, useRef, useState } from "react";
+import { common, useMessages } from "@/shared/lib/i18n";
 import { MAX_QUERY, normalizeQuery } from "@/shared/lib/search-query";
 import { cn } from "@/shared/lib/utils";
 import { control, controlHeight, kbd } from "@/shared/ui/recipes";
+import { Tooltip } from "@/shared/ui/tooltip";
+import { messages } from "../messages";
 import { hasVersionBox } from "./keyboard";
 
 const GLOBAL_INPUT_ID = "global-search-input";
@@ -35,6 +38,8 @@ export function GlobalSearchBox({
   prominent = false,
   className,
 }: Props) {
+  const t = useMessages(messages);
+  const c = useMessages(common);
   const navigate = useNavigate();
   const onSearch = useLocation({ select: (l) => l.pathname === "/search" });
   const urlQ = useLocation({
@@ -99,7 +104,7 @@ export function GlobalSearchBox({
 
   return (
     <search
-      aria-label="All libraries"
+      aria-label={t.box.allLibraries}
       className={cn(
         "min-w-0 flex-1",
         // The page's own box replaces the band's on /search: one field, not two.
@@ -114,7 +119,7 @@ export function GlobalSearchBox({
         }}
       >
         <label htmlFor={`${GLOBAL_INPUT_ID}-${place}`} className="sr-only">
-          Search all libraries
+          {t.box.searchAll}
         </label>
         <div className="relative">
           <Search
@@ -136,7 +141,7 @@ export function GlobalSearchBox({
             enterKeyHint="search"
             aria-keyshortcuts="/"
             maxLength={MAX_QUERY}
-            placeholder="Search all libraries"
+            placeholder={t.box.searchAll}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={onKeyDown}
@@ -144,7 +149,7 @@ export function GlobalSearchBox({
               control,
               controlHeight,
               "min-w-0 pr-16 pl-9 [appearance:none] [&::-webkit-search-cancel-button]:hidden",
-              prominent && "h-12 pl-11 text-section [@media(pointer:fine)]:h-12",
+              prominent && "h-12 pl-11 text-section fine:h-12",
             )}
           />
           {draft === "" ? (
@@ -158,21 +163,23 @@ export function GlobalSearchBox({
               /
             </kbd>
           ) : (
-            <button
-              type="button"
-              aria-label="Clear search"
-              onClick={() => {
-                setDraft("");
-                go("", false);
-                input.current?.focus();
-              }}
-              className={cn(
-                "absolute top-0 right-0 inline-flex size-11 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-transform duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] sm:size-9 [@media(hover:hover)]:hover:text-foreground",
-                prominent && "sm:top-1.5 sm:right-1",
-              )}
-            >
-              <X aria-hidden="true" className="size-4" />
-            </button>
+            <Tooltip label={c.clearSearch}>
+              <button
+                type="button"
+                aria-label={c.clearSearch}
+                onClick={() => {
+                  setDraft("");
+                  go("", false);
+                  input.current?.focus();
+                }}
+                className={cn(
+                  "absolute top-0 right-0 inline-flex size-11 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-transform duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] sm:size-9 can-hover:hover:text-foreground",
+                  prominent && "sm:top-1.5 sm:right-1",
+                )}
+              >
+                <X aria-hidden="true" className="size-4" />
+              </button>
+            </Tooltip>
           )}
         </div>
       </form>

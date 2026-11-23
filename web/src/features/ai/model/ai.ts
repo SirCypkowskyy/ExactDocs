@@ -1,6 +1,8 @@
 import type { AiProvider } from "@/shared/lib/ai-queries";
 import type { components } from "@/shared/lib/api-schema";
 import { HttpError } from "@/shared/lib/http";
+import { currentLanguage, type Language, messagesFor } from "@/shared/lib/i18n";
+import { messages } from "../messages";
 
 export type ModelCheck = components["schemas"]["ModelCheckOut"];
 export type ModelChecks = components["schemas"]["ModelChecksOut"];
@@ -11,33 +13,24 @@ export type ScopeUsage = components["schemas"]["ScopeUsageOut"];
 export type Budget = components["schemas"]["BudgetOut"];
 
 /** Where a profile's key comes from. The key itself never reaches the browser. */
-export function keyWords(p: AiProvider): string {
+export function keyWords(p: AiProvider, language: Language = currentLanguage()): string {
+  const t = messagesFor(messages, language).providers.key;
   switch (p.key) {
     case "sealed":
-      return "Key stored, sealed";
+      return t.sealed;
     case "file":
-      return "Key read from a file";
+      return t.file;
     case "environment":
-      return "Key from the environment";
+      return t.environment;
     default:
-      return "No key";
+      return t.none;
   }
 }
 
-export function originWords(p: AiProvider): string {
-  return p.origin === "configuration" ? "Configuration (read-only)" : "Added over the API";
+export function originWords(p: AiProvider, language: Language = currentLanguage()): string {
+  const t = messagesFor(messages, language).providers;
+  return p.origin === "configuration" ? t.fromConfiguration : t.fromApi;
 }
-
-const usdFormat = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 4,
-});
-const countFormat = new Intl.NumberFormat("en-US");
-
-export const usd = (n: number) => usdFormat.format(n);
-export const count = (n: number) => countFormat.format(n);
 
 /** A share of a whole as a whole percent; 100 only when nothing is left. */
 export function percent(part: number, whole: number): number {
@@ -46,52 +39,54 @@ export function percent(part: number, whole: number): number {
   return part >= whole ? 100 : Math.min(p, 99);
 }
 
-export function scopeName(s: ScopeUsage): string {
+export function scopeName(s: ScopeUsage, language: Language = currentLanguage()): string {
+  const t = messagesFor(messages, language).usage.scopes;
   switch (s.scope) {
     case "instance":
-      return "The instance";
+      return t.instance;
     case "embedding":
-      return "Embedding runs";
+      return t.embedding;
     case "library":
-      return `Library ${s.id}`;
+      return t.library(s.id);
     default:
-      return `Account ${s.id}`;
+      return t.account(s.id);
   }
 }
 
 /** One budget in words: its ceilings and what is left of them. */
-export function budgetWords(b: Budget): string {
+export function budgetWords(b: Budget, language: Language = currentLanguage()): string {
+  const t = messagesFor(messages, language);
   const parts: string[] = [];
-  if (b.usd_limit !== null) parts.push(`${usd(b.usd_left ?? 0)} of ${usd(b.usd_limit)} left`);
-  if (b.tokens_limit !== null) {
-    parts.push(`${count(b.tokens_left ?? 0)} of ${count(b.tokens_limit)} tokens left`);
-  }
-  return `${b.window === "day" ? "Today" : "This month"}: ${parts.join(", ")}`;
+  if (b.usd_limit !== null) parts.push(t.usage.usdLeft(t.usd(b.usd_left ?? 0), t.usd(b.usd_limit)));
+  if (b.tokens_limit !== null) parts.push(t.usage.tokensLeft(b.tokens_left ?? 0, b.tokens_limit));
+  return t.usage.budget(b.window === "day" ? "day" : "month", parts.join(", "));
 }
 
 /** Why a library's budget is lower than the one it set: the instance's lower limit applies. */
-export function ownBudgetNote(b: Budget): string | null {
+export function ownBudgetNote(b: Budget, language: Language = currentLanguage()): string | null {
+  const t = messagesFor(messages, language);
   const own: string[] = [];
-  if (b.own_usd_limit != null) own.push(usd(b.own_usd_limit));
-  if (b.own_tokens_limit != null) own.push(`${count(b.own_tokens_limit)} tokens`);
+  if (b.own_usd_limit != null) own.push(t.usd(b.own_usd_limit));
+  if (b.own_tokens_limit != null) own.push(t.usage.tokens(b.own_tokens_limit));
   if (own.length === 0) return null;
-  return `The instance limit is lower than the library's own budget (${own.join(", ")}), so it applies.`;
+  return t.usage.ownBudget(own.join(", "));
 }
 
-export function checkWords(c: ModelCheck): string {
-  if (c.status === "error") return c.error ?? "The call failed.";
-  const extra = c.dimensions ? `, ${c.dimensions} dimensions` : "";
-  return `Answered in ${Math.round(c.latency_ms)} ms${c.served_model ? ` by ${c.served_model}` : ""}${extra}`;
+export function checkWords(c: ModelCheck, language: Language = currentLanguage()): string {
+  const t = messagesFor(messages, language).providers;
+  if (c.status === "error") return c.error ?? t.callFailed;
+  return t.answered(Math.round(c.latency_ms), c.served_model, c.dimensions);
 }
 
 /** A failed read or check, in words. */
-export function explainAiError(error: unknown): string {
-  if (!(error instanceof HttpError)) return "Can't reach the server. Check your connection.";
-  if (error.status === 401) return "Your session ended. Sign in again.";
-  if (error.status === 403) return "Only admins can see the instance's AI settings.";
+export function explainAiError(error: unknown, language: Language = currentLanguage()): string {
+  const t = messagesFor(messages, language).errors;
+  if (!(error instanceof HttpError)) return t.offline;
+  if (error.status === 401) return t.sessionEnded;
+  if (error.status === 403) return t.adminsOnly;
   if (error.code === "vector_store_unavailable") return error.message;
   if (error.status === 404 || error.status === 422) return error.message;
-  return `Something went wrong on the server (${error.status}). Try again in a moment.`;
+  return t.other(error.status);
 }
 
 /** How much of a budget is used, as a whole percent: the tighter of its dollar and token ceilings. */

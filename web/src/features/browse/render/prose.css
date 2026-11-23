@@ -137,7 +137,7 @@
 }
 @keyframes doc-target {
   from {
-    background: color-mix(in oklab, var(--route) 16%, transparent);
+    background: var(--route-soft);
   }
 }
 @media (prefers-reduced-motion: reduce) {

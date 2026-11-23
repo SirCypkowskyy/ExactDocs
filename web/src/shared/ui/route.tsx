@@ -4,7 +4,7 @@ import { cn } from "@/shared/lib/utils";
 /*
  * The signature of the UI (DESIGN.md, "The route"): every library is a line with its own colour,
  * every version a station on it. A library's bullet, a version's station and the route between
- * them say where a piece of text comes from, the way a wayfinding sign does.
+ * them say exactly where a piece of text comes from: library, version, commit.
  */
 
 const LINES = 8;

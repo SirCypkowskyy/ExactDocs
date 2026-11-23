@@ -4,11 +4,13 @@ import { Check, CircleAlert } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { HttpError } from "@/shared/lib/http";
+import { useLanguage, useMessages } from "@/shared/lib/i18n";
 import { BROWSE_KEY } from "@/shared/lib/query-keys";
 import { cn } from "@/shared/lib/utils";
 import { buttonVariants } from "@/shared/ui/button";
 import { importJobQueryOptions } from "../api/add-library";
 import { librariesKeys } from "../api/libraries-query";
+import { type JobKindKey, progressMessages } from "../messages/progress";
 import {
   type AddedLibrary,
   type ProblemSummary,
@@ -23,50 +25,33 @@ import { SkippedList } from "./skipped-list";
 const isOver = (state: string) =>
   state === "succeeded" || state === "failed" || state === "cancelled";
 
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-
 /** What a job counts and what it is called: an import counts files; re-processing a library counts versions. */
-interface JobWords {
-  unit: "file" | "version";
-  /** “Import”, “Re-processing”: the start of each phase sentence. */
-  noun: string;
-  /** “imported”: what a counted item is once done. */
-  done: string;
-}
-
-const IMPORT_WORDS: JobWords = { unit: "file", noun: "Import", done: "imported" };
+type JobWords = (typeof progressMessages)["en"]["kinds"][JobKindKey];
 
 /** A `reprocess`, `rechunk` or `retag` job (a library's settings were edited) counts versions. */
-function wordsOf(kind: string | undefined): JobWords {
-  if (kind === "reprocess") return { unit: "version", noun: "Re-processing", done: "re-processed" };
-  if (kind === "rechunk") return { unit: "version", noun: "Re-chunking", done: "re-chunked" };
-  if (kind === "retag") return { unit: "version", noun: "Re-tagging", done: "re-tagged" };
-  return IMPORT_WORDS;
+function kindOf(kind: string | undefined): JobKindKey {
+  return kind === "reprocess" || kind === "rechunk" || kind === "retag" ? kind : "import";
 }
-
-const units = (w: JobWords, n: number) => (n === 1 ? w.unit : `${w.unit}s`);
 
 /** One sentence per phase, so a screen reader hears the import start and end, never every file. */
 function phaseText(
+  w: JobWords,
   state: string | undefined,
   done: number,
   skipped: string,
   error: string | null,
-  w: JobWords = IMPORT_WORDS,
 ) {
   switch (state) {
     case "queued":
-      return `${w.noun} queued.`;
+      return w.queued;
     case "running":
-      return w === IMPORT_WORDS ? "Importing." : `${w.noun}.`;
+      return w.running;
     case "succeeded":
-      return w.unit === "file"
-        ? `${w.noun} finished. ${plural(done, "file", "files")} ${w.done}, ${skipped} skipped.`
-        : `${w.noun} finished. ${done} ${units(w, done)} ${w.done}.`;
+      return w.finished(done, skipped);
     case "failed":
-      return `${w.noun} failed. ${error ?? ""}`.trim();
+      return w.failed(error);
     case "cancelled":
-      return `${w.noun} cancelled.`;
+      return w.cancelled;
     default:
       return "";
   }
@@ -90,34 +75,36 @@ interface StatusProps {
   state: string;
   known: boolean;
   skipped: string;
-  words?: JobWords;
+  kind?: JobKindKey;
 }
 
-function Status({ job, state, known, skipped, words: w = IMPORT_WORDS }: StatusProps) {
+function Status({ job, state, known, skipped, kind = "import" }: StatusProps) {
+  const t = useMessages(progressMessages);
+  const w = t.kinds[kind];
   const done = job?.done ?? 0;
   const total = job?.total ?? 0;
-  if (state === "queued") return <p>Waiting for a free worker</p>;
+  if (state === "queued") return <p>{t.waitingForWorker}</p>;
   if (state === "running") {
-    return (
-      <p className="tabular-nums">
-        {known
-          ? `${done} of ${total} ${units(w, total)}`
-          : w.unit === "file"
-            ? "Reading the repository"
-            : "Starting"}
-      </p>
-    );
+    return <p className="tabular-nums">{known ? w.progress(done, total) : w.starting}</p>;
   }
   if (state === "succeeded") {
     return (
       <p className="inline-flex items-center gap-1.5 text-body font-medium">
         <Check aria-hidden="true" className="size-4 text-route" />
-        {done} {units(w, done)} {w.done}
-        {w.unit === "file" && skipped !== "0" && `, ${skipped} skipped`}
+        {w.doneCount(done, skipped)}
       </p>
     );
   }
-  return <Ended job={job} done={done} total={total} known={known} w={w} />;
+  return (
+    <Ended
+      job={job}
+      done={done}
+      total={total}
+      known={known}
+      w={w}
+      countsVersions={kind !== "import"}
+    />
+  );
 }
 
 /** A job that stopped before its end: someone cancelled it, or it failed. */
@@ -127,13 +114,15 @@ function Ended(props: {
   total: number;
   known: boolean;
   w: JobWords;
+  countsVersions: boolean;
 }) {
-  const { job, done, total, known, w } = props;
-  if (job?.state !== "cancelled") return <Failed done={done} total={total} known={known} w={w} />;
-  const by = job.cancelled_by ? ` by ${job.cancelled_by}` : "";
+  const { job, done, total, known, w, countsVersions } = props;
+  if (job?.state !== "cancelled") {
+    return <Failed done={done} total={total} known={known} w={w} countsVersions={countsVersions} />;
+  }
   return (
     <p className="text-section font-medium">
-      {`Cancelled${by} after ${done}${known ? ` of ${total}` : ""} ${units(w, known ? total : done)}`}
+      {w.cancelledAfter(job.cancelled_by ?? null, done, known ? total : null)}
     </p>
   );
 }
@@ -144,43 +133,44 @@ function Failed({
   total,
   known,
   w,
+  countsVersions,
 }: {
   done: number;
   total: number;
   known: boolean;
   w: JobWords;
+  countsVersions: boolean;
 }) {
-  const triedAll = w.unit === "version" && known && done >= total;
+  const triedAll = countsVersions && known && done >= total;
   return (
     <p className="inline-flex items-center gap-1.5 text-body font-medium text-destructive">
       <CircleAlert aria-hidden="true" className="size-4" />
-      {triedAll
-        ? `Failed: all ${total} ${units(w, total)} tried, not every one could be ${w.done}`
-        : `Stopped after ${done}${known ? ` of ${total}` : ""} ${units(w, known ? total : done)}`}
+      {triedAll ? w.triedAll(total) : w.stoppedAfter(done, known ? total : null)}
     </p>
   );
 }
 
 interface MeterProps {
   id: string;
-  /** “Import”, “Re-processing”: names the bar. */
-  noun?: string;
+  /** Import, re-processing…: names the bar. */
+  kind?: JobKindKey;
   job: Job | undefined;
   state: string;
   known: boolean;
 }
 
 /** The bar is for waiting; once the import is over the status line says everything. */
-function Meter({ id, job, state, known, noun = "Import" }: MeterProps) {
+function Meter({ id, job, state, known, kind = "import" }: MeterProps) {
+  const t = useMessages(progressMessages);
   const pct = known && job ? Math.min(1, job.done / job.total) : 0;
   return (
     <div
       role="progressbar"
-      aria-label={`${noun} progress for ${id}`}
+      aria-label={t.kinds[kind].meter(id)}
       aria-valuemin={0}
       aria-valuemax={known ? job?.total : undefined}
       aria-valuenow={known ? job?.done : undefined}
-      aria-valuetext={known && job ? `${job.done} of ${job.total}` : undefined}
+      aria-valuetext={known && job ? t.valueText(job.done, job.total) : undefined}
       className="mt-2 h-2 w-full overflow-hidden rounded-full bg-secondary"
     >
       <div
@@ -207,30 +197,26 @@ function Failure({
   variant: "library" | "version";
   id: string;
 }) {
+  const t = useMessages(progressMessages);
   const [, owner = "", repo = ""] = id.split("/");
   return (
     <div className="mt-5">
       <p>
-        {variant === "library" ? (
-          <>
-            The library was created, but this version did not finish importing, so it has no
-            articles yet. Fix the cause below, then sync it again from the library's{" "}
-            <Link
-              to="/libraries/$owner/$repo/settings"
-              params={{ owner, repo }}
-              className="rounded underline decoration-route/40 underline-offset-4 outline-none hover:decoration-route focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              settings page
-            </Link>
-            .
-          </>
-        ) : (
-          "This version did not finish importing, so it was not added. Fix the cause below, then add it again."
-        )}
+        {variant === "library"
+          ? t.libraryFailed((text) => (
+              <Link
+                to="/libraries/$owner/$repo/settings"
+                params={{ owner, repo }}
+                className="rounded underline decoration-route/40 underline-offset-4 outline-none hover:decoration-route focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {text}
+              </Link>
+            ))
+          : t.versionFailed}
       </p>
-      <p className="mt-4 text-body font-medium">Details from the server</p>
+      <p className="mt-4 text-body font-medium">{t.serverDetails}</p>
       <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap rounded-md bg-secondary px-3 py-3 font-mono text-mono [overflow-wrap:anywhere]">
-        {job?.error ?? "No reason was recorded."}
+        {job?.error ?? t.noReason}
       </pre>
     </div>
   );
@@ -269,20 +255,18 @@ function useToastWhenOver(
   ref: string,
   library: boolean,
 ) {
+  const t = useMessages(progressMessages).toast;
   const told = useRef(false);
   useEffect(() => {
     if (told.current || (state !== "succeeded" && state !== "failed")) return;
     told.current = true;
     const what = library ? libraryId : ref;
     if (state === "succeeded") {
-      const done = job?.done ?? 0;
-      toast.success(`Imported ${what}`, {
-        description: `${plural(done, "file", "files")} imported${skipped !== "0" ? `, ${skipped} skipped` : ""}.`,
-      });
+      toast.success(t.imported(what), { description: t.importedDetail(job?.done ?? 0, skipped) });
     } else {
-      toast.error(`Import of ${what} failed`, { description: job?.error ?? undefined });
+      toast.error(t.failed(what), { description: job?.error ?? undefined });
     }
-  }, [state, job, skipped, libraryId, ref, library]);
+  }, [state, job, skipped, libraryId, ref, library, t]);
 }
 
 function Actions({
@@ -296,6 +280,7 @@ function Actions({
   onAddAnother: (() => void) | undefined;
   finish: ReactNode;
 }) {
+  const t = useMessages(progressMessages);
   // Inside another page the exit is that page's own (Close), from the first second.
   return finish ? (
     <div
@@ -310,20 +295,18 @@ function Actions({
     <div className="fade-in mt-8 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
       {succeeded && onAddAnother && (
         <button type="button" onClick={onAddAnother} className={backLink(false)}>
-          Add another
+          {t.addAnother}
         </button>
       )}
       <Link to="/" className={backLink(true)}>
-        Back to libraries
+        {t.backToLibraries}
       </Link>
     </div>
   ) : (
     <div className="mt-6">
-      <p className="text-body text-muted-foreground">
-        You can leave this page. The import keeps running, and the library list shows how it went.
-      </p>
+      <p className="text-body text-muted-foreground">{t.canLeave}</p>
       <Link to="/" className={cn(backLink(false), "-ml-3 mt-2")}>
-        Back to libraries
+        {t.backToLibraries}
       </Link>
     </div>
   );
@@ -364,12 +347,13 @@ function Heading({
 
 /** Under the heading: the ref and commit; for a version, the library it belongs to instead of its ref. */
 function Subline({ added, library }: { added: Props["added"]; library: boolean }) {
+  const t = useMessages(progressMessages);
   return (
     <p className="mt-2 text-muted-foreground">
       <span className="font-mono text-mono">{library ? added.ref : added.library_id}</span>
       <span aria-hidden="true"> · </span>
       <span className="font-mono text-mono">{shortSha(added.commit_sha)}</span>
-      <span className="sr-only"> commit</span>
+      <span className="sr-only">{t.commit}</span>
     </p>
   );
 }
@@ -387,20 +371,20 @@ interface OutcomeProps {
 
 /** What the job has to say right now: progress, the failure, or the files it skipped. */
 function Outcome({ id, job, state, skipped, summary, gone, lostContact, variant }: OutcomeProps) {
+  const t = useMessages(progressMessages);
   const finished = isOver(state);
   const known = (job?.total ?? 0) > 0;
   return (
     <>
       {gone ? (
         <p role="alert" className="mt-6 text-destructive">
-          We can't find this import any more, so its progress can't be shown. The library list shows
-          where things stand.
+          {t.gone}
         </p>
       ) : (
         <div className="mt-6">
           <div className="flex items-baseline justify-between gap-4 text-body">
             <Status job={job} state={state} known={known} skipped={skipped} />
-            {lostContact && <p className="text-muted-foreground">Lost contact, retrying…</p>}
+            {lostContact && <p className="text-muted-foreground">{t.lostContact}</p>}
             {state === "running" && known && job && (
               <p className="text-muted-foreground tabular-nums">
                 {Math.round((job.done / job.total) * 100)}%
@@ -408,7 +392,7 @@ function Outcome({ id, job, state, skipped, summary, gone, lostContact, variant 
             )}
           </div>
           {!finished && <Meter id={id} job={job} state={state} known={known} />}
-          {job && <CancelJob job={job} label={`the import of ${id}`} />}
+          {job && <CancelJob job={job} label={t.cancelLabel(id)} />}
         </div>
       )}
       {state === "failed" && <Failure job={job} variant={variant} id={id} />}
@@ -419,13 +403,15 @@ function Outcome({ id, job, state, skipped, summary, gone, lostContact, variant 
 
 /** Watches the import job of a library that was just added, including the files it skipped. */
 export function ImportProgress({ added, onAddAnother, finish, children }: Props) {
+  const language = useLanguage();
+  const t = progressMessages[language];
   const { data: job, error } = useQuery(importJobQueryOptions(added.job_id));
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => heading.current?.focus({ preventScroll: true }), []);
 
   const state = job?.state ?? "queued";
   const finished = isOver(state);
-  const summary = summarizeProblems(job?.problems ?? []);
+  const summary = summarizeProblems(job?.problems ?? [], language);
   const skipped = skippedLabel(summary);
   // A 4xx will not fix itself (the job is gone, or we are signed out): stop and say so.
   const gone = error instanceof HttpError && error.status < 500 && !job;
@@ -435,7 +421,7 @@ export function ImportProgress({ added, onAddAnother, finish, children }: Props)
   useToastWhenOver(state, job, skipped, added.library_id, added.ref, Boolean(onAddAnother));
 
   // The text changes with the phase only, never with the counter.
-  const announced = phaseText(state, job?.done ?? 0, skipped, job?.error ?? null);
+  const announced = phaseText(t.kinds.import, state, job?.done ?? 0, skipped, job?.error ?? null);
 
   return (
     <section aria-labelledby="progress-title" className="fade-in">
@@ -444,12 +430,12 @@ export function ImportProgress({ added, onAddAnother, finish, children }: Props)
         version={!onAddAnother}
         verb={
           state === "failed"
-            ? "Import failed"
+            ? t.heading.failed
             : state === "cancelled"
-              ? "Import cancelled"
+              ? t.heading.cancelled
               : finished
-                ? "Imported"
-                : "Importing"
+                ? t.heading.imported
+                : t.heading.importing
         }
         refName={added.ref}
         libraryId={added.library_id}
@@ -483,24 +469,25 @@ export function ImportProgress({ added, onAddAnother, finish, children }: Props)
 
 /** One job (an import, or a library re-processed) as a single quiet line with its bar, for a list of jobs (a re-sync queues one per branch). */
 export function JobLine({ jobId, label }: { jobId: string; label: string }) {
+  const t = useMessages(progressMessages);
   const { data: job, error } = useQuery(importJobQueryOptions(jobId));
   const state = job?.state ?? "queued";
   const finished = isOver(state);
   const gone = error instanceof HttpError && error.status < 500 && !job;
   const known = (job?.total ?? 0) > 0;
   const skipped = skippedLabel(summarizeProblems(job?.problems ?? []));
-  const words = wordsOf(job?.kind);
+  const kind = kindOf(job?.kind);
   useRefreshListsWhen(finished);
-  if (gone) return <p className="text-body text-muted-foreground">Progress for {label} is gone.</p>;
+  if (gone) return <p className="text-body text-muted-foreground">{t.lineGone(label)}</p>;
   return (
     <div className="text-body">
       {/* Heard once per phase, never per file. */}
       <p role="status" className="sr-only">
         {finished &&
-          `${label}: ${phaseText(state, job?.done ?? 0, skipped, job?.error ?? null, words)}`}
+          `${label}: ${phaseText(t.kinds[kind], state, job?.done ?? 0, skipped, job?.error ?? null)}`}
       </p>
-      <Status job={job} state={state} known={known} skipped={skipped} words={words} />
-      {!finished && <Meter id={label} job={job} state={state} known={known} noun={words.noun} />}
+      <Status job={job} state={state} known={known} skipped={skipped} kind={kind} />
+      {!finished && <Meter id={label} job={job} state={state} known={known} kind={kind} />}
       {job && <CancelJob job={job} label={label} />}
       {state === "failed" && job?.error && (
         <p className="mt-1 text-small text-muted-foreground [overflow-wrap:anywhere]">

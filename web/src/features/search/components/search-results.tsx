@@ -1,16 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useId } from "react";
+import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { parseTags } from "@/shared/lib/tags";
 import { cn } from "@/shared/lib/utils";
 import { buttonVariants } from "@/shared/ui/button";
 import { kbd, pill, pillTone } from "@/shared/ui/recipes";
 import { searchQueryOptions } from "../api/search-queries";
 import { useSearchNav } from "../hooks/use-search-nav";
+import { messages } from "../messages";
 import type { SearchContext } from "../model/context";
 import {
   countLabel,
-  resultsNoun,
   type SearchHit,
   type SearchResults as SearchResultData,
 } from "../model/search";
@@ -23,9 +24,10 @@ import { onArrows } from "./keyboard";
 import { INPUT_ID, RESULTS_ID } from "./search-box";
 
 function Hit({ hit, ctx }: { hit: SearchHit; ctx: SearchContext }) {
+  const t = useMessages(messages);
   return (
     // The whole row is the target (the title link stretches over it), so the hover tint covers the tags too.
-    <li className="row-in relative rounded-lg px-3 py-4 transition-colors duration-(--dur-fast) [@media(hover:hover)]:hover:bg-raised">
+    <li className="row-in relative rounded-lg px-3 py-4 transition-colors duration-(--dur-fast) can-hover:hover:bg-raised">
       <Link
         data-result=""
         to="/libraries/$owner/$repo"
@@ -43,7 +45,7 @@ function Hit({ hit, ctx }: { hit: SearchHit; ctx: SearchContext }) {
       </Link>
       <Snippet hit={hit} />
       {hit.tags.length > 0 && (
-        <ul aria-label="Tags" className="relative mt-2 flex flex-wrap gap-1.5">
+        <ul aria-label={t.tags.label} className="relative mt-2 flex flex-wrap gap-1.5">
           {hit.tags.map((tag) => (
             <li key={tag} className={cn(pill, pillTone.neutral)}>
               {tag}
@@ -56,17 +58,21 @@ function Hit({ hit, ctx }: { hit: SearchHit; ctx: SearchContext }) {
 }
 
 function NoResults({ ctx, q }: { ctx: SearchContext; q: string }) {
+  const t = useMessages(messages);
   const update = useSearchNav(ctx.owner, ctx.repo);
   const tags = parseTags(ctx.tags);
   return (
     <div className="max-w-xl">
-      <h2 className="text-title font-semibold">No results in {ctx.ref}</h2>
+      <h2 className="text-title font-semibold">{t.empty.noResultsIn(ctx.ref)}</h2>
       <p className="mt-2 text-body text-muted-foreground">
-        Nothing in <span className="font-mono text-foreground">{ctx.ref}</span> matches{" "}
-        <span className="font-medium text-foreground [overflow-wrap:anywhere]">“{q}”</span>
-        {tags.length > 0 &&
-          ` among articles tagged ${tags.join(ctx.match === "all" ? " and " : " or ")}`}
-        . Try fewer or different words.
+        {t.empty.nothingIn(
+          <span className="font-mono text-foreground">{ctx.ref}</span>,
+          <span className="font-medium text-foreground [overflow-wrap:anywhere]">
+            {t.results.quote(q)}
+          </span>,
+          tags,
+          ctx.match === "all",
+        )}
       </p>
       <div className="mt-4 flex flex-wrap gap-2">
         {tags.length > 0 && (
@@ -75,7 +81,7 @@ function NoResults({ ctx, q }: { ctx: SearchContext; q: string }) {
             className={retry}
             onClick={() => void update({ tags: undefined, match: undefined })}
           >
-            Remove tag filter
+            {t.empty.removeTagFilter}
           </button>
         )}
         {ctx.otherRefs.slice(0, 3).map((ref) => (
@@ -91,7 +97,7 @@ function NoResults({ ctx, q }: { ctx: SearchContext; q: string }) {
             }}
             className={retry}
           >
-            Search&nbsp;<span className="font-mono">{ref}</span>&nbsp;instead
+            {t.empty.searchInstead(<span className="font-mono">{ref}</span>)}
           </Link>
         ))}
       </div>
@@ -108,17 +114,18 @@ function HitList({
   ctx: SearchContext;
   stale: boolean;
 }) {
+  const t = useMessages(messages);
   const count = data.results.length;
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: arrow keys move between the links inside
     <div onKeyDown={onArrows(() => document.getElementById(INPUT_ID)?.focus())}>
       <p aria-hidden="true" className="mb-3 flex h-5 items-center text-body text-muted-foreground">
         <span className="font-medium text-foreground">
-          {resultsNoun(count, data.coverage.complete)}
+          {t.results.count(count, data.coverage.complete)}
         </span>
-        &nbsp;in&nbsp;<span className="font-mono">{ctx.ref}</span>
+        {t.results.inRef(<span className="font-mono">{ctx.ref}</span>)}
         <span className="ml-3 hidden text-small lg:inline">
-          <kbd className={kbd}>↓</kbd> to move through results
+          {t.results.moveHint(<kbd className={kbd}>↓</kbd>)}
         </span>
       </p>
       {/* The dim waits 150 ms (transition-delay applies only when it starts): a quick answer never blinks. */}
@@ -133,23 +140,21 @@ function HitList({
         ))}
       </ul>
       {!data.coverage.complete && (
-        <p className="mt-4 text-body text-muted-foreground">
-          Showing the best {count}. More sections match: add a tag or a more specific word.
-        </p>
+        <p className="mt-4 text-body text-muted-foreground">{t.results.bestOfVersion(count)}</p>
       )}
     </div>
   );
 }
 
 function Failed({ refName, onRetry }: { refName: string; onRetry: () => void }) {
+  const t = useMessages(messages);
+  const c = useMessages(common);
   return (
     <div role="alert" className="max-w-xl">
-      <h2 className="text-title font-semibold">Search failed</h2>
-      <p className="mt-2 text-body text-muted-foreground">
-        Couldn't search {refName}. Check your connection or try again.
-      </p>
+      <h2 className="text-title font-semibold">{t.failed.title}</h2>
+      <p className="mt-2 text-body text-muted-foreground">{t.failed.version(refName)}</p>
       <button type="button" className={cn(retry, "mt-3")} onClick={onRetry}>
-        Try again
+        {c.retry}
       </button>
     </div>
   );
@@ -157,6 +162,8 @@ function Failed({ refName, onRetry }: { refName: string; onRetry: () => void }) 
 
 /** The hits for the URL's query in the selected version. */
 export function SearchResults({ ctx }: { ctx: SearchContext }) {
+  const t = useMessages(messages);
+  const language = useLanguage();
   const heading = useId();
   const { q } = ctx;
   const result = useQuery({
@@ -188,11 +195,13 @@ export function SearchResults({ ctx }: { ctx: SearchContext }) {
       className="min-h-[24rem] max-w-[72ch] min-w-0"
     >
       <h2 id={heading} className="sr-only">
-        Search results
+        {t.results.heading}
       </h2>
       {/* Announced once per settled result set; the visible summary is not live. */}
       <p role="status" className="sr-only">
-        {settled ? countLabel(data.results.length, q, ctx.ref, data.coverage.complete) : ""}
+        {settled
+          ? countLabel(data.results.length, q, ctx.ref, data.coverage.complete, language)
+          : ""}
       </p>
       {body}
     </section>

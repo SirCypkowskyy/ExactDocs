@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useMessages } from "@/shared/lib/i18n";
+import { progressMessages } from "../messages/progress";
 import { type ProblemSummary, type SkipGroup, skippedLabel } from "../model/add-library";
 
 const SHOWN = 8;
@@ -6,6 +8,7 @@ const SHOWN = 8;
 const FOLD_FROM = 30;
 
 function Group({ group }: { group: SkipGroup }) {
+  const t = useMessages(progressMessages).skipped;
   const [all, setAll] = useState(false);
   const files = all ? group.files : group.files.slice(0, SHOWN);
   const rest = group.files.length - SHOWN;
@@ -35,7 +38,7 @@ function Group({ group }: { group: SkipGroup }) {
           onClick={() => setAll(true)}
           className="mt-1 min-h-11 rounded text-body text-muted-foreground underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
         >
-          Show {rest} more
+          {t.showMore(rest)}
         </button>
       )}
     </li>
@@ -43,35 +46,30 @@ function Group({ group }: { group: SkipGroup }) {
 }
 
 function Skipped({ summary }: { summary: ProblemSummary }) {
+  const t = useMessages(progressMessages).skipped;
   const { skipGroups, skipped, truncated } = summary;
   return (
     <>
-      <p className="mt-1 text-body text-muted-foreground">
-        These were left out of the version. The rest was imported.
-      </p>
+      <p className="mt-1 text-body text-muted-foreground">{t.leftOut}</p>
       <ul className="mt-4 space-y-5">
         {skipGroups.map((g) => (
           <Group key={g.code} group={g} />
         ))}
       </ul>
-      {truncated && (
-        <p className="mt-4 text-body text-muted-foreground">
-          Showing the first {skipped} skipped files. More were skipped for the same kinds of
-          reasons.
-        </p>
-      )}
+      {truncated && <p className="mt-4 text-body text-muted-foreground">{t.firstOnly(skipped)}</p>}
     </>
   );
 }
 
 /** The files an import left out, grouped by why, plus files it kept with a note. */
 export function SkippedList({ summary }: { summary: ProblemSummary }) {
+  const t = useMessages(progressMessages).skipped;
   const { skipped, notes, truncated } = summary;
   if (skipped === 0 && notes.length === 0 && !truncated) return null;
   const fold = skipped >= FOLD_FROM;
   const title = (
     <>
-      Skipped files{" "}
+      {t.title}{" "}
       <span className="font-normal text-muted-foreground tabular-nums">
         ({skippedLabel(summary)})
       </span>
@@ -101,7 +99,7 @@ export function SkippedList({ summary }: { summary: ProblemSummary }) {
       {notes.length > 0 && (
         <section aria-labelledby="notes-title">
           <h3 id="notes-title" className="text-section font-semibold">
-            Imported with a note{" "}
+            {t.notes}{" "}
             <span className="font-normal text-muted-foreground tabular-nums">({notes.length})</span>
           </h3>
           <ul className="mt-3 space-y-2">

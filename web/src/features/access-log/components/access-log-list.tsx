@@ -1,6 +1,7 @@
 import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query";
 import { History } from "lucide-react";
 import { useId, useState } from "react";
+import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { absoluteTime, absoluteTimeWithZone } from "@/shared/lib/time";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
@@ -8,11 +9,11 @@ import { Input } from "@/shared/ui/input";
 import { EmptyState } from "@/shared/ui/page";
 import { SelectField } from "@/shared/ui/select-field";
 import { Skeleton } from "@/shared/ui/skeleton";
+import { messages } from "../messages";
 import {
   type AccessEvent,
   type AccessLogPage,
   type AccessLogView,
-  CHANGE_LABELS,
   type Change,
   describeEvent,
   explainAccessLogError,
@@ -28,9 +29,10 @@ interface Props {
 }
 
 function EventSentence({ event }: { event: AccessEvent }) {
+  const language = useLanguage();
   return (
     <p className="[overflow-wrap:anywhere]">
-      {describeEvent(event).map((part) => (
+      {describeEvent(event, language).map((part) => (
         <span
           key={part.key}
           className={cn(
@@ -48,6 +50,7 @@ function EventSentence({ event }: { event: AccessEvent }) {
 
 function Toolbar({ view, onView, everyLibrary }: Omit<Props, "log">) {
   const id = useId();
+  const t = useMessages(messages).list;
   const [library, setLibrary] = useState(view.library ?? "");
   const invalid = library.trim() !== "" && !isLibraryId(library);
   return (
@@ -55,12 +58,12 @@ function Toolbar({ view, onView, everyLibrary }: Omit<Props, "log">) {
       <div className="w-60">
         <SelectField
           id={`${id}-change`}
-          label="Show"
+          label={t.show}
           value={view.change ?? ""}
           onChange={(e) => onView({ ...view, change: (e.target.value || undefined) as Change })}
         >
-          <option value="">Every change</option>
-          {Object.entries(CHANGE_LABELS).map(([value, label]) => (
+          <option value="">{t.everyChange}</option>
+          {Object.entries(t.changes).map(([value, label]) => (
             <option key={value} value={value}>
               {label}
             </option>
@@ -76,7 +79,7 @@ function Toolbar({ view, onView, everyLibrary }: Omit<Props, "log">) {
           }}
         >
           <label htmlFor={`${id}-library`} className="text-body font-medium">
-            Library
+            {t.library}
           </label>
           <div className="flex gap-2">
             <Input
@@ -93,13 +96,11 @@ function Toolbar({ view, onView, everyLibrary }: Omit<Props, "log">) {
               className="font-mono"
             />
             <Button type="submit" variant="outline">
-              Filter
+              {t.filter}
             </Button>
           </div>
           <p id={`${id}-library-hint`} className="text-small text-muted-foreground">
-            {invalid
-              ? "Write the library's ID as /owner/repo."
-              : "The full ID; removed libraries keep their log."}
+            {invalid ? t.libraryInvalid : t.libraryHint}
           </p>
         </form>
       )}
@@ -109,6 +110,9 @@ function Toolbar({ view, onView, everyLibrary }: Omit<Props, "log">) {
 
 /** The access log: who changed access, how and when, newest first, a page at a time. */
 export function AccessLogList({ log, view, onView, everyLibrary = false }: Props) {
+  const language = useLanguage();
+  const t = useMessages(messages).list;
+  const c = useMessages(common);
   const events = log.data?.pages.flatMap((p) => p.events) ?? [];
   const total = log.data?.pages.at(-1)?.total ?? 0;
   const filtered = Boolean(view.change || view.library);
@@ -120,19 +124,18 @@ export function AccessLogList({ log, view, onView, everyLibrary = false }: Props
         className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg bg-destructive-soft py-1.5 pr-1.5 pl-4"
       >
         <p className="text-body font-medium text-destructive-ink">
-          {explainAccessLogError(log.error)}
+          {explainAccessLogError(log.error, language)}
         </p>
         <Button variant="ghost" onClick={() => log.refetch()}>
-          Try again
+          {c.retry}
         </Button>
       </div>
     );
   }
   if (total === 0 && !filtered) {
     return (
-      <EmptyState icon={<History aria-hidden="true" />} title="Nothing recorded yet">
-        Creating, sharing, unsharing and removing a library is recorded here, with who did it and
-        when.
+      <EmptyState icon={<History aria-hidden="true" />} title={t.emptyTitle}>
+        {t.emptyBody}
       </EmptyState>
     );
   }
@@ -140,15 +143,15 @@ export function AccessLogList({ log, view, onView, everyLibrary = false }: Props
     <div>
       <Toolbar view={view} onView={onView} everyLibrary={everyLibrary} />
       {events.length === 0 ? (
-        <EmptyState title="No changes match" className="max-w-2xl">
-          <p>Nothing recorded matches these filters.</p>
+        <EmptyState title={t.noMatchTitle} className="max-w-2xl">
+          <p>{t.noMatch}</p>
           <Button variant="ghost" className="mt-3" onClick={() => onView({})}>
-            Clear filters
+            {t.clearFilters}
           </Button>
         </EmptyState>
       ) : (
         <>
-          <ol aria-label="Access changes, newest first" className="divide-y divide-rule border-y">
+          <ol aria-label={t.label} className="divide-y divide-rule border-y">
             {events.map((event) => (
               <li
                 key={event.id}
@@ -156,10 +159,10 @@ export function AccessLogList({ log, view, onView, everyLibrary = false }: Props
               >
                 <time
                   dateTime={event.at}
-                  title={absoluteTimeWithZone(event.at)}
+                  title={absoluteTimeWithZone(event.at, language)}
                   className="text-small text-muted-foreground tabular-nums sm:pt-0.5"
                 >
-                  {absoluteTime(event.at)}
+                  {absoluteTime(event.at, language)}
                 </time>
                 <div className="min-w-0">
                   <EventSentence event={event} />
@@ -178,16 +181,14 @@ export function AccessLogList({ log, view, onView, everyLibrary = false }: Props
             )}
           </ol>
           <div className="flex items-center gap-3 pt-4 text-small text-muted-foreground">
-            <p className="num">
-              Showing {events.length} of {total}
-            </p>
+            <p className="num">{t.showing(events.length, total)}</p>
             {log.hasNextPage && (
               <Button
                 variant="outline"
                 onClick={() => void log.fetchNextPage()}
                 disabled={log.isFetchingNextPage}
               >
-                Load more
+                {t.loadMore}
               </Button>
             )}
           </div>
@@ -198,9 +199,10 @@ export function AccessLogList({ log, view, onView, everyLibrary = false }: Props
 }
 
 function AccessLogSkeleton() {
+  const t = useMessages(messages).list;
   return (
     <div aria-busy="true">
-      <span className="sr-only">Loading the access log</span>
+      <span className="sr-only">{t.loading}</span>
       <div aria-hidden="true" className="divide-y divide-rule border-y border-border">
         {[0, 1, 2].map((i) => (
           <div key={i} className="flex gap-4 py-3">

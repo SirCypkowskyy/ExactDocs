@@ -1,4 +1,11 @@
-import { oneOf, pickSort, textParam } from "@/shared/lib/list-sort";
+import { textParam } from "@/shared/lib/list-sort";
+import {
+  parseChoice,
+  parseFacet,
+  parseTableSearch,
+  type TableConfig,
+  type TableSearch,
+} from "@/shared/ui/data-table/table-search";
 
 /** The jobs list's view state: what the URL holds and what `GET /v1/jobs` is asked for. */
 export const JOB_STATES = ["queued", "running", "succeeded", "failed", "cancelled"] as const;
@@ -12,39 +19,89 @@ export const JOB_KINDS = [
   "embed",
   "push",
 ] as const;
-const SORT_FIELDS = ["id", "created_at", "state", "kind", "library"];
+/** "Queued within" presets of the date filter. */
+export const QUEUED_WITHIN = ["24h", "7d", "30d"] as const;
 
-export interface JobsView {
-  q?: string | undefined;
-  state?: (typeof JOB_STATES)[number] | undefined;
-  kind?: (typeof JOB_KINDS)[number] | undefined;
+export type JobState = (typeof JOB_STATES)[number];
+export type JobKind = (typeof JOB_KINDS)[number];
+export type QueuedWithin = (typeof QUEUED_WITHIN)[number];
+
+/** The jobs table (DataTable v2): sortable by the API's fields, newest first by default. */
+export const JOBS_TABLE: TableConfig = {
+  id: "jobs",
+  sortFields: ["id", "created_at", "state", "kind", "library"],
+  defaultSort: "-id",
+};
+
+export interface JobsView extends TableSearch {
+  state?: JobState[] | undefined;
+  kind?: JobKind[] | undefined;
+  created?: QueuedWithin | undefined;
   /** A library ID, `/owner/repo`. */
   library?: string | undefined;
-  sort?: string | undefined;
+  /** An exact ref. */
+  version?: string | undefined;
 }
 
 /** Anything unknown in a shared or hand-edited URL is dropped, never sent to the API. */
 export function parseJobsView(search: Record<string, unknown>): JobsView {
   const library = textParam(search.library);
   return {
-    q: textParam(search.q),
-    state: oneOf(search.state, JOB_STATES),
-    kind: oneOf(search.kind, JOB_KINDS),
+    ...parseTableSearch(search, JOBS_TABLE),
+    state: parseFacet(search.state, JOB_STATES),
+    kind: parseFacet(search.kind, JOB_KINDS),
+    created: parseChoice(search.created, QUEUED_WITHIN),
     library: library && /^\/[^/]+\/[^/]+$/.test(library) ? library : undefined,
-    sort: pickSort(search.sort, SORT_FIELDS),
+    version: textParam(search.version),
   };
 }
 
-export const jobsFiltered = (v: JobsView) => Boolean(v.q || v.state || v.kind || v.library);
+const WITHIN_MS: Record<QueuedWithin, number> = {
+  "24h": 24 * 3_600_000,
+  "7d": 7 * 86_400_000,
+  "30d": 30 * 86_400_000,
+};
 
-/** The query string of `GET /v1/jobs` for a view and a page cursor. */
-export function jobsParams(view: JobsView, cursor?: string | null): string {
-  const p = new URLSearchParams({ limit: "50" });
-  if (view.q) p.set("q", view.q);
-  if (view.state) p.set("state", view.state);
-  if (view.kind) p.set("kind", view.kind);
-  if (view.library) p.set("library", view.library);
-  if (view.sort) p.set("sort", view.sort);
+/** What `GET /v1/jobs` filters and sorts by: the view without its page and size. */
+export interface JobsFilters {
+  q?: string;
+  state?: readonly string[];
+  kind?: readonly string[];
+  library?: string;
+  version?: string;
+  created_after?: string;
+  sort?: string;
+}
+
+/**
+ * The view's filters for the API. A "queued within" preset counts back from `now` rounded down to
+ * the minute, so the route's loader and the page ask for the same thing.
+ */
+export function jobsFilters(view: JobsView, now: number): JobsFilters {
+  const minute = Math.floor(now / 60_000) * 60_000;
+  return {
+    ...(view.q && { q: view.q }),
+    ...(view.state && { state: view.state }),
+    ...(view.kind && { kind: view.kind }),
+    ...(view.library && { library: view.library }),
+    ...(view.version && { version: view.version }),
+    ...(view.created && {
+      created_after: new Date(minute - WITHIN_MS[view.created]).toISOString(),
+    }),
+    ...(view.sort && { sort: view.sort }),
+  };
+}
+
+/** The query string of `GET /v1/jobs` for some filters and one request's `limit` and cursor. */
+export function jobsParams(filters: JobsFilters, limit: number, cursor?: string | null): string {
+  const p = new URLSearchParams({ limit: String(limit) });
+  if (filters.q) p.set("q", filters.q);
+  for (const state of filters.state ?? []) p.append("state", state);
+  for (const kind of filters.kind ?? []) p.append("kind", kind);
+  if (filters.library) p.set("library", filters.library);
+  if (filters.version) p.set("version", filters.version);
+  if (filters.created_after) p.set("created_after", filters.created_after);
+  if (filters.sort) p.set("sort", filters.sort);
   if (cursor) p.set("cursor", cursor);
   return p.toString();
 }

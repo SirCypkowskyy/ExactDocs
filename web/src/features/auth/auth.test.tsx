@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
+import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { setUp, signIn } from "./api/session-query";
 import { AccountPanel, SetupPage, SignInPage, SignOutButton, safeNext } from "./index";
 import { AdminCreated, explainError } from "./model/errors";
@@ -452,5 +453,28 @@ describe("sign-in through an identity provider", () => {
       <SignInPage error="you have won a prize" providers={providers} onSignedIn={vi.fn()} />,
     );
     expect(screen.queryByText(/prize/)).not.toBeInTheDocument();
+  });
+});
+
+describe("in Polish", () => {
+  afterEach(() => resetPreferences());
+
+  it("signs in, validates and explains refusals in Polish", async () => {
+    setPreferences({ language: "pl" });
+    renderWithClient(<SignInPage error="account_disabled" onSignedIn={vi.fn()} />);
+    expect(screen.getByRole("heading", { name: "Zaloguj się" })).toBeInTheDocument();
+    expect(screen.getByText(/Twoje konto jest wyłączone/)).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Zaloguj się" }));
+    expect(await screen.findByText("Wpisz nazwę użytkownika.")).toBeInTheDocument();
+  });
+
+  it("counts characters and seconds with Polish plurals", () => {
+    expect(validateSetup({ username: "a", password: "x", confirm: "x" }, "pl").password).toBe(
+      "Użyj co najmniej 12 znaków.",
+    );
+    const limited = new HttpError(429, "/v1/session", { error: "rate_limited" }, 3);
+    expect(explainError(limited, "pl").message).toBe(
+      "Zbyt wiele nieudanych logowań. Spróbuj ponownie za 3 sekundy.",
+    );
   });
 });

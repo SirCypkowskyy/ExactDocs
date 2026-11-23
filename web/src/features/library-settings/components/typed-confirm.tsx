@@ -1,4 +1,5 @@
 import { type FormEvent, type ReactNode, useRef, useState } from "react";
+import { common, useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import {
@@ -10,6 +11,7 @@ import {
 } from "@/shared/ui/dialog";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { control, controlHeight } from "@/shared/ui/recipes";
+import { pageMessages } from "../messages/page";
 import type { Problem } from "../model/settings";
 
 interface TypedConfirmProps {
@@ -37,6 +39,8 @@ type BodyProps = Pick<
 >;
 
 function Body({ loss, safe, phrase, confirmLabel, pending, problem, onConfirm }: BodyProps) {
+  const t = useMessages(pageMessages).confirm;
+  const { cancel } = useMessages(common);
   const [typed, setTyped] = useState("");
   const armed = typed === phrase;
   const blocked = !armed || pending;
@@ -56,7 +60,7 @@ function Body({ loss, safe, phrase, confirmLabel, pending, problem, onConfirm }:
       </ConfirmDescription>
       <div className="mt-5 flex flex-col gap-1.5">
         <label htmlFor="confirm-phrase" className="text-body font-medium">
-          Type <span className="font-mono">{phrase}</span> to confirm
+          {t.typeToConfirm(<span className="font-mono">{phrase}</span>)}
         </label>
         <input
           id="confirm-phrase"
@@ -75,7 +79,7 @@ function Body({ loss, safe, phrase, confirmLabel, pending, problem, onConfirm }:
       <div className="mt-2 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <ConfirmCancel asChild>
           <Button variant="ghost" aria-disabled={pending}>
-            Cancel
+            {cancel}
           </Button>
         </ConfirmCancel>
         <Button
@@ -93,7 +97,7 @@ function Body({ loss, safe, phrase, confirmLabel, pending, problem, onConfirm }:
               "aria-disabled:bg-destructive aria-disabled:text-primary-foreground aria-disabled:ring-0",
           )}
         >
-          {pending ? "Removing" : confirmLabel}
+          {pending ? t.removing : confirmLabel}
         </Button>
       </div>
     </form>

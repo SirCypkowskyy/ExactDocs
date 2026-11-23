@@ -35,6 +35,7 @@ export function Page({
 /** The title row: an h1 (focused on navigation by usePageTitle), one line about the data, and actions. */
 export function PageHeader({
   title,
+  icon,
   headingRef,
   description,
   actions,
@@ -42,6 +43,8 @@ export function PageHeader({
   className,
 }: {
   title: ReactNode;
+  /** The page's own icon (the one its navigation entry uses), in a hairline tile beside the title. */
+  icon?: ReactNode;
   headingRef?: Ref<HTMLHeadingElement>;
   description?: ReactNode;
   actions?: ReactNode;
@@ -53,17 +56,29 @@ export function PageHeader({
     <header className={cn("mb-6 lg:mb-8", className)}>
       {above && <div className="mb-3">{above}</div>}
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-        <div className="min-w-0 flex-1 basis-64">
-          <h1
-            ref={headingRef}
-            tabIndex={-1}
-            className="text-title font-semibold tracking-[-0.01em] text-balance outline-none"
-          >
-            {title}
-          </h1>
-          {description && (
-            <div className="mt-1.5 max-w-[68ch] text-body text-muted-foreground">{description}</div>
+        <div className="flex min-w-0 flex-1 basis-64 items-start gap-3">
+          {icon && (
+            <span
+              aria-hidden="true"
+              className="mt-0.5 inline-flex size-9 flex-none items-center justify-center rounded-lg border border-border bg-raised text-muted-foreground [&_svg]:size-[1.125rem]"
+            >
+              {icon}
+            </span>
           )}
+          <div className="min-w-0 flex-1">
+            <h1
+              ref={headingRef}
+              tabIndex={-1}
+              className="text-title font-semibold tracking-[-0.01em] text-balance outline-none"
+            >
+              {title}
+            </h1>
+            {description && (
+              <div className="mt-1.5 max-w-[68ch] text-body text-muted-foreground">
+                {description}
+              </div>
+            )}
+          </div>
         </div>
         {actions && <div className="flex flex-none flex-wrap items-center gap-2">{actions}</div>}
       </div>
@@ -75,6 +90,7 @@ export function PageHeader({
 export function Section({
   id,
   title,
+  icon,
   description,
   actions,
   children,
@@ -83,6 +99,8 @@ export function Section({
 }: {
   id?: string;
   title: ReactNode;
+  /** A small muted icon before the heading. */
+  icon?: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
@@ -98,7 +116,15 @@ export function Section({
     >
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0 flex-1 basis-72">
-          <Heading id={id && `${id}-title`} className="text-section font-semibold">
+          <Heading
+            id={id && `${id}-title`}
+            className="flex items-center gap-2 text-section font-semibold"
+          >
+            {icon && (
+              <span aria-hidden="true" className="text-muted-foreground [&_svg]:size-4">
+                {icon}
+              </span>
+            )}
             {title}
           </Heading>
           {description && (

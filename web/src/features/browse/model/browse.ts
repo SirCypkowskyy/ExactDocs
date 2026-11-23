@@ -245,8 +245,8 @@ const HOST_NAMES: Record<string, string> = {
   gitea: "Gitea",
 };
 
-/** The host's display name, for labels. */
-export const hostName = (host: string): string => HOST_NAMES[host] ?? "the host";
+/** The host's display name, for labels; undefined for a host ExactDocs has no name for. */
+export const hostName = (host: string): string | undefined => HOST_NAMES[host];
 
 /** Only http(s) links are ever rendered from repository data. */
 export function safeHref(url: string | null | undefined): string | undefined {

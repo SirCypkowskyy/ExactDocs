@@ -2,8 +2,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
+import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { TestRouter } from "@/shared/lib/test-router";
 import { SharingPage } from "./index";
 import { canManage, explainSharingError, givableRoles } from "./model/grant";
@@ -319,5 +320,77 @@ describe("sharing page", () => {
       await screen.findByText("Only the library's admins manage its sharing"),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Share" })).not.toBeInTheDocument();
+  });
+});
+
+describe("sharing page in Polish", () => {
+  beforeEach(() => setPreferences({ language: "pl" }));
+  afterEach(() => {
+    resetPreferences();
+    vi.unstubAllGlobals();
+  });
+
+  const rowPl = (name: string) => {
+    const cell = within(screen.getByRole("table", { name: "Kto ma dostęp" })).getByText(name);
+    return within(cell.closest("tr") as HTMLElement);
+  };
+
+  it("names roles, actions and outcomes in Polish", async () => {
+    stubApi("alice");
+    renderPage();
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Udostępnianie" })).toBeVisible();
+    expect(await screen.findByText(/Twórca:/)).toHaveTextContent(
+      "Twórca: alice. Tylko twórca nadaje i odbiera rolę administratora oraz może przekazać bibliotekę.",
+    );
+    expect(rowPl("alice").getByText("Twórca")).toBeInTheDocument();
+    expect(rowPl("bob").getByRole("combobox", { name: "Rola: bob" })).toHaveValue("admin");
+    expect(screen.getByRole("button", { name: "Przekaż własność" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Dziennik dostępu" })).toBeInTheDocument();
+    const kinds = screen.getByRole("combobox", { name: "Rodzaj" });
+    expect(
+      within(kinds)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["Dowolny", "Użytkownicy", "Grupy"]);
+
+    await userEvent.click(rowPl("dave").getByRole("button", { name: "Usuń: dave" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByRole("heading")).toHaveTextContent(
+      "Usunąć dostęp użytkownika dave?",
+    );
+    expect(dialog).toHaveTextContent("dave traci rolę czytelnika. Dostęp kończy się natychmiast");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Usuń" }));
+    await waitFor(() =>
+      expect(
+        screen.getByText("dave nie ma już dostępu.", { selector: "[role=status]" }),
+      ).toBeInTheDocument(),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Udostępnij" }));
+    const share = await screen.findByRole("dialog");
+    expect(within(share).getByRole("heading")).toHaveTextContent("Udostępnij /acme/payments");
+    const roles = within(share).getByRole("combobox", { name: "Rola" });
+    expect(
+      within(roles)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["Czytelnik", "Współtwórca", "Administrator"]);
+    await userEvent.click(within(share).getByRole("button", { name: "Udostępnij" }));
+    expect(await within(share).findByText("Wpisz nazwę użytkownika.")).toBeInTheDocument();
+    await userEvent.click(within(share).getByRole("radio", { name: "Grupie" }));
+    expect(within(share).getByLabelText("Grupa")).toBeInTheDocument();
+  });
+
+  it("explains a refusal in Polish", () => {
+    const refused = new HttpError(404, "/v1/x", {
+      error: "unknown_account",
+      detail: "unknown_account",
+      fields: [],
+    });
+    expect(explainSharingError(refused, "pl")).toBe(
+      "Żadne konto nie ma takiej nazwy użytkownika. Sprawdź pisownię lub poproś operatora o utworzenie konta.",
+    );
+    expect(explainSharingError(new TypeError("offline"), "pl")).toMatch(/Nie można połączyć się/);
   });
 });

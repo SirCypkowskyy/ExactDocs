@@ -1,11 +1,13 @@
 import { Link } from "@tanstack/react-router";
 import { ExternalLink } from "lucide-react";
 import { Fragment, useId, useState } from "react";
+import { useLanguage, useMessages } from "@/shared/lib/i18n";
 import { absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 import { cn } from "@/shared/lib/utils";
 import { pill, pillTone } from "@/shared/ui/recipes";
 import { LibraryBullet } from "@/shared/ui/route";
 import type { SyncState } from "../hooks/use-libraries";
+import { listMessages } from "../messages/list";
 import { type Library, orderedVersions, shortSha, sourceLabel } from "../model/library";
 import { FailureDetail, SyncStatus } from "./sync-status";
 
@@ -27,13 +29,14 @@ function Id({ id }: { id: string }) {
 }
 
 function Versions({ library }: { library: Library }) {
+  const t = useMessages(listMessages).row;
   const [all, setAll] = useState(false);
   const list = useId();
   const versions = orderedVersions(library);
   const visible = all ? versions : versions.slice(0, SHOWN);
   const shas = new Map(library.refs.map((r) => [r.ref, r.commit_sha]));
   return (
-    <ul id={list} aria-label="Versions" className="flex flex-wrap items-center gap-1.5">
+    <ul id={list} aria-label={t.versions} className="flex flex-wrap items-center gap-1.5">
       {visible.map((version, i) => {
         const isDefault = version === library.default_version;
         const sha = shas.get(version);
@@ -41,8 +44,8 @@ function Versions({ library }: { library: Library }) {
           <li
             key={version}
             title={[
-              isDefault && (library.default_pinned ? "Pinned default version" : "Default version"),
-              sha && `commit ${sha}`,
+              isDefault && (library.default_pinned ? t.pinnedDefaultVersion : t.defaultVersion),
+              sha && t.commit(sha),
             ]
               .filter(Boolean)
               .join(" · ")}
@@ -65,7 +68,7 @@ function Versions({ library }: { library: Library }) {
               <span className="truncate">{version}</span>
               {isDefault && (
                 <span className="sr-only">
-                  {library.default_pinned ? " (pinned default)" : " (default)"}
+                  {library.default_pinned ? t.pinnedDefault : t.isDefault}
                 </span>
               )}
               {isDefault && sha && (
@@ -84,14 +87,12 @@ function Versions({ library }: { library: Library }) {
             aria-expanded={all}
             aria-controls={list}
             aria-label={
-              all
-                ? `Show fewer versions of ${library.id}`
-                : `Show ${versions.length - SHOWN} more versions of ${library.id}`
+              all ? t.showFewerOf(library.id) : t.showMoreOf(versions.length - SHOWN, library.id)
             }
             onClick={() => setAll(!all)}
             className="min-h-11 cursor-pointer rounded-full px-2.5 text-small font-medium text-muted-foreground outline-none transition-colors duration-(--dur-fast) hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:min-h-6"
           >
-            {all ? "Show fewer" : `+${versions.length - SHOWN} more`}
+            {all ? t.showFewer : t.more(versions.length - SHOWN)}
           </button>
         </li>
       )}
@@ -106,6 +107,8 @@ interface LibraryRowProps {
 }
 
 export function LibraryRow({ library, sync, now }: LibraryRowProps) {
+  const language = useLanguage();
+  const t = listMessages[language].row;
   const [, owner = "", repo = ""] = library.id.split("/");
   const imported = library.last_imported_at;
   const [open, setOpen] = useState(false);
@@ -142,7 +145,7 @@ export function LibraryRow({ library, sync, now }: LibraryRowProps) {
             >
               <span className="truncate">{sourceLabel(library.source_url)}</span>
               <ExternalLink aria-hidden="true" className="size-3 shrink-0" />
-              <span className="sr-only">(opens the repository)</span>
+              <span className="sr-only">{t.opensRepository}</span>
             </a>
           </div>
         </div>
@@ -153,7 +156,7 @@ export function LibraryRow({ library, sync, now }: LibraryRowProps) {
               className="truncate text-small text-muted-foreground"
               title={library.tags.join(", ")}
             >
-              <span className="sr-only">Tags: </span>
+              <span className="sr-only">{t.tags}</span>
               {library.tags.join(" · ")}
             </p>
           )}
@@ -161,9 +164,9 @@ export function LibraryRow({ library, sync, now }: LibraryRowProps) {
         <div className="relative z-10 flex items-start justify-between gap-4 md:contents">
           <p className="relative z-10 whitespace-nowrap text-body">
             {imported ? (
-              <time dateTime={imported} title={absoluteTimeWithZone(imported)}>
-                <span className="text-muted-foreground md:sr-only">Imported </span>
-                {relativeTime(imported, now)}
+              <time dateTime={imported} title={absoluteTimeWithZone(imported, language)}>
+                <span className="text-muted-foreground md:sr-only">{t.imported}</span>
+                {relativeTime(imported, now, language)}
               </time>
             ) : (
               <span className="text-muted-foreground">-</span>

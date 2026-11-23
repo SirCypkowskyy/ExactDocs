@@ -2,6 +2,7 @@ import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-q
 import { KeyRound, Plus } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
+import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { Button } from "@/shared/ui/button";
 import {
   ConfirmAction,
@@ -14,6 +15,7 @@ import {
 import { EmptyState } from "@/shared/ui/page";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { revokeToken, tokensKey, tokensQueryOptions } from "../api/tokens-query";
+import { messages } from "../messages";
 import type { TokensView } from "../model/list-view";
 import { explainTokenError, isAlreadyGone, MAX_TOKENS, type Token } from "../model/token";
 import { CreateTokenDialog } from "./create-token-dialog";
@@ -33,6 +35,9 @@ export function TokensSection({
   onView?: (view: TokensView) => void;
 }) {
   const queryClient = useQueryClient();
+  const language = useLanguage();
+  const t = useMessages(messages).section;
+  const c = useMessages(common);
   const tokens = useInfiniteQuery(tokensQueryOptions(view));
   const loaded = tokens.data?.pages.flatMap((p) => p.tokens) ?? [];
   const total = tokens.data?.pages.at(-1)?.total ?? 0;
@@ -50,11 +55,11 @@ export function TokensSection({
       }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: tokensKey }),
     onSuccess: (_, id) => {
-      const name = revoking?.id === id ? revoking.name : "Token";
+      const name = revoking?.id === id ? revoking.name : undefined;
       focusHeadingAfterClose.current = true;
       setRevoking(undefined);
-      setAnnouncement(`${name} revoked.`);
-      toast.success(`${name} revoked`);
+      setAnnouncement(t.revoked(name));
+      toast.success(t.revokedToast(name));
     },
   });
 
@@ -72,12 +77,9 @@ export function TokensSection({
               tabIndex={-1}
               className="text-section font-semibold outline-none"
             >
-              API tokens
+              {t.heading}
             </h2>
-            <p className="mt-1 text-body text-muted-foreground">
-              Connect an agent to ExactDocs without signing in. A token is shown once, when you
-              create it.
-            </p>
+            <p className="mt-1 text-body text-muted-foreground">{t.description}</p>
           </div>
           <Button
             aria-disabled={full}
@@ -86,13 +88,12 @@ export function TokensSection({
             onClick={() => !full && setCreating(true)}
           >
             <Plus aria-hidden="true" />
-            New token
+            {t.newToken}
           </Button>
         </div>
         {full && (
           <p id="token-limit" className="mb-3 text-body text-muted-foreground">
-            You have {MAX_TOKENS} of {MAX_TOKENS} tokens. Revoke one you no longer use to create
-            another.
+            {t.limit(MAX_TOKENS)}
           </p>
         )}
         <p role="status" className="sr-only">
@@ -107,24 +108,23 @@ export function TokensSection({
             className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg bg-destructive-soft py-1.5 pr-1.5 pl-4"
           >
             <p className="text-body font-medium text-destructive-ink">
-              {explainTokenError(tokens.error)}
+              {explainTokenError(tokens.error, language)}
             </p>
             <Button variant="ghost" onClick={() => tokens.refetch()}>
-              Try again
+              {c.retry}
             </Button>
           </div>
         ) : total === 0 && !view.q ? (
           <EmptyState
             icon={<KeyRound aria-hidden="true" />}
-            title="No tokens yet"
+            title={t.emptyTitle}
             action={
               <Button variant="outline" onClick={() => setCreating(true)}>
-                Create your first token
+                {t.createFirst}
               </Button>
             }
           >
-            Create one, then give it to your agent as a bearer token. The config below shows where
-            it goes.
+            {t.emptyBody}
           </EmptyState>
         ) : (
           <TokenList
@@ -146,8 +146,8 @@ export function TokensSection({
         open={creating}
         onOpenChange={setCreating}
         onCreated={(name) => {
-          setAnnouncement(`Token ${name} created.`);
-          toast.success(`Token ${name} created`);
+          setAnnouncement(t.created(name));
+          toast.success(t.createdToast(name));
         }}
       />
 
@@ -170,21 +170,21 @@ export function TokensSection({
             }
           }}
         >
-          <ConfirmTitle>Revoke “{revoking?.name}”?</ConfirmTitle>
+          <ConfirmTitle>{t.confirmTitle(revoking?.name ?? "")}</ConfirmTitle>
           <ConfirmDescription>
-            Anything using{" "}
-            {revoking ? <code className="text-foreground">{revoking.prefix}…</code> : "it"} stops
-            working at once. This can't be undone.
+            {t.confirmDescription(
+              revoking ? <code className="text-foreground">{revoking.prefix}…</code> : undefined,
+            )}
           </ConfirmDescription>
           <p
             role="alert"
             className="mt-4 rounded-md bg-destructive-soft px-3 py-2.5 text-body font-medium text-destructive-ink empty:hidden"
           >
-            {revoke.isError && explainTokenError(revoke.error)}
+            {revoke.isError && explainTokenError(revoke.error, language)}
           </p>
           <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <ConfirmCancel asChild>
-              <Button variant="ghost">Cancel</Button>
+              <Button variant="ghost">{c.cancel}</Button>
             </ConfirmCancel>
             <ConfirmAction asChild>
               <Button
@@ -195,7 +195,7 @@ export function TokensSection({
                   if (revoking && !revoke.isPending) revoke.mutate(revoking.id);
                 }}
               >
-                Revoke
+                {t.revoke}
               </Button>
             </ConfirmAction>
           </div>
@@ -206,9 +206,10 @@ export function TokensSection({
 }
 
 function TokenSkeleton() {
+  const t = useMessages(messages).section;
   return (
     <div aria-busy="true">
-      <span className="sr-only">Loading tokens</span>
+      <span className="sr-only">{t.loading}</span>
       <div aria-hidden="true" className="divide-y divide-rule border-y border-border">
         {[0, 1, 2].map((i) => (
           <div key={i} className="flex items-start justify-between gap-3 py-4">

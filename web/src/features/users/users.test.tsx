@@ -2,8 +2,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
+import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { UsersPage } from "./index";
 import { explainUserError, validateNewUser, validatePassword } from "./model/user";
 
@@ -282,5 +283,65 @@ describe("user form rules", () => {
       fields: [],
     });
     expect(explainUserError(error)).toMatch(/identity provider/);
+  });
+});
+
+describe("users page in Polish", () => {
+  beforeEach(() => setPreferences({ language: "pl" }));
+  afterEach(() => {
+    resetPreferences();
+    vi.unstubAllGlobals();
+  });
+
+  it("names roles, states and actions in Polish", async () => {
+    stubApi();
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Użytkownicy" })).toBeInTheDocument();
+    expect(document.title).toBe("Użytkownicy - ExactDocs");
+    const list = await screen.findByRole("list", { name: "Konta użytkowników" });
+    const [ada, bob] = within(list).getAllByRole("listitem") as [HTMLElement, HTMLElement];
+    expect(ada).toHaveTextContent(/ada\s*Ty/);
+    expect(ada).toHaveTextContent(/Administrator\s*Aktywne/);
+    expect(bob).toHaveTextContent(/Użytkownik\s*Aktywne/);
+    expect(bob).toHaveTextContent("Utworzono 13 lis 2026");
+    expect(screen.getByRole("button", { name: "Sortuj według: Konto" })).toBeInTheDocument();
+    expect(screen.getByText("Wyświetlono 2 z 2")).toBeInTheDocument();
+
+    await userEvent.click(within(bob).getByRole("button", { name: "Wyłącz konto bob" }));
+    const confirm = await screen.findByRole("alertdialog");
+    expect(within(confirm).getByText("Wyłączyć konto „bob”?")).toBeInTheDocument();
+    expect(within(confirm).getByRole("button", { name: "Wyłącz" })).toBeInTheDocument();
+  });
+
+  it("checks a new account's password in Polish", async () => {
+    stubApi();
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Nowy użytkownik" }));
+    const dialog = await screen.findByRole("dialog", { name: "Nowy użytkownik" });
+    await userEvent.type(within(dialog).getByLabelText("Nazwa użytkownika"), "carol");
+    await userEvent.type(within(dialog).getByLabelText("Hasło"), "short");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Utwórz użytkownika" }));
+    expect(within(dialog).getByLabelText("Hasło")).toHaveAccessibleDescription(
+      "Co najmniej 12 znaków. Użyj co najmniej 12 znaków.",
+    );
+    expect(within(dialog).getByRole("option", { name: "Administrator" })).toBeInTheDocument();
+  });
+
+  it("explains refusals in Polish, keeping the server's reason", () => {
+    expect(
+      explainUserError(new HttpError(409, "/v1/users", { error: "username_taken" }), "pl"),
+    ).toBe("Inne konto ma już tę nazwę użytkownika. Wybierz inną.");
+    const invalid = new HttpError(422, "/v1/users", {
+      error: "validation_error",
+      detail: "request is invalid",
+      fields: [{ loc: ["body", "password"], msg: "Value error, too short", type: "value_error" }],
+    });
+    expect(explainUserError(invalid, "pl")).toBe(
+      "To hasło jest niedozwolone: Value error, too short.",
+    );
+    expect(validatePassword("pass", "other", "pl")).toEqual({
+      password: "Użyj co najmniej 12 znaków.",
+      confirm: "Hasła się różnią.",
+    });
   });
 });

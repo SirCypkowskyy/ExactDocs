@@ -1,5 +1,7 @@
 import type { components } from "@/shared/lib/api-schema";
 import { HttpError } from "@/shared/lib/http";
+import { currentLanguage, type Language } from "@/shared/lib/i18n";
+import { messages } from "../messages";
 
 export type Token = components["schemas"]["TokenSummary"];
 export type TokenGrant = components["schemas"]["TokenGrant"];
@@ -9,14 +11,9 @@ export const MAX_TOKENS = 50;
 /** `CreateTokenCommand.name` maxLength in openapi.json. */
 export const MAX_NAME_LENGTH = 256;
 
-export const EXPIRY_CHOICES = [
-  { value: "never", label: "Never" },
-  { value: "7", label: "In 7 days" },
-  { value: "30", label: "In 30 days" },
-  { value: "90", label: "In 90 days" },
-  { value: "365", label: "In a year" },
-] as const;
-export type ExpiryChoice = (typeof EXPIRY_CHOICES)[number]["value"];
+/** The expiry choices, in the order the form offers them; their words are in the catalogue. */
+export const EXPIRY_CHOICES = ["never", "7", "30", "90", "365"] as const;
+export type ExpiryChoice = (typeof EXPIRY_CHOICES)[number];
 
 /** The `expires_at` to send (UTC, in the future), or nothing for a token that never expires. */
 export function expiresAt(choice: ExpiryChoice, now = Date.now()): string | undefined {
@@ -26,16 +23,13 @@ export function expiresAt(choice: ExpiryChoice, now = Date.now()): string | unde
 export const isExpired = (t: Token, now = Date.now()) =>
   t.expires_at !== null && Date.parse(t.expires_at) <= now;
 
-export function explainTokenError(error: unknown): string {
-  if (!(error instanceof HttpError)) {
-    return "Can't reach the server. Check your connection and try again.";
-  }
-  if (error.code === "too_many_tokens") {
-    return `You have ${MAX_TOKENS} tokens, the most an account can hold. Revoke one you no longer use first.`;
-  }
-  if (error.status === 401) return "Your session ended. Sign in again to manage tokens.";
-  if (error.status === 422) return "That name or expiry isn't accepted. Check them and try again.";
-  return `Something went wrong (${error.status}). Try again.`;
+export function explainTokenError(error: unknown, language: Language = currentLanguage()): string {
+  const t = messages[language].errors;
+  if (!(error instanceof HttpError)) return t.offline;
+  if (error.code === "too_many_tokens") return t.tooMany(MAX_TOKENS);
+  if (error.status === 401) return t.sessionEnded;
+  if (error.status === 422) return t.invalid;
+  return t.other(error.status);
 }
 
 /** The session cookie is gone: nothing here can work until the user signs in again. */

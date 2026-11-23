@@ -5,18 +5,17 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { useEffect, useEffectEvent, useId, useState } from "react";
-import { UI_LOCALE } from "@/shared/lib/time";
+import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
+import { mediumDate } from "@/shared/lib/time";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { EmptyState } from "@/shared/ui/page";
 import { SelectField } from "@/shared/ui/select-field";
 import { Skeleton } from "@/shared/ui/skeleton";
+import { messages } from "../messages";
 import type { TokensView } from "../model/list-view";
 import { isExpired, type Token } from "../model/token";
-
-const date = new Intl.DateTimeFormat(UI_LOCALE, { dateStyle: "medium" });
-const when = (iso: string) => date.format(new Date(iso));
 
 /** Sorting is done by the API; the table holds the sort state the URL gives it. */
 const columnDefs: ColumnDef<Token>[] = [
@@ -55,6 +54,10 @@ export function TokenList({
   onRevoke,
 }: TokenListProps) {
   const id = useId();
+  const language = useLanguage();
+  const t = useMessages(messages).list;
+  const c = useMessages(common);
+  const when = (iso: string) => mediumDate(iso, language);
   const [text, setText] = useState(view.q ?? "");
   const commit = useEffectEvent((value: string) => {
     if ((view.q ?? "") !== value.trim()) onView({ ...view, q: value.trim() || undefined });
@@ -83,35 +86,35 @@ export function TokenList({
       <search className="mb-4 flex flex-wrap items-end gap-3">
         <div className="flex min-w-0 flex-1 basis-60 flex-col gap-2">
           <label htmlFor={`${id}-q`} className="text-body font-medium">
-            Find a token
+            {t.find}
           </label>
           <Input
             id={`${id}-q`}
             type="search"
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Name"
+            placeholder={t.namePlaceholder}
           />
         </div>
         <div className="w-52">
           <SelectField
             id={`${id}-sort`}
-            label="Sort by"
+            label={t.sortBy}
             value={specOf(table.getState().sorting)}
             onChange={(e) => table.setSorting(sortingOf(e.target.value))}
           >
-            <option value="-created_at">Newest first</option>
-            <option value="created_at">Oldest first</option>
-            <option value="name">Name, A to Z</option>
-            <option value="-name">Name, Z to A</option>
-            <option value="-last_used_at">Recently used</option>
-            <option value="expires_at">No expiry, then soonest</option>
+            <option value="-created_at">{t.sort.newest}</option>
+            <option value="created_at">{t.sort.oldest}</option>
+            <option value="name">{t.sort.nameAsc}</option>
+            <option value="-name">{t.sort.nameDesc}</option>
+            <option value="-last_used_at">{t.sort.recentlyUsed}</option>
+            <option value="expires_at">{t.sort.expiry}</option>
           </SelectField>
         </div>
       </search>
       {tokens.length === 0 ? (
-        <EmptyState title="No tokens match" className="max-w-2xl">
-          <p>No token name contains “{view.q}”.</p>
+        <EmptyState title={t.noMatchTitle} className="max-w-2xl">
+          <p>{t.noMatch(view.q ?? "")}</p>
           <Button
             variant="ghost"
             className="mt-3"
@@ -120,12 +123,12 @@ export function TokenList({
               onView({ sort: view.sort });
             }}
           >
-            Clear search
+            {c.clearSearch}
           </Button>
         </EmptyState>
       ) : (
         <>
-          <ul aria-label="API tokens" className="divide-y divide-rule border-y border-border">
+          <ul aria-label={t.label} className="divide-y divide-rule border-y border-border">
             {table.getRowModel().rows.map(({ original: token }) => {
               const expired = isExpired(token);
               return (
@@ -146,24 +149,22 @@ export function TokenList({
                     </p>
                     <p className="mt-0.5 text-small text-muted-foreground [overflow-wrap:anywhere]">
                       {token.library_ids == null
-                        ? "All libraries you can access"
+                        ? t.allLibraries
                         : token.library_ids.length === 0
-                          ? "No libraries"
+                          ? t.noLibraries
                           : token.library_ids.join(", ")}
                     </p>
                     <p className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-small text-muted-foreground tabular-nums">
-                      <span>Created {when(token.created_at)}</span>
+                      <span>{t.created(when(token.created_at))}</span>
                       <span className={expired ? "font-medium text-destructive" : undefined}>
                         {token.expires_at
                           ? expired
-                            ? `Expired ${when(token.expires_at)}`
-                            : `Expires ${when(token.expires_at)}`
-                          : "No expiry"}
+                            ? t.expired(when(token.expires_at))
+                            : t.expires(when(token.expires_at))
+                          : t.noExpiry}
                       </span>
                       <span>
-                        {token.last_used_at
-                          ? `Last used ${when(token.last_used_at)}`
-                          : "Never used"}
+                        {token.last_used_at ? t.lastUsed(when(token.last_used_at)) : t.neverUsed}
                       </span>
                     </p>
                   </div>
@@ -171,10 +172,10 @@ export function TokenList({
                     variant="ghost"
                     size="sm"
                     className="shrink-0 text-destructive hover:bg-destructive-soft"
-                    aria-label={`Revoke ${token.name}`}
+                    aria-label={t.revokeNamed(token.name)}
                     onClick={() => onRevoke(token)}
                   >
-                    Revoke
+                    {t.revoke}
                   </Button>
                 </li>
               );
@@ -186,12 +187,10 @@ export function TokenList({
             )}
           </ul>
           <div className="flex items-center gap-3 pt-4 text-small text-muted-foreground">
-            <p className="num">
-              Showing {tokens.length} of {total}
-            </p>
+            <p className="num">{t.showing(tokens.length, total)}</p>
             {hasMore && (
               <Button variant="outline" onClick={onLoadMore} disabled={loadingMore}>
-                Load more
+                {t.loadMore}
               </Button>
             )}
           </div>

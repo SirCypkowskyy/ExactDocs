@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
+import { useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { parseTags, sameTag, toggleTag, visibleTags } from "../lib/tags";
+import { messages } from "./messages";
 
 interface TagChipsProps {
   /** The version's tags with article counts, most used first. */
@@ -33,6 +35,7 @@ export function TagChips({
   trailing,
   fixedRow = false,
 }: TagChipsProps) {
+  const t = useMessages(messages).tags;
   const selected = parseTags(value);
   const counts = new Map(facets.map((f) => [f.tag.toLowerCase(), f.count]));
   const shown = visibleTags(
@@ -42,7 +45,7 @@ export function TagChips({
   if (!loading && shown.length === 0) return null;
   return (
     <fieldset className="min-w-0">
-      <legend className="sr-only">Filter by tag</legend>
+      <legend className="sr-only">{t.filter}</legend>
       <div
         className={cn(
           "mb-1.5 flex items-center justify-between gap-2 text-body font-medium text-muted-foreground",
@@ -51,7 +54,7 @@ export function TagChips({
           !(fixedRow || trailing) && "max-lg:hidden",
         )}
       >
-        <span aria-hidden="true">Filter by tag</span>
+        <span aria-hidden="true">{t.filter}</span>
         {trailing}
       </div>
       {/* Padding inside the scroller keeps the focus and pressed rings from being clipped. */}
@@ -71,7 +74,7 @@ export function TagChips({
                     "inline-flex h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-3 text-body outline-none transition-[background-color,transform] duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.97] lg:h-8 lg:px-2.5",
                     on
                       ? "bg-route text-route-foreground"
-                      : "bg-secondary text-secondary-foreground [@media(hover:hover)]:hover:bg-accent",
+                      : "bg-secondary text-secondary-foreground can-hover:hover:bg-accent",
                   )}
                 >
                   {tag}
@@ -83,16 +86,14 @@ export function TagChips({
                         on ? "text-route-foreground/75" : "text-muted-foreground",
                       )}
                     >
-                      {count}
+                      {t.count(count)}
                     </span>
                   )}
                 </button>
               );
             })}
       </div>
-      {truncated && (
-        <p className="mt-1.5 text-small text-muted-foreground">Showing the most used tags only.</p>
-      )}
+      {truncated && <p className="mt-1.5 text-small text-muted-foreground">{t.truncated}</p>}
     </fieldset>
   );
 }

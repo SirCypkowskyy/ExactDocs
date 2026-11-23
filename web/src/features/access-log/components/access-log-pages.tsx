@@ -1,8 +1,10 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { useMessages } from "@/shared/lib/i18n";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { accessLogQueryOptions, libraryAccessLogQueryOptions } from "../api/access-log-query";
+import { messages } from "../messages";
 import type { AccessLogView } from "../model/access-log";
 import { AccessLogList } from "./access-log-list";
 
@@ -26,20 +28,21 @@ export function LibraryAccessLogPage({
   onView = ignore,
 }: ViewProps & { owner: string; repo: string }) {
   const id = `/${owner}/${repo}`;
-  const heading = usePageTitle(`${id} access log`);
+  const t = useMessages(messages).pages;
+  const heading = usePageTitle(t.libraryTitle(id));
   const log = useInfiniteQuery(libraryAccessLogQueryOptions(owner, repo, view));
   return (
     <Page>
       <PageHeader
         headingRef={heading}
-        title="Access log"
-        description="Who created, shared, unshared or handed over this library, and when. Newest first."
+        title={t.title}
+        description={t.libraryDescription}
         above={
-          <nav aria-label="Breadcrumb" className="text-body text-muted-foreground">
+          <nav aria-label={t.breadcrumb} className="text-body text-muted-foreground">
             <ol className="flex flex-wrap items-center gap-x-1.5">
               <li>
                 <Link to="/" className={crumb}>
-                  Libraries
+                  {t.libraries}
                 </Link>
               </li>
               <li aria-hidden="true">/</li>
@@ -59,12 +62,12 @@ export function LibraryAccessLogPage({
                   params={{ owner, repo }}
                   className={crumb}
                 >
-                  Sharing
+                  {t.sharing}
                 </Link>
               </li>
               <li aria-hidden="true">/</li>
               <li aria-current="page" className="text-foreground">
-                Access log
+                {t.title}
               </li>
             </ol>
           </nav>
@@ -77,15 +80,12 @@ export function LibraryAccessLogPage({
 
 /** Every library's access log, removed libraries included: the operators' page. */
 export function AccessLogPage({ view = NO_VIEW, onView = ignore }: ViewProps) {
-  const heading = usePageTitle("Access log");
+  const t = useMessages(messages).pages;
+  const heading = usePageTitle(t.title);
   const log = useInfiniteQuery(accessLogQueryOptions(view));
   return (
     <Page>
-      <PageHeader
-        headingRef={heading}
-        title="Access log"
-        description="Every library's creations, role changes, ownership transfers and removals, with who made them and when. Removed libraries keep their log here. Newest first."
-      />
+      <PageHeader headingRef={heading} title={t.title} description={t.description} />
       <AccessLogList log={log} view={view} onView={onView} everyLibrary />
     </Page>
   );

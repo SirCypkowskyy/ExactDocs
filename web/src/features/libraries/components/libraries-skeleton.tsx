@@ -1,15 +1,18 @@
+import { useMessages } from "@/shared/lib/i18n";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { Skeleton } from "@/shared/ui/skeleton";
+import { listMessages } from "../messages/list";
 
 const rows = ["a", "b", "c", "d", "e"];
 
 /** The list's final layout with grey bars where the values will be, so nothing jumps when they land. */
 export function LibrariesSkeleton() {
+  const t = useMessages(listMessages);
   return (
     <Page className="pending-in" aria-busy="true">
-      <PageHeader title="Libraries" description={<Skeleton className="h-5 w-24" />} />
+      <PageHeader title={t.title} description={<Skeleton className="h-5 w-24" />} />
       <p role="status" className="sr-only">
-        Loading libraries
+        {t.loading}
       </p>
       <ul aria-hidden="true" className="divide-y divide-rule">
         {rows.map((key) => (

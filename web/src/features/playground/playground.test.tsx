@@ -2,7 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Suspense } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { TestRouter } from "@/shared/lib/test-router";
 import { PlaygroundPage } from "./index";
 import {
@@ -406,5 +407,77 @@ describe("playground model", () => {
 
   it("explains a fallback in a sentence", () => {
     expect(fallbackSentence("embedding_unavailable")).toMatch(/embedding model failed/);
+  });
+});
+
+describe("playground in Polish", () => {
+  beforeEach(() => setPreferences({ language: "pl" }));
+  afterEach(() => {
+    resetPreferences();
+    vi.unstubAllGlobals();
+  });
+
+  it("labels the form, the results and the fallback in Polish", async () => {
+    serve((url) =>
+      Response.json(
+        result(
+          url.searchParams.get("mode") ?? "bm25",
+          [
+            hit("/acme/payments", { bm25_rank: 1, vector_rank: 3 }),
+            hit("/acme/payments", { chunk_id: "c-2", bm25_rank: 2 }),
+          ],
+          { fallback_reason: "embedding_in_progress" },
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Piaskownica wyszukiwania" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Wszystkie biblioteki" })).toBeChecked();
+    await user.click(await screen.findByLabelText("/acme/payments"));
+    await user.type(screen.getByLabelText("Zapytanie"), "retry");
+    expect(screen.getByLabelText("Tryb")).toHaveValue("hybrid");
+    expect(screen.getByLabelText("Porównaj dwa tryby obok siebie")).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Szukaj" }));
+
+    const list = await screen.findByRole("list", { name: "Wyniki: Hybrydowe (BM25 + wektory)" });
+    const [first] = within(list).getAllByRole("listitem");
+    expect(within(first as HTMLElement).getByText("wektorowe #3")).toBeInTheDocument();
+    expect(within(first as HTMLElement).getByText("punktacja 0,5000")).toBeInTheDocument();
+    expect(screen.getByText(/2 wyniki z/)).toHaveTextContent(
+      /^Odpowiedział tryb hybrid · 2 wyniki z 1 biblioteki$/,
+    );
+    expect(
+      screen.getByText(/Zamiast tego odpowiedział BM25: Żadna z wybranych bibliotek/),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the agent's progress, answer and spend in Polish", async () => {
+    serve(() => Response.json(result("bm25", [])), {
+      availability: { available: true, reason: null, max_tool_calls: 20 },
+      stream: () => events(["answer", answered()]),
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(await screen.findByLabelText("Zapytanie"), "retry");
+    await user.selectOptions(
+      screen.getByLabelText("Tryb"),
+      await screen.findByRole("option", { name: "Odpowiedź agenta (LLM czyta i odpowiada)" }),
+    );
+    expect(screen.getByText(/LLM przeszukuje i czyta wybrane biblioteki/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Zapytaj agenta" }));
+
+    expect(await screen.findByText("Use RetryPolicy.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Odpowiedź agenta" })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /^3 z 20 wywołań narzędzi · 2 żądania do modelu, tokeny: 1200 wejściowe \/ 80 wyjściowe, 0,0123\sUSD$/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Źródła" })).toBeInTheDocument();
   });
 });

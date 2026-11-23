@@ -3,10 +3,12 @@ import { Link, useNavigate, useRouter, useRouterState } from "@tanstack/react-ro
 import { ChevronsUpDown } from "lucide-react";
 import { Popover } from "radix-ui";
 import { type KeyboardEvent, type MouseEvent, useRef, useState } from "react";
+import { useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { control, controlHeight, trigger } from "@/shared/ui/recipes";
 import { Spinner } from "@/shared/ui/spinner";
 import { pathInVersionQueryOptions } from "../api/browse-queries";
+import { messages } from "../messages";
 import { type BrowseSearch, orderVersions, shortSha, type Version } from "../model/browse";
 import { DefaultPin } from "./default-pin";
 
@@ -60,7 +62,8 @@ export function VersionPicker({
   pinned,
   keep,
 }: VersionPickerProps) {
-  const defaultLabel = pinned ? "pinned default" : "default";
+  const t = useMessages(messages).versions;
+  const defaultLabel = pinned ? t.pinnedDefault : t.default;
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
   /** The version a click waits to switch to, and the page it was clicked on. */
@@ -128,9 +131,7 @@ export function VersionPicker({
     >
       <Popover.Trigger
         aria-label={
-          waitingFor === null
-            ? `Version: ${current.ref}. Change version`
-            : `Version: ${current.ref}, switching to ${waitingFor.ref}. Change version`
+          waitingFor === null ? t.trigger(current.ref) : t.switching(current.ref, waitingFor.ref)
         }
         aria-busy={waitingFor !== null || undefined}
         className={cn(trigger, "w-full data-[state=open]:border-ring")}
@@ -166,7 +167,7 @@ export function VersionPicker({
           sideOffset={6}
           collisionPadding={12}
           onKeyDown={onKeyDown}
-          className="z-50 w-[min(22rem,calc(100vw-1.5rem))] origin-(--radix-popover-content-transform-origin) rounded-lg border border-border bg-popover text-popover-foreground shadow-lg outline-none transition-none data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-safe:data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:duration-(--dur) data-[state=open]:ease-(--ease-out) data-[state=closed]:duration-(--dur-fast)"
+          className="z-50 w-[min(22rem,calc(100vw-1.5rem))] origin-(--radix-popover-content-transform-origin) rounded-lg border border-border bg-popover text-popover-foreground shadow-float outline-none transition-none data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-safe:data-[state=open]:zoom-in-[0.97] data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:duration-(--dur-menu) data-[state=open]:ease-(--ease-out) data-[state=closed]:duration-(--dur-exit)"
         >
           {versions.length >= FILTER_FROM && (
             <div className="border-b border-rule p-2">
@@ -174,8 +175,8 @@ export function VersionPicker({
                 type="search"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
-                placeholder={`Filter ${versions.length} versions`}
-                aria-label="Filter versions"
+                placeholder={t.filterPlaceholder(versions.length)}
+                aria-label={t.filter}
                 autoComplete="off"
                 spellCheck={false}
                 className={cn(control, controlHeight, "px-3 font-mono placeholder:font-sans")}
@@ -184,7 +185,7 @@ export function VersionPicker({
           )}
           <ul
             ref={list}
-            aria-label="Versions"
+            aria-label={t.list}
             className="max-h-[min(22rem,60dvh)] overflow-y-auto p-1"
           >
             {shown.map((v, i) => {
@@ -214,7 +215,7 @@ export function VersionPicker({
                       "relative flex min-h-11 items-center gap-2.5 rounded-md px-2.5 py-1 text-body outline-none transition-colors duration-(--dur-fast) before:absolute before:top-0 before:bottom-0 before:left-[15px] before:w-0.5 before:bg-route/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring lg:min-h-9",
                       i === 0 && "before:top-1/2",
                       i === shown.length - 1 && "before:bottom-1/2",
-                      isCurrent ? "bg-route-soft" : "[@media(hover:hover)]:hover:bg-accent",
+                      isCurrent ? "bg-route-soft" : "can-hover:hover:bg-accent",
                     )}
                   >
                     <Station current={isCurrent} isDefault={v.is_default} />
@@ -224,7 +225,7 @@ export function VersionPicker({
                         <span className="text-small text-muted-foreground">{defaultLabel}</span>
                       )}
                       {v.kind !== "tag" && (
-                        <span className="text-small text-muted-foreground">{v.kind}</span>
+                        <span className="text-small text-muted-foreground">{t.kind[v.kind]}</span>
                       )}
                     </span>
                     {resolved[i]?.isFetching && (
@@ -240,7 +241,7 @@ export function VersionPicker({
             })}
             {shown.length === 0 && (
               <li className="px-3 py-4 text-body text-muted-foreground">
-                No version matches "{filter.trim()}".
+                {t.noMatch(filter.trim())}
               </li>
             )}
           </ul>

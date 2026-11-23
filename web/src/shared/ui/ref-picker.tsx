@@ -1,6 +1,7 @@
 import { ChevronDown, CircleAlert } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import type { Credential } from "@/shared/lib/credentials";
+import { common, useMessages } from "@/shared/lib/i18n";
 import {
   decodeChoice,
   encodeChoice,
@@ -10,6 +11,7 @@ import {
 } from "@/shared/lib/refs";
 import { useRepositoryRefs } from "@/shared/lib/use-repository-refs";
 import { Input } from "./input";
+import { messages } from "./messages";
 import { select } from "./recipes";
 import { Skeleton } from "./skeleton";
 
@@ -55,6 +57,7 @@ function Select({
   explicit: boolean | undefined;
   onChoice: (c: RefChoice) => void;
 }) {
+  const t = useMessages(messages).refs;
   const [query, setQuery] = useState("");
   const left = new Set(exclude);
   const refs = {
@@ -71,13 +74,13 @@ function Select({
       {many && (
         <div className="mb-1">
           <label htmlFor="ref-filter" className="sr-only">
-            Filter branches and tags
+            {t.filter}
           </label>
           <Input
             id="ref-filter"
             type="search"
             autoComplete="off"
-            placeholder="Filter branches and tags"
+            placeholder={t.filter}
             value={query}
             onKeyDown={(e) => {
               // Enter here means "apply the filter", never "add the library".
@@ -100,7 +103,7 @@ function Select({
           />
           <p role="status" className="mt-1 min-h-5 text-body text-muted-foreground tabular-nums">
             {query.trim() &&
-              `${branches.length + tags.length} of ${refs.branches.length + refs.tags.length} match`}
+              t.matches(branches.length + tags.length, refs.branches.length + refs.tags.length)}
           </p>
         </div>
       )}
@@ -115,15 +118,13 @@ function Select({
         >
           {explicit ? (
             <option value="none" disabled>
-              Choose a branch or tag…
+              {t.choose}
             </option>
           ) : (
-            <option value="default">
-              Default branch{refs.default_branch ? ` (${refs.default_branch})` : ""}
-            </option>
+            <option value="default">{t.defaultBranch(refs.default_branch)}</option>
           )}
           {branches.length > 0 && (
-            <optgroup label={`Branches (${branches.length})`}>
+            <optgroup label={t.branches(branches.length)}>
               {branches.map((b) => (
                 <option key={b.name} value={`branch:${b.name}`}>
                   {b.name}
@@ -132,7 +133,7 @@ function Select({
             </optgroup>
           )}
           {tags.length > 0 && (
-            <optgroup label={`Tags (${tags.length})`}>
+            <optgroup label={t.tags(tags.length)}>
               {tags.map((t) => (
                 <option key={t.name} value={`tag:${t.name}`}>
                   {t.name}
@@ -145,18 +146,14 @@ function Select({
             ![...branches, ...tags].some((r) => r.name === choice.name) && (
               <option value={encodeChoice(choice)}>{choice.name}</option>
             )}
-          <option value="other">Another ref or commit…</option>
+          <option value="other">{t.another}</option>
         </select>
         <ChevronDown
           aria-hidden="true"
           className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-muted-foreground"
         />
       </div>
-      {none && (
-        <p className="mt-2 text-body text-muted-foreground">
-          Nothing matches “{query.trim()}”. Pick “Another ref or commit…” to type it.
-        </p>
-      )}
+      {none && <p className="mt-2 text-body text-muted-foreground">{t.noMatch(query.trim())}</p>}
     </>
   );
 }
@@ -171,18 +168,19 @@ function Unavailable({
   fetching: boolean;
   onRetry: () => unknown;
 }) {
+  const t = useMessages(messages).refs;
+  const c = useMessages(common);
   if (why) return <p className="text-body text-muted-foreground">{why}</p>;
   return (
     <p className="text-body text-muted-foreground">
-      Couldn't load branches and tags. Type a version below, or leave it empty for the default
-      branch.{" "}
+      {t.unavailable}{" "}
       <button
         type="button"
         onClick={() => void onRetry()}
         aria-disabled={fetching}
         className="min-h-11 rounded underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
       >
-        Try again
+        {c.retry}
       </button>
     </p>
   );
@@ -211,6 +209,7 @@ export function RefPicker({
     refetch,
     isFetching,
   } = useRepositoryRefs(url, credential, !unlisted);
+  const t = useMessages(messages).refs;
   // Without a list the only way to name a version is to type it, so the typed value must count.
   useEffect(() => {
     if (isError) onUnavailable();
@@ -228,12 +227,12 @@ export function RefPicker({
   return (
     <div className="flex flex-col gap-1.5">
       <label htmlFor={data ? "ref" : "ref-typed"} className="text-body font-medium">
-        Version to import
+        {t.label}
       </label>
       {isPending && <Skeleton className="h-11" />}
       {isPending && (
         <p className="sr-only" role="status">
-          Loading branches and tags
+          {t.loading}
         </p>
       )}
       {isError && (
@@ -259,8 +258,8 @@ export function RefPicker({
           value={typed}
           autoComplete="off"
           spellCheck={false}
-          placeholder="v1.4.0, release/2, or a commit SHA"
-          aria-label="Branch, tag or commit"
+          placeholder={t.typedPlaceholder}
+          aria-label={t.typedLabel}
           aria-invalid={error ? true : undefined}
           aria-describedby={["ref-hint", error && "ref-error"].filter(Boolean).join(" ")}
           onChange={(e) => onTyped(e.target.value)}
@@ -281,13 +280,10 @@ export function RefPicker({
               aria-hidden="true"
               className="mt-0.5 size-4 shrink-0 text-muted-foreground"
             />
-            <span>
-              Only the first 1000 branches and 1000 tags are listed. Pick “Another ref or commit…”
-              for the rest.
-            </span>
+            <span>{t.truncated}</span>
           </>
         ) : (
-          "The version is pinned to the commit it points to today, so the docs stay exact."
+          t.pinned
         )}
       </p>
       {message}

@@ -2,8 +2,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { HttpError } from "@/shared/lib/http";
+import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { TokensSection } from "./index";
-import { expiresAt, MAX_TOKENS } from "./model/token";
+import { expiresAt, explainTokenError, MAX_TOKENS } from "./model/token";
 
 const SECRET = "exd_SECRET_VALUE_0123456789";
 const row = (n: number, extra = {}) => ({
@@ -327,5 +329,61 @@ describe("tokens", () => {
         ).length,
       ).toBeGreaterThan(1),
     );
+  });
+});
+
+describe("tokens in Polish", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setPreferences({ language: "pl" });
+  });
+  afterEach(() => {
+    resetPreferences();
+    vi.unstubAllGlobals();
+  });
+
+  it("lists tokens with Polish words, dates and counts", async () => {
+    stubApi([
+      row(1, { expires_at: "2099-01-01T00:00:00Z", library_ids: [] }),
+      row(2, { last_used_at: "2026-11-02T10:00:00Z" }),
+    ]);
+    renderSection();
+    expect(await screen.findByRole("heading", { name: "Tokeny API" })).toBeInTheDocument();
+    const list = await screen.findByRole("list", { name: "Tokeny API" });
+    const [first, second] = within(list).getAllByRole("listitem");
+    expect(first).toHaveTextContent("Utworzono 1 lis 2026");
+    expect(first).toHaveTextContent("Wygasa 1 sty 2099");
+    expect(first).toHaveTextContent("Nigdy nieużywany");
+    expect(first).toHaveTextContent("Brak bibliotek");
+    expect(second).toHaveTextContent("Bezterminowy");
+    expect(second).toHaveTextContent("Ostatnio użyty 2 lis 2026");
+    expect(second).toHaveTextContent("Wszystkie biblioteki, do których masz dostęp");
+    expect(screen.getByText("Wyświetlono 2 z 2")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Konfiguracja klienta MCP" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Unieważnij token 1" }));
+    const confirm = await screen.findByRole("alertdialog");
+    expect(within(confirm).getByText("Unieważnić token „token 1”?")).toBeInTheDocument();
+    expect(confirm).toHaveTextContent("od razu przestanie działać. Tego nie można cofnąć.");
+    expect(within(confirm).getByRole("button", { name: "Anuluj" })).toBeInTheDocument();
+  });
+
+  it("asks for a name in Polish and offers Polish expiry choices", async () => {
+    stubApi();
+    renderSection();
+    expect(await screen.findByText("Nie ma jeszcze tokenów")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Nowy token" }));
+    const dialog = await screen.findByRole("dialog", { name: "Nowy token API" });
+    expect(within(dialog).getByRole("option", { name: "Za 30 dni" })).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Utwórz token" }));
+    expect(
+      within(dialog).getByText("Nazwij token od miejsca, w którym będzie używany, np. „laptop”."),
+    ).toBeInTheDocument();
+  });
+
+  it("explains the token limit with a Polish plural", () => {
+    const full = new HttpError(409, "/v1/tokens", { error: "too_many_tokens" });
+    expect(explainTokenError(full, "pl")).toMatch(/^Masz 50 tokenów, czyli najwięcej/);
+    expect(explainTokenError(full, "en")).toMatch(/^You have 50 tokens, the most/);
   });
 });

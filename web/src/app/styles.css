@@ -1,51 +1,80 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "@fontsource-variable/ibm-plex-sans";
-@import "@fontsource-variable/ibm-plex-sans/wght-italic.css";
-@import "@fontsource/ibm-plex-mono/400.css";
-@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource-variable/schibsted-grotesk";
+@import "@fontsource-variable/schibsted-grotesk/wght-italic.css";
+@import "@fontsource-variable/jetbrains-mono";
+/* Readable faces offered under Interface preferences; their files load only when chosen. */
+@import "@fontsource-variable/atkinson-hyperlegible-next";
+@import "@fontsource/opendyslexic/400.css";
+@import "@fontsource/opendyslexic/700.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Interface preferences (shared/lib/preferences.ts) override the system media queries, so these
+ * variants replace the media-query forms everywhere:
+ * - `fine:` a mouse or trackpad, unless the person asked for large targets (then 44 px stays);
+ * - `can-hover:` hover effects only where hover exists;
+ * - `motion-safe:` / `motion-reduce:` read data-reduce-motion, which preferences.ts sets from the
+ *   person's choice first and the OS setting second.
+ */
+@custom-variant fine {
+  @media (pointer: fine) {
+    &:where(:root:not([data-targets="large"]) *) {
+      @slot;
+    }
+  }
+}
+@custom-variant can-hover {
+  @media (hover: hover) {
+    @slot;
+  }
+}
+@custom-variant motion-safe (&:where(:root:not([data-reduce-motion]) *));
+@custom-variant motion-reduce (&:where(:root[data-reduce-motion] *));
 
 /*
  * ExactDocs design tokens. web/DESIGN.md explains each one and when to use it; components use
  * these names only (Tailwind classes generated from @theme below), never raw colours.
  *
- * The world: a cool tinted frame (the top band and the window margin) around a white working
- * sheet; ink and two greys; one route hue (deep teal) for "where you are" and progress; eight
- * line colours, one per library, used only on its round bullet.
+ * The world comes from the sign: an anthracite mole with a headlamp who finds exactly the one
+ * version you asked for. A stone frame (the band and the window margin) around a white sheet;
+ * ink and two greys for words; one light, the lamp, for "where you are". In light mode the lamp is
+ * a yellow wash behind the lit item with ink marks on it (yellow text would fail contrast); in dark
+ * mode the lamp itself draws the marks. Eight line colours, one per library, only on its bullet.
  */
 :root {
   --radius: 0.5rem; /* cards 8, controls 6, chips 4, the sheet 16 */
 
   /* Surfaces */
-  --frame: oklch(0.965 0.006 230); /* the band and the margin around the sheet */
-  --background: oklch(1 0 0); /* the sheet: where the work is */
-  --foreground: oklch(0.2 0.006 250);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.2 0.006 250);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.2 0.006 250);
-  --raised: oklch(0.973 0.004 240); /* a panel one step off the sheet: settings panels, code */
-  --muted: oklch(0.973 0.004 240);
-  --muted-foreground: oklch(0.47 0.005 250); /* 6.6:1 on white */
-  --secondary: oklch(0.948 0.004 240);
-  --secondary-foreground: oklch(0.2 0.006 250);
-  --accent: oklch(0.948 0.004 240); /* hover and the active nav pill */
-  --accent-foreground: oklch(0.2 0.006 250);
+  --frame: #f3f2ef; /* the band and the margin around the sheet: warm stone, not cream */
+  --background: #ffffff; /* the sheet: where the work is */
+  --foreground: #17171a;
+  --card: #ffffff;
+  --card-foreground: #17171a;
+  --popover: #ffffff;
+  --popover-foreground: #17171a;
+  --raised: #f7f6f4; /* a panel one step off the sheet: settings panels, code */
+  --muted: #f7f6f4;
+  --muted-foreground: #5c5d63; /* 6.6:1 on white, 5.9:1 on the frame */
+  --secondary: #efeeeb;
+  --secondary-foreground: #17171a;
+  --accent: #efeeeb; /* hover fills and open menu triggers */
+  --accent-foreground: #17171a;
 
   /* Lines: card edges, row rules, control borders (one step stronger) */
-  --border: oklch(0.925 0.004 240);
-  --rule: oklch(0.955 0.003 240);
-  --input: oklch(0.84 0.005 250);
+  --border: #e5e4e0;
+  --rule: #efeeea;
+  --input: #b9b8b3;
 
-  /* Actions: the primary is near-black; the route hue is for place, selection and progress */
-  --primary: oklch(0.2 0.006 250);
-  --primary-foreground: oklch(0.99 0 0);
-  --route: oklch(0.47 0.08 215); /* #1b6c80 */
-  --route-foreground: oklch(0.99 0 0);
-  --route-soft: oklch(0.95 0.025 215);
-  --ring: oklch(0.55 0.1 215);
+  /* Actions: the primary is anthracite; the lamp marks place, selection and progress */
+  --primary: #17171a;
+  --primary-foreground: #ffffff;
+  --lamp: #f5c542; /* the brand yellow: decorative marks only, never text on white */
+  --route: #17171a; /* marks that must read (tab rule, current station): ink in light mode */
+  --route-foreground: #ffffff;
+  --route-soft: #fcefc4; /* the lamp's wash behind the lit item; ink text on it is 15:1 */
+  --ring: #17171a;
 
   /* States: text colour and pale pill pairs */
   --positive: oklch(0.5 0.11 155);
@@ -68,11 +97,14 @@
   --line-7: oklch(0.48 0.09 120);
   --line-8: oklch(0.45 0.02 250);
 
-  /* The scrim behind a modal. */
-  --overlay: oklch(0.2 0.01 250 / 0.35);
+  /* Floating layers: the scrim, the tooltip, the one shadow (menus, popovers, dialogs only). */
+  --overlay: rgb(23 23 26 / 0.38);
+  --tip: #17171a;
+  --tip-foreground: #f6f5f2;
+  --shadow-float: 0 10px 30px -12px rgb(23 23 26 / 0.22), 0 0 0 1px rgb(23 23 26 / 0.06);
 
   /* Code: syntax roles, each 4.5:1+ on --code */
-  --code: oklch(0.973 0.004 240);
+  --code: #f7f6f4;
   --hl-comment: oklch(0.5 0.01 250);
   --hl-keyword: oklch(0.45 0.14 255);
   --hl-string: oklch(0.44 0.1 155);
@@ -81,46 +113,57 @@
   --hl-type: oklch(0.47 0.12 25);
   --hl-meta: oklch(0.47 0.01 250);
   --hl-deletion: oklch(0.47 0.16 27);
-  /* Callout tints (note, tip, warning; danger is --destructive). */
   --tint-note: oklch(0.5 0.1 250);
   --tint-tip: oklch(0.52 0.11 155);
   --tint-warning: oklch(0.6 0.13 75);
 
+  /* Type: the UI face and the literal face. Interface preferences can swap the UI face. */
+  --ui-font:
+    "Schibsted Grotesk Variable", "Schibsted Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --code-font:
+    "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo,
+    Consolas, monospace;
+
   /* Motion: short, decelerating, interruptible. Reduced motion zeroes the travel, keeps fades. */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-  --dur-fast: 120ms;
-  --dur: 180ms;
-  --dur-slow: 240ms;
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --dur-fast: 120ms; /* press, hover, colour */
+  --dur-tip: 125ms; /* tooltips */
+  --dur-menu: 150ms; /* menus, popovers, selects */
+  --dur-exit: 100ms; /* menus and tooltips leave faster than they arrive */
+  --dur: 180ms; /* rows arriving, notices, route change */
+  --dur-slow: 240ms; /* sheets, dialogs */
 
   color-scheme: light;
 }
 
-/* Dark: true neutrals, never navy; the band is darker than the sheet. */
+/* Dark: the mole's own colours. Anthracite grounds, the band darker than the sheet; the lamp draws. */
 .dark {
-  --frame: oklch(0.13 0.002 250);
-  --background: oklch(0.175 0.003 250);
-  --foreground: oklch(0.95 0.002 250);
-  --card: oklch(0.175 0.003 250);
-  --card-foreground: oklch(0.95 0.002 250);
-  --popover: oklch(0.215 0.003 250);
-  --popover-foreground: oklch(0.95 0.002 250);
-  --raised: oklch(0.205 0.003 250);
-  --muted: oklch(0.205 0.003 250);
-  --muted-foreground: oklch(0.74 0.004 250);
-  --secondary: oklch(0.245 0.003 250);
-  --secondary-foreground: oklch(0.95 0.002 250);
-  --accent: oklch(0.245 0.003 250);
-  --accent-foreground: oklch(0.97 0.002 250);
-  --border: oklch(0.27 0.003 250);
-  --rule: oklch(0.23 0.003 250);
-  --input: oklch(0.4 0.004 250);
-  --primary: oklch(0.95 0.002 250);
-  --primary-foreground: oklch(0.175 0.003 250);
-  --route: oklch(0.75 0.09 210);
-  --route-foreground: oklch(0.17 0.02 220);
-  --route-soft: oklch(0.27 0.035 215);
-  --ring: oklch(0.72 0.1 210);
+  --frame: #0e0e10;
+  --background: #17171a;
+  --foreground: #f3f1ec;
+  --card: #17171a;
+  --card-foreground: #f3f1ec;
+  --popover: #1f1f23;
+  --popover-foreground: #f3f1ec;
+  --raised: #1d1d21;
+  --muted: #1d1d21;
+  --muted-foreground: #a6a6ae;
+  --secondary: #26262b;
+  --secondary-foreground: #f3f1ec;
+  --accent: #26262b;
+  --accent-foreground: #f6f4ef;
+  --border: #2a2a30;
+  --rule: #222227;
+  --input: #4a4a52;
+  --primary: #f3f1ec;
+  --primary-foreground: #17171a;
+  --lamp: #f5c542;
+  --route: #f5c542;
+  --route-foreground: #17171a;
+  --route-soft: #3b3320;
+  --ring: #f5c542;
   --positive: oklch(0.75 0.14 155);
   --positive-soft: oklch(0.26 0.04 155);
   --positive-ink: oklch(0.82 0.12 155);
@@ -138,8 +181,11 @@
   --line-6: oklch(0.5 0.14 350);
   --line-7: oklch(0.5 0.09 120);
   --line-8: oklch(0.48 0.02 250);
-  --overlay: oklch(0.05 0 0 / 0.6);
-  --code: oklch(0.205 0.003 250);
+  --overlay: rgb(0 0 0 / 0.6);
+  --tip: #f3f1ec;
+  --tip-foreground: #17171a;
+  --shadow-float: 0 12px 32px -10px rgb(0 0 0 / 0.7), 0 0 0 1px rgb(255 255 255 / 0.07);
+  --code: #1d1d21;
   --hl-comment: oklch(0.72 0.01 250);
   --hl-keyword: oklch(0.79 0.1 255);
   --hl-string: oklch(0.8 0.11 155);
@@ -154,6 +200,95 @@
   color-scheme: dark;
 }
 
+/* ---- Interface preferences (preferences.ts puts these attributes on <html>) ---- */
+
+/* More contrast: darker secondary text and stronger edges, both themes. */
+:root[data-contrast="more"] {
+  --muted-foreground: #3f4045;
+  --border: #b4b3ae;
+  --rule: #cfcec9;
+  --input: #6f6e69;
+  --frame: #ebeae6;
+}
+:root.dark[data-contrast="more"] {
+  --muted-foreground: #d2d2d8;
+  --border: #55555e;
+  --rule: #3c3c44;
+  --input: #8a8a94;
+  --frame: #060607;
+}
+
+/* The face: a readable alternative, or the device's own. */
+:root[data-font="hyperlegible"] {
+  --ui-font:
+    "Atkinson Hyperlegible Next Variable", "Atkinson Hyperlegible Next", ui-sans-serif, system-ui,
+    sans-serif;
+}
+:root[data-font="dyslexic"] {
+  --ui-font: "OpenDyslexic", ui-sans-serif, system-ui, sans-serif;
+}
+:root[data-font="system"] {
+  --ui-font: system-ui, -apple-system, "Segoe UI", Roboto, ui-sans-serif, sans-serif;
+}
+
+/* Wide text spacing: the WCAG 1.4.12 values (line 1.5, paragraph 2em, letters 0.12em, words 0.16em). */
+:root[data-spacing="wide"]
+  :where(body)
+  :where(
+    p,
+    li,
+    dd,
+    dt,
+    td,
+    th,
+    label,
+    a,
+    span,
+    blockquote,
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    button,
+    input,
+    textarea,
+    select
+  ) {
+  /* biome-ignore lint/complexity/noImportantStyles: the person's spacing beats every size utility */
+  line-height: 1.5 !important;
+  /* biome-ignore lint/complexity/noImportantStyles: as above */
+  letter-spacing: 0.12em !important;
+  /* biome-ignore lint/complexity/noImportantStyles: as above */
+  word-spacing: 0.16em !important;
+}
+:root[data-spacing="wide"] :where(p) {
+  /* biome-ignore lint/complexity/noImportantStyles: as above */
+  margin-bottom: 2em !important;
+}
+
+/* The Interface tab previews each face in itself. */
+[data-font-preview="default"] {
+  font-family: "Schibsted Grotesk Variable", "Schibsted Grotesk", sans-serif;
+}
+[data-font-preview="hyperlegible"] {
+  font-family: "Atkinson Hyperlegible Next Variable", "Atkinson Hyperlegible Next", sans-serif;
+}
+[data-font-preview="dyslexic"] {
+  font-family: "OpenDyslexic", sans-serif;
+}
+[data-font-preview="system"] {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Every link underlined, not only the ones in running text. */
+:root[data-links="underline"] a:not([data-no-underline]) {
+  text-decoration-line: underline;
+  text-decoration-thickness: from-font;
+  text-underline-offset: 0.2em;
+}
+
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -161,6 +296,10 @@
   --radius-xl: calc(var(--radius) + 4px);
   --radius-sheet: 16px;
   --color-frame: var(--frame);
+  --color-band: var(--frame);
+  --color-band-foreground: var(--foreground);
+  --color-band-muted: var(--muted-foreground);
+  --color-band-hover: var(--accent);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -189,9 +328,14 @@
   --color-rule: var(--rule);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-lamp: var(--lamp);
   --color-route: var(--route);
   --color-route-foreground: var(--route-foreground);
   --color-route-soft: var(--route-soft);
+  --color-selection: var(--route);
+  --color-selection-soft: var(--route-soft);
+  --color-tip: var(--tip);
+  --color-tip-foreground: var(--tip-foreground);
   --color-code: var(--code);
   --color-overlay: var(--overlay);
   --color-line-1: var(--line-1);
@@ -202,10 +346,10 @@
   --color-line-6: var(--line-6);
   --color-line-7: var(--line-7);
   --color-line-8: var(--line-8);
+  --shadow-float: var(--shadow-float);
 
-  --font-sans: "IBM Plex Sans Variable", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-mono:
-    "IBM Plex Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --font-sans: var(--ui-font);
+  --font-mono: var(--code-font);
 
   /* Type scale (DESIGN.md): 12 / 13 mono / 14 / 16 / 22 / 28, plus the reader's 17 and 30. */
   --text-small: 0.75rem;
@@ -239,10 +383,9 @@
   }
   body {
     @apply bg-frame font-sans text-foreground antialiased;
-    font-feature-settings: "ss02"; /* Plex: the single-storey g reads calmer in UI text */
   }
   ::selection {
-    background: color-mix(in oklab, var(--route) 26%, transparent);
+    background: color-mix(in oklab, var(--lamp) 55%, transparent);
     color: var(--foreground);
   }
   :focus-visible {
@@ -262,7 +405,7 @@
   }
 }
 
-/* A theme switch cross-fades the whole page (theme.ts skips it under reduced motion). */
+/* A theme switch cross-fades the whole page (preferences.ts skips it under reduced motion). */
 html.theme-fade::view-transition-old(root),
 html.theme-fade::view-transition-new(root) {
   animation-duration: 180ms;
@@ -287,30 +430,31 @@ html:not(.theme-fade)::view-transition-old(root),
 html:not(.theme-fade)::view-transition-new(root) {
   animation: none;
 }
-@media (prefers-reduced-motion: reduce) {
-  ::view-transition-group(*),
-  ::view-transition-old(*),
-  ::view-transition-new(*) {
-    animation: none !important;
-  }
-  /* Dialogs, sheets and menus (shadcn, via tw-animate-css): the fade stays, the slide and zoom go. */
-  [data-state] {
-    /* biome-ignore lint/complexity/noImportantStyles: beats the utility classes that set the same variable */
-    --tw-enter-translate-x: 0 !important;
-    /* biome-ignore lint/complexity/noImportantStyles: beats the utility classes that set the same variable */
-    --tw-enter-translate-y: 0 !important;
-    /* biome-ignore lint/complexity/noImportantStyles: beats the utility classes that set the same variable */
-    --tw-enter-scale: 1 !important;
-    /* biome-ignore lint/complexity/noImportantStyles: beats the utility classes that set the same variable */
-    --tw-exit-translate-x: 0 !important;
-    /* biome-ignore lint/complexity/noImportantStyles: beats the utility classes that set the same variable */
-    --tw-exit-translate-y: 0 !important;
-    /* biome-ignore lint/complexity/noImportantStyles: beats the utility classes that set the same variable */
-    --tw-exit-scale: 1 !important;
-  }
+
+/* Reduced motion (the person's choice, else the OS): no travel or zoom anywhere. */
+:root[data-reduce-motion]::view-transition-group(*),
+:root[data-reduce-motion]::view-transition-old(*),
+:root[data-reduce-motion]::view-transition-new(*) {
+  /* biome-ignore lint/complexity/noImportantStyles: beats every transition rule above */
+  animation: none !important;
+}
+/* Dialogs, sheets and menus (shadcn, via tw-animate-css): the fade stays, the slide and zoom go. */
+:root[data-reduce-motion] [data-state] {
+  /* biome-ignore lint/complexity/noImportantStyles: beats the utility classes that set the same variable */
+  --tw-enter-translate-x: 0 !important;
+  /* biome-ignore lint/complexity/noImportantStyles: as above */
+  --tw-enter-translate-y: 0 !important;
+  /* biome-ignore lint/complexity/noImportantStyles: as above */
+  --tw-enter-scale: 1 !important;
+  /* biome-ignore lint/complexity/noImportantStyles: as above */
+  --tw-exit-translate-x: 0 !important;
+  /* biome-ignore lint/complexity/noImportantStyles: as above */
+  --tw-exit-translate-y: 0 !important;
+  /* biome-ignore lint/complexity/noImportantStyles: as above */
+  --tw-exit-scale: 1 !important;
 }
 
-@media (prefers-reduced-motion: no-preference) {
+:root:not([data-reduce-motion]) {
   /* One entrance for the auth form; elsewhere pages arrive through the view transition. */
   .rise {
     animation: rise var(--dur-slow) var(--ease-out) backwards;
@@ -343,7 +487,7 @@ html:not(.theme-fade)::view-transition-new(root) {
 
 /* Reduced motion: no rotation, but the busy ring still breathes so it never looks broken, and what
    appears in place still fades in (opacity only) so a new row or notice does not just pop. */
-@media (prefers-reduced-motion: reduce) {
+:root[data-reduce-motion] {
   .fade-in,
   .reveal,
   .row-in,

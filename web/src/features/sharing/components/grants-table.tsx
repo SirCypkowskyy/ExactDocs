@@ -1,11 +1,13 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { ChevronDown, Users } from "lucide-react";
-import { createContext, use, useId } from "react";
+import { createContext, use, useId, useMemo } from "react";
+import { common, useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import { DataTable, ListFooter, SearchFilter, useServerTable } from "@/shared/ui/data-table";
 import { pill, pillTone, select } from "@/shared/ui/recipes";
 import { SelectField } from "@/shared/ui/select-field";
+import { messages, roleLabel, type SharingMessages } from "../messages";
 import {
   type CallerRole,
   canManage,
@@ -13,8 +15,6 @@ import {
   type GrantedRole,
   givableRoles,
   grantKey,
-  KIND_LABELS,
-  ROLE_LABELS,
 } from "../model/grant";
 import { GRANT_KINDS, GRANT_ROLES, parseSharingView, type SharingView } from "../model/grants-view";
 
@@ -35,6 +35,7 @@ const RowContext = createContext<RowActions>({
 });
 
 function Subject({ grant }: { grant: Grant }) {
+  const t = useMessages(messages);
   return (
     <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
       <span
@@ -46,18 +47,19 @@ function Subject({ grant }: { grant: Grant }) {
         {grant.subject}
       </span>
       {grant.kind === "group" && (
-        <span className={cn(pill, pillTone.neutral, "md:hidden")}>Group</span>
+        <span className={cn(pill, pillTone.neutral, "md:hidden")}>{t.kinds.group}</span>
       )}
     </span>
   );
 }
 
 function RoleCell({ grant }: { grant: Grant }) {
+  const t = useMessages(messages);
   const { caller, busy, onRole } = use(RowContext);
   if (!canManage(grant, caller)) {
     return (
       <span className={cn(pill, grant.role === "creator" ? pillTone.route : pillTone.neutral)}>
-        {ROLE_LABELS[grant.role] ?? grant.role}
+        {roleLabel(t, grant.role)}
       </span>
     );
   }
@@ -65,7 +67,7 @@ function RoleCell({ grant }: { grant: Grant }) {
   return (
     <span className="relative -my-1.5 inline-block w-40">
       <select
-        aria-label={`Role of ${grant.subject}`}
+        aria-label={t.table.roleOf(grant.subject)}
         value={grant.role}
         disabled={busy === grantKey(grant)}
         onChange={(e) => onRole(grant, e.target.value as GrantedRole)}
@@ -73,7 +75,7 @@ function RoleCell({ grant }: { grant: Grant }) {
       >
         {roles.map((role) => (
           <option key={role} value={role}>
-            {ROLE_LABELS[role]}
+            {t.roles[role]}
           </option>
         ))}
       </select>
@@ -86,6 +88,8 @@ function RoleCell({ grant }: { grant: Grant }) {
 }
 
 function RemoveButton({ grant }: { grant: Grant }) {
+  const t = useMessages(messages);
+  const c = useMessages(common);
   const { caller, onRemove } = use(RowContext);
   if (!canManage(grant, caller)) return null;
   return (
@@ -93,37 +97,38 @@ function RemoveButton({ grant }: { grant: Grant }) {
       type="button"
       variant="ghost"
       size="sm"
-      aria-label={`Remove ${grant.subject}`}
+      aria-label={t.table.remove(grant.subject)}
       onClick={() => onRemove(grant)}
       className="-my-1.5 text-muted-foreground hover:bg-destructive-soft hover:text-destructive focus-visible:text-destructive"
     >
-      Remove
+      {c.remove}
     </Button>
   );
 }
 
-// Module level on purpose: a cell is rendered as a component, so a new function would remount it.
-const columns: ColumnDef<Grant>[] = [
+// Built once per language, not per render: a cell is rendered as a component, so a new function
+// would remount it. The headers stay strings: the sort buttons are named after them.
+const makeColumns = (t: SharingMessages): ColumnDef<Grant>[] => [
   {
     accessorKey: "subject",
-    header: "Who",
+    header: t.table.who,
     cell: ({ row }) => <Subject grant={row.original} />,
   },
   {
     accessorKey: "kind",
-    header: "Kind",
+    header: t.table.kind,
     meta: { className: "max-md:hidden" },
-    cell: ({ row }) => KIND_LABELS[row.original.kind],
+    cell: ({ row }) => t.kinds[row.original.kind],
   },
   {
     accessorKey: "role",
-    header: "Role",
+    header: t.table.role,
     sortDescFirst: true,
     cell: ({ row }) => <RoleCell grant={row.original} />,
   },
   {
     id: "actions",
-    header: "Actions",
+    header: t.table.actions,
     enableSorting: false,
     meta: { className: "w-28 text-right" },
     cell: ({ row }) => <RemoveButton grant={row.original} />,
@@ -151,6 +156,8 @@ export function GrantsTable({
   onLoadMore,
   ...actions
 }: Props) {
+  const t = useMessages(messages);
+  const columns = useMemo(() => makeColumns(t), [t]);
   const id = useId();
   const table = useServerTable({
     data: grants,
@@ -164,24 +171,24 @@ export function GrantsTable({
       <search className="mb-3 flex flex-wrap items-end gap-3">
         <SearchFilter
           id={`${id}-q`}
-          label="Find a person or group"
-          placeholder="Username or group"
+          label={t.table.find}
+          placeholder={t.table.findPlaceholder}
           value={view.q}
           onCommit={(q) => onView({ ...view, q })}
         />
         <div className="w-32">
           <SelectField
             id={`${id}-kind`}
-            label="Kind"
+            label={t.table.kind}
             value={view.kind ?? ""}
             onChange={(e) =>
               onView({ ...view, kind: parseSharingView({ kind: e.target.value }).kind })
             }
           >
-            <option value="">Any</option>
+            <option value="">{t.table.anyKind}</option>
             {GRANT_KINDS.map((k) => (
               <option key={k} value={k}>
-                {KIND_LABELS[k]}s
+                {t.kindsPlural[k]}
               </option>
             ))}
           </SelectField>
@@ -189,16 +196,16 @@ export function GrantsTable({
         <div className="w-36">
           <SelectField
             id={`${id}-role`}
-            label="Role"
+            label={t.table.role}
             value={view.role ?? ""}
             onChange={(e) =>
               onView({ ...view, role: parseSharingView({ role: e.target.value }).role })
             }
           >
-            <option value="">Any</option>
+            <option value="">{t.table.anyRole}</option>
             {GRANT_ROLES.map((r) => (
               <option key={r} value={r}>
-                {ROLE_LABELS[r]}
+                {t.roles[r]}
               </option>
             ))}
           </SelectField>
@@ -208,19 +215,19 @@ export function GrantsTable({
         <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-input px-5 py-6">
           <Users aria-hidden="true" className="size-5 text-muted-foreground" />
           <p className="text-body">
-            <span className="font-medium">Nobody matches.</span>{" "}
+            <span className="font-medium">{t.table.nobody}</span>{" "}
             <button
               type="button"
               onClick={() => onView({ sort: view.sort })}
               className="cursor-pointer font-medium underline underline-offset-2"
             >
-              Clear filters
+              {t.table.clearFilters}
             </button>
           </p>
         </div>
       ) : (
         <>
-          <DataTable table={table} label="Who has access" loadingMore={loadingMore} />
+          <DataTable table={table} label={t.table.label} loadingMore={loadingMore} />
           <ListFooter
             shown={grants.length}
             total={total}

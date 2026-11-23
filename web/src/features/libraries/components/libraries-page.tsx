@@ -1,8 +1,10 @@
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
+import { useMessages } from "@/shared/lib/i18n";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { type SyncState, useLibraries, useSyncStates } from "../hooks/use-libraries";
+import { listMessages } from "../messages/list";
 import { failedFirst } from "../model/library";
 import { isFiltered, type ListView, parseListView } from "../model/list-view";
 import { AddLibraryLink } from "./add-library-link";
@@ -20,7 +22,8 @@ export function LibrariesPage() {
   );
   const { query, libraries, total, hasMore, loadingMore, loadMore } = useLibraries(view);
   const { syncs, failedToLoad, loading, retry } = useSyncStates(libraries);
-  const heading = usePageTitle("Libraries");
+  const t = useMessages(listMessages);
+  const heading = usePageTitle(t.title);
   // Without a chosen sort, loaded libraries with a failed sync come first.
   const sorted = useMemo(
     () =>
@@ -30,15 +33,15 @@ export function LibrariesPage() {
   if (query.isError && !query.data) {
     return (
       <Page>
-        <PageHeader title="Libraries" headingRef={heading} />
+        <PageHeader title={t.title} headingRef={heading} />
         <p role="alert">
-          Couldn't load libraries.{" "}
+          {t.loadFailed}{" "}
           <button
             type="button"
             onClick={() => void query.refetch()}
             className="cursor-pointer font-medium underline"
           >
-            Retry
+            {t.retry}
           </button>
         </p>
       </Page>
@@ -51,7 +54,7 @@ export function LibrariesPage() {
   return (
     <Page>
       <PageHeader
-        title="Libraries"
+        title={t.title}
         headingRef={heading}
         actions={showing && <AddLibraryLink />}
         description={
@@ -59,24 +62,24 @@ export function LibrariesPage() {
             <>
               {/* Atomic: one sentence is announced, and the sync counts only once they are known. */}
               <p role="status" aria-atomic="true" className="num">
-                {total} {total === 1 ? "library" : "libraries"}
+                {t.count(total)}
                 {!loading && failed > 0 && (
                   <>
                     {" · "}
-                    <span className="font-medium text-destructive">{failed} sync failed</span>
+                    <span className="font-medium text-destructive">{t.syncsFailed(failed)}</span>
                   </>
                 )}
-                {!loading && running > 0 && ` · ${running} importing`}
+                {!loading && running > 0 && ` · ${t.importing(running)}`}
               </p>
               {failedToLoad && (
                 <p className="mt-1">
-                  Couldn't load sync status.{" "}
+                  {t.syncLoadFailed}{" "}
                   <button
                     type="button"
                     onClick={retry}
                     className="min-h-11 cursor-pointer rounded font-medium text-foreground underline underline-offset-2 outline-none hover:text-route focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
                   >
-                    Retry
+                    {t.retry}
                   </button>
                 </p>
               )}

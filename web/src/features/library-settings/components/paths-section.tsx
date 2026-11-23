@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type Ref, useRef, useState } from "react";
 import { toast } from "sonner";
+import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
 import { Button } from "@/shared/ui/button";
 import {
@@ -18,6 +19,9 @@ import {
   reprocessJobsQueryOptions,
   saveSelection,
 } from "../api/settings";
+import { pageMessages } from "../messages/page";
+import { pathsMessages } from "../messages/paths";
+import { sharedMessages } from "../messages/shared";
 import {
   type Activity,
   draftOf,
@@ -73,7 +77,9 @@ function ReprocessConfirm({
   pending,
   ...p
 }: ConfirmProps) {
-  const words = reprocessWarning(change, refs, afterFailure);
+  const language = useLanguage();
+  const words = reprocessWarning(change, refs, afterFailure, language);
+  const shared = sharedMessages[language];
   return (
     <ConfirmRoot
       open={open}
@@ -96,7 +102,7 @@ function ReprocessConfirm({
         <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <ConfirmCancel asChild>
             <Button variant="ghost" aria-disabled={pending}>
-              Cancel
+              {common[language].cancel}
             </Button>
           </ConfirmCancel>
           <Button
@@ -108,7 +114,7 @@ function ReprocessConfirm({
             }}
             className="min-w-32"
           >
-            {pending ? "Saving" : words.confirm}
+            {pending ? shared.saving : words.confirm}
           </Button>
         </div>
       </ConfirmContent>
@@ -125,6 +131,8 @@ interface SaveRowProps {
 }
 
 function SaveRow({ ref, blocked, busy, hint }: SaveRowProps) {
+  const t = useMessages(pathsMessages);
+  const shared = useMessages(sharedMessages);
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
       <Button
@@ -135,7 +143,7 @@ function SaveRow({ ref, blocked, busy, hint }: SaveRowProps) {
         aria-describedby="paths-save-hint"
         className="min-w-32 aria-disabled:cursor-default"
       >
-        {busy ? "Saving" : "Save paths and tags"}
+        {busy ? shared.saving : t.save}
       </Button>
       <p id="paths-save-hint" className="text-body text-muted-foreground">
         {hint}
@@ -152,6 +160,8 @@ function SavedStatus({
   saved: SavedSettings | undefined;
   Line: JobViews["Line"];
 }) {
+  const language = useLanguage();
+  const t = pathsMessages[language];
   return (
     <div
       id="paths-status"
@@ -159,11 +169,11 @@ function SavedStatus({
       className={saved ? "mt-5 rounded outline-none" : "outline-none"}
     >
       <p role="status" className={saved ? "font-medium" : undefined}>
-        {saved && <span className="fade-in">{savedHeadline(saved)}</span>}
+        {saved && <span className="fade-in">{savedHeadline(saved, language)}</span>}
       </p>
       {saved?.job_id && (
         <div className="fade-in mt-2 max-w-sm">
-          <Line jobId={saved.job_id} label="every version" />
+          <Line jobId={saved.job_id} label={t.everyVersion} />
           <p className="mt-1 text-body text-muted-foreground [overflow-wrap:anywhere]">
             {saved.versions.join(", ")}
           </p>
@@ -183,15 +193,16 @@ interface RunAgainProps {
 
 /** The newest re-processing failed: its line, and a way to run it again with what is stored. */
 function RunAgain({ job, Line, lineShown, pending, onRun }: RunAgainProps) {
-  const what =
-    job.kind === "retag" ? "re-tagging" : job.kind === "rechunk" ? "re-chunking" : "re-processing";
+  const t = useMessages(pathsMessages);
+  const shared = useMessages(sharedMessages);
+  const kind = job.kind === "retag" || job.kind === "rechunk" ? job.kind : "reprocess";
   return (
     <div className="fade-in mt-5 max-w-sm">
       {!lineShown && (
         <>
-          <p className="font-medium">The last {what} failed. Every version keeps what it served.</p>
+          <p className="font-medium">{t.lastFailed[kind]}</p>
           <div className="mt-2">
-            <Line jobId={job.id} label="every version" />
+            <Line jobId={job.id} label={t.everyVersion} />
           </div>
         </>
       )}
@@ -204,8 +215,8 @@ function RunAgain({ job, Line, lineShown, pending, onRun }: RunAgainProps) {
         }}
         className={`${secondary} mt-3 min-w-32`}
       >
-        {pending ? "Queueing" : "Run again"}
-        <span className="sr-only"> the {what} with the saved paths and tag rules</span>
+        {pending ? shared.queueing : t.runAgain}
+        <span className="sr-only">{t.runAgainWhat[kind]}</span>
       </Button>
     </div>
   );
@@ -216,6 +227,8 @@ function RunAgain({ job, Line, lineShown, pending, onRun }: RunAgainProps) {
  * set and, once a version exists, re-processes every version: the warning says so first.
  */
 export function PathsSection({ owner, repo, library, Line, Preview, activity, onStart }: Props) {
+  const language = useLanguage();
+  const t = pathsMessages[language];
   const queryClient = useQueryClient();
   const focusAfterRender = useFocusAfterRender();
   // What the server stored last; until this page saves, what the library was loaded with.
@@ -247,8 +260,8 @@ export function PathsSection({ owner, repo, library, Line, Preview, activity, on
     mutationFn: (settings: SelectionDraft) => saveSelection(owner, repo, settings),
     onSuccess: (data) => {
       setStored(data);
-      toast.success("Saved files and tags", {
-        description: savedHeadline(data),
+      toast.success(t.savedToast, {
+        description: savedHeadline(data, language),
       });
       setEdits(undefined);
       setShowRuleErrors(false);
@@ -260,7 +273,7 @@ export function PathsSection({ owner, repo, library, Line, Preview, activity, on
       refreshLibraries(queryClient);
     },
     onError: (error) => {
-      const p = explainSettings(error);
+      const p = explainSettings(error, language);
       if (p.field === "paths" || p.field === "tags") {
         setErrors({ [p.field]: p.message });
         const id = p.field === "paths" ? "include" : "add-rule";
@@ -285,7 +298,7 @@ export function PathsSection({ owner, repo, library, Line, Preview, activity, on
   function submit(event: FormEvent) {
     event.preventDefault();
     if (mutation.isPending || change === null) return;
-    const found = validateSelection(draft);
+    const found = validateSelection(draft, language);
     setProblem(undefined);
     setErrors(found.paths ? { paths: found.paths } : {});
     setShowRuleErrors(true);
@@ -314,8 +327,8 @@ export function PathsSection({ owner, repo, library, Line, Preview, activity, on
   return (
     <SettingsSection
       id="paths"
-      title="Files and tags"
-      description="Which files of the repository become articles, and the tags they get by path. Saving a change re-processes every version."
+      title={pageMessages[language].sections.paths}
+      description={t.description}
     >
       <form onSubmit={submit} noValidate className="flex flex-col gap-6">
         <FormAlert id="paths-alert" message={shownProblem?.message} link={shownProblem?.link} />
@@ -327,10 +340,7 @@ export function PathsSection({ owner, repo, library, Line, Preview, activity, on
           onExclude={(exclude) => edit({ exclude })}
         />
         {access?.private ? (
-          <p className="text-body text-muted-foreground">
-            Preview isn't available for a private repository yet: it can't use the library's stored
-            credential. Saving still re-processes every version with it.
-          </p>
+          <p className="text-body text-muted-foreground">{t.privatePreview}</p>
         ) : (
           <Preview
             url={library.source_url}
@@ -349,7 +359,7 @@ export function PathsSection({ owner, repo, library, Line, Preview, activity, on
           ref={save}
           blocked={mutation.isPending || change === null}
           busy={mutation.isPending && !confirming}
-          hint={saveHint(change, refs.length)}
+          hint={saveHint(change, refs.length, language)}
         />
       </form>
       <SavedStatus saved={shown} Line={Line} />

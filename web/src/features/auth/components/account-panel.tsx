@@ -1,9 +1,12 @@
+import { UserRound } from "lucide-react";
 import type { ReactNode } from "react";
+import { useMessages } from "@/shared/lib/i18n";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { cn } from "@/shared/lib/utils";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { pill, pillTone } from "@/shared/ui/recipes";
 import { useSession } from "../hooks/use-session";
+import { messages, roleName } from "../messages";
 import { SignOutButton } from "./sign-out-button";
 
 export function AccountPanel({
@@ -16,26 +19,29 @@ export function AccountPanel({
 }) {
   const session = useSession();
   const account = session?.account;
-  const heading = usePageTitle("Account");
+  const t = useMessages(messages);
+  const heading = usePageTitle(t.account.title);
   return (
     <Page>
       <PageHeader
-        title="Account"
+        title={t.account.title}
+        icon={<UserRound />}
         headingRef={heading}
-        description="Who you are signed in as, and the tokens that let an agent read documentation for you."
+        description={t.account.description}
       />
       <div className="grid items-start gap-10 lg:grid-cols-[18rem_minmax(0,1fr)] lg:gap-12">
         <section
           aria-labelledby="identity-heading"
           className="rounded-lg border border-border bg-raised p-5"
         >
-          <h2 id="identity-heading" className="text-section font-semibold">
-            Signed in as
+          <h2 id="identity-heading" className="flex items-center gap-2 text-section font-semibold">
+            <UserRound aria-hidden="true" className="size-4 text-muted-foreground" />
+            {t.account.signedInAs}
           </h2>
           <dl className="mt-4 grid grid-cols-[5.5rem_minmax(0,1fr)] items-baseline gap-y-3 text-body">
-            <dt className="text-muted-foreground">Username</dt>
+            <dt className="text-muted-foreground">{t.account.username}</dt>
             <dd className="font-medium [overflow-wrap:anywhere]">{account?.username}</dd>
-            <dt className="text-muted-foreground">Role</dt>
+            <dt className="text-muted-foreground">{t.account.role}</dt>
             <dd>
               <span
                 className={cn(
@@ -44,13 +50,13 @@ export function AccountPanel({
                   account?.role === "admin" ? pillTone.route : pillTone.neutral,
                 )}
               >
-                {account?.role}
+                {roleName(t.roles, account?.role)}
               </span>
             </dd>
             {session?.source === "cloudflare_access" && (
               <>
-                <dt className="text-muted-foreground">Signed in</dt>
-                <dd className="font-medium">through Cloudflare Access</dd>
+                <dt className="text-muted-foreground">{t.account.signedIn}</dt>
+                <dd className="font-medium">{t.account.throughAccess}</dd>
               </>
             )}
           </dl>

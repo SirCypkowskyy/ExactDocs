@@ -1,20 +1,20 @@
 import type { components } from "@/shared/lib/api-schema";
 import { HttpError, type Query } from "@/shared/lib/http";
+import { currentLanguage, type Language } from "@/shared/lib/i18n";
+import { messages } from "../messages";
 
 export type AccessEvent = components["schemas"]["AccessEventSummary"];
 export type AccessLogPage = components["schemas"]["AccessLogPage"];
 export type Change = AccessEvent["change"];
 
 /** Every change the log records, in the order the filter offers them. */
-export const CHANGE_LABELS: Record<Change, string> = {
-  granted: "Roles given or changed",
-  revoked: "Roles taken away",
-  ownership_transferred: "Ownership transfers",
-  library_created: "Creations",
-  library_deleted: "Removals",
-};
-
-const CHANGES = Object.keys(CHANGE_LABELS) as Change[];
+const CHANGES = [
+  "granted",
+  "revoked",
+  "ownership_transferred",
+  "library_created",
+  "library_deleted",
+] as const satisfies readonly Change[];
 const LIBRARY_ID = /^\/[^/\s]+\/[^/\s]+$/;
 
 /** What the URL holds: one change to show, and (operators' log) one library. */
@@ -28,7 +28,7 @@ export function parseAccessLogView(search: Record<string, unknown>): AccessLogVi
   const change = typeof search.change === "string" ? search.change : "";
   const library = typeof search.library === "string" ? search.library.trim() : "";
   return {
-    change: (CHANGES as string[]).includes(change) ? (change as Change) : undefined,
+    change: (CHANGES as readonly string[]).includes(change) ? (change as Change) : undefined,
     library: LIBRARY_ID.test(library) ? library : undefined,
   };
 }
@@ -51,63 +51,75 @@ export type Part = { key: string; text: string; kind?: "person" | "group" | "rol
  * The event as a sentence, split so names and roles can be set apart:
  * "alice gave bob the viewer role", "alice changed bob from viewer to contributor".
  */
-export function describeEvent(event: AccessEvent): Part[] {
-  const actor: Part = event.actor
-    ? { key: "actor", text: event.actor, kind: "person" }
-    : { key: "actor", text: "ExactDocs (command line or a job)" };
+export function describeEvent(event: AccessEvent, language: Language = currentLanguage()): Part[] {
+  const t = messages[language].sentence;
+  // Words a language does without (English needs no "user" before a name) leave no part.
+  const words = (key: string, text: string): Part[] => (text ? [{ key, text }] : []);
+  const actor: Part[] = event.actor
+    ? [...words("actor-before", t.actorBefore), { key: "actor", text: event.actor, kind: "person" }]
+    : [{ key: "actor", text: t.instance }];
   const subject: Part[] =
     event.kind === "group"
       ? [
-          { key: "the-group", text: "the group " },
+          ...words("the-group", t.theGroup),
           { key: "subject", text: event.subject ?? "", kind: "group" },
         ]
-      : [{ key: "subject", text: event.subject ?? "", kind: "person" }];
-  const role: Part = { key: "role", text: event.role ?? "", kind: "role" };
-  const words = (key: string, text: string): Part => ({ key, text });
+      : [
+          ...words("the-user", t.theUser),
+          { key: "subject", text: event.subject ?? "", kind: "person" },
+        ];
+  const roleName = (role: string) => t.roles[role] ?? role;
+  const role: Part = { key: "role", text: roleName(event.role ?? ""), kind: "role" };
   switch (event.change) {
     case "library_created":
-      return [actor, words("verb", " created the library")];
+      return [...actor, ...words("verb", t.created)];
     case "library_deleted":
-      return [actor, words("verb", " removed the library and every role on it")];
+      return [...actor, ...words("verb", t.deleted)];
     case "ownership_transferred":
-      return [actor, words("verb", " transferred ownership to "), ...subject];
+      return [...actor, ...words("verb", t.transferred), ...subject];
     case "revoked":
-      return [actor, words("verb", " took the "), role, words("from", " role from "), ...subject];
+      return [
+        ...actor,
+        ...words("verb", t.revoked),
+        role,
+        ...words("from", t.revokedFrom),
+        ...subject,
+      ];
     case "granted":
       if (event.previous_role) {
         return [
-          actor,
-          words("verb", " changed "),
+          ...actor,
+          ...words("verb", t.changed),
           ...subject,
-          words("from", " from "),
-          { key: "previous", text: event.previous_role, kind: "role" },
-          words("to", " to "),
+          ...words("from", t.changedFrom),
+          { key: "previous", text: roleName(event.previous_role), kind: "role" },
+          ...words("to", t.changedTo),
           role,
         ];
       }
       return [
-        actor,
-        words("verb", " gave "),
+        ...actor,
+        ...words("verb", t.gave),
         ...subject,
-        words("the", " the "),
+        ...words("the", t.gaveThe),
         role,
-        words("tail", " role"),
+        ...words("tail", t.gaveTail),
       ];
   }
 }
 
 /** One sentence a person can act on, for any failure of the access log API. */
-export function explainAccessLogError(error: unknown): string {
-  if (!(error instanceof HttpError)) {
-    return "Can't reach the server. Check your connection and try again.";
-  }
-  if (error.status === 401) return "Your session ended. Sign in again to read the access log.";
-  if (error.status === 403) {
-    return "Only the library's admins and the server's operators can read its access log.";
-  }
-  if (error.status === 404) return "This library doesn't exist, or you have no access to it.";
-  if (error.code === "invalid_cursor") return "The list moved on. Reload the page to start over.";
-  return `Something went wrong (${error.status}). Try again.`;
+export function explainAccessLogError(
+  error: unknown,
+  language: Language = currentLanguage(),
+): string {
+  const t = messages[language].errors;
+  if (!(error instanceof HttpError)) return t.offline;
+  if (error.status === 401) return t.sessionEnded;
+  if (error.status === 403) return t.forbidden;
+  if (error.status === 404) return t.notFound;
+  if (error.code === "invalid_cursor") return t.invalidCursor;
+  return t.other(error.status);
 }
 
 /** A library's own log filters by change only. */

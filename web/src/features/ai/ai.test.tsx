@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiRole } from "@/shared/lib/ai-queries";
 import { HttpError } from "@/shared/lib/http";
+import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { AiPage } from "./index";
 import {
   type Budget,
@@ -474,5 +475,93 @@ describe("ai model", () => {
     );
     expect(explainAiError(new HttpError(403, "/v1/ai/usage", {}))).toMatch(/Only admins/);
     expect(explainAiError(new TypeError("down"))).toMatch(/Can't reach/);
+  });
+});
+
+describe("instance AI page in Polish", () => {
+  beforeEach(() => setPreferences({ language: "pl" }));
+  afterEach(() => resetPreferences());
+
+  it("words providers, roles and checks in Polish", async () => {
+    serve();
+    renderPage();
+    const providers = await region("Dostawcy i role");
+
+    expect(await providers.findByText("Klucz zapisany, zaszyfrowany")).toBeInTheDocument();
+    expect(providers.getByText("Nie używa go żadna rola instancji.")).toBeInTheDocument();
+    expect(providers.getByText("Używany w rolach: Embedding, LLM")).toBeInTheDocument();
+    expect(await providers.findByLabelText("Myślenie LLM")).toBeDisabled();
+    expect(
+      providers.getByText("Ustawiony w konfiguracji (EXACTDOCS_AI__LLM__THINKING)."),
+    ).toBeInTheDocument();
+    const judge = providers.getByLabelText("Myślenie sędziego");
+    expect(within(judge).getAllByRole("option")[0]).toHaveTextContent("Poziom roli LLM (Niski)");
+
+    await userEvent.click(providers.getByRole("button", { name: "Sprawdź corp" }));
+    const result = providers.getByRole("status", { name: "Sprawdzenie corp" });
+    expect(
+      await within(result).findByText(/OK\. Odpowiedź w 42 ms, model e5-v2, 3 wymiary/),
+    ).toBeVisible();
+    expect(within(result).getByText(/Błąd\. 401 Unauthorized/)).toBeVisible();
+  });
+
+  it("shows embedding progress and spend in Polish, with Polish numbers", async () => {
+    serve();
+    renderPage();
+    const embedding = await region("Embedding");
+
+    expect(await embedding.findByText("Przestrzeń 2: e5")).toBeInTheDocument();
+    expect(
+      embedding.getByRole("progressbar", { name: "Postęp: Przestrzeń 2: e5" }),
+    ).toHaveAttribute("aria-valuenow", "25");
+    expect(embedding.getByText("25%: 50 z 200 fragmentów, 1 z 4 wersji")).toBeInTheDocument();
+    expect(embedding.getByText("W budowie")).toBeInTheDocument();
+    expect(
+      embedding.getByText(/^Skonfigurowany model · openai-compatible · 3 wymiary · utworzona/),
+    ).toBeInTheDocument();
+
+    const usage = await region("Zużycie i budżety");
+    const instance = (await usage.findByRole("rowheader", { name: "Instancja" })).closest(
+      "tr",
+    ) as HTMLElement;
+    expect(within(instance).getByText("3000 tokenów · 3 wywołania")).toBeInTheDocument();
+    expect(
+      within(instance).getByText(/^Dziś: zostało 8,50\sUSD z 10,00\sUSD$/),
+    ).toBeInTheDocument();
+    const runs = usage
+      .getByRole("rowheader", { name: "Przebiegi embeddingu" })
+      .closest("tr") as HTMLElement;
+    expect(
+      within(runs).getAllByText("0 tokenów (+1200 lokalnie, poza budżetem) · 3 wywołania"),
+    ).toHaveLength(2);
+    const library = usage
+      .getByRole("rowheader", { name: "Biblioteka /acme/payments" })
+      .closest("tr") as HTMLElement;
+    expect(within(library).getByText(/· wyczerpany do/)).toBeVisible();
+    expect(
+      usage.getByText("Wyszukiwania LLM na minutę dla jednego wywołującego: 30"),
+    ).toBeInTheDocument();
+    expect(usage.getByRole("columnheader", { name: "Ten miesiąc" })).toBeInTheDocument();
+  });
+
+  it("puts budgets and errors into Polish words", () => {
+    expect(
+      budgetWords(
+        {
+          window: "month",
+          window_start: "2026-11-01",
+          resets_at: "2026-12-01T00:00:00Z",
+          usd_limit: null,
+          usd_left: null,
+          tokens_limit: 50000,
+          tokens_left: 12000,
+          reached: false,
+        },
+        "pl",
+      ),
+    ).toBe("W tym miesiącu: zostało 12 000 z 50 000 tokenów");
+    expect(explainAiError(new HttpError(403, "/v1/ai/usage", {}), "pl")).toBe(
+      "Tylko administratorzy widzą ustawienia AI instancji.",
+    );
   });
 });

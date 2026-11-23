@@ -1,14 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { useId } from "react";
 import { HttpError } from "@/shared/lib/http";
+import { useLanguage, useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { EmptyState } from "@/shared/ui/page";
 import { pill, pillTone } from "@/shared/ui/recipes";
 import { playgroundSearchQueryOptions } from "../api/playground-queries";
+import { messages } from "../messages";
 import {
   fallbackSentence,
   librariesRanked,
-  MODE_LABEL,
   type PlaygroundHit,
   type PlaygroundMode,
   rankLabels,
@@ -16,6 +17,8 @@ import {
 import { Notice, ResultHead, ResultsSkeleton, resultCard, resultList } from "./parts";
 
 function Hit({ hit, place }: { hit: PlaygroundHit; place: number }) {
+  const t = useMessages(messages);
+  const language = useLanguage();
   return (
     <li className={cn(resultCard, "row-in")}>
       <ResultHead
@@ -28,10 +31,10 @@ function Hit({ hit, place }: { hit: PlaygroundHit; place: number }) {
       <p className="mt-2 text-body whitespace-pre-wrap [overflow-wrap:anywhere]">{hit.snippet}</p>
       <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-small text-muted-foreground">
         <span className="font-medium text-foreground tabular-nums">{place}.</span>
-        <span className="tabular-nums" title="Score in the mode that answered">
-          score {hit.score.toFixed(4)}
+        <span className="tabular-nums" title={t.results.scoreTitle}>
+          {t.results.score(hit.score)}
         </span>
-        {rankLabels(hit).map((label) => (
+        {rankLabels(hit, language).map((label) => (
           <span key={label} className={cn(pill, pillTone.neutral, "font-mono")}>
             {label}
           </span>
@@ -51,25 +54,27 @@ export function ModeResults({
   mode: PlaygroundMode;
   libraries: readonly string[];
 }) {
+  const t = useMessages(messages);
+  const language = useLanguage();
   const headingId = useId();
   const { data, error, isFetching } = useQuery(playgroundSearchQueryOptions(q, mode, libraries));
   const ranked = data ? librariesRanked(libraries, data) : 0;
   return (
     <section aria-labelledby={headingId} aria-busy={isFetching} className="min-w-0 space-y-3">
       <h2 id={headingId} className="text-section font-semibold">
-        {MODE_LABEL[mode]}
+        {t.modes[mode]}
       </h2>
       {error && (
         <Notice tone="error">
           {error instanceof HttpError && error.code === "mode_unavailable"
-            ? `Unavailable: ${error.message}`
+            ? t.results.unavailable(error.message)
             : error.message}
         </Notice>
       )}
       {!error && !data && isFetching && (
         <>
           <p role="status" className="text-body text-muted-foreground">
-            Searching…
+            {t.results.searching}
           </p>
           <ResultsSkeleton />
         </>
@@ -77,27 +82,27 @@ export function ModeResults({
       {data && (
         <>
           <p className="text-body text-muted-foreground">
-            Answered by <span className="font-medium text-foreground">{data.retrieval_mode}</span>
-            {" · "}
-            {data.results.length} result{data.results.length === 1 ? "" : "s"} from {ranked} librar
-            {ranked === 1 ? "y" : "ies"}
+            {t.results.answeredBy(
+              <span className="font-medium text-foreground">{data.retrieval_mode}</span>,
+              data.results.length,
+              ranked,
+            )}
           </p>
           {data.fallback_reason && (
             <Notice tone="note">
-              {fallbackSentence(data.fallback_reason)}{" "}
+              {fallbackSentence(data.fallback_reason, language)}{" "}
               <span className="font-mono text-mono">({data.fallback_reason})</span>
             </Notice>
           )}
           {data.libraries_without_vectors.length > 0 && (
             <p className="text-body text-muted-foreground">
-              Not in the vector ranking (AI off or not embedded yet):{" "}
-              {data.libraries_without_vectors.join(", ")}
+              {t.results.withoutVectors(data.libraries_without_vectors.join(", "))}
             </p>
           )}
           {data.results.length === 0 ? (
-            <EmptyState title="No results">Try other words, or choose more libraries.</EmptyState>
+            <EmptyState title={t.results.none}>{t.results.noneHint}</EmptyState>
           ) : (
-            <ol aria-label={`${MODE_LABEL[mode]} results`} className={resultList}>
+            <ol aria-label={t.results.list(t.modes[mode])} className={resultList}>
               {data.results.map((hit, i) => (
                 <Hit key={`${hit.library}:${hit.chunk_id}`} hit={hit} place={i + 1} />
               ))}

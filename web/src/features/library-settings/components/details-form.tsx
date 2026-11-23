@@ -2,11 +2,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, Info } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
+import { useLanguage } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import { Field, TextareaField } from "@/shared/ui/field";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { refreshLibraries, saveDetails } from "../api/settings";
+import { pageMessages } from "../messages/page";
+import { sharedMessages } from "../messages/shared";
 import {
   type Activity,
   changedFields,
@@ -29,6 +32,9 @@ interface Props {
 
 /** Title and description. Only the fields that changed are sent. */
 export function DetailsForm({ owner, repo, library, activity, onStart }: Props) {
+  const language = useLanguage();
+  const t = pageMessages[language].details;
+  const shared = sharedMessages[language];
   const queryClient = useQueryClient();
   // Only what the person typed is state; an untouched field shows what the library has.
   const [edits, setEdits] = useState<Partial<DetailsDraft>>({});
@@ -51,11 +57,11 @@ export function DetailsForm({ owner, repo, library, activity, onStart }: Props) 
     onSuccess: () => {
       setSaved(true);
       setProblem(undefined);
-      toast.success("Saved the library details");
+      toast.success(t.savedToast);
       refreshLibraries(queryClient);
     },
     onError: (error) => {
-      const p = explainSave(error);
+      const p = explainSave(error, language);
       if (p.field) {
         setErrors({ [p.field]: p.message });
         document.getElementById(p.field)?.focus();
@@ -68,7 +74,7 @@ export function DetailsForm({ owner, repo, library, activity, onStart }: Props) 
   function submit(event: FormEvent) {
     event.preventDefault();
     if (save.isPending || unchanged) return;
-    const found = validateDetails(draft);
+    const found = validateDetails(draft, language);
     setErrors(found);
     setProblem(undefined);
     if (found.title || found.description) {
@@ -92,19 +98,19 @@ export function DetailsForm({ owner, repo, library, activity, onStart }: Props) 
       <div className="flex flex-col gap-5">
         <Field
           id="title"
-          label="Title"
+          label={t.titleLabel}
           autoComplete="off"
           value={title}
           error={errors.title}
-          hint="Shown in the library list and as the page heading."
+          hint={t.titleHint}
           onChange={(e) => edit("title")(e.target.value)}
         />
         <TextareaField
           id="description"
-          label="Description"
+          label={t.descriptionLabel}
           value={description}
           error={errors.description}
-          hint={`Shown on the library page. Up to ${MAX_DESCRIPTION} characters, and it can be empty.`}
+          hint={t.descriptionHint(MAX_DESCRIPTION)}
           onChange={(e) => edit("description")(e.target.value)}
         />
         {/* Said when it matters: once something is edited. */}
@@ -118,10 +124,7 @@ export function DetailsForm({ owner, repo, library, activity, onStart }: Props) 
         >
           <p className="flex items-start gap-2 text-body text-muted-foreground">
             <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
-            <span>
-              Edited fields are kept when the library is re-imported. Fields you leave alone keep
-              following the repository's README.
-            </span>
+            <span>{t.editedNote}</span>
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -131,13 +134,13 @@ export function DetailsForm({ owner, repo, library, activity, onStart }: Props) 
             aria-disabled={save.isPending || unchanged}
             className="min-w-32 aria-disabled:cursor-default"
           >
-            {save.isPending ? "Saving" : "Save changes"}
+            {save.isPending ? shared.saving : t.save}
           </Button>
           <p role="status" className="min-h-5 text-body">
             {saved && unchanged && activity.by === "details" && (
               <span className="fade-in inline-flex items-center gap-1.5">
                 <Check aria-hidden="true" className="size-4 text-route" />
-                Saved.
+                {shared.saved}
               </span>
             )}
           </p>

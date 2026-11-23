@@ -1,12 +1,15 @@
 import { Link } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
+import { useMessages } from "@/shared/lib/i18n";
 import { buttonVariants } from "@/shared/ui/button";
+import { listMessages } from "../messages/list";
 
 export function AddLibraryLink() {
+  const t = useMessages(listMessages);
   return (
     <Link to="/libraries/new" className={buttonVariants()}>
       <Plus aria-hidden="true" className="size-4" />
-      Add library
+      {t.addLibrary}
     </Link>
   );
 }

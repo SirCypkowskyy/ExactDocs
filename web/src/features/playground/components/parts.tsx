@@ -1,8 +1,10 @@
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { LibraryBullet, VersionStation } from "@/shared/ui/route";
 import { Skeleton } from "@/shared/ui/skeleton";
+import { messages } from "../messages";
 import { splitLibrary } from "../model/playground";
 
 /** A line under a heading: an error (alert), or a neutral note about how the answer came about. */
@@ -40,13 +42,14 @@ export function ResultHead({
   anchor?: string | null | undefined;
   headingPath: readonly string[];
 }) {
+  const t = useMessages(messages);
   const { owner, repo } = splitLibrary(library);
   return (
     <>
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-body">
         <LibraryBullet id={library} size="sm" />
         <span className="font-medium">{library}</span>
-        <span className="sr-only">version </span>
+        <span className="sr-only">{t.results.version}</span>
         <VersionStation version={version} />
       </div>
       <Link

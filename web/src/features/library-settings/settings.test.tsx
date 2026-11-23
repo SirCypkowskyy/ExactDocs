@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
+import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { BROWSE_KEY, LIBRARIES_KEY } from "@/shared/lib/query-keys";
 import { TestRouter } from "@/shared/lib/test-router";
 import { LibrarySettingsPage } from "./index";
@@ -14,6 +15,7 @@ import {
   explainRemove,
   explainSync,
   failureWords,
+  statusWords,
   syncHeadline,
   validateDetails,
 } from "./model/settings";
@@ -950,5 +952,134 @@ describe("the versions table", () => {
         "/api/v1/libraries/acme/payments/versions?limit=50&kind=tag&sort=-imported_at",
       ),
     );
+  });
+});
+
+describe("in Polish", () => {
+  const synced = (versions: unknown[]) => ({
+    status: 202,
+    body: { library_id: "/acme/payments", versions },
+  });
+  const row = (over: Record<string, unknown>) => ({
+    ref: "main",
+    ref_kind: "branch",
+    status: "queued",
+    previous_commit_sha: SHA,
+    commit_sha: SHA2,
+    job_id: "j5",
+    error_code: null,
+    ...over,
+  });
+
+  afterEach(() => resetPreferences());
+
+  it("names the page, its sections and the versions table in Polish", async () => {
+    setPreferences({ language: "pl" });
+    serve();
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Szczegóły" })).toBeInTheDocument();
+    await waitFor(() => expect(document.title).toBe("Ustawienia: Payments - ExactDocs"));
+    expect(screen.getByRole("navigation", { name: "Na tej stronie" })).toBeInTheDocument();
+    for (const name of ["Pliki i tagi", "Wersje", "Udostępnianie", "Usuń bibliotekę"]) {
+      expect(screen.getByRole("region", { name })).toBeInTheDocument();
+    }
+    expect(screen.getByRole("link", { name: "Zarządzaj udostępnianiem" })).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText("Tytuł"), "!");
+    expect(await screen.findByText("1 sekcja ma niezapisane zmiany.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Zapisz zmiany" })).toBeInTheDocument();
+
+    const table = await screen.findByRole("table", { name: "Zaimportowane wersje" });
+    expect(await within(table).findByText("gałąź")).toBeInTheDocument();
+    expect(within(table).getByText("domyślna")).toBeInTheDocument();
+    expect(within(table).getByRole("button", { name: "Usuń wersję main" })).toBeVisible();
+    expect(screen.getByLabelText("Znajdź wersję")).toHaveAttribute("placeholder", "Ref lub commit");
+  });
+
+  it("asks for the version typed, and says why it stays while an import runs", async () => {
+    setPreferences({ language: "pl" });
+    serve({ removeVersion: () => failure(409, "import_in_progress") });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Usuń wersję main" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Usunąć main?" });
+    await userEvent.type(within(dialog).getByLabelText("Wpisz main, aby potwierdzić"), "main");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Usuń wersję" }));
+    expect(
+      await within(dialog).findByText(/^Import wersji main wciąż trwa\. Usuwanie nigdy/),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Anuluj" })).toBeInTheDocument();
+  });
+
+  it("says what removing the library takes, with the right plural", async () => {
+    setPreferences({ language: "pl" });
+    serve();
+    renderPage();
+    const danger = within(await screen.findByRole("region", { name: "Usuń bibliotekę" }));
+    expect(danger.getByText(/wraz z jej 2 wersjami\. Zniknie z przeglądania/)).toHaveTextContent(
+      /^Usuń bibliotekę \/acme\/payments wraz z jej 2 wersjami\./,
+    );
+    await userEvent.click(danger.getByRole("button", { name: "Usuń bibliotekę…" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("Wszystkie 2 wersje (v1.2.0, main) i ich artykuły");
+  });
+
+  it("reports a re-sync in Polish", async () => {
+    setPreferences({ language: "pl" });
+    serve({
+      sync: () =>
+        synced([
+          row({}),
+          row({ ref: "next", status: "failed", job_id: null, error_code: "ref_deleted" }),
+          row({ ref: "v1.2.0", ref_kind: "tag", status: "pinned", job_id: null }),
+        ]),
+    });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Synchronizuj teraz" }));
+    expect(
+      await screen.findByText("1 wersja jest aktualizowana, nie udało się sprawdzić 1 wersji."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Sprawdzono", { exact: false })).toHaveTextContent(
+      "Sprawdzono przed chwilą.",
+    );
+    expect(screen.getByText("Błąd")).toBeInTheDocument();
+    expect(screen.getByText(/^Gałęzi nie ma już w repozytorium\./)).toBeInTheDocument();
+    expect(screen.getByText("v1.2.0 jest przypięta i nigdy się nie zmienia.")).toBeInTheDocument();
+  });
+
+  it("words plurals and refusals in Polish", () => {
+    const versions = (n: number, status: string) =>
+      Array.from({ length: n }, (_, i) => row({ ref: `v${i}`, status }));
+    const headline = (...v: unknown[][]) =>
+      syncHeadline({ library_id: "x", versions: v.flat() } as never, "pl");
+    expect(headline(versions(2, "queued"))).toBe("2 wersje są aktualizowane.");
+    expect(headline(versions(5, "queued"))).toBe("5 wersji jest aktualizowanych.");
+    expect(headline(versions(22, "queued"))).toBe("22 wersje są aktualizowane.");
+    expect(headline(versions(3, "failed"))).toBe("Nie udało się sprawdzić 3 wersji.");
+    expect(headline(versions(1, "up_to_date"))).toBe("Wszystko jest aktualne.");
+    expect(statusWords("up_to_date", "pl")).toBe("Aktualna");
+    expect(validateDetails({ title: "x".repeat(201), description: "" }, "pl").title).toBe(
+      "Tytuł może mieć najwyżej 200 znaków.",
+    );
+    expect(explainSync(new TypeError("offline"), "pl").message).toMatch(/^Nie można połączyć/);
+    expect(
+      explainRemove(
+        new HttpError(401, "/v1/x", { error: "unauthenticated", detail: "d", fields: [] }),
+        "z",
+        "pl",
+      ),
+    ).toMatchObject({
+      message: "Twoja sesja wygasła.",
+      link: { href: "/sign-in", label: "Zaloguj się" },
+    });
+    expect(
+      explainAddVersion(
+        new HttpError(409, "/v1/x", { error: "version_exists", detail: "d", fields: [] }),
+        "v1",
+        undefined,
+        "pl",
+      ),
+    ).toMatchObject({
+      message: "„v1” jest już wersją tej biblioteki.",
+    });
   });
 });

@@ -1,33 +1,63 @@
-/** The UI is written in English: dates and times are too, whatever the browser's locale. */
-export const UI_LOCALE = "en";
+import { currentLanguage, defineMessages, type Language } from "./i18n";
 
-const relative = new Intl.RelativeTimeFormat(UI_LOCALE, { numeric: "auto" });
-const sameYear = new Intl.DateTimeFormat(UI_LOCALE, {
-  month: "short",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
-const otherYear = new Intl.DateTimeFormat(UI_LOCALE, {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
-const withZone = new Intl.DateTimeFormat(UI_LOCALE, {
-  year: "numeric",
-  month: "short",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-  timeZoneName: "short",
-});
+/*
+ * Dates and times in the language the UI speaks (English or Polish), whatever the browser's
+ * locale. Pass the language from `useLanguage()` so a component re-renders when it changes; it
+ * defaults to the current one for code outside React.
+ */
+
+const messages = defineMessages({ justNow: "just now" }, { justNow: "przed chwilą" });
+
+type Formats = {
+  relative: Intl.RelativeTimeFormat;
+  sameYear: Intl.DateTimeFormat;
+  otherYear: Intl.DateTimeFormat;
+  withZone: Intl.DateTimeFormat;
+  date: Intl.DateTimeFormat;
+};
+
+const cache = new Map<Language, Formats>();
+
+function formats(language: Language): Formats {
+  let found = cache.get(language);
+  if (!found) {
+    found = {
+      relative: new Intl.RelativeTimeFormat(language, { numeric: "auto" }),
+      sameYear: new Intl.DateTimeFormat(language, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }),
+      otherYear: new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }),
+      withZone: new Intl.DateTimeFormat(language, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZoneName: "short",
+      }),
+      date: new Intl.DateTimeFormat(language, { dateStyle: "medium" }),
+    };
+    cache.set(language, found);
+  }
+  return found;
+}
 
 /**
- * "3 days ago", "yesterday", "just now". Floors, so 59.6 minutes is minutes and 360 days is
- * months; days up to 60, so a stale library never reads as "last month". Never "in 3 minutes".
+ * "3 days ago", "yesterday", "just now" ("3 dni temu", "wczoraj", "przed chwilą"). Floors, so
+ * 59.6 minutes is minutes and 360 days is months; days up to 60, so a stale library never reads
+ * as "last month". Never "in 3 minutes".
  */
-export function relativeTime(iso: string, now: number): string {
+export function relativeTime(
+  iso: string,
+  now: number,
+  language: Language = currentLanguage(),
+): string {
   const s = Math.max(0, (now - Date.parse(iso)) / 1000);
-  if (s < 45) return "just now";
+  if (s < 45) return messages[language].justNow;
+  const { relative } = formats(language);
   const minutes = Math.max(1, Math.floor(s / 60));
   if (minutes < 60) return relative.format(-minutes, "minute");
   const hours = Math.floor(s / 3600);
@@ -38,14 +68,20 @@ export function relativeTime(iso: string, now: number): string {
   return relative.format(-Math.floor(days / 365), "year");
 }
 
-/** "Nov 4, 9:00 AM" this year, with the year before; one line. */
-export function absoluteTime(iso: string): string {
+/** "Nov 4, 9:00 AM" ("4 lis, 09:00") this year, with the year before; one line. */
+export function absoluteTime(iso: string, language: Language = currentLanguage()): string {
   const date = new Date(iso);
   const same = date.getFullYear() === new Date().getFullYear();
+  const { sameYear, otherYear } = formats(language);
   return (same ? sameYear : otherYear).format(date);
 }
 
 /** For tooltips: adds the time zone, which the browser picked. */
-export function absoluteTimeWithZone(iso: string): string {
-  return withZone.format(new Date(iso));
+export function absoluteTimeWithZone(iso: string, language: Language = currentLanguage()): string {
+  return formats(language).withZone.format(new Date(iso));
+}
+
+/** A date without the time: "Nov 4, 2026" ("4 lis 2026"). */
+export function mediumDate(iso: string | Date, language: Language = currentLanguage()): string {
+  return formats(language).date.format(typeof iso === "string" ? new Date(iso) : iso);
 }

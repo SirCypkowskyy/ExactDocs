@@ -6,28 +6,24 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
-import { type ReactNode, useEffect, useEffectEvent, useId, useState } from "react";
+import { type ReactNode, useEffect, useEffectEvent, useId, useMemo, useState } from "react";
+import { type Language, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { EmptyState } from "@/shared/ui/page";
 import { SelectField } from "@/shared/ui/select-field";
 import { Skeleton } from "@/shared/ui/skeleton";
+import { messages } from "../messages";
 import type { UsersView } from "../model/list-view";
 import type { User } from "../model/user";
 
 // Account | Role | Status | Created | Actions. Below `md` the pills sit under the name.
-export const columns =
-  "md:grid md:grid-cols-[minmax(0,1fr)_5rem_6rem_7.5rem_auto] md:items-center md:gap-x-4";
-
-/** Sorting is done by the API, so the table only holds the state and draws the headers. */
-const columnDefs: ColumnDef<User>[] = [
-  { accessorKey: "username", header: "Account" },
-  { accessorKey: "role", header: "Role" },
-  { id: "status", header: "Status", enableSorting: false },
-  { accessorKey: "created_at", header: "Created", sortDescFirst: true },
-  { id: "actions", header: "", enableSorting: false },
-];
+// Polish names the admin role "Administrator", which needs a wider role column than "Admin".
+export const columnsFor = (language: Language) =>
+  language === "pl"
+    ? "md:grid md:grid-cols-[minmax(0,1fr)_6.75rem_6rem_7.5rem_auto] md:items-center md:gap-x-4"
+    : "md:grid md:grid-cols-[minmax(0,1fr)_5rem_6rem_7.5rem_auto] md:items-center md:gap-x-4";
 const sortingOf = (sort: string | undefined): SortingState =>
   sort ? [{ id: sort.replace(/^-/, ""), desc: sort.startsWith("-") }] : [];
 
@@ -49,6 +45,7 @@ function Toolbar({
   setText,
 }: Pick<UsersListProps, "view" | "onView"> & { text: string; setText: (v: string) => void }) {
   const id = useId();
+  const { list: t, roles } = useMessages(messages);
   const commit = useEffectEvent((value: string) => {
     if ((view.q ?? "") !== value.trim()) onView({ ...view, q: value.trim() || undefined });
   });
@@ -61,56 +58,56 @@ function Toolbar({
     <search className="mb-4 flex flex-wrap items-end gap-3">
       <div className="flex min-w-0 flex-1 basis-60 flex-col gap-2">
         <label htmlFor={`${id}-q`} className="text-body font-medium">
-          Find an account
+          {t.find}
         </label>
         <Input
           id={`${id}-q`}
           type="search"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Username"
+          placeholder={t.usernamePlaceholder}
         />
       </div>
       <div className="w-36">
         <SelectField
           id={`${id}-role`}
-          label="Role"
+          label={t.role}
           value={view.role ?? ""}
           onChange={(e) =>
             onView({ ...view, role: (e.target.value || undefined) as UsersView["role"] })
           }
         >
-          <option value="">Any</option>
-          <option value="admin">Admin</option>
-          <option value="user">User</option>
+          <option value="">{t.anyRole}</option>
+          <option value="admin">{roles.admin}</option>
+          <option value="user">{roles.user}</option>
         </SelectField>
       </div>
       <div className="w-36">
         <SelectField
           id={`${id}-status`}
-          label="Status"
+          label={t.status}
           value={view.status ?? ""}
           onChange={(e) =>
             onView({ ...view, status: (e.target.value || undefined) as UsersView["status"] })
           }
         >
-          <option value="">Any</option>
-          <option value="active">Active</option>
-          <option value="disabled">Disabled</option>
+          <option value="">{t.anyStatus}</option>
+          <option value="active">{t.active}</option>
+          <option value="disabled">{t.disabled}</option>
         </SelectField>
       </div>
       <div className="w-48 md:hidden">
         <SelectField
           id={`${id}-sort`}
-          label="Sort by"
+          label={t.sortLabel}
           value={view.sort ?? ""}
           onChange={(e) => onView({ ...view, sort: e.target.value || undefined })}
         >
-          <option value="">Oldest first</option>
-          <option value="-created_at">Newest first</option>
-          <option value="username">Name, A to Z</option>
-          <option value="-username">Name, Z to A</option>
-          <option value="role">Admins first</option>
+          <option value="">{t.sort.oldest}</option>
+          <option value="-created_at">{t.sort.newest}</option>
+          <option value="username">{t.sort.nameAsc}</option>
+          <option value="-username">{t.sort.nameDesc}</option>
+          <option value="role">{t.sort.adminsFirst}</option>
         </SelectField>
       </div>
     </search>
@@ -128,6 +125,20 @@ export function UsersList({
   onLoadMore,
   row,
 }: UsersListProps) {
+  const language = useLanguage();
+  const t = useMessages(messages).list;
+  const columns = columnsFor(language);
+  // Sorting is done by the API, so the table only holds the state and draws the headers.
+  const columnDefs = useMemo<ColumnDef<User>[]>(
+    () => [
+      { accessorKey: "username", header: t.columns.account },
+      { accessorKey: "role", header: t.columns.role },
+      { id: "status", header: t.columns.status, enableSorting: false },
+      { accessorKey: "created_at", header: t.columns.created, sortDescFirst: true },
+      { id: "actions", header: "", enableSorting: false },
+    ],
+    [t],
+  );
   const [text, setText] = useState(view.q ?? "");
   const table = useReactTable({
     data: users as User[],
@@ -146,8 +157,8 @@ export function UsersList({
     <div>
       <Toolbar view={view} onView={onView} text={text} setText={setText} />
       {users.length === 0 ? (
-        <EmptyState title="No accounts match" className="max-w-2xl">
-          <p>Nothing matches these filters.</p>
+        <EmptyState title={t.noMatchTitle} className="max-w-2xl">
+          <p>{t.noMatch}</p>
           <Button
             variant="ghost"
             className="mt-3"
@@ -156,7 +167,7 @@ export function UsersList({
               onView({ sort: view.sort });
             }}
           >
-            Clear filters
+            {t.clearFilters}
           </Button>
         </EmptyState>
       ) : (
@@ -181,7 +192,7 @@ export function UsersList({
                 <span key={header.id}>
                   <button
                     type="button"
-                    aria-label={`Sort by ${String(header.column.columnDef.header)}${dir ? `, sorted ${dir === "asc" ? "ascending" : "descending"}` : ""}`}
+                    aria-label={t.sortBy(String(header.column.columnDef.header), dir)}
                     onClick={header.column.getToggleSortingHandler()}
                     className="inline-flex cursor-pointer items-center gap-1 rounded outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                   >
@@ -199,7 +210,7 @@ export function UsersList({
             })}
           </div>
           <ul
-            aria-label="User accounts"
+            aria-label={t.label}
             className="divide-y divide-rule border-b border-border md:border-t-0 max-md:border-t"
           >
             {table.getRowModel().rows.map(({ original }) => row(original))}
@@ -210,12 +221,10 @@ export function UsersList({
             )}
           </ul>
           <div className="flex items-center gap-3 pt-4 text-small text-muted-foreground">
-            <p className="num">
-              Showing {users.length} of {total}
-            </p>
+            <p className="num">{t.showing(users.length, total)}</p>
             {hasMore && (
               <Button variant="outline" onClick={onLoadMore} disabled={loadingMore}>
-                Load more
+                {t.loadMore}
               </Button>
             )}
           </div>

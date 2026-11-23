@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
+import { common, useMessages } from "@/shared/lib/i18n";
 import { Button } from "@/shared/ui/button";
 import { Field } from "@/shared/ui/field";
 import { Page, PageHeader } from "@/shared/ui/page";
@@ -8,9 +9,9 @@ import {
   answerAvailabilityQueryOptions,
   playgroundLibrariesQueryOptions,
 } from "../api/playground-queries";
+import { messages } from "../messages";
 import {
   AGENT,
-  MODE_LABEL,
   PLAYGROUND_MODES,
   type PlaygroundChoice,
   type PlaygroundMode,
@@ -29,12 +30,13 @@ function LibraryPicker({
   chosen: readonly string[];
   onChange: (next: string[]) => void;
 }) {
+  const t = useMessages(messages);
   const picked = new Set(chosen);
   const toggle = (id: string) =>
     onChange(picked.has(id) ? chosen.filter((c) => c !== id) : [...chosen, id]);
   return (
     <fieldset className="space-y-2">
-      <legend className="text-body font-medium">Libraries</legend>
+      <legend className="text-body font-medium">{t.page.libraries}</legend>
       <div className="flex flex-wrap gap-x-5 gap-y-1">
         <label className="flex min-h-11 cursor-pointer items-center gap-2.5 text-body md:min-h-9">
           <input
@@ -43,7 +45,7 @@ function LibraryPicker({
             onChange={() => onChange([])}
             className="size-4 cursor-pointer accent-primary"
           />
-          All libraries
+          {t.page.allLibraries}
         </label>
         {libraries.map((id) => (
           <label
@@ -78,22 +80,23 @@ function ModeSelect({
   /** The agent option: absent leaves it out, `""` offers it, a reason shows it disabled. */
   agent?: string | undefined;
 }) {
+  const t = useMessages(messages);
   return (
     <SelectField
       id={id}
       label={label}
       value={value}
-      hint={agent ? `Agent answer is unavailable: ${agent}` : undefined}
+      hint={agent ? t.page.agentUnavailable(agent) : undefined}
       onChange={(e) => onChange(e.target.value as PlaygroundChoice)}
     >
       {PLAYGROUND_MODES.map((m) => (
         <option key={m} value={m}>
-          {MODE_LABEL[m]}
+          {t.modes[m]}
         </option>
       ))}
       {agent !== undefined && (
         <option value={AGENT} disabled={agent !== ""}>
-          {agent === "" ? "Agent answer (an LLM reads and answers)" : "Agent answer (unavailable)"}
+          {agent === "" ? t.page.agentOption : t.page.agentOptionUnavailable}
         </option>
       )}
     </SelectField>
@@ -105,6 +108,8 @@ function ModeSelect({
  * mode or two side by side, with each result's BM25 and vector ranks and why a mode fell back.
  */
 export function PlaygroundPage() {
+  const t = useMessages(messages);
+  const c = useMessages(common);
   const { data: summaries } = useQuery(playgroundLibrariesQueryOptions());
   const libraries = searchableLibraries(summaries ?? []);
   const [q, setQ] = useState("");
@@ -118,7 +123,7 @@ export function PlaygroundPage() {
   const agentOffer = availability
     ? availability.available
       ? ""
-      : (availability.reason ?? "it can't run now")
+      : (availability.reason ?? t.page.agentCantRun)
     : undefined;
   const agentChosen = mode === AGENT;
 
@@ -136,28 +141,25 @@ export function PlaygroundPage() {
 
   return (
     <Page>
-      <PageHeader
-        title="Search playground"
-        description="Run one query across the libraries you choose and compare how BM25, vector and hybrid search rank it."
-      />
+      <PageHeader title={t.page.title} description={t.page.description} />
       <form
         onSubmit={submit}
         className="max-w-3xl space-y-5 rounded-lg border border-border bg-raised p-5"
-        aria-label="Playground query"
+        aria-label={t.page.form}
       >
         <Field
           id="playground-q"
-          label="Query"
+          label={t.page.query}
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="how do I retry failed calls"
+          placeholder={t.page.queryPlaceholder}
           maxLength={2000}
         />
         <LibraryPicker libraries={libraries} chosen={chosen} onChange={setChosen} />
         <div className="grid gap-4 sm:grid-cols-2">
           <ModeSelect
             id="playground-mode"
-            label="Mode"
+            label={t.page.mode}
             value={mode}
             onChange={setMode}
             agent={agentOffer}
@@ -165,17 +167,14 @@ export function PlaygroundPage() {
           {compare && !agentChosen && (
             <ModeSelect
               id="playground-other"
-              label="Compare with"
+              label={t.page.compareWith}
               value={other}
               onChange={(m) => setOther(m as PlaygroundMode)}
             />
           )}
         </div>
         {agentChosen ? (
-          <p className="text-body text-muted-foreground">
-            An LLM searches and reads the chosen libraries and writes an answer. It counts to the
-            LLM budgets and rate limit like an agentic search.
-          </p>
+          <p className="text-body text-muted-foreground">{t.page.agentNote}</p>
         ) : (
           <label className="flex min-h-11 cursor-pointer items-center gap-2.5 text-body md:min-h-9">
             <input
@@ -184,11 +183,11 @@ export function PlaygroundPage() {
               onChange={(e) => setCompare(e.target.checked)}
               className="size-4 cursor-pointer accent-primary"
             />
-            Compare two modes side by side
+            {t.page.compare}
           </label>
         )}
         <Button type="submit" disabled={!q.trim()}>
-          {agentChosen ? "Ask the agent" : "Search"}
+          {agentChosen ? t.page.ask : c.search}
         </Button>
       </form>
       {run && run.first === AGENT && (

@@ -4,6 +4,7 @@ import { ArrowLeft, Check } from "lucide-react";
 import { type FormEvent, type ReactNode, type Ref, useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { type Credential, type CredentialDraft, credentialKindFor } from "@/shared/lib/credentials";
+import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { filledRules, lines, type TagRuleDraft } from "@/shared/lib/path-selection";
 import { type RefChoice, refToSend } from "@/shared/lib/refs";
 import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
@@ -18,6 +19,7 @@ import { addLibrary, checkRepository, importJobQueryOptions } from "../api/add-l
 import { librariesKeys } from "../api/libraries-query";
 import { useOlderVersions, usePreview } from "../hooks/use-preview";
 import { usePrivateAccess } from "../hooks/use-private-access";
+import { addMessages } from "../messages/add";
 import {
   type AddedLibrary,
   type AddField,
@@ -34,13 +36,6 @@ import { AdvancedOptions } from "./file-selection";
 import { ImportProgress } from "./import-progress";
 
 const ALERT_ID = "add-alert";
-const HOSTS: Record<string, string> = {
-  github: "GitHub",
-  gitlab: "GitLab",
-  bitbucket: "Bitbucket",
-  gitea: "Gitea",
-  git: "a git server",
-};
 const FOCUS: Record<AddField, string> = {
   url: "url",
   credential: "credential",
@@ -51,6 +46,8 @@ const FOCUS: Record<AddField, string> = {
 };
 
 function RepoFound({ checked }: { checked: Checked | undefined }) {
+  const t = useMessages(addMessages).address;
+  const hosts: Readonly<Record<string, string>> = t.hosts;
   return (
     <>
       <p role="status" className="min-h-5 text-body text-muted-foreground">
@@ -58,10 +55,8 @@ function RepoFound({ checked }: { checked: Checked | undefined }) {
           <span className="fade-in inline-flex items-start gap-1.5">
             <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
             <span>
-              Found on {HOSTS[checked.host] ?? "a git server"}.{" "}
-              {checked.default_branch
-                ? `Default branch is ${checked.default_branch}.`
-                : "It has no default branch, so choose one below."}
+              {t.foundOn(hosts[checked.host] ?? t.hosts.git)}{" "}
+              {checked.default_branch ? t.defaultBranch(checked.default_branch) : t.noDefaultBranch}
             </span>
           </span>
         )}
@@ -73,16 +68,14 @@ function RepoFound({ checked }: { checked: Checked | undefined }) {
 
 /** An SSH server's key, to compare with the one the host publishes before anything is added. */
 function HostKey({ fingerprint }: { fingerprint: string }) {
+  const t = useMessages(addMessages).address;
   return (
     <div className="fade-in rounded-md border border-border bg-secondary/60 px-3 py-2.5 text-body">
-      <p className="font-medium">SSH host key of the server</p>
+      <p className="font-medium">{t.hostKeyTitle}</p>
       <code className="mt-1 block font-mono text-small break-all text-foreground select-all">
         {fingerprint}
       </code>
-      <p className="mt-1 text-muted-foreground">
-        Compare it with the fingerprint your git host publishes before you add the library. If they
-        differ, don't add it: someone may be in the middle.
-      </p>
+      <p className="mt-1 text-muted-foreground">{t.hostKeyHint}</p>
     </div>
   );
 }
@@ -103,6 +96,7 @@ function PrivateAccess({
   onOpen: (open: boolean) => void;
   onChange: (draft: CredentialDraft) => void;
 }) {
+  const t = useMessages(addMessages).address;
   const kind = credentialKindFor(url);
   return (
     <div className="flex flex-col gap-3">
@@ -114,7 +108,7 @@ function PrivateAccess({
           onChange={(e) => onOpen(e.target.checked)}
           className="size-4 cursor-pointer accent-primary"
         />
-        This repository is private
+        {t.private}
       </label>
       {open &&
         (kind ? (
@@ -137,8 +131,7 @@ function PrivateAccess({
                 : "fade-in text-body text-muted-foreground outline-none"
             }
           >
-            {error ??
-              "A private repository needs an https:// address (with an access token) or an ssh:// or git@host:path address (with a deploy key)."}
+            {error ?? t.privateNeedsAddress}
           </p>
         ))}
     </div>
@@ -147,13 +140,14 @@ function PrivateAccess({
 
 /** `aria-disabled` while busy keeps focus on the button; the submit handler ignores repeats. */
 function SubmitButton({ pending, checked }: { pending: boolean; checked: boolean }) {
+  const t = useMessages(addMessages);
   const label = checked
     ? pending
-      ? "Adding"
-      : "Add library"
+      ? t.adding
+      : t.addLibrary
     : pending
-      ? "Checking"
-      : "Check repository";
+      ? t.checking
+      : t.checkRepository;
   return (
     <Button type="submit" pending={pending} aria-disabled={pending} className="min-w-36">
       {label}
@@ -201,11 +195,12 @@ function AddressStep({
   /** `restart`: what was checked no longer holds, so the form goes back to the check. */
   onAccessChanged: (restart: boolean) => void;
 }) {
+  const t = useMessages(addMessages).address;
   return (
     <div className="flex flex-col gap-3">
       <Field
         id="url"
-        label="Repository address"
+        label={t.label}
         type="url"
         inputMode="url"
         autoComplete="off"
@@ -215,7 +210,7 @@ function AddressStep({
         error={error}
         errorAction={taken ? <LibraryLink id={taken} /> : undefined}
         alertId={alertId}
-        hint={error ? undefined : "A git repository with Markdown docs."}
+        hint={error ? undefined : t.hint}
         onChange={(e) => onEdit(e.target.value)}
       />
       <PrivateAccess
@@ -239,6 +234,7 @@ function AddressStep({
 
 /** `/owner/repo` as a link to that library's page, named so it reads well out of context too. */
 function LibraryLink({ id }: { id: string }) {
+  const t = useMessages(addMessages).address;
   const [owner = "", repo = ""] = id.slice(1).split("/");
   return (
     <Link
@@ -246,16 +242,17 @@ function LibraryLink({ id }: { id: string }) {
       params={{ owner, repo }}
       className="rounded-sm underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      Open {id}
+      {t.openLibrary(id)}
     </Link>
   );
 }
 
 function FormActions({ pending, checked }: { pending: boolean; checked: boolean }) {
+  const c = useMessages(common);
   return (
     <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
       <Link to="/" className={buttonVariants({ variant: "ghost" })}>
-        Cancel
+        {c.cancel}
       </Link>
       <SubmitButton pending={pending} checked={checked} />
     </div>
@@ -263,15 +260,18 @@ function FormActions({ pending, checked }: { pending: boolean; checked: boolean 
 }
 
 /** The way back to the list, above the title. */
-const backToList = (
-  <Link
-    to="/"
-    className="-ml-2 inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 text-body text-muted-foreground outline-none transition-colors duration-(--dur-fast) hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
-  >
-    <ArrowLeft aria-hidden="true" className="size-4" />
-    Libraries
-  </Link>
-);
+function BackToList() {
+  const t = useMessages(addMessages);
+  return (
+    <Link
+      to="/"
+      className="-ml-2 inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 text-body text-muted-foreground outline-none transition-colors duration-(--dur-fast) hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+    >
+      <ArrowLeft aria-hidden="true" className="size-4" />
+      {t.backToList}
+    </Link>
+  );
+}
 
 function LibraryIdField({
   value,
@@ -282,15 +282,16 @@ function LibraryIdField({
   error: string | undefined;
   onChange: (value: string) => void;
 }) {
+  const t = useMessages(addMessages).libraryId;
   return (
     <Field
       id="library-id"
-      label="Library ID"
+      label={t.label}
       autoComplete="off"
       spellCheck={false}
       value={value}
       error={error}
-      hint="How agents refer to this library, as /owner/repo."
+      hint={t.hint}
       className="font-mono"
       onChange={(e) => onChange(e.target.value)}
     />
@@ -319,17 +320,14 @@ function AddFrame({
   heading: Ref<HTMLHeadingElement>;
   children: ReactNode;
 }) {
+  const t = useMessages(addMessages);
   return (
     <Page>
       <PageHeader
-        above={backToList}
+        above={<BackToList />}
         {...(!added && { headingRef: heading })}
-        title={added ? "Import" : "Add a library"}
-        description={
-          added
-            ? "Reading the repository and indexing its documents."
-            : "Point ExactDocs at a git repository with Markdown docs. It imports one version at a time, exactly as it was."
-        }
+        title={added ? t.importTitle : t.title}
+        description={added ? t.importDescription : t.description}
       />
       <div className="lg:grid lg:grid-cols-[13rem_minmax(0,42rem)] lg:gap-12">
         <AddSteps phase={phase} />
@@ -341,7 +339,9 @@ function AddFrame({
 
 export function AddLibraryPage() {
   const queryClient = useQueryClient();
-  const heading = usePageTitle("Add a library");
+  const language = useLanguage();
+  const t = addMessages[language];
+  const heading = usePageTitle(t.title);
   const focusAfterRender = useFocusAfterRender();
   const [url, setUrl] = useState("");
   // The secret lives there and in `checked` only: never a query, storage or the URL.
@@ -439,7 +439,7 @@ export function AddLibraryPage() {
   }
 
   async function check() {
-    const invalid = validateUrl(url);
+    const invalid = validateUrl(url, language);
     if (invalid) return fail({ field: "url", message: invalid });
     const sent = access.toSend(url);
     if (sent.error) return fail({ field: "credential", message: sent.error });
@@ -455,7 +455,7 @@ export function AddLibraryPage() {
       setChecked({ ...result, url: target, credential: sent.credential });
       setLibraryId(result.library_id);
     } catch (error) {
-      if (run.current === mine) fail(explainCheckError(error, sent.credential?.kind));
+      if (run.current === mine) fail(explainCheckError(error, sent.credential?.kind, language));
     } finally {
       if (run.current === mine) {
         busy.current = false;
@@ -469,7 +469,7 @@ export function AddLibraryPage() {
     if (busy.current) return;
     if (!checked) return check();
 
-    const form = validateForm({ libraryId, include, exclude, rules });
+    const form = validateForm({ libraryId, include, exclude, rules }, language);
     if (!form.ok) {
       setProblem(undefined);
       setShowRuleErrors(true);
@@ -506,14 +506,16 @@ export function AddLibraryPage() {
       setChecked((c) => c && { ...c, credential: undefined });
       if (run.current === mine) {
         setAdded(result);
-        toast.success(`Added ${result.library_id}`, {
-          description: `Importing ${result.ref} now. You can leave this page.`,
+        toast.success(t.added.toast(result.library_id), {
+          description: t.added.description(result.ref),
         });
         const tags = preview.chosen([ref, result.ref]);
         if (tags.length) void older.queue(result.library_id, tags);
       }
     } catch (error) {
-      if (run.current === mine) fail(explainAddError(error, ref, checked.credential?.kind));
+      if (run.current === mine) {
+        fail(explainAddError(error, ref, checked.credential?.kind, language));
+      }
     } finally {
       if (run.current === mine) {
         busy.current = false;

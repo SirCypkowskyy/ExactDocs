@@ -1,5 +1,5 @@
 // Public API of the `libraries` slice. Everything else in this folder is private.
-export { jobsQueryOptions, librariesQueryOptions } from "./api/libraries-query";
+export { jobsPageQueryOptions, librariesQueryOptions } from "./api/libraries-query";
 export { AddLibraryPage } from "./components/add-library-page";
 export { SelectionPreview } from "./components/file-preview";
 export { ImportProgress, JobLine } from "./components/import-progress";
