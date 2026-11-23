@@ -662,10 +662,31 @@ answerable one by the result list today.
 For each budget, cheapest first, the candidates are the results that ran with no wrong version,
 no read outside the version, no error and no reranker fallback. The best of a budget, by recall@5,
 then nDCG@10, MRR, lower USD and lower p95, becomes its default only when its recall@5 beats the
-cheaper budget's default by 5 points (the suite's `DEFAULT_MARGIN_POINTS`); otherwise the cheaper
-default stays, and the reason says by how much the dearer one fell short. Each recommendation
-gives its USD per 1000 questions and its numbers. A budget nothing of which ran is "not measured
-yet"; for hosted models that means a real-providers run is needed.
+cheaper budget's default by 5 points (the suite's `DEFAULT_MARGIN_POINTS`) **and** McNemar's test
+(mid-p) of its recall@5 against that default, on the answerable cases both answered, is
+significant at 5% (#489). Otherwise the cheaper default stays, and the reason says which it
+missed: by how much the dearer one fell short of the margin, or that the difference is not
+significant, with its p-value. A result without per-case outcomes (`rows`) cannot be tested and
+does not become a default. Each recommendation gives its USD per 1000 questions, its numbers and
+the test (`test`). A budget nothing of which ran is "not measured yet"; for hosted models that
+means a real-providers run is needed.
+
+### Intervals and paired tests
+
+Every rate and mean of `metrics`, `by_kind` and `by_project` (recall@k, MRR, nDCG@10, section
+recall, the wrong-version, clean, no-answer and empty rates, tokens and USD per question; not the
+latency percentiles) has a 95% interval in `intervals`: a percentile bootstrap over the cases,
+10,000 resamples drawn from `random.Random(489)`. The draws depend only on the seed and the
+number of cases, and the rows are taken in case order, so every configuration that answered the
+same cases is resampled with the same draws (paired). Each result is then tested against its
+budget's default (`versus_default`) on the answerable cases both answered: McNemar's test (mid-p)
+for recall@1, @5 and @10, and a paired sign-flip permutation test (10,000 random sign patterns,
+same seed) for MRR and nDCG@10, each with the difference and its paired bootstrap interval. The
+summary shows the intervals in brackets and the tests under *Against the budget's default*.
+The definitions, and why mid-p and a permutation test, are in
+[Intervals and significance](benchmark/method.md#intervals-and-significance); the code is
+`retrieval_eval/stats.py`, tested on synthetic runs with known answers in
+`tests/evals/test_stats.py`.
 
 ### Reproducing a result
 
@@ -681,14 +702,21 @@ yet"; for hosted models that means a real-providers run is needed.
   `reason`; `models` (each role's `<profile>:<model>`, the profile's `kind` and `base_url`, and for
   a local model the Hub `revision` it was pulled at and its `dimensions`); `settings` (the `ai`
   settings it ran with: the roles, `rerank_with`, the reranker's `top_n` and timeout, the judge's
-  timeout, HyDE and agentic limits; never a key); `metrics`, `by_kind`, `by_project`, `index`,
-  `fallbacks`, `reranked`, `rerank_fallbacks`, `misses`, `errors`, `wrong_version_cases`,
-  `left_version_cases`;
-- `recommendations`: per `budget`, the `configuration`, `chunking`, `usd_per_1000_questions` and
-  the `reasons`.
+  timeout, HyDE and agentic limits; never a key); `metrics`, `by_kind`, `by_project` (each with
+  its `intervals`), `index`, `fallbacks`, `reranked`, `rerank_fallbacks`, `misses`, `errors`,
+  `wrong_version_cases`, `left_version_cases`; `rows`, every case's outcome by case name (its
+  kind, project, rank, nDCG, section ranks, wrong version, empty, search time, tokens and USD),
+  from which the metrics, intervals and tests can be recomputed; `rows_from`, set when the rows
+  come from a later run than the metrics (below); and `versus_default`, the paired tests
+  against its budget's default;
+- `recommendations`: per `budget`, the `configuration`, `chunking`, `usd_per_1000_questions`,
+  the `reasons` and the recall@5 `test` against the cheaper default;
+- `statistics`: how the intervals and tests were computed (`seed`, `resamples`, `confidence`,
+  `alpha` and the methods).
 
 The recorded run is `packages/exactdocs/evals/results/retrieval.json` and `retrieval.md`.
-`schema_version` changes when a field is renamed or removed.
+`schema_version` changes when a field is renamed or removed; #489 only added fields, so it is
+still 1, and a report without them still reads.
 
 ### The recorded run
 
@@ -717,6 +745,15 @@ BM25 is best at `default`, split level 3 and 4,000 characters (recall@5 81.7%, a
 3 points more, under the 5-point margin, so BM25 stays the default for both the no-model and the
 local budget; the cross-encoder adds as much as hybrid at `h6` and loses recall at `h2`, whose
 chunks are longer than its window; arctic-embed-s is below BM25 (75.3%).
+
+The run kept aggregates only, so it had no per-case outcomes for intervals and tests (#489).
+BM25 was run again at every chunking for #489 (`just retrieval-bench --offline --configs bm25`,
+on Linux x86_64 with 4 CPUs); its recall@k, MRR, nDCG@10, section recall and rates matched the
+recorded ones exactly overall, per kind and per project, so its `rows` were added to the four
+recorded BM25 results, with `rows_from` saying where they come from (their `search_ms` are that
+re-run's; the recorded latencies stay), and the intervals, tests and recommendation were derived
+again. The model configurations were not run again: they have no rows, so no interval and no
+test, until the next recorded run, which keeps rows for every result.
 
 ### Running it with local models
 
@@ -837,8 +874,16 @@ one cell per agent model and retrieval configuration:
   its facts are stated;
 - *Read another version*: questions where the agent read something of the asked library at
   another version;
-- tool calls, tokens and USD per question, median wall time, and how the searches were answered.
+- tool calls, tokens and USD per question, median wall time, and how the searches were answered;
+- the 95% interval of accuracy (overall, per kind and per project), of *Read the answer* and of
+  the means per question (`intervals`, a percentile bootstrap over the questions as in
+  [Intervals and paired tests](#intervals-and-paired-tests));
+- for each retrieval configuration but the run's first, McNemar's test (mid-p) of its accuracy
+  against the first configuration's, for the same agent model and the questions both asked
+  (`reference`, `versus_reference`), shown under *Against the first retrieval configuration*.
+  Put the baseline first (`--retrieval`), e.g. BM25 when comparing models.
 
+`statistics` records the seed, resamples, confidence and level of the intervals and tests.
 `meta` holds what a rerun needs: the agent models, the judge model, each configuration's
 settings, the limits, the instructions and prompt, the ExactDocs version and repository commit,
 and every imported version with its pinned and recorded commit. `questions` holds every question's

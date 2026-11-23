@@ -33,6 +33,7 @@ from agent_bench.report import (
     QuestionResult,
     RunMeta,
     accurate,
+    against_reference,
     markdown,
     results_of,
     summarize,
@@ -40,6 +41,7 @@ from agent_bench.report import (
 from fixture_repo import git
 from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question
 from retrieval_eval.golden import Corpus, GoldenCase, PinnedVersion, Project, fetch
+from retrieval_eval.stats import StatsMethod
 
 LIBRARY = "/acme/demo"
 
@@ -407,11 +409,65 @@ def _report(rows: list[QuestionResult]) -> BenchReport:
 
 def test_the_markdown_report_shows_each_cell_and_the_breakdowns() -> None:
     text = markdown(_report([_row("a"), _row("b", grade="wrong", wrong_version=True, agent="m2")]))
-    assert "| `m1` | bm25 | 100.0 % |" in text
-    assert "| `m2` | bm25 | 0.0 % | 0 | 1 | 0 | 0 | 1 |" in text
+    assert "| `m1` | bm25 | 100.0 % [100.0, 100.0] |" in text
+    assert "| `m2` | bm25 | 0.0 % [0.0, 0.0] | 0 | 1 | 0 | 0 | 1 |" in text
     assert "## Accuracy per kind" in text
     assert "## Accuracy per project" in text
     assert "`EXACTDOCS_AI__MODE=bm25`; searches answered by no search" in text
+
+
+# ---------------------------------------------------------------------- intervals, tests (#489)
+
+
+def test_a_cell_gives_its_rates_and_means_an_interval() -> None:
+    grades = ["correct" if i % 4 else "wrong" for i in range(40)]
+    rows = [_row(str(i), grade=g, kind="a" if i < 20 else "b") for i, g in enumerate(grades)]
+
+    cell = summarize("m", "bm25", rows)
+
+    accuracy = cell.intervals["accuracy"]
+    assert cell.accuracy == pytest.approx(0.75)
+    assert accuracy.low < cell.accuracy < accuracy.high
+    assert {"accuracy", "tool_calls_per_question", "tokens_per_question"} <= set(cell.intervals)
+    assert "grounded_share" not in cell.intervals  # no question names its sections here
+    usd = cell.intervals["usd_per_question"]  # every question cost the same
+    assert (usd.low, usd.high) == pytest.approx((0.01, 0.01))
+    kind = cell.by_kind["b"]
+    assert kind.interval is not None
+    assert kind.interval.high - kind.interval.low > accuracy.high - accuracy.low  # fewer cases
+
+
+def _against(grades: dict[str, list[str]]) -> list[QuestionResult]:
+    return [
+        _row(f"case {i}", grade=grade).model_copy(update={"retrieval": retrieval})
+        for retrieval, given in grades.items()
+        for i, grade in enumerate(given)
+    ]
+
+
+def test_each_configuration_is_tested_against_the_first_one() -> None:
+    same = ["correct", "wrong"] * 20
+    better = ["correct"] * 40  # every question the first got wrong, now right
+    rows = _against({"none": same, "bm25": same, "hybrid": better})
+    names = ("none", "bm25", "hybrid")
+    cells = [summarize("m1", name, [q for q in rows if q.retrieval == name]) for name in names]
+
+    first, bm25, hybrid = against_reference(cells, rows)
+
+    assert (first.reference, first.versus_reference) == (None, None)
+    assert bm25.reference == "none"
+    assert bm25.versus_reference is not None
+    assert (bm25.versus_reference.p_value, bm25.versus_reference.significant) == (1, False)
+    assert hybrid.versus_reference is not None
+    assert hybrid.versus_reference.significant
+    assert (hybrid.versus_reference.gained, hybrid.versus_reference.lost) == (20, 0)
+    report = _report(rows).model_copy(
+        update={"cells": [first, bm25, hybrid], "statistics": StatsMethod()}
+    )
+    text = markdown(report)
+    assert "## Against the first retrieval configuration" in text
+    assert "| `m1` | hybrid | none | **+50.0** [" in text
+    assert "10,000 resamples, seed 489" in text
 
 
 def test_a_labelling_sample_is_reproducible_has_blank_labels_and_no_judge_grade() -> None:
@@ -606,4 +662,8 @@ async def test_stand_in_agents_answer_through_exactdocs_as_shipped(tmp_path: Pat
             assert row.grounded in {False, None}
     unanswerable = [r for r in report.questions if r.kind == "unanswerable"]
     assert {r.grade for r in unanswerable} == {"wrong"}  # the stand-ins answer anyway
+    # each agent model's hybrid cell is tested against its bm25 cell, the first configuration
+    assert report.statistics is not None
+    assert [c.reference for c in report.cells] == [None, None, "bm25", "bm25"]
+    assert all(c.versus_reference.cases == 3 for c in report.cells[2:] if c.versus_reference)
     assert "# Agent benchmark" in markdown(report)

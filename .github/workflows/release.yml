@@ -7,11 +7,27 @@
 # Every image tag also comes as -ai and -local (X.Y.Z-ai, latest-local, dev-ai, ...): the three
 # variants of deploy/Dockerfile (#246). Nothing is published before the retrieval eval passes
 # (job `eval`, docs/evals.md). See docs/releasing.md.
+#
+# Runners (#478, docs/releasing.md "CI/CD and runners"), switched by the repository variable
+# RUNNER_MODE (Settings -> Secrets and variables -> Actions -> Variables):
+#   hybrid (default, also when unset): the self-hosted ARM64 runner [self-hosted, linux, ARM64,
+#     exactdocs] runs the eval, the web and Python builds and the arm64 image legs; GitHub-hosted
+#     ubuntu-24.04 runs the amd64 image legs (natively) and the short jobs that validate the tag,
+#     publish and sign (a fresh VM each time).
+#   self-hosted (when the GitHub-hosted minutes ran out): every job on the self-hosted runner.
+#     The amd64 legs are cross-built there (QEMU runs only the runtime stage's apt-get, never
+#     Python) and checked with `check_artifacts.py --no-python`.
+#
+# A manual run (workflow_dispatch, from any branch) is a DRY RUN: no tag is checked, the version
+# is 0.0.0.dev<run number>, and the eval, the distributions, every image build, size check and
+# scan run as in a release, but nothing is published (no PyPI, no ghcr.io push, no signature, no
+# GitHub Release). Every publishing job and step is limited to `github.event_name == 'push'`.
 name: Release
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -23,13 +39,14 @@ permissions:
 jobs:
   meta:
     name: Validate tag
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     outputs:
       version: ${{ steps.meta.outputs.version }}
       channel: ${{ steps.meta.outputs.channel }}
       short_sha: ${{ steps.meta.outputs.short_sha }}
       image: ${{ steps.meta.outputs.image }}
       refresh: ${{ steps.meta.outputs.refresh }}
+      created: ${{ steps.meta.outputs.created }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -38,20 +55,28 @@ jobs:
         name: Derive version and channel from the tag
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          n='(0|[1-9][0-9]*)'
-          if [[ "$version" =~ ^$n\.$n\.$n$ ]]; then
-            channel=stable; branch=main
-          elif [[ "$version" =~ ^$n\.$n\.$n\.dev$n$ ]]; then
-            channel=dev; branch=develop
+          if [[ "$GITHUB_EVENT_NAME" != push ]]; then
+            # A dry run: any branch, a version no release has, nothing published.
+            version="0.0.0.dev$GITHUB_RUN_NUMBER"; channel=dry-run; branch="$GITHUB_REF_NAME"
+          elif [[ "$GITHUB_REF" != refs/tags/* ]]; then
+            echo "::error::A release runs on a tag push, not on '$GITHUB_REF'."
+            exit 1
           else
-            echo "::error::Tag '$GITHUB_REF_NAME' is neither vX.Y.Z (main) nor vX.Y.Z.devN (develop)."
-            exit 1
-          fi
-          git fetch --no-tags origin "$branch"
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/$branch"; then
-            echo "::error::A $channel tag must point at a commit on '$branch'."
-            exit 1
+            version="${GITHUB_REF_NAME#v}"
+            n='(0|[1-9][0-9]*)'
+            if [[ "$version" =~ ^$n\.$n\.$n$ ]]; then
+              channel=stable; branch=main
+            elif [[ "$version" =~ ^$n\.$n\.$n\.dev$n$ ]]; then
+              channel=dev; branch=develop
+            else
+              echo "::error::Tag '$GITHUB_REF_NAME' is neither vX.Y.Z (main) nor vX.Y.Z.devN (develop)."
+              exit 1
+            fi
+            git fetch --no-tags origin "$branch"
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/$branch"; then
+              echo "::error::A $channel tag must point at a commit on '$branch'."
+              exit 1
+            fi
           fi
           {
             echo "version=$version"
@@ -61,8 +86,13 @@ jobs:
             # DEBIAN_REFRESH of every image build, set once: the push must rebuild the layers that
             # were scanned, even when it starts after midnight UTC.
             echo "refresh=$(date -u +%F)"
+            echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } >> "$GITHUB_OUTPUT"
-          echo "### $channel release $version from $branch" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$channel" == dry-run ]]; then
+            echo "### Dry run $version from $branch: nothing is published" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### $channel release $version from $branch" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   # The retrieval eval (docs/evals.md) runs here, not on pull requests: nothing is published
   # unless it passes (`pypi-kernel` and `image` need it). Model-free gates first: wrong-version
@@ -74,7 +104,10 @@ jobs:
     name: Retrieval eval
     needs: meta
     runs-on: [self-hosted, linux, ARM64, exactdocs]
-    timeout-minutes: 40
+    # On the self-hosted runner in both modes: the heaviest job, and nothing in it needs x86. The
+    # gating steps take about 10 minutes on a 2-4 core runner, the report-only local models most
+    # of the rest.
+    timeout-minutes: 75
     services:
       postgres:
         image: paradedb/paradedb:0.26.3-pg17@sha256:950f68abebc78e28fd2ecfc8ed915aa29d07b5dd8cba25b2f513ca4e211dda70
@@ -248,11 +281,12 @@ jobs:
 
   # One job and one GitHub environment per PyPI project: PyPI allows only one pending trusted
   # publisher per (repository, workflow, environment). The kernel goes first because the app
-  # pins exactdocs-kernel==<same version>.
+  # pins exactdocs-kernel==<same version>. Never in a dry run.
   pypi-kernel:
     name: Publish exactdocs-kernel to PyPI
     needs: [meta, python, eval]
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    if: github.event_name == 'push'
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     environment:
       name: pypi
       url: https://pypi.org/project/exactdocs-kernel/${{ needs.meta.outputs.version }}/
@@ -269,7 +303,8 @@ jobs:
   pypi:
     name: Publish exactdocs to PyPI
     needs: [meta, pypi-kernel]
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    if: github.event_name == 'push'
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     environment:
       name: pypi-exactdocs
       url: https://pypi.org/project/exactdocs/${{ needs.meta.outputs.version }}/
@@ -284,52 +319,153 @@ jobs:
       - run: uv publish --trusted-publishing always dist/exactdocs-*
 
   # The three image variants (#246): base (BM25, model-free), -ai (exactdocs[ai]) and -local
-  # (exactdocs[ai,local] with the default models). Every variant is built natively and scanned
-  # before any is pushed: `image` needs all three scans.
+  # (exactdocs[ai,local] with the default models), each for linux/amd64 and linux/arm64, checked
+  # against its size budget and scanned before anything is pushed: `image` needs all six scans.
+  # arm64 is built natively on the self-hosted runner; amd64 natively on ubuntu-24.04 in hybrid
+  # mode, or cross-built on the self-hosted runner in self-hosted mode: the Python stages run
+  # natively there and cross-install the venv, and only the runtime stage's apt-get runs under
+  # QEMU, because Python 3.14 crashes under it (deploy/Dockerfile). So a cross-built image's
+  # check runs no Python in it (`--no-python`: size, packages from their .dist-info, model
+  # files; the -local default models are checked by the arm64 leg, the same files).
   image-scan:
-    name: Scan image (${{ matrix.variant }})
+    name: Scan image (${{ matrix.variant }}, ${{ matrix.arch }})
     needs: meta
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
-    timeout-minutes: 60
+    runs-on: ${{ (matrix.arch == 'arm64' || vars.RUNNER_MODE == 'self-hosted') && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 90
     strategy:
+      fail-fast: false # one variant's finding must not hide another's
       matrix:
         variant: [base, ai, local]
+        arch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v7
+      # Hosted runners start with little free disk; -local, the build cache and the scan's
+      # `docker save` copy need several GB. Never on the self-hosted runner.
+      - name: Free disk space
+        if: runner.environment == 'github-hosted'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
       # Debian security updates: a cached apt layer would keep the package set of an older
       # build, so DEBIAN_REFRESH is the release's date (needs.meta.outputs.refresh, the same in
-      # the push below, so it reuses these layers).
+      # `image`, so it reuses these layers).
+      # binfmt for the cross-built amd64 leg on the ARM64 runner (self-hosted mode only).
+      - uses: docker/setup-qemu-action@v4
+        if: matrix.arch == 'amd64' && runner.arch == 'ARM64'
+        with:
+          platforms: amd64
       - uses: docker/setup-buildx-action@v4
-      # Built natively (arm64, from the cache) and loaded; the Debian and Python packages are the
-      # same for amd64. The gate fails on a fixable CRITICAL/HIGH finding; accepted ones are in
-      # .trivyignore (docs/releasing.md).
+      # Built and loaded. The gate fails on a fixable CRITICAL/HIGH finding; accepted
+      # ones are in .trivyignore (docs/releasing.md). The GitHub Actions cache, one scope per
+      # variant and architecture, hands these layers to the build in `image`.
       - name: Build the image to scan
         uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile
           target: ${{ matrix.variant }}
+          platforms: linux/${{ matrix.arch }}
           load: true
-          tags: exactdocs:scan-${{ matrix.variant }}
+          tags: exactdocs:scan-${{ matrix.variant }}-${{ matrix.arch }}
           build-args: |
             VERSION=${{ needs.meta.outputs.version }}
+            REVISION=${{ github.sha }}
+            CREATED=${{ needs.meta.outputs.created }}
             DEBIAN_REFRESH=${{ needs.meta.outputs.refresh }}
-          cache-from: type=gha,scope=exactdocs-${{ matrix.variant }}
-          cache-to: type=gha,scope=exactdocs-${{ matrix.variant }},mode=max
+          cache-from: type=gha,scope=exactdocs-${{ matrix.variant }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=exactdocs-${{ matrix.variant }}-${{ matrix.arch }},mode=max
       - name: Size budget, packages and models
-        run: python3 deploy/check_artifacts.py image exactdocs:scan-${{ matrix.variant }} ${{ matrix.variant }}
+        env:
+          DOCKER_DEFAULT_PLATFORM: linux/${{ matrix.arch }}
+          NO_PYTHON: ${{ matrix.arch == 'amd64' && runner.arch == 'ARM64' && '--no-python' || '' }}
+        run: >-
+          python3 deploy/check_artifacts.py image exactdocs:scan-${{ matrix.variant }}-${{ matrix.arch }}
+          ${{ matrix.variant }} ${NO_PYTHON:+"$NO_PYTHON"}
+      # Trivy reads the saved image's files and runs nothing in it, so emulation does not matter.
       - name: Trivy scan
         uses: ./.github/actions/trivy-gate
         with:
-          image: exactdocs:scan-${{ matrix.variant }}
-          report-name: trivy-report-${{ matrix.variant }}
+          image: exactdocs:scan-${{ matrix.variant }}-${{ matrix.arch }}
+          report-name: trivy-report-${{ matrix.variant }}-${{ matrix.arch }}
           retention-days: 30
+      # The self-hosted runner is persistent: drop the scanned image (the cache keeps the layers).
+      - name: Remove the scanned image
+        if: always()
+        run: docker image rm -f "exactdocs:scan-${{ matrix.variant }}-${{ matrix.arch }}" >/dev/null || true
 
+  # Each variant and architecture again, on the same kind of runner and from the scan's cache (the
+  # same build arguments, so the same layers), now with SBOM and provenance attestations, pushed by digest
+  # only: no tag until `image-publish`. A dry run builds it and pushes nothing.
   image:
-    name: Publish image to ghcr.io (${{ matrix.variant }})
+    name: Build image (${{ matrix.variant }}, ${{ matrix.arch }})
     needs: [meta, image-scan, eval]
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: ${{ (matrix.arch == 'arm64' || vars.RUNNER_MODE == 'self-hosted') && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        variant: [base, ai, local]
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free disk space
+        if: runner.environment == 'github-hosted'
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: docker/setup-qemu-action@v4
+        if: matrix.arch == 'amd64' && runner.arch == 'ARM64'
+        with:
+          platforms: amd64
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        if: github.event_name == 'push'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # The image's labels (title, description, licenses, version, revision, created) come from
+      # the variant's stage of deploy/Dockerfile and these build arguments.
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          target: ${{ matrix.variant }}
+          platforms: linux/${{ matrix.arch }}
+          build-args: |
+            VERSION=${{ needs.meta.outputs.version }}
+            REVISION=${{ github.sha }}
+            CREATED=${{ needs.meta.outputs.created }}
+            DEBIAN_REFRESH=${{ needs.meta.outputs.refresh }}
+          outputs: type=image,name=${{ needs.meta.outputs.image }},push-by-digest=true,name-canonical=true,push=${{ github.event_name == 'push' }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=exactdocs-${{ matrix.variant }}-${{ matrix.arch }}
+      - name: Record the digest
+        if: github.event_name == 'push'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" == sha256:* ]] || { echo "::error::the build reported no digest"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'push'
+        with:
+          name: digest-${{ matrix.variant }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # One multi-arch index per variant from its two pushed images (their attestations come along),
+  # tagged, annotated and keyless-signed with cosign. Never in a dry run.
+  image-publish:
+    name: Publish image to ghcr.io (${{ matrix.variant }})
+    needs: [meta, image]
+    if: github.event_name == 'push'
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
       packages: write
@@ -337,8 +473,7 @@ jobs:
     strategy:
       matrix:
         include:
-          # title, description and licenses as in the variant's stage of deploy/Dockerfile:
-          # metadata-action's own labels (from the repository) would replace them otherwise.
+          # title, description and licenses as in the variant's stage of deploy/Dockerfile.
           - variant: base
             suffix: ""
             title: ExactDocs
@@ -355,10 +490,11 @@ jobs:
             description: Self-hosted, version-accurate documentation for AI coding agents, with local embedding and reranking models (exactdocs[ai,local])
             licenses: Apache-2.0 AND MIT
     steps:
-      - uses: actions/checkout@v7
-      # The Python stages cross-build linux/amd64 natively on the ARM64 runner; only the runtime
-      # stage's apt-get runs under the QEMU binfmt that the runner VMs have (deploy/runners).
-      # The default models of -local are platform-independent and pulled once, natively.
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: digest-${{ matrix.variant }}-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
@@ -366,9 +502,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       # <v>, <v>-ai, <v>-local; stable also X.Y and latest, dev also <v>-<sha7> and dev, each with
-      # the variant's suffix (latest-ai, dev-local, ...).
+      # the variant's suffix (latest-ai, dev-local, ...). The annotations go on the index.
       - id: tags
         uses: docker/metadata-action@v6
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: index
         with:
           images: ${{ needs.meta.outputs.image }}
           flavor: latest=false
@@ -378,40 +516,51 @@ jobs:
             type=raw,value=latest${{ matrix.suffix }},enable=${{ needs.meta.outputs.channel == 'stable' }}
             type=raw,value=${{ needs.meta.outputs.version }}-${{ needs.meta.outputs.short_sha }}${{ matrix.suffix }},enable=${{ needs.meta.outputs.channel == 'dev' }}
             type=raw,value=dev${{ matrix.suffix }},enable=${{ needs.meta.outputs.channel == 'dev' }}
-          labels: |
-            org.opencontainers.image.title=${{ matrix.title }}
-            org.opencontainers.image.description=${{ matrix.description }}
-            org.opencontainers.image.licenses=${{ matrix.licenses }}
           annotations: |
             org.opencontainers.image.title=${{ matrix.title }}
             org.opencontainers.image.description=${{ matrix.description }}
             org.opencontainers.image.licenses=${{ matrix.licenses }}
-      - id: build
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: deploy/Dockerfile
-          target: ${{ matrix.variant }}
-          platforms: linux/amd64,linux/arm64
-          push: true
-          build-args: |
-            VERSION=${{ needs.meta.outputs.version }}
-            DEBIAN_REFRESH=${{ needs.meta.outputs.refresh }}
-          tags: ${{ steps.tags.outputs.tags }}
-          labels: ${{ steps.tags.outputs.labels }}
-          annotations: ${{ steps.tags.outputs.annotations }}
-          provenance: mode=max
-          sbom: true
-          cache-from: type=gha,scope=exactdocs-${{ matrix.variant }}
-          cache-to: type=gha,scope=exactdocs-${{ matrix.variant }},mode=max
+      - id: index
+        name: Create, tag and check the multi-arch index
+        env:
+          IMAGE: ${{ needs.meta.outputs.image }}
+          TAGS: ${{ steps.tags.outputs.tags }}
+          ANNOTATIONS: ${{ steps.tags.outputs.annotations }}
+          REF: ${{ needs.meta.outputs.image }}:${{ needs.meta.outputs.version }}${{ matrix.suffix }}
+        run: |
+          set -euo pipefail
+          args=()
+          while IFS= read -r tag; do
+            if [[ -n "$tag" ]]; then args+=(--tag "$tag"); fi
+          done <<< "$TAGS"
+          while IFS= read -r annotation; do
+            if [[ -n "$annotation" ]]; then args+=(--annotation "$annotation"); fi
+          done <<< "$ANNOTATIONS"
+          sources=()
+          for file in "$RUNNER_TEMP"/digests/*; do sources+=("$IMAGE@sha256:$(basename "$file")"); done
+          if [[ "${#sources[@]}" -ne 2 ]]; then
+            echo "::error::expected the amd64 and arm64 images, got ${#sources[@]}"
+            exit 1
+          fi
+          docker buildx imagetools create "${args[@]}" "${sources[@]}"
+          docker buildx imagetools inspect "$REF"
+          platforms=$(docker buildx imagetools inspect --raw "$REF" | jq -r \
+            '[.manifests[].platform | select(.os != "unknown") | .os + "/" + .architecture] | sort | join(",")')
+          if [[ "$platforms" != linux/amd64,linux/arm64 ]]; then
+            echo "::error::the index holds '$platforms', not linux/amd64 and linux/arm64"
+            exit 1
+          fi
+          digest=$(docker buildx imagetools inspect --format '{{json .Manifest}}' "$REF" | jq -r .digest)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - uses: sigstore/cosign-installer@v4.1.3 # upstream has no floating major tag
       - name: Sign image (keyless)
-        run: cosign sign --yes "${{ needs.meta.outputs.image }}@${{ steps.build.outputs.digest }}"
+        run: cosign sign --yes "${{ needs.meta.outputs.image }}@${{ steps.index.outputs.digest }}"
 
   github-release:
     name: GitHub Release
-    needs: [meta, python, pypi-kernel, pypi, image]
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    needs: [meta, python, pypi-kernel, pypi, image-publish]
+    if: github.event_name == 'push'
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     permissions:
       contents: write
     steps:

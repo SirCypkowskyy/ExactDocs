@@ -2,8 +2,9 @@
 
 The configuration ExactDocs recommends for each budget, from the recorded
 [retrieval run](retrieval.md) on the [golden set](golden-set.md). A dearer budget gets its own
-default only when it beats the cheaper one by at least 5 points of recall@5
-([How a default is chosen](method.md#how-a-default-is-chosen)).
+default only when it beats the cheaper one by at least 5 points of recall@5 and the difference
+is significant on the same cases (McNemar's test, p under 5%;
+[How a default is chosen](method.md#how-a-default-is-chosen)).
 
 <!-- bench:defaults -->
 | budget | configuration | chunking | USD / 1000 questions | why |
@@ -20,7 +21,12 @@ Use **BM25 at chunking `default`**: library settings `split_level` 3 and `max_ch
 headings). It reaches 81.7% recall@5 on the golden set against 79.8% for BM25 at `h6`, where every
 heading starts a chunk, and it answers faster (p95 57 ms against 91 ms).
 
-The gain is 1.9 points, 5 more questions out of 267. It was enough to change the shipped default
+The gain is 1.9 points, 5 more questions out of 267, and on its own it is not significant
+(McNemar mid-p 0.07, 95% interval of the difference 0.0 to 3.8 points; [Retrieval
+results](retrieval.md#against-the-budgets-default)). The other measures point the same way and
+are significant: at `default`, recall@10 (+2.2 points), MRR (+0.025) and nDCG@10 (+0.021) are
+better than at `h6` (p 0.016, 0.017 and 0.004), and `h2` and `merge-400` are worse than `default`
+on recall@5. That changed the shipped default
 ([#381](https://github.com/SirCypkowskyy/ExactDocs/issues/381)): **a library added without
 chunking settings gets this chunking.** A library stores its chunking, so the change re-chunks
 none of the libraries that exist. Those added with ExactDocs 0.4 or earlier keep `h6`
@@ -33,7 +39,10 @@ Keep **BM25 at `default`**. The best local configuration, hybrid search on
 `BAAI/bge-small-en-v1.5` at `h6`, reaches 84.6% recall@5: 3.0 points more, under the 5-point
 margin. It also needs the corpus embedded first (17 minutes for the whole golden corpus on a
 10-core laptop) and a p95 of 127 ms. Hybrid at `default` scores about the same (84.3%), so
-the default chunking does not hurt an instance that turns hybrid on.
+the default chunking does not hurt an instance that turns hybrid on. Whether those 3 points are
+more than noise is not known yet: the run that measured the local models kept no per-case
+outcomes, so it cannot be tested; the next recorded run can. BM25's own interval at `default`
+runs from 76.8% to 86.1%, which holds both.
 
 ## Hosted models
 
@@ -58,6 +67,7 @@ Each names the issue whose benchmark found it; none has an issue of its own yet.
   read as code blocks, and Pydantic v1's includes stay unexpanded. Found by the golden set (#345)
   and measured by the ingestion benchmark (#346).
 - **Unreviewed cases.** The golden set was written and checked by agents, not people (#345), so
-  differences of a point or two between configurations may be within its error.
+  differences of a point or two between configurations may be within its error. The intervals
+  measure sampling noise only (which cases happen to be in the set), not mistakes in the cases.
 - **Gaps in the matrix.** `hybrid:bge-base-en-v1.5` did not run, the cross-encoder ran only at
   `h6` and `h2` (not at today's `default`), and every hosted configuration is unmeasured (#347).

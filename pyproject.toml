@@ -157,6 +157,8 @@ ignore = [
 "deploy/check_artifacts.py" = ["implicit-namespace-package", "suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path", "unspecified-encoding", "builtin-open", "regex-flag-alias", "manual-list-comprehension"]
 # The vector benchmark wants reproducible Gaussian data, not secrets.
 "**/tests/retrieval/bench_vector_index.py" = ["suspicious-non-cryptographic-random-usage"]
+# The benchmarks' bootstrap and permutation test want seeded, reproducible draws, not secrets.
+"packages/exactdocs/evals/retrieval_eval/stats.py" = ["suspicious-non-cryptographic-random-usage"]
 # Runs inside the built image (python - < file) to prove sqlite-vec loads there.
 "deploy/check_sqlite_vec.py" = ["implicit-namespace-package"]
 # Runs inside the `-local` image (python - < file) to prove it searches with no network (#246).
