@@ -42,6 +42,8 @@ dev = [
     "pytest>=9",
     "pytest-asyncio>=1.2",
     "pytest-cov>=7",
+    # CI shards the fast suite by recorded durations (.test_durations; #507).
+    "pytest-split>=0.11",
     "ruff>=0.14",
     "ty>=0.0.1",
 ]
