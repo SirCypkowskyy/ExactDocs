@@ -209,9 +209,9 @@ choice.
   imports the fixture, waits for the version to be embedded, and the search must answer with
   `retrieval_mode` `hybrid` and `reranked: true`.
 - **CI time.** The variants are built, checked, scanned and smoke-tested in their own job, in
-  parallel with the base image's (2 min 20 s on a warm VM); `local` builds on the `ai` stages, and
-  the runner VM's BuildKit keeps their layers and the models' cache mount between jobs. The job
-  removes its two images at the end (`if: always()`), so they do not pile up on the VM's disk.
+  parallel with the base image's, and `local` builds on the `ai` stages. On the GitHub-hosted
+  runners (#468) nothing is cached between runs, so every run builds both from scratch. The job
+  removes its two images at the end (`if: always()`).
 - **Locally:** `just docker-build 0.0.0.dev0 ai` (or `local`) builds `exactdocs:build-ai` (`exactdocs:build-local`), and
   `just docker-check ai` runs the same check.
 
@@ -294,9 +294,10 @@ When it fails:
    `libc6`, `dpkg`, ...): `apt-get install` leaves installed packages alone, so a finding in one
    of those is fixed by a newer base digest or, until one ships the fix, by an explicit
    `apt-get install --only-upgrade <package>` in the `runtime-tools` stage (as for `zlib1g`,
-   #275; remove it once the base digest catches up). Each runner VM caches its own Trivy DB, so the
-   same image can pass on one runner and fail on the other until both DBs know the advisory;
-   the failing run is the real result.
+   #275; remove it once the base digest catches up). CI's hosted runners download a fresh Trivy
+   DB every run, while each of the release's self-hosted runner VMs caches its own, so the same
+   image can pass on one runner and fail on another until every DB knows the advisory; the
+   failing run is the real result.
    Because the week is part of the cache key, the first Docker build of each ISO week (Monday)
    re-runs the apt steps and is about a minute slower; that is expected, not a cache bug.
 2. If the fix is a Python dependency, update it in `uv.lock`; for a web dependency, `pnpm-lock.yaml`.
@@ -312,22 +313,28 @@ read: bump `hadolint/hadolint` (`.github/workflows/ci.yml`, job *image*) and
 `ghcr.io/aquasecurity/trivy` (`.github/actions/trivy-gate/action.yml`) by hand at every release, or
 a stale scanner stops finding new vulnerabilities.
 
-The CI Docker job uses the runner VM's own BuildKit (`driver: docker`), so layers and cache mounts
-persist between jobs on the same VM (see `deploy/runners/README.md`); the release uses the GitHub
-Actions cache instead (`scope=exactdocs-<variant>`), because it builds multi-arch with a throwaway builder.
+The CI Docker jobs use the Docker daemon's own BuildKit (`driver: docker`), so each image loads
+straight into the local store; on the GitHub-hosted runners nothing is cached between runs. The
+release uses the GitHub Actions cache (`scope=exactdocs-<variant>`), because it builds multi-arch
+with a throwaway builder.
 
 ## CI/CD and runners
 
-Every workflow runs on two LXD virtual machines on the GB10 host (see `deploy/runners/README.md`),
-matched by the labels `self-hosted, linux, ARM64, exactdocs`.
+CI (`ci.yml`) and the docs build (`docs.yml`) run on GitHub-hosted `ubuntu-24.04` runners (amd64)
+since #468. The release, GHCR retention and the manually started workflows (the agent benchmark,
+the real-providers eval, Azure AI Search and Pinecone) run on two LXD virtual machines on the
+GB10 host (see `deploy/runners/README.md`), matched by the labels
+`self-hosted, linux, ARM64, exactdocs`.
 
 ```mermaid
 flowchart LR
     gh["GitHub<br/>PR, push to main or develop, tag v*"]
+    subgraph hosted ["GitHub-hosted runners (ubuntu-24.04, amd64)"]
+        ci["CI<br/>python, web, image, image variants, uvx + browser e2e"]
+        docs["Docs<br/>Mermaid check, zensical build --strict"]
+    end
     subgraph gb10 ["Dell Pro Max GB10 (ARM64)"]
         subgraph vms ["LXD runner VMs: exactdocs-runner-1, -2"]
-            ci["CI<br/>python, web, image, image variants, uvx + browser e2e"]
-            docs["Docs<br/>Mermaid check, zensical build --strict"]
             rel["Release<br/>meta, eval, web, python, pypi-kernel, pypi, image-scan, image, github-release"]
             ret["GHCR retention"]
         end

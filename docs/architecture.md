@@ -56,7 +56,7 @@ re-sync of a branch re-chunks only the files that changed. [Flows](flows.md) dra
 | `packages/exactdocs/tests/`, `packages/exactdocs/features/` | pytest (unit, integration, architecture) and behave (Gherkin acceptance scenarios) |
 | `packages/exactdocs/evals/` | the retrieval eval suite (Pydantic Evals), not shipped; see [Retrieval evals](evals.md) |
 | `web/` | React client (Vite, TanStack Router and Query, shadcn); see [web/README.md](https://github.com/SirCypkowskyy/ExactDocs/blob/develop/web/README.md) |
-| `deploy/` | Dockerfile, smoke test, size-budget check, Mermaid check, self-hosted runner scripts |
+| `deploy/` | Dockerfile, smoke test, size-budget check, Mermaid check, scripts for the self-hosted runners of the release and the manual workflows |
 | `e2e/` | the Playwright test of the whole loop in a browser |
 | `docs/` | this site (Zensical) |
 
