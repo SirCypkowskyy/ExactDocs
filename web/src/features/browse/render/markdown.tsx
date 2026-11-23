@@ -188,11 +188,11 @@ function link(node: Node, ctx: Ctx) {
           {kids}
         </a>
       ) : (
-        <>{kids}</>
+        kids
       );
     }
     default:
-      return <>{kids}</>;
+      return kids;
   }
 }
 
