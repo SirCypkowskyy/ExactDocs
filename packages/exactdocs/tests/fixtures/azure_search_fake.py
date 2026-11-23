@@ -547,7 +547,7 @@ def _prioritized_names(configuration: Doc) -> list[str]:
         *prioritized["prioritizedContentFields"],
         *prioritized["prioritizedKeywordsFields"],
     ]
-    return [(reference or {}).get("fieldName") for reference in references]
+    return [str((reference or {}).get("fieldName")) for reference in references]
 
 
 def _check_semantic_fields(configuration: Doc, fields: Mapping[str, Doc]) -> None:
