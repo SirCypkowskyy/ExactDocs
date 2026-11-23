@@ -1,11 +1,11 @@
-import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/react-query";
+import { queryOptions } from "@tanstack/react-query";
 import { getJson } from "@/shared/lib/http";
 import { LIBRARIES_KEY } from "@/shared/lib/query-keys";
 import { pageQueryOptions, type ServerSource } from "@/shared/ui/data-table/server-pages";
 import { pageOf } from "@/shared/ui/data-table/table-search";
 import { JOBS_TABLE, type JobsView, jobsFilters, jobsParams } from "../model/jobs-view";
-import type { Job, JobList, LatestJobs, LibrariesResponse } from "../model/library";
-import { type ListView, listParams } from "../model/list-view";
+import type { Job, JobList, LatestJobs, LibrariesResponse, Library } from "../model/library";
+import { LIBRARIES_TABLE, type ListView, listFilters, listParams } from "../model/list-view";
 
 export const librariesKeys = {
   all: LIBRARIES_KEY,
@@ -14,16 +14,32 @@ export const librariesKeys = {
   job: (id: string) => [...librariesKeys.all, "job", id] as const,
 };
 
-/** One page at a time; the next page is fetched on demand, sorted and filtered by the server. */
-export const librariesQueryOptions = (view: ListView = {}) =>
-  infiniteQueryOptions({
-    queryKey: [...librariesKeys.list(), view] as const,
-    queryFn: ({ signal, pageParam }) =>
-      getJson<LibrariesResponse>(`/v1/libraries?${listParams(view, pageParam)}`, { signal }),
-    initialPageParam: null as string | null,
-    getNextPageParam: (last) => last.next_cursor,
-    placeholderData: keepPreviousData,
-  });
+/**
+ * The libraries a view asks for, as a DataTable v2 source: numbered pages over the cursor API,
+ * sorted and filtered by the server. `now` anchors a "last imported within" preset.
+ */
+export function librariesSource(view: ListView, now: number = Date.now()): ServerSource<Library> {
+  const filters = listFilters(view, now);
+  return {
+    // Under `list()`, so a finished import that refreshes the list refreshes every page of it.
+    key: [...librariesKeys.list(), filters],
+    // #509: `paging: "offset"` once `GET /v1/libraries` takes an offset (Last, one-request jumps).
+    fetchPage: ({ limit, cursor, signal }) =>
+      getJson<LibrariesResponse>(`/v1/libraries?${listParams(filters, limit, cursor)}`, {
+        signal,
+      }).then((list) => ({
+        rows: list.libraries,
+        total: list.total,
+        nextCursor: list.next_cursor,
+      })),
+  };
+}
+
+/** The page of libraries a view shows (its page and size from the URL, else this browser's size). */
+export const librariesPageQueryOptions = (view: ListView) => {
+  const { page, size } = pageOf(view, LIBRARIES_TABLE);
+  return pageQueryOptions(librariesSource(view), page, size);
+};
 
 /**
  * The jobs a view asks for, as a DataTable v2 source: numbered pages over the cursor API, sorted
@@ -34,6 +50,7 @@ export function jobsSource(view: JobsView, now: number = Date.now()): ServerSour
   const filters = jobsFilters(view, now);
   return {
     key: [...librariesKeys.all, "jobs", filters],
+    // #509: `paging: "offset"` once `GET /v1/jobs` takes an offset (Last, one-request jumps).
     fetchPage: ({ limit, cursor, signal }) =>
       getJson<JobList>(`/v1/jobs?${jobsParams(filters, limit, cursor)}`, { signal }).then(
         (list) => ({ rows: list.jobs, total: list.total, nextCursor: list.next_cursor }),

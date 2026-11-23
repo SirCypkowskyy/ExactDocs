@@ -90,18 +90,28 @@ describe("the libraries slice in Polish", () => {
     });
     renderWith(<TestRouter pages={{ "/": LibrariesPage }} />);
 
-    const row = (await screen.findByRole("heading", { name: "Payments" })).closest("li");
+    const table = await screen.findByRole("table", { name: "Biblioteki" });
+    const row = (await within(table).findByRole("link", { name: "Payments" })).closest("tr");
     if (!row) throw new Error("no row");
     expect(screen.getByRole("heading", { name: "Biblioteki" })).toBeInTheDocument();
     expect(screen.getByText("1 biblioteka")).toHaveAttribute("role", "status");
     expect(screen.getByLabelText("Znajdź bibliotekę")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Dodaj bibliotekę" })).toBeInTheDocument();
-    const versions = within(within(row).getByRole("list", { name: "Wersje" })).getAllByRole(
-      "listitem",
-    );
-    expect(versions[0]).toHaveTextContent("v1.4.0 (domyślna)");
+    for (const header of ["Wersja domyślna", "Wersje", "Ostatni import", "Synchronizacja"]) {
+      expect(
+        within(table).getByRole("columnheader", { name: new RegExp(header) }),
+      ).toBeInTheDocument();
+    }
+    expect(screen.getByRole("button", { name: "Ostatni import" })).toBeInTheDocument();
     expect(within(row).getByText("3 dni temu")).toBeInTheDocument();
     expect(await within(row).findByText("Zsynchronizowano, pominięto 2")).toBeInTheDocument();
+    expect(screen.getByText("1–1 z 1")).toBeInTheDocument();
+    await userEvent.click(
+      within(row).getByRole("button", { name: "Więcej opcji: /acme/payments" }),
+    );
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getByRole("menuitem", { name: "Synchronizuj teraz" })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Pokaż jej zadania" })).toBeInTheDocument();
   });
 
   it("walks the add form in Polish, with Polish refusals", async () => {

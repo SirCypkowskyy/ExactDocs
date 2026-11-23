@@ -1,34 +1,35 @@
+import { LibraryBig } from "lucide-react";
 import { useMessages } from "@/shared/lib/i18n";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { listMessages } from "../messages/list";
-
-const rows = ["a", "b", "c", "d", "e"];
+import { TableSkeleton } from "./table-skeleton";
 
 /** The list's final layout with grey bars where the values will be, so nothing jumps when they land. */
 export function LibrariesSkeleton() {
   const t = useMessages(listMessages);
+  const c = t.columns;
   return (
     <Page className="pending-in" aria-busy="true">
-      <PageHeader title={t.title} description={<Skeleton className="h-5 w-24" />} />
+      <PageHeader
+        title={t.title}
+        icon={<LibraryBig />}
+        description={<Skeleton className="h-5 w-24" />}
+        actions={<Skeleton className="h-11 w-36 fine:h-9" />}
+      />
       <p role="status" className="sr-only">
         {t.loading}
       </p>
-      <ul aria-hidden="true" className="divide-y divide-rule">
-        {rows.map((key) => (
-          <li key={key} className="flex items-start gap-3 py-4 md:min-h-[76px]">
-            <Skeleton className="size-9 rounded-full" />
-            <div className="flex min-w-0 flex-1 flex-col gap-2 md:flex-row md:gap-6">
-              <div className="flex flex-col gap-1.5 md:w-1/3">
-                <Skeleton className="h-5 w-40" />
-                <Skeleton className="h-4 w-28" />
-              </div>
-              <Skeleton className="h-6 w-48" />
-              <Skeleton className="h-4 w-20 md:ml-auto" />
-            </div>
-          </li>
-        ))}
-      </ul>
+      <TableSkeleton
+        filters={3}
+        columns={[
+          { id: "library", header: c.library, shape: "avatar" },
+          { id: "default", header: c.defaultVersion, shape: "mono" },
+          { id: "versions", header: c.versions, shape: "number", className: "max-lg:hidden" },
+          { id: "imported", header: c.lastImported },
+          { id: "sync", header: c.sync, shape: "pill" },
+        ]}
+      />
     </Page>
   );
 }

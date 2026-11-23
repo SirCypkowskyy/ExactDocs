@@ -11,6 +11,7 @@ export type JobList = components["schemas"]["JobList"];
 export type LatestJob = components["schemas"]["LatestJob"];
 export type LatestJobs = components["schemas"]["LatestJobs"];
 export type ReimportedVersion = components["schemas"]["ReimportedVersion"];
+export type SyncedLibrary = components["schemas"]["SyncedLibrary"];
 
 /** Why confirming a moved tag queued nothing; `final` refusals will not change on a retry. */
 export function explainReimport(
@@ -49,6 +50,24 @@ export function explainReimport(
   }
 }
 
+/** What a sync did: queued an import, found nothing to do, or could not sync a version. */
+export function syncOutcome(result: SyncedLibrary | null): "queued" | "upToDate" | "failed" {
+  // A 202 may come without a body: something was queued.
+  if (!result) return "queued";
+  const statuses = result.versions.map((v) => v.status);
+  if (statuses.some((s) => s === "queued" || s === "importing")) return "queued";
+  return statuses.includes("failed") ? "failed" : "upToDate";
+}
+
+/** Why a sync was refused, in words. */
+export function explainSync(error: unknown, language: Language = currentLanguage()): string {
+  const t = listMessages[language].actions;
+  if (!(error instanceof HttpError)) return t.syncOffline;
+  if (error.status === 401) return listMessages[language].reimport.sessionEnded;
+  if (error.status === 403) return t.syncForbidden;
+  return t.syncServer(error.status);
+}
+
 /** What the newest job of every version of a library says about its sync. */
 export type Sync =
   | { kind: "none" }
@@ -75,48 +94,4 @@ export function syncOf(jobs: readonly LatestJob[]): Sync {
   return { kind: "ok", job: last, skipped: jobs.reduce((n, j) => n + j.skipped, 0) };
 }
 
-/** `v2.10.0` -> [2, 10, 0]; null when the ref is not a dotted number. */
-function semver(ref: string): number[] | null {
-  const m = /^v?(\d+(?:\.\d+)*)/.exec(ref);
-  return m?.[1] ? m[1].split(".").map(Number) : null;
-}
-
-function byVersionDesc(a: string, b: string): number {
-  const x = semver(a);
-  const y = semver(b);
-  if (x && y) {
-    for (let i = 0; i < Math.max(x.length, y.length); i++) {
-      const d = (y[i] ?? 0) - (x[i] ?? 0);
-      if (d !== 0) return d;
-    }
-    return 0;
-  }
-  return x ? -1 : y ? 1 : a.localeCompare(b);
-}
-
-/** The default version first, then tags by semver descending, then branches and commits. */
-export function orderedVersions(library: Library): string[] {
-  const kinds = new Map(library.refs.map((r) => [r.ref, r.kind]));
-  const rest = library.refs.map((r) => r.ref).filter((v) => v !== library.default_version);
-  const tags = rest.filter((v) => (kinds.get(v) ?? "tag") === "tag").sort(byVersionDesc);
-  const others = rest.filter((v) => (kinds.get(v) ?? "tag") !== "tag").sort();
-  return [...(library.default_version ? [library.default_version] : []), ...tags, ...others];
-}
-
-/** Libraries whose sync failed first; otherwise the API's order. */
-export function failedFirst<T extends { id: string }>(
-  libraries: readonly T[],
-  failed: (id: string) => boolean,
-): T[] {
-  return [...libraries].sort((a, b) => Number(failed(b.id)) - Number(failed(a.id)));
-}
-
 export const shortSha = (sha: string) => sha.slice(0, 7);
-
-/** `https://github.com/acme/payments.git` -> `github.com/acme/payments`. */
-export function sourceLabel(url: string): string {
-  return url
-    .replace(/^[a-z+]+:\/\//i, "")
-    .replace(/\.git$/, "")
-    .replace(/\/$/, "");
-}
