@@ -159,9 +159,12 @@ LIBSQL_COMPRESSIONS: Final[frozenset[str]] = frozenset(
     {"float1bit", "float8", "float16", "floatb16", "float32"}
 )
 """The ``compress_neighbors`` values libSQL's vector index takes."""
-LIBSQL_DEFAULT_COMPRESSION: Final[str] = "float8"
-"""The ``compress_neighbors`` default: the index stores each neighbour's vector in one byte per
-dimension (a quarter of float32), which candidates only come from: their distances are exact."""
+LIBSQL_DEFAULT_COMPRESSION: Final[str] = "float1bit"
+"""The ``compress_neighbors`` default: the index stores each neighbour's vector as one bit per
+dimension. The index only proposes candidates, whose exact distances rank them, and it is 5
+times smaller and several times faster to write than with ``float8`` (1536 dimensions: about
+40 KiB a chunk instead of 200), with the same recall in our measurements (docs/configuration.md,
+*libSQL*)."""
 LIBSQL_URL_SCHEMES: Final[frozenset[str]] = frozenset({"libsql", "https", "http"})
 """The schemes of a libSQL server's URL (``libsql://`` is HTTPS, or HTTP with ``?tls=0``)."""
 LIBSQL_ANN_OVERFETCH: Final[int] = 2

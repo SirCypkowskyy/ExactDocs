@@ -239,7 +239,7 @@ async def _opened(backend: LibsqlVectorBackend) -> LibsqlVectorBackend:
 
 
 async def test_vectors_are_libsql_vectors_in_a_libsql_vector_index(where: Build) -> None:
-    backend = await _opened(vector_backend(where({"compress_neighbors": "float1bit"})))
+    backend = await _opened(vector_backend(where({"compress_neighbors": "float8"})))
     v1 = manifest("m1")
     try:
         await backend.put(space(), v1, [entry(v1, "a", (1.0, 0.0, 0.0))])
@@ -256,13 +256,13 @@ async def test_vectors_are_libsql_vectors_in_a_libsql_vector_index(where: Build)
 
     assert "embedding F32_BLOB(3) NOT NULL" in table[0]
     assert (
-        "libsql_vector_idx(embedding, 'metric=cosine', 'compress_neighbors=float1bit')"
-        in (index[0])
+        "libsql_vector_idx(embedding, 'metric=cosine', 'compress_neighbors=float8')" in (index[0])
     )
 
 
 async def test_a_small_version_of_a_big_space_finds_its_nearest(where: Build) -> None:
-    backend = await _opened(vector_backend(where({})))
+    # Three dimensions are three bits with the default compression: float8 tells them apart.
+    backend = await _opened(vector_backend(where({"compress_neighbors": "float8"})))
     big, small = manifest("big"), manifest("small")
     try:
         await backend.put(

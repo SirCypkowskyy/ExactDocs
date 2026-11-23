@@ -289,7 +289,7 @@ export EXACTDOCS_INDEX_BACKENDS__LIBSQL__AUTH_TOKEN=...   # or auth_token_file i
 | `auth_token_file` | unset | A file holding the token (a mounted secret), instead of `auth_token` |
 | `prefix` | `exactdocs` | What every table ExactDocs creates starts with (letters, digits and `_`, at most 40). Give every ExactDocs instance that shares a libSQL database its own |
 | `timeout` | `10` | Seconds one request to a server may take |
-| `compress_neighbors` | `float8` | How the vector index stores the vectors of a node's neighbours: `float1bit`, `float8`, `float16`, `floatb16` or `float32` (sizing below). Set when a space's table is created: changing it later needs the space dropped (a new embedding model) or the tables dropped and `exactdocs index rebuild` |
+| `compress_neighbors` | `float1bit` | How the vector index stores the vectors of a node's neighbours: `float1bit`, `float8`, `float16`, `floatb16` or `float32` (sizing below). Set when a space's table is created: changing it later needs the space dropped (a new embedding model) or the tables dropped and `exactdocs index rebuild` |
 | `max_neighbors` | libSQL's | The most neighbours of a node in the vector index (libSQL's default grows with the square root of the dimensions). Fewer: a smaller, faster to write, less exact index |
 
 **What ExactDocs creates.** For the search index, `<prefix>_search_entries` (one row per chunk of
@@ -314,8 +314,8 @@ instead, which is exact and cheap for a version's few thousand chunks. Hybrid se
 libSQL's two halves in ExactDocs (reciprocal rank fusion), as with the database.
 
 **Several processes.** A libSQL server is what several ExactDocs processes or hosts share (with
-PostgreSQL as their database): each write is one transaction on the server, so they can write at
-the same time. A local file is for one host: processes there may share it (WAL, and a writer
+PostgreSQL as their database): each write is one transaction, which the server runs one after
+the other. A local file is for one host: processes there may share it (WAL, and a writer
 waits up to 5 seconds for another's lock), but never put it on a network filesystem. Embedded
 replicas (a local copy synced from a server) are not used.
 
@@ -324,10 +324,27 @@ private network: the token goes with every request. A missing or refused token s
 with `HTTP 401` and the backend's name; no error or log line carries the token.
 
 **Sizing.** libSQL holds one row per chunk of each version (the same section in two versions is
-two rows), so count the chunks of every indexed version. The search index takes about what the
-text takes, twice (FTS5 keeps its own copy, as on SQLite). A vector takes 4 bytes per dimension,
+two rows), so count the chunks of every indexed version. The search index keeps a copy of each
+chunk's text and its FTS5 index, as ExactDocs' SQLite index does. A vector takes 4 bytes per dimension,
 but the vector index takes much more: each node keeps its neighbours' vectors, compressed by
-`compress_neighbors`. SIZING_TABLE
+`compress_neighbors`. The index only proposes candidates (their exact distances rank them), so
+the default, one bit per dimension, costs no recall we could measure and is several times smaller
+and faster to write. Measured on a local file (x86_64, libSQL's default `max_neighbors`):
+
+| Dimensions | `compress_neighbors` | Disk per chunk | Write per chunk |
+|---|---|---|---|
+| 384 | `float1bit` (default) | about 7 KiB | about 2 ms |
+| 384 | `float8` | about 28 KiB | about 4 ms |
+| 1536 | `float1bit` (default) | about 40 KiB | about 5 ms |
+| 1536 | `float8` | about 200 KiB | about 40 ms |
+| 1536 | `float32` | about 320 KiB | about 50 ms |
+
+Recall@10 of the index's 20 candidates, ranked by exact distance, was 0.99 to 1.00 with
+`float1bit` and `float8` (384 dimensions, 3,000 clustered test vectors; `float1bit` with 1536 too). So 100,000 chunks of a 1536-dimension model take about
+4 GB and a rebuild writes them in roughly ten minutes (one writer); with `float8`, five times
+that. `max_neighbors` lower than libSQL's default makes the index smaller again (384 dimensions,
+`float8`, 32 neighbours: about 18 KiB a chunk). One bit per dimension needs many dimensions to
+tell vectors apart: for a model of fewer than about 256, use `float8`.
 
 ### ExactDocs' own database on libSQL
 
