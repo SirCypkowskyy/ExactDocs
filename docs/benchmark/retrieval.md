@@ -20,6 +20,12 @@ ran a subset:
 is what was `h3-max-4000`, and `h6` what was `default`. BM25 at `default` and at `h6` was run
 again with #381 and matched the recorded recall.
 
+The run measured the golden set as it was before its review (#490), which added sections to 14
+cases and changed the kind of 6 ([Golden set](golden-set.md#the-independent-review)). The first
+expected section of every case is unchanged, so recall@k and MRR over the whole set would be the
+same; nDCG@10 and section recall count the added sections, and the per-kind numbers follow the
+changed kinds, so those would move.
+
 **Every hosted configuration is not measured yet**: hybrid on a hosted embedding model, HyDE,
 agentic search and every configuration reranked by the LLM judge. They run only from the manual
 *Retrieval eval (real providers)* workflow (`.github/workflows/eval-providers.yml`) with the
