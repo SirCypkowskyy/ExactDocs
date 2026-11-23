@@ -340,6 +340,11 @@ Every case file must load as the dataset's models, and every case must:
   cuts at every heading) cut it into. So a case can only name a section ExactDocs produces, and moving the pins (or changing how
   articles are cut) shows every case that no longer holds.
 
+It also checks the review's verdicts, `review.yaml` beside the case files
+([Reviewing the golden set](#reviewing-the-golden-set)): a `correct` or `fixed` case is in the set
+and a `removed` one is not, no case is reviewed twice, a wrong case names its problems and says
+why, and every kind of every project has the sample's number of entries.
+
 It prints every broken case (`<case>: <problem>`, with the closest existing sections when only
 the heading path is wrong) and exits with 1. `uv run pytest` checks the rules on the real files
 in CI; the section check needs the cache, so it runs in pytest only where the cache already holds
@@ -377,6 +382,78 @@ Pitfalls the corpus shows:
 - **Unanswerable** means the pinned docs do not answer it at all: search the whole docs tree at
   that commit (`git grep`) before writing one; a third-party page that mentions the name is enough
   to make it answerable.
+
+### Reviewing the golden set
+
+Agents wrote and checked the cases, so a sample of them is reviewed independently (#490); the
+result is on [Golden set](benchmark/golden-set.md#the-independent-review).
+
+```bash
+just golden-review sample              # draw the sample, write reports/golden-review/sheet.md
+just golden-review sample --seed 7 --per-stratum 5 --no-text
+just golden-review checks              # whole-set checks: reports/golden-review/checks.md, .json
+just golden-review summary             # the recorded review's verdicts and error rate
+```
+
+`sample` draws `--per-stratum` cases (3 by default) of every kind in every project, at random
+with `--seed` (490 by default): each stratum is drawn with its own generator, from its cases in
+name order, so the same seed and cases give the same sample. It writes a sheet with, per case, the
+question, version, kind, reference answer, facts and sections, each linked to the source at the
+pinned commit; with the cache (the default) also the text of each expected section, the sections
+of that version closest to the question and reference, and the same section and the closest ones
+in the neighbouring versions. `review-draft.yaml` lists the sampled cases with the verdict left
+blank.
+
+The verdicts go in `packages/exactdocs/evals/golden/review.yaml`:
+
+```yaml
+sample: {seed: 490, per_stratum: 3, drawn_from: 'sha256:39f6f9d5e909d128'}
+entries:
+- case: 'zod v4.6.7: Is there a util ...'
+  project: zod
+  kind: identifier-lookup        # the stratum it was drawn from; a fix may change the case's kind
+  verdict: fixed                 # correct, fixed (the case was corrected) or removed
+  problems: [unsupported-fact]   # empty when correct
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: The source line that proves the defect, and what was changed.
+```
+
+`drawn_from` is the golden set's fingerprint when the sample was drawn, before any fix: fixes change
+the cases' sections and kinds, so drawing again from today's set gives another sample. A fix that
+rewrites a question renames the case; its entry names the new case and keeps the old name in `was`.
+
+The problem categories:
+
+| Problem | The case |
+|---|---|
+| `unsupported-fact` | lists a fact the expected sections do not state at that version, or only imply |
+| `wrong-reference` | has a reference answer that is wrong or incomplete for that version |
+| `missing-section` | leaves out another section of that version that answers it as well |
+| `wrong-section` | names a section that does not answer it |
+| `wrong-kind` | has the wrong kind; `cross-page` when one article states every fact |
+| `answerable` | is `unanswerable`, but its version's docs answer it |
+| `not-a-change` | is a `version-change` whose change the neighbouring versions contradict |
+| `ambiguous` | has more than one fair answer, or none without guessing |
+| `duplicate` | asks what another case asks of the same version |
+
+`checks` runs over the whole set and needs the cache. It cuts every article of every pinned version
+as the importer does (every heading starts a section) and compares words: lower-case, stemmed,
+stop words left out, each weighted by its inverse document frequency in that version.
+
+- **Lexical overlap**, per answerable case: the weighted share of the question's words its best
+  expected section holds, the same for the best section that is not expected, the expected
+  section's rank among all sections of the version, and the longest run of words the question
+  shares with an expected section. A run of 5 words or more, 3 of them content words, is listed as
+  copied. A question written from its section's words would favour keyword search (BM25).
+- **Near-duplicate questions**: pairs of one project that share at least half their content words
+  (Jaccard), same version or not.
+- **The vocabulary of every `unanswerable` case**: its words no section of its version holds, and
+  the three sections holding most of them; one section with 75% of the weighted words is flagged
+  to check by hand. Synonyms are not searched; the reviewer does that.
+
+The tests (`tests/evals/test_golden_review.py`, `golden_review.feature`) run on a tiny local
+repository; one checks the recorded `review.yaml` against the real case files in CI.
 
 ## The ingestion benchmark
 
