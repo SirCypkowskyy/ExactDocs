@@ -120,7 +120,7 @@ jobs:
           --health-interval 2s --health-timeout 5s --health-retries 30
       # #363: MongoDB with Atlas Search and Vector Search (mongot) in one container, for the
       # MongoDB backend's contract tests and scenario (EXACTDOCS_TEST_MONGODB_URL), pinned to an
-      # exact version (multi-arch: the arm64 image runs here). A one-node replica set without
+      # exact version (multi-arch: the amd64 image runs here). A one-node replica set without
       # authentication; directConnection because the node names itself by its container's host.
       mongodb:
         image: mongodb/mongodb-atlas-local:9.0.8@sha256:747a6c6b37b9358b45d9ecc63e4b8b6d59f8d11896d1c75f967f2520e12f4947

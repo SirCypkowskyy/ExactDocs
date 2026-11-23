@@ -14,8 +14,10 @@ An adapter PR adds one ``BackendCase`` to ``EXTERNAL_BACKENDS``: a name and an a
 manager per index it can hold, yielding a fresh, empty, opened backend and cleaning it up after.
 A backend that needs a server reads its URL from an ``EXACTDOCS_TEST_<NAME>_URL`` variable and
 is left out when the variable is unset (as ``databases.py`` does for PostgreSQL), so the suites
-still run everywhere; CI sets the variable. An embedded backend (LanceDB) needs no server: it
-runs on a temporary directory wherever its extra is installed (the dev environment has it).
+still run everywhere; CI sets the variable. An embedded backend (LanceDB, DuckDB, Chroma's and
+Milvus Lite's local modes, a libSQL file) or a fake (Azure AI Search) needs no server: it runs on
+a temporary directory, or in process, wherever its extra is installed (the dev environment has
+them).
 """
 
 import asyncio

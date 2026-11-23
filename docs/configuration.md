@@ -776,9 +776,9 @@ Not supported yet: `EXACTDOCS_DATABASE_URL` takes SQLite or PostgreSQL. What was
 - **No driver for ExactDocs' database stack.** ExactDocs runs SQLite through async SQLAlchemy
   (aiosqlite). There is no maintained async driver for libSQL: `sqlalchemy-libsql` is sync and
   needs `libsql-experimental` (deprecated, no Python 3.14 wheels); `libsql` 0.1.11 (the latest,
-  2025-09) is sync, has no Linux ARM64 wheel (the images and CI are ARM64), and its connection
-  lacks what ExactDocs' SQLite setup calls: `create_function`, `set_authorizer` (the AI spend
-  ledger's guard), `enable_load_extension` (`sqlite-vec`) and `backup` (`exactdocs backup`).
+  2025-09) is sync, has no Linux ARM64 wheel (the images are built for ARM64 too), and its
+  connection lacks what ExactDocs' SQLite setup calls: `create_function`, `set_authorizer` (the AI
+  spend ledger's guard), `enable_load_extension` (`sqlite-vec`) and `backup` (`exactdocs backup`).
   `pyturso` (Turso's rewrite) has wheels, but neither libSQL's vector index nor FTS5.
 - **The database's vector store needs `sqlite-vec`**, which a libSQL server cannot load: it would
   need a store on libSQL's native vectors (this backend is one, for the copy it holds).
