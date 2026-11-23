@@ -151,7 +151,8 @@ function useTagsFilter(
   const counted = useQuery(tagsQueryOptions(at));
   return useMemo(() => {
     const known = (counted.data?.tags ?? []).map((f) => f.tag);
-    const values = [...known, ...(picked ?? []).filter((p) => !known.includes(p))];
+    const seen = new Set(known);
+    const values = [...known, ...(picked ?? []).filter((p) => !seen.has(p))];
     return { id: "tags", title: t.tags, options: values.map((v) => ({ value: v, label: v })) };
   }, [counted.data, picked, t]);
 }
