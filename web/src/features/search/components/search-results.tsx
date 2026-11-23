@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { CircleAlert, FunnelX, RotateCcw, Search, SearchX } from "lucide-react";
 import { type ReactNode, useId } from "react";
 import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { parseTags } from "@/shared/lib/tags";
 import { cn } from "@/shared/lib/utils";
-import { buttonVariants } from "@/shared/ui/button";
+import { Button, buttonVariants } from "@/shared/ui/button";
 import { kbd, pill, pillTone } from "@/shared/ui/recipes";
 import { searchQueryOptions } from "../api/search-queries";
 import { useSearchNav } from "../hooks/use-search-nav";
@@ -63,6 +64,7 @@ function NoResults({ ctx, q }: { ctx: SearchContext; q: string }) {
   const tags = parseTags(ctx.tags);
   return (
     <div className="max-w-xl">
+      <SearchX aria-hidden="true" strokeWidth={1.5} className="mb-3 size-8 text-muted-foreground" />
       <h2 className="text-title font-semibold">{t.empty.noResultsIn(ctx.ref)}</h2>
       <p className="mt-2 text-body text-muted-foreground">
         {t.empty.nothingIn(
@@ -76,13 +78,14 @@ function NoResults({ ctx, q }: { ctx: SearchContext; q: string }) {
       </p>
       <div className="mt-4 flex flex-wrap gap-2">
         {tags.length > 0 && (
-          <button
-            type="button"
-            className={retry}
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => void update({ tags: undefined, match: undefined })}
           >
+            <FunnelX aria-hidden="true" data-icon-motion="tilt" />
             {t.empty.removeTagFilter}
-          </button>
+          </Button>
         )}
         {ctx.otherRefs.slice(0, 3).map((ref) => (
           <Link
@@ -97,6 +100,7 @@ function NoResults({ ctx, q }: { ctx: SearchContext; q: string }) {
             }}
             className={retry}
           >
+            <Search aria-hidden="true" data-icon-motion="tilt" />
             {t.empty.searchInstead(<span className="font-mono">{ref}</span>)}
           </Link>
         ))}
@@ -151,11 +155,17 @@ function Failed({ refName, onRetry }: { refName: string; onRetry: () => void }) 
   const c = useMessages(common);
   return (
     <div role="alert" className="max-w-xl">
+      <CircleAlert
+        aria-hidden="true"
+        strokeWidth={1.5}
+        className="mb-3 size-8 text-muted-foreground"
+      />
       <h2 className="text-title font-semibold">{t.failed.title}</h2>
       <p className="mt-2 text-body text-muted-foreground">{t.failed.version(refName)}</p>
-      <button type="button" className={cn(retry, "mt-3")} onClick={onRetry}>
+      <Button variant="outline" size="sm" className="mt-3" onClick={onRetry}>
+        <RotateCcw aria-hidden="true" data-icon-motion="refresh" />
         {c.retry}
-      </button>
+      </Button>
     </div>
   );
 }
