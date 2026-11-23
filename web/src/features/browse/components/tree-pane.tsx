@@ -1,3 +1,4 @@
+import { FunnelX, RotateCcw } from "lucide-react";
 import { useCallback } from "react";
 import { common, useMessages } from "@/shared/lib/i18n";
 import { Button } from "@/shared/ui/button";
@@ -68,6 +69,7 @@ export function TreePane({ target, tagsParam, selected, onClearTags, onOpen }: T
       <div role="alert" className="py-3 text-body">
         <p className="text-muted-foreground">{t.filesFailed(ref)}</p>
         <Button variant="outline" size="sm" className="mt-2" onClick={() => loadMore("")}>
+          <RotateCcw aria-hidden="true" data-icon-motion="refresh" />
           {c.retry}
         </Button>
       </div>
@@ -82,6 +84,7 @@ export function TreePane({ target, tagsParam, selected, onClearTags, onOpen }: T
         </p>
         {tags.length > 0 && (
           <Button variant="outline" size="sm" className="mt-2" onClick={onClearTags}>
+            <FunnelX aria-hidden="true" data-icon-motion="tilt" />
             {t.showAll}
           </Button>
         )}
