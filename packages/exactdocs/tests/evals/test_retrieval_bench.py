@@ -18,6 +18,7 @@ from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question
 from retrieval_eval.golden import fetch, load_corpus, load_golden
 from retrieval_eval.ingestion_cli import CONFIGURATIONS
 from retrieval_eval.retrieval_bench import (
+    BenchMetrics,
     Budget,
     ConfigResult,
     RetrievalBenchReport,
@@ -282,12 +283,11 @@ def test_every_rate_and_mean_comes_with_an_interval() -> None:
     for name in ("recall_at_1", "recall_at_5", "recall_at_10", "mrr", "ndcg_at_10"):
         spread = m.intervals[name]
         assert spread.low < getattr(m, name) < spread.high, name
-    assert set(m.intervals) == {
-        "recall_at_1", "recall_at_5", "recall_at_10", "mrr", "ndcg_at_10",
-        "section_recall_at_5", "section_recall_at_10", "wrong_version_rate",
-        "unanswerable_clean_rate", "no_answer_rate", "answerable_empty_rate",
-        "tokens_per_question", "usd_per_question",
-    }  # fmt: skip
+    # every rate and mean: each float metric but the latency percentiles
+    fields = BenchMetrics.model_fields.items()
+    means = {name for name, f in fields if f.annotation in {float, float | None}}
+    assert set(m.intervals) == means - {"latency_p50_ms", "latency_p95_ms"}
+    assert {"recall_at_5", "mrr", "ndcg_at_10", "no_answer_rate"} <= set(m.intervals)
     assert (m.intervals["wrong_version_rate"].low, m.intervals["wrong_version_rate"].high) == (0, 0)
     # a kind's interval, on half the cases, is wider than the whole set's
     whole, kind = m.intervals["recall_at_5"], result.by_kind["a"].intervals["recall_at_5"]
@@ -488,10 +488,15 @@ def test_the_command_runs_the_model_free_part_and_checks_it(
     assert "recall_at_5" in bm25.metrics.intervals
     assert report.statistics is not None
     assert report.statistics.seed == 489
-    h2 = ran[1].versus_default
-    assert h2 is not None
-    assert (h2.configuration, h2.chunking) == ("bm25", "default")
-    assert h2.tests["recall_at_5"].p_value == 1  # the same answer at both chunkings
+    # one chunking is the default (the faster one, as recall ties): the other is tested against it
+    (other,) = [r for r in ran if r.versus_default is not None]
+    versus = other.versus_default
+    assert versus is not None
+    assert (versus.configuration, versus.chunking) == (
+        report.recommendations[0].configuration,
+        report.recommendations[0].chunking,
+    )
+    assert versus.tests["recall_at_5"].p_value == 1  # the same answer at both chunkings
     # a local model that was not pulled is reported, with how to pull it
     local = next(r for r in report.results if r.configuration == "bm25+ce")
     assert local.status == "unavailable"
