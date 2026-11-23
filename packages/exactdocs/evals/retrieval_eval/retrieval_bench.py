@@ -2,7 +2,9 @@
 
 Every configuration of the matrix (``retrieval_bench_cli``) answers the golden set at every
 chunking configuration; each answer becomes a ``Row``, and the rows give the metrics overall, by
-question kind and by project. Definitions are in docs/evals.md#the-retrieval-benchmark.
+question kind and by project, each with its 95% interval, and the paired tests of a result
+against its budget's default (#489, ``stats``). Definitions are in
+docs/evals.md#the-retrieval-benchmark.
 """
 
 import math
@@ -384,7 +386,7 @@ class ConfigResult(_Model):
             rows: Every case's row.
 
         Returns:
-            A copy with ``metrics``, ``by_kind`` and ``by_project``.
+            A copy with ``rows`` (in case order), ``metrics``, ``by_kind`` and ``by_project``.
         """
 
         def by(key: Callable[[Row], str]) -> dict[str, BenchMetrics]:
