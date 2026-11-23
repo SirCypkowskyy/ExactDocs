@@ -1825,6 +1825,190 @@
         }
       }
     },
+    "/api/v1/stats/usage": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "Get Usage Stats",
+        "description": "Report the instance's reads, searches and agent answers per period. Operators only.\n\n`series` has one bucket per `period` (UTC days, ISO weeks, months or years; `periods`\nof them, the last holding `until`), zeros included; `groups` breaks the whole range\ndown `by` library, person (`account`) or person and API token (`token`). Only counts\nare kept, never what was read or asked. People are named only while the people\nleaderboard is on (`GET /stats/settings`) and only if they opted in\n(`leaderboard_opt_in`); everyone else is summed into one group with `others: true`.\nA search or an answer over several libraries counts to no library (`library: null`).",
+        "operationId": "usage-get_usage_stats",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Period",
+              "description": "What each bucket adds up: `day` (UTC), `week` (ISO, Monday first), `month` or `year`.",
+              "default": "day"
+            },
+            "description": "What each bucket adds up: `day` (UTC), `week` (ISO, Monday first), `month` or `year`."
+          },
+          {
+            "name": "periods",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 400,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How many buckets, the last one holding `until`; default 30 days, 12 weeks, 12 months or 2\nyears. Counts older than the retention are gone, so older buckets are zeros.",
+              "title": "Periods"
+            },
+            "description": "How many buckets, the last one holding `until`; default 30 days, 12 weeks, 12 months or 2\nyears. Counts older than the retention are gone, so older buckets are zeros."
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A day of the last bucket (UTC); default today.",
+              "title": "Until"
+            },
+            "description": "A day of the last bucket (UTC); default today."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "How many groups to list, most reads first.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "How many groups to list, most reads first."
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Grouping",
+              "description": "`library`, `account` (people), `token` (people and their API tokens), or `none`. People\nare named only while the people leaderboard is on and only if they opted in; everyone else\nis summed into one group with `others` set.",
+              "default": "none"
+            },
+            "description": "`library`, `account` (people), `token` (people and their API tokens), or `none`. People\nare named only while the people leaderboard is on and only if they opted in; everyone else\nis summed into one group with `others` set."
+          },
+          {
+            "name": "library",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256,
+                  "pattern": "^/[^/]+/[^/]+$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only this library's counts (`/owner/repo`, any letter case).",
+              "title": "Library"
+            },
+            "description": "Only this library's counts (`/owner/repo`, any letter case)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageStats"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/libraries/{owner}/{repo}/grants": {
       "get": {
         "tags": [
@@ -6577,6 +6761,427 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/account/usage": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "Get Account Usage",
+        "description": "Report your own reads, searches and agent answers per period.\n\nThe same shape as `GET /stats/usage`, over your account only, broken down by library or\nby API token (`token_id: null` is your browser sessions and OAuth sign-ins).",
+        "operationId": "usage-get_account_usage",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Period",
+              "description": "What each bucket adds up: `day` (UTC), `week` (ISO, Monday first), `month` or `year`.",
+              "default": "day"
+            },
+            "description": "What each bucket adds up: `day` (UTC), `week` (ISO, Monday first), `month` or `year`."
+          },
+          {
+            "name": "periods",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 400,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How many buckets, the last one holding `until`; default 30 days, 12 weeks, 12 months or 2\nyears. Counts older than the retention are gone, so older buckets are zeros.",
+              "title": "Periods"
+            },
+            "description": "How many buckets, the last one holding `until`; default 30 days, 12 weeks, 12 months or 2\nyears. Counts older than the retention are gone, so older buckets are zeros."
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A day of the last bucket (UTC); default today.",
+              "title": "Until"
+            },
+            "description": "A day of the last bucket (UTC); default today."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "How many groups to list, most reads first.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "How many groups to list, most reads first."
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "none",
+                "library",
+                "token"
+              ],
+              "type": "string",
+              "description": "`library`, `token` (your API tokens; null is your browser sessions), or `none`.",
+              "default": "none",
+              "title": "By"
+            },
+            "description": "`library`, `token` (your API tokens; null is your browser sessions), or `none`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageStats"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stats/leaderboard": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "Get Leaderboard",
+        "description": "Rank libraries or people by reads, searches or agent answers over a period.\n\n`period` is the UTC day, ISO week, month or year holding `at` (default today, so the\ncurrent period so far); each entry has its rank in the previous period among the same\nsubjects (`previous_rank`, null when it had none). `libraries` ranks only libraries you\nmay read. `people` is 403 `people_leaderboard_off` unless the operator turned the\npeople leaderboard on, and ranks only people who opted in (`leaderboard_opt_in` in\n`PUT /account/preferences`); your own entry is marked `you`, and given in `you` when\nit is ranked beyond `limit`.",
+        "operationId": "usage-get_leaderboard",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "subject",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Subject",
+              "description": "`libraries` (always on; only libraries you may read) or `people` (only while the\noperator has it on; only people who opted in).",
+              "default": "libraries"
+            },
+            "description": "`libraries` (always on; only libraries you may read) or `people` (only while the\noperator has it on; only people who opted in)."
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Metric",
+              "description": "`reads`, `searches` or `answers`.",
+              "default": "reads"
+            },
+            "description": "`reads`, `searches` or `answers`."
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Period",
+              "description": "`day` (UTC), `week` (ISO), `month` or `year`.",
+              "default": "week"
+            },
+            "description": "`day` (UTC), `week` (ISO), `month` or `year`."
+          },
+          {
+            "name": "at",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A day of the period to rank (UTC); default today, so the current period so far.",
+              "title": "At"
+            },
+            "description": "A day of the period to rank (UTC); default today, so the current period so far."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "How many entries to list, best first.",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "How many entries to list, best first."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Leaderboard"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stats/settings": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "Get Usage Settings",
+        "description": "Say whether the people leaderboard is on and how long daily counts are kept.\n\nBoth are the operator's configuration (`EXACTDOCS_USAGE__PEOPLE_LEADERBOARD`,\n`EXACTDOCS_USAGE__RETENTION_MONTHS`).",
+        "operationId": "usage-get_usage_settings",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageSettingsOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ]
       }
     },
     "/api/v1/libraries/{owner}/{repo}/retrieval": {
@@ -13505,6 +14110,17 @@
         "title": "FileProblemSummary",
         "description": "A problem with a file: skipped (`is_skip`) or imported with a note. `code` is stable."
       },
+      "Grouping": {
+        "type": "string",
+        "enum": [
+          "none",
+          "library",
+          "account",
+          "token"
+        ],
+        "title": "Grouping",
+        "description": "What a usage report breaks its counts down by."
+      },
       "HostKind": {
         "type": "string",
         "enum": [
@@ -13604,6 +14220,12 @@
             "type": "boolean",
             "title": "Library Logos",
             "description": "Whether libraries show their logos, and generic icons where they have none; `false` hides\nboth. Default `true`."
+          },
+          "leaderboard_opt_in": {
+            "type": "boolean",
+            "title": "Leaderboard Opt In",
+            "description": "Whether the person agrees to be shown by name on the people leaderboard while the operator\nhas it on (`GET /stats/settings`). Without it they are on no people leaderboard, and nobody\nsees their usage except as part of totals. Default `false`. The one setting a save may leave\nout: a client that does not know it keeps the choice already saved (`false` if none).",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -13621,7 +14243,7 @@
           "library_logos"
         ],
         "title": "InterfacePreferences",
-        "description": "How a person wants the interface to look and behave. Every setting is required."
+        "description": "How a person wants the interface to look and behave.\n\nEvery setting is required but `leaderboard_opt_in` (#510), which a client written before it\nexisted does not send."
       },
       "JobList": {
         "properties": {
@@ -14059,6 +14681,168 @@
         ],
         "title": "LatestJobs",
         "description": "The newest job of every (library, version), ordered by library and version."
+      },
+      "Leaderboard": {
+        "properties": {
+          "subject": {
+            "$ref": "#/components/schemas/Subject",
+            "description": "What is ranked."
+          },
+          "metric": {
+            "$ref": "#/components/schemas/Metric",
+            "description": "What it is ranked by."
+          },
+          "period": {
+            "$ref": "#/components/schemas/Period",
+            "description": "The kind of period."
+          },
+          "start": {
+            "type": "string",
+            "format": "date",
+            "title": "Start",
+            "description": "The period's first day (UTC)."
+          },
+          "end": {
+            "type": "string",
+            "format": "date",
+            "title": "End",
+            "description": "The period's last day, included (UTC); the current period ends after today."
+          },
+          "previous_start": {
+            "type": "string",
+            "format": "date",
+            "title": "Previous Start",
+            "description": "The previous period's first day: what `previous_rank` ranks."
+          },
+          "previous_end": {
+            "type": "string",
+            "format": "date",
+            "title": "Previous End",
+            "description": "The previous period's last day, included."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "The metric summed over every ranked subject (for each one's share)."
+          },
+          "ranked": {
+            "type": "integer",
+            "title": "Ranked",
+            "description": "How many subjects are ranked; `entries` lists the first `limit`."
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/LeaderboardEntryOut"
+            },
+            "type": "array",
+            "title": "Entries",
+            "description": "The best first; equal values by name."
+          },
+          "you": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LeaderboardEntryOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`people`: the caller's own entry when it is ranked but beyond `limit`; null otherwise."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "subject",
+          "metric",
+          "period",
+          "start",
+          "end",
+          "previous_start",
+          "previous_end",
+          "total",
+          "ranked",
+          "entries"
+        ],
+        "title": "Leaderboard",
+        "description": "Libraries or people ranked by one metric over one period, with the previous period's rank."
+      },
+      "LeaderboardEntryOut": {
+        "properties": {
+          "rank": {
+            "type": "integer",
+            "title": "Rank",
+            "description": "1 for the most; equal values share a rank (1, 2, 2, 4)."
+          },
+          "previous_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Rank",
+            "description": "The rank in the previous period, among the same subjects; null when it was not ranked\nthen (nothing counted)."
+          },
+          "value": {
+            "type": "integer",
+            "title": "Value",
+            "description": "The metric's count in the period."
+          },
+          "library": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library",
+            "description": "`libraries`: the library ID, lower-case."
+          },
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id",
+            "description": "`people`: the account ID."
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username",
+            "description": "`people`: the username."
+          },
+          "you": {
+            "type": "boolean",
+            "title": "You",
+            "description": "`people`: this is the caller.",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "rank",
+          "previous_rank",
+          "value"
+        ],
+        "title": "LeaderboardEntryOut",
+        "description": "One library or person on a leaderboard."
       },
       "LibraryAccess": {
         "properties": {
@@ -15551,6 +16335,16 @@
         "title": "ManualTagsIn",
         "description": "The tags to set by hand on an article path; they replace its earlier manual tags."
       },
+      "Metric": {
+        "type": "string",
+        "enum": [
+          "reads",
+          "searches",
+          "answers"
+        ],
+        "title": "Metric",
+        "description": "What a leaderboard ranks by: one operation's counts."
+      },
       "ModelCheckOut": {
         "properties": {
           "role": {
@@ -15998,6 +16792,17 @@
         ],
         "title": "PathsChange",
         "description": "A managed path list as stored and as declared."
+      },
+      "Period": {
+        "type": "string",
+        "enum": [
+          "day",
+          "week",
+          "month",
+          "year"
+        ],
+        "title": "Period",
+        "description": "A calendar period in UTC: what counts are added up over."
       },
       "PlanSourcesCommand": {
         "properties": {
@@ -18021,6 +18826,15 @@
         "title": "SpentOut",
         "description": "What one scope spent in one window, as the providers reported it."
       },
+      "Subject": {
+        "type": "string",
+        "enum": [
+          "libraries",
+          "people"
+        ],
+        "title": "Subject",
+        "description": "Who or what a leaderboard ranks."
+      },
       "SyncStatus": {
         "type": "string",
         "enum": [
@@ -18698,6 +19512,243 @@
         ],
         "title": "UpdatedLibrarySettings",
         "description": "The settings as stored (normalized) and the job that brings every version in line."
+      },
+      "UsageBucketOut": {
+        "properties": {
+          "reads": {
+            "type": "integer",
+            "title": "Reads",
+            "description": "Articles and chunks read (MCP, REST and the web reader)."
+          },
+          "searches": {
+            "type": "integer",
+            "title": "Searches",
+            "description": "Searches (one library, several or all; `query-docs` included)."
+          },
+          "answers": {
+            "type": "integer",
+            "title": "Answers",
+            "description": "Questions answered by the agent."
+          },
+          "start": {
+            "type": "string",
+            "format": "date",
+            "title": "Start",
+            "description": "The period's first day (UTC)."
+          },
+          "end": {
+            "type": "string",
+            "format": "date",
+            "title": "End",
+            "description": "The period's last day, included (UTC); the current period's may be after today."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reads",
+          "searches",
+          "answers",
+          "start",
+          "end"
+        ],
+        "title": "UsageBucketOut",
+        "description": "The counts of one period."
+      },
+      "UsageCountsOut": {
+        "properties": {
+          "reads": {
+            "type": "integer",
+            "title": "Reads",
+            "description": "Articles and chunks read (MCP, REST and the web reader)."
+          },
+          "searches": {
+            "type": "integer",
+            "title": "Searches",
+            "description": "Searches (one library, several or all; `query-docs` included)."
+          },
+          "answers": {
+            "type": "integer",
+            "title": "Answers",
+            "description": "Questions answered by the agent."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reads",
+          "searches",
+          "answers"
+        ],
+        "title": "UsageCountsOut",
+        "description": "How many reads, searches and agent answers were counted."
+      },
+      "UsageGroupOut": {
+        "properties": {
+          "reads": {
+            "type": "integer",
+            "title": "Reads",
+            "description": "Articles and chunks read (MCP, REST and the web reader)."
+          },
+          "searches": {
+            "type": "integer",
+            "title": "Searches",
+            "description": "Searches (one library, several or all; `query-docs` included)."
+          },
+          "answers": {
+            "type": "integer",
+            "title": "Answers",
+            "description": "Questions answered by the agent."
+          },
+          "library": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library",
+            "description": "`by=library`: the library ID, lower-case; null for searches and answers over several\nlibraries."
+          },
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id",
+            "description": "`by=account` or `token`: the person's account ID; null in the `others` group."
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username",
+            "description": "The person's username, next to `account_id`."
+          },
+          "token_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Id",
+            "description": "`by=token`: the API token's ID; null for browser sessions and OAuth sign-ins."
+          },
+          "others": {
+            "type": "boolean",
+            "title": "Others",
+            "description": "`true` for the one group that sums everyone not shown by name (people who did not opt\nin, everyone while the people leaderboard is off, and requests without an account).",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reads",
+          "searches",
+          "answers"
+        ],
+        "title": "UsageGroupOut",
+        "description": "The counts of one library, person or token over the whole report."
+      },
+      "UsageSettingsOut": {
+        "properties": {
+          "people_leaderboard": {
+            "type": "boolean",
+            "title": "People Leaderboard",
+            "description": "Whether the people leaderboard is on (`EXACTDOCS_USAGE__PEOPLE_LEADERBOARD`). Off, nobody\nis shown by name; on, only people who opted in (`leaderboard_opt_in`)."
+          },
+          "retention_months": {
+            "type": "integer",
+            "title": "Retention Months",
+            "description": "How many months of daily counts are kept (`EXACTDOCS_USAGE__RETENTION_MONTHS`)."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "people_leaderboard",
+          "retention_months"
+        ],
+        "title": "UsageSettingsOut",
+        "description": "How this instance counts usage: the operator's configuration."
+      },
+      "UsageStats": {
+        "properties": {
+          "period": {
+            "$ref": "#/components/schemas/Period",
+            "description": "What each bucket adds up."
+          },
+          "since": {
+            "type": "string",
+            "format": "date",
+            "title": "Since",
+            "description": "The first day covered (UTC)."
+          },
+          "until": {
+            "type": "string",
+            "format": "date",
+            "title": "Until",
+            "description": "The last day covered, included (UTC)."
+          },
+          "by": {
+            "$ref": "#/components/schemas/Grouping",
+            "description": "What `groups` breaks the counts down by."
+          },
+          "total": {
+            "$ref": "#/components/schemas/UsageCountsOut",
+            "description": "Everything counted in the range."
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/UsageBucketOut"
+            },
+            "type": "array",
+            "title": "Series",
+            "description": "One bucket per period, oldest first, zeros included."
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/UsageGroupOut"
+            },
+            "type": "array",
+            "title": "Groups",
+            "description": "The breakdown, most reads first (then searches, then answers), at most `limit`; the\n`others` group, when there is one, comes last and is always listed."
+          },
+          "groups_total": {
+            "type": "integer",
+            "title": "Groups Total",
+            "description": "How many groups there are in all, the `others` group included."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "period",
+          "since",
+          "until",
+          "by",
+          "total",
+          "series",
+          "groups",
+          "groups_total"
+        ],
+        "title": "UsageStats",
+        "description": "Counts per period over a range of periods, and a breakdown over the whole range."
       },
       "UserList": {
         "properties": {

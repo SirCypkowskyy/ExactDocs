@@ -197,9 +197,12 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   (`system`, `reduced`, `full`), `font` (`default`, `hyperlegible`, `dyslexic`, `system`),
   `underline_links` and `large_targets` (booleans), `language` (`system`, `en`, `pl`; `system`
   follows the browser's), `library_logos` (boolean; `false` hides library logos and generic
-  icons, #504); defaults `system`, `standard`, 100, `standard`, `system`, `default`, `false`,
-  `false`, `system`, `true`. Every key is required; an unknown key or a value not listed is 422
-  `validation_error` naming the field, and nothing is saved. They are stored per account
+  icons, #504), `leaderboard_opt_in` (boolean; `true` agrees to be shown by name on the people
+  leaderboard while the operator has it on, #510); defaults `system`, `standard`, 100, `standard`,
+  `system`, `default`, `false`, `false`, `system`, `true`, `false`. Every key is required but
+  `leaderboard_opt_in`: a `PUT` without it (an interface older than #510) keeps the choice already
+  saved (`false` if none), so it neither opts the person in nor drops their opt-in. An unknown key
+  or a value not listed is 422 `validation_error` naming the field, and nothing is saved. They are stored per account
   (`identity_preferences`, one JSON object: a key a stored row lacks, or a value no longer
   offered, reads as its default), so they follow the person to every browser; a session or an
   API token may call both, and each acts as its own account only.
@@ -246,6 +249,36 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `creator`, `previous_role` the role they held, if any), with the caller as actor.
   Giving someone the role they already hold records nothing. Changes made before the upgrade
   that added the log are not in it.
+- **Usage** (#510): every read (an article or a chunk, over REST, MCP or its resources), search
+  (one library, several or all, `query-docs` and `/c7/docs` included) and agent answer is counted
+  per UTC day, account, API token, library and operation, and nothing else: no query, no path, no
+  text. A request that fails is not counted, nor are the agent's own reads or a stdio MCP process
+  (read-only). A search or an answer over more than one library counts to no library. Counts are
+  added up in memory and written every 10 s and when the server stops (a report writes the pending
+  ones first), and the days older than `EXACTDOCS_USAGE__RETENTION_MONTHS` (13 by default) are
+  deleted every night. `GET /stats/usage` is the instance's usage for operators (like `/users`, the
+  session cookie of an `admin`: an API token is 401, anyone else 403): `period` (`day`, `week`
+  (ISO, Monday first), `month`, `year`; UTC), `periods` (how many, 1 to 400; default 30 days, 12
+  weeks, 12 months or 2 years), `until` (a day of the last period; default today), `by` (`none`,
+  `library`, `account`, `token`), `library` and `limit` (groups, 1 to 200, default 50). It answers
+  `{"period", "since", "until", "by", "total", "series", "groups", "groups_total"}`: `series` has one
+  bucket per period (`start`, `end`, `reads`, `searches`, `answers`), zeros included; `groups` the
+  breakdown over the whole range, most reads first. People are named (`account_id`, `username`)
+  only while the people leaderboard is on and only if they opted in; everyone else, and requests
+  without an account, are summed into one last group with `others: true`, so an operator sees
+  them in aggregate only. `GET /account/usage` is the same report over the caller's own counts
+  (`by`: `none`, `library`, `token`; `token_id: null` is their browser sessions and OAuth
+  sign-ins); a session or an API token may ask, and nobody can ask for someone else's.
+  `GET /stats/leaderboard?subject=libraries|people&metric=reads|searches|answers&period=day|week|month|year&at=&limit=`
+  ranks over the period holding `at` (default today, so the current period so far): `{"subject",
+  "metric", "period", "start", "end", "previous_start", "previous_end", "total", "ranked",
+  "entries", "you"}`, each entry with `rank` (equal values share one: 1, 2, 2, 4),
+  `previous_rank` (among the same subjects in the period before; `null` when it had nothing
+  counted) and `value`. `libraries` (the default) is always on and lists only libraries the caller
+  may read. `people` is 403 `people_leaderboard_off` until the operator sets
+  `EXACTDOCS_USAGE__PEOPLE_LEADERBOARD`, and then ranks only enabled accounts that opted in
+  (`leaderboard_opt_in`); the caller's entry has `you: true`, and comes in `you` when ranked beyond
+  `limit`. `GET /stats/settings` tells any caller `{"people_leaderboard", "retention_months"}`.
 - **Editing a library**: `PATCH /libraries/{owner}/{repo}` (`{"title"?, "description"?}`). An edited
   field is kept across re-imports instead of following the default version's `context7.json` or
   root README (LIB-07).
