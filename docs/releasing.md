@@ -154,7 +154,10 @@ libraries. Operators who want AI retrieval should not have to build their own im
 comes in three variants, the build targets of one `deploy/Dockerfile` (#246; decision record
 [*Image variants*](decisions/ai-retrieval.md#image-variants)). CI enforces each budget
 (`deploy/check_artifacts.py`, CI jobs *Docker image* and *Docker image variants*, and the
-release's *Scan image* jobs; the sizes land in the job summary):
+release's *Scan image* jobs; the sizes land in the job summary). Since #468 the CI jobs run on GitHub-hosted
+`ubuntu-24.04` (amd64), where the images come out smaller than on arm64 (353.0 MB against 387.1 MB
+for `base` before MCP Apps), so the arm64 figures below come from the release's builds and earlier
+CI runs:
 
 | Artifact | Budget | Now | Also checked |
 |---|---|---|---|
