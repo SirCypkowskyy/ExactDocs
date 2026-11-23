@@ -1,54 +1,182 @@
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Users } from "lucide-react";
-import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useSearch } from "@tanstack/react-router";
+import type { ColumnDef } from "@tanstack/react-table";
+import {
+  Ban,
+  CircleCheck,
+  KeyRound,
+  LogIn,
+  Plus,
+  ShieldCheck,
+  UserCheck,
+  UserRound,
+  Users,
+  UserX,
+} from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
-import { mediumDate } from "@/shared/lib/time";
+import { useLanguage, useMessages } from "@/shared/lib/i18n";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { cn } from "@/shared/lib/utils";
+import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
-import {
-  ConfirmAction,
-  ConfirmCancel,
-  ConfirmContent,
-  ConfirmDescription,
-  ConfirmRoot,
-  ConfirmTitle,
-} from "@/shared/ui/dialog";
-import { EmptyState, Page, PageHeader } from "@/shared/ui/page";
-import { pill, pillTone } from "@/shared/ui/recipes";
-import { Skeleton } from "@/shared/ui/skeleton";
-import { setUserDisabled, usersKey, usersQueryOptions } from "../api/users-query";
+import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
+import { Person, RelativeTime } from "@/shared/ui/data-table/cells";
+import { DataTable } from "@/shared/ui/data-table/data-table";
+import { DataTablePagination } from "@/shared/ui/data-table/pagination";
+import { type RowAction, restoreRowFocus } from "@/shared/ui/data-table/row-actions";
+import { pageQueryOptions } from "@/shared/ui/data-table/server-pages";
+import { pageOf } from "@/shared/ui/data-table/table-search";
+import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";
+import { type TableFilter, useDataTable } from "@/shared/ui/data-table/use-data-table";
+import { FormAlert } from "@/shared/ui/form-alert";
+import { Page, PageHeader } from "@/shared/ui/page";
+import { setUserDisabled, usersKey, usersSource } from "../api/users-query";
 import { messages } from "../messages";
-import { columnsFor } from "../model/columns";
-import { isFiltered, type UsersView } from "../model/list-view";
+import { parseUsersView, USER_ROLES, USER_STATUSES, USERS_TABLE } from "../model/list-view";
 import { explainUserError, type Role, type User } from "../model/user";
 import { CreateUserDialog } from "./create-user-dialog";
+import { GroupChips } from "./group-chips";
 import { ResetPasswordDialog } from "./reset-password-dialog";
-import { UsersList } from "./users-list";
 
-const NO_VIEW: UsersView = {};
-const ignore = () => {};
+/*
+ * The operator's users page (blocks-map §2.3, Users): every account in DataTable v2, numbered
+ * pages sorted and filtered by the server, the view in the URL; create, reset a password, disable
+ * (behind a confirmation) or enable, from the row's menu or its context menu.
+ */
+
+type UsersMessages = (typeof messages)["en"];
+
+/** A role the API sends, by its name; one this client does not know shows as sent. */
+const roleName = (m: UsersMessages, role: string) => m.roles[role as Role] ?? role;
+
+function UserCell({ user, you }: { user: User; you: boolean }) {
+  const t = useMessages(messages).row;
+  return (
+    <span className={cn("flex min-w-0", user.disabled && "text-muted-foreground")}>
+      <Person name={user.username}>{you && <Badge tone="route">{t.you}</Badge>}</Person>
+    </span>
+  );
+}
+
+function SignInCell({ user }: { user: User }) {
+  const t = useMessages(messages).row;
+  const Icon = user.provider ? LogIn : KeyRound;
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground">
+      <Icon aria-hidden="true" className="size-3.5 flex-none" />
+      <span className="truncate">{user.provider ?? t.password}</span>
+    </span>
+  );
+}
+
+// Built once per language and operator: a cell is rendered as a component, so a new function
+// would remount it.
+const columnsOf = (m: UsersMessages, me: string): ColumnDef<User>[] => [
+  {
+    accessorKey: "username",
+    header: m.list.columns.account,
+    enableHiding: false,
+    meta: { priority: 1, skeleton: "avatar" },
+    cell: ({ row }) => <UserCell user={row.original} you={row.original.id === me} />,
+  },
+  {
+    accessorKey: "role",
+    header: m.list.columns.role,
+    meta: { priority: 2, skeleton: "pill" },
+    cell: ({ row }) => {
+      const Icon = row.original.role === "admin" ? ShieldCheck : UserRound;
+      return (
+        <Badge>
+          <Icon aria-hidden="true" className="size-3" />
+          {roleName(m, row.original.role)}
+        </Badge>
+      );
+    },
+  },
+  {
+    id: "sign_in",
+    header: m.list.signIn,
+    enableSorting: false,
+    meta: { label: m.list.signIn, className: "max-md:hidden" },
+    cell: ({ row }) => <SignInCell user={row.original} />,
+  },
+  {
+    id: "groups",
+    header: m.list.groups,
+    enableSorting: false,
+    meta: { label: m.list.groups, className: "max-lg:hidden" },
+    cell: ({ row }) => (
+      <GroupChips name={row.original.username} groups={row.original.groups ?? []} />
+    ),
+  },
+  {
+    id: "status",
+    header: m.list.columns.status,
+    enableSorting: false,
+    meta: { priority: 2, skeleton: "pill", label: m.list.columns.status },
+    cell: ({ row }) =>
+      row.original.disabled ? (
+        <Badge>
+          <Ban aria-hidden="true" className="size-3" />
+          {m.row.disabled}
+        </Badge>
+      ) : (
+        <span className="text-muted-foreground">{m.row.active}</span>
+      ),
+  },
+  {
+    accessorKey: "created_at",
+    header: m.list.columns.created,
+    sortDescFirst: true,
+    meta: { priority: 3 },
+    cell: ({ row }) => <RelativeTime iso={row.original.created_at} />,
+  },
+];
+
+const filtersOf = (m: UsersMessages): TableFilter[] => [
+  {
+    id: "role",
+    title: m.list.role,
+    options: USER_ROLES.map((r) => ({
+      value: r,
+      label: m.roles[r],
+      icon: r === "admin" ? ShieldCheck : UserRound,
+    })),
+  },
+  {
+    id: "status",
+    title: m.list.status,
+    options: USER_STATUSES.map((s) => ({
+      value: s,
+      label: m.list[s],
+      icon: s === "active" ? CircleCheck : Ban,
+    })),
+  },
+];
 
 /** The operator's users page: list, create, disable or enable, and reset a password. */
-export function UsersPage({
-  currentUserId,
-  view = NO_VIEW,
-  onView = ignore,
-}: {
-  currentUserId: string;
-  /** The filters and sort, held in the URL by the route. */
-  view?: UsersView;
-  onView?: (view: UsersView) => void;
-}) {
+export function UsersPage({ currentUserId }: { currentUserId: string }) {
+  const view = parseUsersView(useSearch({ strict: false }) as Record<string, unknown>);
   const language = useLanguage();
-  const t = useMessages(messages).page;
-  const c = useMessages(common);
+  const m = useMessages(messages);
+  const t = m.page;
   const heading = usePageTitle(t.title);
   const queryClient = useQueryClient();
-  const users = useInfiniteQuery(usersQueryOptions(view));
-  const loaded = users.data?.pages.flatMap((p) => p.users) ?? [];
-  const total = users.data?.pages.at(-1)?.total ?? 0;
+  const columns = useMemo(() => columnsOf(m, currentUserId), [m, currentUserId]);
+  const filters = useMemo(() => filtersOf(m), [m]);
+  const source = usersSource(view);
+  const model = useDataTable({
+    config: USERS_TABLE,
+    search: view,
+    columns,
+    getRowId: (user) => user.id,
+    filters,
+    source,
+  });
+  // The failure of the shown page, to say why in words (a non-operator is refused, 403).
+  const { page, size } = pageOf(view, USERS_TABLE);
+  const failure = queryClient.getQueryState(pageQueryOptions(source, page, size).queryKey)?.error;
   const [creating, setCreating] = useState(false);
   const [disabling, setDisabling] = useState<User>();
   const [resetting, setResetting] = useState<User>();
@@ -68,19 +196,75 @@ export function UsersPage({
       if (!disabled) toast.error(t.enableFailed(user.username, explainUserError(error, language)));
     },
   });
-  const toggling = toggle.isPending ? toggle.variables.user.id : undefined;
+
+  const actions = (user: User): RowAction<User>[] => {
+    const you = user.id === currentUserId;
+    return [
+      // A reset ends every session of the account, the operator's own included. An account of
+      // an identity provider has no password to reset.
+      ...(!you && !user.provider
+        ? [
+            {
+              id: "reset",
+              label: m.actions.reset,
+              icon: KeyRound,
+              motion: "tilt" as const,
+              onSelect: () => setResetting(user),
+            },
+          ]
+        : []),
+      ...(user.disabled
+        ? [
+            {
+              id: "enable",
+              label: m.actions.enable,
+              icon: UserCheck,
+              motion: "pop" as const,
+              onSelect: () => {
+                if (!toggle.isPending) toggle.mutate({ user, disabled: false });
+              },
+            },
+          ]
+        : you
+          ? []
+          : [
+              {
+                id: "disable",
+                label: m.actions.disable,
+                icon: UserX,
+                motion: "warn" as const,
+                destructive: true,
+                group: true,
+                onSelect: () => {
+                  toggle.reset();
+                  setDisabling(user);
+                },
+              },
+            ]),
+    ];
+  };
 
   return (
     <Page>
       <PageHeader
         title={t.title}
+        icon={<Users />}
         headingRef={heading}
-        description={t.description(
-          <code className="font-mono text-small">exactdocs user create</code>,
-        )}
+        description={
+          <>
+            <p>
+              {t.description(<code className="font-mono text-small">exactdocs user create</code>)}
+            </p>
+            {model.total !== undefined && (
+              <p role="status" className="num mt-1">
+                {t.count(model.total)}
+              </p>
+            )}
+          </>
+        }
         actions={
           <Button onClick={() => setCreating(true)}>
-            <Plus aria-hidden="true" />
+            <Plus aria-hidden="true" data-icon-motion="turn" />
             {t.newUser}
           </Button>
         }
@@ -89,61 +273,32 @@ export function UsersPage({
         {announcement}
       </p>
       {toggle.isError && !disabling && (
-        <p
-          role="alert"
-          className="mb-6 rounded-md bg-destructive-soft px-3 py-2.5 text-body font-medium text-destructive-ink"
-        >
-          {explainUserError(toggle.error, language)}
-        </p>
+        <FormAlert id="users-alert" message={explainUserError(toggle.error, language)} />
       )}
-
-      {users.isPending ? (
-        <UsersSkeleton />
-      ) : users.isError && !users.data ? (
-        <div
-          role="alert"
-          className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg bg-destructive-soft py-1.5 pr-1.5 pl-4"
-        >
-          <p className="text-body font-medium text-destructive-ink">
-            {explainUserError(users.error, language)}
-          </p>
-          <Button variant="ghost" onClick={() => users.refetch()}>
-            {c.retry}
-          </Button>
-        </div>
-      ) : total === 0 && !isFiltered(view) ? (
-        <EmptyState
-          icon={<Users aria-hidden="true" />}
-          title={t.emptyTitle}
-          action={<Button onClick={() => setCreating(true)}>{t.newUser}</Button>}
-        >
-          {t.emptyBody}
-        </EmptyState>
-      ) : (
-        <UsersList
-          users={loaded}
-          view={view}
-          onView={onView}
-          total={total}
-          hasMore={users.hasNextPage}
-          loadingMore={users.isFetchingNextPage}
-          onLoadMore={() => void users.fetchNextPage()}
-          row={(user) => (
-            <UserRow
-              key={user.id}
-              user={user}
-              you={user.id === currentUserId}
-              busy={toggling === user.id}
-              onReset={() => setResetting(user)}
-              onEnable={() => !toggle.isPending && toggle.mutate({ user, disabled: false })}
-              onDisable={() => {
-                toggle.reset();
-                setDisabling(user);
-              }}
-            />
-          )}
-        />
-      )}
+      <DataTableToolbar
+        model={model}
+        search={{ label: m.list.find, placeholder: m.list.usernamePlaceholder }}
+      />
+      <DataTable
+        model={model}
+        label={m.list.label}
+        rowActions={actions}
+        rowLabel={(user) => user.username}
+        empty={{
+          icon: Users,
+          title: t.emptyTitle,
+          body: t.emptyBody,
+          action: (
+            <Button variant="outline" onClick={() => setCreating(true)}>
+              <Plus aria-hidden="true" data-icon-motion="turn" />
+              {t.newUser}
+            </Button>
+          ),
+        }}
+        noMatch={{ title: m.list.noMatchTitle, body: m.list.noMatch }}
+        errorMessage={failure ? explainUserError(failure, language) : t.loadFailed}
+      />
+      <DataTablePagination model={model} />
 
       <CreateUserDialog
         open={creating}
@@ -164,7 +319,7 @@ export function UsersPage({
           });
         }}
       />
-      <ConfirmRoot
+      <ConfirmDialog
         open={disabling !== undefined}
         onOpenChange={(open) => {
           if (!open) {
@@ -172,180 +327,17 @@ export function UsersPage({
             toggle.reset();
           }
         }}
-      >
-        <ConfirmContent>
-          <ConfirmTitle>{t.disableTitle(disabling?.username ?? "")}</ConfirmTitle>
-          <ConfirmDescription>{t.disableDescription}</ConfirmDescription>
-          <p
-            role="alert"
-            className="mt-4 rounded-md bg-destructive-soft px-3 py-2.5 text-body font-medium text-destructive-ink empty:hidden"
-          >
-            {toggle.isError && explainUserError(toggle.error, language)}
-          </p>
-          <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <ConfirmCancel asChild>
-              <Button variant="ghost">{c.cancel}</Button>
-            </ConfirmCancel>
-            <ConfirmAction asChild>
-              <Button
-                variant="destructive-solid"
-                pending={toggle.isPending}
-                onClick={(event) => {
-                  event.preventDefault(); // stay open until the server answers
-                  if (disabling && !toggle.isPending)
-                    toggle.mutate({ user: disabling, disabled: true });
-                }}
-              >
-                {t.disable}
-              </Button>
-            </ConfirmAction>
-          </div>
-        </ConfirmContent>
-      </ConfirmRoot>
+        title={t.disableTitle(disabling?.username ?? "")}
+        description={t.disableDescription}
+        confirmLabel={t.disable}
+        icon={<UserX aria-hidden="true" data-icon-motion="warn" />}
+        pending={toggle.isPending}
+        error={toggle.isError && disabling ? explainUserError(toggle.error, language) : undefined}
+        onConfirm={() => {
+          if (disabling && !toggle.isPending) toggle.mutate({ user: disabling, disabled: true });
+        }}
+        onCloseAutoFocus={restoreRowFocus}
+      />
     </Page>
-  );
-}
-
-function UserRow({
-  user,
-  you,
-  busy,
-  onReset,
-  onEnable,
-  onDisable,
-}: {
-  user: User;
-  you: boolean;
-  busy: boolean;
-  onReset: () => void;
-  onEnable: () => void;
-  onDisable: () => void;
-}) {
-  const language = useLanguage();
-  const m = useMessages(messages);
-  const t = m.row;
-  const isAdmin = user.role === "admin";
-  return (
-    <li className={cn("row-in flex flex-col gap-y-2 py-4", columnsFor(language))}>
-      <div className="min-w-0">
-        <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span
-            className={cn(
-              "font-medium [overflow-wrap:anywhere]",
-              user.disabled && "text-muted-foreground line-through",
-            )}
-          >
-            {user.username}
-          </span>
-          {you && <span className={cn(pill, pillTone.route)}>{t.you}</span>}
-        </p>
-        <p className="mt-0.5 text-small text-muted-foreground">
-          {user.provider ? t.signsInWith(user.provider) : t.password}
-        </p>
-        {user.provider && (
-          <p className="mt-1 text-small text-muted-foreground">
-            {user.groups && user.groups.length > 0 ? (
-              <>
-                <span className="sr-only">{t.groups}</span>
-                <span className="flex flex-wrap gap-1.5">
-                  {user.groups.map((group) => (
-                    <span
-                      key={group}
-                      className="rounded-sm bg-accent px-1.5 py-0.5 font-mono text-small text-foreground"
-                    >
-                      {group}
-                    </span>
-                  ))}
-                </span>
-              </>
-            ) : (
-              t.noGroups
-            )}
-          </p>
-        )}
-      </div>
-      <div className="flex flex-wrap items-center gap-2 md:contents">
-        <span
-          className={cn(pill, isAdmin ? pillTone.route : pillTone.neutral, "justify-self-start")}
-        >
-          {m.roles[user.role as Role] ?? user.role}
-        </span>
-        <span
-          className={cn(
-            pill,
-            user.disabled ? pillTone.destructive : pillTone.positive,
-            "justify-self-start",
-          )}
-        >
-          {user.disabled ? t.disabled : t.active}
-        </span>
-        <span className="text-small text-muted-foreground tabular-nums">
-          <span className="md:hidden">{t.created}</span>
-          {mediumDate(user.created_at, language)}
-        </span>
-      </div>
-      <div className="-ml-3 flex flex-wrap gap-1 md:ml-0 md:w-44 md:justify-end">
-        {/* A reset ends every session of the account, the operator's own included.
-            An account of an identity provider has no password to reset. */}
-        {!you && !user.provider && (
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={t.resetNamed(user.username)}
-            onClick={onReset}
-          >
-            {t.reset}
-          </Button>
-        )}
-        {user.disabled ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={t.enableNamed(user.username)}
-            pending={busy}
-            onClick={onEnable}
-          >
-            {t.enable}
-          </Button>
-        ) : (
-          !you && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-destructive hover:bg-destructive-soft"
-              aria-label={t.disableNamed(user.username)}
-              onClick={onDisable}
-            >
-              {t.disable}
-            </Button>
-          )
-        )}
-      </div>
-    </li>
-  );
-}
-
-function UsersSkeleton() {
-  const language = useLanguage();
-  const t = useMessages(messages).page;
-  const columns = columnsFor(language);
-  return (
-    <div aria-busy="true">
-      <span className="sr-only">{t.loading}</span>
-      <div aria-hidden="true" className="divide-y divide-rule border-y border-border">
-        {[0, 1, 2].map((i) => (
-          <div key={i} className={cn("flex flex-col gap-2 py-4", columns)}>
-            <div>
-              <Skeleton className="h-5 w-32" />
-              <Skeleton className="mt-1.5 h-4 w-20" />
-            </div>
-            <Skeleton className="h-5 w-14 rounded-full" />
-            <Skeleton className="h-5 w-16 rounded-full" />
-            <Skeleton className="h-4 w-24" />
-            <Skeleton className="h-8 w-44" />
-          </div>
-        ))}
-      </div>
-    </div>
   );
 }

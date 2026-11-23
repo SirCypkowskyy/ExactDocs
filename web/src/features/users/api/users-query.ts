@@ -1,23 +1,25 @@
-import { infiniteQueryOptions, keepPreviousData } from "@tanstack/react-query";
 import type { components } from "@/shared/lib/api-schema";
 import { getJson, sendJson } from "@/shared/lib/http";
-import { type UsersView, usersParams } from "../model/list-view";
+import type { ServerSource } from "@/shared/ui/data-table/server-pages";
+import { type UsersView, usersFilters, usersParams } from "../model/list-view";
 import type { NewUser, User } from "../model/user";
+
+type UserList = components["schemas"]["UserList"];
 
 export const usersKey = ["users"] as const;
 
-/** One page at a time; the next page is fetched on demand, sorted and filtered by the server. */
-export const usersQueryOptions = (view: UsersView = {}) =>
-  infiniteQueryOptions({
-    queryKey: [...usersKey, "list", view] as const,
-    queryFn: ({ signal, pageParam }) =>
-      getJson<components["schemas"]["UserList"]>(`/v1/users?${usersParams(view, pageParam)}`, {
-        signal,
-      }),
-    initialPageParam: null as string | null,
-    getNextPageParam: (last) => last.next_cursor,
-    placeholderData: keepPreviousData,
-  });
+/** The accounts a view shows, a numbered page at a time, sorted and filtered by the server. */
+export function usersSource(view: UsersView): ServerSource<User> {
+  const filters = usersFilters(view);
+  return {
+    key: [...usersKey, "list", filters],
+    fetchPage: ({ limit, cursor, signal }) =>
+      getJson<UserList>(`/v1/users?${usersParams(filters, limit, cursor)}`, { signal }).then(
+        (list) => ({ rows: list.users, total: list.total, nextCursor: list.next_cursor }),
+      ),
+    // #509: `paging: "offset"` (and `offset` in the params) once `GET /users` takes an offset.
+  };
+}
 
 export const createUser = (user: NewUser) => sendJson<User>("POST", "/v1/users", user);
 
