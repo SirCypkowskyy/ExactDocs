@@ -77,10 +77,10 @@ async def _memory_vectors() -> AsyncGenerator[VectorBackend]:
 
 # ---------------------------------------------------------------- pinecone (#362)
 PINECONE_URL = os.environ.get("EXACTDOCS_TEST_PINECONE_URL") or None
-"""An index's host: Pinecone Local's single-index image (``just pinecone-local`` starts it, then
-``EXACTDOCS_TEST_PINECONE_URL=http://localhost:5081``), or a real serverless ``dotproduct`` index
-of at least 4 dimensions (the manual ``pinecone.yml`` workflow). Each test gets a namespace of
-its own, emptied after."""
+"""An index's host: Pinecone Local's single-index image (amd64 only; the command is in
+docs/configuration.md, *Pinecone*), then ``EXACTDOCS_TEST_PINECONE_URL=http://localhost:5081``; or
+a real serverless ``dotproduct`` index of at least 256 dimensions (the manual ``pinecone.yml``
+workflow). Each test gets a namespace of its own, emptied after."""
 PINECONE_API_KEY = os.environ.get("EXACTDOCS_TEST_PINECONE_API_KEY") or "pclocal"
 """The API key; Pinecone Local takes any."""
 PINECONE_HYBRID = os.environ.get("EXACTDOCS_TEST_PINECONE_HYBRID") == "1"
