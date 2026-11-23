@@ -17,7 +17,11 @@ another vendor where possible grades each answer against the case's reference an
 Per agent model and retrieval configuration, the report gives accuracy overall, per question kind
 and per project; the answers true only of another version; how often the agent read every
 expected section in full; reads of another version; and tool calls, tokens, USD and wall time per
-question.
+question. Accuracy and every other rate and mean come with a 95% interval, and each retrieval
+configuration's accuracy is tested against the run's first configuration for the same agent
+model, on the same questions (McNemar's test, mid-p;
+[Intervals and significance](method.md#intervals-and-significance)). With a few dozen questions
+per kind, the per-kind intervals are wide.
 
 ## What produces the results
 

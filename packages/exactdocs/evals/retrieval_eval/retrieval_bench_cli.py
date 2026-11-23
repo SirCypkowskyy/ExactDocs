@@ -66,6 +66,7 @@ from retrieval_eval.retrieval_bench import (
     IndexCost,
     ModelInfo,
     RetrievalBenchReport,
+    against_defaults,
     check,
     markdown,
     recommend,
@@ -73,6 +74,7 @@ from retrieval_eval.retrieval_bench import (
     run_problems,
 )
 from retrieval_eval.retrievers import RecordedReads, Retriever
+from retrieval_eval.stats import DEFAULT as DEFAULT_STATS
 from retrieval_eval.suite import MODES
 
 REPORT_DIR: Final[Path] = Path("reports/evals")
@@ -621,6 +623,7 @@ async def bench(
                     f"{chunking.name} {config.name}: {results[-1].status} "
                     f"({time.perf_counter() - started:.0f} s)\n"
                 )
+    picks = recommend(results, DEFAULT_STATS)
     return RetrievalBenchReport(
         golden=fingerprint(dataset),
         cases=len(dataset.cases),
@@ -635,8 +638,9 @@ async def bench(
             {"name": c.name, "about": c.about, **c.chunking.model_dump(mode="json")}
             for c in chunkings
         ],
-        results=results,
-        recommendations=recommend(results),
+        results=against_defaults(results, picks, DEFAULT_STATS),
+        recommendations=picks,
+        statistics=DEFAULT_STATS,
     )
 
 
