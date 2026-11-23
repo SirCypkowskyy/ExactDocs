@@ -439,6 +439,7 @@ async def test_bm25_on_the_fixture_meets_the_stored_baseline_and_reports_the_res
     assert bm25.fallbacks == 0
     assert report.search_engine == "fts5"
     assert [(o.mode, o.status, o.reason) for o in others] == [
+        (RetrievalMode.VECTOR, "unavailable", "needs the embedding role, not configured"),
         (RetrievalMode.HYBRID, "unavailable", "needs the embedding role, not configured"),
         (
             RetrievalMode.HYBRID_HYDE,
