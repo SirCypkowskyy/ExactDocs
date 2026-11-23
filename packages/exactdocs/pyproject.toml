@@ -42,6 +42,9 @@ local = [
     "fastembed==0.9.1",
     "onnxruntime==1.31.0",
 ]
+# Pinecone as the vector index (#362, EXACTDOCS_VECTOR_BACKEND=pinecone): imported only when the
+# operator names it. The 10.x SDK speaks HTTP (httpx, msgspec, orjson): no grpcio or protobuf.
+pinecone = ["pinecone==10.3.0"]
 
 [project.scripts]
 exactdocs = "exactdocs.bootstrap.cli:main"
