@@ -1,7 +1,9 @@
 import { Link } from "@tanstack/react-router";
+import { Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { cn } from "@/shared/lib/utils";
+import { buttonVariants } from "@/shared/ui/button";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { LibraryBullet } from "@/shared/ui/route";
 import type { Activity, JobViews, SettingsLibrary } from "../model/settings";
@@ -31,6 +33,7 @@ const SECTIONS = [
   ["versions-heading", "Versions", "versions"],
   ["ai-heading", "Retrieval and AI", "ai"],
   ["sync-heading", "Re-sync", "sync"],
+  ["sharing-heading", "Sharing", "sharing"],
   ["danger-heading", "Remove library", "danger"],
 ] as const;
 
@@ -177,6 +180,20 @@ export function LibrarySettingsPage({ owner, repo, library, jobs }: Props) {
               activity={activity}
               onStart={start("sync")}
             />
+            <SettingsSection
+              id="sharing"
+              title="Sharing"
+              description="Who can find, read, change and manage this library. Its admins share it; its creator hands it over."
+            >
+              <Link
+                to="/libraries/$owner/$repo/sharing"
+                params={{ owner, repo }}
+                className={buttonVariants({ variant: "outline" })}
+              >
+                <Users aria-hidden="true" />
+                Manage sharing
+              </Link>
+            </SettingsSection>
             <DangerSection owner={owner} repo={repo} library={library} onStart={start("danger")} />
           </div>
         </div>

@@ -852,8 +852,10 @@ identity's `ResolveLibraryRoles`, `ClaimLibrary` and `DropLibraryGrants`).
 - **Sharing** is `GET/PUT /libraries/{owner}/{repo}/grants` and `DELETE
   .../grants/{user|group}/{subject}` (identity's `GrantLibraryRole`, `RevokeLibraryRole`,
   `ListLibraryGrants`). They need `admin` on the library; giving, changing or removing an `admin`
-  needs `creator`; the creator's own role is neither given nor changed there (transfer is
-  E12-06).
+  needs `creator`; the creator's own role is neither given nor changed there. `POST
+  .../transfer` (identity's `TransferLibrary`) is how it changes hands: only the `creator` (or an
+  operator) may, the new user becomes the creator and the creators before become admins, in one
+  step of the grant repository (`transfer`, which answers who they were).
 - **Upgrading**: libraries that exist when the migration runs get no grant. Operators keep full
   access; other accounts hold no role until an operator or the creator shares the library.
 

@@ -51,6 +51,7 @@ from exactdocs.identity.ports.driving import (
     SignIn,
     SignOut,
     StartExternalSignIn,
+    TransferLibrary,
 )
 from exactdocs.identity.use_cases import (
     AuthenticateUseCase,
@@ -82,6 +83,7 @@ from exactdocs.identity.use_cases import (
     SignInUseCase,
     SignOutUseCase,
     StartExternalSignInUseCase,
+    TransferLibraryUseCase,
 )
 from exactdocs_kernel import Clock
 
@@ -146,6 +148,8 @@ class IdentityModule:
     """Take a role away from a user or a group."""
     list_library_grants: ListLibraryGrants
     """List who holds a role on a library (library admins)."""
+    transfer_library: TransferLibrary
+    """Hand a library over to another user (its creator only)."""
 
     @classmethod
     def build(
@@ -295,4 +299,5 @@ class IdentityModule:
             grant_library_role=GrantLibraryRoleUseCase(sharing=sharing),
             revoke_library_role=RevokeLibraryRoleUseCase(sharing=sharing),
             list_library_grants=ListLibraryGrantsUseCase(sharing=sharing),
+            transfer_library=TransferLibraryUseCase(sharing=sharing),
         )

@@ -1,6 +1,6 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowUpRight, Info, Settings } from "lucide-react";
+import { ArrowUpRight, Info, Settings, Users } from "lucide-react";
 import { absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { buttonVariants } from "@/shared/ui/button";
@@ -210,18 +210,33 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
           </span>
         }
         actions={
-          <Link
-            to="/libraries/$owner/$repo/settings"
-            params={{ owner, repo }}
-            className={buttonVariants({
-              variant: "outline",
-              size: "sm",
-              className: "max-sm:w-11 max-sm:px-0",
-            })}
-          >
-            <Settings aria-hidden="true" />
-            <span className="max-sm:sr-only">Settings</span>
-          </Link>
+          <>
+            {/* On a phone the header keeps one button; sharing is linked from the settings. */}
+            <Link
+              to="/libraries/$owner/$repo/sharing"
+              params={{ owner, repo }}
+              className={buttonVariants({
+                variant: "outline",
+                size: "sm",
+                className: "max-sm:hidden",
+              })}
+            >
+              <Users aria-hidden="true" />
+              Share
+            </Link>
+            <Link
+              to="/libraries/$owner/$repo/settings"
+              params={{ owner, repo }}
+              className={buttonVariants({
+                variant: "outline",
+                size: "sm",
+                className: "max-sm:w-11 max-sm:px-0",
+              })}
+            >
+              <Settings aria-hidden="true" />
+              <span className="max-sm:sr-only">Settings</span>
+            </Link>
+          </>
         }
       />
       {missing && version && <UnknownVersion missing={missing} shown={version.ref} />}

@@ -302,3 +302,72 @@ def step_grants_refused(context: Context, username: str) -> None:
     response = send_as(context, "GET", path, session=session, params={"limit": 1})
     assert response.status_code == HTTPStatus.FORBIDDEN, response.text
     assert "total" not in response.json(), response.text
+
+
+@given('"{username}" is the creator of "{library}"')
+def step_creator(context: Context, username: str, library: str) -> None:
+    person = get_person(context, username)
+    # As when that account adds the library: the fixture is imported without a creator.
+    with closing(sqlite3.connect(context.settings.data_dir / DATABASE_MEMBER)) as database:
+        database.execute(
+            "INSERT INTO identity_library_grants (library, kind, subject, role) "
+            "VALUES (?, 'user', ?, 'creator')",
+            (library.casefold(), person["id"]),
+        )
+        database.commit()
+    context.creator = username
+
+
+@given('"{username}" is an admin of "{library}"')
+def step_admin_of(context: Context, username: str, library: str) -> None:
+    get_person(context, username)
+    _grant(context, library, "user", username, "admin")
+
+
+def _transfer(context: Context, username: str, library: str, to: str) -> httpx.Response:
+    get_person(context, to)
+    return send_as(
+        context,
+        "POST",
+        f"{_library_path(library)}/transfer",
+        session=get_person(context, username)["session"],
+        json={"username": to},
+    )
+
+
+def _take_admin_role(context: Context, username: str, subject: str) -> httpx.Response:
+    path = f"{_library_path('/fixture/docs-repo')}/grants/user/{subject}"
+    return send_as(context, "DELETE", path, session=get_person(context, username)["session"])
+
+
+@when('the creator transfers "{library}" to "{username}"')
+def step_transfer(context: Context, library: str, username: str) -> None:
+    response = _transfer(context, context.creator, library, username)
+    assert response.status_code == HTTPStatus.OK, response.text
+    context.library = library
+
+
+@then('"{username}" is the creator and the previous owner becomes admin')
+def step_transferred(context: Context, username: str) -> None:
+    session = get_person(context, username)["session"]
+    listed = send_as(context, "GET", f"{_library_path(context.library)}/grants", session=session)
+    assert listed.status_code == HTTPStatus.OK, listed.text
+    page = listed.json()
+    roles = {g["subject"]: g["role"] for g in page["grants"] if g["kind"] == "user"}
+    assert roles == {username: "creator", context.creator: "admin"}, page
+    assert (page["creator"], page["caller_role"]) == (username, "creator"), page
+
+
+@then('"{username}" may neither transfer "{library}" nor take "{subject}"\'s admin role away')
+def step_admin_refused(context: Context, username: str, library: str, subject: str) -> None:
+    moved = _transfer(context, username, library, "carol")
+    assert (moved.status_code, moved.json()["error"]) == (403, "forbidden"), moved.text
+    taken = _take_admin_role(context, username, subject)
+    assert (taken.status_code, taken.json()["error"]) == (403, "forbidden"), taken.text
+
+
+@then('"{username}" may take "{subject}"\'s admin role away')
+def step_creator_takes_admin(context: Context, username: str, subject: str) -> None:
+    taken = _take_admin_role(context, username, subject)
+    assert taken.status_code == HTTPStatus.OK, taken.text
+    assert subject not in {g["subject"] for g in taken.json()["grants"]}, taken.text
