@@ -1,10 +1,5 @@
 import type { ReactNode } from "react";
-import {
-  type Language,
-  readPreferences,
-  resolveLanguage,
-  usePreferences,
-} from "./preferences";
+import { type Language, readPreferences, resolveLanguage, usePreferences } from "./preferences";
 
 /*
  * The UI speaks English and Polish (#486). Strings live next to the code that shows them: every
