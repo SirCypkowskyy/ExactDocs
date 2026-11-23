@@ -1,5 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createMemoryHistory, useSearch } from "@tanstack/react-router";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Outlet,
+  RouterProvider,
+  useSearch,
+} from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -12,7 +20,7 @@ import { DataTable } from "./data-table";
 import { DataTablePagination } from "./pagination";
 import type { RowAction } from "./row-actions";
 import type { ServerSource } from "./server-pages";
-import { parseFacet, parseTableSearch, type TableConfig } from "./table-search";
+import { parseFacet, parseTableSearch, stringifySearch, type TableConfig } from "./table-search";
 import { DataTableToolbar } from "./toolbar";
 import { type ClientQuery, type TableFilter, useDataTable } from "./use-data-table";
 
@@ -420,5 +428,41 @@ describe("DataTable v2 in Polish", () => {
     expect(
       within(nav).getByText("Strona 2 z 618", { selector: "[role=status]" }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("DataTable v2 behind a route that validates its search", () => {
+  it("keeps facets in the URL as `a,b` after the route turns them into lists", async () => {
+    const history = createMemoryHistory({ initialEntries: ["/things?state=failed"] });
+    const root = createRootRoute({ component: Outlet });
+    const things = createRoute({
+      getParentRoute: () => root,
+      path: "/things",
+      validateSearch: (raw: Record<string, unknown>) => ({
+        ...parseTableSearch(raw, CLIENT),
+        state: parseFacet(raw.state, STATES),
+      }),
+      component: () => <ClientThings query={ready(THINGS)} />,
+    });
+    const router = createRouter({
+      routeTree: root.addChildren([things]),
+      history,
+      stringifySearch,
+    });
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <TooltipProvider>
+          <RouterProvider router={router as never} />
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("1–7 of 7")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "State, 1 selected" }));
+    await userEvent.click(await screen.findByRole("option", { name: /queued/ }));
+    await userEvent.keyboard("{Escape}");
+
+    expect(await screen.findByText("1–15 of 15")).toBeInTheDocument();
+    expect(history.location.search).toBe("?state=queued%2Cfailed");
   });
 });

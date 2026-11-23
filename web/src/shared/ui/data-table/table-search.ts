@@ -1,3 +1,4 @@
+import { stringifySearchWith } from "@tanstack/react-router";
 import type { SortingState } from "@tanstack/react-table";
 import { pickSort, textParam } from "@/shared/lib/list-sort";
 
@@ -150,3 +151,20 @@ export function valuesOf(value: unknown): string[] {
   if (typeof value === "string" && value) return value.split(",");
   return [];
 }
+
+/** A facet's values: plain words, written `a,b` rather than as JSON. */
+const isFacetList = (value: unknown): value is string[] =>
+  Array.isArray(value) &&
+  value.length > 0 &&
+  value.every((v) => typeof v === "string" && v !== "" && !v.includes(","));
+
+/**
+ * The app router's `stringifySearch`. A route's `validateSearch` turns `state=failed,queued` into
+ * a list, and the router writes the validated search back to the URL: a list of words goes back
+ * as `failed,queued` (what `parseFacet` reads), never as `["failed","queued"]`. Everything else is
+ * written as TanStack Router's default does.
+ */
+export const stringifySearch = stringifySearchWith(
+  (value: unknown) => (isFacetList(value) ? value.join(",") : JSON.stringify(value)),
+  JSON.parse,
+);

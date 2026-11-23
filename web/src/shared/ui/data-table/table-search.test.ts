@@ -11,6 +11,7 @@ import {
   sizesFor,
   sortingOf,
   sortOf,
+  stringifySearch,
   type TableConfig,
   valuesOf,
 } from "./table-search";
@@ -121,5 +122,21 @@ describe("parseFacet", () => {
     expect(valuesOf("queued,failed")).toEqual(["queued", "failed"]);
     expect(valuesOf(["a", 1])).toEqual(["a"]);
     expect(valuesOf(undefined)).toEqual([]);
+  });
+});
+
+describe("stringifySearch", () => {
+  it("writes a facet's list as `a,b`, which parseFacet reads back", () => {
+    const url = stringifySearch({ state: ["queued", "failed"], page: 2, q: "pay ments" });
+    expect(url).toBe("?state=queued%2Cfailed&page=2&q=pay+ments");
+    const back = new URLSearchParams(url);
+    expect(parseFacet(back.get("state"), STATES)).toEqual(["queued", "failed"]);
+  });
+
+  it("writes everything else as the router's default does", () => {
+    expect(stringifySearch({ ids: [1, 2], tags: ["a,b"], empty: [], flag: true })).toBe(
+      `?ids=${encodeURIComponent("[1,2]")}&tags=${encodeURIComponent('["a,b"]')}&empty=${encodeURIComponent("[]")}&flag=true`,
+    );
+    expect(stringifySearch({})).toBe("");
   });
 });
