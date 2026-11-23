@@ -272,6 +272,21 @@ class PineconeVectorBackend:
                 index is not a dense ``cosine`` / ``dotproduct`` one (``dotproduct`` with
                 ``hybrid``).
         """
+        try:
+            self._dimension = await self._connect()
+        except IndexBackendUnavailableError:
+            await self.close()  # what was opened before the failure
+            raise
+
+    async def _connect(self) -> int:
+        """Open the clients and read the index's dimension and metric.
+
+        Returns:
+            The index's dimension.
+
+        Raises:
+            IndexBackendUnavailableError: The index has no dense vectors or another metric.
+        """
         options = self.options
         with _answering(self.name):
             self._client = AsyncPinecone(api_key=options.api_key, timeout=options.timeout)
@@ -282,15 +297,13 @@ class PineconeVectorBackend:
             )
             stats = await self._index.describe_index_stats()
         if not stats.dimension:
-            await self.close()
             raise IndexBackendUnavailableError(self.name, "the index holds no dense vectors")
         metric = (stats.metric or "").lower()
         wanted = {PINECONE_HYBRID_METRIC} if options.hybrid else PINECONE_METRICS
         if metric and metric not in wanted:
-            await self.close()
             reason = f"the index's metric is {metric}; it must be {' or '.join(sorted(wanted))}"
             raise IndexBackendUnavailableError(self.name, reason)
-        self._dimension = stats.dimension
+        return stats.dimension
 
     async def close(self) -> None:
         """Close the clients (each is closed even if the other fails)."""
