@@ -131,6 +131,40 @@ EXTERNAL_HIT_MARGIN: Final[int] = 10
 MEMORY_BACKEND: Final[str] = "memory"
 """The registered name of the in-process reference index backend (tests only)."""
 
+# ---------------------------------------------------------------- adapters.driven.pinecone_index
+PINECONE_BACKEND: Final[str] = "pinecone"
+"""The registered name of the Pinecone vector backend (#362)."""
+PINECONE_NAMESPACE: Final[str] = "exactdocs"
+"""The namespace an instance keeps its vectors in when its options name none."""
+PINECONE_MAX_NAMESPACE: Final[int] = 500
+"""The longest namespace name taken (Pinecone allows ASCII names of a few hundred bytes)."""
+PINECONE_TIMEOUT_SECONDS: Final[float] = 30.0
+"""How long one request to Pinecone may take when the options name no ``timeout``."""
+PINECONE_HYBRID_ALPHA: Final[float] = 0.5
+"""The dense half's weight in a sparse-dense query (the sparse half gets the rest)."""
+PINECONE_ID_SEPARATOR: Final[str] = "#"
+"""Separates the parts of a vector ID: ``<manifest>#<space>#<chunk>``. The manifest ID is
+percent-quoted, so a version's IDs all start with ``<manifest>#`` and nothing else does."""
+PINECONE_UPSERT_BATCH: Final[int] = 100
+"""Vectors per upsert request (Pinecone caps a request at 1000 vectors and 2 MB)."""
+PINECONE_DELETE_BATCH: Final[int] = 1000
+"""Vector IDs per delete request (Pinecone's cap)."""
+PINECONE_LIST_PAGE: Final[int] = 100
+"""Vector IDs per page when listing a namespace (Pinecone's cap)."""
+PINECONE_FETCH_BATCH: Final[int] = 100
+"""Vector IDs per fetch request (they travel in the URL)."""
+PINECONE_MAX_TOP_K: Final[int] = 10_000
+"""The most matches one query returns (Pinecone's cap without values or metadata)."""
+PINECONE_SPARSE_TERMS: Final[int] = 1000
+"""The most terms a chunk's sparse vector keeps (Pinecone caps its non-zero values), heaviest
+first."""
+PINECONE_HEADING_WEIGHT: Final[int] = 3
+"""How many times a term of the chunk's headings counts in its sparse vector."""
+PINECONE_METRICS: Final[frozenset[str]] = frozenset({"cosine", "dotproduct"})
+"""Index metrics the backend can use: vectors are unit length, so both rank by cosine."""
+PINECONE_HYBRID_METRIC: Final[str] = "dotproduct"
+"""The metric a sparse-dense (hybrid) index needs."""
+
 # ---------------------------------------------------------------- adapters.driven.memory
 MEMORY_FORMAT: Final[int] = 1
 """Format version of the in-memory search index."""

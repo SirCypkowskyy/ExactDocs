@@ -414,6 +414,14 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             production=False,
         ),
+        "pinecone": IndexBackendKind(
+            name="pinecone",
+            module="exactdocs.retrieval.adapters.driven.pinecone_index",
+            search=None,
+            vectors="vector_backend",
+            extra="pinecone",
+            packages=("pinecone",),
+        ),
     }
 )
 """The external index backends, by name. Adding one is one adapter module in
