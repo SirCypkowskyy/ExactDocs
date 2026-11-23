@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-23T22:30:00+00:00",
+  "generatedAt": "2026-11-23T23:59:00+00:00",
   "title": "Design System: ExactDocs",
   "extensions": {
     "colorMeta": {
@@ -348,6 +348,36 @@
           "oklch(0.86 0.015 250)",
           "oklch(0.95 0.014 250)"
         ]
+      },
+      "chart-series": {
+        "role": "neutral",
+        "displayName": "Chart Series",
+        "canonical": "oklch(0.53 0.009 278)",
+        "tonalRamp": [
+          "oklch(0.20 0.009 278)",
+          "oklch(0.30 0.009 278)",
+          "oklch(0.40 0.009 278)",
+          "oklch(0.50 0.009 278)",
+          "oklch(0.62 0.009 278)",
+          "oklch(0.74 0.009 278)",
+          "oklch(0.86 0.009 278)",
+          "oklch(0.95 0.009 278)"
+        ]
+      },
+      "logo-tile": {
+        "role": "neutral",
+        "displayName": "Logo Tile (white in both themes)",
+        "canonical": "oklch(1 0 0)",
+        "tonalRamp": [
+          "oklch(0.20 0.000 0)",
+          "oklch(0.30 0.000 0)",
+          "oklch(0.40 0.000 0)",
+          "oklch(0.50 0.000 0)",
+          "oklch(0.62 0.000 0)",
+          "oklch(0.74 0.000 0)",
+          "oklch(0.86 0.000 0)",
+          "oklch(0.95 0.000 0)"
+        ]
       }
     },
     "typographyMeta": {
@@ -425,7 +455,7 @@
       {
         "name": "dur-menu",
         "value": "150ms",
-        "purpose": "Menus, popovers, selects entering (0.97 scale from the trigger's corner)."
+        "purpose": "Menus, popovers, selects entering (0.97 scale from the trigger's corner); they leave in dur-exit (100ms)."
       },
       {
         "name": "dur",
@@ -476,6 +506,11 @@
         "name": "breathe",
         "value": "opacity to 0.35 at 50%, 1.2s infinite",
         "purpose": "Busy indicators under reduced motion."
+      },
+      {
+        "name": "icon-reactions",
+        "value": "data-icon-motion=\"forward|back|out|down|up|turn|cog|refresh|tilt|pop|warn|draw|alert\" (src/app/icon-motion.css): transform only (clip-path for draw), at most 2px, var(--dur), var(--ease-out)",
+        "purpose": "An icon inside something pressable says what the action does on hover, keyboard focus, menu highlight or press; off under reduced motion."
       },
       {
         "name": "reduced-motion",
@@ -539,7 +574,11 @@
       "line-5": "oklch(0.5 0.1 70)",
       "line-6": "oklch(0.5 0.14 350)",
       "line-7": "oklch(0.5 0.09 120)",
-      "line-8": "oklch(0.48 0.02 250)"
+      "line-8": "oklch(0.48 0.02 250)",
+      "logo-tile": "#ffffff",
+      "logo-tile-edge": "rgb(23 23 26 / 0.12)",
+      "chart-series": "#8b8b94",
+      "chart-highlight": "#f5c542"
     },
     "contrastMore": {
       "light": {
@@ -547,14 +586,18 @@
         "border": "#b4b3ae",
         "rule": "#cfcec9",
         "control-border": "#6f6e69",
-        "frame": "#ebeae6"
+        "frame": "#ebeae6",
+        "chart-series": "#4f5055",
+        "logo-tile-edge": "rgb(23 23 26 / 0.3)"
       },
       "dark": {
         "ink-muted": "#d2d2d8",
         "border": "#55555e",
         "rule": "#3c3c44",
         "control-border": "#8a8a94",
-        "frame": "#060607"
+        "frame": "#060607",
+        "chart-series": "#a0a0a8",
+        "logo-tile-edge": "rgb(23 23 26 / 0.3)"
       }
     },
     "brand": {
@@ -687,6 +730,70 @@
       "description": "Literal text shown as it is, in JetBrains Mono.",
       "html": "<pre class=\"ds-code\">uvx exactdocs serve --port 3000</pre>",
       "css": ".ds-code{margin:0;padding:10px 12px;border-radius:6px;background:var(--code,#f7f6f4);color:var(--foreground,#17171a);font-family:'JetBrains Mono Variable','JetBrains Mono',ui-monospace,monospace;font-size:13px;line-height:20px;overflow-wrap:anywhere}"
+    },
+    {
+      "name": "Icon Button",
+      "kind": "button",
+      "refersTo": "icon-button",
+      "description": "A button that shows only an icon: its label is its accessible name and its tooltip; the icon reacts (here `forward`).",
+      "html": "<button class=\"ds-icon-btn\" aria-label=\"Next page\"><svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m9 18 6-6-6-6\"/></svg></button>",
+      "css": ".ds-icon-btn{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border:0;border-radius:6px;background:transparent;color:var(--foreground,#17171a);cursor:pointer;transition:background-color 120ms cubic-bezier(0.23,1,0.32,1),transform 120ms cubic-bezier(0.23,1,0.32,1)}.ds-icon-btn:hover{background:var(--accent,#efeeeb)}.ds-icon-btn:active{transform:scale(.97)}.ds-icon-btn:focus-visible{outline:2px solid var(--ring,#17171a);outline-offset:2px}.ds-icon-btn svg{transition:transform 180ms cubic-bezier(0.23,1,0.32,1)}.ds-icon-btn:hover svg,.ds-icon-btn:focus-visible svg{transform:translateX(2px)}"
+    },
+    {
+      "name": "Count Badge",
+      "kind": "chip",
+      "refersTo": "badge-count",
+      "description": "The number pill on a filter button: tabular, at least as wide as it is high.",
+      "html": "<button class=\"ds-filter\">State <span class=\"ds-count\">2</span></button>",
+      "css": ".ds-filter{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 12px;border:1px solid var(--input,#b9b8b3);border-radius:6px;background:var(--background,#fff);color:var(--foreground,#17171a);font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:14px;font-weight:500}.ds-count{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;border-radius:9999px;background:var(--accent,#efeeeb);font-size:12px;font-variant-numeric:tabular-nums}"
+    },
+    {
+      "name": "Confirmation",
+      "kind": "custom",
+      "refersTo": "alert-dialog",
+      "description": "An AlertDialog: the question, what happens, Cancel focused first and the verb in destructive-solid.",
+      "html": "<div class=\"ds-confirm\" role=\"alertdialog\" aria-labelledby=\"ds-confirm-t\"><h2 id=\"ds-confirm-t\">Remove v1.4.0?</h2><p>Its articles leave search. The repository is not touched.</p><div class=\"ds-confirm-actions\"><button class=\"ds-confirm-cancel\">Cancel</button><button class=\"ds-confirm-go\">Remove version</button></div></div>",
+      "css": ".ds-confirm{max-width:448px;padding:24px;border:1px solid var(--border,#e5e4e0);border-radius:12px;background:var(--card,#fff);color:var(--foreground,#17171a);font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;box-shadow:var(--shadow-float,0 10px 30px -12px rgb(23 23 26 / .22),0 0 0 1px rgb(23 23 26 / .06))}.ds-confirm h2{margin:0;font-size:22px;line-height:28px;font-weight:600}.ds-confirm p{margin:8px 0 0;font-size:14px;line-height:20px;color:var(--muted-foreground,#5c5d63)}.ds-confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:24px}.ds-confirm-actions button{height:36px;padding:0 16px;border:0;border-radius:6px;font:inherit;font-size:14px;font-weight:500;cursor:pointer}.ds-confirm-cancel{background:transparent;color:var(--foreground,#17171a)}.ds-confirm-cancel:hover{background:var(--accent,#efeeeb)}.ds-confirm-go{background:var(--destructive,oklch(0.52 0.19 27));color:#fff}"
+    },
+    {
+      "name": "Segmented Control",
+      "kind": "nav",
+      "refersTo": "toggle-item-on",
+      "description": "A ToggleGroup for a few views or periods kept in the URL: one bordered group, the picked item on the lamp's wash.",
+      "html": "<div class=\"ds-seg\" role=\"radiogroup\" aria-label=\"Period\"><button role=\"radio\" aria-checked=\"false\">Day</button><button role=\"radio\" aria-checked=\"true\">Week</button><button role=\"radio\" aria-checked=\"false\">Month</button></div>",
+      "css": ".ds-seg{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--input,#b9b8b3);border-radius:6px;background:var(--background,#fff)}.ds-seg button{height:32px;padding:0 12px;border:0;border-radius:4px;background:transparent;color:var(--muted-foreground,#5c5d63);font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:14px;font-weight:500;cursor:pointer;transition:background-color 120ms,color 120ms,transform 120ms}.ds-seg button:hover{color:var(--foreground,#17171a)}.ds-seg button:active{transform:scale(.97)}.ds-seg button[aria-checked=true]{background:var(--route-soft,#fcefc4);color:var(--foreground,#17171a)}"
+    },
+    {
+      "name": "Avatar",
+      "kind": "custom",
+      "refersTo": "avatar",
+      "description": "Initials on a full-round disc beside the username; decorative.",
+      "html": "<span class=\"ds-person\"><span class=\"ds-avatar\" aria-hidden=\"true\">AS</span>alice.smith</span>",
+      "css": ".ds-person{display:inline-flex;align-items:center;gap:8px;font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:14px;color:var(--foreground,#17171a)}.ds-avatar{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:9999px;background:var(--secondary,#efeeeb);font-size:12px;font-weight:600}"
+    },
+    {
+      "name": "Meter",
+      "kind": "custom",
+      "refersTo": "meter",
+      "description": "A 6px bar whose fill moves by scaleX; route for progress, warning or destructive for budgets near or over.",
+      "html": "<div class=\"ds-meter\" role=\"progressbar\" aria-label=\"Import of v1.4.0\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"40\"><div class=\"ds-meter-fill\"></div></div>",
+      "css": ".ds-meter{width:160px;height:6px;overflow:hidden;border-radius:9999px;background:var(--secondary,#efeeeb)}.ds-meter-fill{height:100%;border-radius:9999px;background:var(--route,#17171a);transform-origin:left;transform:scaleX(.4);transition:transform 240ms cubic-bezier(0.23,1,0.32,1)}"
+    },
+    {
+      "name": "Data Table Pagination",
+      "kind": "nav",
+      "refersTo": "table-header",
+      "description": "DataTable v2's bar: the range, rows per page, the page and First, Previous, Next, Last as icon buttons.",
+      "html": "<nav class=\"ds-pager\" aria-label=\"Pagination\"><span>21–40 of 233</span><span>Page 2 of 12</span></nav>",
+      "css": ".ds-pager{display:flex;justify-content:space-between;gap:24px;padding-top:16px;font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:12px;line-height:18px;color:var(--muted-foreground,#5c5d63);font-variant-numeric:tabular-nums}"
+    },
+    {
+      "name": "Library Logo Tile",
+      "kind": "custom",
+      "refersTo": "logo-tile",
+      "description": "A library's own logo on white in both themes, inside an ink hairline at 12%.",
+      "html": "<span class=\"ds-logo\" aria-hidden=\"true\"><span class=\"ds-logo-mark\"></span></span>",
+      "css": ".ds-logo{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:2px;box-sizing:border-box;border:1px solid var(--logo-tile-edge,rgb(23 23 26 / .12));border-radius:6px;background:var(--logo-tile,#fff)}.ds-logo-mark{width:16px;height:16px;border-radius:4px;background:#17171a}"
     }
   ],
   "narrative": {
@@ -740,6 +847,16 @@
         "name": "The Flat-At-Rest Rule",
         "body": "Surfaces never carry a shadow at rest; only floating layers (menu, tooltip, popover, dialog, sheet) do, and they use `shadow-float`.",
         "section": "elevation"
+      },
+      {
+        "name": "Confirm with AlertDialog",
+        "body": "Every confirmation is an AlertDialog (`ConfirmDialog` or `TypedConfirmDialog`): `role=\"alertdialog\"`, Cancel focused first, Escape cancels, a click outside does nothing, the verb in `destructive-solid` when it removes or stops something. Never an inline \"Are you sure?\" row and never a plain Dialog.",
+        "section": "components"
+      },
+      {
+        "name": "A context menu mirrors a visible menu",
+        "body": "Nothing is reachable by right-click alone: touch, keyboard and new users would never find it. A row's context menu shows the same items as its visible \"More actions\" menu, fed from one list (`RowActions`), and opens from the keyboard with Shift+F10 or the Menu key.",
+        "section": "components"
       }
     ],
     "dos": [
@@ -750,7 +867,9 @@
       "**Do** set literal text (versions, SHAs, paths, IDs, tokens, code) in JetBrains Mono.",
       "**Do** give every icon control an accessible name and a tooltip that repeats it.",
       "**Do** read interface preferences through the `fine:`, `can-hover:` and `motion-*` variants, and size everything in rem.",
-      "**Do** animate transform and opacity only, with `--dur-*` and `--ease-out`."
+      "**Do** animate transform and opacity only, with `--dur-*` and `--ease-out`.",
+      "**Do** confirm with an AlertDialog and give every row action a visible menu as well as a context menu.",
+      "**Do** keep a list's view (filters, sort, page, size) in the URL."
     ],
     "donts": [
       "**Don't** set the lamp yellow as text or as a thin mark on a light ground.",
@@ -761,7 +880,9 @@
       "**Don't** put a shadow on anything at rest, or any shadow but `shadow-float` on a floating layer.",
       "**Don't** animate a height, a width or `grid-template-rows`.",
       "**Don't** let a tooltip carry information the control's name does not.",
-      "**Don't** use a dialog except for confirmations and for showing a secret once."
+      "**Don't** use a dialog except for confirmations and for showing a secret once.",
+      "**Don't** scale a button up on hover, or let anything bounce or overshoot.",
+      "**Don't** give a chart a second hue for its series: `chart-series`, with `chart-highlight` for the one lit thing."
     ]
   }
 }

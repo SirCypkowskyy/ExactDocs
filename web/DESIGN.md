@@ -20,6 +20,10 @@ colors:
   tip-foreground: "#f6f5f2"
   overlay: "rgb(23 23 26 / 0.38)"
   code: "#f7f6f4"
+  logo-tile: "#ffffff"
+  logo-tile-edge: "rgb(23 23 26 / 0.12)"
+  chart-series: "#6b6c72"
+  chart-highlight: "#17171a"
   positive: "oklch(0.5 0.11 155)"
   positive-soft: "oklch(0.96 0.04 155)"
   positive-ink: "oklch(0.3 0.07 155)"
@@ -213,6 +217,57 @@ components:
     rounded: "{rounded.full}"
     padding: "0 8px"
     height: "20px"
+  badge-count:
+    backgroundColor: "{colors.accent-fill}"
+    textColor: "{colors.ink}"
+    typography: "{typography.small}"
+    rounded: "{rounded.full}"
+    padding: "0 6px"
+    height: "20px"
+  icon-button:
+    textColor: "{colors.ink}"
+    rounded: "{rounded.md}"
+    size: "36px"
+  icon-button-hover:
+    backgroundColor: "{colors.accent-fill}"
+  alert-dialog:
+    backgroundColor: "{colors.sheet}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.xl}"
+    padding: "24px"
+  confirm-destructive:
+    backgroundColor: "{colors.destructive}"
+    textColor: "{colors.ink-inverse}"
+    typography: "{typography.body}"
+    rounded: "{rounded.md}"
+    padding: "0 16px"
+    height: "36px"
+  toggle-item:
+    textColor: "{colors.ink-muted}"
+    typography: "{typography.body}"
+    rounded: "{rounded.sm}"
+    padding: "0 12px"
+    height: "32px"
+  toggle-item-on:
+    backgroundColor: "{colors.route-soft}"
+    textColor: "{colors.ink}"
+  avatar:
+    backgroundColor: "{colors.accent-fill}"
+    textColor: "{colors.ink}"
+    typography: "{typography.small}"
+    rounded: "{rounded.full}"
+    size: "24px"
+  meter:
+    backgroundColor: "{colors.accent-fill}"
+    rounded: "{rounded.full}"
+    height: "6px"
+  logo-tile:
+    backgroundColor: "{colors.logo-tile}"
+    rounded: "{rounded.md}"
+    padding: "2px"
+  table-header:
+    textColor: "{colors.ink-muted}"
+    typography: "{typography.small}"
   library-bullet:
     backgroundColor: "{colors.line-1}"
     textColor: "{colors.ink-inverse}"
@@ -332,18 +387,34 @@ and `.dark`; `src/shared/lib/preferences.ts` picks one.
   in lists, tables and menus (one step lighter); control borders (one step stronger).
 - **Tip** (`tip`, `tip-foreground`): the tooltip, inverted (anthracite in light, cream in dark).
 - **Overlay** (`overlay`): the scrim behind dialogs and sheets.
+- **Logo Tile** (`logo-tile`, `logo-tile-edge`): the ground of a library's own logo in
+  `LibraryMark`: white in both themes, inside a hairline of ink at 12% (30% with more contrast)
+  drawn over the white, so a dark logo with a transparent background stays visible on the dark
+  sheet. Only logos sit on it.
 - **Reader roles** (`hl-*`, `tint-*`): syntax roles in code and callout tints in articles (reader
   only). Each syntax role is 4.5:1+ on `code`.
+
+### Charts
+- **Chart Series** (`chart-series`): every bar, line and area of a chart (`#6b6c72`; 5.2:1 on the
+  sheet, 4.8:1 on `raised`). One grey for all series: a chart compares amounts, not colours.
+- **Chart Highlight** (`chart-highlight` = `route`): the one lit series or bar ("you" on the
+  leaderboard, the selected day). Ink in light (17.9:1), the lamp in dark (11:1). It is never told
+  by colour alone: a label or the legend names it too.
+- Grids are `rule`, axes `text-small` in `muted-foreground`, the chart tooltip is the inverted `tip`.
+  State series (jobs by state) use the state tokens because they are states. Never `line-1` to
+  `line-8` (library colours belong to bullets), never the lamp as a fill on a light ground.
 
 ### Dark
 The mole's own colours: the frame (#0e0e10) is darker than the sheet (#17171a), text is cream
 (#f3f1ec) with a grey of #a6a6ae, the primary button inverts to cream, and the lamp draws every mark
-that must read (10:1+ on the sheet). `route-soft` becomes a dim amber (#3b3320). Dark is true
-anthracite, never navy.
+that must read (10:1+ on the sheet). `route-soft` becomes a dim amber (#3b3320). The logo tile stays
+white; `chart-series` is #8b8b94 (5.3:1 on the sheet, 5:1 on `raised`) and `chart-highlight` is the
+lamp. Dark is true anthracite, never navy.
 
 ### More contrast
 `data-contrast="more"` darkens `muted-foreground` and strengthens `border`, `rule`, `input` and the
-frame in both themes. Nothing else changes.
+frame in both themes; `chart-series` goes to #4f5055 in light (8:1) and #a0a0a8 in dark (6.9:1),
+and the logo tile's hairline to 30% ink. Nothing else changes.
 
 ### Named Rules
 **The One Lamp Rule.** The lamp is the only accent. It marks the one lit thing (where you are, what
@@ -462,19 +533,33 @@ and the lamp on the one lit thing.
 
 | Component | Where | Notes |
 |---|---|---|
-| `Button` | `ui/button.tsx` | `default` (the one primary), `outline` (secondary), `ghost` (toolbar), `destructive` (outlined), `destructive-solid` (only inside a confirmation). Sizes `default`, `sm`, `icon`. |
+| `Button` | `ui/button.tsx` | `default` (the one primary), `outline` (secondary), `ghost` (toolbar), `destructive` (outlined), `destructive-solid` (only inside a confirmation), `band` (the band's icon controls). Sizes `default`, `sm`, `icon`, `icon-sm`. `pending` keeps the label and adds the spinner; `done` cross-fades the label to a check for a moment. |
+| `IconButton` | `ui/button.tsx` | A button that shows only an icon. `label` is required and is both its accessible name and its tooltip; `shortcut` adds a key hint; `motion` puts an icon reaction on the icon. Variants `ghost` (default), `outline`, `destructive`, `band`; sizes `icon` (36px with a mouse) and `icon-sm` (32px, dense rows). It forwards its ref and props, so it can be a Radix trigger (`<DropdownMenuTrigger asChild>`). |
 | `Input`, `Field`, `TextareaField`, `SelectField` | `ui/` | Label above (14 / 500), help text below in `text-small`, errors announced. Built on the `control` recipe. |
 | `trigger` recipe | `recipes.ts` | A button that opens a picker (versions, files). |
 | `pill` + `pillTone` | `recipes.ts` | Status beside a value. One status mark per row. Tones: neutral, route (the lamp's wash), positive, warning, destructive. |
+| `Badge` | `ui/badge.tsx` | The `pill` recipe as a component: `tone` (neutral, route, positive, warning, destructive); `count` makes the number pill of a filter button ("State · 2"). `StateBadge` (data-table cells) maps job states to tones and icons. |
+| `Meter` | `ui/meter.tsx` | A 6px determinate bar on `secondary`; the fill moves by `scaleX`. `value` in whole percent, or `null` for the travelling `sweep` when no total is known; tone `route` (progress), `warning` or `destructive` (budgets near or over); `role` `progressbar` or `meter`. |
+| `Avatar` | `ui/avatar.tsx` | Initials only (no pictures are kept): a full-round disc on `secondary`, 24px (`md`) or 32px (`lg`), 12 / 600. Decorative: the username is always beside it. |
+| `ToggleGroup`, `ToggleGroupItem` | `ui/toggle-group.tsx` | A segmented control for a few views or periods kept in the URL: one bordered group, the picked item on the lamp's wash. Single choice is a `radiogroup` (name it with `aria-label`); arrow keys move, Space picks. |
 | `codeWell`, `kbd` | `recipes.ts` | Literal text (tokens, snippets) and key hints. |
 | `LibraryBullet`, `VersionStation`, `Commit`, `RouteStrip` | `ui/route.tsx` | Use them wherever a library, version or commit is named. |
-| `Page`, `PageHeader`, `Section`, `EmptyState` | `ui/page.tsx` | The page frame. |
+| `LibraryMark` | `ui/library-mark.tsx` | A library's logo on the `logo-tile`, else a generic icon on its line colour; the monogram bullet when the person turned logos off. Sizes `sm` 24, `md` 28, `lg` 36, `xl` 48. |
+| `Page`, `PageHeader`, `Section`, `EmptyState` | `ui/page.tsx` | The page frame. `PageHeader` takes the page's nav `icon`, `description`, `actions` and `above` (a breadcrumb). |
+| `Breadcrumb` and its parts | `ui/breadcrumb.tsx` | Slash separators, the way back in muted ink, the current page in ink with `aria-current`. One for the library page, settings, sharing and the library's access log. |
 | `Mark`, `Wordmark` | `ui/wordmark.tsx` | The small mole (28px) and the lockup; light and dark files swap with the theme. |
-| `TextSizeControl`, `ThemeButton`, `InterfaceMenu` | `ui/interface-controls.tsx` | The band's interface controls (#486). |
+| `TextSizeControl`, `ThemeButton`, `LanguageMenu`, `InterfaceMenu`, `InterfaceCluster` | `ui/interface-controls.tsx` | The band's interface console (#486); every trigger is a band `IconButton`. |
 | `InterfaceSettings` | `ui/interface-settings.tsx` | Account → Interface: every preference, with a reset. |
-| `Tooltip` | `ui/tooltip.tsx` | A short name or a key for an icon control. |
+| `Tooltip` | `ui/tooltip.tsx` | A short name or a key for an icon control. `IconButton` brings its own. |
 | `Tabs` | `ui/tabs.tsx` | Underline tabs with one sliding indicator. |
-| `Dialog`, `Sheet`, `DropdownMenu`, `DataTable` | `ui/` | shadcn on these tokens. A dialog only for confirmations and for showing a secret once. |
+| `AlertDialog` and its parts | `ui/alert-dialog.tsx` | The one way to confirm: `role="alertdialog"`, Cancel focused first, Escape cancels, a click outside does nothing; 12px corners, 24px padding. |
+| `ConfirmDialog`, `TypedConfirmDialog` | `ui/confirm-dialog.tsx` | The usual confirmation built on AlertDialog: a question as the title, what happens, Cancel and the verb. The confirm runs `onConfirm` and the dialog stays open until the caller closes it, so a refusal shows inside it (`error`); while `pending` it cannot be closed. The typed one keeps the confirm inert until the field holds `phrase` exactly. Focus goes back to what opened it. |
+| `DropdownMenu`, `ContextMenu` | `ui/dropdown-menu.tsx`, `ui/context-menu.tsx` | One menu feel (Menus below). A context menu only mirrors a visible menu. |
+| `Popover`, `Command` | `ui/popover.tsx`, `ui/command.tsx` | A floating card like a menu, and the filterable list (cmdk) inside pickers and faceted filters; rows use the menu recipe. |
+| `Table` and its parts | `ui/table.tsx` | The shadcn table primitives on the tokens: headers `text-small` muted, rows on `rule` hairlines, figures tabular. |
+| `DataTable` (v2) | `ui/data-table/` | Every list with many rows (Data tables below): `useDataTable`, `DataTable`, `DataTableToolbar`, `DataTablePagination`, row actions and the cell kit. `ui/data-table.tsx` is v1 ("Load more"), kept until the last page moves. |
+| `Skeleton` | `ui/skeleton.tsx` | A flat bar at the size of the value it stands for; no pulse. |
+| `Dialog`, `Sheet` | `ui/` | shadcn on these tokens. A dialog only for confirmations (as an `AlertDialog`) and for showing a secret once. |
 | `Toaster` / `toast` | `ui/sonner.tsx` | Mounted once in `__root`, bottom right, on `popover` with a hairline. |
 
 ### Buttons
@@ -523,7 +608,9 @@ Built on shadcn's Navigation Menu after the free shadcnblocks `navbar1`, `navbar
 One feel for every floating list: white (`popover`) on an 8px card with a hairline and
 `shadow-float`, 4px inner padding, 6px rows 44px on touch and 32px with a mouse, highlighted rows on
 `accent`, labels in `text-small` muted, separators in `rule`, check and radio marks in `selection`.
-A menu scales from the trigger's corner (0.97 in, 0.98 out; never from the centre, never sliding).
+A menu scales from the trigger's corner (0.97 in, 0.98 out; never from the centre, never sliding),
+150ms in and 100ms out. Every item has a leading icon in muted ink; a destructive item is red and
+fills `destructive-soft` when highlighted.
 
 ### Tooltips
 Inverted (`tip` ground), 4px radius, 4px by 8px, 12px / 500, at most 256px wide, 6px from the
@@ -535,6 +622,50 @@ the same.
 ### Tabs
 Underline tabs: 14px / 500 muted labels, the active one ink. One 2px indicator in `route` slides
 under the active tab and takes its width (transform only), on a hairline `border`.
+
+### Confirmations
+Built on `AlertDialog` (`ConfirmDialog`, `TypedConfirmDialog`). The title asks a question ("Cancel
+this job?", "Remove v1.4.0?"), one or two sentences say what happens, then Cancel (ghost, focused
+first) and the verb. The verb is `destructive-solid` with a leading `Trash2` (`warn` reaction) when
+it removes or stops something (`Ban` for a cancel), or the primary when it does not. A refusal from
+the server shows inside the dialog in a `FormAlert`; while the request runs the confirm keeps its
+label with the spinner and the dialog cannot be closed. Removing something that cannot be undone
+and is named (a library, a version) asks for the name to be typed: the confirm stays visible but
+inert, in a neutral fill, until the text matches, and Enter in the field confirms. The panel is
+anchored near the top so a message arriving below never moves it.
+
+### Data tables
+DataTable v2 (`ui/data-table/`, after the free shadcnblocks `data-table1` and `data-table4` and
+shadcn/ui's data-table guide) is the one way to show a list with many rows.
+
+- **The view lives in the URL:** `q` (the global filter), each filter (`state=failed,queued`),
+  `sort` (an API sort field, `-` for descending), `page` (from 2) and `size` (5, 20, 50 or 100;
+  20 is left out). A new filter, sort or size goes back to page 1. The last size per table is
+  remembered in this browser; the URL wins, and a link to page *n* without a size means 20.
+- **Server mode** (`source`): the API sorts, filters and pages. Pages are numbered over the
+  cursor API: each cached page knows its cursor, so First, Previous and Next are one request (and
+  the next page is fetched ahead); a page nobody reached yet walks forward in requests of at most
+  200 rows. Last and a reload on page *n* in one request need `paging: "offset"`.
+- **Client mode** (`query`): a bounded list arrives in one request and is sorted, filtered,
+  paged and counted in the browser; `maxRows` hides sizes above the list's cap; Last is offered.
+- **Filterable and sortable** only where the server filters and sorts (never a client filter over
+  one server page). Enum filters are faceted multi-selects (an outline button with a count pill,
+  a Popover with a Command list, counts per value in client mode); date filters are single presets.
+  Active filters show as chips (`pill-neutral` with a remove `IconButton`) and Clear all.
+- **Pagination bar:** "21–40 of 233", Rows per page, "Page 2 of 12", then First, Previous, Next
+  (and Last) as `icon-sm` IconButtons. An end that cannot be passed is `aria-disabled` so focus
+  stays; a live region says the page after a move; the table's top scrolls into view.
+- **States in the frame:** loading is skeleton rows at the page size, each cell in its column's
+  shape (`meta.skeleton`: text, mono, pill, avatar, number, meter), shown after 150ms; while
+  another page or view loads the shown rows stay, at 60% with `aria-busy`; empty and no-match keep
+  the frame with a dashed border and the next step; an error is one sentence and Retry.
+- **Rows:** `aria-rowcount` and `aria-rowindex` place the page in the whole list. Below `md` rows
+  become cards: the `meta.priority` 1 cell as the title, 2 and 3 under it with their column named
+  for screen readers, the row menu at the right. Page changes swap rows at once; only rows that
+  arrive on a refresh use `row-in`.
+- **Cells** (`cells.tsx`): `RelativeTime`, `VersionCell`, `LibraryCell`, `Person`, `StateBadge`,
+  `Progress`, `Bytes`, `Count`, `Money`, `MonoCopy`; literals in mono, figures tabular and at
+  the end.
 
 ### Interface settings
 Each preference is a row: label and description on the left (240px column from `md`), the control
@@ -550,9 +681,11 @@ version station (ring plus a mono ref) and a short SHA in muted mono.
 Motion explains state. It is never decoration. Durations and easing come from the tokens (listed in
 the sidecar's `motion`), never from literals.
 
-- **Press:** buttons scale to 0.97, band icons to 0.94.
+- **Press:** buttons scale to 0.97, band icons to 0.94. Nothing scales up on hover, and nothing
+  bounces or overshoots: every curve is `--ease-out`.
 - **Tooltips:** 125ms in (fade plus a 0.96 scale from the trigger), 120ms out.
-- **Menus:** 150ms in, out faster, scaling from the trigger's corner.
+- **Menus and popovers:** 150ms in (`--dur-menu`), 100ms out (`--dur-exit`), scaling from the
+  trigger's corner.
 - **Tabs and the nav underline:** the indicator slides or grows in 180ms (`--dur`).
 - **Theme:** the icon turns over (a quarter turn with a cross-fade) and the page cross-fades for 180ms.
 - **Route change:** the sheet cross-fades with a 4px rise (View Transitions, `page`). The band and
@@ -566,6 +699,49 @@ Only transform and opacity animate. Exits are faster than entrances. Reduced mot
 `data-reduce-motion` attribute: the person's choice first, the OS second) removes travel, zoom,
 rotation and view transitions; what appears in place still fades, and busy indicators breathe
 instead of spinning.
+
+### Icons and motion
+Every page and element gets a lucide icon where it helps people scan or act, and every icon inside
+something pressable reacts in a way that says what the action does. The reactions live in
+`src/app/icon-motion.css`; opt in with `data-icon-motion="<name>"` on the icon (or `motion` on an
+`IconButton`, `motion` on a row action). Icons are always `aria-hidden`; the text or the
+accessible name carries the meaning. The reaction plays when the control is hovered (where hover
+exists), focused by keyboard, highlighted in a menu or pressed; it moves by `transform` only (the
+one-off `draw` uses `clip-path`), at most 2px, in `--dur` on `--ease-out`; reduced motion turns all
+of it off.
+
+| Element | Icon | Notes |
+|---|---|---|
+| Page header (`PageHeader icon`) | the page's nav icon (LibraryBig, Search, FlaskConical, Activity, Cpu, Users, ScrollText; UserRound for Account) | in the hairline tile beside the title; not on auth pages |
+| Section headings | one per section (Settings2, GitBranch, Tags, FolderTree, Share2; ShieldAlert for danger) | 16px, muted |
+| Tabs | icon and label (KeyRound tokens, SlidersHorizontal interface, LogIn sign-in) | 16px |
+| Buttons | a leading icon for every action (Plus add, Save, RefreshCw sync, Trash2 delete, Copy, Download, Upload, ExternalLink, LogIn / LogOut, Send, Check) | 16px |
+| Menu items | every item has a leading icon | 16px, muted |
+| State badges | succeeded CircleCheck, failed CircleX, running LoaderCircle (spins), queued Clock, cancelled Ban, skipped CircleSlash, warning TriangleAlert | 12px inside the pill |
+| Empty states | one large muted icon above the sentence | 32px, no reaction |
+| Alerts and toasts | CircleCheck success (`draw`), TriangleAlert warning, CircleAlert error (`alert`), Info | |
+| Form fields | a leading icon only in search and filter inputs (Search) and on credentials (KeyRound) | |
+| Links that leave the app | ExternalLink after the text | |
+| Row links | ChevronRight at the row's end | |
+
+| Reaction | Motion | Icons |
+|---|---|---|
+| `forward` | 2px right | ArrowRight, ChevronRight, LogIn, LogOut, Send, CornerDownRight |
+| `back` | 2px left | ArrowLeft, ChevronLeft, Undo2 |
+| `out` | 1.5px up and right | ExternalLink, ArrowUpRight, Share2 |
+| `down` | 1.5px down | Download, ChevronsDown, ArrowDown |
+| `up` | 1.5px up | Upload, ArrowUp |
+| `turn` | a quarter turn | Plus, X (close, remove) |
+| `cog` | 60° on hover, 180° while pressed | Settings, Settings2, SlidersHorizontal |
+| `refresh` | 60° on hover, 180° pressed, turns while `aria-busy` | RefreshCw, RotateCcw, History |
+| `tilt` | -10° | Search, Pencil, Tag, Tags, KeyRound, Filter, ListFilter, Languages |
+| `pop` | scale 1.12, 0.9 pressed | Copy, Check, Star, Sparkles, Eye, Bookmark, CircleCheck in buttons |
+| `warn` | one small swing, never a loop | Trash2, Ban, UserX, ShieldAlert, LogOut in destructive menus |
+| `draw` | draws itself in once on arrival | Check and CircleCheck for "done" and in success toasts |
+| `alert` | one nudge on arrival | CircleAlert and TriangleAlert in form alerts and error toasts |
+
+Not animated: icons that only label (page headers, section headings, empty states, badges other
+than "running") and the band's daily links (they move with their underline).
 
 ### Interface preferences
 Stored in `localStorage` (`exactdocs-preferences`), applied to `<html>` before first paint by the
@@ -595,12 +771,24 @@ Icon-only controls have accessible names; tooltips repeat them.
 
 ### States and feedback
 - **Loading:** `Skeleton` bars at the size of the value, in the final layout, no pulse. A cold load
-  waits 150ms before showing anything.
+  waits 150ms before showing anything (`pending-in`). Every route with a loader has a
+  `pendingComponent` that draws the page's skeleton in its final layout; tables draw skeleton rows.
 - **Results:** a toast for an outcome that happened off-screen or after a dialog closed; an inline
   status line when it belongs to a field or row.
 - **Errors:** inside the block that failed, one sentence on what failed and how to recover, and a
   Retry. `FormAlert` for forms, `StatusScreen` for a whole page.
 - **Empty:** `EmptyState` keeps the block's frame and says what to do next, with the action.
+
+### Named Rules
+**Confirm with AlertDialog.** Every confirmation is an AlertDialog (`ConfirmDialog` or
+`TypedConfirmDialog`): `role="alertdialog"`, Cancel focused first, Escape cancels, a click outside
+does nothing, the verb in `destructive-solid` when it removes or stops something. Never an inline
+"Are you sure?" row and never a plain Dialog.
+
+**A context menu mirrors a visible menu.** Nothing is reachable by right-click alone: touch,
+keyboard and new users would never find it. A row's context menu shows the same items as its
+visible "More actions" menu, fed from one list (`RowActions`), and opens from the keyboard with
+Shift+F10 or the Menu key.
 
 ## Do's and Don'ts
 
@@ -613,6 +801,8 @@ Icon-only controls have accessible names; tooltips repeat them.
 - **Do** give every icon control an accessible name and a tooltip that repeats it.
 - **Do** read interface preferences through the `fine:`, `can-hover:` and `motion-*` variants, and size everything in rem.
 - **Do** animate transform and opacity only, with `--dur-*` and `--ease-out`.
+- **Do** confirm with an AlertDialog and give every row action a visible menu as well as a context menu.
+- **Do** keep a list's view (filters, sort, page, size) in the URL.
 
 ### Don't:
 - **Don't** set the lamp yellow as text or as a thin mark on a light ground.
@@ -624,3 +814,5 @@ Icon-only controls have accessible names; tooltips repeat them.
 - **Don't** animate a height, a width or `grid-template-rows`.
 - **Don't** let a tooltip carry information the control's name does not.
 - **Don't** use a dialog except for confirmations and for showing a secret once.
+- **Don't** scale a button up on hover, or let anything bounce or overshoot.
+- **Don't** give a chart a second hue for its series: `chart-series`, with `chart-highlight` for the one lit thing.
