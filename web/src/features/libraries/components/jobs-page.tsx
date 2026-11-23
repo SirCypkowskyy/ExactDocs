@@ -136,7 +136,8 @@ const columnsOf = (t: JobsMessages): ColumnDef<Job>[] => [
     meta: { label: t.columns.id, skeleton: "mono", className: "max-lg:hidden" },
     cell: ({ row }) => (
       <span className="font-mono text-mono text-muted-foreground">
-        {row.original.id.slice(0, 8)}
+        {/* The end of the ID: its start is a timestamp, the same for jobs queued together. */}
+        {row.original.id.slice(-8)}
       </span>
     ),
   },
@@ -151,7 +152,7 @@ const columnsOf = (t: JobsMessages): ColumnDef<Job>[] => [
     accessorKey: "version",
     header: t.columns.version,
     enableSorting: false,
-    meta: { skeleton: "mono" },
+    meta: { priority: 2, skeleton: "mono" },
     cell: ({ row }) => (
       <VersionCell
         version={row.original.version}

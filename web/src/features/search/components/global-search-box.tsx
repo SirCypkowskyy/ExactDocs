@@ -148,7 +148,7 @@ export function GlobalSearchBox({
             className={cn(
               control,
               controlHeight,
-              "min-w-0 pr-16 pl-9 [appearance:none] [&::-webkit-search-cancel-button]:hidden",
+              "min-w-0 pr-16 pl-9 text-ellipsis [appearance:none] [&::-webkit-search-cancel-button]:hidden",
               prominent && "h-12 pl-11 text-section fine:h-12",
             )}
           />
