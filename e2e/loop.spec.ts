@@ -383,7 +383,9 @@ test("the library list and the file tree stay responsive with large libraries", 
   expect(firstMs).toBeLessThan(4000);
   expect(listMs).toBeLessThan(8000);
   expect(await longest(page)).toBeLessThan(1000);
-  expect(list.p95).toBeLessThan(50);
+  // As the file tree below: GitHub-hosted runners (#468) measured 33 and 50 ms here (2 and 3
+  // frames at 60 Hz); 100 ms is under 6 frames.
+  expect(list.p95).toBeLessThan(100);
   await page.unroute(/\/api\/v1\/libraries\?/);
 
   // One version of 7,000 articles, paged 100 at a time like the API does.
