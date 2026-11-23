@@ -921,25 +921,13 @@ def _intervals_note(report: RetrievalBenchReport) -> list[str]:
     method = report.statistics
     if method is None:
         return []
-    without = [
-        f"`{r.configuration}` at `{r.chunking}`"
-        for r in report.results
-        if r.metrics is not None and not r.metrics.intervals
-    ]
-    lines = [
-        "",
-        (
-            f"In brackets: the {method.confidence:.0%} interval, a percentile bootstrap over the "
-            f"cases ({method.resamples:,} resamples, seed {method.seed})."
-        ),
-    ]
-    if without:
-        lines[-1] += (
-            " Recorded without their per-case outcomes, so with no interval: "
-            + ", ".join(without)
-            + "."
-        )
-    return lines
+    note = (
+        f"In brackets: the {method.confidence:.0%} interval, a percentile bootstrap over the "
+        f"cases ({method.resamples:,} resamples, seed {method.seed})."
+    )
+    if any(r.metrics is not None and not r.metrics.intervals for r in report.results):
+        note += " A result recorded without its per-case outcomes has none."
+    return ["", note]
 
 
 def _test_cell(test: PairedTest | None, *, points: bool) -> str:
