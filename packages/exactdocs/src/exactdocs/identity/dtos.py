@@ -9,6 +9,7 @@ from pydantic import (
     ConfigDict,
     Field,
     SecretStr,
+    StrictBool,
     field_serializer,
     field_validator,
     model_validator,
@@ -32,9 +33,17 @@ from exactdocs.identity.models import (
     AccessEvent,
     Account,
     ApiToken,
+    Contrast,
+    Font,
+    Language,
     LibraryGrant,
     LibraryRole,
+    Motion,
+    Preferences,
     SignInPolicy,
+    TextScale,
+    TextSpacing,
+    Theme,
 )
 from exactdocs_kernel import DEFAULT_LIMIT, LIBRARY_ID_PATTERN, MAX_LIMIT, MAX_NAME, Page
 
@@ -859,3 +868,117 @@ class AccessLogPage(_Dto):
     """Pass as `cursor` to get the next (older) page; null on the last page."""
     total: int
     """How many events match the filters, across every page."""
+
+
+class InterfacePreferences(_Dto):
+    """How a person wants the interface to look and behave. Every setting is required."""
+
+    theme: Literal["light", "dark", "system"]
+    """Colour scheme: `light`, `dark`, or `system` to follow the operating system. Default
+    `system`."""
+    contrast: Literal["standard", "more"]
+    """Contrast of text and controls: `standard` or `more`. Default `standard`."""
+    text_scale: TextScale
+    """Text size in percent of the default size: 90, 100, 110, 125 or 150. Default 100."""
+    text_spacing: Literal["standard", "wide"]
+    """Spacing of lines, words and letters: `standard`, or `wide` (WCAG 1.4.12's minimums).
+    Default `standard`."""
+    motion: Literal["system", "reduced", "full"]
+    """Animations: `system` follows the operating system's reduced-motion setting; `reduced` and
+    `full` override it. Default `system`."""
+    font: Literal["default", "hyperlegible", "dyslexic", "system"]
+    """Typeface: `default`, `hyperlegible` (a typeface for low vision), `dyslexic` (one for
+    dyslexic readers) or `system` (the operating system's). Default `default`."""
+    underline_links: StrictBool
+    """Whether every link is underlined, not only told apart by its colour. Default `false`."""
+    large_targets: StrictBool
+    """Whether buttons and links get larger hit areas. Default `false`."""
+    language: Literal["system", "en", "pl"]
+    """Interface language: `en` (English), `pl` (Polish), or `system` to follow the browser's.
+    Default `system`."""
+    library_logos: StrictBool
+    """Whether libraries show their logos, and generic icons where they have none; `false` hides
+    both. Default `true`."""
+
+    @classmethod
+    def from_model(cls, preferences: Preferences) -> Self:
+        """Map the domain's preferences to their boundary representation.
+
+        Args:
+            preferences: The preferences.
+
+        Returns:
+            Their representation.
+        """
+        return cls(
+            theme=preferences.theme.value,
+            contrast=preferences.contrast.value,
+            text_scale=preferences.text_scale,
+            text_spacing=preferences.text_spacing.value,
+            motion=preferences.motion.value,
+            font=preferences.font.value,
+            underline_links=preferences.underline_links,
+            large_targets=preferences.large_targets,
+            language=preferences.language.value,
+            library_logos=preferences.library_logos,
+        )
+
+    def to_model(self) -> Preferences:
+        """Convert to the domain value.
+
+        Returns:
+            The preferences.
+        """
+        return Preferences(
+            theme=Theme(self.theme),
+            contrast=Contrast(self.contrast),
+            text_scale=self.text_scale,
+            text_spacing=TextSpacing(self.text_spacing),
+            motion=Motion(self.motion),
+            font=Font(self.font),
+            underline_links=self.underline_links,
+            large_targets=self.large_targets,
+            language=Language(self.language),
+            library_logos=self.library_logos,
+        )
+
+
+class GetPreferencesQuery(_Dto):
+    """Read an account's interface preferences."""
+
+    account_id: str
+    """The account, as the caller is signed in."""
+
+
+class SavePreferencesCommand(_Dto):
+    """Save an account's interface preferences, replacing the ones it had."""
+
+    account_id: str
+    """The account, as the caller is signed in."""
+    preferences: InterfacePreferences
+    """Its new preferences, every setting given."""
+
+
+class AccountPreferences(_Dto):
+    """An account's interface preferences, and whether it saved them."""
+
+    saved: bool
+    """`false` while the account never saved any: `preferences` then holds the defaults, and a
+    browser keeps (and may save) the ones it already applies."""
+    preferences: InterfacePreferences
+    """The saved preferences, or the defaults when `saved` is `false`."""
+
+    @classmethod
+    def from_model(cls, preferences: Preferences | None) -> Self:
+        """Map what an account saved to its boundary representation.
+
+        Args:
+            preferences: The saved preferences, or ``None`` when the account never saved any.
+
+        Returns:
+            The preferences, or the defaults, and whether they were saved.
+        """
+        return cls(
+            saved=preferences is not None,
+            preferences=InterfacePreferences.from_model(preferences or Preferences()),
+        )

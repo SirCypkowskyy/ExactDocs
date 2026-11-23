@@ -17,6 +17,7 @@ from exactdocs.identity.ports.driven import (
     FailedSignInLog,
     LibraryGrantRepository,
     PasswordHasher,
+    PreferencesRepository,
     SecretBox,
     SessionRepository,
     SignInAttemptRepository,
@@ -32,6 +33,7 @@ from exactdocs.identity.ports.driving import (
     CreateUser,
     DropLibraryGrants,
     FinishExternalSignIn,
+    GetPreferences,
     GetSessionState,
     GetSetupState,
     GrantLibraryRole,
@@ -50,6 +52,7 @@ from exactdocs.identity.ports.driving import (
     RevalidateExternalAccounts,
     RevokeLibraryRole,
     RevokeToken,
+    SavePreferences,
     SetUserDisabled,
     SignIn,
     SignOut,
@@ -65,6 +68,7 @@ from exactdocs.identity.use_cases import (
     CreateUserUseCase,
     DropLibraryGrantsUseCase,
     FinishExternalSignInUseCase,
+    GetPreferencesUseCase,
     GetSessionStateUseCase,
     GetSetupStateUseCase,
     GrantLibraryRoleUseCase,
@@ -83,6 +87,7 @@ from exactdocs.identity.use_cases import (
     RevalidateExternalAccountsUseCase,
     RevokeLibraryRoleUseCase,
     RevokeTokenUseCase,
+    SavePreferencesUseCase,
     SetUserDisabledUseCase,
     Sharing,
     SignInUseCase,
@@ -159,6 +164,10 @@ class IdentityModule:
     """Read the access log of every library, removed ones included (operators)."""
     transfer_library: TransferLibrary
     """Hand a library over to another user (its creator only)."""
+    get_preferences: GetPreferences
+    """Return an account's interface preferences, or the defaults when it saved none."""
+    save_preferences: SavePreferences
+    """Save an account's interface preferences."""
 
     @classmethod
     def build(
@@ -175,6 +184,7 @@ class IdentityModule:
         attempts: SignInAttemptRepository,
         box: SecretBox,
         clock: Clock,
+        preferences: PreferencesRepository,
         providers: Mapping[str, SignInProvider] = MappingProxyType({}),
         policies: Mapping[str, SignInPolicy] = MappingProxyType({}),
         library_creation: LibraryCreationPolicy | None = None,
@@ -197,6 +207,7 @@ class IdentityModule:
             attempts: Where started external sign-ins wait for their callback.
             box: Seals the refresh tokens of external identities.
             clock: The current time.
+            preferences: Where each account's interface preferences are saved.
             providers: The configured identity providers, by name.
             policies: Their policies, by the same names.
             access_verifier: Checks Cloudflare Access tokens; ``None`` when Access is off.
@@ -321,4 +332,6 @@ class IdentityModule:
             list_library_access_log=ListLibraryAccessLogUseCase(sharing=sharing),
             list_access_log=ListAccessLogUseCase(sharing=sharing),
             transfer_library=TransferLibraryUseCase(sharing=sharing),
+            get_preferences=GetPreferencesUseCase(preferences=preferences),
+            save_preferences=SavePreferencesUseCase(preferences=preferences),
         )

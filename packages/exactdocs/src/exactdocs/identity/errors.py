@@ -371,3 +371,17 @@ class GithubAccessDeniedError(ProviderAccessRevokedError):
         """
         self.code = refusal_code
         UnauthenticatedError.__init__(self, reason)
+
+
+class InvalidPreferencesError(ValidationError):
+    """Interface preferences hold a value the interface does not offer."""
+
+    code = "invalid_preferences"
+
+    def __init__(self, reason: str) -> None:
+        """Create the error.
+
+        Args:
+            reason: Which preference is wrong, and what it may be.
+        """
+        super().__init__(reason)

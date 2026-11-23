@@ -107,7 +107,7 @@ def _include_session_routers(v1: APIRouter, container: Container) -> identity_ht
 def _protected_router(
     container: Container, current_caller: identity_http.CurrentCaller
 ) -> APIRouter:
-    """Build the router of everything that needs a caller, with the library grants routes.
+    """Build the router of everything that needs a caller, with the grants and preferences routes.
 
     Every route of it names the caller to the library roles (``bind_caller``), so each use case
     it reaches checks the role of whoever is calling.
@@ -157,6 +157,13 @@ def _protected_router(
             transfer=container.identity.transfer_library,
             caller=current_caller,
             require_library=require_library,
+        )
+    )
+    router.include_router(
+        identity_http.build_preferences_router(
+            get_preferences=container.identity.get_preferences,
+            save_preferences=container.identity.save_preferences,
+            caller=current_caller,
         )
     )
     return router

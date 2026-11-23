@@ -188,6 +188,21 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   operator: an API token is 401 (a stolen token cannot create accounts), and a signed-in account
   that is not an `admin` gets 403 `forbidden`. Library roles (who may read or change a library)
   are separate: see the *Library roles* bullet below.
+- **Interface preferences** (#487): `GET /api/v1/account/preferences` answers the caller's
+  `{"saved", "preferences"}`; `saved` is `false` while the account never saved any, and
+  `preferences` then holds the defaults (so the UI keeps, and saves, what the browser already
+  applies on a first sign-in). `PUT` takes the whole `preferences` object and answers the same
+  shape with `saved: true`: `theme` (`light`, `dark`, `system`), `contrast` (`standard`, `more`),
+  `text_scale` (90, 100, 110, 125 or 150 percent), `text_spacing` (`standard`, `wide`), `motion`
+  (`system`, `reduced`, `full`), `font` (`default`, `hyperlegible`, `dyslexic`, `system`),
+  `underline_links` and `large_targets` (booleans), `language` (`system`, `en`, `pl`; `system`
+  follows the browser's), `library_logos` (boolean; `false` hides library logos and generic
+  icons, #504); defaults `system`, `standard`, 100, `standard`, `system`, `default`, `false`,
+  `false`, `system`, `true`. Every key is required; an unknown key or a value not listed is 422
+  `validation_error` naming the field, and nothing is saved. They are stored per account
+  (`identity_preferences`, one JSON object: a key a stored row lacks, or a value no longer
+  offered, reads as its default), so they follow the person to every browser; a session or an
+  API token may call both, and each acts as its own account only.
 - **Library roles** (ACL-02): `viewer < contributor < admin < creator` on each library, granted
   to users and to groups; an account's role is the highest it holds, and an operator (role
   `admin`) is `creator` of every library. Every library route asks for one: `viewer` reads and

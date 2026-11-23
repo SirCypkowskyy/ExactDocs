@@ -599,6 +599,7 @@ erDiagram
     identity_accounts ||--o{ identity_api_tokens : "owns"
     identity_accounts ||..o{ identity_library_grants : "holds roles by ID"
     identity_accounts ||..o{ identity_access_events : "changed access, by ID"
+    identity_accounts ||--o| identity_preferences : "saved"
 
     identity_accounts {
         text id PK
@@ -642,6 +643,10 @@ erDiagram
     identity_known_sign_ins {
         text key PK "username@address"
         text signed_in_at "pruned after 30 days"
+    }
+    identity_preferences {
+        text account_id PK, FK
+        json preferences "theme, contrast, text size, ...; a missing key is its default"
     }
 
     ingestion_jobs {

@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator, Collection, Iterable, Mapping, Seque
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import (
@@ -26,6 +27,9 @@ from sqlalchemy import (
     text,
     update,
 )
+from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Row
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
@@ -38,6 +42,7 @@ from exactdocs.identity.constants import (
     MAX_CONCURRENT_SIGN_IN_TURNS,
     REMEMBER_SIGN_INS_FOR,
     SIGN_IN_TURN_TIMEOUT,
+    TEXT_SCALES,
 )
 from exactdocs.identity.models import (
     AccessChange,
@@ -46,14 +51,21 @@ from exactdocs.identity.models import (
     Account,
     AccountId,
     ApiToken,
+    Contrast,
     ExternalIdentity,
     FailedSignIns,
+    Font,
+    Language,
     LibraryGrant,
     LibraryRole,
+    Motion,
+    Preferences,
     Role,
     Session,
     SignInAttempt,
     SubjectKind,
+    TextSpacing,
+    Theme,
     Username,
     known_sign_ins_prefix,
 )
@@ -174,6 +186,17 @@ known_sign_ins = Table(
     metadata,
     Column("key", Text, primary_key=True),  # `<username>@address:...`
     Column("signed_in_at", Text, nullable=False),  # see `_stamp`
+)
+account_preferences = Table(
+    "identity_preferences",
+    metadata,
+    Column(
+        "account_id",
+        Text,
+        ForeignKey("identity_accounts.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("preferences", Text, nullable=False),  # a JSON object, one key per preference
 )
 # One statement takes every key's lock, in the order of the lock ids (not of the keys: two keys
 # whose `hashtext` collides share an id, and key order could then cross another attempt's).
@@ -1703,3 +1726,142 @@ async def _replace_groups(
             insert(account_groups),
             [{"account_id": account_id, "name": name} for name in sorted(groups)],
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqlitePreferencesRepository:
+    """Implements ``ports.driven.PreferencesRepository`` (SQLite, libSQL and PostgreSQL).
+
+    One JSON object per account, so a preference added later needs no migration: a key a row
+    lacks, or a value the interface no longer offers, reads as that preference's default.
+    """
+
+    engine: AsyncEngine
+    """The database engine."""
+
+    async def get(self, account_id: AccountId) -> Preferences | None:
+        """Return the preferences an account saved, or ``None`` when it never saved any.
+
+        Args:
+            account_id: The account.
+
+        Returns:
+            Its preferences, or ``None``.
+        """
+        query = select(account_preferences.c.preferences).where(
+            account_preferences.c.account_id == account_id
+        )
+        async with self.engine.connect() as connection:
+            stored = (await connection.execute(query)).scalar_one_or_none()
+        return None if stored is None else _preferences(json.loads(stored))
+
+    async def put(self, account_id: AccountId, preferences: Preferences) -> None:
+        """Save an account's preferences, replacing the ones it had (one atomic upsert).
+
+        Args:
+            account_id: The account, which exists.
+            preferences: Its new preferences.
+        """
+        values = {"preferences": json.dumps(_preference_values(preferences), sort_keys=True)}
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                _conflict_insert(connection, account_preferences)
+                .values(account_id=account_id, **values)
+                .on_conflict_do_update(
+                    index_elements=[account_preferences.c.account_id], set_=values
+                )
+            )
+
+
+def _conflict_insert(
+    bind: AsyncConnection | AsyncEngine, table: Table
+) -> sqlite.Insert | postgresql.Insert:
+    """Return an ``INSERT`` that takes ``ON CONFLICT`` clauses, in the database's dialect.
+
+    Args:
+        bind: Where the statement runs (SQLite, libSQL or PostgreSQL).
+        table: The table to insert into.
+
+    Returns:
+        The statement; both dialects spell ``on_conflict_do_update``/``_nothing`` alike.
+    """
+    if bind.dialect.name == "postgresql":
+        return postgres_insert(table)
+    return sqlite_insert(table)
+
+
+def _preference_values(preferences: Preferences) -> dict[str, Any]:
+    """Return the JSON object a row stores.
+
+    Args:
+        preferences: The preferences.
+
+    Returns:
+        One plain value per preference.
+    """
+    return {
+        "theme": preferences.theme.value,
+        "contrast": preferences.contrast.value,
+        "text_scale": preferences.text_scale,
+        "text_spacing": preferences.text_spacing.value,
+        "motion": preferences.motion.value,
+        "font": preferences.font.value,
+        "underline_links": preferences.underline_links,
+        "large_targets": preferences.large_targets,
+        "language": preferences.language.value,
+        "library_logos": preferences.library_logos,
+    }
+
+
+def _preferences(stored: object) -> Preferences:
+    """Read a row's JSON object back, a missing or no longer offered value as its default.
+
+    Args:
+        stored: The decoded JSON.
+
+    Returns:
+        The preferences.
+    """
+    values: Mapping[str, Any] = stored if isinstance(stored, dict) else {}
+    defaults = Preferences()
+    scale = values.get("text_scale")
+    offered = type(scale) is int and scale in TEXT_SCALES
+    return Preferences(
+        theme=_choice(Theme, values.get("theme"), defaults.theme),
+        contrast=_choice(Contrast, values.get("contrast"), defaults.contrast),
+        text_scale=scale if offered else defaults.text_scale,
+        text_spacing=_choice(TextSpacing, values.get("text_spacing"), defaults.text_spacing),
+        motion=_choice(Motion, values.get("motion"), defaults.motion),
+        font=_choice(Font, values.get("font"), defaults.font),
+        underline_links=_flag(values.get("underline_links"), default=defaults.underline_links),
+        large_targets=_flag(values.get("large_targets"), default=defaults.large_targets),
+        language=_choice(Language, values.get("language"), defaults.language),
+        library_logos=_flag(values.get("library_logos"), default=defaults.library_logos),
+    )
+
+
+def _flag(value: object, *, default: bool) -> bool:
+    """Return the stored yes or no, or the default when it is missing or not a boolean.
+
+    Args:
+        value: The stored value.
+        default: The preference's default.
+
+    Returns:
+        The flag.
+    """
+    return value if isinstance(value, bool) else default
+
+
+def _choice[E: StrEnum](kind: type[E], value: object, default: E) -> E:
+    """Return the stored choice, or the default when it is missing or no longer offered.
+
+    Args:
+        kind: The enumeration of the choices.
+        value: The stored value.
+        default: The preference's default.
+
+    Returns:
+        The choice.
+    """
+    return next((choice for choice in kind if choice.value == value), default)

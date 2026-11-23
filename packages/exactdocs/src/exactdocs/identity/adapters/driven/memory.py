@@ -17,6 +17,7 @@ from exactdocs.identity.models import (
     FailedSignIns,
     LibraryGrant,
     LibraryRole,
+    Preferences,
     Role,
     Session,
     SignInAttempt,
@@ -822,6 +823,34 @@ class InMemoryAccessLog:
             How many there are.
         """
         return len(self._matching(where))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryPreferencesRepository:
+    """Implements ``ports.driven.PreferencesRepository``. For tests."""
+
+    preferences: dict[AccountId, Preferences] = field(default_factory=dict)
+    """The saved preferences, by account."""
+
+    async def get(self, account_id: AccountId) -> Preferences | None:
+        """Return the preferences an account saved, or ``None`` when it never saved any.
+
+        Args:
+            account_id: The account.
+
+        Returns:
+            Its preferences, or ``None``.
+        """
+        return self.preferences.get(account_id)
+
+    async def put(self, account_id: AccountId, preferences: Preferences) -> None:
+        """Save an account's preferences, replacing the ones it had.
+
+        Args:
+            account_id: The account.
+            preferences: Its new preferences.
+        """
+        self.preferences[account_id] = preferences
 
 
 def _revision(link: ExternalIdentity) -> tuple[object, ...]:

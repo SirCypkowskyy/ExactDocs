@@ -16,6 +16,7 @@ from exactdocs.identity.models import (
     ExternalIdentity,
     FailedSignIns,
     LibraryGrant,
+    Preferences,
     Role,
     Session,
     SignInAttempt,
@@ -790,5 +791,29 @@ class AccessLog(Protocol):
 
         Returns:
             How many there are.
+        """
+        ...
+
+
+class PreferencesRepository(Protocol):
+    """The interface preferences of each account."""
+
+    async def get(self, account_id: AccountId) -> Preferences | None:
+        """Return the preferences an account saved, or ``None`` when it never saved any.
+
+        Args:
+            account_id: The account.
+
+        Returns:
+            Its preferences, or ``None``.
+        """
+        ...
+
+    async def put(self, account_id: AccountId, preferences: Preferences) -> None:
+        """Save an account's preferences, replacing the ones it had.
+
+        Args:
+            account_id: The account, which exists.
+            preferences: Its new preferences.
         """
         ...
