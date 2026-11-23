@@ -1,5 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, CircleCheck, Sparkles } from "lucide-react";
+import {
+  CircleAlert,
+  CircleCheck,
+  Cpu,
+  KeyRound,
+  Layers,
+  RefreshCw,
+  Server,
+  Sparkles,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   type AiProvider,
@@ -10,37 +19,27 @@ import {
   type ThinkingLevel,
 } from "@/shared/lib/ai-queries";
 import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
-import { absoluteTime, absoluteTimeWithZone } from "@/shared/lib/time";
+import { absoluteTime } from "@/shared/lib/time";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { cn } from "@/shared/lib/utils";
+import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
+import { StateBadge } from "@/shared/ui/data-table/cells";
 import { Meter } from "@/shared/ui/meter";
 import { EmptyState, Page, PageHeader, Section } from "@/shared/ui/page";
-import { pill, pillTone } from "@/shared/ui/recipes";
 import { SelectField } from "@/shared/ui/select-field";
 import { Skeleton } from "@/shared/ui/skeleton";
-import {
-  aiUsageQueryOptions,
-  checkProvider,
-  embeddingProgressQueryOptions,
-  setRoleThinking,
-} from "../api/ai";
+import { checkProvider, embeddingProgressQueryOptions, setRoleThinking } from "../api/ai";
 import { messages } from "../messages";
 import {
-  BUDGET_NEAR,
-  type Budget,
-  budgetUsed,
-  budgetWords,
   checkWords,
   explainAiError,
   keyWords,
   originWords,
-  ownBudgetNote,
   percent,
-  type ScopeUsage,
   type SpaceProgress,
-  scopeName,
 } from "../model/ai";
+import { UsageSection } from "./usage-table";
 
 const SKELETON_ROWS = [0, 1, 2, 3] as const;
 const card = "rounded-lg border border-border bg-raised";
@@ -51,7 +50,12 @@ export function AiPage() {
   const title = usePageTitle(t.page.title);
   return (
     <Page>
-      <PageHeader title={t.page.title} headingRef={title} description={t.page.description} />
+      <PageHeader
+        title={t.page.title}
+        icon={<Cpu />}
+        headingRef={title}
+        description={t.page.description}
+      />
       <div className="flex flex-col gap-12">
         <div className="grid items-start gap-12 lg:grid-cols-2 lg:gap-8">
           <ProvidersSection />
@@ -76,6 +80,7 @@ function Problem({ error, onRetry }: { error: unknown; onRetry: () => void }) {
         {explainAiError(error, language)}
       </p>
       <Button variant="ghost" onClick={onRetry}>
+        <RefreshCw aria-hidden="true" data-icon-motion="refresh" />
         {c.retry}
       </Button>
     </div>
@@ -101,7 +106,12 @@ function ProvidersSection() {
   const providers = useQuery(aiProvidersQueryOptions());
   const roles = useQuery(aiRolesQueryOptions());
   return (
-    <Section id="providers" title={t.providers.title} description={t.providers.description}>
+    <Section
+      id="providers"
+      icon={<Server />}
+      title={t.providers.title}
+      description={t.providers.description}
+    >
       <div className="flex flex-col gap-4">
         {roles.isError ? (
           <Problem error={roles.error} onRetry={() => roles.refetch()} />
@@ -233,15 +243,17 @@ function ProviderCard({ provider: p }: { provider: AiProvider }) {
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: aiProvidersQueryOptions().queryKey }),
   });
-  const keyTone = p.key === "none" ? pillTone.neutral : pillTone.positive;
   return (
     <li className={cn(card, "p-4")}>
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <h3 className="font-mono text-body font-semibold [overflow-wrap:anywhere]">{p.name}</h3>
-            <span className={cn(pill, pillTone.neutral)}>{p.kind}</span>
-            <span className={cn(pill, keyTone)}>{keyWords(p, language)}</span>
+            <Badge>{p.kind}</Badge>
+            <Badge tone={p.key === "none" ? "neutral" : "positive"}>
+              <KeyRound aria-hidden="true" className="size-3" />
+              {keyWords(p, language)}
+            </Badge>
           </div>
           <p className="mt-1.5 text-small text-muted-foreground">{originWords(p, language)}</p>
           {p.base_url && (
@@ -262,6 +274,7 @@ function ProviderCard({ provider: p }: { provider: AiProvider }) {
           pending={check.isPending}
           onClick={() => !check.isPending && check.mutate()}
         >
+          <CircleCheck aria-hidden="true" data-icon-motion="pop" />
           {t.providers.check}
         </Button>
       </div>
@@ -281,11 +294,13 @@ function ProviderCard({ provider: p }: { provider: AiProvider }) {
                 {c.status === "ok" ? (
                   <CircleCheck
                     aria-hidden="true"
+                    data-icon-motion="draw"
                     className="mt-0.5 size-4 shrink-0 text-positive"
                   />
                 ) : (
                   <CircleAlert
                     aria-hidden="true"
+                    data-icon-motion="alert"
                     className="mt-0.5 size-4 shrink-0 text-destructive"
                   />
                 )}
@@ -309,7 +324,12 @@ function EmbeddingSection() {
   const t = useMessages(messages);
   const progress = useQuery(embeddingProgressQueryOptions());
   return (
-    <Section id="embedding" title={t.embedding.title} description={t.embedding.description}>
+    <Section
+      id="embedding"
+      icon={<Layers />}
+      title={t.embedding.title}
+      description={t.embedding.description}
+    >
       {progress.isPending ? (
         <CardSkeleton label={t.embedding.loading} />
       ) : progress.isError ? (
@@ -348,9 +368,11 @@ function SpaceRow({ space: s }: { space: SpaceProgress }) {
     <li className={cn(card, "p-4")}>
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
         <h3 className="font-mono text-body font-semibold [overflow-wrap:anywhere]">{name}</h3>
-        <span className={cn(pill, s.state === "active" ? pillTone.positive : pillTone.route)}>
-          {s.state === "active" ? t.embedding.searched : t.embedding.building}
-        </span>
+        {s.state === "active" ? (
+          <StateBadge state="succeeded" label={t.embedding.searched} />
+        ) : (
+          <StateBadge state="running" label={t.embedding.building} />
+        )}
       </div>
       <p className="mt-1 text-small text-muted-foreground">
         {s.current ? t.embedding.current : t.embedding.retiring} · {s.profile_kind} ·{" "}
@@ -361,130 +383,6 @@ function SpaceRow({ space: s }: { space: SpaceProgress }) {
       <p className="mt-2 text-body tabular-nums">
         {t.embedding.progress(done, s.chunks_embedded, s.chunks, s.versions_embedded, s.versions)}
       </p>
-    </li>
-  );
-}
-
-function UsageSection() {
-  const t = useMessages(messages);
-  const usage = useQuery(aiUsageQueryOptions());
-  return (
-    <Section id="usage" title={t.usage.title} description={t.usage.description}>
-      {usage.isPending ? (
-        <div aria-busy="true" className={cn(card, "flex flex-col gap-4 p-4")}>
-          <span className="sr-only">{t.usage.loading}</span>
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-5 w-full" />
-          ))}
-        </div>
-      ) : usage.isError ? (
-        <Problem error={usage.error} onRetry={() => usage.refetch()} />
-      ) : (
-        <>
-          <p className="mb-3 text-body text-muted-foreground">
-            {t.usage.searchesPerMinute}
-            {usage.data.llm_searches_per_minute ?? t.usage.notLimited}
-          </p>
-          {/* Scrolls sideways on a phone: focusable, so a keyboard can scroll it too. */}
-          <section
-            aria-label={t.usage.table}
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: a table wider than the screen scrolls
-            tabIndex={0}
-            className="overflow-x-auto rounded-lg border border-border outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <table className="w-full min-w-[44rem] text-left text-body">
-              <thead className="bg-raised text-small text-muted-foreground">
-                <tr>
-                  <th scope="col" className="px-4 py-2.5 font-medium">
-                    {t.usage.scope}
-                  </th>
-                  <th scope="col" className="px-4 py-2.5 text-right font-medium">
-                    {t.usage.today}
-                  </th>
-                  <th scope="col" className="px-4 py-2.5 text-right font-medium">
-                    {t.usage.thisMonth}
-                  </th>
-                  <th scope="col" className="px-4 py-2.5 font-medium">
-                    {t.usage.budgets}
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {usage.data.scopes.map((s) => (
-                  <UsageRow key={`${s.scope}:${s.id}`} scope={s} />
-                ))}
-              </tbody>
-            </table>
-          </section>
-        </>
-      )}
-    </Section>
-  );
-}
-
-/** The money leads; tokens and calls sit under it, so a column is one figure to scan. */
-function Spent({ spent: s }: { spent: ScopeUsage["day"] }) {
-  const t = useMessages(messages);
-  // Local models cost nothing: their tokens are shown, but no token budget counts them.
-  return (
-    <>
-      <span className="block font-medium">{t.usd(s.usd)}</span>
-      <span className="block text-small text-muted-foreground">
-        {t.usage.spent(s.tokens, s.local_tokens, s.requests, s.unpriced_requests)}
-      </span>
-    </>
-  );
-}
-
-function UsageRow({ scope: s }: { scope: ScopeUsage }) {
-  const c = useMessages(common);
-  const language = useLanguage();
-  return (
-    <tr className="border-t border-rule align-top">
-      <th scope="row" className="px-4 py-3 font-medium [overflow-wrap:anywhere]">
-        {scopeName(s, language)}
-      </th>
-      <td className="px-4 py-3 text-right tabular-nums">
-        <Spent spent={s.day} />
-      </td>
-      <td className="px-4 py-3 text-right tabular-nums">
-        <Spent spent={s.month} />
-      </td>
-      <td className="min-w-64 px-4 py-3">
-        {s.budgets.length === 0 ? (
-          <span className="text-muted-foreground">{c.none}</span>
-        ) : (
-          <ul className="flex flex-col gap-3">
-            {s.budgets.map((b: Budget) => (
-              <BudgetItem key={b.window} budget={b} />
-            ))}
-          </ul>
-        )}
-      </td>
-    </tr>
-  );
-}
-
-function BudgetItem({ budget: b }: { budget: Budget }) {
-  const t = useMessages(messages);
-  const language = useLanguage();
-  const note = ownBudgetNote(b, language);
-  const used = budgetUsed(b);
-  const tone = b.reached ? "destructive" : used >= BUDGET_NEAR ? "warning" : "route";
-  return (
-    <li>
-      <span className={b.reached ? "font-medium text-destructive" : undefined}>
-        {budgetWords(b, language)}
-        {b.reached && t.usage.reachedUntil(absoluteTimeWithZone(b.resets_at, language))}
-      </span>
-      <Meter
-        role="meter"
-        value={used}
-        tone={tone}
-        label={t.usage.used(b.window === "day" ? "day" : "month")}
-        className="mt-1.5"
-      />
-      {note && <span className="mt-1 block text-small text-muted-foreground">{note}</span>}
     </li>
   );
 }
