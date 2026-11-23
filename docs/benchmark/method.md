@@ -102,12 +102,13 @@ chunkings of one budget the best one wins outright.
 
 | Run | Where | Models |
 |---|---|---|
-| quick tests of all three benchmarks | every pull request (`uv run pytest`, `uv run behave`) | stand-ins only, tiny local corpora |
+| quick tests of all three benchmarks and the text scorer | every pull request (`uv run pytest`, `uv run behave`) | stand-ins only, tiny local corpora |
 | `just golden-validate` rules | every pull request (pytest) | none |
 | ingestion benchmark `--check` | every release, *Retrieval eval* job | none |
 | retrieval benchmark, BM25 at `default`, `--check` | every release, *Retrieval eval* job | none |
 | retrieval benchmark with local models | by hand (`just retrieval-bench --offline`) | local, pulled with `exactdocs models pull` |
 | retrieval benchmark, hosted configurations | by hand: the manual *Retrieval eval (real providers)* workflow (`eval-providers.yml`) with the `benchmark` input ticked | hosted |
+| text scorer calibration | by hand (`just text-bench --offline`), when the matcher or the chunker changes | none |
 | agent benchmark | by hand: the manual *Agent benchmark (real providers)* workflow (`agent-bench.yml`), or `just agent-bench run` locally | hosted |
 
 No CI or release run calls a hosted model or needs a secret.
