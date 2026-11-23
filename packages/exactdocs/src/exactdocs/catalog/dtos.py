@@ -58,6 +58,7 @@ from exactdocs_kernel import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
     MAX_NAME,
+    MAX_OFFSET,
     MAX_PATH,
     MAX_TAG_INPUT,
     MAX_TAG_LENGTH,
@@ -304,6 +305,7 @@ class LibraryDetail(_Dto):
 
 
 Limit = Annotated[int, Field(ge=1, le=MAX_LIMIT)]
+Offset = Annotated[int, Field(ge=0, le=MAX_OFFSET)]
 
 
 class ListLibrariesQuery(_Dto):
@@ -314,6 +316,9 @@ class ListLibrariesQuery(_Dto):
     cursor: str | None = None
     """Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
     `sort` and filters of the request that returned it."""
+    offset: Offset | None = None
+    """Jump to a page: skip this many matches, in the order and with the filters of the cursor
+    walk. Not with `cursor`; the page's `next_cursor` goes on from it."""
     sort: str | None = Field(
         default=None,
         max_length=MAX_NAME,
@@ -387,6 +392,9 @@ class VersionListQuery(_Dto):
     cursor: str | None = None
     """Opaque: only ever a `next_cursor`; it only works with the `sort` and filters of the
     request that returned it."""
+    offset: Offset | None = None
+    """Jump to a page: skip this many matches, in the order and with the filters of the cursor
+    walk. Not with `cursor`; the page's `next_cursor` goes on from it."""
 
     @field_validator("imported_after", "imported_before")
     @classmethod
@@ -748,6 +756,9 @@ class ListArticlesQuery(_Dto):
     cursor: str | None = Field(default=None)
     """Opaque: only ever a `next_cursor`. It only works with the `sort` and filters of the
     request that returned it."""
+    offset: Offset | None = None
+    """Jump to a page: skip this many matches, in the order and with the filters of the cursor
+    walk. Not with `cursor`; the page's `next_cursor` goes on from it."""
 
     @field_validator("ref", mode="before")
     @classmethod

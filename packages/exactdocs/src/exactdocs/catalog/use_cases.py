@@ -141,6 +141,7 @@ from exactdocs_kernel import (
     Clock,
     decode_sort_cursor,
     encode_sort_cursor,
+    page_offset,
     parse_sort,
     section_link,
     sorted_page,
@@ -244,6 +245,7 @@ class ListLibrariesUseCase:
             key=lambda lib: lib.id.value,
             limit=query.limit,
             cursor=query.cursor,
+            offset=query.offset,
         )
         return LibraryList.from_page(page)
 
@@ -299,6 +301,7 @@ class ListVersionsUseCase:
             key=lambda v: str(v.ref),
             limit=query.limit,
             cursor=query.cursor,
+            offset=query.offset,
         )
         return VersionList(
             library=str(library.id),
@@ -1162,6 +1165,7 @@ class ListArticlesUseCase:
         if manifest is None:
             raise ArticleNotFoundError(str(library.id), str(version.ref), None)
         sort = parse_sort(query.sort, allowed=ARTICLE_SORT_FIELDS, default="path")
+        skip = page_offset(cursor=query.cursor, offset=query.offset)
         after = (
             decode_sort_cursor(query.cursor, sort, key_field="path")
             if query.cursor is not None
@@ -1176,6 +1180,7 @@ class ListArticlesUseCase:
             text=query.q,
             sort=sort,
             after=after,
+            offset=skip,
             limit=query.limit + 1,  # one more than asked tells whether another page follows
         )
         page = entries[: query.limit]

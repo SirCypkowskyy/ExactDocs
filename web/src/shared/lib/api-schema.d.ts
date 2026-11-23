@@ -6910,6 +6910,11 @@ export interface operations {
                  */
                 readonly cursor?: string | null;
                 /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
+                /**
                  * @description Only items whose name contains this text, any case: a user's username, a token's name, a
                  *     grant's username or group.
                  */
@@ -7150,6 +7155,11 @@ export interface operations {
                  *     `sort` and filters of the request that returned it.
                  */
                 readonly cursor?: string | null;
+                /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
                 /**
                  * @description Only items whose name contains this text, any case: a user's username, a token's name, a
                  *     grant's username or group.
@@ -7553,6 +7563,11 @@ export interface operations {
                  *     filters of the request that returned it.
                  */
                 readonly cursor?: string | null;
+                /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
                 /** @description Only events of these changes; repeat for several. */
                 readonly change?: readonly ("library_created" | "granted" | "revoked" | "ownership_transferred" | "library_deleted")[] | null;
                 /** @description Only the events of this library (`/owner/repo`, any case), removed ones included. */
@@ -7639,6 +7654,11 @@ export interface operations {
                  *     `sort` and filters of the request that returned it.
                  */
                 readonly cursor?: string | null;
+                /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
                 /**
                  * @description Only items whose name contains this text, any case: a user's username, a token's name, a
                  *     grant's username or group.
@@ -7976,6 +7996,11 @@ export interface operations {
                  *     filters of the request that returned it.
                  */
                 readonly cursor?: string | null;
+                /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
                 /** @description Only events of these changes; repeat for several. */
                 readonly change?: readonly ("library_created" | "granted" | "revoked" | "ownership_transferred" | "library_deleted")[] | null;
             };
@@ -8325,6 +8350,11 @@ export interface operations {
                  *     request that returned it.
                  */
                 readonly cursor?: string | null;
+                /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
             };
             readonly header?: never;
             readonly path: {
@@ -8493,6 +8523,11 @@ export interface operations {
                  *     `sort` and filters of the request that returned it.
                  */
                 readonly cursor?: string | null;
+                /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
                 /** @description Sort by one of id, title, last_imported_at, version_count; prefix `-` for descending. Default: `id`. An unknown field is a 422. */
                 readonly sort?: string | null;
                 /** @description Only libraries whose ID, title or description contains this text (any case). */
@@ -9073,6 +9108,8 @@ export interface operations {
                 readonly sort?: string | null;
                 readonly limit?: number;
                 readonly cursor?: string | null;
+                /** @description Jump to a page: skip this many matches, in the order and with the filters of the cursor walk. Not with `cursor`; the page's `next_cursor` goes on from it. */
+                readonly offset?: number | null;
             };
             readonly header?: never;
             readonly path: {
@@ -12104,6 +12141,11 @@ export interface operations {
                  *     null for the first page.
                  */
                 readonly cursor?: string | null;
+                /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
                 /** @description Only jobs of this library, `/owner/repo`. */
                 readonly library?: string | null;
             };
@@ -12429,6 +12471,11 @@ export interface operations {
                  *     null for the first page.
                  */
                 readonly cursor?: string | null;
+                /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
             };
             readonly header?: never;
             readonly path: {

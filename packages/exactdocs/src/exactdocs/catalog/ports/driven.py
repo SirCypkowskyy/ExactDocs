@@ -689,6 +689,7 @@ class EntrySearch(Protocol):
         sort: Sort,
         after: tuple[SortValue, str] | None,
         limit: int,
+        offset: int = 0,
     ) -> Sequence[ManifestEntry]:
         """Return up to ``limit`` filtered entries in ``sort`` order, after the ``after`` key.
 
@@ -704,6 +705,7 @@ class EntrySearch(Protocol):
             sort: The order.
             after: The sort value and path of the last entry of the previous page.
             limit: The most entries returned.
+            offset: How many of the entries in order (after ``after``) to skip first.
 
         Returns:
             The entries in order.

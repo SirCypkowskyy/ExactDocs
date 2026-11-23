@@ -51,6 +51,10 @@ DEFAULT_LIMIT: Final[int] = 50
 """Page size of a list when the caller names none."""
 MAX_LIMIT: Final[int] = 200
 """Largest page a caller may ask for."""
+MAX_OFFSET: Final[int] = 10_000
+"""Most matches a page may skip with ``offset``. A database skips them by reading them, so the
+bound keeps a deep page cheap; past it, a client walks on with ``next_cursor`` or reverses the sort.
+"""
 
 # ---------------------------------------------------------------- source_link
 _SCP_URL: Final[re.Pattern[str]] = re.compile(r"[\w.-]+@(?P<host>[\w.-]+):(?P<path>[^:].*)")

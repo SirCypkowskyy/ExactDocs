@@ -109,3 +109,52 @@ def step_progress(context: Context, done: int, total: int) -> None:
 def step_job_ids(context: Context, ids: str) -> None:
     expected = [item.strip().strip('"') for item in ids.split(",")]
     assert [job["id"] for job in context.response.json()["jobs"]] == expected
+
+
+@given('{count:d} finished jobs of "{library}"')
+def step_many_finished_jobs(context: Context, count: int, library: str) -> None:
+    finished = []
+    for n in range(count):
+        queued = _queued(context, f"job-{n:04d}", library)
+        finished.append(queued.started(queued.created_at).succeeded(queued.created_at))
+    repository = SqliteJobRepository(engine=context.container.engine)
+
+    async def store_all() -> None:
+        for job in finished:
+            await repository.add(job)
+
+    context.client.portal.call(store_all)  # one hop to the app's event loop, not one per job
+
+
+@when("I list the jobs {limit:d} at a time, skipping the first {offset:d}")
+def step_list_jobs_at_offset(context: Context, limit: int, offset: int) -> None:
+    context.page_size = limit
+    context.response = context.client.get("/api/v1/jobs", params={"limit": limit, "offset": offset})
+
+
+@when("I list the jobs with both a cursor and an offset")
+def step_list_jobs_with_cursor_and_offset(context: Context) -> None:
+    first = context.client.get("/api/v1/jobs", params={"limit": 1}).json()
+    assert first["next_cursor"] is not None, first
+    context.response = context.client.get(
+        "/api/v1/jobs", params={"limit": 1, "cursor": first["next_cursor"], "offset": 1}
+    )
+
+
+@then("I get the last {count:d} jobs, in the order a page-by-page walk gives them")
+def step_last_jobs_of_the_walk(context: Context, count: int) -> None:
+    walked, cursor = [], None
+    while True:
+        params = {"limit": context.page_size} | ({"cursor": cursor} if cursor else {})
+        body = context.client.get("/api/v1/jobs", params=params).json()
+        walked += [job["id"] for job in body["jobs"]]
+        if (cursor := body["next_cursor"]) is None:
+            break
+    page = context.response.json()
+    assert [job["id"] for job in page["jobs"]] == walked[-count:], page
+    assert page["next_cursor"] is None, page
+
+
+@then("the total is {total:d} jobs")
+def step_job_total(context: Context, total: int) -> None:
+    assert context.response.json()["total"] == total

@@ -852,6 +852,26 @@
             "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it."
           },
           {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 10000,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it.",
+              "title": "Offset"
+            },
+            "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it."
+          },
+          {
             "name": "q",
             "in": "query",
             "required": false,
@@ -1100,6 +1120,26 @@
               "title": "Cursor"
             },
             "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 10000,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it.",
+              "title": "Offset"
+            },
+            "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it."
           },
           {
             "name": "q",
@@ -1703,6 +1743,26 @@
             "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\nfilters of the request that returned it."
           },
           {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 10000,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it.",
+              "title": "Offset"
+            },
+            "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it."
+          },
+          {
             "name": "change",
             "in": "query",
             "required": false,
@@ -1891,6 +1951,26 @@
               "title": "Cursor"
             },
             "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 10000,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it.",
+              "title": "Offset"
+            },
+            "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it."
           },
           {
             "name": "q",
@@ -2493,6 +2573,26 @@
               "title": "Cursor"
             },
             "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\nfilters of the request that returned it."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 10000,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it.",
+              "title": "Offset"
+            },
+            "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it."
           },
           {
             "name": "change",
@@ -3155,6 +3255,26 @@
               "title": "Cursor"
             },
             "description": "Opaque: only ever a `next_cursor`; it only works with the `sort` and filters of the\nrequest that returned it."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 10000,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it.",
+              "title": "Offset"
+            },
+            "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it."
           }
         ],
         "responses": {
@@ -3405,6 +3525,26 @@
               "title": "Cursor"
             },
             "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 10000,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it.",
+              "title": "Offset"
+            },
+            "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it."
           },
           {
             "name": "sort",
@@ -4445,6 +4585,26 @@
               ],
               "title": "Cursor"
             }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 10000,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor walk. Not with `cursor`; the page's `next_cursor` goes on from it.",
+              "title": "Offset"
+            },
+            "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor walk. Not with `cursor`; the page's `next_cursor` goes on from it."
           }
         ],
         "responses": {
@@ -8984,6 +9144,26 @@
             "description": "The `next_cursor` of the previous page, which only works with the same `sort` and filters;\nnull for the first page."
           },
           {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 10000,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it.",
+              "title": "Offset"
+            },
+            "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it."
+          },
+          {
             "name": "library",
             "in": "query",
             "required": false,
@@ -9585,6 +9765,26 @@
               "title": "Cursor"
             },
             "description": "The `next_cursor` of the previous page, which only works with the same `sort` and filters;\nnull for the first page."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 10000,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it.",
+              "title": "Offset"
+            },
+            "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it."
           }
         ],
         "responses": {

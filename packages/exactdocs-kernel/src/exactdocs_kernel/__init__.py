@@ -10,6 +10,7 @@ from exactdocs_kernel.constants import (
     MAX_CURSOR,
     MAX_LIMIT,
     MAX_NAME,
+    MAX_OFFSET,
     MAX_PATH,
     MAX_TAG_INPUT,
     MAX_TAG_LENGTH,
@@ -41,10 +42,12 @@ from exactdocs_kernel.listing import (
     sorted_page,
 )
 from exactdocs_kernel.pagination import (
+    CursorWithOffsetError,
     InvalidCursorError,
     Page,
     decode_cursor,
     encode_cursor,
+    page_offset,
     paginate,
 )
 from exactdocs_kernel.source_link import section_link
@@ -56,6 +59,7 @@ __all__ = [
     "MAX_CURSOR",
     "MAX_LIMIT",
     "MAX_NAME",
+    "MAX_OFFSET",
     "MAX_PATH",
     "MAX_TAGS",
     "MAX_TAG_INPUT",
@@ -65,6 +69,7 @@ __all__ = [
     "BusyError",
     "Clock",
     "ConflictError",
+    "CursorWithOffsetError",
     "DomainError",
     "ForbiddenError",
     "InvalidCursorError",
@@ -86,6 +91,7 @@ __all__ = [
     "is_after",
     "like_pattern",
     "normalize_tag",
+    "page_offset",
     "paginate",
     "parse_sort",
     "section_link",
