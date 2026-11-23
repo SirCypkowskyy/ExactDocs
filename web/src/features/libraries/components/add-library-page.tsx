@@ -337,7 +337,7 @@ function AddFrame({
   );
 }
 
-type Field<T> = readonly [T, (value: T) => void];
+type FieldState<T> = readonly [T, (value: T) => void];
 
 /**
  * What the form asks once the repository answered: the library ID, the version, the advanced
@@ -364,14 +364,14 @@ function CheckedFields({
   clear: (field: AddField) => void;
   focusAfterRender: ReturnType<typeof useFocusAfterRender>;
   preview: ReturnType<typeof usePreview>;
-  libraryId: Field<string>;
-  choice: Field<RefChoice>;
-  typedRef: Field<string>;
+  libraryId: FieldState<string>;
+  choice: FieldState<RefChoice>;
+  typedRef: FieldState<string>;
   onUnavailable: () => void;
-  advanced: Field<boolean>;
-  include: Field<string>;
-  exclude: Field<string>;
-  rules: Field<TagRuleDraft[]>;
+  advanced: FieldState<boolean>;
+  include: FieldState<string>;
+  exclude: FieldState<string>;
+  rules: FieldState<TagRuleDraft[]>;
   showRuleErrors: boolean;
 }) {
   return (
