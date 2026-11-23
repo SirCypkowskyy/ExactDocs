@@ -58,6 +58,8 @@ env:
   EVAL_LLM_MODEL: ${{ vars.EVAL_LLM_MODEL }}
   EVAL_JUDGE_MODEL: ${{ vars.EVAL_JUDGE_MODEL }}
 
+# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing.md "CI/CD and
+# runners"); it uses none of the GitHub-hosted minutes.
 jobs:
   eval:
     name: Retrieval eval with real providers
