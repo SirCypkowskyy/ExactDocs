@@ -165,6 +165,8 @@ benchmark numbers. See [Search and AI models](docs/search.md).
     hybrid search.
   - [Qdrant](docs/configuration.md#qdrant) for the vector index (`exactdocs[qdrant]`),
     self-hosted or Qdrant Cloud, with optional native hybrid search.
+  - [Redis](docs/configuration.md#redis) 8 (its Query Engine) for the search and vector indexes
+    (`exactdocs[redis]`), with optional native hybrid search.
 
 ## How it works
 

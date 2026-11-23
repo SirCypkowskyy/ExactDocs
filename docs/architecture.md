@@ -1346,6 +1346,7 @@ keeps the backends in step:
 | `lancedb` | search, vectors | `lancedb_index.py`: embedded, a directory or an object-store URI; a table for search and one per space, filtered on `manifest_id` before ranking; writers on a local directory take turns on a `flock`, an object store needs `single_writer = true` ([Configuration](configuration.md#lancedb)) | `lancedb` | yes: LanceDB's BM25 and exact cosine halves fused by its RRF reranker |
 | `opensearch` | search, vectors | `opensearch_index.py` over `elastic_index.py` ([Configuration](configuration.md#elasticsearch-and-opensearch)) | `opensearch` | yes: a `hybrid` query and a normalisation pipeline |
 | `qdrant` | vectors | `qdrant_index.py`: a collection per space, payload-indexed `manifest_id` / `library` / `tags` ([Configuration](configuration.md#qdrant)) | `qdrant` | with `hybrid = true`: BM25-weighted sparse and dense prefetches fused by Qdrant (RRF) |
+| `redis` | search, vectors | `redis_index.py`: Redis 8's Query Engine, a hash per chunk and version, indexes made with `FT.CREATE` (`<prefix>:search`, `<prefix>:space<id>`), `manifest_id` / `library` / `version_id` / `tags` as `TAG` fields ([Configuration](configuration.md#redis)) | `redis` | with `hybrid = true`: one `FT.HYBRID` query (BM25 and KNN fused by Redis, RRF) |
 
 **Adding a backend** is one adapter module in `retrieval/adapters/driven/` (the reference is
 `memory_index.py`; it holds nothing across a restart and is for tests), its extra in

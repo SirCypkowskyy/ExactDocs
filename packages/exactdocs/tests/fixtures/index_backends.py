@@ -51,6 +51,9 @@ class BackendCase:
     counts_terms: bool = False
     """It ranks by term counts (the in-memory reference), not BM25: the suites skip the cases
     only a BM25-like ranking passes (length normalisation, a heading's ancestors)."""
+    stale_statistics: bool = False
+    """Deleted entries still count in its term statistics until its garbage collector runs
+    (Redis' Query Engine): a rebuild finds the same hits, with other scores."""
 
 
 @asynccontextmanager
@@ -234,6 +237,27 @@ def _chroma_cases() -> list[BackendCase]:
     return cases
 
 
+def _redis_cases() -> list[BackendCase]:
+    """Redis (#364), search and vectors, and vectors with native hybrid, when
+    ``EXACTDOCS_TEST_REDIS_URL`` is set."""
+    if not os.environ.get("EXACTDOCS_TEST_REDIS_URL"):
+        if os.environ.get("EXACTDOCS_REQUIRE_REDIS") == "1":  # CI: never skipped there
+            message = "EXACTDOCS_REQUIRE_REDIS=1 but EXACTDOCS_TEST_REDIS_URL is not set"
+            raise RuntimeError(message)
+        return []
+    import redis_server  # ruff: ignore[import-outside-top-level] -- the extra, only with a server
+
+    return [
+        BackendCase(
+            name="redis",
+            search=redis_server.redis_search,
+            vectors=redis_server.plain_vectors,
+            stale_statistics=True,
+        ),
+        BackendCase(name="redis_hybrid", vectors=redis_server.hybrid_vectors),
+    ]
+
+
 EXTERNAL_BACKENDS: list[BackendCase] = [
     BackendCase(name="memory", search=_memory_search, vectors=_memory_vectors, counts_terms=True),
     *_qdrant_cases(),
@@ -255,6 +279,7 @@ EXTERNAL_BACKENDS: list[BackendCase] = [
         else []
     ),
     *_chroma_cases(),
+    *_redis_cases(),
 ]
 """Every external backend the suites run on here. Add yours (see the module docstring)."""
 

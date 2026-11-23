@@ -77,6 +77,11 @@ duckdb = ["duckdb==2.0.0", "duckdb-extension-fts==2.0.0"]
 # embedding functions: it passes its own vectors.
 chroma = ["chromadb-client==1.5.9"]
 chroma-local = ["chromadb==1.5.9"]
+# Redis (Query Engine) as the search and vector backend (#364, EXACTDOCS_SEARCH_BACKEND /
+# EXACTDOCS_VECTOR_BACKEND=redis): imported only by `retrieval/adapters/driven/redis_index.py`,
+# and only once an operator names the backend. Not in the image. Exact pin, tested against the
+# official `redis` 8 server image (CI service).
+redis = ["redis==8.1.0"]
 
 [project.scripts]
 exactdocs = "exactdocs.bootstrap.cli:main"

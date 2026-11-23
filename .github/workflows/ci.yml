@@ -107,6 +107,17 @@ jobs:
         image: chromadb/chroma:1.5.9@sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6
         ports:
           - 8000/tcp
+      # #364: Redis 8 with its Query Engine, the search and vector backend's contract tests and
+      # scenario (EXACTDOCS_TEST_REDIS_URL), pinned to an exact version. A service takes no
+      # command line, so the default user has no password: the credentials test adds an ACL user
+      # with one and signs in as it.
+      redis:
+        image: redis:8.10.3@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53
+        ports:
+          - 6379/tcp
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 5s --health-retries 30
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
@@ -144,6 +155,8 @@ jobs:
           EXACTDOCS_TEST_OPENSEARCH_URL: http://127.0.0.1:${{ job.services.opensearch.ports['9200'] }}
           EXACTDOCS_TEST_CHROMA_URL: http://127.0.0.1:${{ job.services.chroma.ports['8000'] }}
           EXACTDOCS_REQUIRE_CHROMA: "1" # the Chroma HTTP cases and scenario never skip here (#361)
+          EXACTDOCS_TEST_REDIS_URL: redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}
+          EXACTDOCS_REQUIRE_REDIS: "1" # the Redis cases and scenario never skip here (#364)
         run: uv run pytest --cov=exactdocs --cov=exactdocs_kernel --cov-report=term-missing --junitxml=reports/pytest.xml
       - name: behave (acceptance)
         env:
@@ -160,6 +173,8 @@ jobs:
           EXACTDOCS_TEST_OPENSEARCH_URL: http://127.0.0.1:${{ job.services.opensearch.ports['9200'] }}
           EXACTDOCS_TEST_CHROMA_URL: http://127.0.0.1:${{ job.services.chroma.ports['8000'] }}
           EXACTDOCS_REQUIRE_CHROMA: "1"
+          EXACTDOCS_TEST_REDIS_URL: redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}
+          EXACTDOCS_REQUIRE_REDIS: "1"
         run: uv run behave --format=progress --junit --junit-directory=reports/behave
       # The shared ranking suite again, on Supabase's image (postgres_fts: it has no pg_search).
       - name: Ranking suite on supabase/postgres

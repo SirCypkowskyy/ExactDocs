@@ -25,6 +25,7 @@ dev = [
     "exactdocs[lancedb]",
     "exactdocs[opensearch]",
     "exactdocs[qdrant]",
+    "exactdocs[redis]",
     "httpx>=0.28",
     # The retrieval eval suite (packages/exactdocs/evals, docs/decisions/ai-retrieval.md):
     # exact pin, it moves with pydantic-ai-slim in the `ai` extra.
