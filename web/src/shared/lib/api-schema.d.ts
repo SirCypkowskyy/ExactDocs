@@ -2755,13 +2755,13 @@ export interface components {
         };
         /**
          * ChunkingIn
-         * @description How a library's articles are cut into chunks (the defaults: one chunk per heading).
+         * @description How a library's articles are cut into chunks (defaults: `#` to `###`, 4,000 characters).
          */
         readonly ChunkingIn: {
             /**
              * Split Level
-             * @description The deepest heading that starts a chunk: 2 cuts at `#` and `##` only.
-             * @default 6
+             * @description The deepest heading that starts a chunk: 2 cuts at `#` and `##` only, 6 at every heading.
+             * @default 3
              */
             readonly split_level: number;
             /**
@@ -2775,10 +2775,12 @@ export interface components {
             /**
              * Max Chars
              * @description A chunk longer than this is cut again at its deeper headings; never inside a code block or
-             *     table. Null: no bound. At least `min_chars`, and at most 8,000 when sent: whatever the
-             *     settings, a section longer than 8,000 characters is split between its top-level blocks.
+             *     table. Left out: 4,000; null: no bound. At least `min_chars`, and at most 8,000 when sent:
+             *     whatever the settings, a section longer than 8,000 characters is split between its top-level
+             *     blocks.
+             * @default 4000
              */
-            readonly max_chars?: number | null;
+            readonly max_chars: number | null;
             /**
              * Chunker
              * @description `markdown`: cuts at headings with markdown-it-py (the only one supported).

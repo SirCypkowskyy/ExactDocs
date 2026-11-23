@@ -16,13 +16,16 @@ gives the definitions the result pages rely on.
 
 | Name | Settings | What it does |
 |---|---|---|
-| `default` | split level 6, no merging, no bound | today's default: every heading starts a chunk |
-| `h2` | split level 2 | only `#` and `##` start a chunk; deeper sections stay inside their parent |
-| `h3-max-4000` | split level 3, `max_chars` 4,000 | `#` to `###` start a chunk; a longer one is cut again at deeper headings |
-| `merge-400` | `min_chars` 400, `max_chars` 4,000 | every heading starts a chunk, then a chunk under 400 characters is merged with the next while the result stays within 4,000 |
+| `default` | split level 3, `max_chars` 4,000 | today's default (#381): `#` to `###` start a chunk; a longer one is cut again at deeper headings |
+| `h6` | split level 6, no merging, no bound | every heading starts a chunk (the default before #381) |
+| `h2` | split level 2, no bound | only `#` and `##` start a chunk; deeper sections stay inside their parent |
+| `merge-400` | split level 6, `min_chars` 400, `max_chars` 4,000 | every heading starts a chunk, then a chunk under 400 characters is merged with the next while the result stays within 4,000 |
 
-The golden set names sections as `default` cuts them. A configuration that cuts coarser or finer
-would lose every hit to a heading path that no longer exists, so a returned chunk of the right
+`default` is what a new library gets, so it follows the shipped default; until #381 it was
+`h6`, and the recorded runs took the new names when it changed.
+
+The golden set names sections as `h6` cuts them: every heading. A configuration that cuts
+coarser or finer would lose every hit to a heading path that no longer exists, so a returned chunk of the right
 version and article answers an expected section when its heading path is the expected one, when
 it is a section inside the expected one (a finer cut), or when it is a parent of the expected one
 and holds its heading (a coarser cut). The ingestion results also show recall@5 with exact paths
@@ -119,7 +122,7 @@ model with its Hub revision, and the AI settings of each configuration
 ```bash
 just ingestion-bench --offline --out packages/exactdocs/evals/results
 EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
-  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@default,bm25+ce@h2,hybrid:bge-small-en-v1.5+ce@default,hybrid:snowflake-arctic-embed-s@default,*+judge,*:hosted*' \
+  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@h6,bm25+ce@h2,hybrid:bge-small-en-v1.5+ce@h6,hybrid:snowflake-arctic-embed-s@h6,*+judge,*:hosted*' \
   --out packages/exactdocs/evals/results
 ```
 

@@ -10,7 +10,7 @@ from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.memory import InMemoryLibraryRepository
-from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
+from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository, libraries
 from exactdocs.catalog.errors import InvalidSettingsError, LibraryAlreadyExistsError
 from exactdocs.catalog.models import (
     ChunkingConfig,
@@ -222,6 +222,42 @@ async def test_a_rule_stored_under_an_older_normal_form_still_loads(
 
     assert await repository.get(legacy.id) == legacy
     assert await repository.list_all() == (legacy,)
+
+
+@pytest.fixture(params=SQL_BACKENDS)
+async def stored(request: pytest.FixtureRequest) -> AsyncIterator[Container]:
+    """A running container whose database holds ``LEDGER``."""
+    if request.param == "postgres":
+        request.getfixturevalue("on_postgres")
+    container = Container.build(Settings())
+    async with container.running(jobs=False):
+        await SqliteLibraryRepository(engine=container.engine).save(LEDGER)
+        yield container
+
+
+@pytest.mark.parametrize(
+    "chunking",
+    [
+        '{"split_level":6,"min_chars":0,"max_chars":null,"chunker":"markdown"}',  # v0.3, v0.4
+        '{"split_level":6,"min_chars":0,"max_chars":null}',  # v0.2: no chunker yet
+    ],
+)
+async def test_a_library_stored_on_the_old_default_chunking_keeps_it(
+    stored: Container, chunking: str
+) -> None:
+    # Settings are stored whole: a library added before #381 with the defaults of then (split
+    # level 6, no bound) keeps them, and is not cut with the new default at its next import.
+    settings = f'{{"include_paths":[],"exclude_paths":[],"tag_rules":[],"chunking":{chunking}}}'
+    async with stored.engine.begin() as connection:
+        await connection.execute(
+            libraries.update().where(libraries.c.id == LEDGER.id.value).values(settings=settings)
+        )
+
+    loaded = await SqliteLibraryRepository(engine=stored.engine).get(LEDGER.id)
+
+    assert loaded is not None
+    assert loaded.settings.chunking == ChunkingConfig(split_level=6, max_chars=None)
+    assert loaded.settings.chunking != ChunkingConfig()  # the new default is not applied
 
 
 @pytest.mark.parametrize("tag", ["", "a,b", "a b", "t" * 41])

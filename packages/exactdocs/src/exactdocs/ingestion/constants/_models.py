@@ -25,6 +25,14 @@ so those libraries' chunk sets are cut again when they are next imported or re-c
 """
 MAX_HEADING_LEVEL: Final[int] = 6
 """Deepest Markdown heading level a chunking config may split at."""
+DEFAULT_SPLIT_LEVEL: Final[int] = 3
+"""The split level a library gets unless its settings name one: ``#`` to ``###`` start a chunk
+(#381, after the retrieval benchmark: BM25's recall@5 81.7% against 79.8% at every heading). It
+was ``MAX_HEADING_LEVEL`` before; libraries store their chunking, so changing it changes no
+existing library."""
+DEFAULT_MAX_CHARS: Final[int] = 4_000
+"""The ``max_chars`` a library gets unless its settings name one: a chunk longer than this is cut
+again at its deeper headings (#381). It was no bound before."""
 _ALWAYS_INVISIBLE: Final[re.Pattern[str]] = re.compile(
     # a subdivision flag (England, Scotland, Wales...) is visible text, keep it whole
     r"(?P<flag>\N{WAVING BLACK FLAG}"

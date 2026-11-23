@@ -79,18 +79,23 @@ class Configuration:
 CONFIGURATIONS: Final[tuple[Configuration, ...]] = (
     Configuration(
         name="default",
-        about="today's default: every heading starts a chunk; nothing is merged or bounded",
+        about=(
+            "today's default (#381): # to ### start a chunk; one over 4,000 characters is cut "
+            "again at deeper headings"
+        ),
         chunking=ChunkingIn(),
+    ),
+    Configuration(
+        name="h6",
+        about=(
+            "every heading starts a chunk; nothing is merged or bounded (the default before #381)"
+        ),
+        chunking=ChunkingIn(split_level=6, max_chars=None),
     ),
     Configuration(
         name="h2",
         about="only # and ## start a chunk; deeper sections stay inside their parent",
-        chunking=ChunkingIn(split_level=2),
-    ),
-    Configuration(
-        name="h3-max-4000",
-        about="# to ### start a chunk; one over 4,000 characters is cut again at deeper headings",
-        chunking=ChunkingIn(split_level=3, max_chars=4000),
+        chunking=ChunkingIn(split_level=2, max_chars=None),
     ),
     Configuration(
         name="merge-400",
@@ -98,10 +103,11 @@ CONFIGURATIONS: Final[tuple[Configuration, ...]] = (
             "every heading starts a chunk, then one under 400 characters is merged with the "
             "next while the result stays within 4,000"
         ),
-        chunking=ChunkingIn(min_chars=400, max_chars=4000),
+        chunking=ChunkingIn(split_level=6, min_chars=400, max_chars=4000),
     ),
 )
-"""The configurations compared, today's default first."""
+"""The configurations compared, today's default first. All but ``default`` name every setting,
+so a change of the default changes only what ``default`` measures (#381: it measured ``h6``)."""
 
 
 class _Model(BaseModel):

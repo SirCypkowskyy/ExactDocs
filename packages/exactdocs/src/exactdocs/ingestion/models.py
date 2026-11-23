@@ -1661,7 +1661,10 @@ def branch_name(raw: str) -> str | None:
 class ChunkingConfig:
     """How articles are cut (per library, LIB-09).
 
-    ``split_depth`` is the deepest heading level that starts a chunk (``h1``...``h6``). A section
+    ``split_depth`` is the deepest heading level that starts a chunk (``h1``...``h6``). The field
+    defaults cut at every heading, unbounded: what a chunker does unless told otherwise, not what a
+    new library gets, which is ``ChunkingIn``'s (``DEFAULT_SPLIT_LEVEL``, ``DEFAULT_MAX_CHARS``,
+    #381) and is stored with the library. A section
     longer than ``max_chars`` is cut again at its deeper headings, and sections shorter than
     ``min_chars`` are merged with the next one (the last with the one before) while the merged
     chunk stays within ``max_chars``: never inside a block, never with the text before the first

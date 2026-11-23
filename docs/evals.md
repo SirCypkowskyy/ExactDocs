@@ -4,7 +4,9 @@ Retrieval modes are compared with numbers before one becomes a default. The eval
 dataset of questions through every retrieval mode this build can run, on the fixture docs
 repository imported for real, and reports per mode how often the right section comes back, how
 often anything of another version does, what it cost and how long it took. The decisions behind
-it are in [AI retrieval decisions](decisions/ai-retrieval.md#evaluation).
+it are in [AI retrieval decisions](decisions/ai-retrieval.md#evaluation). The fixture is imported
+with every heading starting a chunk (`split_level` 6, no bound), because the dataset names its
+`####` sections; a new library's default since #381 would hold them inside their parent.
 
 The results of the benchmarks below (the golden set, ingestion, retrieval and agent) and the
 defaults they recommend are published in the [Benchmark](benchmark/index.md) section; this page
@@ -334,8 +336,8 @@ Every case file must load as the dataset's models, and every case must:
   it is; name sections of the case's own version only; for `cross-page`, of two articles or more;
 - name only sections that exist **at the pinned commit**: the article is read from the cache,
   must be selected by the project's docs paths, and its heading path must be one of the chunks the
-  importer's own parser and chunker (`parse_article`, `MarkdownChunker`, default settings) cut it
-  into. So a case can only name a section ExactDocs produces, and moving the pins (or changing how
+  importer's own parser and chunker (`parse_article`, `MarkdownChunker` with no settings, which
+  cuts at every heading) cut it into. So a case can only name a section ExactDocs produces, and moving the pins (or changing how
   articles are cut) shows every case that no longer holds.
 
 It prints every broken case (`<case>: <problem>`, with the closest existing sections when only
@@ -415,12 +417,16 @@ quick tests (`tests/evals/test_ingestion.py`, `ingestion_bench.feature`) on a ti
 
 | Name | Settings | What it does |
 |---|---|---|
-| `default` | split level 6, no merging, no bound | today's default: every heading starts a chunk |
-| `h2` | split level 2 | only `#` and `##` start a chunk; deeper sections stay inside their parent |
-| `h3-max-4000` | split level 3, `max_chars` 4,000 | `#` to `###` start a chunk; a longer one is cut again at deeper headings |
-| `merge-400` | `min_chars` 400, `max_chars` 4,000 | every heading starts a chunk, then a chunk under 400 characters is merged with the next while the result stays within 4,000 |
+| `default` | split level 3, `max_chars` 4,000 | today's default (#381): `#` to `###` start a chunk; a longer one is cut again at deeper headings |
+| `h6` | split level 6, no merging, no bound | every heading starts a chunk (the default before #381) |
+| `h2` | split level 2, no bound | only `#` and `##` start a chunk; deeper sections stay inside their parent |
+| `merge-400` | split level 6, `min_chars` 400, `max_chars` 4,000 | every heading starts a chunk, then a chunk under 400 characters is merged with the next while the result stays within 4,000 |
 
-They are `CONFIGURATIONS` in `retrieval_eval/ingestion_cli.py`. The section ceiling of #141
+They are `CONFIGURATIONS` in `retrieval_eval/ingestion_cli.py`. `default` is whatever a new
+library gets, so it follows the shipped default; the others name every setting. When the default
+changed in #381, `h3-max-4000` became `default` and the old `default` became `h6`: the ingestion
+run was measured again (the same numbers under the new names) and the retrieval run relabelled.
+The section ceiling of #141
 (splitting a long section at block boundaries) is not one of them yet: it is not exposed in the
 library settings.
 
@@ -519,7 +525,7 @@ of another version, read outside its version (agentic traces), or failed on a qu
 | `hyde:hosted` | hosted | the hosted embedding model and `EXACTDOCS_AI__LLM__MODEL` |
 | `agentic:hosted` | hosted | `EXACTDOCS_AI__LLM__MODEL` |
 
-Each runs at every chunking configuration (`default`, `h2`, `h3-max-4000`, `merge-400`;
+Each runs at every chunking configuration (`default`, `h6`, `h2`, `merge-400`;
 `--chunkings`). `--configs` takes names or shell patterns (`'hybrid:*+ce'`). A configuration that
 cannot run is listed with the reason: a local model that was not pulled (`unavailable`, with the
 `exactdocs models pull` command), a hosted role that is not configured, or a hosted configuration
@@ -614,24 +620,26 @@ Measured on an Apple M-series laptop (10 cores) with no network, on the whole go
 at four chunkings) would take about six hours on that CPU, so it ran on this subset:
 
 - `bm25` and `hybrid:bge-small-en-v1.5` at every chunking configuration;
-- `bm25+ce` at `default` and `h2`; `hybrid:bge-small-en-v1.5+ce` at `default`;
-- `hybrid:snowflake-arctic-embed-s` at `default` (the second local embedding model);
+- `bm25+ce` at `h6` and `h2`; `hybrid:bge-small-en-v1.5+ce` at `h6`;
+- `hybrid:snowflake-arctic-embed-s` at `h6` (the second local embedding model);
 - `hybrid:bge-base-en-v1.5` did not run (about 50 minutes of embedding per chunking there);
 - every hosted configuration is listed as skipped: it needs a real-providers run.
 
 ```bash
 EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
-  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@default,bm25+ce@h2,hybrid:bge-small-en-v1.5+ce@default,hybrid:snowflake-arctic-embed-s@default,*+judge,*:hosted*' \
+  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@h6,bm25+ce@h2,hybrid:bge-small-en-v1.5+ce@h6,hybrid:snowflake-arctic-embed-s@h6,*+judge,*:hosted*' \
   --out packages/exactdocs/evals/results
 ```
 
-Embedding the whole corpus took 17 minutes with bge-small at `default` (8 at `h2`, 13 at
-`h3-max-4000`, 11 at `merge-400`) and 16 with arctic-embed-s; the cross-encoder adds about
-1.4 s per question (32 candidates). What it found: BM25 is best at `h3-max-4000` (recall@5 81.7%);
-hybrid on bge-small reaches 84.6% at `default`, 3 points more, under the 5-point margin, so BM25
-stays the default for both the no-model and the local budget; the cross-encoder adds as much as
-hybrid at `default` and loses recall at `h2`, whose chunks are longer than its window;
-arctic-embed-s is below BM25 (75.3%).
+The run predates #381, so its `default` was today's `h6`; the report was relabelled when the
+default changed (the commands above name today's chunkings). Embedding the whole corpus took 17
+minutes with bge-small at `h6` (8 at `h2`, 13 at `default`, 11 at `merge-400`) and 16 with
+arctic-embed-s; the cross-encoder adds about 1.4 s per question (32 candidates). What it found:
+BM25 is best at `default`, split level 3 and 4,000 characters (recall@5 81.7%, against 79.8% at
+`h6`), which #381 made the default for new libraries; hybrid on bge-small reaches 84.6% at `h6`,
+3 points more, under the 5-point margin, so BM25 stays the default for both the no-model and the
+local budget; the cross-encoder adds as much as hybrid at `h6` and loses recall at `h2`, whose
+chunks are longer than its window; arctic-embed-s is below BM25 (75.3%).
 
 ### Running it with local models
 

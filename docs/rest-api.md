@@ -241,9 +241,11 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `chunking` left out or `null` keeps the stored one, so a client that edits only paths and tag
   rules (the web UI) never resets it, validated like `POST /libraries` (422 `invalid_path_pattern`
   / `invalid_tag` / `invalid_chunking_config` or a field error, nothing stored), 404 for an unknown
-  library. `chunking` is `{"split_level": 1-6, "min_chars": 0, "max_chars": null, "chunker":
-  "markdown"}` (the defaults): `split_level` is the deepest heading that starts a chunk (`2` cuts
-  at `#` and `##` only); a chunk longer than `max_chars` is cut again at its deeper headings (never
+  library. `chunking` is `{"split_level": 1-6, "min_chars": 0, "max_chars": 4000, "chunker":
+  "markdown"}` with `split_level` 3 (the defaults, also for a library added without `chunking`,
+  #381; before, `split_level` 6 and `max_chars` null, which libraries added then keep): a field
+  left out of a sent `chunking` takes its default, so send `"max_chars": null` for no bound;
+  `split_level` is the deepest heading that starts a chunk (`2` cuts at `#` and `##` only); a chunk longer than `max_chars` is cut again at its deeper headings (never
   inside a code block or table, so a section without deeper headings stays whole); chunks shorter
   than `min_chars` are merged with the next one (the last with the one before) as long as the
   result stays within `max_chars`, and the text before the first heading is never merged (a merged
