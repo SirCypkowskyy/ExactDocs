@@ -105,7 +105,6 @@ export const messages = defineMessages(
       title: "Usage and budgets",
       description:
         "What AI calls spent today and this month (UTC), and what is left of each budget. A used-up budget skips the paid step; searches still answer.",
-      loading: "Loading the usage",
       searchesPerMinute: "LLM searches per minute per caller: ",
       notLimited: "not limited",
       table: "Usage table",
@@ -113,6 +112,25 @@ export const messages = defineMessages(
       today: "Today",
       thisMonth: "This month",
       budgets: "Budgets",
+      /** The table's filters: the kind of scope, and where it stands against its budgets. */
+      kind: "Kind",
+      budgetFilter: "Budget",
+      scopeKinds: {
+        instance: "Instance",
+        embedding: "Embedding runs",
+        library: "Libraries",
+        user: "Accounts",
+      },
+      budgetStates: {
+        reached: "Used up",
+        near: "Near the limit",
+        within: "Within budget",
+        none: "No budget",
+      },
+      find: "Find a scope",
+      findPlaceholder: "A library or an account",
+      noMatch: "No scope matches",
+      empty: "Nothing has been spent yet",
       scopes: {
         instance: "The instance",
         embedding: "Embedding runs",
@@ -228,7 +246,6 @@ export const messages = defineMessages(
       title: "Zużycie i budżety",
       description:
         "Ile wydały wywołania AI dziś i w tym miesiącu (UTC) oraz ile zostało z każdego budżetu. Po wyczerpaniu budżetu płatny krok jest pomijany; wyszukiwanie nadal odpowiada.",
-      loading: "Wczytywanie zużycia",
       searchesPerMinute: "Wyszukiwania LLM na minutę dla jednego wywołującego: ",
       notLimited: "bez limitu",
       table: "Tabela zużycia",
@@ -236,6 +253,24 @@ export const messages = defineMessages(
       today: "Dziś",
       thisMonth: "Ten miesiąc",
       budgets: "Budżety",
+      kind: "Rodzaj",
+      budgetFilter: "Budżet",
+      scopeKinds: {
+        instance: "Instancja",
+        embedding: "Przebiegi embeddingu",
+        library: "Biblioteki",
+        user: "Konta",
+      },
+      budgetStates: {
+        reached: "Wyczerpany",
+        near: "Blisko limitu",
+        within: "W ramach budżetu",
+        none: "Bez budżetu",
+      },
+      find: "Znajdź zakres",
+      findPlaceholder: "Biblioteka lub konto",
+      noMatch: "Żaden zakres nie pasuje",
+      empty: "Jeszcze nic nie wydano",
       scopes: {
         instance: "Instancja",
         embedding: "Przebiegi embeddingu",

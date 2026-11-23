@@ -1,92 +1,106 @@
-import { useInfiniteQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
+import { ScrollText } from "lucide-react";
 import { useMessages } from "@/shared/lib/i18n";
 import { usePageTitle } from "@/shared/lib/use-page-title";
+import { cn } from "@/shared/lib/utils";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/shared/ui/breadcrumb";
 import { Page, PageHeader } from "@/shared/ui/page";
-import { accessLogQueryOptions, libraryAccessLogQueryOptions } from "../api/access-log-query";
+import { accessLogSource, libraryAccessLogSource } from "../api/access-log-query";
 import { messages } from "../messages";
-import type { AccessLogView } from "../model/access-log";
-import { AccessLogList } from "./access-log-list";
+import {
+  ACCESS_LOG_TABLE,
+  LIBRARY_ACCESS_LOG_TABLE,
+  parseAccessLogView,
+  parseLibraryAccessLogView,
+} from "../model/access-log";
+import { AccessLogTable } from "./access-log-list";
 
-const crumb =
-  "-ml-1 inline-flex min-h-11 items-center rounded px-1 outline-none transition-colors duration-(--dur-fast) hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-7";
+/** Crumbs stay 44 px high on touch (DESIGN.md, Accessibility). */
+const crumbTarget = "inline-flex min-h-11 items-center fine:min-h-7";
 
-const NO_VIEW: AccessLogView = {};
-const ignore = () => {};
-
-interface ViewProps {
-  /** The filter, held in the URL by the route. */
-  view?: AccessLogView;
-  onView?: (view: AccessLogView) => void;
-}
+/** The URL's search, as the route validated it (or as typed, in a test). */
+const useRawSearch = () => useSearch({ strict: false }) as Record<string, unknown>;
 
 /** One library's access log, for its admins and the server's operators. */
-export function LibraryAccessLogPage({
-  owner,
-  repo,
-  view = NO_VIEW,
-  onView = ignore,
-}: ViewProps & { owner: string; repo: string }) {
+export function LibraryAccessLogPage({ owner, repo }: { owner: string; repo: string }) {
   const id = `/${owner}/${repo}`;
   const t = useMessages(messages).pages;
   const heading = usePageTitle(t.libraryTitle(id));
-  const log = useInfiniteQuery(libraryAccessLogQueryOptions(owner, repo, view));
+  const view = parseLibraryAccessLogView(useRawSearch());
   return (
     <Page>
       <PageHeader
         headingRef={heading}
+        icon={<ScrollText />}
         title={t.title}
         description={t.libraryDescription}
         above={
-          <nav aria-label={t.breadcrumb} className="text-body text-muted-foreground">
-            <ol className="flex flex-wrap items-center gap-x-1.5">
-              <li>
-                <Link to="/" className={crumb}>
-                  {t.libraries}
-                </Link>
-              </li>
-              <li aria-hidden="true">/</li>
-              <li>
-                <Link
-                  to="/libraries/$owner/$repo"
-                  params={{ owner, repo }}
-                  className={`${crumb} font-mono text-small`}
-                >
-                  {id}
-                </Link>
-              </li>
-              <li aria-hidden="true">/</li>
-              <li>
-                <Link
-                  to="/libraries/$owner/$repo/sharing"
-                  params={{ owner, repo }}
-                  className={crumb}
-                >
-                  {t.sharing}
-                </Link>
-              </li>
-              <li aria-hidden="true">/</li>
-              <li aria-current="page" className="text-foreground">
-                {t.title}
-              </li>
-            </ol>
-          </nav>
+          <Breadcrumb>
+            <BreadcrumbList>
+              <BreadcrumbItem>
+                <BreadcrumbLink asChild className={crumbTarget}>
+                  <Link to="/">{t.libraries}</Link>
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbLink asChild className={cn(crumbTarget, "font-mono text-small")}>
+                  <Link to="/libraries/$owner/$repo" params={{ owner, repo }}>
+                    {id}
+                  </Link>
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbLink asChild className={crumbTarget}>
+                  <Link to="/libraries/$owner/$repo/sharing" params={{ owner, repo }}>
+                    {t.sharing}
+                  </Link>
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage>{t.title}</BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
         }
       />
-      <AccessLogList log={log} view={{ change: view.change }} onView={onView} />
+      <AccessLogTable
+        view={view}
+        config={LIBRARY_ACCESS_LOG_TABLE}
+        source={libraryAccessLogSource(owner, repo, view)}
+      />
     </Page>
   );
 }
 
 /** Every library's access log, removed libraries included: the operators' page. */
-export function AccessLogPage({ view = NO_VIEW, onView = ignore }: ViewProps) {
+export function AccessLogPage() {
   const t = useMessages(messages).pages;
   const heading = usePageTitle(t.title);
-  const log = useInfiniteQuery(accessLogQueryOptions(view));
+  const view = parseAccessLogView(useRawSearch());
   return (
     <Page>
-      <PageHeader headingRef={heading} title={t.title} description={t.description} />
-      <AccessLogList log={log} view={view} onView={onView} everyLibrary />
+      <PageHeader
+        headingRef={heading}
+        icon={<ScrollText />}
+        title={t.title}
+        description={t.description}
+      />
+      <AccessLogTable
+        view={view}
+        config={ACCESS_LOG_TABLE}
+        source={accessLogSource(view)}
+        everyLibrary
+      />
     </Page>
   );
 }

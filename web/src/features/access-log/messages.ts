@@ -1,4 +1,4 @@
-import { defineMessages, formatNumber } from "@/shared/lib/i18n";
+import { defineMessages } from "@/shared/lib/i18n";
 import type { Change } from "./model/access-log";
 
 /** The access log's strings: the pages, the list and its filters, event sentences, errors. */
@@ -11,13 +11,10 @@ export const messages = defineMessages(
         "Who created, shared, unshared or handed over this library, and when. Newest first.",
       description:
         "Every library's creations, role changes, ownership transfers and removals, with who made them and when. Removed libraries keep their log here. Newest first.",
-      breadcrumb: "Breadcrumb",
       libraries: "Libraries",
       sharing: "Sharing",
     },
     list: {
-      show: "Show",
-      everyChange: "Every change",
       /** Every change the log records, in the order the filter offers them. */
       changes: {
         granted: "Roles given or changed",
@@ -35,11 +32,34 @@ export const messages = defineMessages(
         "Creating, sharing, unsharing and removing a library is recorded here, with who did it and when.",
       noMatchTitle: "No changes match",
       noMatch: "Nothing recorded matches these filters.",
-      clearFilters: "Clear filters",
       label: "Access changes, newest first",
-      showing: (shown: number, total: number) => `Showing ${shown} of ${total}`,
-      loadMore: "Load more",
-      loading: "Loading the access log",
+      loadFailed: "Couldn't load the access log.",
+      /** The table's columns. */
+      columns: {
+        event: "What happened",
+        when: "When",
+        library: "Library",
+        change: "Change",
+        subject: "Who",
+        role: "Role",
+        by: "By",
+      },
+      /** One event's change, as a pill. */
+      change: {
+        granted: "Role given",
+        changed: "Role changed",
+        revoked: "Role taken away",
+        ownership_transferred: "Ownership transferred",
+        library_created: "Library created",
+        library_deleted: "Library removed",
+      },
+      /** A role change for screen readers; the screen shows "viewer → admin". */
+      fromTo: (from: string, to: string) => `from ${from} to ${to}`,
+      actions: {
+        openLibrary: "Open library",
+        libraryEntries: "Show this library's entries",
+      },
+      row: (sentence: string, library: string) => `${sentence} (${library})`,
     },
     /** The words of an event's sentence; names and roles go between them. */
     sentence: {
@@ -85,13 +105,10 @@ export const messages = defineMessages(
         "Kto i kiedy utworzył tę bibliotekę, udostępnił ją, cofnął jej udostępnienie lub ją przekazał. Od najnowszych.",
       description:
         "Utworzenia, zmiany ról, przekazania własności i usunięcia wszystkich bibliotek, z informacją, kto i kiedy ich dokonał. Usunięte biblioteki zachowują tu swój dziennik. Od najnowszych.",
-      breadcrumb: "Ścieżka nawigacji",
       libraries: "Biblioteki",
       sharing: "Udostępnianie",
     },
     list: {
-      show: "Pokaż",
-      everyChange: "Wszystkie zmiany",
       changes: {
         granted: "Nadane lub zmienione role",
         revoked: "Odebrane role",
@@ -108,12 +125,31 @@ export const messages = defineMessages(
         "Tutaj rejestrowane jest utworzenie, udostępnienie, cofnięcie udostępnienia i usunięcie biblioteki, z informacją, kto i kiedy to zrobił.",
       noMatchTitle: "Brak pasujących zmian",
       noMatch: "Żaden wpis nie pasuje do tych filtrów.",
-      clearFilters: "Wyczyść filtry",
       label: "Zmiany dostępu, od najnowszych",
-      showing: (shown, total) =>
-        `Wyświetlono ${formatNumber(shown, "pl")} z ${formatNumber(total, "pl")}`,
-      loadMore: "Wczytaj więcej",
-      loading: "Wczytywanie dziennika dostępu",
+      loadFailed: "Nie udało się wczytać dziennika dostępu.",
+      columns: {
+        event: "Co się stało",
+        when: "Kiedy",
+        library: "Biblioteka",
+        change: "Zmiana",
+        subject: "Kto",
+        role: "Rola",
+        by: "Autor zmiany",
+      },
+      change: {
+        granted: "Nadana rola",
+        changed: "Zmieniona rola",
+        revoked: "Odebrana rola",
+        ownership_transferred: "Przekazana własność",
+        library_created: "Utworzona biblioteka",
+        library_deleted: "Usunięta biblioteka",
+      },
+      fromTo: (from, to) => `z ${from} na ${to}`,
+      actions: {
+        openLibrary: "Otwórz bibliotekę",
+        libraryEntries: "Pokaż wpisy tej biblioteki",
+      },
+      row: (sentence, library) => `${sentence} (${library})`,
     },
     // Polish verbs in the past tense carry a gender, so the sentence names the actor as
     // "Użytkownik alice" (a masculine noun, whoever the person is) and the verbs agree with it.

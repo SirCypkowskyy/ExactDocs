@@ -1,37 +1,80 @@
-import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query";
-import { History } from "lucide-react";
-import { useId, useState } from "react";
-import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
-import { absoluteTime, absoluteTimeWithZone } from "@/shared/lib/time";
+import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
+import type { ColumnDef } from "@tanstack/react-table";
+import {
+  ArrowRight,
+  ArrowRightLeft,
+  ListFilter,
+  type LucideIcon,
+  Plus,
+  ScrollText,
+  Trash2,
+  UserCheck,
+  UserMinus,
+  UserPen,
+  Users,
+} from "lucide-react";
+import { useId, useMemo, useState } from "react";
+import { useLanguage, useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
+import { Badge, type BadgeTone } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
+import { LibraryCell, Person, RelativeTime } from "@/shared/ui/data-table/cells";
+import { DataTable } from "@/shared/ui/data-table/data-table";
+import { DataTablePagination } from "@/shared/ui/data-table/pagination";
+import type { RowAction } from "@/shared/ui/data-table/row-actions";
+import { pageQueryOptions, type ServerSource } from "@/shared/ui/data-table/server-pages";
+import { pageOf, type TableConfig } from "@/shared/ui/data-table/table-search";
+import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";
+import {
+  type DataTableModel,
+  type TableFilter,
+  type TableParam,
+  useDataTable,
+} from "@/shared/ui/data-table/use-data-table";
 import { Input } from "@/shared/ui/input";
-import { EmptyState } from "@/shared/ui/page";
-import { SelectField } from "@/shared/ui/select-field";
-import { Skeleton } from "@/shared/ui/skeleton";
 import { messages } from "../messages";
 import {
   type AccessEvent,
-  type AccessLogPage,
   type AccessLogView,
+  CHANGES,
   type Change,
   describeEvent,
   explainAccessLogError,
   isLibraryId,
 } from "../model/access-log";
 
-interface Props {
-  log: UseInfiniteQueryResult<InfiniteData<AccessLogPage>>;
-  view: AccessLogView;
-  onView: (view: AccessLogView) => void;
-  /** The operators' log of every library: a library filter, and each event names its library. */
-  everyLibrary?: boolean;
-}
+/*
+ * The access log as a table (blocks-map §2.3, "Access log"): who changed access, how and when,
+ * newest first, numbered pages over the cursor API, the change filter (and, for operators, the
+ * library) in the URL. On a phone each row is a card titled by the event's sentence.
+ */
+
+type Messages = (typeof messages)["en"];
+type ChangeLook = { icon: LucideIcon; tone: BadgeTone };
+
+const CHANGE_LOOKS: Record<Change | "changed", ChangeLook> = {
+  granted: { icon: UserCheck, tone: "neutral" },
+  changed: { icon: UserPen, tone: "neutral" },
+  revoked: { icon: UserMinus, tone: "neutral" },
+  ownership_transferred: { icon: ArrowRightLeft, tone: "neutral" },
+  library_created: { icon: Plus, tone: "neutral" },
+  library_deleted: { icon: Trash2, tone: "destructive" },
+};
+
+/** A grant that replaced a role reads as a change, not as a new role. */
+const lookOf = (event: AccessEvent) =>
+  event.change === "granted" && event.previous_role ? "changed" : event.change;
+
+const sentenceOf = (event: AccessEvent, language: ReturnType<typeof useLanguage>) =>
+  describeEvent(event, language)
+    .map((p) => p.text)
+    .join("");
 
 function EventSentence({ event }: { event: AccessEvent }) {
   const language = useLanguage();
   return (
-    <p className="[overflow-wrap:anywhere]">
+    <span className="block [overflow-wrap:anywhere]">
       {describeEvent(event, language).map((part) => (
         <span
           key={part.key}
@@ -44,173 +87,265 @@ function EventSentence({ event }: { event: AccessEvent }) {
           {part.text}
         </span>
       ))}
-    </p>
+    </span>
   );
 }
 
-function Toolbar({ view, onView, everyLibrary }: Omit<Props, "log">) {
+function ChangeBadge({ event }: { event: AccessEvent }) {
+  const t = useMessages(messages).list;
+  const look = lookOf(event);
+  const { icon: Icon, tone } = CHANGE_LOOKS[look];
+  return (
+    <Badge tone={tone}>
+      <Icon aria-hidden="true" className="size-3" />
+      {t.change[look]}
+    </Badge>
+  );
+}
+
+function Subject({ event }: { event: AccessEvent }) {
+  if (!event.subject) return <span className="text-muted-foreground">–</span>;
+  if (event.kind !== "group") return <Person name={event.subject} />;
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <span className="inline-flex size-6 flex-none items-center justify-center rounded-full bg-secondary text-muted-foreground">
+        <Users aria-hidden="true" className="size-3.5" />
+      </span>
+      <span className="font-mono text-mono [overflow-wrap:anywhere]">{event.subject}</span>
+    </span>
+  );
+}
+
+/** "viewer → admin" on screen, "from viewer to admin" for a screen reader. */
+function RoleChange({ event }: { event: AccessEvent }) {
+  const t = useMessages(messages);
+  if (!event.role) return <span className="text-muted-foreground">–</span>;
+  const name = (role: string) => t.sentence.roles[role] ?? role;
+  if (!event.previous_role) return <span>{name(event.role)}</span>;
+  const from = name(event.previous_role);
+  const to = name(event.role);
+  return (
+    <span className="whitespace-nowrap">
+      <span aria-hidden="true" className="inline-flex items-center gap-1">
+        <span className="text-muted-foreground">{from}</span>
+        <ArrowRight className="size-3.5 text-muted-foreground" />
+        {to}
+      </span>
+      <span className="sr-only">{t.list.fromTo(from, to)}</span>
+    </span>
+  );
+}
+
+function Actor({ event }: { event: AccessEvent }) {
+  const t = useMessages(messages).sentence;
+  if (event.actor) return <Person name={event.actor} />;
+  return <span className="text-muted-foreground">{t.instance}</span>;
+}
+
+// Built once per language (and log): a cell is rendered as a component, so a new function would
+// remount it. Nothing sorts: the API lists newest first only.
+const columnsOf = (t: Messages, everyLibrary: boolean): ColumnDef<AccessEvent>[] => [
+  {
+    // The sentence titles a phone's card; on a wider screen the columns below say the same.
+    id: "event",
+    header: t.list.columns.event,
+    enableSorting: false,
+    enableHiding: false,
+    meta: { priority: 1, className: "hidden" },
+    cell: ({ row }) => <EventSentence event={row.original} />,
+  },
+  {
+    accessorKey: "at",
+    header: t.list.columns.when,
+    enableSorting: false,
+    enableHiding: false,
+    meta: { priority: 2 },
+    cell: ({ row }) => <RelativeTime iso={row.original.at} />,
+  },
+  ...(everyLibrary
+    ? [
+        {
+          accessorKey: "library",
+          header: t.list.columns.library,
+          enableSorting: false,
+          meta: { priority: 3, skeleton: "avatar" },
+          cell: ({ row }) => <LibraryCell id={row.original.library} />,
+        } satisfies ColumnDef<AccessEvent>,
+      ]
+    : []),
+  {
+    accessorKey: "change",
+    header: t.list.columns.change,
+    enableSorting: false,
+    meta: { skeleton: "pill" },
+    cell: ({ row }) => <ChangeBadge event={row.original} />,
+  },
+  {
+    accessorKey: "subject",
+    header: t.list.columns.subject,
+    enableSorting: false,
+    meta: { skeleton: "avatar" },
+    cell: ({ row }) => <Subject event={row.original} />,
+  },
+  {
+    accessorKey: "role",
+    header: t.list.columns.role,
+    enableSorting: false,
+    meta: { className: "max-lg:hidden" },
+    cell: ({ row }) => <RoleChange event={row.original} />,
+  },
+  {
+    accessorKey: "actor",
+    header: t.list.columns.by,
+    enableSorting: false,
+    meta: { skeleton: "avatar", className: "max-lg:hidden" },
+    cell: ({ row }) => <Actor event={row.original} />,
+  },
+];
+
+const filtersOf = (t: Messages): TableFilter[] => [
+  {
+    id: "change",
+    title: t.list.columns.change,
+    options: CHANGES.map((c) => ({
+      value: c,
+      label: t.list.changes[c],
+      icon: CHANGE_LOOKS[c].icon,
+    })),
+  },
+];
+
+const paramsOf = (t: Messages): TableParam[] => [
+  { id: "library", title: t.list.library, mono: true },
+];
+
+/** The operators' library filter: a typed `/owner/repo`, checked before it reaches the URL. */
+function LibraryFilter<T>({ model }: { model: DataTableModel<T> }) {
   const id = useId();
   const t = useMessages(messages).list;
-  const [library, setLibrary] = useState(view.library ?? "");
+  const current = model.param("library");
+  const [library, setLibrary] = useState(current ?? "");
+  const [shown, setShown] = useState(current);
+  // A removed chip (or a row's action) changes the filter from outside: the field follows it.
+  if (shown !== current) {
+    setShown(current);
+    setLibrary(current ?? "");
+  }
   const invalid = library.trim() !== "" && !isLibraryId(library);
   return (
-    <search className="mb-4 flex flex-wrap items-end gap-3">
-      <div className="w-60">
-        <SelectField
-          id={`${id}-change`}
-          label={t.show}
-          value={view.change ?? ""}
-          onChange={(e) => onView({ ...view, change: (e.target.value || undefined) as Change })}
-        >
-          <option value="">{t.everyChange}</option>
-          {Object.entries(t.changes).map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </SelectField>
-      </div>
-      {everyLibrary && (
-        <form
-          className="flex min-w-0 flex-1 basis-60 flex-col gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!invalid) onView({ ...view, library: library.trim() || undefined });
+    <form
+      className="flex min-w-0 flex-1 basis-60 flex-col gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!invalid) model.setParam("library", library.trim() || undefined);
+      }}
+    >
+      <label htmlFor={`${id}-library`} className="text-body font-medium">
+        {t.library}
+      </label>
+      <div className="flex gap-2">
+        <Input
+          id={`${id}-library`}
+          type="search"
+          value={library}
+          aria-invalid={invalid || undefined}
+          aria-describedby={`${id}-library-hint`}
+          onChange={(e) => {
+            setLibrary(e.target.value);
+            if (!e.target.value.trim() && current) model.setParam("library", undefined);
           }}
-        >
-          <label htmlFor={`${id}-library`} className="text-body font-medium">
-            {t.library}
-          </label>
-          <div className="flex gap-2">
-            <Input
-              id={`${id}-library`}
-              type="search"
-              value={library}
-              aria-invalid={invalid || undefined}
-              aria-describedby={`${id}-library-hint`}
-              onChange={(e) => {
-                setLibrary(e.target.value);
-                if (!e.target.value.trim() && view.library) onView({ ...view, library: undefined });
-              }}
-              placeholder="/owner/repo"
-              className="font-mono"
-            />
-            <Button type="submit" variant="outline">
-              {t.filter}
-            </Button>
-          </div>
-          <p id={`${id}-library-hint`} className="text-small text-muted-foreground">
-            {invalid ? t.libraryInvalid : t.libraryHint}
-          </p>
-        </form>
-      )}
-    </search>
+          placeholder="/owner/repo"
+          className="font-mono"
+        />
+        <Button type="submit" variant="outline">
+          <ListFilter aria-hidden="true" data-icon-motion="tilt" />
+          {t.filter}
+        </Button>
+      </div>
+      <p id={`${id}-library-hint`} className="text-small text-muted-foreground">
+        {invalid ? t.libraryInvalid : t.libraryHint}
+      </p>
+    </form>
   );
+}
+
+/** Why the shown page failed, in one sentence (the table's own query, read from the cache). */
+function useLoadError(source: ServerSource<AccessEvent>, view: AccessLogView, config: TableConfig) {
+  const client = useQueryClient();
+  const language = useLanguage();
+  const { page, size } = pageOf(view, config);
+  const error = client.getQueryState(pageQueryOptions(source, page, size).queryKey)?.error;
+  return error ? explainAccessLogError(error, language) : undefined;
+}
+
+interface Props {
+  view: AccessLogView;
+  config: TableConfig;
+  source: ServerSource<AccessEvent>;
+  /** The operators' log of every library: a library filter, and each event names its library. */
+  everyLibrary?: boolean;
 }
 
 /** The access log: who changed access, how and when, newest first, a page at a time. */
-export function AccessLogList({ log, view, onView, everyLibrary = false }: Props) {
+export function AccessLogTable({ view, config, source, everyLibrary = false }: Props) {
+  const t = useMessages(messages);
   const language = useLanguage();
-  const t = useMessages(messages).list;
-  const c = useMessages(common);
-  const events = log.data?.pages.flatMap((p) => p.events) ?? [];
-  const total = log.data?.pages.at(-1)?.total ?? 0;
-  const filtered = Boolean(view.change || view.library);
-  if (log.isPending) return <AccessLogSkeleton />;
-  if (log.isError && !log.data) {
-    return (
-      <div
-        role="alert"
-        className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg bg-destructive-soft py-1.5 pr-1.5 pl-4"
-      >
-        <p className="text-body font-medium text-destructive-ink">
-          {explainAccessLogError(log.error, language)}
-        </p>
-        <Button variant="ghost" onClick={() => log.refetch()}>
-          {c.retry}
-        </Button>
-      </div>
-    );
-  }
-  if (total === 0 && !filtered) {
-    return (
-      <EmptyState icon={<History aria-hidden="true" />} title={t.emptyTitle}>
-        {t.emptyBody}
-      </EmptyState>
-    );
-  }
-  return (
-    <div>
-      <Toolbar view={view} onView={onView} everyLibrary={everyLibrary} />
-      {events.length === 0 ? (
-        <EmptyState title={t.noMatchTitle} className="max-w-2xl">
-          <p>{t.noMatch}</p>
-          <Button variant="ghost" className="mt-3" onClick={() => onView({})}>
-            {t.clearFilters}
-          </Button>
-        </EmptyState>
-      ) : (
-        <>
-          <ol aria-label={t.label} className="divide-y divide-rule border-y">
-            {events.map((event) => (
-              <li
-                key={event.id}
-                className="row-in flex flex-col gap-1 py-3 sm:grid sm:grid-cols-[11rem_minmax(0,1fr)] sm:gap-x-4"
-              >
-                <time
-                  dateTime={event.at}
-                  title={absoluteTimeWithZone(event.at, language)}
-                  className="text-small text-muted-foreground tabular-nums sm:pt-0.5"
-                >
-                  {absoluteTime(event.at, language)}
-                </time>
-                <div className="min-w-0">
-                  <EventSentence event={event} />
-                  {everyLibrary && (
-                    <p className="mt-0.5 font-mono text-small text-muted-foreground [overflow-wrap:anywhere]">
-                      {event.library}
-                    </p>
-                  )}
-                </div>
-              </li>
-            ))}
-            {log.isFetchingNextPage && (
-              <li aria-hidden="true" className="py-3">
-                <Skeleton className="h-6 w-full" />
-              </li>
-            )}
-          </ol>
-          <div className="flex items-center gap-3 pt-4 text-small text-muted-foreground">
-            <p className="num">{t.showing(events.length, total)}</p>
-            {log.hasNextPage && (
-              <Button
-                variant="outline"
-                onClick={() => void log.fetchNextPage()}
-                disabled={log.isFetchingNextPage}
-              >
-                {t.loadMore}
-              </Button>
-            )}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
+  const navigate = useNavigate();
+  const columns = useMemo(() => columnsOf(t, everyLibrary), [t, everyLibrary]);
+  const filters = useMemo(() => filtersOf(t), [t]);
+  const params = useMemo(() => (everyLibrary ? paramsOf(t) : []), [t, everyLibrary]);
+  const model = useDataTable({
+    config,
+    search: view,
+    columns,
+    getRowId: (event) => event.id,
+    filters,
+    params,
+    source,
+  });
+  const loadError = useLoadError(source, view, config);
 
-function AccessLogSkeleton() {
-  const t = useMessages(messages).list;
+  const actions = (event: AccessEvent): RowAction<AccessEvent>[] => {
+    if (!everyLibrary) return [];
+    const [, owner = "", repo = ""] = event.library.split("/");
+    return [
+      ...(event.change === "library_deleted"
+        ? []
+        : [
+            {
+              id: "open",
+              label: t.list.actions.openLibrary,
+              icon: ArrowRight,
+              motion: "forward" as const,
+              onSelect: () =>
+                void navigate({ to: "/libraries/$owner/$repo", params: { owner, repo } }),
+            },
+          ]),
+      {
+        id: "library-entries",
+        label: t.list.actions.libraryEntries,
+        icon: ListFilter,
+        motion: "tilt",
+        onSelect: () => model.setParam("library", event.library),
+      },
+    ];
+  };
+
   return (
-    <div aria-busy="true">
-      <span className="sr-only">{t.loading}</span>
-      <div aria-hidden="true" className="divide-y divide-rule border-y border-border">
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="flex gap-4 py-3">
-            <Skeleton className="h-4 w-32" />
-            <Skeleton className="h-4 w-72" />
-          </div>
-        ))}
-      </div>
-    </div>
+    <>
+      <DataTableToolbar model={model}>
+        {everyLibrary && <LibraryFilter model={model} />}
+      </DataTableToolbar>
+      <DataTable
+        model={model}
+        label={t.list.label}
+        rowActions={actions}
+        rowLabel={(event) => t.list.row(sentenceOf(event, language), event.library)}
+        empty={{ icon: ScrollText, title: t.list.emptyTitle, body: t.list.emptyBody }}
+        noMatch={{ title: t.list.noMatchTitle, body: t.list.noMatch }}
+        errorMessage={loadError ?? t.list.loadFailed}
+      />
+      <DataTablePagination model={model} />
+    </>
   );
 }

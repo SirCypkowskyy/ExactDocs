@@ -1,14 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createMemoryHistory } from "@tanstack/react-router";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
 import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { TestRouter } from "@/shared/lib/test-router";
+import { TooltipProvider } from "@/shared/ui/tooltip";
 import { SharingPage } from "./index";
 import { canManage, explainSharingError, givableRoles } from "./model/grant";
-import { grantsParams, parseSharingView, type SharingView } from "./model/grants-view";
+import { grantsFilters, grantsParams, parseSharingView } from "./model/grants-view";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -20,7 +21,8 @@ const refuse = (status: number, error: string, detail = error) =>
 
 /**
  * A tiny in-memory sharing API for one library, called as `me`: the creator holds `creator`,
- * anyone else here is an admin (an operator would be `creator` too).
+ * anyone else here is an admin (an operator would be `creator` too). It filters by `kind` and
+ * `role` (repeatable) and `q`, and pages with `limit` and an offset cursor (`o<n>`).
  */
 function stubApi(me: string, rows: Row[] = defaultRows()) {
   let grants = [...rows];
@@ -32,14 +34,20 @@ function stubApi(me: string, rows: Row[] = defaultRows()) {
     const method = init?.method ?? "GET";
     if (url.startsWith(`${BASE}/grants?`) && method === "GET") {
       const params = new URL(url, "http://localhost").searchParams;
+      const roles = params.getAll("role");
+      const kinds = params.getAll("kind");
+      const q = params.get("q") ?? "";
       const shown = grants.filter(
         (g) =>
-          (!params.get("role") || g.role === params.get("role")) &&
-          (!params.get("kind") || g.kind === params.get("kind")),
+          (roles.length === 0 || roles.includes(g.role)) &&
+          (kinds.length === 0 || kinds.includes(g.kind)) &&
+          g.subject.includes(q),
       );
+      const start = Number(params.get("cursor")?.slice(1) ?? 0);
+      const limit = Number(params.get("limit"));
       return json({
-        grants: shown,
-        next_cursor: null,
+        grants: shown.slice(start, start + limit),
+        next_cursor: start + limit < shown.length ? `o${start + limit}` : null,
         total: shown.length,
         caller_role: callerRole(),
         creator: grants.find((g) => g.role === "creator")?.subject ?? null,
@@ -88,46 +96,55 @@ function defaultRows(): Row[] {
   ];
 }
 
-/** The route keeps the view in the URL; here a state stands in for it. */
-function Harness({ seen }: { seen: SharingView[] }) {
-  const [view, setView] = useState<SharingView>({});
-  return (
-    <SharingPage
-      owner="acme"
-      repo="payments"
-      libraryId="/acme/payments"
-      title="Payments"
-      view={view}
-      onView={(next) => {
-        seen.push(next);
-        setView(next);
-      }}
-    />
-  );
-}
+const PATH = "/libraries/acme/payments/sharing";
 
-function renderPage() {
-  const seen: SharingView[] = [];
+/** The page under a memory router, so the table's view lives in the URL as in the app. */
+function renderPage(search = "") {
+  const history = createMemoryHistory({ initialEntries: [`${PATH}${search}`] });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <TestRouter
-        pages={{
-          "/": () => <p>Libraries home</p>,
-          "/libraries/$owner/$repo": () => <p>Browse</p>,
-          "/libraries/$owner/$repo/sharing": () => <Harness seen={seen} />,
-        }}
-        start="/libraries/acme/payments/sharing"
-      />
+      <TooltipProvider>
+        <TestRouter
+          history={history}
+          pages={{
+            "/": () => <p>Libraries home</p>,
+            "/libraries/$owner/$repo": () => <p>Browse</p>,
+            "/libraries/$owner/$repo/sharing": () => (
+              <SharingPage
+                owner="acme"
+                repo="payments"
+                libraryId="/acme/payments"
+                title="Payments"
+              />
+            ),
+          }}
+        />
+      </TooltipProvider>
     </QueryClientProvider>,
   );
-  return seen;
+  return history;
 }
 
 const sent = (fetchMock: ReturnType<typeof stubApi>, method: string) =>
   fetchMock.mock.calls
     .filter(([, init]) => init?.method === method)
     .map(([url, init]) => [String(url), init?.body ? JSON.parse(String(init.body)) : undefined]);
+
+const listed = (fetchMock: ReturnType<typeof stubApi>) =>
+  fetchMock.mock.calls
+    .map(([url]) => String(url))
+    .filter((u) => u.startsWith(`${BASE}/grants?`) && u !== `${BASE}/grants?limit=1`);
+
+/** The table once its rows are in (its skeleton rows come first). */
+async function rows(label = "Who has access") {
+  const table = await screen.findByRole("table", { name: label });
+  await within(table).findByText("corp:docs");
+  return table;
+}
+
+/** A faceted filter's options (the role selects in the rows are options too). */
+const facetOptions = async () => within(await screen.findByRole("listbox")).getAllByRole("option");
 
 const row = (name: string) => {
   const cell = within(screen.getByRole("table", { name: "Who has access" })).getByText(name);
@@ -138,21 +155,38 @@ const row = (name: string) => {
 
 describe("the sharing view", () => {
   it("keeps only what the API knows from a hand-edited URL", () => {
-    expect(parseSharingView({ q: " bo ", kind: "group", role: "admin", sort: "-role" })).toEqual({
+    expect(
+      parseSharingView({
+        q: " bo ",
+        kind: "group",
+        role: "admin,viewer",
+        sort: "-role",
+        page: 2,
+        size: 50,
+      }),
+    ).toEqual({
       q: "bo",
-      kind: "group",
-      role: "admin",
+      kind: ["group"],
+      role: ["viewer", "admin"],
       sort: "-role",
+      page: 2,
+      size: 50,
     });
-    expect(parseSharingView({ kind: "team", role: "owner", sort: "created_at" })).toEqual({
+    expect(parseSharingView({ kind: "team", role: "owner", sort: "created_at", size: 7 })).toEqual({
       q: undefined,
       kind: undefined,
       role: undefined,
       sort: undefined,
+      page: undefined,
+      size: undefined,
     });
-    expect(grantsParams({ q: "b", kind: "user", role: "viewer", sort: "subject" }, "c1")).toBe(
-      "limit=50&q=b&kind=user&role=viewer&sort=subject&cursor=c1",
-    );
+    expect(
+      grantsParams(
+        grantsFilters({ q: "b", kind: ["user"], role: ["viewer", "admin"], sort: "subject" }),
+        20,
+        "c1",
+      ),
+    ).toBe("limit=20&q=b&kind=user&role=viewer&role=admin&sort=subject&cursor=c1");
   });
 
   it("lets only the creator give, change or take away admin", () => {
@@ -183,6 +217,7 @@ describe("the sharing view", () => {
 });
 
 describe("sharing page", () => {
+  beforeEach(() => localStorage.clear());
   afterEach(() => vi.unstubAllGlobals());
 
   it("shows the creator, the roles, and lets the creator change and remove an admin", async () => {
@@ -192,8 +227,10 @@ describe("sharing page", () => {
     expect(await screen.findByText("Created by", { exact: false })).toHaveTextContent(
       "Created by alice",
     );
+    await rows();
     expect(row("alice").queryByRole("combobox")).not.toBeInTheDocument();
     expect(row("alice").getByText("Creator")).toBeInTheDocument();
+    expect(row("corp:docs").getByText("Group")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Transfer ownership" })).toBeInTheDocument();
 
     await userEvent.selectOptions(
@@ -206,28 +243,68 @@ describe("sharing page", () => {
       ]),
     );
 
-    await userEvent.click(row("dave").getByRole("button", { name: "Remove dave" }));
-    const dialog = await screen.findByRole("alertdialog");
+    await userEvent.click(row("dave").getByRole("button", { name: "More actions for dave" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Remove…" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Remove dave?" });
     expect(dialog).toHaveTextContent("dave loses the viewer role");
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
     await userEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
 
     await waitFor(() => expect(screen.queryByText("dave")).not.toBeInTheDocument());
     expect(sent(fetchMock, "DELETE")).toEqual([[`${BASE}/grants/user/dave`, undefined]]);
+    // The row is gone: focus lands on the page's heading, not on the page's end.
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { level: 1, name: "Sharing" })).toHaveFocus(),
+    );
+  });
+
+  it("offers the other roles and removal in a row's menu, mirrored in its context menu", async () => {
+    const fetchMock = stubApi("alice");
+    renderPage();
+    await rows();
+
+    await userEvent.click(row("dave").getByRole("button", { name: "More actions for dave" }));
+    const menu = await screen.findByRole("menu");
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent),
+    ).toEqual(["Change role to contributor", "Change role to admin", "Remove…"]);
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Change role to admin" }));
+    await waitFor(() =>
+      expect(sent(fetchMock, "PUT")).toEqual([
+        [`${BASE}/grants`, { kind: "user", subject: "dave", role: "admin" }],
+      ]),
+    );
+
+    // The creator's own row hands the library over, from the keyboard too.
+    row("alice").getByText("alice").closest("tr")?.focus();
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    const context = await screen.findByRole("menu");
+    await userEvent.click(within(context).getByRole("menuitem", { name: "Transfer ownership…" }));
+    expect(await screen.findByRole("dialog", { name: "Transfer /acme/payments" })).toBeVisible();
   });
 
   it("gives an admin no way to touch admins, nor to transfer", async () => {
     stubApi("bob");
     renderPage();
 
-    await screen.findByRole("table", { name: "Who has access" });
+    await rows();
     expect(row("bob").queryByRole("combobox")).not.toBeInTheDocument();
-    expect(row("bob").queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
+    expect(row("bob").queryByRole("button", { name: /More actions/ })).not.toBeInTheDocument();
+    expect(row("alice").queryByRole("button", { name: /More actions/ })).not.toBeInTheDocument();
     expect(row("dave").getByRole("combobox", { name: "Role of dave" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Transfer ownership" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Access log" })).toHaveAttribute(
       "href",
       "/libraries/acme/payments/access-log",
     );
+    await userEvent.click(row("dave").getByRole("button", { name: "More actions for dave" }));
+    expect((await screen.findAllByRole("menuitem")).map((item) => item.textContent)).toEqual([
+      "Change role to contributor",
+      "Remove…",
+    ]);
+    await userEvent.keyboard("{Escape}");
 
     await userEvent.click(screen.getByRole("button", { name: "Share" }));
     const dialog = await screen.findByRole("dialog");
@@ -240,10 +317,22 @@ describe("sharing page", () => {
     expect(dialog).toHaveTextContent("Only the library's creator makes someone an admin.");
   });
 
+  it("links back through one breadcrumb", async () => {
+    stubApi("alice");
+    renderPage();
+    const crumbs = await screen.findByRole("navigation", { name: "Breadcrumb" });
+    expect(within(crumbs).getByRole("link", { name: "Libraries" })).toHaveAttribute("href", "/");
+    expect(within(crumbs).getByRole("link", { name: "/acme/payments" })).toHaveAttribute(
+      "href",
+      "/libraries/acme/payments",
+    );
+    expect(within(crumbs).getByText("Sharing")).toHaveAttribute("aria-current", "page");
+  });
+
   it("shares with a group, and names an unknown username on its field", async () => {
     const fetchMock = stubApi("alice");
     renderPage();
-    await screen.findByRole("table", { name: "Who has access" });
+    await rows();
 
     await userEvent.click(screen.getByRole("button", { name: "Share" }));
     let dialog = await screen.findByRole("dialog");
@@ -270,7 +359,7 @@ describe("sharing page", () => {
   it("transfers ownership: the new user is the creator, the creator before an admin", async () => {
     const fetchMock = stubApi("alice");
     renderPage();
-    await screen.findByRole("table", { name: "Who has access" });
+    await rows();
 
     await userEvent.click(screen.getByRole("button", { name: "Transfer ownership" }));
     const dialog = await screen.findByRole("dialog");
@@ -281,7 +370,7 @@ describe("sharing page", () => {
       "Created by carol",
     );
     expect(sent(fetchMock, "POST")).toEqual([[`${BASE}/transfer`, { username: "carol" }]]);
-    expect(row("carol").getByText("Creator")).toBeInTheDocument();
+    await waitFor(() => expect(row("carol").getByText("Creator")).toBeInTheDocument());
     // alice is an admin now: she sees her own admin row read-only and can no longer transfer.
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: "Transfer ownership" })).not.toBeInTheDocument(),
@@ -289,24 +378,62 @@ describe("sharing page", () => {
     expect(row("alice").getByText("Admin")).toBeInTheDocument();
   });
 
-  it("asks the server to sort and filter, and offers to clear filters", async () => {
+  it("asks the server to sort and filter, keeps the view in the URL and clears it", async () => {
     const fetchMock = stubApi("alice");
-    const seen = renderPage();
-    await screen.findByRole("table", { name: "Who has access" });
+    const history = renderPage();
+    const table = await rows();
+    // The API's own order (users, then groups) shows on the Kind column.
+    expect(within(table).getByRole("columnheader", { name: /Kind/ })).toHaveAttribute(
+      "aria-sort",
+      "ascending",
+    );
 
     await userEvent.click(screen.getByRole("button", { name: "Sort by Role" }));
-    expect(seen.at(-1)).toEqual({ sort: "-role" });
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Kind" }), "group");
-    expect(seen.at(-1)).toEqual({ sort: "-role", kind: "group" });
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.map(([u]) => String(u))).toContain(
-        `${BASE}/grants?limit=50&kind=group&sort=-role`,
-      ),
-    );
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Role" }), "viewer");
+    await waitFor(() => expect(listed(fetchMock)).toContain(`${BASE}/grants?limit=20&sort=-role`));
+    expect(history.location.search).toContain("sort=-role");
 
-    await userEvent.click(await screen.findByRole("button", { name: "Clear filters" }));
-    expect(seen.at(-1)).toEqual({ sort: "-role" });
+    await userEvent.click(screen.getByRole("button", { name: "Kind" }));
+    await userEvent.click(
+      (await facetOptions()).find((o) => o.textContent === "Groups") as HTMLElement,
+    );
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(listed(fetchMock)).toContain(`${BASE}/grants?limit=20&kind=group&sort=-role`),
+    );
+    expect(history.location.search).toContain("kind=group");
+    expect(await screen.findByText("1–1 of 1")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Role" }));
+    await userEvent.click(
+      (await facetOptions()).find((o) => o.textContent === "Viewer") as HTMLElement,
+    );
+    await userEvent.keyboard("{Escape}");
+    expect(await screen.findByText("Nobody matches.")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(await screen.findByText("1–4 of 4")).toBeInTheDocument();
+    expect(history.location.search).toBe("?sort=-role");
+  });
+
+  it("pages through many grants, the next page asked for with the first one's cursor", async () => {
+    const people: Row[] = Array.from({ length: 24 }, (_, i) => ({
+      kind: "user",
+      subject: `user${String(i + 1).padStart(2, "0")}`,
+      role: "viewer",
+    }));
+    const fetchMock = stubApi("alice", [
+      { kind: "user", subject: "alice", role: "creator" },
+      ...people,
+    ]);
+    const history = renderPage();
+    expect(await screen.findByText("1–20 of 25")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Next page" }));
+
+    expect(await screen.findByText("21–25 of 25")).toBeInTheDocument();
+    expect(row("user24").getByRole("combobox", { name: "Role of user24" })).toBeInTheDocument();
+    expect(history.location.search).toContain("page=2");
+    expect(listed(fetchMock)).toContain(`${BASE}/grants?limit=20&cursor=o20`);
   });
 
   it("tells someone who isn't an admin of the library that they can't manage it", async () => {
@@ -321,10 +448,20 @@ describe("sharing page", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Share" })).not.toBeInTheDocument();
   });
+
+  it("invites a first share when nobody has access yet", async () => {
+    stubApi("alice", []);
+    renderPage();
+    expect(await screen.findByText("Not shared with anyone yet")).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
 });
 
 describe("sharing page in Polish", () => {
-  beforeEach(() => setPreferences({ language: "pl" }));
+  beforeEach(() => {
+    localStorage.clear();
+    setPreferences({ language: "pl" });
+  });
   afterEach(() => {
     resetPreferences();
     vi.unstubAllGlobals();
@@ -343,18 +480,23 @@ describe("sharing page in Polish", () => {
     expect(await screen.findByText(/Twórca:/)).toHaveTextContent(
       "Twórca: alice. Tylko twórca nadaje i odbiera rolę administratora oraz może przekazać bibliotekę.",
     );
+    await rows("Kto ma dostęp");
     expect(rowPl("alice").getByText("Twórca")).toBeInTheDocument();
+    expect(rowPl("corp:docs").getByText("Grupa")).toBeInTheDocument();
     expect(rowPl("bob").getByRole("combobox", { name: "Rola: bob" })).toHaveValue("admin");
     expect(screen.getByRole("button", { name: "Przekaż własność" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Dziennik dostępu" })).toBeInTheDocument();
-    const kinds = screen.getByRole("combobox", { name: "Rodzaj" });
-    expect(
-      within(kinds)
-        .getAllByRole("option")
-        .map((o) => o.textContent),
-    ).toEqual(["Dowolny", "Użytkownicy", "Grupy"]);
+    await userEvent.click(screen.getByRole("button", { name: "Rodzaj" }));
+    expect((await facetOptions()).map((o) => o.textContent)).toEqual(["Użytkownicy", "Grupy"]);
+    await userEvent.keyboard("{Escape}");
 
-    await userEvent.click(rowPl("dave").getByRole("button", { name: "Usuń: dave" }));
+    await userEvent.click(rowPl("dave").getByRole("button", { name: "Więcej opcji: dave" }));
+    expect((await screen.findAllByRole("menuitem")).map((item) => item.textContent)).toEqual([
+      "Zmień rolę na: współtwórca",
+      "Zmień rolę na: administrator",
+      "Usuń…",
+    ]);
+    await userEvent.click(screen.getByRole("menuitem", { name: "Usuń…" }));
     const dialog = await screen.findByRole("alertdialog");
     expect(within(dialog).getByRole("heading")).toHaveTextContent(
       "Usunąć dostęp użytkownika dave?",

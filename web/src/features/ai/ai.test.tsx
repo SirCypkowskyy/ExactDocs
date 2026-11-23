@@ -1,11 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createMemoryHistory } from "@tanstack/react-router";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiRole } from "@/shared/lib/ai-queries";
 import { HttpError } from "@/shared/lib/http";
 import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
-import { AiPage } from "./index";
+import { TestRouter } from "@/shared/lib/test-router";
+import { TooltipProvider } from "@/shared/ui/tooltip";
+import { AiPage, parseUsageView } from "./index";
 import {
   type Budget,
   budgetUsed,
@@ -247,14 +250,31 @@ function serve(overrides: Record<string, { status: number; body: unknown }> = {}
   return calls;
 }
 
-function renderPage() {
+function renderPage(search = "") {
+  const history = createMemoryHistory({ initialEntries: [`/ai${search}`] });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
-      <AiPage />
+      <TooltipProvider>
+        <TestRouter
+          history={history}
+          pages={{ "/ai": AiPage, "/libraries/$owner/$repo": () => <p>Browse</p> }}
+        />
+      </TooltipProvider>
     </QueryClientProvider>,
   );
+  return history;
 }
+
+/** The usage table's row that holds `text` (a scope's name, or a library's ID). */
+async function usageRow(text: string) {
+  const table = await screen.findByRole("table", { name: /Usage table|Tabela zużycia/ });
+  const cell = await within(table).findByText(text);
+  return within(cell.closest("tr") as HTMLElement);
+}
+
+/** A faceted filter's options. */
+const facetOptions = async () => within(await screen.findByRole("listbox")).getAllByRole("option");
 
 const region = async (name: string) =>
   within(
@@ -357,44 +377,84 @@ describe("instance AI page", () => {
     renderPage();
     const usage = await region("Usage and budgets");
 
-    const instance = (await usage.findByRole("rowheader", { name: "The instance" })).closest(
-      "tr",
-    ) as HTMLElement;
-    expect(within(instance).getByText("3,000 tokens · 3 calls")).toBeInTheDocument();
-    expect(within(instance).getAllByText("$1.50").length).toBeGreaterThan(0);
-    expect(within(instance).queryByText(/local/)).not.toBeInTheDocument();
-    const embedding = usage
-      .getByRole("rowheader", { name: "Embedding runs" })
-      .closest("tr") as HTMLElement;
+    const instance = await usageRow("The instance");
+    expect(instance.getByText("3,000 tokens · 3 calls")).toBeInTheDocument();
+    expect(instance.getAllByText("$1.50").length).toBeGreaterThan(0);
+    expect(instance.queryByText(/local/)).not.toBeInTheDocument();
+    const embedding = await usageRow("Embedding runs");
     // Local models' tokens are shown, apart: no token budget counts them (#284).
     expect(
-      within(embedding).getAllByText(/0 tokens \(\+1,200 local, not budgeted\) · 3 calls/),
+      embedding.getAllByText(/0 tokens \(\+1,200 local, not budgeted\) · 3 calls/),
     ).toHaveLength(2);
-    expect(within(instance).getByText("Today: $8.50 of $10.00 left")).toBeInTheDocument();
-    const library = usage
-      .getByRole("rowheader", { name: "Library /acme/payments" })
-      .closest("tr") as HTMLElement;
-    expect(
-      within(library).getByText(/Today: \$0\.00 of \$1\.00 left · reached until/),
-    ).toBeVisible();
+    expect(instance.getByText("Today: $8.50 of $10.00 left")).toBeInTheDocument();
+    const library = await usageRow("/acme/payments");
+    expect(library.getByRole("link", { name: "/acme/payments" })).toHaveAttribute(
+      "href",
+      "/libraries/acme/payments",
+    );
+    expect(library.getByText(/Today: \$0\.00 of \$1\.00 left · reached until/)).toBeVisible();
     expect(usage.getByText(/LLM searches per minute per caller: 30/)).toBeInTheDocument();
-    expect(within(library).queryByText(/instance limit is lower/)).not.toBeInTheDocument();
+    expect(library.queryByText(/instance limit is lower/)).not.toBeInTheDocument();
   });
 
   it("shows the instance limit that applies, with a note, when a library's own is higher", async () => {
     serve();
     renderPage();
-    const usage = await region("Usage and budgets");
+    await region("Usage and budgets");
 
-    const docs = (await usage.findByRole("rowheader", { name: "Library /acme/docs" })).closest(
-      "tr",
-    ) as HTMLElement;
-    expect(within(docs).getByText("Today: $0.75 of $1.00 left")).toBeInTheDocument();
+    const docs = await usageRow("/acme/docs");
+    expect(docs.getByText("Today: $0.75 of $1.00 left")).toBeInTheDocument();
     expect(
-      within(docs).getByText(
+      docs.getByText(
         "The instance limit is lower than the library's own budget ($2.00), so it applies.",
       ),
     ).toBeVisible();
+  });
+
+  it("sorts, filters and searches the scopes in the browser, the view in the URL", async () => {
+    const calls = serve();
+    const history = renderPage();
+    await usageRow("The instance");
+    const names = () =>
+      screen
+        .getAllByRole("row")
+        .slice(1)
+        .map((r) => r.querySelector("td")?.textContent);
+
+    await userEvent.click(screen.getByRole("button", { name: "Sort by Today" }));
+    expect(history.location.search).toContain("sort=-day");
+    expect(names()).toEqual(["The instance", "/acme/payments", "/acme/docs", "Embedding runs"]);
+
+    await userEvent.click(screen.getByRole("button", { name: "Budget" }));
+    await userEvent.click(
+      (await facetOptions()).find((o) => o.textContent?.startsWith("Used up")) as HTMLElement,
+    );
+    await userEvent.keyboard("{Escape}");
+    expect(history.location.search).toContain("budget=reached");
+    await waitFor(() => expect(names()).toEqual(["/acme/payments"]));
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear all" }));
+    await userEvent.type(screen.getByLabelText("Find a scope"), "docs{Enter}");
+    await waitFor(() => expect(names()).toEqual(["/acme/docs"]));
+    expect(history.location.search).toContain("q=docs");
+    // One request, whatever the view.
+    expect(calls.filter((c) => c.url.includes("/ai/usage"))).toHaveLength(1);
+  });
+
+  it("reads the usage view from a link", async () => {
+    expect(parseUsageView({ scope: "library,user", budget: "near", sort: "-month" })).toEqual({
+      q: undefined,
+      sort: "-month",
+      page: undefined,
+      size: undefined,
+      scope: ["library", "user"],
+      budget: ["near"],
+    });
+    serve();
+    renderPage("?scope=library");
+    await usageRow("/acme/docs");
+    expect(screen.queryByText("The instance")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove filter Kind: Libraries" })).toBeVisible();
   });
 
   it("says when a part cannot be read, and the rest still shows", async () => {
@@ -408,7 +468,7 @@ describe("instance AI page", () => {
 
     const embedding = await region("Embedding");
     expect(await embedding.findByRole("alert")).toHaveTextContent("no vector store");
-    expect(await screen.findByRole("rowheader", { name: "The instance" })).toBeInTheDocument();
+    expect((await usageRow("The instance")).getByText("3,000 tokens · 3 calls")).toBeVisible();
   });
 });
 
@@ -521,27 +581,26 @@ describe("instance AI page in Polish", () => {
     ).toBeInTheDocument();
 
     const usage = await region("Zużycie i budżety");
-    const instance = (await usage.findByRole("rowheader", { name: "Instancja" })).closest(
-      "tr",
-    ) as HTMLElement;
-    expect(within(instance).getByText("3000 tokenów · 3 wywołania")).toBeInTheDocument();
+    const instance = await usageRow("Instancja");
+    expect(instance.getByText("3000 tokenów · 3 wywołania")).toBeInTheDocument();
+    expect(instance.getByText(/^Dziś: zostało 8,50\sUSD z 10,00\sUSD$/)).toBeInTheDocument();
+    const runs = await usageRow("Przebiegi embeddingu");
     expect(
-      within(instance).getByText(/^Dziś: zostało 8,50\sUSD z 10,00\sUSD$/),
-    ).toBeInTheDocument();
-    const runs = usage
-      .getByRole("rowheader", { name: "Przebiegi embeddingu" })
-      .closest("tr") as HTMLElement;
-    expect(
-      within(runs).getAllByText("0 tokenów (+1200 lokalnie, poza budżetem) · 3 wywołania"),
+      runs.getAllByText("0 tokenów (+1200 lokalnie, poza budżetem) · 3 wywołania"),
     ).toHaveLength(2);
-    const library = usage
-      .getByRole("rowheader", { name: "Biblioteka /acme/payments" })
-      .closest("tr") as HTMLElement;
-    expect(within(library).getByText(/· wyczerpany do/)).toBeVisible();
+    const library = await usageRow("/acme/payments");
+    expect(library.getByText(/· wyczerpany do/)).toBeVisible();
     expect(
       usage.getByText("Wyszukiwania LLM na minutę dla jednego wywołującego: 30"),
     ).toBeInTheDocument();
-    expect(usage.getByRole("columnheader", { name: "Ten miesiąc" })).toBeInTheDocument();
+    expect(usage.getByRole("columnheader", { name: /Ten miesiąc/ })).toBeInTheDocument();
+    await userEvent.click(usage.getByRole("button", { name: "Budżet" }));
+    expect((await facetOptions()).map((o) => o.textContent)).toEqual([
+      "Wyczerpany1",
+      "Blisko limitu",
+      "W ramach budżetu2",
+      "Bez budżetu1",
+    ]);
   });
 
   it("puts budgets and errors into Polish words", () => {

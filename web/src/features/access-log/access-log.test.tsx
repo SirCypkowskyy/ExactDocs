@@ -1,12 +1,25 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { createMemoryHistory } from "@tanstack/react-router";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
 import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { TestRouter } from "@/shared/lib/test-router";
-import { AccessLogPage, LibraryAccessLogPage, parseAccessLogView } from "./index";
-import { type AccessEvent, describeEvent, explainAccessLogError } from "./model/access-log";
+import { TooltipProvider } from "@/shared/ui/tooltip";
+import {
+  AccessLogPage,
+  LibraryAccessLogPage,
+  parseAccessLogView,
+  parseLibraryAccessLogView,
+} from "./index";
+import {
+  type AccessEvent,
+  accessLogFilters,
+  accessLogParams,
+  describeEvent,
+  explainAccessLogError,
+} from "./model/access-log";
 
 const event = (extra: Partial<AccessEvent>): AccessEvent => ({
   id: "e",
@@ -26,21 +39,69 @@ const sentence = (e: AccessEvent) =>
     .join("");
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 
+/**
+ * An access log API over `events` that filters by `change` (repeatable) and `library`, and pages
+ * with `limit` and an offset cursor (`o<n>`); or one that refuses with `status`.
+ */
 function stubApi(events: AccessEvent[], status = 200) {
   const fetchMock = vi.fn(async (url: string) => {
     if (status !== 200) return json({ error: "forbidden", detail: "no", fields: [] }, status);
-    const change = new URL(url, "http://x").searchParams.get("change");
-    const shown = events.filter((e) => !change || e.change === change);
-    return json({ events: shown, next_cursor: null, total: shown.length });
+    const params = new URL(url, "http://x").searchParams;
+    const changes = params.getAll("change");
+    const library = params.get("library");
+    const shown = events.filter(
+      (e) =>
+        (changes.length === 0 || changes.includes(e.change)) && (!library || e.library === library),
+    );
+    const start = Number(params.get("cursor")?.slice(1) ?? 0);
+    const limit = Number(params.get("limit"));
+    return json({
+      events: shown.slice(start, start + limit),
+      next_cursor: start + limit < shown.length ? `o${start + limit}` : null,
+      total: shown.length,
+    });
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
 
-function withClient(children: React.ReactNode) {
+const asked = (fetchMock: ReturnType<typeof stubApi>) =>
+  fetchMock.mock.calls.map(([url]) => String(url));
+
+/** A page under a memory router, as in the app: the table's view lives in the URL. */
+function renderAt(page: "all" | "library", search = "") {
+  const path = page === "all" ? "/access-log" : "/libraries/acme/payments/access-log";
+  const history = createMemoryHistory({ initialEntries: [`${path}${search}`] });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  render(
+    <QueryClientProvider client={client}>
+      <TooltipProvider>
+        <TestRouter
+          history={history}
+          pages={{
+            "/access-log": AccessLogPage,
+            "/libraries/$owner/$repo/access-log": () => (
+              <LibraryAccessLogPage owner="acme" repo="payments" />
+            ),
+            "/libraries/$owner/$repo": () => <p>Browse</p>,
+          }}
+        />
+      </TooltipProvider>
+    </QueryClientProvider>,
+  );
+  return history;
 }
+
+/** The table once its rows are in (skeleton rows come first). */
+async function rowsOf(label = "Access changes, newest first") {
+  const table = await screen.findByRole("table", { name: label });
+  await waitFor(() => expect(within(table).getAllByRole("row").length).toBeGreaterThan(1));
+  await waitFor(() => expect(table).not.toHaveAttribute("aria-busy"));
+  return within(table).getAllByRole("row").slice(1);
+}
+
+/** A faceted filter's options. */
+const facetOptions = async () => within(await screen.findByRole("listbox")).getAllByRole("option");
 
 describe("access log sentences", () => {
   it("say who did what to whom", () => {
@@ -72,14 +133,39 @@ describe("access log sentences", () => {
 
 describe("access log view", () => {
   it("drops anything unknown in the URL", () => {
-    expect(parseAccessLogView({ change: "granted", library: "/acme/payments" })).toEqual({
-      change: "granted",
+    expect(
+      parseAccessLogView({
+        change: "revoked,granted",
+        library: "/acme/payments",
+        page: 2,
+        size: 50,
+        q: "x",
+        sort: "at",
+      }),
+    ).toEqual({
+      change: ["granted", "revoked"],
       library: "/acme/payments",
+      page: 2,
+      size: 50,
     });
-    expect(parseAccessLogView({ change: "nuked", library: "acme" })).toEqual({
+    expect(parseAccessLogView({ change: "nuked", library: "acme", size: 7 })).toEqual({
       change: undefined,
       library: undefined,
+      page: undefined,
+      size: undefined,
     });
+    expect(parseLibraryAccessLogView({ change: "granted", library: "/acme/payments" })).toEqual({
+      change: ["granted"],
+      page: undefined,
+      size: undefined,
+    });
+    expect(
+      accessLogParams(
+        accessLogFilters({ change: ["granted", "revoked"], library: "/a/b" }),
+        20,
+        "c1",
+      ),
+    ).toBe("limit=20&change=granted&change=revoked&library=%2Fa%2Fb&cursor=c1");
   });
 
   it("explains a refusal", () => {
@@ -89,89 +175,145 @@ describe("access log view", () => {
 });
 
 describe("operators' access log", () => {
+  beforeEach(() => localStorage.clear());
   afterEach(() => vi.unstubAllGlobals());
 
   it("lists every library's changes newest first, each with its library and time", async () => {
     stubApi([
       event({ id: "2", change: "library_deleted", kind: null, subject: null, role: null }),
-      event({ id: "1", library: "/acme/ledger" }),
+      event({ id: "1", library: "/acme/ledger", role: "admin", previous_role: "viewer" }),
     ]);
-    render(withClient(<AccessLogPage />));
+    renderAt("all");
 
-    const list = await screen.findByRole("list", { name: "Access changes, newest first" });
-    const [first, second] = within(list).getAllByRole("listitem");
+    const [first, second] = await rowsOf();
+    const one = within(first as HTMLElement);
+    const two = within(second as HTMLElement);
     expect(first).toHaveTextContent("alice removed the library and every role on it");
-    expect(first).toHaveTextContent("/acme/payments");
-    expect(second).toHaveTextContent("alice gave bob the viewer role");
-    expect(second).toHaveTextContent("/acme/ledger");
-    expect(within(first as HTMLElement).getByText(/Nov 22/)).toHaveAttribute(
+    expect(one.getByRole("link", { name: "/acme/payments" })).toBeInTheDocument();
+    expect(one.getByText("Library removed")).toBeInTheDocument();
+    expect(one.getByText(/Nov 22/).closest("time")).toHaveAttribute(
       "datetime",
       "2026-11-22T10:00:00Z",
     );
-    expect(screen.getByText("Showing 2 of 2")).toBeInTheDocument();
+    expect(second).toHaveTextContent("alice changed bob from viewer to admin");
+    expect(two.getByRole("link", { name: "/acme/ledger" })).toBeInTheDocument();
+    expect(two.getByText("Role changed")).toBeInTheDocument();
+    expect(two.getByText("from viewer to admin")).toBeInTheDocument();
+    expect(screen.getByText("1–2 of 2")).toBeInTheDocument();
   });
 
-  it("filters by change and by library through the view", async () => {
-    stubApi([event({})]);
-    const onView = vi.fn();
-    render(withClient(<AccessLogPage onView={onView} />));
+  it("filters by change and by library, in the URL, and sends both to the API", async () => {
+    const fetchMock = stubApi([event({ id: "1" }), event({ id: "2", library: "/acme/ledger" })]);
+    const history = renderAt("all");
+    await rowsOf();
 
-    await userEvent.selectOptions(await screen.findByLabelText("Show"), "library_deleted");
-    expect(onView).toHaveBeenLastCalledWith({ change: "library_deleted" });
+    await userEvent.click(screen.getByRole("button", { name: "Change" }));
+    await userEvent.click(
+      (await facetOptions()).find((o) => o.textContent === "Roles given or changed") as HTMLElement,
+    );
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(asked(fetchMock)).toContain("/api/v1/access-log?limit=20&change=granted"),
+    );
+    expect(history.location.search).toContain("change=granted");
 
     await userEvent.type(screen.getByLabelText("Library"), "not-an-id");
     expect(screen.getByText("Write the library's ID as /owner/repo.")).toBeInTheDocument();
     await userEvent.clear(screen.getByLabelText("Library"));
     await userEvent.type(screen.getByLabelText("Library"), "/acme/ledger{Enter}");
-    expect(onView).toHaveBeenLastCalledWith({ library: "/acme/ledger" });
+
+    await waitFor(() =>
+      expect(asked(fetchMock)).toContain(
+        "/api/v1/access-log?limit=20&change=granted&library=%2Facme%2Fledger",
+      ),
+    );
+    expect(history.location.search).toContain("library=");
+    expect(await screen.findByText("1–1 of 1")).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove filter Library: /acme/ledger" }),
+    );
+    expect(await screen.findByText("1–2 of 2")).toBeInTheDocument();
+    expect(screen.getByLabelText("Library")).toHaveValue("");
+  });
+
+  it("narrows to one library from a row's menu", async () => {
+    stubApi([event({ id: "1" }), event({ id: "2", library: "/acme/ledger" })]);
+    const history = renderAt("all");
+    await rowsOf();
+
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "More actions for alice gave bob the viewer role (/acme/ledger)",
+      }),
+    );
+    expect(await screen.findByRole("menuitem", { name: "Open library" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("menuitem", { name: "Show this library's entries" }));
+
+    expect(await screen.findByText("1–1 of 1")).toBeInTheDocument();
+    expect(history.location.search).toContain("library=");
+    expect(screen.getByLabelText("Library")).toHaveValue("/acme/ledger");
+  });
+
+  it("pages through a long log, the next page asked for with the first one's cursor", async () => {
+    const fetchMock = stubApi(
+      Array.from({ length: 25 }, (_, i) => event({ id: `e${i + 1}`, subject: `user${i + 1}` })),
+    );
+    const history = renderAt("all");
+    expect(await screen.findByText("1–20 of 25")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Next page" }));
+
+    expect(await screen.findByText("21–25 of 25")).toBeInTheDocument();
+    expect(screen.getAllByText("user25")).not.toHaveLength(0);
+    expect(history.location.search).toContain("page=2");
+    expect(asked(fetchMock)).toContain("/api/v1/access-log?limit=20&cursor=o20");
   });
 
   it("says so when nothing was recorded", async () => {
     stubApi([]);
-    render(withClient(<AccessLogPage />));
+    renderAt("all");
     expect(await screen.findByText("Nothing recorded yet")).toBeInTheDocument();
   });
 });
 
 describe("a library's access log", () => {
+  beforeEach(() => localStorage.clear());
   afterEach(() => vi.unstubAllGlobals());
 
   it("asks the library's endpoint and links back to its sharing page", async () => {
     const fetchMock = stubApi([event({})]);
-    render(
-      withClient(
-        <TestRouter pages={{ "/": () => <LibraryAccessLogPage owner="acme" repo="payments" /> }} />,
-      ),
-    );
+    renderAt("library");
 
-    expect(
-      await screen.findByRole("list", { name: "Access changes, newest first" }),
-    ).toHaveTextContent("alice gave bob the viewer role");
-    expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(
-      /^\/api\/v1\/libraries\/acme\/payments\/access-log\?/,
-    );
-    expect(screen.getByRole("link", { name: "Sharing" })).toHaveAttribute(
+    const [first] = await rowsOf();
+    expect(first).toHaveTextContent("alice gave bob the viewer role");
+    expect(asked(fetchMock)[0]).toBe("/api/v1/libraries/acme/payments/access-log?limit=20");
+    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(crumbs).getByRole("link", { name: "Sharing" })).toHaveAttribute(
       "href",
       "/libraries/acme/payments/sharing",
     );
+    expect(within(crumbs).getByText("Access log")).toHaveAttribute("aria-current", "page");
     expect(screen.queryByLabelText("Library")).not.toBeInTheDocument();
+    // One library's events need no library column, and no way to narrow to it.
+    expect(screen.queryByRole("columnheader", { name: "Library" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /More actions/ })).not.toBeInTheDocument();
   });
 
   it("tells someone who is no admin of it why they see nothing", async () => {
     stubApi([], 403);
-    render(
-      withClient(
-        <TestRouter pages={{ "/": () => <LibraryAccessLogPage owner="acme" repo="payments" /> }} />,
-      ),
-    );
+    renderAt("library");
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Only the library's admins and the server's operators can read its access log.",
     );
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 });
 
 describe("access log in Polish", () => {
-  beforeEach(() => setPreferences({ language: "pl" }));
+  beforeEach(() => {
+    localStorage.clear();
+    setPreferences({ language: "pl" });
+  });
   afterEach(() => {
     resetPreferences();
     vi.unstubAllGlobals();
@@ -210,14 +352,24 @@ describe("access log in Polish", () => {
   });
 
   it("renders the operators' log in Polish", async () => {
-    stubApi([event({})]);
-    render(withClient(<AccessLogPage />));
+    stubApi([event({ previous_role: "viewer", role: "admin" })]);
+    renderAt("all");
     expect(await screen.findByRole("heading", { name: "Dziennik dostępu" })).toBeInTheDocument();
-    const list = await screen.findByRole("list", { name: "Zmiany dostępu, od najnowszych" });
-    expect(list).toHaveTextContent("Użytkownik alice nadał użytkownikowi bob rolę czytelnik");
-    expect(within(list).getByText(/22 lis/)).toHaveAttribute("datetime", "2026-11-22T10:00:00Z");
-    expect(screen.getByText("Wyświetlono 1 z 1")).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Usunięcia bibliotek" })).toBeInTheDocument();
+    const [first] = await rowsOf("Zmiany dostępu, od najnowszych");
+    const row = within(first as HTMLElement);
+    expect(first).toHaveTextContent(
+      "Użytkownik alice zmienił użytkownikowi bob rolę z czytelnik na administrator",
+    );
+    expect(row.getByText("Zmieniona rola")).toBeInTheDocument();
+    expect(row.getByText("z czytelnik na administrator")).toBeInTheDocument();
+    expect(row.getByText(/22 lis/).closest("time")).toHaveAttribute(
+      "datetime",
+      "2026-11-22T10:00:00Z",
+    );
+    expect(screen.getByText("1–1 z 1")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Zmiana" }));
+    expect((await facetOptions()).map((o) => o.textContent)).toContain("Usunięcia bibliotek");
+    await userEvent.keyboard("{Escape}");
     await userEvent.type(screen.getByLabelText("Biblioteka"), "nie-id");
     expect(
       screen.getByText("Wpisz identyfikator biblioteki w postaci /owner/repo."),
@@ -226,11 +378,7 @@ describe("access log in Polish", () => {
 
   it("explains a refusal in Polish", async () => {
     stubApi([], 403);
-    render(
-      withClient(
-        <TestRouter pages={{ "/": () => <LibraryAccessLogPage owner="acme" repo="payments" /> }} />,
-      ),
-    );
+    renderAt("library");
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Dziennik dostępu biblioteki mogą przeglądać tylko jej administratorzy i operatorzy serwera.",
     );

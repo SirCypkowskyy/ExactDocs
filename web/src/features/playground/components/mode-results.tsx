@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
+import { Combine, type LucideIcon, SearchX, Waypoints, WholeWord } from "lucide-react";
 import { useId } from "react";
 import { HttpError } from "@/shared/lib/http";
 import { useLanguage, useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
+import { Badge } from "@/shared/ui/badge";
 import { EmptyState } from "@/shared/ui/page";
-import { pill, pillTone } from "@/shared/ui/recipes";
 import { playgroundSearchQueryOptions } from "../api/playground-queries";
 import { messages } from "../messages";
 import {
@@ -14,7 +15,21 @@ import {
   type PlaygroundMode,
   rankLabels,
 } from "../model/playground";
-import { Notice, ResultHead, ResultsSkeleton, resultCard, resultList } from "./parts";
+import {
+  Notice,
+  ResultHead,
+  ResultsHeading,
+  ResultsSkeleton,
+  resultCard,
+  resultList,
+} from "./parts";
+
+/** Each mode by its icon: keywords, vectors, both. */
+const MODE_ICONS: Record<PlaygroundMode, LucideIcon> = {
+  bm25: WholeWord,
+  vector: Waypoints,
+  hybrid: Combine,
+};
 
 function Hit({ hit, place }: { hit: PlaygroundHit; place: number }) {
   const t = useMessages(messages);
@@ -35,9 +50,9 @@ function Hit({ hit, place }: { hit: PlaygroundHit; place: number }) {
           {t.results.score(hit.score)}
         </span>
         {rankLabels(hit, language).map((label) => (
-          <span key={label} className={cn(pill, pillTone.neutral, "font-mono")}>
+          <Badge key={label} className="font-mono">
             {label}
-          </span>
+          </Badge>
         ))}
       </div>
     </li>
@@ -61,9 +76,9 @@ export function ModeResults({
   const ranked = data ? librariesRanked(libraries, data) : 0;
   return (
     <section aria-labelledby={headingId} aria-busy={isFetching} className="min-w-0 space-y-3">
-      <h2 id={headingId} className="text-section font-semibold">
+      <ResultsHeading id={headingId} icon={MODE_ICONS[mode]}>
         {t.modes[mode]}
-      </h2>
+      </ResultsHeading>
       {error && (
         <Notice tone="error">
           {error instanceof HttpError && error.code === "mode_unavailable"
@@ -100,7 +115,9 @@ export function ModeResults({
             </p>
           )}
           {data.results.length === 0 ? (
-            <EmptyState title={t.results.none}>{t.results.noneHint}</EmptyState>
+            <EmptyState icon={<SearchX aria-hidden="true" />} title={t.results.none}>
+              {t.results.noneHint}
+            </EmptyState>
           ) : (
             <ol aria-label={t.results.list(t.modes[mode])} className={resultList}>
               {data.results.map((hit, i) => (
