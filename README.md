@@ -163,6 +163,9 @@ benchmark numbers. See [Search and AI models](docs/search.md).
   - [LanceDB](docs/configuration.md#lancedb) for the search and vector indexes
     (`exactdocs[lancedb]`), embedded in a local directory or in object storage, with native
     hybrid search.
+  - [libSQL](docs/configuration.md#libsql) for the search and vector indexes: FTS5 and libSQL's
+    native vector index, on a libSQL server (`sqld`, Turso) shared by several processes or in
+    one local file (`exactdocs[libsql]`).
   - [Milvus](docs/configuration.md#milvus) for the vector index, with native hybrid search
     (BM25 and dense vectors fused by Milvus' RRF ranker): a server or Zilliz Cloud
     (`exactdocs[milvus]`), or Milvus Lite in a local directory (`exactdocs[milvus-lite]`).

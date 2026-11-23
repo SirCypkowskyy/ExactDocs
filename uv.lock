@@ -4,10 +4,12 @@ requires-python = ">=3.14"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version >= '3.15' and ((platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'))",
     "python_full_version < '3.15' and sys_platform == 'win32'",
     "python_full_version < '3.15' and sys_platform == 'emscripten'",
-    "python_full_version < '3.15' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version < '3.15' and ((platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'))",
 ]
 conflicts = [[
     { package = "exactdocs", extra = "chroma" },
@@ -1123,6 +1125,9 @@ elasticsearch = [
 lancedb = [
     { name = "lancedb" },
 ]
+libsql = [
+    { name = "libsql" },
+]
 local = [
     { name = "fastembed" },
     { name = "onnxruntime" },
@@ -1171,6 +1176,7 @@ requires-dist = [
     { name = "httpx2", specifier = ">=2" },
     { name = "joserfc", specifier = ">=1.8.0" },
     { name = "lancedb", marker = "extra == 'lancedb'", specifier = "==0.41.0" },
+    { name = "libsql", marker = "extra == 'libsql'", specifier = "==0.1.11" },
     { name = "markdown-it-py", specifier = ">=4" },
     { name = "mcp", specifier = ">=2" },
     { name = "milvus-lite", marker = "extra == 'milvus-lite'", specifier = "==3.2.2" },
@@ -1197,7 +1203,7 @@ requires-dist = [
     { name = "sqlite-vec", marker = "extra == 'ai'", specifier = "==0.1.9" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.38" },
 ]
-provides-extras = ["ai", "chroma", "chroma-local", "duckdb", "elasticsearch", "lancedb", "local", "milvus", "milvus-lite", "mongodb", "opensearch", "qdrant", "redis"]
+provides-extras = ["ai", "chroma", "chroma-local", "duckdb", "elasticsearch", "lancedb", "libsql", "local", "milvus", "milvus-lite", "mongodb", "opensearch", "qdrant", "redis"]
 
 [[package]]
 name = "exactdocs-kernel"
@@ -1218,6 +1224,7 @@ dev = [
     { name = "behave" },
     { name = "exactdocs", extra = ["ai", "duckdb", "elasticsearch", "lancedb", "local", "milvus-lite", "mongodb", "opensearch", "qdrant", "redis"] },
     { name = "exactdocs", extra = ["chroma-local"], marker = "extra == 'extra-9-exactdocs-chroma-local'" },
+    { name = "exactdocs", extra = ["libsql"], marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "httpx" },
     { name = "pydantic-evals" },
     { name = "pytest" },
@@ -1245,6 +1252,7 @@ dev = [
     { name = "exactdocs", extras = ["duckdb"], editable = "packages/exactdocs" },
     { name = "exactdocs", extras = ["elasticsearch"], editable = "packages/exactdocs" },
     { name = "exactdocs", extras = ["lancedb"], editable = "packages/exactdocs" },
+    { name = "exactdocs", extras = ["libsql"], marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", editable = "packages/exactdocs" },
     { name = "exactdocs", extras = ["local"], editable = "packages/exactdocs" },
     { name = "exactdocs", extras = ["milvus-lite"], editable = "packages/exactdocs" },
     { name = "exactdocs", extras = ["mongodb"], editable = "packages/exactdocs" },
@@ -2071,6 +2079,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/04/32/b6b8a41ce5e255078e52405ca0340fc579c378dca0b1cc1fbfb2bcdf1fb2/lancedb-0.41.0-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:984d97c50169face1539ccaa802a2002ebc7b50a445c3e7e8cd24513569c1aab", size = 73184107, upload-time = "2026-10-29T09:10:30.268Z" },
     { url = "https://files.pythonhosted.org/packages/ae/f6/a0da90921905febaf19bf05c5301cef004d5fb83d41175a28a6b9b6e1d0e/lancedb-0.41.0-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:e3da8fbde2c916d41fc324a91a25b3f57a7b8ac5eb2981d5fb8fd0914901c44e", size = 76876798, upload-time = "2026-10-29T09:10:34.344Z" },
     { url = "https://files.pythonhosted.org/packages/14/05/34ded5ae87fc632bed8c95370df082bc01ab5bac1a599727c10b07315d12/lancedb-0.41.0-cp310-abi3-win_amd64.whl", hash = "sha256:c00ba59f0f880c2581566851a6018c00ef5c49be56ac4484c600e5129135f059", size = 85595685, upload-time = "2026-10-29T09:10:38.536Z" },
+]
+
+[[package]]
+name = "libsql"
+version = "0.1.11"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ff/a2/804e533104102770b42aa0698fee944dd13654652ceb3d27e08a83404bbd/libsql-0.1.11.tar.gz", hash = "sha256:101b6e60f5333434b3e6107bfe2cf24cd5d1317286ad262cb6489941abde77d4", size = 33353, upload-time = "2025-09-02T10:13:38.63Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d8/ad/cb4e9ac36693a9f3f3f9b03f2b1f0d14cf5b1b449c66be6f9ce7845cbf02/libsql-0.1.11-cp314-cp314-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9c7b39b90228637a4b26293af44833633c36c091276fc8b58f216dea38742f23", size = 5110968, upload-time = "2025-09-02T10:13:30.228Z" },
 ]
 
 [[package]]

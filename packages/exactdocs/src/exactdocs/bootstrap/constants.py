@@ -446,6 +446,14 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             extra="lancedb",
             packages=("lancedb", "pyarrow"),
         ),
+        "libsql": IndexBackendKind(
+            name="libsql",
+            module="exactdocs.retrieval.adapters.driven.libsql_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="libsql",
+            packages=("libsql",),
+        ),
         "milvus": IndexBackendKind(
             name="milvus",
             module="exactdocs.retrieval.adapters.driven.milvus_index",

@@ -30,6 +30,7 @@ from functools import partial
 from pathlib import Path
 from types import ModuleType
 
+import libsql_backends
 from exactdocs.retrieval.adapters.driven.elastic_index import (
     ElasticSearchBackend,
     ElasticVectorBackend,
@@ -291,6 +292,29 @@ def _mongodb_cases() -> list[BackendCase]:
     ]
 
 
+def _libsql_cases() -> list[BackendCase]:
+    """libSQL (#358): a server when ``EXACTDOCS_TEST_LIBSQL_URL`` is set, a local file when the
+    ``libsql`` package is installed (see ``libsql_backends.py``)."""
+    found = []
+    if libsql_backends.server_url() is not None:
+        found.append(
+            BackendCase(
+                name="libsql",
+                search=libsql_backends.server_search,
+                vectors=libsql_backends.server_vectors,
+            )
+        )
+    if libsql_backends.HAS_DRIVER:
+        found.append(
+            BackendCase(
+                name="libsql_file",
+                search=libsql_backends.file_search,
+                vectors=libsql_backends.file_vectors,
+            )
+        )
+    return found
+
+
 EXTERNAL_BACKENDS: list[BackendCase] = [
     BackendCase(name="memory", search=_memory_search, vectors=_memory_vectors, counts_terms=True),
     *_qdrant_cases(),
@@ -315,6 +339,7 @@ EXTERNAL_BACKENDS: list[BackendCase] = [
     *_redis_cases(),
     *_milvus_cases(),
     *_mongodb_cases(),
+    *_libsql_cases(),
 ]
 """Every external backend the suites run on here. Add yours (see the module docstring)."""
 
