@@ -403,7 +403,9 @@ gh workflow run release.yml --ref develop     # or a feature branch with workflo
 It builds version `0.0.0.dev<run number>` and runs **meta** (without the tag checks), **eval**,
 **web**, **python** and all twelve image jobs (the six **image** builds with `push=false`, no
 registry login). **pypi-kernel**, **pypi**, **image-publish** and **github-release** are skipped
-(`if: github.event_name == 'push'`), and GHCR retention does not start after it. Run one before
+(`if: github.event_name == 'push'`). GHCR retention still starts after it (a `workflow_run`
+trigger fires on every completed Release run, from the file on the default branch) but skips its
+jobs when the run was not a tag push. Run one before
 tagging when the release workflow, the Dockerfile, the eval or a size budget changed: the gates
 that pull requests do not run (the eval, arm64 budgets and scans) fail here instead of on the tag.
 The one thing it cannot check is the publishing itself (PyPI trusted publishing, the index, the
