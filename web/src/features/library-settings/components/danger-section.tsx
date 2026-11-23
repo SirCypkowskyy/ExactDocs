@@ -1,15 +1,16 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+import { Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLanguage } from "@/shared/lib/i18n";
 import { Button } from "@/shared/ui/button";
+import { TypedConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { forgetLibrary, refreshLibraries, removeLibrary } from "../api/settings";
 import { errorMessages } from "../messages/errors";
 import { pageMessages } from "../messages/page";
 import { explainRemove, isAlreadyGone, listed, type SettingsLibrary } from "../model/settings";
 import { SettingsSection } from "./settings-section";
-import { TypedConfirm } from "./typed-confirm";
 
 const LISTED = 5;
 
@@ -51,6 +52,9 @@ export function DangerSection({
     },
     onError: () => refreshLibraries(queryClient),
   });
+  const problem = remove.isError
+    ? explainRemove(remove.error, errorMessages[language].remove.library, language)
+    : undefined;
 
   return (
     <SettingsSection id="danger" title={t.sections.danger} description={t.danger.description}>
@@ -72,34 +76,39 @@ export function DangerSection({
               setOpen(true);
             }}
           >
+            <Trash2 aria-hidden="true" data-icon-motion="warn" />
             {t.danger.button}
           </Button>
         </div>
       </div>
-      <TypedConfirm
+      <TypedConfirmDialog
         open={open}
         onOpenChange={setOpen}
-        title={t.confirm.title(<span className="font-mono">{library.id}</span>)}
-        loss={
-          count > 0
-            ? t.danger.lossVersions(count, listed(refs, language, LISTED))
-            : t.danger.lossLibrary
+        title={t.confirm.title(
+          <span className="font-mono [overflow-wrap:anywhere]">{library.id}</span>,
+        )}
+        description={
+          <span className="text-foreground">
+            {count > 0
+              ? t.danger.lossVersions(count, listed(refs, language, LISTED))
+              : t.danger.lossLibrary}
+          </span>
         }
-        safe={t.danger.safe}
         phrase={library.id}
+        initialFocus="phrase"
         confirmLabel={t.danger.confirm}
+        pendingLabel={t.confirm.removing}
         pending={remove.isPending}
-        problem={
-          remove.isError
-            ? explainRemove(remove.error, errorMessages[language].remove.library, language)
-            : undefined
-        }
+        error={problem?.message}
+        errorTone={problem?.tone}
         onConfirm={() => remove.mutate()}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           button.current?.focus();
         }}
-      />
+      >
+        <p className="mt-1.5">{t.danger.safe}</p>
+      </TypedConfirmDialog>
     </SettingsSection>
   );
 }

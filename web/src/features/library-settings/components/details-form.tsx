@@ -1,15 +1,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, Info } from "lucide-react";
+import { Info } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { useLanguage } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
-import { Button } from "@/shared/ui/button";
 import { Field, TextareaField } from "@/shared/ui/field";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { refreshLibraries, saveDetails } from "../api/settings";
 import { pageMessages } from "../messages/page";
-import { sharedMessages } from "../messages/shared";
 import {
   type Activity,
   changedFields,
@@ -21,6 +19,7 @@ import {
   validateDetails,
 } from "../model/settings";
 import { useReportDirty } from "./dirty";
+import { SaveRow } from "./save-row";
 
 interface Props {
   owner: string;
@@ -34,7 +33,6 @@ interface Props {
 export function DetailsForm({ owner, repo, library, activity, onStart }: Props) {
   const language = useLanguage();
   const t = pageMessages[language].details;
-  const shared = sharedMessages[language];
   const queryClient = useQueryClient();
   // Only what the person typed is state; an untouched field shows what the library has.
   const [edits, setEdits] = useState<Partial<DetailsDraft>>({});
@@ -127,24 +125,12 @@ export function DetailsForm({ owner, repo, library, activity, onStart }: Props) 
             <span>{t.editedNote}</span>
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <Button
-            type="submit"
-            pending={save.isPending}
-            aria-disabled={save.isPending || unchanged}
-            className="min-w-32 aria-disabled:cursor-default"
-          >
-            {save.isPending ? shared.saving : t.save}
-          </Button>
-          <p role="status" className="min-h-5 text-body">
-            {saved && unchanged && activity.by === "details" && (
-              <span className="fade-in inline-flex items-center gap-1.5">
-                <Check aria-hidden="true" className="size-4 text-route" />
-                {shared.saved}
-              </span>
-            )}
-          </p>
-        </div>
+        <SaveRow
+          label={t.save}
+          pending={save.isPending}
+          blocked={save.isPending || unchanged}
+          saved={saved && unchanged && activity.by === "details"}
+        />
       </div>
     </form>
   );

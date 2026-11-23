@@ -1,13 +1,22 @@
 import { Link } from "@tanstack/react-router";
-import { History, Users } from "lucide-react";
+import { History, Settings, Share2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useMessages } from "@/shared/lib/i18n";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { cn } from "@/shared/lib/utils";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/shared/ui/breadcrumb";
 import { buttonVariants } from "@/shared/ui/button";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { LibraryBullet } from "@/shared/ui/route";
 import { pageMessages } from "../messages/page";
+import { SECTIONS } from "../model/sections";
 import type { Activity, JobViews, SettingsLibrary } from "../model/settings";
 import { AiSection } from "./ai-section";
 import { DangerSection } from "./danger-section";
@@ -24,20 +33,6 @@ interface Props {
   library: SettingsLibrary;
   jobs: JobViews;
 }
-
-const crumb =
-  "-ml-1 inline-flex min-h-11 items-center rounded px-1 outline-none transition-colors duration-(--dur-fast) hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-7";
-
-/** [heading id, the id its form reports unsaved edits under, which is also its label's key]. */
-const SECTIONS = [
-  ["details-heading", "details"],
-  ["paths-heading", "paths"],
-  ["versions-heading", "versions"],
-  ["ai-heading", "ai"],
-  ["sync-heading", "sync"],
-  ["sharing-heading", "sharing"],
-  ["danger-heading", "danger"],
-] as const;
 
 /** The section being read: the last heading above the top third of the viewport. */
 function useActiveSection(): string {
@@ -101,6 +96,52 @@ function SectionNav() {
   );
 }
 
+/** A crumb is a 44 px target on touch, as tall as the line with a mouse. */
+const crumb = "inline-flex min-h-11 items-center fine:min-h-7";
+
+/** Libraries / the library's ID / Settings. */
+export function SettingsBreadcrumb({
+  owner,
+  repo,
+  id,
+}: {
+  owner: string;
+  repo: string;
+  id: string;
+}) {
+  const t = useMessages(pageMessages);
+  return (
+    <Breadcrumb>
+      <BreadcrumbList>
+        <BreadcrumbItem>
+          <BreadcrumbLink asChild>
+            <Link to="/" className={crumb}>
+              {t.libraries}
+            </Link>
+          </BreadcrumbLink>
+        </BreadcrumbItem>
+        <BreadcrumbSeparator />
+        <BreadcrumbItem>
+          <LibraryBullet id={id} size="sm" />
+          <BreadcrumbLink asChild>
+            <Link
+              to="/libraries/$owner/$repo"
+              params={{ owner, repo }}
+              className={cn(crumb, "font-mono text-small [overflow-wrap:anywhere]")}
+            >
+              {id}
+            </Link>
+          </BreadcrumbLink>
+        </BreadcrumbItem>
+        <BreadcrumbSeparator />
+        <BreadcrumbItem>
+          <BreadcrumbPage>{t.settings}</BreadcrumbPage>
+        </BreadcrumbItem>
+      </BreadcrumbList>
+    </Breadcrumb>
+  );
+}
+
 /** Everything a person can change about one library, on one page. */
 export function LibrarySettingsPage({ owner, repo, library, jobs }: Props) {
   const t = useMessages(pageMessages);
@@ -116,32 +157,8 @@ export function LibrarySettingsPage({ owner, repo, library, jobs }: Props) {
           headingRef={heading}
           title={name}
           description={t.description}
-          above={
-            <nav aria-label={t.breadcrumb} className="text-body text-muted-foreground">
-              <ol className="flex flex-wrap items-center gap-x-1.5">
-                <li>
-                  <Link to="/" className={crumb}>
-                    {t.libraries}
-                  </Link>
-                </li>
-                <li aria-hidden="true">/</li>
-                <li className="inline-flex items-center gap-1.5">
-                  <LibraryBullet id={library.id} size="sm" />
-                  <Link
-                    to="/libraries/$owner/$repo"
-                    params={{ owner, repo }}
-                    className={`${crumb} font-mono text-small`}
-                  >
-                    {library.id}
-                  </Link>
-                </li>
-                <li aria-hidden="true">/</li>
-                <li aria-current="page" className="text-foreground">
-                  {t.settings}
-                </li>
-              </ol>
-            </nav>
-          }
+          icon={<Settings />}
+          above={<SettingsBreadcrumb owner={owner} repo={repo} id={library.id} />}
         />
         <div className="lg:grid lg:grid-cols-[11rem_minmax(0,1fr)] lg:gap-12">
           <SectionNav />
@@ -195,7 +212,7 @@ export function LibrarySettingsPage({ owner, repo, library, jobs }: Props) {
                   params={{ owner, repo }}
                   className={buttonVariants({ variant: "outline" })}
                 >
-                  <Users aria-hidden="true" />
+                  <Share2 aria-hidden="true" data-icon-motion="out" />
                   {t.sharing.manage}
                 </Link>
                 <Link
@@ -203,7 +220,7 @@ export function LibrarySettingsPage({ owner, repo, library, jobs }: Props) {
                   params={{ owner, repo }}
                   className={buttonVariants({ variant: "outline" })}
                 >
-                  <History aria-hidden="true" />
+                  <History aria-hidden="true" data-icon-motion="refresh" />
                   {t.sharing.accessLog}
                 </Link>
               </div>

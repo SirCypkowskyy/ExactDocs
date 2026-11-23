@@ -1,16 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { RefreshCw, RotateCcw, Save } from "lucide-react";
 import { type FormEvent, type Ref, useRef, useState } from "react";
 import { toast } from "sonner";
-import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
+import { useLanguage, useMessages } from "@/shared/lib/i18n";
 import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
 import { Button } from "@/shared/ui/button";
-import {
-  ConfirmCancel,
-  ConfirmContent,
-  ConfirmDescription,
-  ConfirmRoot,
-  ConfirmTitle,
-} from "@/shared/ui/dialog";
+import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { PathFields, TagRules } from "@/shared/ui/path-selection";
 import {
@@ -43,7 +38,6 @@ import {
 } from "../model/settings";
 import { useReportDirty } from "./dirty";
 import { SettingsSection } from "./settings-section";
-import { secondary } from "./styles";
 
 interface Props {
   owner: string;
@@ -68,57 +62,22 @@ interface ConfirmProps {
 }
 
 /** The warning saving waits for: every version is re-processed. It cannot close mid-request. */
-function ReprocessConfirm({
-  open,
-  onOpenChange,
-  change,
-  afterFailure,
-  refs,
-  pending,
-  ...p
-}: ConfirmProps) {
+function ReprocessConfirm({ change, afterFailure, refs, ...p }: ConfirmProps) {
   const language = useLanguage();
   const words = reprocessWarning(change, refs, afterFailure, language);
   const shared = sharedMessages[language];
   return (
-    <ConfirmRoot
-      open={open}
-      onOpenChange={(next) => {
-        if (!next && pending) return;
-        onOpenChange(next);
-      }}
+    <ConfirmDialog
+      {...p}
+      tone="default"
+      icon={<RefreshCw aria-hidden="true" data-icon-motion="refresh" />}
+      title={words.title}
+      description={<span className="text-foreground [overflow-wrap:anywhere]">{words.what}</span>}
+      confirmLabel={words.confirm}
+      pendingLabel={shared.saving}
     >
-      <ConfirmContent
-        className="sm:top-[22vh] sm:translate-y-0"
-        onCloseAutoFocus={p.onCloseAutoFocus}
-      >
-        <ConfirmTitle>{words.title}</ConfirmTitle>
-        <ConfirmDescription asChild>
-          <div>
-            <p className="text-foreground [overflow-wrap:anywhere]">{words.what}</p>
-            <p className="mt-1.5">{words.safe}</p>
-          </div>
-        </ConfirmDescription>
-        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <ConfirmCancel asChild>
-            <Button variant="ghost" aria-disabled={pending}>
-              {common[language].cancel}
-            </Button>
-          </ConfirmCancel>
-          <Button
-            type="button"
-            pending={pending}
-            aria-disabled={pending}
-            onClick={() => {
-              if (!pending) p.onConfirm();
-            }}
-            className="min-w-32"
-          >
-            {pending ? shared.saving : words.confirm}
-          </Button>
-        </div>
-      </ConfirmContent>
-    </ConfirmRoot>
+      <p className="mt-1.5">{words.safe}</p>
+    </ConfirmDialog>
   );
 }
 
@@ -143,6 +102,7 @@ function SaveRow({ ref, blocked, busy, hint }: SaveRowProps) {
         aria-describedby="paths-save-hint"
         className="min-w-32 aria-disabled:cursor-default"
       >
+        {!busy && <Save aria-hidden="true" data-icon-motion="pop" />}
         {busy ? shared.saving : t.save}
       </Button>
       <p id="paths-save-hint" className="text-body text-muted-foreground">
@@ -213,8 +173,10 @@ function RunAgain({ job, Line, lineShown, pending, onRun }: RunAgainProps) {
         onClick={() => {
           if (!pending) onRun();
         }}
-        className={`${secondary} mt-3 min-w-32`}
+        variant="outline"
+        className="mt-3 min-w-32"
       >
+        <RotateCcw aria-hidden="true" data-icon-motion="refresh" />
         {pending ? shared.queueing : t.runAgain}
         <span className="sr-only">{t.runAgainWhat[kind]}</span>
       </Button>

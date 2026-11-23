@@ -1,13 +1,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Check, CircleAlert } from "lucide-react";
+import { ArrowRight, Check, CircleAlert, RefreshCw, RotateCcw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useLanguage, useMessages } from "@/shared/lib/i18n";
 import { relativeTime } from "@/shared/lib/time";
+import { useNow } from "@/shared/lib/use-now";
 import { Button } from "@/shared/ui/button";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { refreshLibraries, reimportVersion, syncLibrary } from "../api/settings";
-import { useNow } from "../hooks/use-now";
 import { pageMessages } from "../messages/page";
 import { sharedMessages } from "../messages/shared";
 import { syncMessages } from "../messages/sync";
@@ -27,7 +27,6 @@ import {
   syncHeadline,
 } from "../model/settings";
 import { SettingsSection } from "./settings-section";
-import { secondary } from "./styles";
 
 interface Props {
   owner: string;
@@ -74,8 +73,10 @@ function Reimport({
           onClick={() => {
             if (!reimport.isPending) reimport.mutate();
           }}
-          className={`${secondary} min-w-32`}
+          variant="outline"
+          className="min-w-32"
         >
+          <RotateCcw aria-hidden="true" data-icon-motion="refresh" />
           {reimport.isPending ? shared.queueing : t.reimport}{" "}
           <span className="sr-only">{t.reimportOf(v.ref)}</span>
         </Button>
@@ -189,7 +190,8 @@ export function SyncSection({ owner, repo, Line, activity, onStart }: Props) {
         <Button
           type="button"
           variant="outline"
-          pending={sync.isPending}
+          // The arrows turn while the remote is asked (icon-motion.css, `refresh`).
+          aria-busy={sync.isPending}
           aria-disabled={sync.isPending}
           onClick={() => {
             if (sync.isPending) return;
@@ -198,6 +200,7 @@ export function SyncSection({ owner, repo, Line, activity, onStart }: Props) {
           }}
           className="min-w-32"
         >
+          <RefreshCw aria-hidden="true" data-icon-motion="refresh" />
           {sync.isPending ? t.checking : t.syncNow}
         </Button>
       </div>
