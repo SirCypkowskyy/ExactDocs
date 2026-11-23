@@ -1,5 +1,5 @@
 """Adapter contract of the external index backends themselves (#352): ``SearchBackend``,
-``VectorBackend`` and the optional ``NativeHybrid``.
+``VectorBackend`` and the optional ``NativeHybrid`` and ``NativeRerank``.
 
 What every backend must do, whatever engine it talks to: put (add or replace) and delete per
 version, report what it holds per version (the drift check), keep versions and libraries apart,
@@ -28,7 +28,7 @@ from exactdocs.retrieval.models import (
     TextQuery,
     search_terms,
 )
-from exactdocs.retrieval.ports import NativeHybrid, SearchBackend, VectorBackend
+from exactdocs.retrieval.ports import NativeHybrid, NativeRerank, SearchBackend, VectorBackend
 from index_backends import SEARCH_BACKEND_CASES, VECTOR_BACKEND_CASES
 
 T0 = datetime(2026, 11, 22, 12, 0, tzinfo=UTC)
@@ -316,3 +316,43 @@ async def test_native_hybrid_ranks_both_halves_within_the_versions(vectors: Vect
     assert {h.manifest_id for h in found} == {"m1"}
     assert {h.chunk_id for h in found} == {"words", "meaning"}  # one from each half
     assert [h.score for h in found] == sorted((h.score for h in found), reverse=True)
+
+
+async def test_native_rerank_reranks_the_hybrid_answer_within_the_versions(
+    vectors: VectorBackend,
+) -> None:
+    if not isinstance(vectors, NativeRerank):
+        pytest.skip("this backend leaves reranking to ExactDocs' own reranker")
+    s, v1, v2 = space(), manifest("m1"), manifest("m2", ref="v2")
+    retried = "Failed calls are retried three times with exponential backoff, then the client fails"
+    await vectors.put(
+        s,
+        v1,
+        [
+            entry(
+                v1, "install", "Install the client with pip", heading="Install", vector=(1, 0, 0)
+            ),
+            entry(v1, "retries", retried, heading="Retries", vector=(0.6, 0.8, 0.0)),
+            entry(
+                v1,
+                "tagged",
+                "How failed calls are retried",
+                heading="Retry policy",
+                tags=("api",),
+                vector=(0.0, 0.0, 1.0),
+            ),
+        ],
+    )
+    await vectors.put(s, v2, [entry(v2, "retries", retried, vector=(1.0, 0.0, 0.0))])
+    asked = query("how are failed calls retried")
+
+    found = await vectors.hybrid_reranked(s, ["m1"], asked, [1, 0, 0], NO_TAGS, 3)
+    tagged = await vectors.hybrid_reranked(s, ["m1"], asked, [1, 0, 0], TagFilter(tags=("api",)), 3)
+
+    assert {h.manifest_id for h in found.hits} == {"m1"}  # never another version
+    assert 0 < found.reranked <= len(found.hits) == 3
+    head = [h.score for h in found.hits[: found.reranked]]
+    assert head == sorted(head, reverse=True)  # the ranker's order
+    # The vector alone puts the installation first; the ranker puts what answers the query first.
+    assert {h.chunk_id for h in found.hits[:2]} == {"tagged", "retries"}
+    assert [h.chunk_id for h in tagged.hits] == ["tagged"]  # filtered before ranking
