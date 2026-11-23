@@ -1,13 +1,25 @@
-# ExactDocs
+---
+title: ExactDocs
+description: A self-hosted MCP server that gives coding agents the docs of the library version you use, verbatim, with the file and commit they came from.
+hide:
+  - navigation
+  - toc
+---
 
-ExactDocs is a self-hosted documentation server for AI coding agents. Point it at a git
-repository, choose the Markdown files you care about, and it serves them to your agent over MCP,
-and to people in a web UI, pinned to the exact tag, branch or commit you imported.
+<div class="xd-hero" markdown>
 
-Ask about `v1.3` and you get text from `v1.3`, verbatim, with its file path, heading, commit SHA
-and a link to the source. If `v1.3` has no answer, you get an explicit "no result", never a
-plausible paragraph from `v1.4`. Its MCP tools and library IDs match context7's, so a client set
-up for context7 switches with a URL change.
+# Documentation, word for word
+
+<p class="xd-lede">ExactDocs is a self-hosted MCP server that gives coding agents the docs of the
+library version you actually use. Point it at a git repository and it serves the Markdown there,
+verbatim, pinned to the tag, branch or commit you imported, with the file and commit each answer
+came from.</p>
+
+<p class="xd-actions">
+  <a class="md-button md-button--primary" href="getting-started/">Get started</a>
+  <a class="md-button" href="mcp/">Connect an agent</a>
+  <a class="md-button" href="https://github.com/SirCypkowskyy/ExactDocs">Source on GitHub</a>
+</p>
 
 ```bash
 docker run -d -p 3000:3000 -v exactdocs-data:/data ghcr.io/sircypkowskyy/exactdocs:latest
@@ -15,15 +27,121 @@ docker run -d -p 3000:3000 -v exactdocs-data:/data ghcr.io/sircypkowskyy/exactdo
 uvx exactdocs serve
 ```
 
-Open <http://localhost:3000>, create the admin account, add a library, then point your agent at
-`http://localhost:3000/mcp` (Streamable HTTP) or run `uvx exactdocs serve --stdio`.
+</div>
 
-```mermaid
-flowchart LR
-    repo[("Your git repositories")] -->|"import a pinned commit"| ed["ExactDocs"]
-    ed -->|"MCP: /mcp or stdio"| agent["AI agent"]
-    ed -->|"web UI and REST"| people["People and scripts"]
-```
+<figure class="xd-figure" markdown>
+
+![Two query-docs calls over MCP with the same question, How do I start the sandbox with Docker, one for /acme/payments/v1.3.0 and one for v1.4.0. The first chunk of each reply is shown verbatim, and the lines that differ are highlighted: docs/guide/setup.md and acme/payments:1.3 in v1.3.0, docs/guide/install.md and acme/payments:1.4 in v1.4.0.](assets/screenshots/mcp-light.webp#only-light)
+![Two query-docs calls over MCP with the same question, How do I start the sandbox with Docker, one for /acme/payments/v1.3.0 and one for v1.4.0. The first chunk of each reply is shown verbatim, and the lines that differ are highlighted: docs/guide/setup.md and acme/payments:1.3 in v1.3.0, docs/guide/install.md and acme/payments:1.4 in v1.4.0.](assets/screenshots/mcp-dark.webp#only-dark)
+
+<figcaption>An agent asks two versions of the same library one question. Both replies are real
+<code>query-docs</code> output from the test fixture library; the highlighted lines are the ones
+that differ. Ask about a version that is not imported and the answer is an explicit "not found",
+never another version's text.</figcaption>
+
+</figure>
+
+## What you get
+
+<div class="xd-grid" markdown>
+
+<div markdown>
+
+### The version is a hard filter
+
+Every library version is a git ref resolved to a commit SHA, and every search runs inside one
+version. In the [benchmark](benchmark/index.md), no configuration returned a chunk of another
+version for any of its 321 questions.
+
+</div>
+
+<div markdown>
+
+### The original text, with its source
+
+Markdown and MDX come back as written, and Sphinx reStructuredText as the Markdown it was
+converted to on import. Each chunk names its file, heading and commit, and links to the file on
+your git host.
+
+</div>
+
+<div markdown>
+
+### Your repositories, public or private
+
+GitHub, GitLab, Bitbucket, Gitea or any git server. You choose the folders and files, and only
+those are imported. Branches stay fresh by hand, on a schedule or by webhook.
+
+</div>
+
+<div markdown>
+
+### The tools agents already know
+
+`resolve-library-id` and `query-docs` match context7's, so a client set up for context7 needs only
+a new URL. More tools list, browse, read and search one version. See [MCP](mcp.md).
+
+</div>
+
+<div markdown>
+
+### Light until you ask for more
+
+The standard image runs BM25 on SQLite with no model. Hybrid search, rerankers, HyDE and an
+agentic mode are optional, on hosted models or on your CPU. See
+[Search and AI models](search.md).
+
+</div>
+
+<div markdown>
+
+### It stays on your network
+
+There is no telemetry. The only outbound connections go to the git hosts, model endpoints and
+trace collector you configure. Accounts, OpenID Connect and library roles decide who reads what.
+
+</div>
+
+</div>
+
+## What it looks like
+
+<figure class="xd-shot" markdown>
+
+![The ExactDocs reader showing the Resilience article of Acme Payments v1.4.0: the version picker with commit 3fb0656, the file tree, the rendered article with a Python code block and a table, and the article's headings on the right.](assets/screenshots/reader-light.webp#only-light){ loading=lazy }
+![The ExactDocs reader showing the Resilience article of Acme Payments v1.4.0: the version picker with commit 3fb0656, the file tree, the rendered article with a Python code block and a table, and the article's headings on the right.](assets/screenshots/reader-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>The reader: one article of one version, with its commit, its place in the file tree
+and its headings.</figcaption>
+
+</figure>
+
+<figure class="xd-shot" markdown>
+
+![The libraries page: Acme Payments with versions v1.4.0, v1.3.0 and next, and ExactDocs with v0.4.0, v0.3.1 and v0.2.0.](assets/screenshots/libraries-light.webp#only-light){ loading=lazy }
+![The libraries page: Acme Payments with versions v1.4.0, v1.3.0 and next, and ExactDocs with v0.4.0, v0.3.1 and v0.2.0.](assets/screenshots/libraries-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>Each library with its imported versions; the default one shows its commit.</figcaption>
+
+</figure>
+
+<figure class="xd-shot" markdown>
+
+![The search playground with the query how do I retry failed calls, ranked by hybrid search and by BM25 side by side.](assets/screenshots/playground-light.webp#only-light){ loading=lazy }
+![The search playground with the query how do I retry failed calls, ranked by hybrid search and by BM25 side by side.](assets/screenshots/playground-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>The search playground ranks one query in two retrieval modes side by side, with each
+result's BM25 and vector rank.</figcaption>
+
+</figure>
+
+## How well it finds things
+
+The [golden set](benchmark/golden-set.md) is 321 questions about the docs of Starlette, Pydantic,
+TanStack Query, Zod and Electron, at three pinned versions each. With no model at all, BM25 puts
+the section that answers in the top 5 for 81.7% of the 267 answerable questions, at 57 ms p95.
+Hybrid search on a small local embedding model reaches up to 84.6%. Hosted models have not run
+yet. [Recommended defaults](benchmark/defaults.md) has the numbers and the known weak spots.
 
 ## Use it
 
@@ -40,7 +158,7 @@ flowchart LR
 
 | Page | What is in it |
 |---|---|
-| [Architecture](architecture.md) | The modular monolith: domains, ports and adapters, the data model, background jobs, vertical slices, and the tests that enforce them |
+| [Architecture](architecture.md) | The system at a glance, then the modular monolith: domains, ports and adapters, the data model, background jobs, vertical slices, and the tests that enforce them |
 | [Flows](flows.md) | Import, re-sync, query, retrieval modes and authentication as diagrams |
 | [REST API](rest-api.md) | Conventions, authentication, errors, and the library, version, sync and job endpoints |
 | [Retrieval evals](evals.md) | The eval suite that compares retrieval modes |
@@ -57,7 +175,8 @@ flowchart LR
 
 !!! note "Which version this site describes"
     The site is published from the `main` branch, so it describes the latest release. Anything not
-    built yet is marked *planned*.
+    built yet is marked *planned*. The screenshots come from the `develop` branch, with the test
+    fixture library imported.
 
 The diagrams are [Mermaid](https://mermaid.js.org), and CI parses every one of them. This site
 loads Mermaid from unpkg, pinned to 12.3.0 (the version CI checks with). That request is made by

@@ -1,0 +1,163 @@
+/*
+ * The site in the web UI's colours (web/DESIGN.md): ink and two greys, one deep-teal route hue for
+ * links and place, and the station mark as the logo. The home page's hero and feature grid are
+ * the .xd-* classes below; every other page keeps the theme as it is.
+ */
+
+:root,
+[data-md-color-scheme="default"] {
+  --xd-route: #0b6677; /* oklch(0.47 0.08 215), the UI's --route */
+  --xd-route-soft: #ddf3f9;
+  --xd-ink: #141619;
+  --xd-muted: #595b5e;
+  --xd-raised: #f4f6f9;
+  --md-primary-fg-color: var(--xd-route);
+  --md-primary-fg-color--light: #2a8091;
+  --md-primary-fg-color--dark: #08505d;
+  --md-accent-fg-color: #08505d;
+  --md-accent-fg-color--transparent: #0b667714;
+  --md-typeset-a-color: var(--xd-route);
+}
+
+[data-md-color-scheme="slate"] {
+  --xd-route: #62becd; /* oklch(0.75 0.09 210), the UI's dark --route */
+  --xd-route-soft: #0f2b31;
+  --xd-ink: #edeef0;
+  --xd-muted: #a9abad;
+  --xd-raised: #161718;
+  --md-primary-fg-color: var(--xd-route);
+  --md-primary-fg-color--light: #8fd3de;
+  --md-primary-fg-color--dark: #3c9fb0;
+  --md-primary-bg-color: #0f1112;
+  --md-accent-fg-color: #8fd3de;
+  --md-accent-fg-color--transparent: #62becd1f;
+  --md-typeset-a-color: var(--xd-route);
+}
+
+/* The logo is the light mark; on the dark scheme it swaps to the dark one. */
+[data-md-color-scheme="slate"] .md-logo img {
+  content: url("../assets/logo/exactdocs-mark-dark.svg");
+}
+
+::selection {
+  background: color-mix(in srgb, var(--xd-route) 26%, transparent);
+}
+
+/* ---------------------------------------------------------------- home page */
+
+.md-typeset .xd-hero {
+  margin: 0.5rem 0 2.75rem;
+}
+
+.md-typeset .xd-hero > :not(h1) {
+  max-width: 40rem;
+}
+
+.md-typeset .xd-hero h1 {
+  margin: 0 0 0.9rem;
+  font-size: clamp(2.1rem, 1.2rem + 3.4vw, 3.3rem);
+  font-weight: 600;
+  line-height: 1.04;
+  letter-spacing: -0.025em;
+  color: var(--xd-ink);
+  text-wrap: balance;
+}
+
+.md-typeset .xd-lede {
+  margin: 0 0 1.5rem;
+  font-size: 1.15em;
+  line-height: 1.55;
+  color: var(--xd-ink);
+}
+
+.md-typeset .xd-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0 0 1.5rem;
+}
+
+.md-typeset .xd-actions .md-button {
+  margin: 0;
+  border-radius: 0.3rem;
+  transition:
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1),
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.md-typeset .xd-actions .md-button:active {
+  transform: scale(0.97);
+}
+
+.md-typeset .xd-hero pre {
+  margin: 0;
+}
+
+/* The figure that carries the page: one question, two versions. */
+.md-typeset .xd-figure {
+  margin: 0 0 3rem;
+}
+
+.md-typeset .xd-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 0.6rem;
+}
+
+/* Light and dark captures: the theme hides #only-light / #only-dark, but `display: block` above
+   and below would show both, so the pairs are switched here. */
+.md-typeset :is(.xd-figure, .xd-shot) img[src$="#only-dark"],
+[data-md-color-scheme="slate"] .md-typeset :is(.xd-figure, .xd-shot) img[src$="#only-light"] {
+  display: none;
+}
+
+[data-md-color-scheme="slate"] .md-typeset :is(.xd-figure, .xd-shot) img[src$="#only-dark"] {
+  display: block;
+}
+
+.md-typeset .xd-figure figcaption,
+.md-typeset .xd-shot figcaption {
+  max-width: 40rem;
+  margin: 0.7rem 0 0;
+  font-size: 0.8em;
+  line-height: 1.5;
+  color: var(--xd-muted);
+  text-align: left;
+}
+
+/* The feature grid: text in columns, set apart by space, no boxes. */
+.md-typeset .xd-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1.75rem 2.25rem;
+  margin: 1.25rem 0 3rem;
+}
+
+.md-typeset .xd-grid h3 {
+  margin: 0 0 0.4rem;
+  font-size: 1em;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--xd-ink);
+}
+
+.md-typeset .xd-grid p {
+  margin: 0;
+  line-height: 1.6;
+}
+
+/* Screenshots, one under the other at the content width. */
+.md-typeset .xd-shot {
+  margin: 0 0 2.25rem;
+}
+
+.md-typeset .xd-shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 0.6rem;
+  outline: 1px solid color-mix(in srgb, var(--xd-ink) 9%, transparent);
+  outline-offset: -1px;
+}
