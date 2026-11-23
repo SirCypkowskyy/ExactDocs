@@ -20,6 +20,15 @@ ran a subset:
 is what was `h3-max-4000`, and `h6` what was `default`. BM25 at `default` and at `h6` was run
 again with #381 and matched the recorded recall.
 
+**Intervals and tests** ([Intervals and significance](method.md#intervals-and-significance)) need
+every case's outcome, and the run kept aggregates only. For #489, BM25 was run again at every
+chunking (23 November 2026, Linux x86_64, 4 CPUs): its recall@k, MRR, nDCG@10, section recall and
+rates matched the recorded ones exactly, overall, per kind and per project, so its per-case
+outcomes were added to the recorded results (each says so in `rows_from`) with the intervals and
+tests they give. Every other number, the latencies included, is still the recorded run's. The
+configurations with a model were not run again (that takes hours of embedding): they show no
+interval and no test until the next recorded run.
+
 **Every hosted configuration is not measured yet**: hybrid on a hosted embedding model, HyDE,
 agentic search and every configuration reranked by the LLM judge. They run only from the manual
 *Retrieval eval (real providers)* workflow (`.github/workflows/eval-providers.yml`) with the
@@ -53,10 +62,16 @@ agentic search and every configuration reranked by the LLM judge. They run only 
 
 ## What it shows
 
-- BM25 is best at `default` (split level 3, 4,000 characters): 81.7% recall@5, against 79.8% at
-  `h6`, where every heading starts a chunk. #381 made it the default for new libraries.
+- BM25 is best at `default` (split level 3, 4,000 characters): 81.7% recall@5 (95% interval
+  76.8% to 86.1%), against 79.8% at `h6`, where every heading starts a chunk. That recall@5 gap
+  alone is not significant (p 0.07), but recall@10, MRR and nDCG@10 are significantly better at
+  `default`, and `h2` and `merge-400` significantly worse. #381 made it the default for new
+  libraries.
 - Hybrid search on bge-small is the best local configuration, at `h6`, but only 3 points of
-  recall@5 above BM25 at `default`, under the 5-point margin.
+  recall@5 above BM25 at `default`, under the 5-point margin, and inside BM25's own interval;
+  it cannot be tested until a recorded run keeps its per-case outcomes.
+- The intervals per kind and per project are about twice as wide as the whole set's (around
+  ±10 points of recall@5 on some 50 cases): differences of a few points there say little.
 - The cross-encoder on BM25 matches hybrid at `h6` (84.6%) but adds about 1.3 s per
   question (p50), and loses recall at `h2`, whose chunks are longer than its window.
 - snowflake-arctic-embed-s scores below BM25.
