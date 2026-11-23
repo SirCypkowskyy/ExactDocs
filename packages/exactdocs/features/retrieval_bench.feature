@@ -18,3 +18,15 @@ Feature: A retrieval benchmark compares modes, models and chunking on the golden
     When the retrieval benchmark runs every configuration at two chunking configurations
     Then the summary names the best configuration with no models, with local models only and with hosted models
     And each with its cost per 1000 questions
+
+  Scenario: Each metric comes with an interval
+    Given a recorded retrieval run on the golden set
+    When the report is rendered
+    Then recall@k, MRR and nDCG@10 of each configuration show a 95% confidence interval
+    And the report records the seed and the number of resamples
+
+  Scenario: A dearer default needs a significant gain
+    Given configuration B beats the budget default A by more than the margin on recall@5
+    And the paired test of B against A on the same cases is not significant at 5%
+    When the defaults are chosen
+    Then A stays the default and the reason says the difference is not significant
