@@ -58,10 +58,12 @@ env:
   EVAL_LLM_MODEL: ${{ vars.EVAL_LLM_MODEL }}
   EVAL_JUDGE_MODEL: ${{ vars.EVAL_JUDGE_MODEL }}
 
+# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing.md "CI/CD and
+# runners"); it uses none of the GitHub-hosted minutes.
 jobs:
   eval:
     name: Retrieval eval with real providers
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
     timeout-minutes: 60
     environment: eval-providers # its protection rules decide who may spend the keys
     env:
@@ -86,7 +88,7 @@ jobs:
             fi
           done
       # The key is given to the two steps that call the provider only, not to `uv sync`
-      # (third-party build backends) or the other steps of the job.
+      # (third-party build backends) or the other steps of this persistent runner.
       - name: Check the roles reach the provider (exactdocs ai check)
         env:
           EXACTDOCS_AI__PROVIDERS__EVAL__API_KEY: ${{ secrets.EVAL_PROVIDER_API_KEY }}
@@ -108,12 +110,11 @@ jobs:
   # judge over every base, HyDE and agentic, at every chunking configuration, next to BM25 so the
   # summary's recommendation compares them. The `+ce` and local `+judge` configurations need the
   # local models too, pulled as in the release's eval job. Several hours on the runner's CPU with
-  # every chunking; narrow it with benchmark_args (e.g. --chunkings default). 360 minutes is the
-  # most a GitHub-hosted job may run (#478): a run with every chunking may not fit in it.
+  # every chunking; narrow it with benchmark_args (e.g. --chunkings default).
   benchmark:
     name: Retrieval benchmark with real providers
     if: ${{ inputs.benchmark }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
     timeout-minutes: 360
     environment: eval-providers # its protection rules decide who may spend the keys
     env:

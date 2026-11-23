@@ -8,8 +8,15 @@
 # variants of deploy/Dockerfile (#246). Nothing is published before the retrieval eval passes
 # (job `eval`, docs/evals.md). See docs/releasing.md.
 #
-# GitHub-hosted runners (#478): ubuntu-24.04 (amd64) for everything except the arm64 image
-# builds, which run natively on ubuntu-24.04-arm. No QEMU anywhere.
+# Runners (#478, docs/releasing.md "CI/CD and runners"), switched by the repository variable
+# RUNNER_MODE (Settings -> Secrets and variables -> Actions -> Variables):
+#   hybrid (default, also when unset): the self-hosted ARM64 runner [self-hosted, linux, ARM64,
+#     exactdocs] runs the eval, the web and Python builds and the arm64 image legs; GitHub-hosted
+#     ubuntu-24.04 runs the amd64 image legs (natively) and the short jobs that validate the tag,
+#     publish and sign (a fresh VM each time).
+#   self-hosted (when the GitHub-hosted minutes ran out): every job on the self-hosted runner.
+#     The amd64 legs are cross-built there (QEMU runs only the runtime stage's apt-get, never
+#     Python) and checked with `check_artifacts.py --no-python`.
 #
 # A manual run (workflow_dispatch, from any branch) is a DRY RUN: no tag is checked, the version
 # is 0.0.0.dev<run number>, and the eval, the distributions, every image build, size check and
@@ -32,7 +39,7 @@ permissions:
 jobs:
   meta:
     name: Validate tag
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     outputs:
       version: ${{ steps.meta.outputs.version }}
       channel: ${{ steps.meta.outputs.channel }}
@@ -96,9 +103,10 @@ jobs:
   eval:
     name: Retrieval eval
     needs: meta
-    runs-on: ubuntu-24.04
-    # A hosted runner has fewer cores than the old self-hosted VMs: the gating steps take about
-    # 10 minutes there, the report-only local models most of the rest.
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    # On the self-hosted runner in both modes: the heaviest job, and nothing in it needs x86. The
+    # gating steps take about 10 minutes on a 2-4 core runner, the report-only local models most
+    # of the rest.
     timeout-minutes: 75
     services:
       postgres:
@@ -217,7 +225,7 @@ jobs:
   web:
     name: Build web UI
     needs: meta
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
     defaults:
       run:
         working-directory: web
@@ -242,7 +250,7 @@ jobs:
   python:
     name: Build Python distributions
     needs: [meta, web]
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
     env:
       UV_DYNAMIC_VERSIONING_BYPASS: ${{ needs.meta.outputs.version }}
     steps:
@@ -278,7 +286,7 @@ jobs:
     name: Publish exactdocs-kernel to PyPI
     needs: [meta, python, eval]
     if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     environment:
       name: pypi
       url: https://pypi.org/project/exactdocs-kernel/${{ needs.meta.outputs.version }}/
@@ -296,7 +304,7 @@ jobs:
     name: Publish exactdocs to PyPI
     needs: [meta, pypi-kernel]
     if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     environment:
       name: pypi-exactdocs
       url: https://pypi.org/project/exactdocs/${{ needs.meta.outputs.version }}/
@@ -311,14 +319,18 @@ jobs:
       - run: uv publish --trusted-publishing always dist/exactdocs-*
 
   # The three image variants (#246): base (BM25, model-free), -ai (exactdocs[ai]) and -local
-  # (exactdocs[ai,local] with the default models), each for linux/amd64 and linux/arm64. Each
-  # variant is built natively on a runner of its architecture (ubuntu-24.04, ubuntu-24.04-arm),
-  # checked against its size budget and scanned before anything is pushed: `image` needs all six
-  # scans. No QEMU: Python 3.14 crashes under it (deploy/Dockerfile).
+  # (exactdocs[ai,local] with the default models), each for linux/amd64 and linux/arm64, checked
+  # against its size budget and scanned before anything is pushed: `image` needs all six scans.
+  # arm64 is built natively on the self-hosted runner; amd64 natively on ubuntu-24.04 in hybrid
+  # mode, or cross-built on the self-hosted runner in self-hosted mode: the Python stages run
+  # natively there and cross-install the venv, and only the runtime stage's apt-get runs under
+  # QEMU, because Python 3.14 crashes under it (deploy/Dockerfile). So a cross-built image's
+  # check runs no Python in it (`--no-python`: size, packages from their .dist-info, model
+  # files; the -local default models are checked by the arm64 leg, the same files).
   image-scan:
     name: Scan image (${{ matrix.variant }}, ${{ matrix.arch }})
     needs: meta
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    runs-on: ${{ (matrix.arch == 'arm64' || vars.RUNNER_MODE == 'self-hosted') && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
     strategy:
       fail-fast: false # one variant's finding must not hide another's
@@ -328,16 +340,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # Hosted runners start with little free disk; -local, the build cache and the scan's
-      # `docker save` copy need several GB.
+      # `docker save` copy need several GB. Never on the self-hosted runner.
       - name: Free disk space
+        if: runner.environment == 'github-hosted'
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
       # Debian security updates: a cached apt layer would keep the package set of an older
       # build, so DEBIAN_REFRESH is the release's date (needs.meta.outputs.refresh, the same in
       # `image`, so it reuses these layers).
+      # binfmt for the cross-built amd64 leg on the ARM64 runner (self-hosted mode only).
+      - uses: docker/setup-qemu-action@v4
+        if: matrix.arch == 'amd64' && runner.arch == 'ARM64'
+        with:
+          platforms: amd64
       - uses: docker/setup-buildx-action@v4
-      # Built natively and loaded. The gate fails on a fixable CRITICAL/HIGH finding; accepted
+      # Built and loaded. The gate fails on a fixable CRITICAL/HIGH finding; accepted
       # ones are in .trivyignore (docs/releasing.md). The GitHub Actions cache, one scope per
       # variant and architecture, hands these layers to the build in `image`.
       - name: Build the image to scan
@@ -348,7 +366,7 @@ jobs:
           target: ${{ matrix.variant }}
           platforms: linux/${{ matrix.arch }}
           load: true
-          tags: exactdocs:scan-${{ matrix.variant }}
+          tags: exactdocs:scan-${{ matrix.variant }}-${{ matrix.arch }}
           build-args: |
             VERSION=${{ needs.meta.outputs.version }}
             REVISION=${{ github.sha }}
@@ -357,21 +375,31 @@ jobs:
           cache-from: type=gha,scope=exactdocs-${{ matrix.variant }}-${{ matrix.arch }}
           cache-to: type=gha,scope=exactdocs-${{ matrix.variant }}-${{ matrix.arch }},mode=max
       - name: Size budget, packages and models
-        run: python3 deploy/check_artifacts.py image exactdocs:scan-${{ matrix.variant }} ${{ matrix.variant }}
+        env:
+          DOCKER_DEFAULT_PLATFORM: linux/${{ matrix.arch }}
+          NO_PYTHON: ${{ matrix.arch == 'amd64' && runner.arch == 'ARM64' && '--no-python' || '' }}
+        run: >-
+          python3 deploy/check_artifacts.py image exactdocs:scan-${{ matrix.variant }}-${{ matrix.arch }}
+          ${{ matrix.variant }} ${NO_PYTHON:+"$NO_PYTHON"}
+      # Trivy reads the saved image's files and runs nothing in it, so emulation does not matter.
       - name: Trivy scan
         uses: ./.github/actions/trivy-gate
         with:
-          image: exactdocs:scan-${{ matrix.variant }}
+          image: exactdocs:scan-${{ matrix.variant }}-${{ matrix.arch }}
           report-name: trivy-report-${{ matrix.variant }}-${{ matrix.arch }}
           retention-days: 30
+      # The self-hosted runner is persistent: drop the scanned image (the cache keeps the layers).
+      - name: Remove the scanned image
+        if: always()
+        run: docker image rm -f "exactdocs:scan-${{ matrix.variant }}-${{ matrix.arch }}" >/dev/null || true
 
-  # Each variant and architecture again, natively and from the scan's cache (the same build
-  # arguments, so the same layers), now with SBOM and provenance attestations, pushed by digest
+  # Each variant and architecture again, on the same kind of runner and from the scan's cache (the
+  # same build arguments, so the same layers), now with SBOM and provenance attestations, pushed by digest
   # only: no tag until `image-publish`. A dry run builds it and pushes nothing.
   image:
     name: Build image (${{ matrix.variant }}, ${{ matrix.arch }})
     needs: [meta, image-scan, eval]
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    runs-on: ${{ (matrix.arch == 'arm64' || vars.RUNNER_MODE == 'self-hosted') && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
     permissions:
       contents: read
@@ -383,7 +411,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Free disk space
+        if: runner.environment == 'github-hosted'
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: docker/setup-qemu-action@v4
+        if: matrix.arch == 'amd64' && runner.arch == 'ARM64'
+        with:
+          platforms: amd64
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         if: github.event_name == 'push'
@@ -432,7 +465,7 @@ jobs:
     name: Publish image to ghcr.io (${{ matrix.variant }})
     needs: [meta, image]
     if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
       packages: write
@@ -527,7 +560,7 @@ jobs:
     name: GitHub Release
     needs: [meta, python, pypi-kernel, pypi, image-publish]
     if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     permissions:
       contents: write
     steps:

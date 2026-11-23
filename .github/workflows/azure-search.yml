@@ -36,10 +36,12 @@ permissions:
 env:
   FORCE_COLOR: "1"
 
+# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing.md "CI/CD and
+# runners"); it uses none of the GitHub-hosted minutes.
 jobs:
   contract:
     name: Contract suites against Azure AI Search
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
     timeout-minutes: 30
     environment: azure-search # its protection rules decide who may use the service's key
     steps:
