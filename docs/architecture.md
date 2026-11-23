@@ -5,6 +5,41 @@ into **domains** with hard boundaries. Inside every domain we follow **hexagonal
 (ports & adapters) with the dependency rule of clean architecture. The React client mirrors the
 same idea with **vertical slices**. All of this is enforced by tests, not by convention.
 
+## The system at a glance
+
+```mermaid
+flowchart TD
+    agent["AI agent<br/>Claude Code, Cursor, ChatGPT, ..."]
+    browser[Browser]
+    cli["exactdocs CLI"]
+    subgraph app ["ExactDocs (one image, one process, or several on PostgreSQL)"]
+        mcp["FastMCP<br/>/mcp (HTTP) or stdio"]
+        api["FastAPI<br/>/api/v1"]
+        ui["Web UI<br/>static build"]
+        retrieval["Retrieval<br/>version filter → BM25, vectors, rerank, agent"]
+        catalog["Catalog<br/>libraries, versions, manifests"]
+        importer["Ingestion and job worker<br/>fetch → parse → chunk → index → activate"]
+        identity["Identity<br/>accounts, sessions, API tokens"]
+        mcp --> retrieval & catalog
+        api --> retrieval & catalog & importer & identity
+        importer --> catalog & retrieval
+    end
+    db[("SQLite in the data directory<br/>or PostgreSQL")]
+    git[("Git hosts you configure<br/>GitHub, GitLab, Bitbucket, ...")]
+    models[/"Optional model endpoints or local models<br/>embeddings, reranker, LLM"/]
+    agent -->|MCP| mcp
+    browser --> ui
+    browser -->|REST| api
+    cli -->|REST| api
+    app --> db
+    importer -->|git fetch of the pinned commit| git
+    retrieval -.-> models
+```
+
+An import fetches only the pinned commit and only the selected files, splits every article at its
+headings and indexes it. A new version becomes visible in one step, once it is complete, and a
+re-sync of a branch re-chunks only the files that changed. [Flows](flows.md) draws each path.
+
 ## Repository layout
 
 | Path | What it is |
