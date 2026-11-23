@@ -13,12 +13,12 @@ import { Tooltip } from "@/shared/ui/tooltip";
 import { messages } from "../messages";
 import {
   expiryOf,
+  lastUseOf,
   scopeOf,
   sortTime,
   TOKEN_EXPIRIES,
   TOKEN_SCOPES,
   TOKEN_USES,
-  useOf,
 } from "../model/list-view";
 import type { Token } from "../model/token";
 
@@ -222,7 +222,7 @@ export const columnsOf = (m: TokensMessages): ColumnDef<Token>[] => [
   },
   {
     id: "used",
-    accessorFn: (token) => useOf(token, Date.now()),
+    accessorFn: (token) => lastUseOf(token, Date.now()),
     header: m.list.columns.used,
     sortDescFirst: true,
     enableGlobalFilter: false,

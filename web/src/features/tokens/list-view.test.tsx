@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TestRouter } from "@/shared/lib/test-router";
 import { TooltipProvider } from "@/shared/ui/tooltip";
 import { TokensSection } from "./index";
-import { expiryOf, parseTokensView, scopeOf, useOf } from "./model/list-view";
+import { expiryOf, lastUseOf, parseTokensView, scopeOf } from "./model/list-view";
 
 const NOW = Date.parse("2026-11-20T12:00:00Z");
 const DAY = 86_400_000;
@@ -104,7 +104,11 @@ describe("the token table", () => {
       "later",
       "never",
     ]);
-    expect([laptop, ciMain, desk].map((t) => useOf(t, NOW))).toEqual(["recent", "older", "never"]);
+    expect([laptop, ciMain, desk].map((t) => lastUseOf(t, NOW))).toEqual([
+      "recent",
+      "older",
+      "never",
+    ]);
   });
 
   it("asks once, newest first, and searches names in the browser", async () => {

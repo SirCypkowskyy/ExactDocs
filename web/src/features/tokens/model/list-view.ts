@@ -64,7 +64,7 @@ export function expiryOf(token: Token, now: number): TokenExpiry {
   return at <= now ? "expired" : at - now <= SOON ? "soon" : "later";
 }
 
-export function useOf(token: Token, now: number): TokenUse {
+export function lastUseOf(token: Token, now: number): TokenUse {
   if (token.last_used_at === null) return "never";
   return now - Date.parse(token.last_used_at) <= RECENT ? "recent" : "older";
 }
