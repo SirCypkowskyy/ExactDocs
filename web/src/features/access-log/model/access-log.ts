@@ -1,6 +1,12 @@
 import type { components } from "@/shared/lib/api-schema";
-import { HttpError, type Query } from "@/shared/lib/http";
+import { HttpError } from "@/shared/lib/http";
 import { currentLanguage, type Language } from "@/shared/lib/i18n";
+import {
+  parseFacet,
+  parseTableSearch,
+  type TableConfig,
+  type TableSearch,
+} from "@/shared/ui/data-table/table-search";
 import { messages } from "../messages";
 
 export type AccessEvent = components["schemas"]["AccessEventSummary"];
@@ -8,7 +14,7 @@ export type AccessLogPage = components["schemas"]["AccessLogPage"];
 export type Change = AccessEvent["change"];
 
 /** Every change the log records, in the order the filter offers them. */
-const CHANGES = [
+export const CHANGES = [
   "granted",
   "revoked",
   "ownership_transferred",
@@ -17,28 +23,60 @@ const CHANGES = [
 ] as const satisfies readonly Change[];
 const LIBRARY_ID = /^\/[^/\s]+\/[^/\s]+$/;
 
-/** What the URL holds: one change to show, and (operators' log) one library. */
-export interface AccessLogView {
-  change?: Change | undefined;
+/** Every library's log (operators) and one library's (its admins): newest first, no other sort. */
+export const ACCESS_LOG_TABLE: TableConfig = { id: "access-log", sortFields: [] };
+export const LIBRARY_ACCESS_LOG_TABLE: TableConfig = { id: "library-access-log", sortFields: [] };
+
+/** What the URL holds: the changes to show, (operators' log) one library, the page and its size. */
+export interface AccessLogView extends TableSearch {
+  change?: Change[] | undefined;
   library?: string | undefined;
 }
 
 /** Anything unknown in a shared or hand-edited URL is dropped, never sent to the API. */
 export function parseAccessLogView(search: Record<string, unknown>): AccessLogView {
-  const change = typeof search.change === "string" ? search.change : "";
+  // The log has no text filter and one order: only the page and its size are kept.
+  const { page, size } = parseTableSearch(search, ACCESS_LOG_TABLE);
   const library = typeof search.library === "string" ? search.library.trim() : "";
   return {
-    change: (CHANGES as readonly string[]).includes(change) ? (change as Change) : undefined,
+    page,
+    size,
+    change: parseFacet(search.change, CHANGES),
     library: LIBRARY_ID.test(library) ? library : undefined,
   };
+}
+
+/** A library's own log filters by change only. */
+export function parseLibraryAccessLogView(search: Record<string, unknown>): AccessLogView {
+  const { page, size } = parseTableSearch(search, LIBRARY_ACCESS_LOG_TABLE);
+  return { page, size, change: parseFacet(search.change, CHANGES) };
 }
 
 /** Whether a library ID typed into the operators' filter is one the API accepts. */
 export const isLibraryId = (text: string) => LIBRARY_ID.test(text.trim());
 
-/** The query of `GET .../access-log` for a view and a page cursor. */
-export function accessLogQuery(view: AccessLogView, cursor: string | null): Query {
-  return { limit: 50, change: view.change, library: view.library, cursor };
+/** What `GET .../access-log` filters by: the view without its page and size. */
+export interface AccessLogFilters {
+  change?: readonly string[];
+  library?: string;
+}
+
+export const accessLogFilters = (view: AccessLogView): AccessLogFilters => ({
+  ...(view.change && { change: view.change }),
+  ...(view.library && { library: view.library }),
+});
+
+/** The query string of `GET .../access-log` for some filters and one request's page. */
+export function accessLogParams(
+  filters: AccessLogFilters,
+  limit: number,
+  cursor?: string | null,
+): string {
+  const p = new URLSearchParams({ limit: String(limit) });
+  for (const change of filters.change ?? []) p.append("change", change);
+  if (filters.library) p.set("library", filters.library);
+  if (cursor) p.set("cursor", cursor);
+  return p.toString();
 }
 
 /**
@@ -120,10 +158,4 @@ export function explainAccessLogError(
   if (error.status === 404) return t.notFound;
   if (error.code === "invalid_cursor") return t.invalidCursor;
   return t.other(error.status);
-}
-
-/** A library's own log filters by change only. */
-export function parseLibraryAccessLogView(search: Record<string, unknown>): AccessLogView {
-  const { change } = parseAccessLogView(search);
-  return change ? { change } : {};
 }
