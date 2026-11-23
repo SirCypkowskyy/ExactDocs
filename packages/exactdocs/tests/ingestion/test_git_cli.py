@@ -433,11 +433,15 @@ async def test_a_local_repository_owned_by_someone_else_can_still_be_listed(
         stderr=asyncio.subprocess.PIPE,
     )
     _, stderr = await probe.communicate()
-    assert b"dubious ownership" in stderr  # the switch works: this is the problem case
+    # Where this git refuses (the image's Debian git does, and so did the old CI runners'), this
+    # is the problem case and the test proves the workaround. Some git builds (2.56.1 on the
+    # GitHub-hosted runners, #468) don't refuse a foreign-owned repository over file:// at all;
+    # the listing must work there too. The image's smoke test imports a foreign-owned mount.
+    refused = b"dubious ownership" in stderr
 
     refs = await GitCli(git=foreign).list_refs(repository(docs_repo.file_url))
 
-    assert refs.default_branch == "main"
+    assert refs.default_branch == "main", f"git refused without the workaround: {refused}"
 
 
 async def test_a_local_permission_error_is_not_mistaken_for_a_login_prompt(
