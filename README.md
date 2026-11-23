@@ -153,6 +153,9 @@ benchmark numbers. See [Search and AI models](docs/search.md).
   A backend is an optional extra behind one adapter; a backend that fuses keyword and vector
   search itself serves hybrid search natively. See
   [External index backends](docs/architecture.md#external-index-backends).
+  Available:
+  - [Pinecone](docs/configuration.md#pinecone) (vectors, sparse-dense hybrid optional):
+    `exactdocs[pinecone]`.
 
 ## How it works
 

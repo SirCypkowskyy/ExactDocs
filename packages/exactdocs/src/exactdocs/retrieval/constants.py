@@ -164,6 +164,21 @@ PINECONE_METRICS: Final[frozenset[str]] = frozenset({"cosine", "dotproduct"})
 """Index metrics the backend can use: vectors are unit length, so both rank by cosine."""
 PINECONE_HYBRID_METRIC: Final[str] = "dotproduct"
 """The metric a sparse-dense (hybrid) index needs."""
+PINECONE_OPTIONS: Final[frozenset[str]] = frozenset({
+    "host",
+    "index",
+    "api_key",
+    "api_key_file",
+    "namespace",
+    "hybrid",
+    "hybrid_alpha",
+    "timeout",
+})  # fmt: skip
+"""The options ``[index_backends.pinecone]`` takes; any other is refused at start."""
+PINECONE_TRUE: Final[frozenset[str]] = frozenset({"1", "true", "yes", "on"})
+"""How a yes/no backend option says yes in the environment (any letter case)."""
+PINECONE_FALSE: Final[frozenset[str]] = frozenset({"0", "false", "no", "off"})
+"""How a yes/no backend option says no in the environment (any letter case)."""
 
 # ---------------------------------------------------------------- adapters.driven.memory
 MEMORY_FORMAT: Final[int] = 1

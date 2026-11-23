@@ -32,6 +32,7 @@ from pinecone import AsyncIndex, AsyncPinecone, PineconeError
 from exactdocs.retrieval.constants import (
     PINECONE_BACKEND,
     PINECONE_DELETE_BATCH,
+    PINECONE_FALSE,
     PINECONE_FETCH_BATCH,
     PINECONE_HEADING_WEIGHT,
     PINECONE_HYBRID_ALPHA,
@@ -42,8 +43,10 @@ from exactdocs.retrieval.constants import (
     PINECONE_MAX_TOP_K,
     PINECONE_METRICS,
     PINECONE_NAMESPACE,
+    PINECONE_OPTIONS,
     PINECONE_SPARSE_TERMS,
     PINECONE_TIMEOUT_SECONDS,
+    PINECONE_TRUE,
     PINECONE_UPSERT_BATCH,
 )
 from exactdocs.retrieval.errors import IndexBackendUnavailableError
@@ -64,19 +67,6 @@ from exactdocs.retrieval.models import (
 
 type _Filter = dict[str, Any]
 type _Sparse = dict[str, list[int] | list[float]]
-
-_OPTIONS = frozenset({
-    "host",
-    "index",
-    "api_key",
-    "api_key_file",
-    "namespace",
-    "hybrid",
-    "hybrid_alpha",
-    "timeout",
-})  # fmt: skip
-_TRUE = frozenset({"1", "true", "yes", "on"})
-_FALSE = frozenset({"0", "false", "no", "off"})
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -697,8 +687,8 @@ def _flag(options: Mapping[str, object], key: str) -> bool:
     if value is None or isinstance(value, bool):
         return bool(value)
     text = str(value).strip().lower()
-    if text in _TRUE | _FALSE:
-        return text in _TRUE
+    if text in PINECONE_TRUE | PINECONE_FALSE:
+        return text in PINECONE_TRUE
     message = f"{key} must be true or false"
     raise ValueError(message)
 
@@ -745,13 +735,15 @@ def pinecone_options(options: Mapping[str, object]) -> PineconeOptions:
     Raises:
         ValueError: An option is unknown, missing, or out of range.
     """
-    unknown = sorted(set(options) - _OPTIONS)
+    unknown = sorted(set(options) - PINECONE_OPTIONS)
     if unknown:
-        message = f"unknown option(s) {', '.join(unknown)} (known: {', '.join(sorted(_OPTIONS))})"
+        message = (
+            f"unknown option(s) {', '.join(unknown)} (known: {', '.join(sorted(PINECONE_OPTIONS))})"
+        )
         raise ValueError(message)
     host, index = _text(options, "host"), _text(options, "index")
     if (host is None) == (index is None):
-        message = "set host (the index's host) or index (its name), not both"
+        message = "set one of host (the index's host) and index (its name)"
         raise ValueError(message)
     api_key, key_file = _text(options, "api_key"), _text(options, "api_key_file")
     if api_key is not None and key_file is not None:

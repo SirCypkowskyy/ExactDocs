@@ -1346,6 +1346,13 @@ backend ports themselves, native hybrid included when implemented). A factory ta
 of `[index_backends.<name>]` (`EXACTDOCS_INDEX_BACKENDS__<NAME>__<OPTION>`) and raises
 `ValueError` for invalid ones; secrets come from the environment or `*_file` options.
 
+**The backends.** Their options, authentication and sizing are in
+[Configuration](configuration.md#external-index-backends).
+
+| Backend | Indexes | Extra | Native hybrid | How it keeps versions apart | Tested against |
+|---|---|---|---|---|---|
+| `pinecone` (#362) | vectors | `pinecone` (the SDK's HTTP client: no gRPC, no protobuf) | with `hybrid = true` on a `dotproduct` index: one sparse-dense query | one namespace per instance; metadata filters on space, manifest and tags in every query; vector IDs `<manifest>#<space>#<chunk>`, so a version is deleted by listing its ID prefix (serverless indexes cannot delete by filter) | Pinecone Local (`pinecone-index` image, amd64 only) by hand, a real index in the manual `pinecone.yml` workflow; CI runs the adapter's logic against a stand-in |
+
 ## AI retrieval (planned)
 
 Mostly not built yet; decided in [AI retrieval decisions](decisions/ai-retrieval.md) (#240) for the

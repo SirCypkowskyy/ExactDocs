@@ -234,8 +234,8 @@ def test_the_options_are_checked_and_defaulted() -> None:
 @pytest.mark.parametrize(
     ("options", "message"),
     [
-        ({"api_key": "k"}, "host .* or index"),
-        ({**BASE, "index": "docs"}, "not both"),
+        ({"api_key": "k"}, "one of host"),
+        ({**BASE, "index": "docs"}, "one of host"),
         ({"host": "h"}, "api_key"),
         ({**BASE, "api_key_file": "/nowhere"}, "not both"),
         ({**BASE, "collection": "x"}, "unknown option"),
