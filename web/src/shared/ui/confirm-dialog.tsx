@@ -53,7 +53,10 @@ interface ConfirmDialogProps {
   error?: string | undefined;
   errorTone?: "error" | "info" | undefined;
   onConfirm: () => void;
-  /** Where focus goes when it closes (default: back to what opened it). */
+  /**
+   * Where focus goes when it closes; call `preventDefault` and focus something yourself. By
+   * default it goes back to what had focus when it opened.
+   */
   onCloseAutoFocus?: ((event: Event) => void) | undefined;
 }
 
@@ -85,6 +88,10 @@ function ConfirmShell({
   const c = useMessages(common);
   const alertId = useId();
   const blocked = !armed || pending;
+  // What had focus when it opened (the button or menu that asked): focus goes back there when it
+  // closes, unless the caller sends it elsewhere. Radix only knows its own Trigger, and a
+  // confirmation is usually opened from state, so without this focus would fall to the page.
+  const opener = useRef<HTMLElement | null>(null);
   function submit(event: FormEvent) {
     event.preventDefault();
     if (!blocked) onSubmit();
@@ -101,16 +108,22 @@ function ConfirmShell({
         // Anchored near the top: an error arriving below must not re-centre (move) the panel.
         className="sm:top-[22vh] sm:translate-y-0"
         {...(!body && { "aria-describedby": undefined })}
-        {...(onCloseAutoFocus && { onCloseAutoFocus })}
-        {...(initialFocus && {
-          onOpenAutoFocus: (event: Event) => {
-            const target = initialFocus();
-            if (target) {
-              event.preventDefault();
-              target.focus();
-            }
-          },
-        })}
+        onCloseAutoFocus={(event) => {
+          onCloseAutoFocus?.(event);
+          if (!event.defaultPrevented && opener.current?.isConnected) {
+            event.preventDefault();
+            opener.current.focus();
+          }
+        }}
+        onOpenAutoFocus={(event) => {
+          opener.current =
+            document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          const target = initialFocus?.();
+          if (target) {
+            event.preventDefault();
+            target.focus();
+          }
+        }}
       >
         <form onSubmit={submit} noValidate>
           <AlertDialogTitle>{title}</AlertDialogTitle>
