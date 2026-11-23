@@ -1,6 +1,7 @@
 """``PUT /api/v1/account/password`` over HTTP: sessions only, throttled, other sessions end."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 
 import httpx
 import pytest
@@ -17,8 +18,8 @@ NEW = "a brand new horse battery"
 PASSWORD = "/api/v1/account/password"
 
 
-@pytest.fixture
-async def client() -> AsyncIterator[httpx.AsyncClient]:
+@asynccontextmanager
+async def serving() -> AsyncGenerator[httpx.AsyncClient]:
     container = Container.build(Settings())
     transport = httpx.ASGITransport(app=create_app(container))
     async with (
@@ -27,6 +28,12 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
     ):
         command = CreateFirstAdminCommand(username="ada", password=SecretStr(HORSE))
         await container.identity.create_first_admin(command)
+        yield client
+
+
+@pytest.fixture
+async def client() -> AsyncIterator[httpx.AsyncClient]:
+    async with serving() as client:
         yield client
 
 
@@ -57,6 +64,21 @@ async def test_a_change_keeps_this_session_and_ends_the_others(client: httpx.Asy
     await session_of(client, NEW)
     old = await client.post("/api/v1/session", json={"username": "ada", "password": HORSE})
     assert old.status_code == 401
+
+
+@pytest.mark.usefixtures("on_postgres")
+async def test_a_change_on_postgresql_ends_the_other_sessions_and_checks_the_current_one() -> None:
+    async with serving() as client:
+        this, other = await session_of(client), await session_of(client)
+
+        wrong = await client.put(PASSWORD, json=body("not the password"), headers=this)
+        response = await client.put(PASSWORD, json=body(HORSE), headers=this)
+
+        assert (wrong.status_code, wrong.json()["error"]) == (403, "wrong_password")
+        assert response.status_code == 204, response.text
+        assert (await client.get("/api/v1/libraries", headers=this)).status_code == 200
+        assert (await client.get("/api/v1/libraries", headers=other)).status_code == 401
+        await session_of(client, NEW)
 
 
 async def test_the_session_state_says_the_account_has_a_password(
