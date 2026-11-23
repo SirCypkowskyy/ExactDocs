@@ -557,7 +557,8 @@ The heading, path and text fields use an analyzer that keeps identifiers whole (
 `v1.4.0`, `client.retry.timeout`, `--dry-run`), lower-cased and ASCII-folded; an `identifiers`
 field holds their parts too (`retryPolicy` is also `retry` and `policy`), so `snake_case`,
 `camelCase` and dotted names are found whole and by their parts, with the same field weights as
-the database's own indexes. Vectors are `dense_vector` (Elasticsearch) or `knn_vector` with the
+the database's own indexes; each word of a query counts once, in the field it scores best in, so
+a section ranks as it does on the database. Vectors are `dense_vector` (Elasticsearch) or `knn_vector` with the
 Lucene engine (OpenSearch) fields, cosine similarity, HNSW without quantisation.
 
 **Native hybrid search.** With the vector index in the cluster, hybrid search asks the cluster
