@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowLeft, Check } from "lucide-react";
+import { ArrowLeft, Check, LibraryBig, Plus, Search, X } from "lucide-react";
 import { type FormEvent, type ReactNode, type Ref, useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { type Credential, type CredentialDraft, credentialKindFor } from "@/shared/lib/credentials";
@@ -53,7 +53,11 @@ function RepoFound({ checked }: { checked: Checked | undefined }) {
       <p role="status" className="min-h-5 text-body text-muted-foreground">
         {checked && (
           <span className="fade-in inline-flex items-start gap-1.5">
-            <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
+            <Check
+              aria-hidden="true"
+              data-icon-motion="draw"
+              className="mt-0.5 size-4 shrink-0 text-route"
+            />
             <span>
               {t.foundOn(hosts[checked.host] ?? t.hosts.git)}{" "}
               {checked.default_branch ? t.defaultBranch(checked.default_branch) : t.noDefaultBranch}
@@ -150,6 +154,13 @@ function SubmitButton({ pending, checked }: { pending: boolean; checked: boolean
       : t.checkRepository;
   return (
     <Button type="submit" pending={pending} aria-disabled={pending} className="min-w-36">
+      {/* The spinner takes the icon's place while the request runs. */}
+      {!pending &&
+        (checked ? (
+          <Plus aria-hidden="true" data-icon-motion="turn" />
+        ) : (
+          <Search aria-hidden="true" data-icon-motion="tilt" />
+        ))}
       {label}
     </Button>
   );
@@ -252,6 +263,7 @@ function FormActions({ pending, checked }: { pending: boolean; checked: boolean 
   return (
     <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
       <Link to="/" className={buttonVariants({ variant: "ghost" })}>
+        <X aria-hidden="true" data-icon-motion="turn" />
         {c.cancel}
       </Link>
       <SubmitButton pending={pending} checked={checked} />
@@ -267,7 +279,7 @@ function BackToList() {
       to="/"
       className="-ml-2 inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 text-body text-muted-foreground outline-none transition-colors duration-(--dur-fast) hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
     >
-      <ArrowLeft aria-hidden="true" className="size-4" />
+      <ArrowLeft aria-hidden="true" data-icon-motion="back" className="size-4" />
       {t.backToList}
     </Link>
   );
@@ -326,6 +338,7 @@ function AddFrame({
       <PageHeader
         above={<BackToList />}
         {...(!added && { headingRef: heading })}
+        icon={<LibraryBig />}
         title={added ? t.importTitle : t.title}
         description={added ? t.importDescription : t.description}
       />

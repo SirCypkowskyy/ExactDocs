@@ -1,13 +1,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Check, CircleAlert } from "lucide-react";
+import { ArrowLeft, Check, CircleAlert, Plus } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { HttpError } from "@/shared/lib/http";
 import { useLanguage, useMessages } from "@/shared/lib/i18n";
 import { BROWSE_KEY } from "@/shared/lib/query-keys";
 import { cn } from "@/shared/lib/utils";
-import { buttonVariants } from "@/shared/ui/button";
+import { Button, buttonVariants } from "@/shared/ui/button";
+import { LibraryMark } from "@/shared/ui/library-mark";
 import { importJobQueryOptions } from "../api/add-library";
 import { librariesKeys } from "../api/libraries-query";
 import { type JobKindKey, progressMessages } from "../messages/progress";
@@ -90,7 +91,7 @@ function Status({ job, state, known, skipped, kind = "import" }: StatusProps) {
   if (state === "succeeded") {
     return (
       <p className="inline-flex items-center gap-1.5 text-body font-medium">
-        <Check aria-hidden="true" className="size-4 text-route" />
+        <Check aria-hidden="true" data-icon-motion="draw" className="size-4 text-route" />
         {w.doneCount(done, skipped)}
       </p>
     );
@@ -144,7 +145,7 @@ function Failed({
   const triedAll = countsVersions && known && done >= total;
   return (
     <p className="inline-flex items-center gap-1.5 text-body font-medium text-destructive">
-      <CircleAlert aria-hidden="true" className="size-4" />
+      <CircleAlert aria-hidden="true" data-icon-motion="alert" className="size-4" />
       {triedAll ? w.triedAll(total) : w.stoppedAfter(done, known ? total : null)}
     </p>
   );
@@ -294,18 +295,21 @@ function Actions({
   ) : over ? (
     <div className="fade-in mt-8 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
       {succeeded && onAddAnother && (
-        <button type="button" onClick={onAddAnother} className={backLink(false)}>
+        <Button variant="ghost" onClick={onAddAnother}>
+          <Plus aria-hidden="true" data-icon-motion="turn" />
           {t.addAnother}
-        </button>
+        </Button>
       )}
       <Link to="/" className={backLink(true)}>
+        <ArrowLeft aria-hidden="true" data-icon-motion="back" />
         {t.backToLibraries}
       </Link>
     </div>
   ) : (
     <div className="mt-6">
       <p className="text-body text-muted-foreground">{t.canLeave}</p>
-      <Link to="/" className={cn(backLink(false), "-ml-3 mt-2")}>
+      <Link to="/" className={cn(backLink(false), "mt-2 -ml-3")}>
+        <ArrowLeft aria-hidden="true" data-icon-motion="back" />
         {t.backToLibraries}
       </Link>
     </div>
@@ -334,12 +338,16 @@ function Heading({
       tabIndex={-1}
       className={cn(
         "font-semibold outline-none",
-        version ? "text-section" : "text-title tracking-[-0.01em]",
+        version ? "text-section" : "flex items-start gap-3 text-title tracking-[-0.01em]",
       )}
     >
-      {verb}{" "}
-      <span className="font-mono font-normal [overflow-wrap:anywhere]">
-        {version ? refName : <LibraryId id={libraryId} />}
+      {/* A new library is named with its mark (DESIGN.md); #504: `logo` once the API sends one. */}
+      {!version && <LibraryMark id={libraryId} size="lg" className="mt-0.5" />}
+      <span className="min-w-0">
+        {verb}{" "}
+        <span className="font-mono font-normal [overflow-wrap:anywhere]">
+          {version ? refName : <LibraryId id={libraryId} />}
+        </span>
       </span>
     </Tag>
   );
