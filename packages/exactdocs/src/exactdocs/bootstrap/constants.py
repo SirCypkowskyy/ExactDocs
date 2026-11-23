@@ -247,7 +247,7 @@ LIBSQL_DIALECT_DRIVER: Final[str] = "libsql"
 """The dialect's ``driver``: how an engine on a libSQL server is told from one on a file."""
 LIBSQL_DRIVER_MODULE: Final[str] = "turso_serverless"
 """Turso's DB-API driver for a libSQL server over HTTP (the ``libsql-database`` extra)."""
-LIBSQL_TOKEN_KEY: Final[str] = "authToken"
+LIBSQL_TOKEN_KEY: Final[str] = "authToken"  # ruff: ignore[hardcoded-password-string] (a name)
 """The URL's query key that carries the server's token, as Turso spells it."""
 LIBSQL_TLS_KEY: Final[str] = "tls"
 """The URL's query key that turns TLS off (``tls=0``: plain HTTP, for a server on loopback)."""

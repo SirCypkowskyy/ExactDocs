@@ -20,6 +20,7 @@ QUERIES = ("token", "naming conventions", "how do I retry failed calls")
 
 def _query(statement: str) -> list[tuple[object, ...]]:
     """Run one statement on the test server, as a look from outside ExactDocs."""
+    assert databases.LIBSQL_DATABASE_URL is not None
     connection = turso_serverless.connect(
         databases.LIBSQL_DATABASE_URL, auth_token=databases.LIBSQL_DATABASE_TOKEN
     )
@@ -60,7 +61,7 @@ def step_second_serves_from_libsql(context: Context) -> None:
     assert _query("SELECT count(*) FROM ingestion_jobs WHERE kind = 'import'") == [(1,)]
     assert _query("SELECT state FROM catalog_manifests") == [("active",)]
     assert _query("SELECT count(*) FROM retrieval_manifests") == [(1,)]
-    assert _query("SELECT count(*) FROM retrieval_chunks")[0][0] > 0
+    assert _query("SELECT count(*) > 0 FROM retrieval_chunks") == [(1,)]
 
 
 @then("its searches rank as on a SQLite file")

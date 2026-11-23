@@ -26,13 +26,14 @@ What ``_Connection`` adds to the driver, so it behaves as ``sqlite3`` where Exac
 
 import importlib
 import sqlite3
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import aiosqlite
 from sqlalchemy import pool
+from sqlalchemy.connectors.asyncio import AsyncIODBAPIConnection
 from sqlalchemy.dialects.sqlite.aiosqlite import (
     AsyncAdapt_aiosqlite_connection,
     AsyncAdapt_aiosqlite_dbapi,
@@ -102,14 +103,18 @@ def driver() -> ModuleType:
 
 
 @contextmanager
-def _as_sqlite_errors() -> Iterator[None]:
+def _as_sqlite_errors() -> Generator[None]:
     """Raise the driver's errors as ``sqlite3``'s, with the server's code where it sent one.
+
+    A driver error becomes the ``sqlite3`` error of the same DB-API class (``IntegrityError``,
+    ``OperationalError`` ...), so SQLAlchemy wraps it as it wraps SQLite's.
 
     Yields:
         Nothing; the block runs inside.
 
     Raises:
-        sqlite3.Error: The block failed in the driver (the same DB-API class, from ``sqlite3``).
+        ProgrammingError: A parameter the protocol cannot carry (an infinite float, a type it
+            does not know).
     """
     module = driver()
     try:
@@ -124,10 +129,9 @@ def _as_sqlite_errors() -> Iterator[None]:
         # The driver raises its DB-API error `from None`; the server's error stays its context.
         server = error.__context__
         for code in (getattr(server, "extended_code", None), getattr(server, "code", None)):
-            number = getattr(sqlite3, code, None) if isinstance(code, str) else None
-            if isinstance(number, int):
-                translated.sqlite_errorcode = number  # ty: ignore[unresolved-attribute] -- sqlite3's errors carry it; ours set it as SQLite does
-                translated.sqlite_errorname = code  # ty: ignore[unresolved-attribute] -- likewise
+            if isinstance(code, str) and isinstance(number := getattr(sqlite3, code, None), int):
+                translated.sqlite_errorcode = number
+                translated.sqlite_errorname = code
                 break
         raise translated from error
 
@@ -173,7 +177,7 @@ def _expired(error: sqlite3.Error) -> bool:
 class _Cursor:
     """A ``sqlite3.Cursor``-shaped cursor over the driver's, for aiosqlite's thread."""
 
-    def __init__(self, connection: "_Connection", inner: Any) -> None:  # ruff: ignore[any-type]
+    def __init__(self, connection: _Connection, inner: Any) -> None:  # ruff: ignore[any-type]
         """Wrap a cursor of the driver.
 
         Args:
@@ -212,7 +216,7 @@ class _Cursor:
         """
         self._inner.arraysize = value
 
-    def execute(self, sql: str, parameters: Parameters = ()) -> "_Cursor":
+    def execute(self, sql: str, parameters: Parameters = ()) -> _Cursor:
         """Run one statement; outside a transaction, again once if the stream had expired.
 
         Args:
@@ -223,7 +227,8 @@ class _Cursor:
             This cursor.
 
         Raises:
-            sqlite3.Error: The server refused the statement.
+            OperationalError: The server refused the statement, or dropped the stream of an open
+                transaction (which it rolled back).
         """
         values = _adapted(parameters)
         retry = not self._connection.in_transaction
@@ -237,7 +242,7 @@ class _Cursor:
                 self._inner.execute(sql, values)
         return self
 
-    def executemany(self, sql: str, parameters: Iterable[Parameters]) -> "_Cursor":
+    def executemany(self, sql: str, parameters: Iterable[Parameters]) -> _Cursor:
         """Run one statement for each set of parameters (one request each).
 
         Args:
@@ -248,7 +253,8 @@ class _Cursor:
             This cursor.
 
         Raises:
-            sqlite3.Error: The server refused the statement.
+            OperationalError: The server refused the statement, or dropped the stream of an open
+                transaction (which it rolled back).
         """
         rows = [_adapted(row) for row in parameters]
         retry = not self._connection.in_transaction
@@ -262,7 +268,7 @@ class _Cursor:
                 self._inner.executemany(sql, rows)
         return self
 
-    def executescript(self, script: str) -> "_Cursor":
+    def executescript(self, script: str) -> _Cursor:
         """Run several statements at once, committing a transaction first (as ``sqlite3``).
 
         Args:
@@ -283,7 +289,7 @@ class _Cursor:
         """
         return self._inner.fetchone()
 
-    def fetchmany(self, size: int | None = None) -> list[Any]:  # ruff: ignore[any-type]
+    def fetchmany(self, size: int | None = None) -> list[Any]:
         """Return the next rows.
 
         Args:
@@ -294,7 +300,7 @@ class _Cursor:
         """
         return self._inner.fetchmany(size)
 
-    def fetchall(self) -> list[Any]:  # ruff: ignore[any-type]
+    def fetchall(self) -> list[Any]:
         """Return every row left.
 
         Returns:
@@ -306,7 +312,7 @@ class _Cursor:
         """Close the cursor (its rows were all read already)."""
         self._inner.close()
 
-    def __iter__(self) -> Iterator[Any]:  # ruff: ignore[any-type]
+    def __iter__(self) -> Iterator[Any]:
         """Iterate over the rows left.
 
         Returns:
@@ -436,7 +442,7 @@ class _Connection:
         self,
         name: str,
         narg: int,
-        func: Callable[..., Any] | None,  # ruff: ignore[any-type]
+        func: Callable[..., Any] | None,
         *,
         deterministic: bool = False,
     ) -> None:
@@ -482,11 +488,14 @@ class _LibsqlDbapi(AsyncAdapt_aiosqlite_dbapi):
             """
             with _as_sqlite_errors():
                 inner = driver().connect(url, auth_token=token, isolation_level=None)
-            return _Connection(inner)  # ty: ignore[invalid-return-type] -- duck-typed: aiosqlite calls sqlite3.Connection's methods only
+            # Duck-typed: aiosqlite calls the methods of sqlite3.Connection that it has.
+            return cast("sqlite3.Connection", _Connection(inner))
 
         connection = aiosqlite.Connection(connector, LIBSQL_CHUNK_ROWS)
-        connection._thread.daemon = True  # as SQLAlchemy does: never hold the interpreter's exit
-        return AsyncAdapt_aiosqlite_connection(self, await_(connection))
+        # As SQLAlchemy does for aiosqlite: a forgotten connection never holds the exit.
+        connection._thread.daemon = True  # ruff: ignore[private-member-access] (aiosqlite's thread)
+        opened = cast("AsyncIODBAPIConnection", await_(connection))
+        return AsyncAdapt_aiosqlite_connection(self, opened)
 
 
 class LibsqlDialect(SQLiteDialect_aiosqlite):
@@ -528,4 +537,3 @@ class LibsqlDialect(SQLiteDialect_aiosqlite):
             No positional argument; ``url`` and ``auth_token``.
         """
         return [], {"url": server_url(url), "auth_token": auth_token(url)}
-

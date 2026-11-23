@@ -16,6 +16,7 @@ from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
 import psycopg
+import turso_serverless
 from psycopg import sql
 from sqlalchemy.engine import make_url
 
@@ -269,9 +270,7 @@ def libsql_database_url() -> str:
 
 
 def empty_libsql_database() -> None:
-    """Drop every trigger, view and table of the test server (libSQL's and SQLite's own excepted)."""
-    import turso_serverless  # noqa: PLC0415 -- the libsql-database extra, only for these tests
-
+    """Drop every trigger, view and table of the test server (but libSQL's and SQLite's own)."""
     assert LIBSQL_DATABASE_URL is not None, "EXACTDOCS_TEST_LIBSQL_DATABASE_URL is not set"
     connection = turso_serverless.connect(
         LIBSQL_DATABASE_URL, auth_token=LIBSQL_DATABASE_TOKEN, isolation_level=None
