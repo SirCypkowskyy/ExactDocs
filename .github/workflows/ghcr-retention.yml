@@ -31,6 +31,8 @@ env:
   KEEP_DEV: 5
   KEEP_STABLE: 10
 
+# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing.md "CI/CD and
+# runners"); it uses none of the GitHub-hosted minutes.
 jobs:
   # One pass per variant and channel. `exclude-tags` keeps everything outside the pass out of it
   # (JavaScript regular expressions): the base passes exclude every -ai/-local tag, a variant's
@@ -40,6 +42,8 @@ jobs:
   # with `(?!sha256[:-])`, or it would match every digest and the pass would delete nothing.
   # packages/exactdocs/tests/bootstrap/test_ghcr_retention.py checks them on sample tags.
   cleanup:
+    # After a release only: a manual Release run is a dry run that pushes nothing (#478).
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.event == 'push'
     runs-on: [self-hosted, linux, ARM64, exactdocs]
     strategy:
       max-parallel: 1 # one deletion at a time on the same package
