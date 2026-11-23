@@ -412,22 +412,36 @@ async def test_transports_that_run_commands_are_refused_by_git_itself(
 async def test_a_local_repository_owned_by_someone_else_can_still_be_listed(
     docs_repo: DocsRepo, tmp_path: Path
 ) -> None:
-    # git's own test switch makes every repository look foreign-owned (no second user needed)
-    foreign = fake_git(tmp_path, f'GIT_TEST_ASSUME_DIFFERENT_OWNER=1 exec "{GIT.git}" "$@"\n')
+    # git's own test switch makes every repository look foreign-owned (no second user needed).
+    # No system config: GitHub-hosted runners set `safe.directory = *` there (#468), which would
+    # hide the problem; the user's global config is left out of the probe for the same reason.
+    foreign = fake_git(
+        tmp_path,
+        f'GIT_CONFIG_NOSYSTEM=1 GIT_TEST_ASSUME_DIFFERENT_OWNER=1 exec "{GIT.git}" "$@"\n',
+    )
     probe = await asyncio.create_subprocess_exec(
         GIT.git,
         "ls-remote",
         docs_repo.file_url,
-        env={**os.environ, "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"},
+        env={
+            **os.environ,
+            "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+        },
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
     )
     _, stderr = await probe.communicate()
-    assert b"dubious ownership" in stderr  # the switch works: this is the problem case
+    # Where this git refuses (the image's Debian git does, and so did the old CI runners'), this
+    # is the problem case and the test proves the workaround. Some git builds (2.56.1 on the
+    # GitHub-hosted runners, #468) don't refuse a foreign-owned repository over file:// at all;
+    # the listing must work there too. The image's smoke test imports a foreign-owned mount.
+    refused = b"dubious ownership" in stderr
 
     refs = await GitCli(git=foreign).list_refs(repository(docs_repo.file_url))
 
-    assert refs.default_branch == "main"
+    assert refs.default_branch == "main", f"git refused without the workaround: {refused}"
 
 
 async def test_a_local_permission_error_is_not_mistaken_for_a_login_prompt(
