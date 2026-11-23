@@ -685,6 +685,135 @@ or recall@5 or nDCG@10 more than 2 points below the recorded run (the same golde
 are required). The local and hosted parts never run in CI; refresh the recorded run by hand when
 ranking, chunking or a model changes. Pull request CI runs the quick tests only.
 
+## Scoring text results
+
+The retrieval benchmark scores ExactDocs by reading each result's chunk ID back. Other
+documentation tools return text: Context7's context endpoint, Grounded Docs' search, a grep or a
+fixed-window RAG baseline. The text scorer (#491) decides from the text alone which sections of
+the golden corpus a result holds, in every pinned version of the project, and scores the results
+with the retrieval benchmark's own metrics. It is deterministic and needs no model. The matcher is
+`retrieval_eval/text_match.py`; the rows, metrics, calibration and report are
+`retrieval_eval/text_bench.py`. The runs of other tools (#492, #493, #494) score with it.
+
+```bash
+just text-bench --offline                                         # calibrate at `default`: about two minutes
+just text-bench --offline --chunkings default,h6,h2,merge-400     # at every chunking
+just text-bench --offline --chunkings default,h6,h2,merge-400 --out packages/exactdocs/evals/results   # refresh the recorded run
+```
+
+### Matching a text to sections
+
+- **Sections.** Each pinned version's articles (the files the importer takes, read at the pinned
+  commit) are cut with the importer's own parser and chunker, every heading starting a section and
+  no size bound (`SECTION_CHUNKING`, the golden set's `h6`): a section is one heading's own text, up
+  to the next heading. `golden-validate` cuts the same headings, so these are the sections the
+  cases name. A heading path that occurs twice in an article is one section with two texts.
+- **Normalized text.** HTML entities are decoded (and the text NFKC-normalized); code fence info
+  strings, ordered-list numbers, Markdown link targets, bare URLs and HTML or JSX tags are dropped;
+  the rest is case folded and split into words of letters and digits (`on_startup` is
+  `on startup`). A text is compared as the set of its 5-word shingles (`SHINGLE_WORDS`); a text of
+  fewer words is one shingle. A reflowed paragraph, another list marker, Markdown rendered as
+  plain text or a link without its URL still matches; a paraphrase does not.
+- **A result answers a section** when it holds at least 80% (`MATCH_THRESHOLD`) of the shingles
+  of the section's own text (the section is inside it: a coarser result, such as a chunk of
+  several sections), or when at least 80% of its own shingles are in the section with its
+  subsections (it is a part of the section: a finer result, such as a window of it or a part of a
+  long section). These are the text forms of the nested rule chunk-ID scoring matches hits with
+  (`golden_run.nested_match`, in [the ingestion benchmark](#the-ingestion-benchmark)), so both
+  scorings count the same hits.
+- **Version.** For a question about version V, a result is *right* when its text matches sections
+  of V and of no other pinned version; *version-neutral* when it matches sections of V and of
+  another version (the text is the same in both, so it cannot say which it came from);
+  *wrong-version* when it matches sections of another version and none of V; *unmatched* when it
+  matches no section at all (text from elsewhere, or too little of it).
+
+### Metrics of text results
+
+A tool's answer to a question is the text of each of its results, best first (`TextAnswer`);
+each tool's harness splits the tool's response into its results, in the tool's order. Each case
+becomes the retrieval benchmark's own `Row`, so the metrics are computed by the same code
+(`metrics_of`) with [the same definitions](#the-retrieval-benchmark): recall@1/5/10, MRR, section
+recall and nDCG@10 over the top 10, the wrong-version rate, unanswerable clean, no answer,
+answerable empty, and latency, model tokens and USD when the harness measures them. A hit is the
+first result in the top 10 that answers the expected section; a case is wrong-version when any of
+its results is. Next to them:
+
+| Metric | Over | Definition |
+|---|---|---|
+| version-neutral | every result returned | share whose text matches the version asked and another pinned version |
+| unmatched | every result returned | share whose text matches no section of any pinned version |
+| results / question | every case | results returned |
+| context tokens / question, p95 | every case | estimated tokens of all the text returned (characters / 4, as `CHARS_PER_TOKEN`); tools return very different amounts of text, so a hit costs a different number of tokens in each |
+| tokens to first hit | answerable cases whose first expected section is in the top 10 | estimated tokens of the results up to and including the one that answers it |
+| facts found | answerable cases | the share of the case's facts the returned text holds, averaged over the cases |
+
+**Facts found** is a second signal, independent of the sections: a fact is found when at least
+75% (`FACT_SHARE`) of its content words are in the text the tool returned (words normalized as
+above, a fixed list of stopwords left out, a plural `s` cut). It is lexical: a fact the docs
+phrase otherwise can be missed, and a lot of text finds more facts by chance. So the calibration
+gives both bounds on ExactDocs' results: the share of facts in the expected sections' own text
+(about the most a tool can reach), and in the results of another question of the same version
+(what text that does not answer reaches).
+
+`TextResult.of(tool, rows)` aggregates one tool's rows overall, by question kind and by project,
+and `results_table` renders tools side by side.
+
+**Version-neutral results.** Most text of a pinned version is the same in the other pinned
+versions of its project, so most results, right or wrong, are version-neutral, and a result of
+another version is caught as wrong only where the text changed. The text scorer's wrong-version
+rate is therefore a lower bound of the rate chunk-ID scoring would give; the version-neutral share
+says how much of what a tool returned no text-based check can attribute.
+
+### Calibration
+
+`just text-bench` checks the text scorer against chunk-ID scoring on ExactDocs' own results. For
+each chunking configuration it imports the corpus as the ingestion benchmark does, asks every
+golden question with BM25 in its project's library, reads each result back by its chunk ID and
+keeps the chunk's content as the result's text. Then it scores the results both ways, chunk IDs
+with the retrieval benchmark's nested rule. A decision is where an expected section of an
+answerable case is in the top 10 (its rank), or that it is not; the two agree on a decision when
+they give the same rank, or both a miss. The criterion is 98% agreement at `default`, the
+chunking ExactDocs ships (`MIN_AGREEMENT`, `GATED_CHUNKING`); below it the command exits with 1.
+The report (`text-scorer.json` and `text-scorer.md`, in `reports/evals/` or `--out`) also gives:
+
+- the agreement on hit or miss alone, whatever the rank;
+- the agreement on the same results rendered as plain text (the Markdown rendered and the tags
+  dropped), as a tool that renders its results returns them;
+- the agreement with a chunk-ID rule that also counts a chunk holding the expected section's
+  heading under another heading path (below);
+- the agreement on each case's wrong-version decision;
+- the agreement at each threshold from 0.5 to 1, on the results as returned and as rendered;
+- both scorings' metrics side by side, the text-only metrics, and every disagreement with what
+  the result at the earlier rank is.
+
+**The recorded calibration** is `packages/exactdocs/evals/results/text-scorer.json` and
+`text-scorer.md`, on the whole golden set (321 cases, 384 decisions):
+
+<!-- text-scorer:calibration -->
+
+The threshold is 0.8 because of the sweep: below it, results of other articles that share part of
+a section's text count as hits (at `default`, 98.4% agreement at 0.7, 97.1% at 0.5); above it the
+results as returned agree as well, but rendered ones less (99.2% at 0.9, 89.8% at 1), since a
+rendering loses a little text. Shingles of 5 words are the usual size for near-duplicate text; in
+trial runs, 3 to 9 words moved the agreement at 0.8 by less than a point.
+
+What still disagrees, and why:
+
+- **The same text in two articles.** TanStack Query v5.90.3 explains streaming with
+  `useSuspenseQuery` in `guides/suspense.md` and again, nearly word for word, in
+  `guides/advanced-ssr.md`. BM25 returns the second at rank 1 and the expected one at rank 7; the
+  text scorer finds the expected section's text at rank 1. Text alone cannot say which article a
+  result came from; a tool that returns it does answer the question.
+- **A section held under another heading path.** At `default`, Starlette's 1.0.0rc1 release notes
+  are longer than 4,000 characters, so they are cut again at their `####` headings and the chunk
+  `1.0.0rc1 > Removed` also holds `Added`, `Fixed` and `Changed`. The question about Jinja2
+  autoescaping expects `Fixed`: the text scorer finds it in that chunk at rank 8, the nested rule
+  does not, since it counts a chunk for its own section, the sections inside it and its parents,
+  not for a sibling it holds. `h2` and `merge-400` put sibling sections into one chunk far more
+  often (a section with all its subsections; small sections merged with the next), so they agree
+  less with the nested rule, and as much as `default` with the rule that counts held headings:
+  the text scorer is right there, and the nested rule undercounts those chunkings' hits.
+
 ## The agent benchmark
 
 Retrieval numbers do not show that a coding agent reaches the right answer. The agent benchmark

@@ -53,6 +53,26 @@ recall@k and MRR count the first expected section only, as the fixture eval suit
 numbers stay comparable across the three benchmarks; section recall and nDCG@10 count every
 expected section.
 
+## Scoring tools that return text
+
+ExactDocs' results are scored by their chunk IDs. Tools that return text (Context7, Grounded
+Docs, a grep or fixed-window baseline) are scored from the text alone, with the same metrics. Each
+pinned version's articles are cut at every heading with the importer's own parser and chunker,
+and texts are compared as sets of 5-word shingles after dropping markup, link targets and case. A
+result answers a section when it holds at least 80% of the section's own text, or when at least
+80% of the result lies in the section with its subsections; it is of the right version, of
+another version, version-neutral (the text is the same in both) or unmatched by the versions
+whose sections it matches. Besides the retrieval metrics, a tool scored from text is reported
+with the share of version-neutral and unmatched results, the tokens of context it returned per
+question (characters / 4) and up to its first hit, and the share of the case's facts its text
+holds.
+
+The scorer was calibrated on ExactDocs' own BM25 results for the whole golden set, scored both
+ways: at the `default` chunking it takes 99.5% of the hit and miss decisions (each expected
+section's rank in the top 10, or a miss) as chunk-ID scoring does, against a criterion of 98%.
+The threshold, the sweep that chose it and every disagreement are in
+[Scoring text results](../evals.md#scoring-text-results).
+
 ## Ingestion metrics
 
 Coverage is the share of the golden set's expected sections that start a chunk (a section held
