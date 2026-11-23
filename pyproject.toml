@@ -20,6 +20,7 @@ dev = [
     # embedded backend, everywhere; the architecture tests prove nothing but their adapter
     # imports them.
     "exactdocs[elasticsearch]",
+    "exactdocs[lancedb]",
     "exactdocs[opensearch]",
     "exactdocs[qdrant]",
     "httpx>=0.28",

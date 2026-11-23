@@ -53,6 +53,14 @@ qdrant = ["qdrant-client==1.20.0"]
 # synchronous (urllib3) client in worker threads. Neither extra adds aiohttp.
 elasticsearch = ["elasticsearch==8.19.3"]
 opensearch = ["opensearch-py==3.2.0"]
+# LanceDB as the search and vector backend (#356, EXACTDOCS_SEARCH_BACKEND / EXACTDOCS_VECTOR_BACKEND
+# = lancedb): embedded, a directory or an object-store URI, no server. Imported only by
+# `retrieval/adapters/driven/lancedb_index.py`, and only once an operator names the backend. Not
+# in any image (lancedb and pyarrow take about 350 MB installed, near the base image's whole
+# budget): `pip install 'exactdocs[lancedb]'` or `uvx --from 'exactdocs[lancedb]' exactdocs`.
+# Exact pin: 0.41.0 (2026-10-29) has manylinux_2_28 wheels for x86_64 and aarch64 (abi3; checked
+# by tests/retrieval/test_lancedb_index.py), and the adapter relies on its FTS and RRF reranker.
+lancedb = ["lancedb==0.41.0"]
 
 [project.scripts]
 exactdocs = "exactdocs.bootstrap.cli:main"

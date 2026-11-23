@@ -155,6 +155,9 @@ benchmark numbers. See [Search and AI models](docs/search.md).
   [External index backends](docs/architecture.md#external-index-backends). Available:
   - [Elasticsearch and OpenSearch](docs/configuration.md#elasticsearch-and-opensearch) for
     either index (`exactdocs[elasticsearch]`, `exactdocs[opensearch]`), with native hybrid search.
+  - [LanceDB](docs/configuration.md#lancedb) for the search and vector indexes
+    (`exactdocs[lancedb]`), embedded in a local directory or in object storage, with native
+    hybrid search.
   - [Qdrant](docs/configuration.md#qdrant) for the vector index (`exactdocs[qdrant]`),
     self-hosted or Qdrant Cloud, with optional native hybrid search.
 

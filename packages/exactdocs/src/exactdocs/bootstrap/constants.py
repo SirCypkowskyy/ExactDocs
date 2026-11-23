@@ -422,6 +422,14 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             extra="elasticsearch",
             packages=("elasticsearch", "elastic_transport"),
         ),
+        "lancedb": IndexBackendKind(
+            name="lancedb",
+            module="exactdocs.retrieval.adapters.driven.lancedb_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="lancedb",
+            packages=("lancedb", "pyarrow"),
+        ),
         "opensearch": IndexBackendKind(
             name="opensearch",
             module="exactdocs.retrieval.adapters.driven.opensearch_index",

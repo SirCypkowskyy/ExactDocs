@@ -1341,6 +1341,7 @@ keeps the backends in step:
 |---|---|---|---|---|
 | `memory` | search, vectors | `memory_index.py` (in process, tests only) | none | yes (RRF of term counts and cosine) |
 | `elasticsearch` | search, vectors | `elasticsearch_index.py` over `elastic_index.py` ([Configuration](configuration.md#elasticsearch-and-opensearch)) | `elasticsearch` | yes: the RRF retriever |
+| `lancedb` | search, vectors | `lancedb_index.py`: embedded, a directory or an object-store URI; a table for search and one per space, filtered on `manifest_id` before ranking; writers on a local directory take turns on a `flock`, an object store needs `single_writer = true` ([Configuration](configuration.md#lancedb)) | `lancedb` | yes: LanceDB's BM25 and exact cosine halves fused by its RRF reranker |
 | `opensearch` | search, vectors | `opensearch_index.py` over `elastic_index.py` ([Configuration](configuration.md#elasticsearch-and-opensearch)) | `opensearch` | yes: a `hybrid` query and a normalisation pipeline |
 | `qdrant` | vectors | `qdrant_index.py`: a collection per space, payload-indexed `manifest_id` / `library` / `tags` ([Configuration](configuration.md#qdrant)) | `qdrant` | with `hybrid = true`: BM25-weighted sparse and dense prefetches fused by Qdrant (RRF) |
 
