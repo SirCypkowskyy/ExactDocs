@@ -39,6 +39,7 @@ from retrieval_eval.golden import (
     schema_problems,
     section_problems,
 )
+from retrieval_eval.golden_review import REVIEW_FILE, review_file_problems
 
 IMPORT_REPORT: Final[Path] = Path("reports/evals/golden-import.json")
 """Where ``import`` writes what it imported, by default."""
@@ -223,7 +224,7 @@ def selected(corpus: Corpus, projects: str) -> list[Project]:
 
 
 def _validate(corpus: Corpus, cases_dir: Path, repos: dict[str, Path], projects: str) -> int:
-    """Check every case and print the broken ones.
+    """Check every case and the review's verdicts (``review.yaml`` beside the cases), print problems.
 
     Args:
         corpus: The corpus.
@@ -236,6 +237,7 @@ def _validate(corpus: Corpus, cases_dir: Path, repos: dict[str, Path], projects:
     """
     cases, problems = load_cases(cases_dir)
     problems += schema_problems(cases, corpus)
+    problems += review_file_problems(cases, cases_dir.parent / REVIEW_FILE.name)
     wanted = {p.id for p in selected(corpus, projects)}
     checked = [(project, case) for project, case in cases if project in wanted]
     problems += section_problems(checked, corpus, repos)
