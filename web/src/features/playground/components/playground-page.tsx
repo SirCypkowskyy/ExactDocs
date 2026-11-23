@@ -104,13 +104,28 @@ function ModeSelect({
   );
 }
 
+/** Runs the query: a search in the chosen modes, or a question to the agent. */
+function RunButton({ agent, disabled }: { agent: boolean; disabled: boolean }) {
+  const t = useMessages(messages);
+  const c = useMessages(common);
+  return (
+    <Button type="submit" disabled={disabled}>
+      {agent ? (
+        <Sparkles aria-hidden="true" data-icon-motion="pop" />
+      ) : (
+        <Search aria-hidden="true" data-icon-motion="tilt" />
+      )}
+      {agent ? t.page.ask : c.search}
+    </Button>
+  );
+}
+
 /**
  * The search playground (#428): one query over all, one or several libraries, in one retrieval
  * mode or two side by side, with each result's BM25 and vector ranks and why a mode fell back.
  */
 export function PlaygroundPage() {
   const t = useMessages(messages);
-  const c = useMessages(common);
   const { data: summaries } = useQuery(playgroundLibrariesQueryOptions());
   const libraries = searchableLibraries(summaries ?? []);
   const [q, setQ] = useState("");
@@ -187,14 +202,7 @@ export function PlaygroundPage() {
             {t.page.compare}
           </label>
         )}
-        <Button type="submit" disabled={!q.trim()}>
-          {agentChosen ? (
-            <Sparkles aria-hidden="true" data-icon-motion="pop" />
-          ) : (
-            <Search aria-hidden="true" data-icon-motion="tilt" />
-          )}
-          {agentChosen ? t.page.ask : c.search}
-        </Button>
+        <RunButton agent={agentChosen} disabled={!q.trim()} />
       </form>
       {run && run.first === AGENT && (
         <div className="mt-8 max-w-3xl">
