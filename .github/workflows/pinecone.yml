@@ -1,0 +1,80 @@
+name: Pinecone contract tests (real index)
+
+# Manual only: it calls a hosted Pinecone index with the repository's key, so it never runs on a
+# push or a pull request (CI never calls Pinecone). CI runs the suites on Pinecone Local, the
+# emulator, which ignores sparse values (#362). This runs the shared vector contract suites, the
+# adapter's own tests and the Pinecone scenario against a real serverless index, sparse-dense
+# hybrid included:
+#
+#   repository variable   PINECONE_TEST_INDEX_HOST (or the `host` input): a serverless dense
+#                         index, metric dotproduct, at least 256 dimensions, used for tests only
+#   repository secret     PINECONE_API_KEY
+#
+# Each test writes to a namespace of its own (`exactdocs-test-<random>`) and empties it after.
+# Serverless indexes are eventually consistent: every write is followed by a wait (`settle`).
+
+on:
+  workflow_dispatch:
+    inputs:
+      host:
+        description: The test index's host (default the PINECONE_TEST_INDEX_HOST variable)
+        required: false
+        default: ""
+      hybrid:
+        description: Test the sparse-dense hybrid too (the index must be dotproduct)
+        type: boolean
+        required: false
+        default: true
+      settle:
+        description: Seconds to wait after each write, for the index to show it
+        required: false
+        default: "2"
+
+concurrency:
+  group: pinecone
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Pinecone contract tests
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    timeout-minutes: 60
+    environment: pinecone # its protection rules decide who may spend the key
+    env:
+      FORCE_COLOR: "1"
+      EXACTDOCS_TEST_PINECONE_URL: ${{ inputs.host || vars.PINECONE_TEST_INDEX_HOST }}
+      EXACTDOCS_TEST_PINECONE_HYBRID: ${{ inputs.hybrid && '1' || '0' }}
+      EXACTDOCS_TEST_PINECONE_SETTLE: ${{ inputs.settle }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked
+      - name: Check the index is named
+        run: |
+          if [ -z "$EXACTDOCS_TEST_PINECONE_URL" ]; then
+            echo "::error::set the host input or the PINECONE_TEST_INDEX_HOST variable"
+            exit 1
+          fi
+      # The key is given to the steps that call Pinecone only, not to `uv sync` (third-party
+      # build backends) or the other steps of this persistent runner.
+      - name: Contract suites and adapter tests
+        env:
+          EXACTDOCS_TEST_PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+        run: >-
+          uv run pytest -p no:cacheprovider -q
+          packages/exactdocs/tests/retrieval/test_index_backends.py
+          packages/exactdocs/tests/retrieval/test_vector_index.py
+          packages/exactdocs/tests/retrieval/test_pinecone_index.py
+          -k "pinecone"
+      - name: Pinecone scenario
+        env:
+          EXACTDOCS_TEST_PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+        run: uv run behave packages/exactdocs/features/pinecone_index.feature

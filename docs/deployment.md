@@ -205,6 +205,18 @@ The rebuild writes every version from the stored chunks and vectors (nothing is 
 embedded again) while the server keeps serving, and deletes the versions the database no longer
 has. A backend that does not answer at start stops the server, naming it.
 
+A backend's client is an optional extra that the images do not carry: install ExactDocs with it
+(`pip install 'exactdocs[lancedb]'`, `uvx --from 'exactdocs[lancedb]' exactdocs serve`), or in
+an image of your own that installs that extra. **LanceDB** is embedded, so the server and the
+command line both open its directory: on a local directory they take turns writing (a lock file in
+it), so the rebuild above is safe while serving; with an object-store URI (`single_writer = true`)
+stop the server before `exactdocs index rebuild`. See [LanceDB](configuration.md#lancedb).
+
+A **DuckDB** file is the exception to "while the server keeps serving": it is open in one process
+only, so stop the server, run `exactdocs index check` or `rebuild`, and start it again (the
+command is refused, naming the server's process, while it runs). See
+[DuckDB](configuration.md#duckdb).
+
 ## Backup and restore
 
 This section is about the SQLite database. On PostgreSQL, use `pg_dump` (see

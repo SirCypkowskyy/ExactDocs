@@ -119,6 +119,7 @@ class World:
     age_index: Callable[[], Awaitable[None]]  # record an older format, as an older build left it
     counts_terms: bool = False  # the memory reference ranks: no BM25 length normalisation
     shares_entries: bool = True  # a chunk set of two versions is one entry (else one each)
+    stale_statistics: bool = False  # deleted entries count in its term statistics for a while
 
     async def index(
         self,
@@ -235,6 +236,7 @@ async def _external_world(
             age_local,
             counts_terms=case.counts_terms,
             shares_entries=False,
+            stale_statistics=case.stale_statistics,
         )
 
 
@@ -613,6 +615,10 @@ async def test_a_rebuild_finds_the_same_and_fills_lost_entries(world: World) -> 
 
     assert rebuilt.entries == await world.index_entries() == 4
     after = [await world.find(m, q) for m in ("m13", "m14") for q in ("retry_policy", "retried")]
+    if world.stale_statistics:  # the lost entry's ghost still counts in the IDF: scores move
+        before, after = (
+            [[(h.chunk_id, h.snippet) for h in hits] for hits in r] for r in (before, after)
+        )
     assert after == before
     assert await world.find("m13", "retry_policy") == []  # still version-exact
 

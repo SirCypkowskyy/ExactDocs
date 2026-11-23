@@ -1359,6 +1359,24 @@ keeps the backends in step:
   through `StoredVectors`), and without a scope deletes the orphans and the retired spaces'
   copies. It is safe while serving and to repeat.
 
+**The backends.**
+
+| Name | Indexes | Adapter | Extra | Native hybrid |
+|---|---|---|---|---|
+| `memory` | search, vectors | `memory_index.py` (in process, tests only) | none | yes (RRF of term counts and cosine) |
+| `azure_search` | search, vectors | `azure_search_index.py`: a document per chunk and version, in `<index>` and one `<index>-space<id>` per space, made when missing (a schema mismatch is refused, naming the index); the words in three `whitespace`-analysed fields ranked with BM25 and a weighting scoring profile, an HNSW cosine vector field of the model's dimensions, `manifest_id` / `library` / `version_id` / `chunk_id` / `tags` filterable (OData, vectors pre-filtered); writes return once the index counts them; API key or Entra ID. No emulator: CI runs it on an in-process fake of the REST API, a manual workflow on a real service ([Configuration](configuration.md#azure-ai-search)) | `azure-search` | with `hybrid` (on by default): one Azure hybrid query (RRF); the semantic ranker is not used |
+| `chroma` | vectors | `chroma_index.py`: a collection per space (cosine, no embedding function: ExactDocs passes its vectors), scalar metadata `manifest_id` / `library` / one `tag:<tag>` key per tag, filtered in Chroma before ranking; the HTTP client (a server, Chroma Cloud) or the embedded persistent client, synchronous, in worker threads ([Configuration](configuration.md#chroma)) | `chroma` (HTTP only), `chroma-local` (embedded too) | no: ExactDocs fuses BM25 and Chroma's nearest vectors |
+| `duckdb` | search, vectors | `duckdb_index.py`: one embedded database file (#357); BM25 from the `fts` extension, loaded from the installed `duckdb-extension-fts` wheel, never downloaded; vectors scanned exactly with `array_cosine_distance` (no `vss`: HNSW persistence is still experimental); one process per file, a second is refused at open ([Configuration](configuration.md#duckdb)) | `duckdb` | no (ExactDocs fuses with RRF) |
+| `elasticsearch` | search, vectors | `elasticsearch_index.py` over `elastic_index.py` ([Configuration](configuration.md#elasticsearch-and-opensearch)) | `elasticsearch` | yes: the RRF retriever |
+| `lancedb` | search, vectors | `lancedb_index.py`: embedded, a directory or an object-store URI; a table for search and one per space, filtered on `manifest_id` before ranking; writers on a local directory take turns on a `flock`, an object store needs `single_writer = true` ([Configuration](configuration.md#lancedb)) | `lancedb` | yes: LanceDB's BM25 and exact cosine halves fused by its RRF reranker |
+| `libsql` | search, vectors | `libsql_index.py`: FTS5 with SQLite's columns and `bm25()` weights; a table per space with an `F32_BLOB` column and a `libsql_vector_idx` index read by `vector_top_k`, filtered to the asked versions (an exact scan when they are too small a share of the space). A server over its HTTP API, or a local file ([Configuration](configuration.md#libsql)) | `libsql` (a local file only) | no (ExactDocs fuses) |
+| `milvus` | vectors | `milvus_index.py`: a collection per space (cosine, `AUTOINDEX`), scalar fields `manifest_id` / `library` / `version_id` with inverted indexes and an array of tags, filtered in Milvus before ranking; a server or Zilliz Cloud, or Milvus Lite on a local `.db` directory; the synchronous client, in worker threads ([Configuration](configuration.md#milvus)) | `milvus` (server), `milvus-lite` (Lite too) | yes, unless `hybrid = false`: a BM25 function's sparse vector and the dense vector in one request, fused by Milvus' RRF ranker |
+| `mongodb` | search, vectors | `mongodb_index.py`: a document per chunk and version, in `<collection>` and one `<collection>.space<id>` per space; an Atlas Search index (`$search`, BM25 on three weighted fields) and an Atlas Vector Search index (`$vectorSearch`, cosine) made when missing, `manifest_id` / `library` / `version_id` / `chunk_id` / `tags` as `token` and `filter` fields; writes return once the indexes return them ([Configuration](configuration.md#mongodb)) | `mongodb` | with `hybrid` (on by default): one `$rankFusion` stage (MongoDB 8.1+), else `$search` and `$vectorSearch` fused in ExactDocs (RRF) |
+| `opensearch` | search, vectors | `opensearch_index.py` over `elastic_index.py` ([Configuration](configuration.md#elasticsearch-and-opensearch)) | `opensearch` | yes: a `hybrid` query and a normalisation pipeline |
+| `pinecone` | vectors | `pinecone_index.py`: a serverless index, one namespace per instance; metadata filters on space, manifest and tags in every query; vector IDs `<manifest>#<space>#<chunk>`, so a version is deleted by listing its ID prefix (serverless indexes cannot delete by filter); the SDK's HTTP client, no gRPC or protobuf ([Configuration](configuration.md#pinecone)) | `pinecone` | with `hybrid = true` on a `dotproduct` index: one sparse-dense query |
+| `qdrant` | vectors | `qdrant_index.py`: a collection per space, payload-indexed `manifest_id` / `library` / `tags` ([Configuration](configuration.md#qdrant)) | `qdrant` | with `hybrid = true`: BM25-weighted sparse and dense prefetches fused by Qdrant (RRF) |
+| `redis` | search, vectors | `redis_index.py`: Redis 8's Query Engine, a hash per chunk and version, indexes made with `FT.CREATE` (`<prefix>:search`, `<prefix>:space<id>`), `manifest_id` / `library` / `version_id` / `tags` as `TAG` fields ([Configuration](configuration.md#redis)) | `redis` | with `hybrid = true`: one `FT.HYBRID` query (BM25 and KNN fused by Redis, RRF) |
+
 **Adding a backend** is one adapter module in `retrieval/adapters/driven/` (the reference is
 `memory_index.py`; it holds nothing across a restart and is for tests), its extra in
 `packages/exactdocs/pyproject.toml`, one `IndexBackendKind` in `INDEX_BACKENDS`
@@ -1371,6 +1389,12 @@ filters, top-k ordering, empty results, unknown versions) and `test_index_backen
 backend ports themselves, native hybrid included when implemented). A factory takes the options
 of `[index_backends.<name>]` (`EXACTDOCS_INDEX_BACKENDS__<NAME>__<OPTION>`) and raises
 `ValueError` for invalid ones; secrets come from the environment or `*_file` options.
+
+Elasticsearch and OpenSearch (#354) answer the same REST API for everything ExactDocs asks, so
+`elastic_index.py` builds the requests and reads the answers once, behind an `Engine` (one
+request in, its JSON out) that each engine's module implements with its client; where the
+engines differ (the vector field, the kNN query, the hybrid query) the engine's name decides. It
+imports neither client. Options, analysis and sizing: [Configuration](configuration.md#elasticsearch-and-opensearch).
 
 ## AI retrieval (planned)
 

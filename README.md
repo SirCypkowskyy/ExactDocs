@@ -171,7 +171,35 @@ values for them, and `sources plan` shows such a change before `apply` makes it.
   `exactdocs index check` reports what it lost and `exactdocs index rebuild` writes it again.
   A backend is an optional extra behind one adapter; a backend that fuses keyword and vector
   search itself serves hybrid search natively. See
-  [External index backends](docs/architecture.md#external-index-backends).
+  [External index backends](docs/architecture.md#external-index-backends). Available:
+  - [Azure AI Search](docs/configuration.md#azure-ai-search) for the search and vector indexes
+    (`exactdocs[azure-search]`), with native hybrid search (Azure's hybrid query) and API key or
+    Entra ID (managed identity) sign-in.
+  - [Chroma](docs/configuration.md#chroma) for the vector index (`exactdocs[chroma]` for a
+    server or Chroma Cloud, `exactdocs[chroma-local]` embedded in a local directory), with
+    ExactDocs' own embeddings.
+  - [DuckDB](docs/configuration.md#duckdb) for the search and vector indexes
+    (`exactdocs[duckdb]`), one embedded database file, no server.
+  - [Elasticsearch and OpenSearch](docs/configuration.md#elasticsearch-and-opensearch) for
+    either index (`exactdocs[elasticsearch]`, `exactdocs[opensearch]`), with native hybrid search.
+  - [LanceDB](docs/configuration.md#lancedb) for the search and vector indexes
+    (`exactdocs[lancedb]`), embedded in a local directory or in object storage, with native
+    hybrid search.
+  - [libSQL](docs/configuration.md#libsql) for the search and vector indexes: FTS5 and libSQL's
+    native vector index, on a libSQL server (`sqld`, Turso) shared by several processes or in
+    one local file (`exactdocs[libsql]`).
+  - [Milvus](docs/configuration.md#milvus) for the vector index, with native hybrid search
+    (BM25 and dense vectors fused by Milvus' RRF ranker): a server or Zilliz Cloud
+    (`exactdocs[milvus]`), or Milvus Lite in a local directory (`exactdocs[milvus-lite]`).
+  - [MongoDB](docs/configuration.md#mongodb) (Atlas Search and Atlas Vector Search, or MongoDB
+    with `mongot`) for the search and vector indexes (`exactdocs[mongodb]`), with native hybrid
+    search (`$rankFusion`).
+  - [Pinecone](docs/configuration.md#pinecone) for the vector index (`exactdocs[pinecone]`), a
+    serverless index, with optional sparse-dense hybrid search.
+  - [Qdrant](docs/configuration.md#qdrant) for the vector index (`exactdocs[qdrant]`),
+    self-hosted or Qdrant Cloud, with optional native hybrid search.
+  - [Redis](docs/configuration.md#redis) 8 (its Query Engine) for the search and vector indexes
+    (`exactdocs[redis]`), with optional native hybrid search.
 
 ## How it works
 
