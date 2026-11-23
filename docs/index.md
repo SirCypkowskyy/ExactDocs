@@ -137,11 +137,15 @@ result's BM25 and vector rank.</figcaption>
 
 ## How well it finds things
 
+<div class="xd-prose" markdown>
+
 The [golden set](benchmark/golden-set.md) is 321 questions about the docs of Starlette, Pydantic,
 TanStack Query, Zod and Electron, at three pinned versions each. With no model at all, BM25 puts
 the section that answers in the top 5 for 81.7% of the 267 answerable questions, at 57 ms p95.
 Hybrid search on a small local embedding model reaches up to 84.6%. Hosted models have not run
 yet. [Recommended defaults](benchmark/defaults.md) has the numbers and the known weak spots.
+
+</div>
 
 ## Use it
 
@@ -173,6 +177,8 @@ yet. [Recommended defaults](benchmark/defaults.md) has the numbers and the known
 | [Delivery plan](plan.md) | The issues behind the user stories, by epic and milestone |
 | [AI retrieval decisions](decisions/ai-retrieval.md) | Why the AI retrieval modes are built the way they are |
 
+<div class="xd-prose" markdown>
+
 !!! note "Which version this site describes"
     The site is published from the `main` branch, so it describes the latest release. Anything not
     built yet is marked *planned*. The screenshots come from the `develop` branch, with the test
@@ -184,3 +190,5 @@ the documentation site only, never by the running app.
 
 The README, the contributing guide and the agent skills live in the
 [repository](https://github.com/SirCypkowskyy/ExactDocs).
+
+</div>

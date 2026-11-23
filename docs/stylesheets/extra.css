@@ -148,6 +148,11 @@
   line-height: 1.6;
 }
 
+/* Running text keeps a readable measure on the wide home page. */
+.md-typeset .xd-prose {
+  max-width: 42rem;
+}
+
 /* Screenshots, one under the other at the content width. */
 .md-typeset .xd-shot {
   margin: 0 0 2.25rem;
