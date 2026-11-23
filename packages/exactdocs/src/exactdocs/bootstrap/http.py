@@ -68,7 +68,7 @@ def _include_session_routers(v1: APIRouter, container: Container) -> identity_ht
     """Add the routes that take a signed-in session and never an API token.
 
     ``/tokens`` (a leaked token must not mint its own successor), ``/users`` (nor create
-    accounts; operators only) and ``/access-log`` (operators only).
+    accounts; operators only), ``/access-log`` and ``/stats/usage`` (operators only).
 
     Args:
         v1: The ``/api/v1`` router.
@@ -101,6 +101,14 @@ def _include_session_routers(v1: APIRouter, container: Container) -> identity_ht
     v1.include_router(
         identity_http.build_access_log_router(
             list_access_log=container.identity.list_access_log, session_caller=session_caller
+        )
+    )
+    v1.include_router(
+        usage_http.build_stats_router(
+            get_usage_stats=container.usage.get_usage_stats,
+            require_operator=identity_http.build_operator(
+                caller=session_caller, action="reads the instance's usage"
+            ),
         )
     )
     return session_caller
@@ -176,7 +184,6 @@ def _include_reading_routers(
     container: Container,
     *,
     caller: Callable[..., Awaitable[str]],
-    session_caller: identity_http.CurrentCaller,
 ) -> None:
     """Add the routes that browse, read, search and answer, and the usage they are counted to.
 
@@ -187,7 +194,6 @@ def _include_reading_routers(
         protected: The router of the routes that need a caller.
         container: The wired domains.
         caller: The dependency naming the request's account (session or API token).
-        session_caller: The dependency that requires a signed-in session.
     """
     reads = counted(
         container.catalog,
@@ -224,15 +230,10 @@ def _include_reading_routers(
     )
     protected.include_router(
         usage_http.build_router(
-            get_usage_stats=container.usage.get_usage_stats,
             get_account_usage=container.usage.get_account_usage,
             get_leaderboard=container.usage.get_leaderboard,
             get_usage_settings=container.usage.get_usage_settings,
             caller=caller,
-            # Like `/users` and `/access-log`: a signed-in operator, never an API token.
-            require_operator=identity_http.build_operator(
-                caller=session_caller, action="reads the instance's usage"
-            ),
         )
     )
 
@@ -368,7 +369,7 @@ def create_app(container: Container) -> FastAPI:
         """
         await session_caller(request, request.cookies.get(SESSION_COOKIE))
 
-    _include_reading_routers(protected, container, caller=caller_id, session_caller=session_caller)
+    _include_reading_routers(protected, container, caller=caller_id)
     protected.include_router(
         retrieval_http.build_library_retrieval_router(
             get_library_retrieval=container.retrieval.get_library_retrieval,

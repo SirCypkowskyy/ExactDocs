@@ -161,7 +161,7 @@ class MeteredSearchAll:
     async def __call__(
         self, query: SearchAllQuery, *, caller: str | None = None
     ) -> SearchAllResult:
-        """Search, then count it: to its one library when it was narrowed to one.
+        """Search, then count it: to its one library when only one was chosen, else to none.
 
         Args:
             query: The query, the libraries, the filters and the limit.
@@ -171,8 +171,8 @@ class MeteredSearchAll:
             The results.
         """
         result = await self.search_all_libraries(query, caller=caller)
-        libraries = [query.library] if query.library else query.libraries
-        await self.meter.count(Operation.SEARCH, libraries)
+        chosen = [*query.libraries, *([query.library] if query.library else [])]
+        await self.meter.count(Operation.SEARCH, chosen)
         return result
 
 

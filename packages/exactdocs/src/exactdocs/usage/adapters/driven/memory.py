@@ -15,13 +15,14 @@ class InMemoryUsageCounts:
     """The stored counts, by counter."""
 
     async def add(self, counts: Mapping[UsageKey, int]) -> None:
-        """Add counts to the stored ones.
+        """Add counts to the stored ones (a zero creates no counter, as in SQL).
 
         Args:
             counts: How many to add to each counter.
         """
         for key, count in counts.items():
-            self.counts[key] = self.counts.get(key, 0) + count
+            if count:
+                self.counts[key] = self.counts.get(key, 0) + count
 
     async def sums(self, selection: UsageSelection) -> Sequence[UsageSum]:
         """Sum the stored counts of a range of days by the selected columns.

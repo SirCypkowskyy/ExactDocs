@@ -24,33 +24,22 @@ from exactdocs.usage.ports.driving import (
 )
 
 
-def build_router(
-    *,
-    get_usage_stats: GetUsageStats,
-    get_account_usage: GetAccountUsage,
-    get_leaderboard: GetLeaderboard,
-    get_usage_settings: GetUsageSettings,
-    caller: Callable[..., Awaitable[str]],
-    require_operator: Callable[..., Awaitable[None]],
+def build_stats_router(
+    *, get_usage_stats: GetUsageStats, require_operator: Callable[..., Awaitable[None]]
 ) -> APIRouter:
-    """Expose ``/stats/usage``, ``/stats/leaderboard``, ``/stats/settings`` and ``/account/usage``.
+    """Expose ``/stats/usage``: the instance's usage, for operators.
 
-    Every route needs a caller (a session or an API token); ``/stats/usage`` only lets an
-    operator through.
+    Like ``/users`` and ``/access-log``, it takes a signed-in operator's session, never an API
+    token: ``require_operator`` decides (401 without a session, 403 for anyone else).
 
     Args:
         get_usage_stats: The instance's usage per period and group.
-        get_account_usage: The caller's own usage.
-        get_leaderboard: Libraries or people ranked over a period.
-        get_usage_settings: Whether the people leaderboard is on, and the retention.
-        caller: The dependency naming the account of the request.
-        require_operator: The dependency that lets only an operator through (403 otherwise).
+        require_operator: The dependency that lets only a signed-in operator through.
 
     Returns:
         The router.
     """
     router = APIRouter(tags=["usage"])
-    account = Annotated[str, Depends(caller)]
 
     @router.get("/stats/usage", name="get_usage_stats", dependencies=[Depends(require_operator)])
     async def usage_stats(query: Annotated[UsageStatsQuery, Query()]) -> UsageStats:
@@ -71,6 +60,32 @@ def build_router(
             The counts per period and per group.
         """
         return await get_usage_stats(query)
+
+    return router
+
+
+def build_router(
+    *,
+    get_account_usage: GetAccountUsage,
+    get_leaderboard: GetLeaderboard,
+    get_usage_settings: GetUsageSettings,
+    caller: Callable[..., Awaitable[str]],
+) -> APIRouter:
+    """Expose ``/account/usage``, ``/stats/leaderboard`` and ``/stats/settings``.
+
+    Mounted where every route needs a caller (a session or an API token).
+
+    Args:
+        get_account_usage: The caller's own usage.
+        get_leaderboard: Libraries or people ranked over a period.
+        get_usage_settings: Whether the people leaderboard is on, and the retention.
+        caller: The dependency naming the account of the request.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["usage"])
+    account = Annotated[str, Depends(caller)]
 
     @router.get("/account/usage", name="get_account_usage")
     async def own_usage(who: account, query: Annotated[OwnUsageQuery, Query()]) -> UsageStats:
