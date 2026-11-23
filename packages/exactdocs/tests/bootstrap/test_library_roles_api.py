@@ -388,6 +388,49 @@ async def test_a_new_library_is_created_by_its_caller_and_removing_it_drops_its_
     assert await role(bob) is None
 
 
+async def test_creating_sharing_and_removing_a_library_is_in_its_access_log(
+    instance: Instance,
+) -> None:
+    catalog = instance.container.catalog
+    new = "/acme/ledger-three"
+    bind_caller(instance.accounts["bob"].id)
+    await catalog.create_library(
+        CreateLibraryCommand(
+            id=new, title="Ledger three", source_url="https://example.com/a/c.git", host="git"
+        )
+    )
+    async with instance.signed_in("bob") as bob, instance.signed_in("ada") as ada:
+        path = "/api/v1/libraries/acme/ledger-three"
+        shared = await bob.put(
+            f"{path}/grants", json={"kind": "user", "subject": "carol", "role": "admin"}
+        )
+        assert shared.status_code == 200, shared.text
+        log = (await bob.get(f"{path}/access-log")).json()
+        assert [(e["actor"], e["change"], e["subject"], e["role"]) for e in log["events"]] == [
+            ("bob", "granted", "carol", "admin"),
+            ("bob", "library_created", "bob", "creator"),
+        ]
+        assert log["total"] == 2
+
+        await catalog.remove_library(RemoveLibraryCommand(library=new))  # still bob's call
+        assert (await bob.get(f"{path}/access-log")).status_code == 404
+        every = await ada.get("/api/v1/access-log", params={"library": new})
+        newest = every.json()["events"][0]
+        assert (newest["actor"], newest["change"], newest["library"]) == (
+            "bob",
+            "library_deleted",
+            new,
+        )
+        refused = await bob.get("/api/v1/access-log")
+        assert (refused.status_code, refused.json()["error"]) == (403, "forbidden")
+    token = await instance.token("ada")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=instance.app), base_url="http://localhost"
+    ) as agent:
+        answer = await agent.get("/api/v1/access-log", headers={"authorization": f"Bearer {token}"})
+        assert answer.status_code == 401  # like /users: a session, never an API token
+
+
 def mcp_client(app: FastAPI, token: str) -> Client[StreamableHttpTransport]:
     """A FastMCP client that talks to the app in-process, over the real HTTP transport."""
 
@@ -421,6 +464,8 @@ async def test_a_viewer_reads_over_mcp_and_a_caller_without_a_role_is_refused(
     reads = [
         ("list_articles", {"library": LIBRARY}),
         ("search_docs", {"library": LIBRARY, "query": "retry"}),
+        ("view_search", {"library": LIBRARY, "query": "retry"}),
+        ("view_article", {"library": LIBRARY, "path": "plan.md"}),
     ]
     async with mcp_client(instance.app, await instance.token("bob")) as viewer:
         for tool, arguments in reads:

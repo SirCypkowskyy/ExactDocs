@@ -1,4 +1,5 @@
 from exactdocs.identity.ports.driven import (
+    AccessLog,
     AccountRepository,
     ExternalIdentityRepository,
     FailedSignInLog,
@@ -24,6 +25,8 @@ from exactdocs.identity.ports.driving import (
     IdentifyCaller,
     IdentifyExternalToken,
     IdentifyToken,
+    ListAccessLog,
+    ListLibraryAccessLog,
     ListLibraryGrants,
     ListTokens,
     ListUsers,
@@ -40,6 +43,7 @@ from exactdocs.identity.ports.driving import (
 )
 
 __all__ = [
+    "AccessLog",
     "AccountRepository",
     "Authenticate",
     "ClaimLibrary",
@@ -57,6 +61,8 @@ __all__ = [
     "IdentifyExternalToken",
     "IdentifyToken",
     "LibraryGrantRepository",
+    "ListAccessLog",
+    "ListLibraryAccessLog",
     "ListLibraryGrants",
     "ListTokens",
     "ListUsers",

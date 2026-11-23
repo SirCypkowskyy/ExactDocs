@@ -294,6 +294,41 @@ class InMemoryChunkRepository:
         rows.update(changed)
         return len(changed)
 
+    async def page(
+        self, manifest_id: str, after: ChunkId | None, limit: int
+    ) -> Sequence[StoredChunk]:
+        """Return the manifest's chunks by chunk ID, a page at a time.
+
+        Args:
+            manifest_id: The manifest.
+            after: Only chunks whose ID sorts after this one; ``None`` from the first.
+            limit: The most chunks returned.
+
+        Returns:
+            At most ``limit`` chunks, ordered by chunk ID.
+        """
+        ids = sorted(i for i in self.rows.get(manifest_id, {}) if after is None or i > after)
+        found = [await self.get(manifest_id, i) for i in ids[:limit]]
+        return [c for c in found if c is not None]
+
+    async def holding(self, keys: Collection[ChunkKey]) -> Sequence[StoredChunk]:
+        """Return every manifest's row of these stored chunks, with the content.
+
+        Args:
+            keys: The stored chunks.
+
+        Returns:
+            One entry per (manifest, row) holding one of them.
+        """
+        wanted = set(keys)
+        found = [
+            await self.get(manifest_id, row.chunk_id)
+            for manifest_id, rows in self.rows.items()
+            for row in rows.values()
+            if (*row.chunk_set, row.position) in wanted
+        ]
+        return [c for c in found if c is not None]
+
     async def embedding_sources(
         self, manifest_id: str, keys: Collection[ChunkKey]
     ) -> Mapping[ChunkKey, EmbeddingSource]:
@@ -810,6 +845,22 @@ class InMemoryVectorIndex:
         self._live(space_id)
         stored = self._stored(space_id)
         return sum(stored.pop(k, None) is not None for k in set(keys))
+
+    async def stored(
+        self, space_id: EmbeddingSpaceId, keys: Collection[ChunkKey]
+    ) -> Mapping[ChunkKey, tuple[float, ...]]:
+        """Return the stored vectors of these chunks.
+
+        Args:
+            space_id: The space.
+            keys: The chunks.
+
+        Returns:
+            Each vector found, by chunk.
+        """
+        self._live(space_id)
+        stored = self._stored(space_id)
+        return {k: stored[k][1] for k in set(keys) if k in stored}
 
     async def nearest(
         self,

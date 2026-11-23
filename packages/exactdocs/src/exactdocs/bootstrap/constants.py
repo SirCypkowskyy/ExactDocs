@@ -5,10 +5,14 @@ Each is ``Final`` and documented; see *Python conventions* in docs/architecture.
 
 import re
 import sqlite3
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Final
 
+from exactdocs.bootstrap.index_kinds import IndexBackendKind
 from exactdocs.catalog.models import ManifestState
+from exactdocs.retrieval.errors import IndexBackendUnavailableError
 from exactdocs.retrieval.models import ManifestStatus
 from exactdocs_kernel import (
     BusyError,
@@ -38,6 +42,8 @@ LOCAL_COMMANDS: Final[frozenset[str]] = frozenset(
         "user reset-password",
         "ai check",
         "ai estimate",
+        "index check",
+        "index rebuild",
         "models pull",
     }
 )
@@ -311,6 +317,10 @@ CLIENTS: Final[tuple[str, ...]] = ("claude", "claude-desktop", "cursor", "vscode
 """MCP clients ``exactdocs mcp-config`` writes a configuration for."""
 SKILL_PATH: Final[Path] = Path(__file__).parent / "skill" / "SKILL.md"
 """The agent skill the server ships and serves as an MCP resource."""
+APP_RENDERER_URI: Final[str] = "ui://exactdocs/renderer.html"
+"""The MCP Apps UI resource of ``view_article`` and ``view_search``: Prefab's renderer, bundled
+into one page, so a host loads nothing from a third party (FastMCP's own ``app=True`` renderer
+loads Prefab from a CDN)."""
 NAME: Final[str] = "exactdocs"
 """Name of the server in MCP client configurations."""
 STDIO: Final[dict[str, str | list[str]]] = {
@@ -334,8 +344,10 @@ _STATUS_BY_ERROR: Final[dict[type[DomainError], int]] = {
     BusyError: 429,
     ValidationError: 422,
     RateLimitedError: 429,
+    IndexBackendUnavailableError: 503,
 }
-"""HTTP status of each kernel error class; any other domain error is a 400."""
+"""HTTP status of each kernel error class (and of an external index backend that does not answer:
+503); any other domain error is a 400."""
 SETUP_EXEMPT: Final[frozenset[tuple[str, ...]]] = frozenset(
     {("POST", f"{V1_PREFIX}/setup"), ("GET", f"{V1_PREFIX}/session"), ("GET", OPENAPI_PATH)}
 )
@@ -392,6 +404,41 @@ _OWNER_ONLY: Final[int] = 0o600
 # ---------------------------------------------------------------- settings
 LOCAL_HOSTS: Final[tuple[str, ...]] = ("localhost", "127.0.0.1", "::1")
 """Hosts every instance accepts; anything else must be listed in EXACTDOCS_ALLOWED_HOSTS."""
+
+# ---------------------------------------------------------------- index_backends (#352)
+DATABASE_BACKEND: Final[str] = "database"
+"""``EXACTDOCS_SEARCH_BACKEND`` / ``EXACTDOCS_VECTOR_BACKEND`` for ExactDocs' own database (the
+default): SQLite FTS5 and sqlite-vec, or PostgreSQL full-text search, pg_search and pgvector."""
+INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
+    {
+        "memory": IndexBackendKind(
+            name="memory",
+            module="exactdocs.retrieval.adapters.driven.memory_index",
+            search="search_backend",
+            vectors="vector_backend",
+            production=False,
+        ),
+    }
+)
+"""The external index backends, by name. Adding one is one adapter module in
+``retrieval/adapters/driven``, its optional extra in ``pyproject.toml``, one entry here, and its
+case in the shared contract suites (``tests/fixtures/index_backends.py``)."""
+INDEX_BACKEND_SECRET_SUFFIXES: Final[tuple[str, ...]] = (
+    "api_key",
+    "apikey",
+    "key",
+    "password",
+    "secret",
+    "token",
+    "credentials",
+)
+"""``[index_backends.<name>]`` options the TOML file may not hold: secrets come from the
+environment (``EXACTDOCS_INDEX_BACKENDS__<NAME>__<OPTION>``) or an option ending in ``_file``."""
+INDEX_DRIFT_CHECK_SECONDS: Final[float] = 300.0
+"""How often a server compares its external indexes with the database (first at start);
+``/healthz`` reports what the last check found."""
+INDEX_DRIFT_LOGGED: Final[int] = 10
+"""Drifted versions a check names in the log; the rest are counted."""
 
 # ---------------------------------------------------------------- exit codes of the CLI
 EXIT_FAILED: Final[int] = 1

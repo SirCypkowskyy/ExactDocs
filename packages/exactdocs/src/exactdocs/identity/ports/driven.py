@@ -6,6 +6,8 @@ from typing import Literal, Protocol
 
 from exactdocs.identity.models import (
     AccessClaims,
+    AccessEvent,
+    AccessLogFilter,
     Account,
     AccountId,
     ApiToken,
@@ -750,5 +752,43 @@ class LibraryGrantRepository(Protocol):
 
         Args:
             library: The library ID, lower-case.
+        """
+        ...
+
+
+class AccessLog(Protocol):
+    """The access log: grants, revocations, ownership transfers and deletions (append-only)."""
+
+    async def record(self, event: AccessEvent) -> None:
+        """Append an event.
+
+        Args:
+            event: What changed, by whom and when.
+        """
+        ...
+
+    async def newest(
+        self, where: AccessLogFilter, *, older_than: str | None, limit: int
+    ) -> list[AccessEvent]:
+        """Return the newest events that match, newest first.
+
+        Args:
+            where: Which events.
+            older_than: Only events recorded before the one with this ID (a page's cursor).
+            limit: Most events returned.
+
+        Returns:
+            Up to ``limit`` events, by ID descending.
+        """
+        ...
+
+    async def count(self, where: AccessLogFilter) -> int:
+        """Count the events that match.
+
+        Args:
+            where: Which events.
+
+        Returns:
+            How many there are.
         """
         ...

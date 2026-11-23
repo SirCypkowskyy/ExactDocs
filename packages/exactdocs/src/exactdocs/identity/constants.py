@@ -104,6 +104,8 @@ TOKEN_SORT_FIELDS: Final[tuple[str, ...]] = ("created_at", "name", "expires_at",
 """What the token list can be sorted by; `-created_at` (newest first) is the default."""
 GRANT_SORT_FIELDS: Final[tuple[str, ...]] = ("kind", "subject", "role")
 """What a library's grants can be sorted by; `kind` (users, then groups, by name) is the default."""
+ACCESS_LOG_ACTION: Final[str] = "reads the access log of every library"
+"""What only an instance operator does, for the 403 of the instance-wide access log."""
 
 # ---------------------------------------------------------------- use_cases
 SIGN_IN_SECRET_BYTES: Final[int] = 32

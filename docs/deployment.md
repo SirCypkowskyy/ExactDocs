@@ -187,6 +187,24 @@ docker exec exactdocs exactdocs reindex     # or: uvx exactdocs reindex
 It builds the new index from the stored chunks next to the one that answers, then swaps them in one
 step, so the server keeps serving throughout. Running it when nothing changed is harmless.
 
+### External index backends
+
+With `EXACTDOCS_SEARCH_BACKEND` or `EXACTDOCS_VECTOR_BACKEND` set to an external backend (see
+[Configuration](configuration.md#search-and-ai)), the backend holds a copy of each version that
+the database can always write again. The server compares the two at start and every five
+minutes, logs what drifted, and `/healthz` reports how many versions did
+(`index_versions_missing`). After the backend lost data (a reset, a deleted index), or when you
+move an index to a backend for the first time, run where the server runs:
+
+```bash
+docker exec exactdocs exactdocs index check     # names what is missing; exits 1 if anything is
+docker exec exactdocs exactdocs index rebuild   # or --library /owner/repo [--version v1.2.0]
+```
+
+The rebuild writes every version from the stored chunks and vectors (nothing is imported or
+embedded again) while the server keeps serving, and deletes the versions the database no longer
+has. A backend that does not answer at start stops the server, naming it.
+
 ## Backup and restore
 
 This section is about the SQLite database. On PostgreSQL, use `pg_dump` (see

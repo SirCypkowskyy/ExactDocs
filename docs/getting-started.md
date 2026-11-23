@@ -543,10 +543,12 @@ planned ([#383](https://github.com/SirCypkowskyy/ExactDocs/issues/383)).
     library's *Sharing* page) or with `PUT /api/v1/libraries/{owner}/{repo}/grants`. Only the
     creator gives or removes `admin` and hands the library over to another user (*Transfer
     ownership*), who becomes its creator while you stay an admin. Operators (admins) hold every
-    library, and manage
-    the accounts. Libraries that existed before roles have no creator, so other accounts see them
-    only once an operator shares them. The AI providers and instance settings stay open to every
-    signed-in account.
+    library, and manage the accounts. Libraries that existed before roles have no creator, so
+    other accounts see them only once an operator shares them. The AI providers and instance
+    settings stay open to every signed-in account. Every grant, revocation, ownership transfer
+    and removal is recorded: a library's admins read its access log from its *Sharing* page or
+    the Sharing section of its settings, and operators read every library's on the *Access log*
+    page (`/access-log`).
 
 ### Planned: teams
 

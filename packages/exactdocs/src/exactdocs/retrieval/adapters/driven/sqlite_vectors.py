@@ -6,6 +6,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
+from itertools import batched
 
 import aiosqlite
 from sqlalchemy import bindparam, insert, select, text, update
@@ -33,6 +34,7 @@ from exactdocs.retrieval.constants import (
     _VECTOR_NEAREST,
     _VECTOR_PENDING,
     _VECTOR_PENDING_ARTICLES,
+    _VECTOR_READ,
     _VECTOR_UPSERT,
     SQLITE_VEC_EXTENSION,
     SQLITE_VEC_MODULE,
@@ -255,6 +257,32 @@ class SqliteVectorIndex:
                 batch = ids[start : start + VECTOR_BATCH]
                 gone += (await connection.execute(statement, {"keys": batch})).rowcount
         return gone
+
+    async def stored(
+        self, space_id: EmbeddingSpaceId, keys: Collection[ChunkKey]
+    ) -> Mapping[ChunkKey, tuple[float, ...]]:
+        """Read back the vectors of these chunks (what an external copy is written from).
+
+        Args:
+            space_id: The space.
+            keys: The chunks.
+
+        Returns:
+            Each vector found, by chunk.
+        """
+        statement = text(_VECTOR_READ.format(table=vector_table(space_id))).bindparams(
+            bindparam("keys", expanding=True)
+        )
+        async with self.engine.connect() as connection:
+            await self._live(connection, space_id)
+            ids = await chunk_ids(connection, list(set(keys)))
+            by_id = {row_id: key for key, row_id in ids.items()}
+            found: dict[ChunkKey, tuple[float, ...]] = {}
+            for batch in batched(list(by_id), VECTOR_BATCH, strict=False):
+                for row in await connection.execute(statement, {"keys": list(batch)}):
+                    blob: bytes = row.embedding
+                    found[by_id[row.chunk_key]] = struct.unpack(f"<{len(blob) // 4}f", blob)
+        return found
 
     async def nearest(
         self,

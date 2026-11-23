@@ -6,6 +6,7 @@ import pytest
 from pydantic import SecretStr
 
 from exactdocs.identity.adapters.driven.memory import (
+    InMemoryAccessLog,
     InMemoryAccountRepository,
     InMemoryExternalIdentityRepository,
     InMemoryFailedSignInLog,
@@ -72,6 +73,7 @@ async def world() -> World:
         failures=InMemoryFailedSignInLog(),
         externals=externals,
         library_grants=InMemoryLibraryGrantRepository(),
+        access_log=InMemoryAccessLog(),
         attempts=InMemorySignInAttemptRepository(),
         box=_NoBox(),
         clock=SystemClock(),

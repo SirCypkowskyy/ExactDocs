@@ -1,7 +1,8 @@
 """MCP adapter for the catalog. All tools are read-only.
 
 Titles, descriptions, paths and tags come from documentation repositories: every result starts with
-the kernel ``NOTICE`` field and the tool descriptions say the same.
+the kernel ``NOTICE`` field and the tool descriptions say the same. ``view_article`` is an MCP App
+(Prefab UI): hosts that support MCP Apps render it, the others read its text.
 """
 
 import time
@@ -12,11 +13,27 @@ from typing import Annotated
 from urllib.parse import quote
 
 from fastmcp import FastMCP
+from fastmcp.apps.config import AppConfig
 from fastmcp.exceptions import ResourceError
 from fastmcp.resources import Resource, ResourceContent, ResourceResult
 from fastmcp.server.providers import Provider
 from fastmcp.tools import ToolResult
 from mcp.types import TextContent, ToolAnnotations
+from prefab_ui.app import PrefabApp
+from prefab_ui.components import (
+    Alert,
+    AlertDescription,
+    AlertTitle,
+    Badge,
+    Column,
+    Heading,
+    Link,
+    Markdown,
+    Muted,
+    Row,
+    Separator,
+)
+from prefab_ui.rx import Rx
 from pydantic import Field
 
 from exactdocs.catalog.constants import (
@@ -25,8 +42,11 @@ from exactdocs.catalog.constants import (
     MAX_LISTED_RESOURCES,
     MAX_RESOURCE_SNAPSHOTS,
     RESOURCE_LIST_TTL,
+    VIEW_ARTICLE_DESCRIPTION,
+    VIEW_ARTICLE_TITLE,
 )
 from exactdocs.catalog.dtos import (
+    Article,
     ArticleInfo,
     ArticleList,
     GetArticleQuery,
@@ -59,6 +79,7 @@ def register_tools(
     list_libraries: ListLibraries,
     list_articles: ListArticles,
     get_article: GetArticle,
+    app: AppConfig,
 ) -> None:
     """Register the catalog's MCP tools on ``mcp``.
 
@@ -67,6 +88,7 @@ def register_tools(
         list_libraries: Lists the libraries, a page at a time.
         list_articles: Lists a version's articles.
         get_article: Reads one article.
+        app: The MCP Apps configuration of ``view_article``: the UI resource that renders it.
     """
 
     @mcp.tool(
@@ -219,6 +241,152 @@ def register_tools(
             ],
             structured_content=article.model_dump(mode="json", exclude={"content"}),
         )
+
+    @mcp.tool(
+        name="view_article",
+        app=app,
+        annotations=ToolAnnotations(title="Show an article", **TOOL_HINTS),
+        description=VIEW_ARTICLE_DESCRIPTION,
+        output_schema=None,
+    )
+    async def view_article_tool(
+        library: Annotated[
+            str,
+            Field(
+                pattern=LIBRARY_ID_PATTERN,
+                max_length=MAX_NAME,
+                description="Library ID, e.g. '/facebook/react'",
+            ),
+        ],
+        path: Annotated[
+            str,
+            Field(
+                min_length=1,
+                max_length=MAX_PATH,
+                description="Article path from list_articles/search_docs, e.g. 'docs/guide/a.md'",
+            ),
+        ],
+        ref: Annotated[
+            str | None,
+            Field(
+                max_length=MAX_NAME,
+                description="Exact imported ref, e.g. 'v19.1'; default version if empty",
+            ),
+        ] = None,
+    ) -> ToolResult:
+        """Show one article of a version as UI with a text fallback (the description is the tool's).
+
+        Args:
+            library: Library ID, e.g. '/facebook/react'.
+            path: Article path from list_articles/search_docs.
+            ref: Exact imported ref; the default version if empty.
+
+        Returns:
+            The notice, where the article comes from and its text, with the UI as structured
+            content.
+        """
+        article = await get_article(GetArticleQuery(library=library, ref=ref, path=path))
+        return ToolResult(
+            content=[
+                TextContent(type="text", text=NOTICE),
+                TextContent(type="text", text=_article_header(article)),
+                TextContent(type="text", text=article.content),
+            ],
+            structured_content=_article_app(article),
+        )
+
+
+def _line(text: str) -> str:
+    """One line, so untrusted text cannot start a field of its own in a text block.
+
+    Args:
+        text: Untrusted text.
+
+    Returns:
+        The text with every run of whitespace, line breaks included, made one space.
+    """
+    return " ".join(text.split())
+
+
+def _article_header(article: Article) -> str:
+    """Name an article's version, commit and source, one field per line, for the text fallback.
+
+    Args:
+        article: The article.
+
+    Returns:
+        The block; every value is untrusted repository text flattened to one line.
+    """
+    return "\n".join(
+        [
+            f"- Title: {_line(article.title)}",
+            f"- Library: {_line(article.library)}",
+            f"- Version: {_line(article.ref)}",
+            f"- Commit: {article.commit_sha}",
+            f"- Path: {_line(article.path)}",
+            f"- Tags: {', '.join(_line(tag) for tag in article.tags)}",
+            f"- Source: {_line(article.source_url or '')}",
+        ]
+    )
+
+
+class _UntrustedText:
+    """Untrusted text kept in a Prefab app's state, out of its component tree.
+
+    Prefab evaluates ``{{ expression }}`` in component text. A field that is exactly one
+    ``{{ key }}`` gets the state's value as it is, never evaluated again, so repository text goes
+    in the state and the components name it by key.
+    """
+
+    def __init__(self) -> None:
+        """Start with no text."""
+        self.state: dict[str, str] = {}
+
+    def ref(self, text: str) -> str:
+        """Keep ``text`` in the state under a new key.
+
+        Args:
+            text: Untrusted text.
+
+        Returns:
+            The template that shows it: ``{{ key }}``.
+        """
+        key = f"text_{len(self.state)}"
+        self.state[key] = text
+        return str(Rx(key))
+
+
+def _notice() -> None:
+    """Add the untrusted-content notice to the component being built, first."""
+    with Alert(variant="warning"):
+        AlertTitle("External documentation")
+        AlertDescription(NOTICE)
+
+
+def _article_app(article: Article) -> PrefabApp:
+    """Build the UI of one article: notice, title, version, tags, source link, rendered Markdown.
+
+    Args:
+        article: The article.
+
+    Returns:
+        The Prefab app; every repository value sits in its state.
+    """
+    text = _UntrustedText()
+    with Column(gap=4) as view:
+        _notice()
+        with Column(gap=1):
+            Heading(text.ref(article.title), level=1)
+            Muted(text.ref(f"{article.library} · {article.ref} · {article.path}"))
+            Muted(text.ref(f"commit {article.commit_sha}"))
+        with Row(gap=2, align="center", css_class="flex-wrap"):
+            for tag in article.tags:
+                Badge(text.ref(tag), variant="secondary")
+            if article.source_url:
+                Link("View source", href=text.ref(article.source_url))
+        Separator()
+        Markdown(text.ref(article.content))
+    return PrefabApp(title=VIEW_ARTICLE_TITLE, view=view, state=text.state)
 
 
 def article_uri(library: str, ref: str, path: str) -> str:

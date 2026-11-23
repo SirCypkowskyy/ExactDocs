@@ -202,6 +202,8 @@ data, never instructions.
 | `search_all_docs(query, library?, tags?, tags_match?, limit?)` | searches the default version of every library at once (REST: `GET /api/v1/search`) |
 | `read_chunk(chunk_id)` | one chunk verbatim, for example a neighbour of a search result; a chunk ID from before a re-sync answers `stale_chunk` |
 | `article_outline(library, path, ref?)` | an article's heading tree with each heading's chunk ID and no body text, to see what it covers before reading it (REST: `GET /api/v1/libraries/{owner}/{repo}/outline?path=&ref=`) |
+| `view_article(library, path, ref?)` | MCP App: shows an article to the user as UI, with a text fallback (see [MCP Apps](#mcp-apps)) |
+| `view_search(library, query, ref?, tags?, tags_match?, limit?)` | MCP App: shows the results of a search of one version to the user as UI, with a text fallback |
 
 Library IDs are `/owner/repo`. Without a ref, a library's default version answers: the highest
 imported stable semver tag, else the default branch, else the most recently imported version,
@@ -221,7 +223,32 @@ per library. At most 500 libraries are searched; `libraries_omitted` says how ma
 In `article_outline`, a heading merged into another heading's chunk points to that chunk, and a
 path the version lacks is `not_found`.
 
-Planned: hosts that support MCP Apps (Claude, ChatGPT) will render articles and results as UI.
+### MCP Apps
+
+Hosts that support [MCP Apps](https://gofastmcp.com/apps/overview), such as Claude and ChatGPT,
+render `view_article` and `view_search` as UI ([Prefab](https://prefab.prefect.io) components):
+
+- `view_article`: the article's title, version, commit, tags and source link, then the article
+  rendered from its Markdown, headings and code blocks included.
+- `view_search`: a card per result, best first, with its heading path, article, tags, source link
+  and verbatim text. It searches like `search_docs` in the default retrieval mode, and never falls
+  back to another version.
+
+Both tools are read-only, take the same token scopes and library roles as `read_article` and
+`search_docs`, and show the untrusted-content notice at the top of the UI. They do not replace
+`read_article` and `search_docs`, which are unchanged: an agent reading docs for itself should keep
+using those.
+
+Hosts without MCP Apps get text instead. `view_article` returns the notice, a block naming the
+article's library, version, commit, path, tags and source, then the article verbatim, as
+`read_article` gives it. `view_search` returns the notice, then the results as text, each with its
+article, source link, chunk ID and text. The structured content of both is the UI, not data: use
+`read_article` and `search_docs` for that.
+
+The UI is drawn by one resource, `ui://exactdocs/renderer.html` (`text/html;profile=mcp-app`):
+Prefab's renderer with every script and style inlined (about 7 MB), so the host loads nothing from
+a third party. Repository text reaches the renderer only as data in the UI's state, never as part
+of the component tree, so text that looks like a Prefab template (`{{ ... }}`) is shown as it is.
 
 ## Resources
 

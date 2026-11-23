@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Users } from "lucide-react";
+import { History, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { cn } from "@/shared/lib/utils";
@@ -183,16 +183,26 @@ export function LibrarySettingsPage({ owner, repo, library, jobs }: Props) {
             <SettingsSection
               id="sharing"
               title="Sharing"
-              description="Who can find, read, change and manage this library. Its admins share it; its creator hands it over."
+              description="Who can find, read, change and manage this library. Its admins share it; its creator hands it over. The access log records every change."
             >
-              <Link
-                to="/libraries/$owner/$repo/sharing"
-                params={{ owner, repo }}
-                className={buttonVariants({ variant: "outline" })}
-              >
-                <Users aria-hidden="true" />
-                Manage sharing
-              </Link>
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  to="/libraries/$owner/$repo/sharing"
+                  params={{ owner, repo }}
+                  className={buttonVariants({ variant: "outline" })}
+                >
+                  <Users aria-hidden="true" />
+                  Manage sharing
+                </Link>
+                <Link
+                  to="/libraries/$owner/$repo/access-log"
+                  params={{ owner, repo }}
+                  className={buttonVariants({ variant: "outline" })}
+                >
+                  <History aria-hidden="true" />
+                  Access log
+                </Link>
+              </div>
             </SettingsSection>
             <DangerSection owner={owner} repo={repo} library={library} onStart={start("danger")} />
           </div>

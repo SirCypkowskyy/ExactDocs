@@ -1176,3 +1176,42 @@ async def test_a_hidden_chunk_id_matches_a_missing_chunk_without_revealing_its_l
         with pytest.raises(ChunkNotFoundError) as caught:
             await read(ReadChunkQuery(chunk_id=identifier))
         assert "/acme/payments" not in str(caught.value)
+
+
+# ---------------------------------------------------------------- what external indexes read (#352)
+
+
+async def test_a_manifest_is_read_a_page_at_a_time_by_chunk_id(world: World) -> None:
+    await world.index("m1", "v1", {"a.md": "blob-a", "b.md": "blob-b", "c.md": "blob-c"})
+    await world.index("m2", "v2", {"z.md": "blob-z"})
+
+    pages, after = [], None
+    while page := await world.chunks.page("m1", after, 4):
+        pages.append(page)
+        after = page[-1].row.chunk_id
+
+    assert [len(p) for p in pages] == [4, 2]
+    read = [c for p in pages for c in p]
+    assert [c.row.chunk_id for c in read] == sorted(c.row.chunk_id for c in read)
+    assert {c.manifest_id for c in read} == {"m1"}
+    assert {c.row.article_path for c in read} == {"a.md", "b.md", "c.md"}
+    assert {c.chunk.content for c in read if c.row.article_path == "a.md"} == {
+        "text of blob-a one",
+        "text of blob-a two",
+    }
+    assert read[0].version_id == "/acme/payments/v1"
+    assert await world.chunks.page("unknown", None, 10) == []
+
+
+async def test_every_manifest_holding_a_stored_chunk_is_found(world: World) -> None:
+    await world.index("m1", "v1", {"a.md": "shared", "b.md": "only-1"})
+    await world.index("m2", "v2", {"copy.md": "shared"})
+
+    found = await world.chunks.holding([("shared", CONFIG, 1), ("nope", CONFIG, 0)])
+
+    assert sorted((c.manifest_id, c.row.article_path) for c in found) == [
+        ("m1", "a.md"),
+        ("m2", "copy.md"),
+    ]
+    assert {c.chunk.content for c in found} == {"text of shared two"}
+    assert await world.chunks.holding([]) == []

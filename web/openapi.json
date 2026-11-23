@@ -1656,6 +1656,175 @@
         }
       }
     },
+    "/api/v1/access-log": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "List Access Log",
+        "description": "List the access changes of every library, newest first. Operators only.\n\nCreations, grants (a new role, or another one), revocations, ownership transfers and\nremovals, each with who made it and when; a removed library's events stay. Filter with\n`library` and `change`; `total` counts every match.",
+        "operationId": "identity-list_access_log",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "How many events per page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "How many events per page."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\nfilters of the request that returned it.",
+              "title": "Cursor"
+            },
+            "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\nfilters of the request that returned it."
+          },
+          {
+            "name": "change",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "library_created",
+                      "granted",
+                      "revoked",
+                      "ownership_transferred",
+                      "library_deleted"
+                    ],
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events of these changes; repeat for several.",
+              "title": "Change"
+            },
+            "description": "Only events of these changes; repeat for several."
+          },
+          {
+            "name": "library",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256,
+                  "pattern": "^/[^/]+/[^/]+$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only the events of this library (`/owner/repo`, any case), removed ones included.",
+              "title": "Library"
+            },
+            "description": "Only the events of this library (`/owner/repo`, any case), removed ones included."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessLogPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/libraries/{owner}/{repo}/grants": {
       "get": {
         "tags": [
@@ -2191,6 +2360,176 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LibraryGrants"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/libraries/{owner}/{repo}/access-log": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "List Library Access Log",
+        "description": "List who changed the library's access, how and when, newest first. Library admins only.\n\nIts creation, grants (a new role, or another one), revocations and ownership transfers,\neach with who made it and when. Operators see every event under the library's ID;\nanyone else only those since it was last removed. Filter with `change`; `total` counts\nevery match.",
+        "operationId": "identity-list_library_access_log",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "How many events per page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "How many events per page."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\nfilters of the request that returned it.",
+              "title": "Cursor"
+            },
+            "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\nfilters of the request that returned it."
+          },
+          {
+            "name": "change",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "library_created",
+                      "granted",
+                      "revoked",
+                      "ownership_transferred",
+                      "library_deleted"
+                    ],
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events of these changes; repeat for several.",
+              "title": "Change"
+            },
+            "description": "Only events of these changes; repeat for several."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessLogPage"
                 }
               }
             }
@@ -10205,6 +10544,155 @@
   },
   "components": {
     "schemas": {
+      "AccessEventSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The event's ID."
+          },
+          "library": {
+            "type": "string",
+            "title": "Library",
+            "description": "The library ID (`/owner/repo`, lower-case)."
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "At",
+            "description": "When it happened."
+          },
+          "actor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor",
+            "description": "The username of who made the change; null when the instance did (CLI, a job)."
+          },
+          "change": {
+            "type": "string",
+            "enum": [
+              "library_created",
+              "granted",
+              "revoked",
+              "ownership_transferred",
+              "library_deleted"
+            ],
+            "title": "Change",
+            "description": "What happened: `library_created`, `granted` (a new role, or another one than before),\n`revoked`, `ownership_transferred` or `library_deleted`."
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "group"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind",
+            "description": "Whether `subject` is a username or a group name; null for a deletion."
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject",
+            "description": "The username or group name the change is about; null for a deletion. An\n`ownership_transferred` event names the new creator."
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role",
+            "description": "The role given, or the role taken away (`revoked`); null for a deletion."
+          },
+          "previous_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Role",
+            "description": "The role the subject held before; null when it held none."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "library",
+          "at",
+          "actor",
+          "change",
+          "kind",
+          "subject",
+          "role",
+          "previous_role"
+        ],
+        "title": "AccessEventSummary",
+        "description": "One entry of the access log as the outside world sees it."
+      },
+      "AccessLogPage": {
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/AccessEventSummary"
+            },
+            "type": "array",
+            "title": "Events",
+            "description": "The events of this page."
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Pass as `cursor` to get the next (older) page; null on the last page."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "How many events match the filters, across every page."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "events",
+          "next_cursor",
+          "total"
+        ],
+        "title": "AccessLogPage",
+        "description": "A page of the access log, newest first."
+      },
       "AccessTokenIn": {
         "properties": {
           "kind": {
