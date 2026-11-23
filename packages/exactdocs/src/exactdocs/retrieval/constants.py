@@ -1868,16 +1868,24 @@ ELASTIC_WORDS_PATTERN: Final[str] = r"[\p{L}\p{N}\p{M}_.\-]+"
 """What a word is to the heading, path and text fields (a Java regular expression, the pattern
 tokenizer's ``group: 0`` keeps the matches): letters, digits, marks and ``-_.``, as
 ``identifier_tokens`` cuts words and FTS5's ``unicode61 tokenchars '-_.'`` does, so
-``retry_policy``, ``v1.4.0`` and ``--dry-run`` stay whole."""
-ELASTIC_TRIM_PATTERN: Final[str] = r"^\.+|[.\-]+$"
-"""Stripped from each word (leading dots, trailing dots and dashes: ``.env`` is ``env``,
-``retried.`` is ``retried``), as ``identifier_tokens`` strips a whole word."""
+``retry_policy``, ``v1.4.0`` and ``--dry-run`` stay whole. Nothing is trimmed from a word, as
+FTS5 and pg_search trim nothing: a sentence's last word keeps its full stop (``tokens.``) and
+is found by the ``identifiers`` field only, as on the database (#472: trimming it let a short
+parent section that only mentions the word outrank the child section that answers)."""
 ELASTIC_FIELD_BOOSTS: Final[Mapping[str, float]] = MappingProxyType(
     dict(zip(("heading", "path", "body", "identifiers"), PG_SEARCH_BOOSTS, strict=True))
 )
-"""Boost of each text field. Each field's BM25 score is multiplied by its boost and the fields'
-scores add up, as in Tantivy, so these are pg_search's boosts (FTS5's column weights, saturated):
-the ranking suite passes on every engine with the same weights."""
+"""Boost of each text field: pg_search's boosts (FTS5's column weights, saturated). Each field's
+BM25 score is multiplied by its boost; how the fields' scores of one term combine is
+``ELASTIC_TIE_BREAKER``'s."""
+ELASTIC_TIE_BREAKER: Final[float] = 0.0
+"""How much a term's other fields add to its best field's score (``dis_max``). FTS5 adds a term's
+weighted counts over the columns *before* BM25 saturates them, so a term found in a heading
+(weight 20) is already near its ceiling and finding it in the text as well adds little. Summing
+each field's own saturated score instead (a ``bool`` of one ``match`` per field) counts it again
+in each field: a parent section whose heading and text both say ``retry policy`` outranked the
+child ``retry_policy`` that answers (#472). So each term scores in its best field only, and the
+terms' scores add up, as FTS5's do."""
 ELASTIC_OPTIONS: Final[frozenset[str]] = frozenset(
     {
         "url",
