@@ -3,7 +3,7 @@ import { useSearch } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Gauge, Layers, LibraryBig, type LucideIcon, Server, UserRound } from "lucide-react";
 import { useMemo } from "react";
-import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
+import { common, type Language, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { absoluteTimeWithZone } from "@/shared/lib/time";
 import { LibraryCell } from "@/shared/ui/data-table/cells";
 import { DataTable } from "@/shared/ui/data-table/data-table";
@@ -22,6 +22,7 @@ import {
   explainAiError,
   ownBudgetNote,
   type ScopeUsage,
+  scopeName,
 } from "../model/ai";
 import {
   BUDGET_STATES,
@@ -51,23 +52,9 @@ const SCOPE_ICONS: Record<ScopeKind, LucideIcon> = {
 const kindOf = (s: ScopeUsage): ScopeKind =>
   (SCOPE_KINDS as readonly string[]).includes(s.scope) ? (s.scope as ScopeKind) : "user";
 
-/** A scope's name in words: what the global filter searches and the Scope column sorts by. */
-function nameOf(t: Messages, s: ScopeUsage): string {
-  switch (s.scope) {
-    case "instance":
-      return t.usage.scopes.instance;
-    case "embedding":
-      return t.usage.scopes.embedding;
-    case "library":
-      return t.usage.scopes.library(s.id);
-    default:
-      return t.usage.scopes.account(s.id);
-  }
-}
-
 /** A library by its mark and ID (a link to it); anything else by its icon and its name. */
 function ScopeCell({ scope: s }: { scope: ScopeUsage }) {
-  const t = useMessages(messages);
+  const language = useLanguage();
   if (s.scope === "library") return <LibraryCell id={s.id} />;
   const Icon = SCOPE_ICONS[kindOf(s)];
   return (
@@ -75,7 +62,7 @@ function ScopeCell({ scope: s }: { scope: ScopeUsage }) {
       <span className="inline-flex size-6 flex-none items-center justify-center rounded-full bg-secondary text-muted-foreground">
         <Icon aria-hidden="true" className="size-3.5" />
       </span>
-      <span className="font-medium [overflow-wrap:anywhere]">{nameOf(t, s)}</span>
+      <span className="font-medium [overflow-wrap:anywhere]">{scopeName(s, language)}</span>
     </span>
   );
 }
@@ -132,10 +119,11 @@ function Budgets({ scope: s }: { scope: ScopeUsage }) {
 
 // Built once per language: a cell is rendered as a component, so a new function would remount
 // it. `scope` and `budget` are hidden columns that only feed their filters.
-const columnsOf = (t: Messages): ColumnDef<ScopeUsage>[] => [
+const columnsOf = (t: Messages, language: Language): ColumnDef<ScopeUsage>[] => [
   {
     id: "name",
-    accessorFn: (s) => nameOf(t, s),
+    // What the search box searches and the column sorts by.
+    accessorFn: (s) => scopeName(s, language),
     header: t.usage.scope,
     enableHiding: false,
     meta: { priority: 1, skeleton: "avatar" },
@@ -212,7 +200,7 @@ export function UsageSection() {
   const usage = useQuery(aiUsageQueryOptions());
   // The same request: its scopes are the table's rows.
   const scopes = useQuery({ ...aiUsageQueryOptions(), select: (data) => data.scopes });
-  const columns = useMemo(() => columnsOf(t), [t]);
+  const columns = useMemo(() => columnsOf(t, language), [t, language]);
   const filters = useMemo(() => filtersOf(t), [t]);
   const model = useDataTable({
     config: USAGE_TABLE,
@@ -238,7 +226,7 @@ export function UsageSection() {
       <DataTable
         model={model}
         label={t.usage.table}
-        rowLabel={(s) => nameOf(t, s)}
+        rowLabel={(s) => scopeName(s, language)}
         empty={{ icon: Gauge, title: t.usage.empty }}
         noMatch={{ title: t.usage.noMatch }}
         errorMessage={usage.isError ? explainAiError(usage.error, language) : undefined}
