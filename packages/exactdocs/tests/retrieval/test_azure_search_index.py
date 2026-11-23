@@ -470,3 +470,19 @@ async def test_a_refused_request_names_the_services_reason(
         IndexBackendUnavailableError, match="HTTP 400: The vector query has 2 dimensions"
     ):
         await vectors.nearest(space(3), ["m14"], [1, 0], TagFilter(), 3)
+
+
+async def test_ids_and_tags_with_quotes_and_delimiters_are_filtered_exactly(
+    service: FakeSearchService, search: AzureSearchBackend
+) -> None:
+    odd = manifest("m'1|,;~^")  # every search.in delimiter: the filter falls back to eq clauses
+    plain = manifest("m2", ref="v2")
+    await search.put(odd, [entry(odd, "a", "retry", tags=("it's",))])
+    await search.put(plain, [entry(plain, "a", "retry", tags=("it's",))])
+
+    found = await search.search([odd.manifest_id], query("retry"), TagFilter(tags=("it's",)), 5)
+
+    assert [h.manifest_id for h in found] == ["m'1|,;~^"]
+    assert service.bodies[-1]["filter"].startswith("(manifest_id eq 'm''1|,;~^')")
+    await search.delete([odd.manifest_id])
+    assert [h.manifest_id for h in await search.held(None)] == ["m2"]
