@@ -15,12 +15,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from databases import SQL_BACKENDS
-from exactdocs.bootstrap.container import Container
+from exactdocs.bootstrap.container import Container, vector_index
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.memory import InMemoryChunkRepository, InMemoryVectorIndex
-from exactdocs.retrieval.adapters.driven.postgres_vectors import PostgresVectorIndex
 from exactdocs.retrieval.adapters.driven.sqlite import SqliteChunkRepository
-from exactdocs.retrieval.adapters.driven.sqlite_vectors import SqliteVectorIndex
 from exactdocs.retrieval.errors import (
     InvalidEmbeddingSpaceError,
     InvalidVectorError,
@@ -157,11 +155,7 @@ async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
     container = Container.build(Settings())
     async with container.running(jobs=False):
         engine = container.engine
-        vectors = (
-            PostgresVectorIndex(engine=engine)
-            if request.param == "postgres"
-            else SqliteVectorIndex(engine=engine)
-        )
+        vectors = vector_index(engine)  # as the app picks it: libSQL's own vectors there (#474)
         yield World(SqliteChunkRepository(engine=engine), vectors, vectors)
 
 

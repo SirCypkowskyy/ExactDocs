@@ -75,6 +75,7 @@ from exactdocs.bootstrap.database import (
     ClosingQueuePool,
     StartupError,
     check_schema_is_current,
+    is_libsql,
     is_postgres,
     migrate,
     open_database,
@@ -554,6 +555,8 @@ def vector_index(
 ) -> PostgresVectorIndex | SqliteVectorIndex:
     """Pick the vector store of the database: pgvector on PostgreSQL, sqlite-vec on SQLite.
 
+    On a libSQL server the SQLite store searches with libSQL's own vector functions.
+
     Neither loads anything here: the store is asked whether it can search only once an embedding
     model is configured.
 
@@ -566,6 +569,8 @@ def vector_index(
     """
     if is_postgres(engine):
         return PostgresVectorIndex(engine=engine)
+    if is_libsql(engine):  # libSQL's own vectors: a server loads no extension (#474)
+        return SqliteVectorIndex(engine=engine, native=True)
     if sqlite_extension is None:
         return SqliteVectorIndex(engine=engine)
     return SqliteVectorIndex(engine=engine, extension=sqlite_extension)

@@ -32,6 +32,8 @@ from exactdocs.bootstrap.constants import (
     DATABASE_BACKEND,
     INDEX_BACKEND_SECRET_SUFFIXES,
     INDEX_BACKENDS,
+    LIBSQL_DRIVER,
+    LIBSQL_SCHEME,
     LOCAL_HOSTS,
     MODELS_SUBDIR,
     POSTGRES_DRIVER,
@@ -826,8 +828,10 @@ class Settings(BaseSettings):
     database_url: str | None = None
     """Overrides the SQLite file in the data directory: another SQLite file
     (`sqlite:////srv/exactdocs.db`) or a PostgreSQL database
-    (`postgresql+psycopg://user:password@host:5432/exactdocs`, `postgresql://` means the same).
-    Several server processes can share a PostgreSQL database; a SQLite one has one server.
+    (`postgresql+psycopg://user:password@host:5432/exactdocs`, `postgresql://` means the same),
+    or a libSQL server (`libsql://host?authToken=...`, the `libsql-database` extra).
+    Several server processes can share a PostgreSQL database or a libSQL server; a SQLite file
+    has one server.
     """
     models_dir: Path | None = None
     """Where local models live (`exactdocs models pull` writes them, `local` profiles read them;
@@ -1198,14 +1202,17 @@ class Settings(BaseSettings):
         """``EXACTDOCS_DATABASE_URL``, or a SQLite file in the data directory.
 
         SQLite runs on aiosqlite, PostgreSQL on psycopg 3: ``postgresql://`` and
-        ``postgresql+psycopg://`` both name it. Any other driver is left as written, and
-        ``open_database`` refuses it.
+        ``postgresql+psycopg://`` both name it. A libSQL server (``libsql://host``, #474) runs
+        on SQLite's dialect over Turso's driver (``sqlite+libsql``). Any other driver is left as
+        written, and ``open_database`` refuses it.
         """
         if self.database_url:
             url = make_url(self.database_url)
         else:
             url = URL.create("sqlite", database=(self.data_dir / "exactdocs.db").as_posix())
-        if url.get_backend_name() == "sqlite":
+        if url.drivername in {LIBSQL_SCHEME, LIBSQL_DRIVER}:
+            url = url.set(drivername=LIBSQL_DRIVER)
+        elif url.get_backend_name() == "sqlite":
             url = url.set(drivername="sqlite+aiosqlite")
         elif url.drivername in POSTGRES_DRIVERS:
             url = url.set(drivername=POSTGRES_DRIVER)

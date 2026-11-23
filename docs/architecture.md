@@ -452,6 +452,20 @@ only holds each process's git work folders and `known_hosts`. What changes:
   `EXACTDOCS_DATA_DIR` at one for every test) and seed data through the repository, so the
   catalog starts empty in production.
 
+**libSQL (#474).** `EXACTDOCS_DATABASE_URL=libsql://host?authToken=...` puts the database on a
+libSQL server (`sqld`, or Turso) with no change to any adapter: `bootstrap/libsql_database.py`
+registers `sqlite+libsql`, SQLite's async dialect over Turso's `turso-serverless` DB-API driver
+(SQL over HTTP; the `libsql-database` extra, imported only there), run on a thread per
+connection through aiosqlite's `Connection` as `sqlite3` is. The engine's dialect is `sqlite`, so
+every SQLite adapter, revision and query applies; `is_libsql(engine)` tells it apart where
+something differs: the vector store searches with libSQL's `vector_distance_cos` instead of
+loading sqlite-vec (`SqliteVectorIndex(native=True)`), no PRAGMA but `foreign_keys` is set, and
+read-only access and `exactdocs backup` are refused. The driver's errors become `sqlite3`'s, and
+a statement outside a transaction is sent again once when the server had dropped the idle
+stream. CI runs the persistence contract tests' SQLite cases on a `sqld` server
+(`EXACTDOCS_TEST_LIBSQL_DATABASE_URL`, its own step). See *ExactDocs' own database on libSQL* in
+configuration.md for what an operator sees.
+
 ### Data model
 
 Tables as created by the migrations in `bootstrap/migrations/versions`; the columns shown are the

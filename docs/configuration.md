@@ -26,7 +26,7 @@ over the TOML file, field by field.
 | Variable | Default | What it does |
 |---|---|---|
 | `EXACTDOCS_DATA_DIR` | `/data` in the Docker image, else the platform's user-data directory | Where ExactDocs keeps everything: the SQLite database, the generated secret key, `known_hosts`, fetch caches and `jobs.sqlite` (the durable steps of running imports). On PostgreSQL only `known_hosts` and fetch caches live here. Created if missing; the server refuses to start, naming the path, if it is not writable. `uvx` and stdio MCP use the same default path |
-| `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | A SQLite file, such as `sqlite:////srv/exactdocs.db` (opened in WAL mode), or a PostgreSQL database, `postgresql://user:password@host:5432/exactdocs` (psycopg 3; see [PostgreSQL](deployment.md#postgresql)). The schema is migrated on start, and `/api/health` reports its revision |
+| `EXACTDOCS_DATABASE_URL` | `exactdocs.db` in the data directory | A SQLite file, such as `sqlite:////srv/exactdocs.db` (opened in WAL mode), a PostgreSQL database, `postgresql://user:password@host:5432/exactdocs` (psycopg 3; see [PostgreSQL](deployment.md#postgresql)), or a libSQL server, `libsql://host?authToken=...` (the `libsql-database` extra; see [ExactDocs' own database on libSQL](#exactdocs-own-database-on-libsql)). The schema is migrated on start, and `/api/health` reports its revision |
 | `EXACTDOCS_DBOS_SYSTEM_SCHEMA` | `dbos` | PostgreSQL only: the schema of the same database where DBOS keeps the durable steps of jobs. SQLite keeps them in `<data dir>/jobs.sqlite` |
 | `EXACTDOCS_MODELS_DIR` | `<data dir>/models` | Where local models live; see [Local models](search.md#local-models) |
 
@@ -781,7 +781,7 @@ instead, which is exact and cheap for a version's few thousand chunks. Hybrid se
 libSQL's two halves in ExactDocs (reciprocal rank fusion), as with the database.
 
 **Several processes.** A libSQL server is what several ExactDocs processes or hosts share (with
-PostgreSQL as their database): each write is one transaction, which the server runs one after
+PostgreSQL, or this same libSQL server, as their database): each write is one transaction, which the server runs one after
 the other. A local file is for one host: processes there may share it (WAL, and a writer
 waits up to 5 seconds for another's lock), but never put it on a network filesystem. Embedded
 replicas (a local copy synced from a server) are not used.
@@ -815,25 +815,61 @@ tell vectors apart: for a model of fewer than about 256, use `float8`.
 
 ### ExactDocs' own database on libSQL
 
-Not supported yet: `EXACTDOCS_DATABASE_URL` takes SQLite or PostgreSQL. What was checked (#358):
+ExactDocs' own database can live on a **libSQL server** (`sqld`, self-hosted, or a Turso
+database) instead of a SQLite file (#474), so several ExactDocs processes and hosts share one
+SQLite-style database:
 
-- **The schema runs on libSQL.** Every Alembic revision runs on a local libSQL file and on a
-  libSQL server and gives the same schema as SQLite (`tests/bootstrap/test_libsql_migrations.py`,
-  through the sync `libsql` driver; libSQL is SQLite 3.45). On the server, a connection's
-  `PRAGMA`s (`foreign_keys=OFF` before the revisions) last one HTTP request only, and the server
-  re-spells a virtual table's `CREATE` statement.
-- **No driver for ExactDocs' database stack.** ExactDocs runs SQLite through async SQLAlchemy
-  (aiosqlite). There is no maintained async driver for libSQL: `sqlalchemy-libsql` is sync and
-  needs `libsql-experimental` (deprecated, no Python 3.14 wheels); `libsql` 0.1.11 (the latest,
-  2025-09) is sync, has no Linux ARM64 wheel (the images are built for ARM64 too), and its
-  connection lacks what ExactDocs' SQLite setup calls: `create_function`, `set_authorizer` (the AI
-  spend ledger's guard), `enable_load_extension` (`sqlite-vec`) and `backup` (`exactdocs backup`).
-  `pyturso` (Turso's rewrite) has wheels, but neither libSQL's vector index nor FTS5.
-- **The database's vector store needs `sqlite-vec`**, which a libSQL server cannot load: it would
-  need a store on libSQL's native vectors (this backend is one, for the copy it holds).
+```bash
+pip install 'exactdocs[libsql-database]'     # or: uvx --from 'exactdocs[libsql-database]' exactdocs serve
+export EXACTDOCS_DATABASE_URL='libsql://exactdocs-acme.turso.io?authToken=...'
+# a sqld on loopback or a private network, without TLS:
+export EXACTDOCS_DATABASE_URL='libsql://sqld:8080?tls=0&authToken=...'
+```
 
-So the existing SQLite persistence tests do not run on libSQL. Use libSQL as the search and
-vector backend above, with SQLite or PostgreSQL as the database.
+The URL names the server only (no path): `libsql://host[:port]`, over HTTPS unless `tls=0`, with
+its token (a JWT: a Turso database token, or one signed with the key given to `sqld
+--auth-jwt-key-file`) as `authToken`, as Turso writes it; a server without authentication takes
+none. Log lines and errors never show the token. The extra installs Turso's `turso-serverless`
+driver (pure Python, no dependency, so every platform); it is not in the images. ExactDocs runs
+SQLite's own SQLAlchemy dialect over it (`sqlite+libsql`, in `bootstrap/libsql_database.py`),
+each connection on a thread of its own as aiosqlite does, so every table, revision and query is
+SQLite's: the schema is migrated on start, and the search index is SQLite's FTS5. Tested against
+`ghcr.io/tursodatabase/libsql-server:v0.24.33`; CI runs the persistence contract tests' SQLite
+cases on it, and a scenario with two server processes.
+
+**Several processes.** Each process (and host) has a data directory of its own and uses the
+server for everything in the database. Writes take turns on the server: a transaction that asks
+for `BEGIN IMMEDIATE` (the first admin, activations, the search index) waits for the one before
+it, as on a file. Processes starting together migrate one after the other.
+
+**What differs from a SQLite file:**
+
+- **Vectors use libSQL's own functions.** The vector store keeps the same tables and BLOBs as on
+  SQLite and searches them exactly, with libSQL's `vector_distance_cos` instead of `sqlite-vec`,
+  which a server cannot load (`/api/health` names its requirement `libSQL vectors`). For an
+  approximate index on libSQL, add the [libSQL backend](#libsql) on the same server.
+- **No read-only access.** A libSQL server refuses `PRAGMA query_only` and has no authorizer, so
+  `serve --stdio` (and the commands that open the database read-only) refuse it: run `exactdocs
+  serve` and connect over HTTP (`/mcp`).
+- **`exactdocs backup` refuses it**: use the server's backups (a Turso database's point-in-time
+  restore, or copies of `sqld`'s data directory).
+- **Jobs stay with their process.** DBOS keeps each process's running jobs in `jobs.sqlite` in its
+  data directory, as on a file: a job runs on the process that took it, and every process sees
+  its state in the database. One server process per data directory, as on a file.
+- **The server keeps its own settings.** It refuses `journal_mode`, `busy_timeout`,
+  `synchronous`, `ANALYZE` and other PRAGMAs that set something; ExactDocs only switches
+  `foreign_keys` on for each connection (the server's default too). Without `ANALYZE` the query
+  planner has no statistics, so it may pick another of a table's indexes than on a file (the
+  answers are the same).
+- **Streams expire.** The server drops a connection's stream after a few seconds idle (`sqld`:
+  10 s). A statement outside a transaction is then sent again; a transaction left idle that long
+  is rolled back by the server and fails.
+- **Every statement is a round trip.** One HTTP request each (about 2 ms on loopback): a first
+  migration takes about a second, and an import is slower than on a local file, more so the
+  farther the server.
+- `REGEXP` is not available (ExactDocs does not use it), and an infinite float cannot be sent.
+- A **local libSQL file** is not a database option: it is the same format as SQLite, so use
+  `sqlite:///path` (libSQL's local file is for the [search and vector backend](#libsql)).
 
 ### Milvus
 

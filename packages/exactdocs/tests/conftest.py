@@ -4,7 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from databases import SECRET_KEY, PostgresDatabase, postgres_database
+from databases import (
+    LIBSQL_DATABASE_URL,
+    SECRET_KEY,
+    PostgresDatabase,
+    empty_libsql_database,
+    libsql_database_url,
+    postgres_database,
+)
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
@@ -141,6 +148,31 @@ def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("EXACTDOCS_JOB_POLL_SECONDS", "0.02")  # jobs start at once in tests
     monkeypatch.delenv("EXACTDOCS_DATABASE_URL", raising=False)
     return data_dir
+
+
+@pytest.fixture(autouse=True)
+def sqlite_cases_on_libsql(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, isolated_data_dir: Path
+) -> None:
+    """With ``EXACTDOCS_TEST_LIBSQL_DATABASE_URL``, run the SQLite cases on that libSQL server.
+
+    A test whose parameters include ``"sqlite"`` (the persistence contract tests, parametrized on
+    ``SQL_BACKENDS``) then gets an empty libSQL server as ``EXACTDOCS_DATABASE_URL`` (#474).
+    Every other test is left as it is.
+
+    Args:
+        request: The test, for its parameters.
+        monkeypatch: Sets the database URL for this test only.
+        isolated_data_dir: Runs first: it clears ``EXACTDOCS_DATABASE_URL``.
+    """
+    del isolated_data_dir
+    callspec = getattr(request.node, "callspec", None)
+    if LIBSQL_DATABASE_URL is None or callspec is None:
+        return
+    if not any(value == "sqlite" for value in callspec.params.values()):
+        return
+    empty_libsql_database()
+    monkeypatch.setenv("EXACTDOCS_DATABASE_URL", libsql_database_url())
 
 
 @pytest.fixture

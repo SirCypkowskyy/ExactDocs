@@ -71,6 +71,9 @@ def before_scenario(context: Context, scenario: Scenario) -> None:
     # one and sets EXACTDOCS_REQUIRE_SUPABASE=1, so there they can never be skipped.
     elif "supabase" in scenario.effective_tags and databases.SUPABASE_URL is None:
         scenario.skip("needs the supabase/postgres image: set EXACTDOCS_TEST_SUPABASE_URL")
+    # ExactDocs' database on libSQL (#474) needs a libSQL server of its own; CI starts one.
+    elif "libsql_database" in scenario.effective_tags and databases.LIBSQL_DATABASE_URL is None:
+        scenario.skip("needs a libSQL server: set EXACTDOCS_TEST_LIBSQL_DATABASE_URL")
     # Pooler scenarios need PgBouncer in transaction mode (EXACTDOCS_TEST_PGBOUNCER_URL, #279);
     # CI runs one and sets EXACTDOCS_REQUIRE_PGBOUNCER=1, so there they can never be skipped.
     elif "pgbouncer" in scenario.effective_tags and (
