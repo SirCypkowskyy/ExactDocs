@@ -101,7 +101,7 @@ def step_cluster_instance(context: Context, engine: str) -> None:
     asyncio.run(store_demo_catalog(context.settings))
 
 
-@when('versions "{first}" and "{second}" are imported and embedded')
+@when('versions "{first}" and "{second}" are imported and embedded into the cluster')
 def step_imported_and_embedded(context: Context, first: str, second: str) -> None:
     asyncio.run(import_versions(context, [first, second]))
     # The server's start queues the versions' embedding; its job worker writes the vectors.

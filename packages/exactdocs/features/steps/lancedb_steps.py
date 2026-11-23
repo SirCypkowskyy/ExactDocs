@@ -48,7 +48,7 @@ def step_lancedb_instance(context: Context) -> None:
     asyncio.run(store_demo_catalog(context.settings))
 
 
-@when('versions "{old}" and "{new}" are imported and embedded')
+@when('versions "{old}" and "{new}" are imported and embedded into LanceDB')
 def step_imported_and_embedded(context: Context, old: str, new: str) -> None:
     asyncio.run(import_versions(context, [old, new]))
     stack = context.stack

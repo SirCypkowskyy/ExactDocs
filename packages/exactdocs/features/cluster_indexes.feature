@@ -8,7 +8,7 @@ Feature: Elasticsearch and OpenSearch hold the search and vector indexes
 
   Scenario Outline: ExactDocs indexes into and searches an <engine> cluster
     Given ExactDocs is configured with a "<engine>" cluster URL and an index prefix
-    When versions "v1.3.0" and "v1.4.0" are imported and embedded
+    When versions "v1.3.0" and "v1.4.0" are imported and embedded into the cluster
     Then their chunks are indexed with library and version as keyword fields and their vectors in a "<vector field>" field
     And search_docs answers from the cluster, filtered to the asked version
 

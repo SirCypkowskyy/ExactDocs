@@ -11,6 +11,6 @@ Feature: LanceDB holds the search and vector indexes
 
   Scenario: ExactDocs stores and searches chunks in LanceDB
     Given ExactDocs is configured with a LanceDB URI (a local directory)
-    When versions "v1.3.0" and "v1.4.0" are imported and embedded
+    When versions "v1.3.0" and "v1.4.0" are imported and embedded into LanceDB
     Then their chunks and vectors are written to LanceDB tables with library and version columns
     And keyword, vector and hybrid searches answer from LanceDB, filtered to the asked version

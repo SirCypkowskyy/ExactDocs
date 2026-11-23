@@ -78,7 +78,7 @@ def _wait_for_embedding(client: TestClient, refs: list[str]) -> None:
     ], jobs
 
 
-@step('versions "{first}" and "{second}" are imported and embedded')
+@step('versions "{first}" and "{second}" are imported and embedded into DuckDB')
 def step_imported(context: Context, first: str, second: str) -> None:
     context.refs = [first, second]
     asyncio.run(import_versions(context, context.refs))  # its own DuckDB connection, closed
