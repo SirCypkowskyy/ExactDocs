@@ -3,7 +3,7 @@ import { SearchIcon } from "lucide-react";
 import type * as React from "react";
 import { useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
-import { menuItem, menuLabel, menuSeparator } from "./dropdown-menu";
+import { menuLabel, menuRow, menuSeparator } from "./dropdown-menu";
 import { messages } from "./messages";
 
 /*
@@ -96,7 +96,7 @@ function CommandItem({ className, ...props }: React.ComponentProps<typeof C.Item
     <C.Item
       data-slot="command-item"
       className={cn(
-        menuItem,
+        menuRow,
         "data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 [&_svg:not([class*='text-'])]:text-muted-foreground",
         className,
       )}

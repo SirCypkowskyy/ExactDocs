@@ -13,8 +13,12 @@ import { cn } from "@/shared/lib/utils";
 export const menuContent =
   "z-50 max-h-(--radix-dropdown-menu-content-available-height) min-w-[8rem] origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-float outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:duration-(--dur-menu) data-[state=open]:ease-(--ease-out) motion-safe:data-[state=open]:zoom-in-[0.97] data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:duration-(--dur-exit) motion-safe:data-[state=closed]:zoom-out-[0.98]";
 
-export const menuItem =
-  "relative flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-2 text-body outline-none select-none transition-colors duration-(--dur-fast) data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50 fine:min-h-8 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
+/** A menu row without its disabled look: cmdk marks every row `data-disabled="false"`. */
+export const menuRow =
+  "relative flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-2 text-body outline-none select-none transition-colors duration-(--dur-fast) data-highlighted:bg-accent data-highlighted:text-accent-foreground fine:min-h-8 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
+
+/** A Radix menu row: a disabled one (`data-disabled` present) is dimmed and inert. */
+export const menuItem = `${menuRow} data-disabled:pointer-events-none data-disabled:opacity-50`;
 
 export const menuLabel = "px-2 pt-1.5 pb-1 text-small font-medium text-muted-foreground";
 
