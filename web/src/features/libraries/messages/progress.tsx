@@ -169,8 +169,8 @@ export const progressMessages = defineMessages(
     cancel: {
       cancelling: "Cancelling after the current step…",
       ask: (label: string) => `Cancel ${label}?`,
-      queued: "Cancel this job? It will not start.",
-      running: "Cancel this job? It stops after the current step and keeps what it finished.",
+      willNotStart: "It has not started, so it never will.",
+      stopsAfterStep: "It stops after the current step and keeps what it finished.",
       confirm: "Yes, cancel",
       keep: "Keep it",
       offline: "Can't reach the server. Try again.",
@@ -271,9 +271,8 @@ export const progressMessages = defineMessages(
     cancel: {
       cancelling: "Anulowanie po bieżącym kroku…",
       ask: (label) => `Anulować ${label}?`,
-      queued: "Anulować to zadanie? Nie zostanie uruchomione.",
-      running:
-        "Anulować to zadanie? Zatrzyma się po bieżącym kroku i zachowa to, co już ukończyło.",
+      willNotStart: "Jeszcze się nie rozpoczęło, więc nie zostanie uruchomione.",
+      stopsAfterStep: "Zatrzyma się po bieżącym kroku i zachowa to, co już ukończyło.",
       confirm: "Tak, anuluj",
       keep: "Zostaw",
       offline: "Nie można połączyć się z serwerem. Spróbuj ponownie.",
