@@ -1,8 +1,8 @@
 """Adapter contract: every ``PreferencesRepository`` behaves the same, whatever stores the data."""
 
 import json
-from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 import pytest
@@ -50,18 +50,12 @@ CHOSEN = Preferences(
 )
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class Store:
-    repository: PreferencesRepository
-    container: Container | None = None
-
-
-@pytest.fixture(params=["memory", *SQL_BACKENDS])
-async def store(request: pytest.FixtureRequest) -> AsyncIterator[Store]:
-    if request.param == "memory":
-        yield Store(repository=InMemoryPreferencesRepository())
-        return
-    if request.param == "postgres":
+@asynccontextmanager
+async def database_with_two_accounts(
+    backend: str, request: pytest.FixtureRequest
+) -> AsyncGenerator[Container]:
+    """Run a container on ``backend`` whose database holds the accounts Ada and Bob."""
+    if backend == "postgres":
         request.getfixturevalue("on_postgres")
     container = Container.build(Settings())
     async with container.running(jobs=False):
@@ -76,36 +70,52 @@ async def store(request: pytest.FixtureRequest) -> AsyncIterator[Store]:
                     created_at=NOW,
                 )
             )
-        yield Store(
-            repository=SqlitePreferencesRepository(engine=container.engine), container=container
-        )
+        yield container
 
 
-async def test_an_account_that_never_saved_has_none(store: Store) -> None:
-    assert await store.repository.get(ADA) is None
+@pytest.fixture(params=["memory", *SQL_BACKENDS])
+async def repository(request: pytest.FixtureRequest) -> AsyncIterator[PreferencesRepository]:
+    if request.param == "memory":
+        yield InMemoryPreferencesRepository()
+        return
+    async with database_with_two_accounts(request.param, request) as container:
+        yield SqlitePreferencesRepository(engine=container.engine)
 
 
-async def test_saved_preferences_come_back_and_a_save_replaces_them(store: Store) -> None:
-    await store.repository.put(ADA, CHOSEN)
-    assert await store.repository.get(ADA) == CHOSEN
-
-    await store.repository.put(ADA, Preferences())
-    assert await store.repository.get(ADA) == Preferences()
-
-
-async def test_each_account_has_its_own(store: Store) -> None:
-    await store.repository.put(ADA, CHOSEN)
-
-    assert await store.repository.get(BOB) is None
-    await store.repository.put(BOB, Preferences(font=Font.SYSTEM))
-    assert await store.repository.get(ADA) == CHOSEN
-    assert await store.repository.get(BOB) == Preferences(font=Font.SYSTEM)
+@pytest.fixture(params=SQL_BACKENDS)
+async def database(request: pytest.FixtureRequest) -> AsyncIterator[Container]:
+    """Only a database keeps rows written by an older or newer release."""
+    async with database_with_two_accounts(request.param, request) as container:
+        yield container
 
 
-async def test_every_language_is_kept(store: Store) -> None:
+async def test_an_account_that_never_saved_has_none(repository: PreferencesRepository) -> None:
+    assert await repository.get(ADA) is None
+
+
+async def test_saved_preferences_come_back_and_a_save_replaces_them(
+    repository: PreferencesRepository,
+) -> None:
+    await repository.put(ADA, CHOSEN)
+    assert await repository.get(ADA) == CHOSEN
+
+    await repository.put(ADA, Preferences())
+    assert await repository.get(ADA) == Preferences()
+
+
+async def test_each_account_has_its_own(repository: PreferencesRepository) -> None:
+    await repository.put(ADA, CHOSEN)
+
+    assert await repository.get(BOB) is None
+    await repository.put(BOB, Preferences(font=Font.SYSTEM))
+    assert await repository.get(ADA) == CHOSEN
+    assert await repository.get(BOB) == Preferences(font=Font.SYSTEM)
+
+
+async def test_every_language_is_kept(repository: PreferencesRepository) -> None:
     for language in Language:
-        await store.repository.put(ADA, Preferences(language=language))
-        assert await store.repository.get(ADA) == Preferences(language=language)
+        await repository.put(ADA, Preferences(language=language))
+        assert await repository.get(ADA) == Preferences(language=language)
 
 
 @pytest.mark.parametrize(
@@ -132,35 +142,37 @@ async def test_every_language_is_kept(store: Store) -> None:
     ],
 )
 async def test_a_setting_a_row_lacks_or_no_longer_offered_reads_as_its_default(
-    store: Store, stored: object, read: Preferences
+    database: Container, stored: object, read: Preferences
 ) -> None:
-    if store.container is None:
-        pytest.skip("only a database keeps rows written by an older or newer release")
-    async with store.container.engine.begin() as connection:
+    async with database.engine.begin() as connection:
         await connection.execute(
             text("INSERT INTO identity_preferences (account_id, preferences) VALUES (:id, :prefs)"),
             {"id": ADA, "prefs": json.dumps(stored)},
         )
 
-    assert await store.repository.get(ADA) == read
+    assert await SqlitePreferencesRepository(engine=database.engine).get(ADA) == read
 
 
-async def test_only_accounts_whose_saved_preferences_opt_in_are_found(store: Store) -> None:
-    assert await store.repository.opted_in({ADA, BOB}) == frozenset()
+async def test_only_accounts_whose_saved_preferences_opt_in_are_found(
+    repository: PreferencesRepository,
+) -> None:
+    assert await repository.opted_in({ADA, BOB}) == frozenset()
 
-    await store.repository.put(ADA, CHOSEN)
-    await store.repository.put(BOB, Preferences(font=Font.SYSTEM))
+    await repository.put(ADA, CHOSEN)
+    await repository.put(BOB, Preferences(font=Font.SYSTEM))
 
-    assert await store.repository.opted_in({ADA, BOB, AccountId("id-nobody")}) == {ADA}
-    assert await store.repository.opted_in({BOB}) == frozenset()
-    assert await store.repository.opted_in(set()) == frozenset()
+    assert await repository.opted_in({ADA, BOB, AccountId("id-nobody")}) == {ADA}
+    assert await repository.opted_in({BOB}) == frozenset()
+    assert await repository.opted_in(set()) == frozenset()
 
-    await store.repository.put(ADA, Preferences())
-    assert await store.repository.opted_in({ADA, BOB}) == frozenset()
+    await repository.put(ADA, Preferences())
+    assert await repository.opted_in({ADA, BOB}) == frozenset()
 
 
-async def test_who_opted_in_is_asked_in_turns_past_one_query_s_ids(store: Store) -> None:
-    await store.repository.put(BOB, Preferences(leaderboard_opt_in=True))
+async def test_who_opted_in_is_asked_in_turns_past_one_query_s_ids(
+    repository: PreferencesRepository,
+) -> None:
+    await repository.put(BOB, Preferences(leaderboard_opt_in=True))
     many = {AccountId(f"id-{n:04d}") for n in range(ACCOUNTS_PER_QUERY * 2 + 1)}
 
-    assert await store.repository.opted_in(many | {BOB}) == {BOB}
+    assert await repository.opted_in(many | {BOB}) == {BOB}
