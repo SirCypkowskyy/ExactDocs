@@ -317,6 +317,10 @@ CLIENTS: Final[tuple[str, ...]] = ("claude", "claude-desktop", "cursor", "vscode
 """MCP clients ``exactdocs mcp-config`` writes a configuration for."""
 SKILL_PATH: Final[Path] = Path(__file__).parent / "skill" / "SKILL.md"
 """The agent skill the server ships and serves as an MCP resource."""
+APP_RENDERER_URI: Final[str] = "ui://exactdocs/renderer.html"
+"""The MCP Apps UI resource of ``view_article`` and ``view_search``: Prefab's renderer, bundled
+into one page, so a host loads nothing from a third party (FastMCP's own ``app=True`` renderer
+loads Prefab from a CDN)."""
 NAME: Final[str] = "exactdocs"
 """Name of the server in MCP client configurations."""
 STDIO: Final[dict[str, str | list[str]]] = {

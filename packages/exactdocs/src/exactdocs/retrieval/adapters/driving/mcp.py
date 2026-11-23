@@ -1,11 +1,35 @@
-"""MCP adapter for retrieval. All tools are read-only."""
+"""MCP adapter for retrieval. All tools are read-only.
+
+``view_search`` is an MCP App (Prefab UI): hosts that support MCP Apps render it, the others read
+its text.
+"""
 
 from collections.abc import Callable, Sequence
 from typing import Annotated
 
 from fastmcp import FastMCP
+from fastmcp.apps.config import AppConfig
 from fastmcp.tools import ToolResult
 from mcp.types import TextContent, ToolAnnotations
+from prefab_ui.app import PrefabApp
+from prefab_ui.components import (
+    Alert,
+    AlertDescription,
+    AlertTitle,
+    Badge,
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
+    Column,
+    Heading,
+    Link,
+    Markdown,
+    Muted,
+    Row,
+)
+from prefab_ui.rx import Rx
 from pydantic import Field
 
 from exactdocs.retrieval.constants import (
@@ -15,6 +39,8 @@ from exactdocs.retrieval.constants import (
     POINTER_TEXT,
     RULES_HEADING,
     SECTION_SEPARATOR,
+    VIEW_SEARCH_DESCRIPTION,
+    VIEW_SEARCH_TITLE,
 )
 from exactdocs.retrieval.dtos import (
     MAX_NAME,
@@ -32,6 +58,7 @@ from exactdocs.retrieval.dtos import (
     SearchAllResult,
     SearchDocsQuery,
     SearchDocsResult,
+    SearchResultOut,
     Tag,
 )
 from exactdocs.retrieval.models import TagMatch
@@ -148,6 +175,131 @@ def format_docs(result: QueryDocsResult) -> str:
     return SECTION_SEPARATOR.join([*rules, *parts])
 
 
+def format_result(result: SearchResultOut) -> str:
+    """One search result as a text block: heading path, article, source, chunk ID, then the text.
+
+    Heading path, article path and source are untrusted repository text, flattened to one line
+    each; the snippet is the verbatim text of the chunk, possibly cut at either end.
+
+    Args:
+        result: The result.
+
+    Returns:
+        The block.
+    """
+    return (
+        f"### {_line(_result_title(result))}\n\nArticle: {_line(result.article_path)}\n\n"
+        f"Source: {_line(result.source_url or '')}\n\nChunk: {result.chunk_id}\n\n"
+        f"{result.snippet}"
+    )
+
+
+def format_search(result: SearchDocsResult) -> str:
+    """Build the text fallback of ``view_search``: which version answered, then the results.
+
+    Args:
+        result: The search's results.
+
+    Returns:
+        The text of the tool's second content block.
+    """
+    head = (
+        f"{len(result.results)} results from {_line(result.library)} version "
+        f"{_line(result.version)} (commit {result.commit_sha}, mode {result.retrieval_mode})."
+    )
+    if not result.coverage.complete:
+        head += " More matches exist than the limit allowed."
+    return SECTION_SEPARATOR.join([head, *(format_result(r) for r in result.results)])
+
+
+def _result_title(result: SearchResultOut) -> str:
+    """Name a result by its heading path, else by its article's path.
+
+    Args:
+        result: The result.
+
+    Returns:
+        The headings joined with ``>``, or the article's path before the first heading.
+    """
+    return " > ".join(result.heading_path) or result.article_path
+
+
+class _UntrustedText:
+    """Untrusted text kept in a Prefab app's state, out of its component tree.
+
+    Prefab evaluates ``{{ expression }}`` in component text. A field that is exactly one
+    ``{{ key }}`` gets the state's value as it is, never evaluated again, so repository text goes
+    in the state and the components name it by key.
+    """
+
+    def __init__(self) -> None:
+        """Start with no text."""
+        self.state: dict[str, str] = {}
+
+    def ref(self, text: str) -> str:
+        """Keep ``text`` in the state under a new key.
+
+        Args:
+            text: Untrusted text.
+
+        Returns:
+            The template that shows it: ``{{ key }}``.
+        """
+        key = f"text_{len(self.state)}"
+        self.state[key] = text
+        return str(Rx(key))
+
+
+def _search_app(query: str, result: SearchDocsResult) -> PrefabApp:
+    """Build the UI of a search: notice, query and version, then a card per result, best first.
+
+    Args:
+        query: What was searched for.
+        result: The search's results.
+
+    Returns:
+        The Prefab app; every repository value and the query sit in its state.
+    """
+    text = _UntrustedText()
+    with Column(gap=4) as view:
+        with Alert(variant="warning"):
+            AlertTitle("External documentation")
+            AlertDescription(NOTICE)
+        with Column(gap=1):
+            Heading(text.ref(query), level=2)
+            Muted(
+                text.ref(
+                    f"{len(result.results)} results · {result.library} · {result.version} · "
+                    f"commit {result.commit_sha} · {result.retrieval_mode}"
+                )
+            )
+        if not result.results:
+            Muted("No matches in this version.")
+        for found in result.results:
+            _result_card(text, found)
+    return PrefabApp(title=VIEW_SEARCH_TITLE, view=view, state=text.state)
+
+
+def _result_card(text: _UntrustedText, found: SearchResultOut) -> None:
+    """Add one result's card to the component being built: where it is, its tags, its text.
+
+    Args:
+        text: The app's state, which takes every repository value.
+        found: The result.
+    """
+    with Card():
+        with CardHeader():
+            CardTitle(text.ref(_result_title(found)))
+            CardDescription(text.ref(found.article_path))
+            with Row(gap=2, align="center", css_class="flex-wrap"):
+                for tag in found.tags:
+                    Badge(text.ref(tag), variant="secondary")
+                if found.source_url:
+                    Link("View source", href=text.ref(found.source_url))
+        with CardContent():
+            Markdown(text.ref(found.snippet))
+
+
 def register_tools(
     mcp: FastMCP,
     *,
@@ -158,6 +310,7 @@ def register_tools(
     resolve_library_id: ResolveLibraryId,
     query_docs: QueryDocs,
     caller: Callable[[], str | None],
+    app: AppConfig,
 ) -> None:
     """Register retrieval's MCP tools on ``mcp``.
 
@@ -173,6 +326,7 @@ def register_tools(
         resolve_library_id: Finds libraries by name.
         query_docs: Answers ``query-docs``.
         caller: Names the account of the current request.
+        app: The MCP Apps configuration of ``view_search``: the UI resource that renders it.
     """
 
     @mcp.tool(
@@ -249,6 +403,76 @@ def register_tools(
                 mode=mode,
             ),
             caller=caller(),
+        )
+
+    @mcp.tool(
+        name="view_search",
+        app=app,
+        annotations=ToolAnnotations(title="Show search results", **TOOL_HINTS),
+        description=VIEW_SEARCH_DESCRIPTION,
+        output_schema=None,
+    )
+    async def view_search_tool(
+        library: Annotated[
+            str,
+            Field(
+                pattern=LIBRARY_ID_PATTERN,
+                max_length=MAX_NAME,
+                description="Library ID, e.g. '/facebook/react'",
+            ),
+        ],
+        query: Annotated[
+            str,
+            Field(
+                min_length=1,
+                max_length=MAX_QUERY,
+                description="Identifier, error message or question",
+            ),
+        ],
+        ref: Annotated[
+            str | None,
+            Field(
+                max_length=MAX_NAME,
+                description="Exact imported ref, e.g. 'v19.1'; default version if empty",
+            ),
+        ] = None,
+        tags: Annotated[
+            list[Tag] | None,
+            Field(max_length=MAX_TAGS, description="Only articles with these tags"),
+        ] = None,
+        tags_match: Annotated[TagMatch, Field(description="'any' or 'all' of tags")] = TagMatch.ANY,
+        limit: Annotated[int, Field(ge=1, le=50)] = 5,
+    ) -> ToolResult:
+        """Search one library version and show the results as UI (the description is the tool's).
+
+        Args:
+            library: Library ID, e.g. '/facebook/react'.
+            query: Identifier, error message or question.
+            ref: Exact imported ref; the default version if empty.
+            tags: Only articles with these tags.
+            tags_match: 'any' or 'all' of tags.
+            limit: How many results to return, best first.
+
+        Returns:
+            The notice and the results as text, with the UI as structured content.
+        """
+        found = await search_docs(
+            SearchDocsQuery(
+                library=library,
+                ref=ref,
+                query=query,
+                tags=tags or [],
+                tags_match=tags_match,
+                limit=limit,
+            ),
+            caller=caller(),
+        )
+        return ToolResult(
+            content=[
+                TextContent(type="text", text=NOTICE),
+                TextContent(type="text", text=format_search(found)),
+            ],
+            structured_content=_search_app(query, found),
         )
 
     @mcp.tool(

@@ -106,6 +106,7 @@ webhooks, user accounts and sign-in through an identity provider.
 | `search_docs` | searches one version, in the retrieval mode you ask for |
 | `search_all_docs` | searches the default version of every library at once |
 | `read_chunk` | one chunk verbatim, such as a neighbour of a search result |
+| `view_article`, `view_search` | an article or search results shown as UI in hosts with MCP Apps (Claude, ChatGPT), with a text fallback |
 
 Articles are also MCP resources (`exactdocs://{owner}/{repo}/{path*}{?ref}`), and the two context7
 operations are available over REST for integrations that do not speak MCP. Every tool is
