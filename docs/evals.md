@@ -761,8 +761,8 @@ and `results_table` renders tools side by side.
 **Version-neutral results.** Most text of a pinned version is the same in the other pinned
 versions of its project, so most results, right or wrong, are version-neutral, and a result of
 another version is caught as wrong only where the text changed. The text scorer's wrong-version
-rate is therefore a lower bound of the rate chunk-ID scoring would give; the version-neutral share
-says how much of what a tool returned no text-based check can attribute.
+rate is in effect a lower bound of the rate chunk-ID scoring would give; the version-neutral share
+says how much of what a tool returned no check on the text alone can attribute.
 
 ### Calibration
 
@@ -787,9 +787,21 @@ The report (`text-scorer.json` and `text-scorer.md`, in `reports/evals/` or `--o
   the result at the earlier rank is.
 
 **The recorded calibration** is `packages/exactdocs/evals/results/text-scorer.json` and
-`text-scorer.md`, on the whole golden set (321 cases, 384 decisions):
+`text-scorer.md`, on the whole golden set (321 cases, 384 decisions), about two minutes per
+chunking on 4 CPUs:
 
-<!-- text-scorer:calibration -->
+| chunking | same rank | hit / miss | rendered as plain text | counting held headings | BM25 recall@5, text (chunk ID) |
+|---|---|---|---|---|---|
+| `default` | **99.5%** | 99.7% | 99.5% | 99.7% | 81.7% (81.7%) |
+| `h6` | 99.7% | 100.0% | 99.7% | 99.7% | 79.8% (79.8%) |
+| `h2` | 93.2% | 93.5% | 93.0% | 99.7% | 82.8% (76.0%) |
+| `merge-400` | 90.9% | 91.4% | 90.9% | 99.5% | 81.7% (74.2%) |
+
+The criterion is met at `default`. Both scorings take the same wrong-version decision on every
+case at every chunking (BM25 returns nothing of another version, and no result's text is only in
+another version). At `default`, 72% of BM25's results are version-neutral; its ten results hold
+3,464 tokens of context on average, 736 of them up to the first hit; they hold 87% of the cases'
+facts, where the expected sections' own text holds 80% and another question's results 25%.
 
 The threshold is 0.8 because of the sweep: below it, results of other articles that share part of
 a section's text count as hits (at `default`, 98.4% agreement at 0.7, 97.1% at 0.5); above it the
@@ -810,9 +822,30 @@ What still disagrees, and why:
   autoescaping expects `Fixed`: the text scorer finds it in that chunk at rank 8, the nested rule
   does not, since it counts a chunk for its own section, the sections inside it and its parents,
   not for a sibling it holds. `h2` and `merge-400` put sibling sections into one chunk far more
-  often (a section with all its subsections; small sections merged with the next), so they agree
-  less with the nested rule, and as much as `default` with the rule that counts held headings:
-  the text scorer is right there, and the nested rule undercounts those chunkings' hits.
+  often (a section with all its subsections; small sections merged with the next), which is 25 of
+  `h2`'s 26 disagreements and 33 of `merge-400`'s 35: with the rule that counts held headings they
+  agree on 99.7% and 99.5%. The text scorer is right there, and the nested rule undercounts those
+  chunkings' hits: scored from text, BM25's recall@5 is 82.8% at `h2` and 81.7% at `merge-400`,
+  not 76.0% and 74.2%.
+- **A part of a section that runs past it.** At `merge-400`, one chunk named after a subsection
+  of the expected section was merged with the start of the next section: the nested rule counts
+  it as part of the expected section, the text scorer does not, since less than 80% of its text
+  is.
+
+### The JSON report
+
+`text-scorer.json` (`schema_version` 1) records `golden` (the golden set's fingerprint), `cases`,
+`projects`, `corpus` (every pinned version's commit), `environment` (as the retrieval benchmark
+records it), `scorer` (`shingle_words`, `threshold`, `fact_share`, `min_agreement`,
+`gated_chunking`) and, per chunking, in `calibrations`: `agreement`, `held_agreement` and
+`rendered_agreement` (each `decisions`, `agreed`, `rate`, `hit_miss_rate`),
+`wrong_version_agreement`, `sweep` (`threshold`, `rate`, `rendered_rate`), `disagreements`
+(`case`, `section`, `chunk_id_rank`, `text_rank`, `why`), `chunk_id` (the retrieval benchmark's
+metrics), `text` (the same scored from text, with the metrics only text gives),
+`facts_in_expected_sections` and `facts_in_other_results`. Like the other benchmarks, it runs by
+hand, not in CI: run it when the matcher, the parser or the chunker changes, and record it in the
+same pull request. Pull request CI runs the quick tests (`tests/evals/test_text_match.py`,
+`test_text_bench.py`, `text_scorer.feature`) on small local corpora.
 
 ## The agent benchmark
 
