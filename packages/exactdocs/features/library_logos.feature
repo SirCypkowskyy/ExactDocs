@@ -29,3 +29,12 @@ Feature: A library carries its project's logo, served by ExactDocs
     And the library has a logo
     When "docs/" of the fixture repository at "v1.4.0" is imported
     Then the library has no logo
+
+  Scenario: A re-sync picks up the logo the branch changed
+    Given the fixture repository is a private copy
+    And "/fixture/docs-repo/next" is imported
+    And the library has a logo
+    And a commit redrew ".github/logo.svg" on branch "next"
+    When the user syncs the library
+    Then the library has a new logo
+    And the served logo is the drawing of ".github/logo.svg" at "next" without its script

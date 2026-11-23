@@ -43,6 +43,32 @@ def step_branded(context: Context, branch: str, path: str) -> None:
     git("checkout", "-q", "main")
 
 
+@given('a commit redrew "{path}" on branch "{branch}"')
+def step_redrawn(context: Context, path: str, branch: str) -> None:
+    """Commit a new drawing of the logo on ``branch``; needs a private copy."""
+    repo = context.fixture_repo.path
+
+    def git(*args: str) -> str:
+        return context.fixture_git(*args, cwd=repo)
+
+    context.logo_before = _library(context)["logo"]
+    git("checkout", "-q", branch)
+    redrawn = BRANDED_LOGO.replace("from the README", "redrawn").replace("#2856c8", "#28c856")
+    (repo / path).write_text(redrawn, encoding="utf-8")
+    git("-c", "user.name=Fixture", "-c", "user.email=f@exactdocs.invalid",
+        "commit", "-q", "-am", "chore: redraw the logo")  # fmt: skip
+    git("checkout", "-q", "main")
+
+
+@then("the library has a new logo")
+def step_new_logo(context: Context) -> None:
+    step_has_logo(context)
+    version = _library(context)["logo"]
+    assert version != context.logo_before, "the logo did not change"
+    context.logo = context.client.get(LOGO, params={"v": version})
+    assert context.logo.status_code == HTTPStatus.OK, context.logo.text
+
+
 @step("the library has a logo")
 def step_has_logo(context: Context) -> None:
     (listed,) = [
