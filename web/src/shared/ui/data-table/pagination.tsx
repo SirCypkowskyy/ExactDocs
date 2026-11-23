@@ -73,7 +73,7 @@ export function DataTablePagination<T>({ model }: { model: DataTableModel<T> }) 
           </div>
         )}
         <p className="num">{t.pageOf(page, pageCount)}</p>
-        <div className="flex items-center gap-1">
+        <div className="ml-auto flex items-center gap-1">
           {nav(
             t.firstPage,
             1,

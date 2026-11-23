@@ -90,7 +90,7 @@ export function FacetedFilter<T>({
                         filter.single ? "rounded-full" : "rounded-sm",
                         checked
                           ? "border-selection bg-selection text-route-foreground"
-                          : "border-input bg-background",
+                          : "border-muted-foreground bg-background",
                       )}
                     >
                       {checked &&

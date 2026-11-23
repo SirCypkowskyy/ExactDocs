@@ -55,7 +55,8 @@ export function DataTableToolbar<T>({
         )}
         {children}
         {columns && (
-          <div className="ml-auto">
+          // Below `md` rows are cards with their own few cells: no columns to choose.
+          <div className="ml-auto max-md:hidden">
             <ColumnsMenu table={model.table} />
           </div>
         )}

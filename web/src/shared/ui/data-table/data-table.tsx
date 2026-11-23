@@ -182,7 +182,7 @@ function DesktopRows<T>({ model, label, actions, actionsOf, nameOf, fresh }: Row
                     </TableCell>
                   ))}
                   {actions && (
-                    <TableCell className="w-0 py-2 text-right">
+                    <TableCell className="w-0 text-right">
                       <RowActionsMenu
                         row={row.original}
                         actions={rowActions}
