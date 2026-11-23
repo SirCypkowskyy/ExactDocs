@@ -164,6 +164,12 @@ def step_can_read(context: Context, username: str) -> None:
     assert not found.get("isError"), found
     shown = _mcp(context, username, "read_article", {"library": library, "path": article})
     assert not shown.get("isError"), shown
+    for tool, arguments in [  # the MCP App tools: the same reads, as UI
+        ("view_search", {"library": library, "query": "retry_policy"}),
+        ("view_article", {"library": library, "path": article}),
+    ]:
+        viewed = _mcp(context, username, tool, arguments)
+        assert not viewed.get("isError"), viewed
 
 
 @then('"{username}" is refused when searching and reading it in the UI and over MCP')
@@ -180,6 +186,8 @@ def step_refused_reading(context: Context, username: str) -> None:
     for tool, arguments in [
         ("search_docs", {"library": "/fixture/docs-repo", "query": "retry_policy"}),
         ("list_articles", {"library": "/fixture/docs-repo"}),
+        ("view_search", {"library": "/fixture/docs-repo", "query": "retry_policy"}),
+        ("view_article", {"library": "/fixture/docs-repo", "path": "docs/guide/install.md"}),
     ]:
         refused = _mcp(context, username, tool, arguments)
         assert refused["isError"], refused
@@ -250,6 +258,13 @@ def step_cannot_discover(context: Context, username: str, library: str) -> None:
         context, username, "resolve-library-id", {"libraryName": "docs-repo", "query": "retry"}
     )
     assert library not in str(resolved)
+    for tool, arguments in [  # the MCP App tools are scoped like the rest
+        ("view_search", {"library": library, "query": "retry_policy"}),
+        ("view_article", {"library": library, "path": "docs/guide/install.md"}),
+    ]:
+        refused = _mcp(context, username, tool, arguments)
+        assert refused["isError"], refused
+        assert "not_found" in json.dumps(refused), refused
 
 
 @then('"{username}" sees the same query error for a hidden and a missing library')

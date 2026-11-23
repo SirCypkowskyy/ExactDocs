@@ -722,7 +722,7 @@ dependencies = [
     { name = "docutils" },
     { name = "exactdocs-kernel" },
     { name = "fastapi" },
-    { name = "fastmcp" },
+    { name = "fastmcp", extra = ["apps"] },
     { name = "httpx2" },
     { name = "joserfc" },
     { name = "markdown-it-py" },
@@ -731,6 +731,7 @@ dependencies = [
     { name = "opentelemetry-exporter-prometheus" },
     { name = "opentelemetry-sdk" },
     { name = "platformdirs" },
+    { name = "prefab-ui" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -768,7 +769,7 @@ requires-dist = [
     { name = "exactdocs-kernel", editable = "packages/exactdocs-kernel" },
     { name = "fastapi", specifier = ">=0.120" },
     { name = "fastembed", marker = "extra == 'local'", specifier = "==0.9.1" },
-    { name = "fastmcp", specifier = ">=4" },
+    { name = "fastmcp", extras = ["apps"], specifier = ">=4" },
     { name = "httpx2", specifier = ">=2" },
     { name = "joserfc", specifier = ">=1.8.0" },
     { name = "markdown-it-py", specifier = ">=4" },
@@ -779,6 +780,7 @@ requires-dist = [
     { name = "opentelemetry-sdk", specifier = ">=1.45.1,<2" },
     { name = "pgvector", marker = "extra == 'ai'", specifier = "==0.5.1" },
     { name = "platformdirs", specifier = ">=4" },
+    { name = "prefab-ui", specifier = "==0.21.1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "pydantic-ai-harness", marker = "extra == 'ai'", specifier = "==0.60.0" },
@@ -903,6 +905,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ed/66/c9281ada4033818d800870dbbd865a629ee871cdf0b8e74ffc598027689a/fastmcp-4.1.6-py3-none-any.whl", hash = "sha256:f54367fdca3d1a37c53164ebf864fb2461acdd92a9d9df731a244078c0332926", size = 8232, upload-time = "2026-11-03T02:53:39.186Z" },
 ]
 
+[package.optional-dependencies]
+apps = [
+    { name = "fastmcp-slim", extra = ["apps"] },
+]
+
 [[package]]
 name = "fastmcp-slim"
 version = "4.1.6"
@@ -922,6 +929,9 @@ wheels = [
 ]
 
 [package.optional-dependencies]
+apps = [
+    { name = "prefab-ui" },
+]
 client = [
     { name = "authlib" },
     { name = "beartype", marker = "python_full_version >= '3.15'" },
@@ -2094,6 +2104,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/bf/db/7fc19e6f2dc92a966727031389fc2e08b558f0f25eb7403c1119ad4713cd/pluggy-1.7.0.tar.gz", hash = "sha256:d1eaa46ebb595891b860ab086b4d09c8588af65ebd4361b8e8f4bb8920b90ba8", size = 123304, upload-time = "2026-10-15T09:50:58.343Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/40/9e/2b38731e0fc536806f16490e1a12d7f0dc2a1235aa8cc07bcc75416a7daa/pluggy-1.7.0-py3-none-any.whl", hash = "sha256:7dd7b0d8832ba3cb632c306926ded123429211b83641b35dc5c41ad2d34f9bec", size = 27082, upload-time = "2026-10-15T09:50:56.808Z" },
+]
+
+[[package]]
+name = "prefab-ui"
+version = "0.21.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cyclopts" },
+    { name = "pydantic" },
+    { name = "rich" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3e/b8/81abe3ba9a85e3862933b274bd7293eef557415e21d00c3b7efdf73a67d8/prefab_ui-0.21.1.tar.gz", hash = "sha256:26e84e0ba195845edd1f36ff88a2ef3d76e9d79044518fa6636a5862e0a1bac5", size = 4442004, upload-time = "2026-10-26T19:18:08.154Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/06/b4fdf18094199cf470dc9f33fff1ba945f7108e1b177d3d14a4eb9273f1c/prefab_ui-0.21.1-py3-none-any.whl", hash = "sha256:94185e9032475ec1b348fc70e23ba5328f458279e0b8af972aa7c755ff9301d3", size = 2039921, upload-time = "2026-10-26T19:18:06.375Z" },
 ]
 
 [[package]]

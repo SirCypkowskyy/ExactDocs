@@ -76,7 +76,9 @@ dependencies = [
     # Exact pin: the converter maps its node classes and directive API.
     "docutils==0.23",
     "fastapi>=0.120",
-    "fastmcp>=4",
+    # MCP Apps (#115): view_article and view_search return Prefab UI. Exact pin: Prefab is pre-1.0
+    # and its renderer and wire format change between minor versions (FastMCP says to pin it).
+    "fastmcp[apps]>=4",
     "httpx2>=2",
     "joserfc>=1.8.0",
     "markdown-it-py>=4",
@@ -89,6 +91,7 @@ dependencies = [
     "opentelemetry-exporter-prometheus>=0.66b1,<1",
     "opentelemetry-sdk>=1.45.1,<2",
     "platformdirs>=4",
+    "prefab-ui==0.21.1",
     # PostgreSQL (EXACTDOCS_DATABASE_URL=postgresql://...): psycopg 3, async. DBOS needs it too,
     # so it adds nothing to the image.
     "psycopg[binary]>=3.2",

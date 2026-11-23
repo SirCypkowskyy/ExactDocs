@@ -37,6 +37,8 @@ FRAMEWORKS = [
     "httpx*",
     "dbos*",
     "argon2*",
+    # MCP Apps UI (#115): built by the MCP adapters only.
+    "prefab_ui*",
     *DATABASE_LIBRARIES,
     # The AI stack (the `[ai]` and `[local]` extras): adapters and bootstrap only, imported once
     # a model is configured (docs/decisions/ai-retrieval.md, "Where the code lives").

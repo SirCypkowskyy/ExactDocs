@@ -464,6 +464,8 @@ async def test_a_viewer_reads_over_mcp_and_a_caller_without_a_role_is_refused(
     reads = [
         ("list_articles", {"library": LIBRARY}),
         ("search_docs", {"library": LIBRARY, "query": "retry"}),
+        ("view_search", {"library": LIBRARY, "query": "retry"}),
+        ("view_article", {"library": LIBRARY, "path": "plan.md"}),
     ]
     async with mcp_client(instance.app, await instance.token("bob")) as viewer:
         for tool, arguments in reads:

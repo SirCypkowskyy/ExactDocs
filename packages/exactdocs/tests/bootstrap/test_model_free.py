@@ -228,9 +228,9 @@ DEFAULT_MODEL_FILES = [
 ONNX_EXAMPLE = "/app/.venv/lib/python3.14/site-packages/onnxruntime/datasets/sigmoid.onnx"
 
 
-def test_each_variant_has_the_budget_of_the_decision_record() -> None:
+def test_each_variant_has_its_documented_budget() -> None:
     assert {k: v.budget for k, v in VARIANTS.items()} == {
-        "base": 400_000_000,
+        "base": 410_000_000,
         "ai": 560_000_000,
         "local": 950_000_000,
     }
