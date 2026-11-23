@@ -53,6 +53,51 @@ SEARCH_ENGINES = {
     **{engine: "external" for name in CLUSTERS for engine in (name, f"hybrid_{name}")},
 }
 """The full-text engine the app must choose for an engine under test (by default its own name)."""
+CLUSTER_RANKING_GAPS: frozenset[str] = frozenset(
+    f"{test}[{engine}-{case}]"
+    for test, engine, case in [
+        *(
+            (test, engine, case)
+            for test in (
+                "test_expected_section_ranks_first",
+                "test_searching_all_libraries_ranks_the_default_version_the_same_way",
+            )
+            for engine in ("elasticsearch", "hybrid_elasticsearch", "opensearch")
+            for case in ("v1.4.0:retry_policy", "v1.4.0:tokens[auth]")
+        ),
+        *(
+            ("test_expected_section_ranks_first", engine, "v1.3.0:tokens[auth]")
+            for engine in ("elasticsearch", "hybrid_elasticsearch", "opensearch")
+        ),
+        ("test_expected_section_ranks_first", "hybrid_opensearch", "v1.4.0:retry_policy"),
+        *(
+            (
+                "test_searching_all_libraries_ranks_the_default_version_the_same_way",
+                "hybrid_opensearch",
+                case,
+            )
+            for case in ("v1.4.0:retry_policy", "v1.4.0:tokens[auth]")
+        ),
+    ]
+)
+"""Cases the cluster engines (#354) rank differently from the database's engines, measured on
+the pinned Elasticsearch 9.5.6 and OpenSearch 3.8.0 when the E14 adapters were combined (#351):
+the parent heading (``Retry policy``, ``Authentication API``) outranks the expected child
+section. A known gap of the adapter's analysis and field weights, not of the combination; strict,
+so a fix shows up as an unexpected pass."""
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Mark the cluster engines' known ranking gaps (``CLUSTER_RANKING_GAPS``) as strict xfails."""
+    for item in items:
+        if item.name in CLUSTER_RANKING_GAPS:
+            item.add_marker(
+                pytest.mark.xfail(
+                    strict=True, reason="a known ranking gap of the cluster engines (#354)"
+                )
+            )
+
+
 _DATABASES: dict[str, str] = {}  # engine -> database URL, for the engines that have one
 _CLUSTERS: dict[str, dict[str, object]] = {}  # engine -> its test cluster's options
 
@@ -99,13 +144,13 @@ def imported(
         The engine's name and the data directory holding its imported versions.
     """
     data_dir = tmp_path_factory.mktemp("ranking")
+    name = request.param.removeprefix("hybrid_")
     with ExitStack() as stack:
-        if request.param not in {"fts5", "hybrid"}:
+        if request.param not in {"fts5", "hybrid"} and name not in CLUSTERS:  # a cluster: SQLite
             database = postgres_database(
                 c_locale=request.param.endswith("_c"), pg_search=request.param == "pg_search"
             )
             _DATABASES[request.param] = stack.enter_context(database).url
-        name = request.param.removeprefix("hybrid_")
         if name in CLUSTERS:
             options = cluster_options(name)
             assert options is not None

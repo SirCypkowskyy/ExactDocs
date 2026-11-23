@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from elastic_transport import HttpxAsyncHttpNode
-from elasticsearch import ApiError, AsyncElasticsearch, TransportError
+from elasticsearch import ApiError, AsyncElasticsearch, TransportError, UnsupportedProductError
 
 from exactdocs.retrieval.adapters.driven.elastic_index import (
     Answer,
@@ -74,6 +74,9 @@ class _Client:
             response = await self.client.perform_request(
                 method, path, params=params, headers=headers, body=body
             )
+        except UnsupportedProductError as error:  # the client's own check of the answer
+            reason = "the cluster is not Elasticsearch (the client's product check refused it)"
+            raise IndexBackendUnavailableError(ELASTICSEARCH_BACKEND, reason) from error
         except ApiError as error:
             status = error.meta.status
             if status in allow:

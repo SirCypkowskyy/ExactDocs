@@ -63,12 +63,11 @@ async def _held(context: Context) -> tuple[dict, list[HeldVersion], list[HeldVer
 
 
 async def _drop(context: Context) -> None:
-    """Delete every index the scenario wrote."""
-    search, vectors = _backends(context)
+    """Delete every index the scenario wrote (the prefix's, vector indexes and pipeline too)."""
+    search, _ = _backends(context)
     await search.cluster.open()
     try:
         await drop_indexes(search)
-        await drop_indexes(vectors)
     finally:
         await search.close()
 

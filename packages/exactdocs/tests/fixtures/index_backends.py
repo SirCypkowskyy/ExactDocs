@@ -70,7 +70,8 @@ class BackendCase:
     only a BM25-like ranking passes (length normalisation, a heading's ancestors)."""
     stale_statistics: bool = False
     """Deleted entries still count in its term statistics until its garbage collector runs
-    (Redis' Query Engine): a rebuild finds the same hits, with other scores."""
+    (Redis' Query Engine) or its segments merge (Lucene: Elasticsearch, OpenSearch): a rebuild
+    finds the same hits, with other scores."""
 
 
 @asynccontextmanager
@@ -458,6 +459,7 @@ EXTERNAL_BACKENDS: list[BackendCase] = [
             name=name,
             search=partial(_cluster_search, name),
             vectors=partial(_cluster_vectors, name),
+            stale_statistics=True,
         )
         for name in ("elasticsearch", "opensearch")
         if cluster_options(name) is not None
