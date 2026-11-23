@@ -9,9 +9,10 @@ export const pageMessages = defineMessages(
   {
     title: (name: string) => `${name} settings`,
     description: "Library settings",
-    breadcrumb: "Breadcrumb",
     libraries: "Libraries",
     settings: "Settings",
+    /** Said while the page loads (the skeleton). */
+    loading: "Loading the library settings",
     onThisPage: "On this page",
     /** Each section's heading, and its entry in the section nav. */
     sections: {
@@ -74,17 +75,15 @@ export const pageMessages = defineMessages(
     confirm: {
       /** `thing`: the version or the library ID, set in mono. */
       title: (thing: ReactNode) => <>Remove {thing}?</>,
-      /** `phrase`: what to type, set in mono. */
-      typeToConfirm: (phrase: ReactNode) => <>Type {phrase} to confirm</>,
       removing: "Removing",
     },
   },
   {
     title: (name) => `Ustawienia: ${name}`,
     description: "Ustawienia biblioteki",
-    breadcrumb: "Ścieżka nawigacji",
     libraries: "Biblioteki",
     settings: "Ustawienia",
+    loading: "Wczytywanie ustawień biblioteki",
     onThisPage: "Na tej stronie",
     sections: {
       details: "Szczegóły",
@@ -149,7 +148,6 @@ export const pageMessages = defineMessages(
     },
     confirm: {
       title: (thing) => <>Usunąć {thing}?</>,
-      typeToConfirm: (phrase) => <>Wpisz {phrase}, aby potwierdzić</>,
       removing: "Usuwanie",
     },
   },

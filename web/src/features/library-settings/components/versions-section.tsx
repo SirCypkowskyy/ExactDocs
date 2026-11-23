@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check } from "lucide-react";
+import { Check, Plus, X } from "lucide-react";
 import { type FormEvent, type ReactNode, useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -14,7 +14,9 @@ import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { type RefChoice, refToSend } from "@/shared/lib/refs";
 import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
 import { Button } from "@/shared/ui/button";
+import { TypedConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { CredentialField } from "@/shared/ui/credential-field";
+import { restoreRowFocus } from "@/shared/ui/data-table/row-actions";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { RefPicker } from "@/shared/ui/ref-picker";
 import { accessQueryOptions, addVersion, refreshLibraries, removeVersion } from "../api/settings";
@@ -33,7 +35,6 @@ import {
   type SettingsVersion,
 } from "../model/settings";
 import { SettingsSection } from "./settings-section";
-import { TypedConfirm } from "./typed-confirm";
 import { VersionsTable } from "./versions-table";
 
 interface Props {
@@ -185,6 +186,7 @@ function AddVersionForm({
         added={added}
         finish={
           <Button type="button" onClick={onClose}>
+            <X aria-hidden="true" data-icon-motion="turn" />
             {close}
           </Button>
         }
@@ -246,6 +248,7 @@ function AddVersionForm({
             {cancel}
           </Button>
           <Button type="submit" pending={pending} aria-disabled={pending} className="min-w-32">
+            {!pending && <Plus aria-hidden="true" data-icon-motion="turn" />}
             {pending ? t.adding : t.addVersion}
           </Button>
         </div>
@@ -253,6 +256,12 @@ function AddVersionForm({
     </form>
   );
 }
+
+/** A version's row (or card) in the table, while it is on the page. */
+const rowOf = (ref: string | undefined) =>
+  [...document.querySelectorAll<HTMLElement>("[data-row-id]")].find(
+    (el) => el.dataset.rowId === ref,
+  );
 
 /** The imported versions, an add form, and a typed-confirmation remove per version. */
 export function VersionsSection(props: Props) {
@@ -267,8 +276,9 @@ export function VersionsSection(props: Props) {
   const [problem, setProblem] = useState<Problem>();
   const heading = useRef<HTMLHeadingElement>(null);
   const addButton = useRef<HTMLButtonElement>(null);
-  const trigger = useRef<HTMLElement | null>(null);
   const removedOk = useRef(false);
+  // The version last asked about: the dialog's state is gone by the time focus moves.
+  const asked = useRef<string>(undefined);
   const focusAfterRender = useFocusAfterRender();
 
   const remove = useMutation({
@@ -330,6 +340,7 @@ export function VersionsSection(props: Props) {
             setAdding(true);
           }}
         >
+          <Plus aria-hidden="true" data-icon-motion="turn" />
           {t.add}
         </Button>
       </div>
@@ -355,8 +366,9 @@ export function VersionsSection(props: Props) {
         <VersionsTable
           owner={owner}
           repo={repo}
-          onRemove={(version, el) => {
-            trigger.current = el;
+          pinned={props.library.default_pinned}
+          onRemove={(version) => {
+            asked.current = version.ref;
             removedOk.current = false;
             remove.reset();
             setProblem(undefined);
@@ -366,27 +378,41 @@ export function VersionsSection(props: Props) {
         />
       </div>
 
-      <TypedConfirm
+      <TypedConfirmDialog
         open={removing !== undefined}
         onOpenChange={(open) => {
           if (!open) setRemoving(undefined);
         }}
         title={page.confirm.title(
-          <span className="font-mono">{removing?.ref ?? t.versionFallback}</span>,
+          <span className="font-mono [overflow-wrap:anywhere]">
+            {removing?.ref ?? t.versionFallback}
+          </span>,
         )}
-        loss={t.loss}
-        safe={t.safe(removing?.is_default ? t.defaultNote : "")}
+        description={<span className="text-foreground">{t.loss}</span>}
         phrase={removing?.ref ?? ""}
+        initialFocus="phrase"
         confirmLabel={t.confirm}
+        pendingLabel={page.confirm.removing}
         pending={remove.isPending}
-        problem={problem}
+        error={problem?.message}
+        errorTone={problem?.tone}
         onConfirm={() => removing && remove.mutate(removing)}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          // A removed row is gone: land on the heading. Otherwise back on the button that opened it.
-          (removedOk.current ? heading.current : trigger.current)?.focus();
+          // A removed row is gone: land on the heading. Otherwise back where the row's menu was
+          // opened, or on its menu button (a menu opened by mouse never had focus).
+          if (removedOk.current) heading.current?.focus();
+          else {
+            restoreRowFocus(event);
+            const row = rowOf(asked.current);
+            if (row && !row.contains(document.activeElement)) {
+              (row.querySelector<HTMLElement>('[aria-haspopup="menu"]') ?? row).focus();
+            }
+          }
         }}
-      />
+      >
+        <p className="mt-1.5">{t.safe(removing?.is_default ? t.defaultNote : "")}</p>
+      </TypedConfirmDialog>
     </SettingsSection>
   );
 }
