@@ -384,6 +384,37 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/account/preferences": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Account Preferences
+         * @description Return the caller's interface preferences.
+         *
+         *     `saved` is `false` while the account never saved any: `preferences` then holds the
+         *     defaults, and a browser signing in keeps the preferences it already applies (and saves
+         *     them). Once `saved` is `true`, the account's preferences win over a browser's.
+         */
+        readonly get: operations["identity-get_account_preferences"];
+        /**
+         * Save Account Preferences
+         * @description Save the caller's interface preferences, replacing the ones it had.
+         *
+         *     Every preference is required. An unknown key or a value the interface does not offer is
+         *     a 422 `validation_error` naming the field, and nothing is saved.
+         */
+        readonly put: operations["identity-save_account_preferences"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries/{owner}/{repo}/asset": {
         readonly parameters: {
             readonly query?: never;
@@ -1647,6 +1678,20 @@ export interface components {
              *     repository tokens use `x-token-auth`.
              */
             readonly username?: string | null;
+        };
+        /**
+         * AccountPreferences
+         * @description An account's interface preferences, and whether it saved them.
+         */
+        readonly AccountPreferences: {
+            /**
+             * Saved
+             * @description `false` while the account never saved any: `preferences` then holds the defaults, and a
+             *     browser keeps (and may save) the ones it already applies.
+             */
+            readonly saved: boolean;
+            /** @description The saved preferences, or the defaults when `saved` is `false`. */
+            readonly preferences: components["schemas"]["InterfacePreferences"];
         };
         /**
          * AccountSummary
@@ -3227,6 +3272,75 @@ export interface components {
          * @enum {string}
          */
         readonly HostKind: "github" | "gitlab" | "bitbucket" | "gitea" | "git";
+        /**
+         * InterfacePreferences
+         * @description How a person wants the interface to look and behave. Every setting is required.
+         */
+        readonly InterfacePreferences: {
+            /**
+             * Theme
+             * @description Colour scheme: `light`, `dark`, or `system` to follow the operating system. Default
+             *     `system`.
+             * @enum {string}
+             */
+            readonly theme: "light" | "dark" | "system";
+            /**
+             * Contrast
+             * @description Contrast of text and controls: `standard` or `more`. Default `standard`.
+             * @enum {string}
+             */
+            readonly contrast: "standard" | "more";
+            /**
+             * Text Scale
+             * @description Text size in percent of the default size: 90, 100, 110, 125 or 150. Default 100.
+             * @enum {integer}
+             */
+            readonly text_scale: 90 | 100 | 110 | 125 | 150;
+            /**
+             * Text Spacing
+             * @description Spacing of lines, words and letters: `standard`, or `wide` (WCAG 1.4.12's minimums).
+             *     Default `standard`.
+             * @enum {string}
+             */
+            readonly text_spacing: "standard" | "wide";
+            /**
+             * Motion
+             * @description Animations: `system` follows the operating system's reduced-motion setting; `reduced` and
+             *     `full` override it. Default `system`.
+             * @enum {string}
+             */
+            readonly motion: "system" | "reduced" | "full";
+            /**
+             * Font
+             * @description Typeface: `default`, `hyperlegible` (a typeface for low vision), `dyslexic` (one for
+             *     dyslexic readers) or `system` (the operating system's). Default `default`.
+             * @enum {string}
+             */
+            readonly font: "default" | "hyperlegible" | "dyslexic" | "system";
+            /**
+             * Underline Links
+             * @description Whether every link is underlined, not only told apart by its colour. Default `false`.
+             */
+            readonly underline_links: boolean;
+            /**
+             * Large Targets
+             * @description Whether buttons and links get larger hit areas. Default `false`.
+             */
+            readonly large_targets: boolean;
+            /**
+             * Language
+             * @description Interface language: `en` (English), `pl` (Polish), or `system` to follow the browser's.
+             *     Default `system`.
+             * @enum {string}
+             */
+            readonly language: "system" | "en" | "pl";
+            /**
+             * Library Logos
+             * @description Whether libraries show their logos, and generic icons where they have none; `false` hides
+             *     both. Default `true`.
+             */
+            readonly library_logos: boolean;
+        };
         /**
          * JobList
          * @description A page of jobs, newest first unless sorted otherwise.
@@ -7995,6 +8109,158 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AccessLogPage"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-get_account_preferences": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccountPreferences"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-save_account_preferences": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["InterfacePreferences"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccountPreferences"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */
