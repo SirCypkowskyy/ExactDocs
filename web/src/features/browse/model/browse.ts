@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { components } from "@/shared/lib/api-schema";
+import type { PageSize } from "@/shared/ui/data-table/table-search";
 
 export type LibraryDetail = components["schemas"]["LibraryDetail"];
 export type Version = components["schemas"]["VersionOut"];
@@ -23,6 +24,10 @@ export interface BrowseSearch {
   /** The articles table's text filter (path or title) and API `sort`; the tree ignores both. */
   filter?: string | undefined;
   sort?: string | undefined;
+  /** The articles table's folder (`path_prefix`), page (from 2) and rows per page. */
+  prefix?: string | undefined;
+  page?: number | undefined;
+  size?: PageSize | undefined;
 }
 
 /** The version the page resolved, handed to the search slots (the `search` slice renders them). */

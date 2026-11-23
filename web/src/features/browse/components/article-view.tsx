@@ -1,6 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { type HistoryState, Link, Navigate, useRouterState } from "@tanstack/react-router";
-import { ArrowUpRight, ChevronRight } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  ArrowUpRight,
+  ChevronRight,
+  Code,
+  Eye,
+  RotateCcw,
+} from "lucide-react";
 import { Component, Fragment, lazy, type ReactNode, Suspense, useRef, useState } from "react";
 import { HttpError } from "@/shared/lib/http";
 import { common, useMessages } from "@/shared/lib/i18n";
@@ -86,7 +94,7 @@ export function CommitLinks({
       {file && (
         <a href={file} target="_blank" rel="noopener noreferrer" className={external}>
           <span className={underline}>{t.viewFileOn(host)}</span>
-          <ArrowUpRight aria-hidden="true" className="size-3.5" />
+          <ArrowUpRight aria-hidden="true" data-icon-motion="out" className="size-3.5" />
           <span className="sr-only">{t.atCommit(shortSha(version.commit_sha))}</span>
         </a>
       )}
@@ -95,7 +103,7 @@ export function CommitLinks({
           <span className={underline}>
             {t.commit} <code className="font-mono">{shortSha(version.commit_sha)}</code>
           </span>
-          <ArrowUpRight aria-hidden="true" className="size-3.5" />
+          <ArrowUpRight aria-hidden="true" data-icon-motion="out" className="size-3.5" />
           <span className="sr-only">{t.opensNewTab}</span>
         </a>
       ) : (
@@ -170,6 +178,7 @@ function NotInVersion({
                   </span>
                   <ChevronRight
                     aria-hidden="true"
+                    data-icon-motion="forward"
                     className="size-4 shrink-0 text-muted-foreground"
                   />
                 </Link>
@@ -185,6 +194,7 @@ function NotInVersion({
           search={{ version: version.ref, tags }}
           className={secondary}
         >
+          <ArrowLeft aria-hidden="true" data-icon-motion="back" />
           {t.showRoot(version.ref)}
         </Link>
         {newest && newest !== version.ref && (
@@ -194,13 +204,14 @@ function NotInVersion({
             search={{ version: newest, path, tags }}
             className={secondary}
           >
+            <ArrowRight aria-hidden="true" data-icon-motion="forward" />
             {t.openPathIn(newest)}
           </Link>
         )}
         {onHost && (
           <a href={onHost} target="_blank" rel="noopener noreferrer" className={secondary}>
             {t.viewOn(hostName(library.host))}
-            <ArrowUpRight aria-hidden="true" className="ml-1 size-4" />
+            <ArrowUpRight aria-hidden="true" data-icon-motion="out" />
             <span className="sr-only"> {t.atCommit(shortSha(version.commit_sha))}</span>
           </a>
         )}
@@ -210,8 +221,7 @@ function NotInVersion({
 }
 
 const toggle =
-  "inline-flex h-11 min-w-20 items-center justify-center rounded-[5px] px-3 text-body font-medium outline-none transition-[background-color,color] duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring lg:h-7";
-const quiet = buttonVariants({ variant: "outline" });
+  "inline-flex h-11 min-w-20 items-center justify-center gap-1.5 rounded-[5px] px-3 text-body font-medium outline-none transition-[background-color,color] duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring lg:h-7";
 
 type View = "rendered" | "source";
 
@@ -233,6 +243,11 @@ function ViewToggle({ view, onChange }: { view: View; onChange: (view: View) => 
               : "text-muted-foreground can-hover:hover:text-foreground"
           }`}
         >
+          {v === "rendered" ? (
+            <Eye aria-hidden="true" data-icon-motion="pop" className="size-4" />
+          ) : (
+            <Code aria-hidden="true" data-icon-motion="pop" className="size-4" />
+          )}
           {t[v]}
         </button>
       ))}
@@ -307,19 +322,20 @@ function RenderedText({
             <p className="text-body font-medium">{t.rendererFailed}</p>
             <p className="mt-1 text-body text-muted-foreground">{t.rendererFailedHint}</p>
             <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" onClick={onSource} className={quiet}>
+              <Button variant="outline" onClick={onSource}>
+                <Code aria-hidden="true" data-icon-motion="pop" />
                 {t.viewSource}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="outline"
                 onClick={() => {
                   setMarkdown(loadMarkdown());
                   retry();
                 }}
-                className={quiet}
               >
+                <RotateCcw aria-hidden="true" data-icon-motion="refresh" />
                 {c.retry}
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -541,6 +557,7 @@ export function ArticleView(props: ArticleViewProps) {
           {error instanceof HttpError && error.code ? error.message : t.noAnswer}
         </p>
         <Button className="mt-4" onClick={() => query.refetch()}>
+          <RotateCcw aria-hidden="true" data-icon-motion="refresh" />
           {c.retry}
         </Button>
       </div>

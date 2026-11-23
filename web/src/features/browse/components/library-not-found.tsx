@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { LibraryBig } from "lucide-react";
+import { ArrowLeft, LibraryBig } from "lucide-react";
 import { useMessages } from "@/shared/lib/i18n";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { buttonVariants } from "@/shared/ui/button";
@@ -17,6 +17,7 @@ export function LibraryNotFound({ owner, repo }: { owner: string; repo: string }
       headingRef={heading}
       actions={
         <Link to="/" className={buttonVariants()}>
+          <ArrowLeft aria-hidden="true" data-icon-motion="back" />
           {t.allLibraries}
         </Link>
       }

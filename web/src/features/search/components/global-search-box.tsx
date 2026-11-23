@@ -4,8 +4,8 @@ import { type KeyboardEvent, useEffect, useEffectEvent, useRef, useState } from 
 import { common, useMessages } from "@/shared/lib/i18n";
 import { MAX_QUERY, normalizeQuery } from "@/shared/lib/search-query";
 import { cn } from "@/shared/lib/utils";
+import { IconButton } from "@/shared/ui/button";
 import { control, controlHeight, kbd } from "@/shared/ui/recipes";
-import { Tooltip } from "@/shared/ui/tooltip";
 import { messages } from "../messages";
 import { hasVersionBox } from "./keyboard";
 
@@ -163,23 +163,21 @@ export function GlobalSearchBox({
               /
             </kbd>
           ) : (
-            <Tooltip label={c.clearSearch}>
-              <button
-                type="button"
-                aria-label={c.clearSearch}
-                onClick={() => {
-                  setDraft("");
-                  go("", false);
-                  input.current?.focus();
-                }}
-                className={cn(
-                  "absolute top-0 right-0 inline-flex size-11 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-transform duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] sm:size-9 can-hover:hover:text-foreground",
-                  prominent && "sm:top-1.5 sm:right-1",
-                )}
-              >
-                <X aria-hidden="true" className="size-4" />
-              </button>
-            </Tooltip>
+            <IconButton
+              label={c.clearSearch}
+              motion="turn"
+              onClick={() => {
+                setDraft("");
+                go("", false);
+                input.current?.focus();
+              }}
+              className={cn(
+                "absolute top-0 right-0 text-muted-foreground hover:bg-transparent hover:text-foreground focus-visible:ring-offset-0 sm:size-9",
+                prominent && "sm:top-1.5 sm:right-1",
+              )}
+            >
+              <X aria-hidden="true" />
+            </IconButton>
           )}
         </div>
       </form>

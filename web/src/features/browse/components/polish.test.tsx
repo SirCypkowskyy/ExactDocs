@@ -53,7 +53,7 @@ const library = {
 } as unknown as LibraryDetail;
 const summaries: ArticleSummary[] = [
   { path: "docs/start.md", title: "Start", tags: [], size: 10 },
-  { path: "docs/api.md", title: "API reference", tags: [], size: 2048 },
+  { path: "docs/api.md", title: "API reference", tags: [], size: 2560 },
 ];
 const article = {
   path: "docs/start.md",
@@ -132,10 +132,11 @@ describe("browse in Polish", () => {
     expect(screen.getByText(/^Zaimportowano/)).toBeInTheDocument();
     expect(screen.getByText("Przeczytaj artykuł")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Artykuły" })).toBeInTheDocument();
+    expect(await screen.findByText("2 artykuły")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: /Ścieżka/ })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: /Rozmiar/ })).toBeInTheDocument();
     // Sizes are written the Polish way: a decimal comma.
-    expect(await screen.findByText("2,0 KB")).toBeInTheDocument();
+    expect(await screen.findByText("2,6 kB")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Wersja: v1.4.0. Zmień wersję" })).toBeVisible();
     expect(await screen.findByRole("tree", { name: "Pliki wersji v1.4.0" })).toBeInTheDocument();
     // The library's own words stay as they are.

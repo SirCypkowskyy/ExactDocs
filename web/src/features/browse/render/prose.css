@@ -27,6 +27,10 @@
 .doc > :first-child {
   margin-top: 0;
 }
+/* Inside a callout: blocks a little closer than in the text. */
+.doc-callout-body > * + * {
+  margin-top: 0.75em;
+}
 .doc p {
   text-wrap: pretty;
 }
@@ -40,26 +44,6 @@
   line-height: 1.3;
   text-wrap: balance;
   scroll-margin-top: 5rem;
-}
-.doc > .doc-h {
-  margin-top: 2em;
-  margin-bottom: 0;
-}
-.doc > .doc-h3 {
-  margin-top: 1.75em;
-}
-.doc > .doc-h:not([hidden]) + * {
-  margin-top: 0.75em;
-}
-.doc > .doc-h:first-child {
-  margin-top: 0;
-}
-/* A heading that only repeats the page title is not shown: what follows spaces itself as if it were not there. */
-.doc > .doc-h[hidden] + * {
-  margin-top: 1.125em;
-}
-.doc > .doc-h[hidden]:first-child + * {
-  margin-top: 0;
 }
 .doc-h1 {
   font-size: 1.375rem;
@@ -83,6 +67,26 @@
 }
 .doc-h[hidden] {
   display: none;
+}
+.doc > .doc-h {
+  margin-top: 2em;
+  margin-bottom: 0;
+}
+.doc > .doc-h3 {
+  margin-top: 1.75em;
+}
+.doc > .doc-h:not([hidden]) + * {
+  margin-top: 0.75em;
+}
+.doc > .doc-h:first-child {
+  margin-top: 0;
+}
+/* A heading that only repeats the page title is not shown: what follows spaces itself as if it were not there. */
+.doc > .doc-h[hidden] + * {
+  margin-top: 1.125em;
+}
+.doc > .doc-h[hidden]:first-child + * {
+  margin-top: 0;
 }
 
 /* The heading's own link: after the text, shown on hover and focus, faint where there is no hover. */
@@ -162,6 +166,11 @@
 }
 .doc a:not(.doc-anchor):focus-visible {
   box-shadow: 0 0 0 2px var(--ring);
+}
+/* Code in a table cell stays on one line: the table scrolls instead. */
+.doc-table code {
+  overflow-wrap: normal;
+  white-space: nowrap;
 }
 .doc :not(pre) > code {
   padding: 0.1em 0.25em;
@@ -297,10 +306,6 @@
   padding: 0.5rem 0.875rem;
   text-align: start;
   vertical-align: top;
-}
-.doc-table code {
-  overflow-wrap: normal;
-  white-space: nowrap;
 }
 .doc-table th {
   background: var(--secondary);
@@ -494,9 +499,6 @@
 }
 .doc-callout-body > :first-child {
   margin-top: 0.5rem;
-}
-.doc-callout-body > * + * {
-  margin-top: 0.75em;
 }
 .doc-callout-body > :last-child {
   margin-bottom: 0;

@@ -3,7 +3,7 @@ import { type KeyboardEvent, useEffect, useEffectEvent, useRef, useState } from 
 import { common, useMessages } from "@/shared/lib/i18n";
 import { MAX_QUERY, normalizeQuery } from "@/shared/lib/search-query";
 import { parseTags } from "@/shared/lib/tags";
-import { Tooltip } from "@/shared/ui/tooltip";
+import { IconButton } from "@/shared/ui/button";
 import { useSearchNav } from "../hooks/use-search-nav";
 import { messages } from "../messages";
 import type { SearchContext } from "../model/context";
@@ -121,20 +121,18 @@ export function SearchBox({ ctx }: { ctx: SearchContext }) {
                 /
               </kbd>
             ) : (
-              <Tooltip label={c.clearSearch}>
-                <button
-                  type="button"
-                  aria-label={c.clearSearch}
-                  onClick={() => {
-                    setDraft("");
-                    commit("");
-                    input.current?.focus();
-                  }}
-                  className="absolute top-0 right-0 inline-flex size-11 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-transform duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] can-hover:hover:text-foreground"
-                >
-                  <X aria-hidden="true" className="size-4" />
-                </button>
-              </Tooltip>
+              <IconButton
+                label={c.clearSearch}
+                motion="turn"
+                onClick={() => {
+                  setDraft("");
+                  commit("");
+                  input.current?.focus();
+                }}
+                className="absolute top-0 right-0 size-11 text-muted-foreground hover:bg-transparent hover:text-foreground focus-visible:ring-offset-0 fine:size-11"
+              >
+                <X aria-hidden="true" />
+              </IconButton>
             )}
           </div>
         </form>

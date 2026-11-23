@@ -7,10 +7,9 @@ import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { MAX_TAG_LENGTH, MAX_TAGS } from "@/shared/lib/tags";
 import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
 import { cn } from "@/shared/lib/utils";
-import { Button } from "@/shared/ui/button";
+import { Button, IconButton } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { pill, pillTone } from "@/shared/ui/recipes";
-import { Tooltip } from "@/shared/ui/tooltip";
 import { refreshTags, setManualTags } from "../api/manual-tags";
 import { messages } from "../messages";
 import {
@@ -77,9 +76,6 @@ function Plain({ tags, label }: { tags: readonly string[]; label: string }) {
   );
 }
 
-const chipButton =
-  "inline-flex size-11 cursor-pointer items-center justify-center rounded-full text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring aria-disabled:cursor-progress aria-disabled:opacity-60 lg:size-6 can-hover:hover:text-foreground";
-
 /** One manual tag, where it was set when that is an older path, and its remove button. */
 function ManualChip({
   tag,
@@ -103,19 +99,18 @@ function ManualChip({
           {t.setOn(<span className="font-mono">{tag.path}</span>)}
         </span>
       )}
-      <Tooltip label={inherited ? t.removeFrom(tag.path) : t.removeTag(tag.tag)}>
-        <button
-          ref={buttonRef}
-          type="button"
-          // Not `disabled`: that would drop the focus while the change is saved.
-          aria-disabled={busy || undefined}
-          onClick={onRemove}
-          aria-label={inherited ? t.removeTagSetOn(tag.tag, tag.path) : t.removeTag(tag.tag)}
-          className={chipButton}
-        >
-          <X aria-hidden="true" className="size-3.5" />
-        </button>
-      </Tooltip>
+      <IconButton
+        ref={buttonRef}
+        label={inherited ? t.removeTagSetOn(tag.tag, tag.path) : t.removeTag(tag.tag)}
+        size="icon-sm"
+        motion="turn"
+        // Not `disabled`: that would drop the focus while the change is saved.
+        aria-disabled={busy || undefined}
+        onClick={onRemove}
+        className="rounded-full text-muted-foreground hover:bg-background/70 fine:size-6 [&_svg]:size-3.5"
+      >
+        <X aria-hidden="true" />
+      </IconButton>
     </li>
   );
 }
@@ -173,9 +168,11 @@ function AddTagForm({
         className="h-11 min-w-0 flex-1 text-body lg:h-8"
       />
       <Button type="submit" size="sm" pending={busy}>
+        {!busy && <Plus aria-hidden="true" data-icon-motion="turn" />}
         {t.add}
       </Button>
       <button type="button" onClick={onClose} className={quiet}>
+        <X aria-hidden="true" data-icon-motion="turn" className="size-3.5" />
         {c.cancel}
       </button>
       <p id={hintId} className="w-full text-small text-muted-foreground">
@@ -353,7 +350,7 @@ export function TagEditor({ owner, repo, article }: TagEditorProps) {
                   }}
                   className={quiet}
                 >
-                  <Plus aria-hidden="true" className="size-3.5" />
+                  <Plus aria-hidden="true" data-icon-motion="turn" className="size-3.5" />
                   {t.addTag}
                 </button>
               </li>

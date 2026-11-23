@@ -1,6 +1,6 @@
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Search } from "lucide-react";
+import { CircleAlert, RotateCcw, Search, SearchX } from "lucide-react";
 import { useId } from "react";
 import { HttpError } from "@/shared/lib/http";
 import { common, formatNumber, useLanguage, useMessages } from "@/shared/lib/i18n";
@@ -254,7 +254,7 @@ function NoResults({
   const t = useMessages(messages);
   return (
     <div className="flex max-w-2xl flex-col items-start gap-3 rounded-lg border border-dashed border-input px-5 py-6">
-      <Search aria-hidden="true" className="size-5 text-muted-foreground" />
+      <SearchX aria-hidden="true" strokeWidth={1.5} className="size-8 text-muted-foreground" />
       <div>
         <h2 className="text-section font-semibold">
           {unavailable
@@ -280,6 +280,7 @@ function NoResults({
       </div>
       {library && (
         <Link to="/search" search={{ q }} className={buttonVariants({ variant: "outline" })}>
+          <Search aria-hidden="true" data-icon-motion="tilt" />
           {t.box.searchAll}
         </Link>
       )}
@@ -308,9 +309,15 @@ function Failed({ onRetry, pending }: { onRetry: () => void; pending: boolean })
   const c = useMessages(common);
   return (
     <div role="alert" className="max-w-xl rounded-lg border border-rule px-5 py-5">
+      <CircleAlert
+        aria-hidden="true"
+        strokeWidth={1.5}
+        className="mb-3 size-8 text-muted-foreground"
+      />
       <h2 className="text-section font-semibold">{t.failed.title}</h2>
       <p className="mt-2 text-body text-muted-foreground">{t.failed.all}</p>
       <Button variant="outline" size="sm" className="mt-3" pending={pending} onClick={onRetry}>
+        {!pending && <RotateCcw aria-hidden="true" data-icon-motion="refresh" />}
         {c.retry}
       </Button>
     </div>
@@ -422,6 +429,7 @@ export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; l
   return (
     <Page>
       <PageHeader
+        icon={<Search />}
         title={
           q ? t.page.title(<span className="[overflow-wrap:anywhere]">{q}</span>) : t.box.searchAll
         }

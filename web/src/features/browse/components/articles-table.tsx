@@ -1,154 +1,315 @@
-import { useInfiniteQuery } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { Link, useNavigate, useRouter } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
-import { useId, useMemo } from "react";
-import { useMessages } from "@/shared/lib/i18n";
-import { parseTags } from "@/shared/lib/tags";
-import { usePrefetchedPages } from "@/shared/lib/use-prefetched-pages";
 import {
-  ColumnsMenu,
-  DataTable,
-  ListFooter,
-  SearchFilter,
-  useServerTable,
-} from "@/shared/ui/data-table";
-import { articlesTableQueryOptions } from "../api/browse-queries";
+  ArrowRight,
+  ArrowUpRight,
+  CircleAlert,
+  Copy,
+  FileText,
+  FolderOpen,
+  Link2,
+  RotateCcw,
+} from "lucide-react";
+import { useId, useMemo } from "react";
+import { toast } from "sonner";
+import { formatNumber, useLanguage, useMessages } from "@/shared/lib/i18n";
+import { tagsQueryOptions } from "@/shared/lib/tags-query";
+import { cn } from "@/shared/lib/utils";
+import { Button } from "@/shared/ui/button";
+import { Bytes } from "@/shared/ui/data-table/cells";
+import { DataTable } from "@/shared/ui/data-table/data-table";
+import { DataTablePagination } from "@/shared/ui/data-table/pagination";
+import type { RowAction } from "@/shared/ui/data-table/row-actions";
+import { TableMessage } from "@/shared/ui/data-table/states";
+import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";
+import {
+  type DataTableModel,
+  type TableFilter,
+  type TableParam,
+  useDataTable,
+} from "@/shared/ui/data-table/use-data-table";
+import { Section } from "@/shared/ui/page";
+import { pill, pillTone } from "@/shared/ui/recipes";
+import { articlesSource, type VersionArgs } from "../api/browse-queries";
 import { messages } from "../messages";
-import type { ArticleSummary, BrowseSearch } from "../model/browse";
+import { ARTICLES_TABLE, articleFilters, articlesView, folderOf } from "../model/articles-view";
+import {
+  type ArticleSummary,
+  type BrowseSearch,
+  hostName,
+  type LibraryDetail,
+  type Version,
+} from "../model/browse";
+import { blobUrl } from "../render/urls";
+
+/*
+ * Every article of the version (blocks-map §2.3, up to 7,000): numbered pages sorted and filtered
+ * by the server, the view in the library page's URL, row actions in a kebab and a context menu.
+ */
+
+type TableMessages = (typeof messages)["en"]["table"];
 
 interface Props {
   owner: string;
   repo: string;
-  /** The version's ref and commit. */
-  versionRef: string;
-  sha: string;
+  library: LibraryDetail;
+  version: Version;
   search: BrowseSearch;
 }
 
-/** Every article of the version as a table, sorted and filtered by the server (path, title, tags). */
-export function ArticlesTable({ owner, repo, versionRef, sha, search }: Props) {
-  const t = useMessages(messages).table;
+/** Tags shown in a row before "+N". */
+const SHOWN_TAGS = 3;
+
+/** The folder muted, the file name in ink; the link's name is the whole path. */
+function PathText({ path }: { path: string }) {
+  const folder = folderOf(path);
+  return (
+    <>
+      {folder && <span className="text-muted-foreground">{folder}/</span>}
+      {folder ? path.slice(folder.length + 1) : path}
+    </>
+  );
+}
+
+function TagList({ tags, label }: { tags: readonly string[]; label: string }) {
+  const language = useLanguage();
+  if (tags.length === 0) return <span className="text-muted-foreground">–</span>;
+  const rest = tags.slice(SHOWN_TAGS);
+  return (
+    <ul aria-label={label} className="flex flex-wrap gap-1">
+      {tags.slice(0, SHOWN_TAGS).map((tag) => (
+        <li key={tag} className={cn(pill, pillTone.neutral)}>
+          {tag}
+        </li>
+      ))}
+      {rest.length > 0 && (
+        <li className={cn(pill, pillTone.neutral, "num")}>
+          <span aria-hidden="true">+{formatNumber(rest.length, language)}</span>
+          <span className="sr-only">{rest.join(", ")}</span>
+        </li>
+      )}
+    </ul>
+  );
+}
+
+/** Where a row's link goes: the reader, in the version and tag filter the page shows. */
+interface Target {
+  owner: string;
+  repo: string;
+  version: string | undefined;
+  tags: string | undefined;
+}
+
+// Built once per language and page: a cell is rendered as a component, so a new function would
+// remount it.
+const columnsOf = (t: TableMessages, to: Target): ColumnDef<ArticleSummary>[] => [
+  {
+    accessorKey: "path",
+    header: t.path,
+    enableHiding: false,
+    meta: { priority: 1, skeleton: "mono" },
+    cell: ({ row }) => (
+      <Link
+        to="/libraries/$owner/$repo"
+        params={{ owner: to.owner, repo: to.repo }}
+        search={{ version: to.version, path: row.original.path, tags: to.tags }}
+        className="rounded font-mono text-mono [overflow-wrap:anywhere] underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <PathText path={row.original.path} />
+      </Link>
+    ),
+  },
+  {
+    accessorKey: "title",
+    header: t.title,
+    meta: { priority: 2, className: "max-md:hidden" },
+    cell: ({ row }) => <span className="[overflow-wrap:anywhere]">{row.original.title}</span>,
+  },
+  {
+    accessorKey: "tags",
+    header: t.tags,
+    enableSorting: false,
+    meta: { skeleton: "pill", className: "max-lg:hidden" },
+    cell: ({ row }) => <TagList tags={row.original.tags} label={t.tags} />,
+  },
+  {
+    accessorKey: "size",
+    header: t.size,
+    sortDescFirst: true,
+    meta: { priority: 3, align: "end", skeleton: "number", label: t.size },
+    cell: ({ row }) => <Bytes value={row.original.size} />,
+  },
+];
+
+/** The version's tags as a facet: the counted ones, and any the URL names beyond them. */
+function useTagsFilter(
+  t: TableMessages,
+  at: VersionArgs,
+  picked: readonly string[] | undefined,
+): TableFilter {
+  const counted = useQuery(tagsQueryOptions(at));
+  return useMemo(() => {
+    const known = (counted.data?.tags ?? []).map((f) => f.tag);
+    const seen = new Set(known);
+    const values = [...known, ...(picked ?? []).filter((p) => !seen.has(p))];
+    return { id: "tags", title: t.tags, options: values.map((v) => ({ value: v, label: v })) };
+  }, [counted.data, picked, t]);
+}
+
+/** Writes the table's own part of the library page's URL, back on page 1. */
+function useWriteView(owner: string, repo: string) {
   const navigate = useNavigate();
-  const onView = (next: Pick<BrowseSearch, "filter" | "sort">) =>
+  return (patch: Pick<BrowseSearch, "filter" | "tags" | "prefix">) =>
     void navigate({
       to: "/libraries/$owner/$repo",
       params: { owner, repo },
-      search: (prev) => ({ ...prev, ...next }),
+      search: (prev) => ({ ...prev, ...patch, page: undefined }),
       replace: true,
+      resetScroll: false,
     });
-  const tags = useMemo(() => parseTags(search.tags), [search.tags]);
-  const view = { tags: search.tags, filter: search.filter, sort: search.sort };
-  const query = useInfiniteQuery(
-    articlesTableQueryOptions({
-      owner,
-      repo,
-      ref: versionRef,
-      sha,
-      tags,
-      filter: search.filter,
-      sort: search.sort,
-    }),
+}
+
+function copy(text: string, done: string) {
+  void navigator.clipboard?.writeText(text).then(
+    () => toast.success(done),
+    () => {},
   );
-  const { pages, hasMore, loadingMore, loadMore } = usePrefetchedPages(query, view);
-  const articles = pages.flatMap((p) => p.articles);
+}
+
+export function ArticlesTable({ owner, repo, library, version, search }: Props) {
+  const t = useMessages(messages).table;
   const id = useId();
-  const version = search.version;
-  const tagsParam = search.tags;
-  // Stable while the page shows this version and tags: a new cell function remounts its rows.
-  const columns = useMemo<ColumnDef<ArticleSummary>[]>(
-    () => [
-      {
-        accessorKey: "path",
-        header: t.path,
-        enableHiding: false,
-        cell: ({ row }) => (
-          <Link
-            to="/libraries/$owner/$repo"
-            params={{ owner, repo }}
-            search={{ version, path: row.original.path, tags: tagsParam }}
-            className="rounded font-mono text-mono [overflow-wrap:anywhere] underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            {row.original.path}
-          </Link>
-        ),
-      },
-      { accessorKey: "title", header: t.title, meta: { className: "max-md:hidden" } },
-      {
-        accessorKey: "tags",
-        header: t.tags,
-        enableSorting: false,
-        meta: { className: "max-lg:hidden" },
-        cell: ({ row }) => (
-          <span className="text-muted-foreground">{row.original.tags.join(", ")}</span>
-        ),
-      },
-      {
-        accessorKey: "size",
-        header: t.size,
-        sortDescFirst: true,
-        meta: { className: "num whitespace-nowrap" },
-        cell: ({ row }) => t.bytes(row.original.size),
-      },
-    ],
-    [owner, repo, version, tagsParam, t],
+  const router = useRouter();
+  const navigate = useNavigate();
+  const write = useWriteView(owner, repo);
+  const view = useMemo(() => articlesView(search), [search]);
+  const at = { owner, repo, ref: version.ref, sha: version.commit_sha };
+  const columns = useMemo(
+    () => columnsOf(t, { owner, repo, version: search.version, tags: search.tags }),
+    [t, owner, repo, search.version, search.tags],
   );
-  const table = useServerTable({
-    data: articles,
+  const tagsFilter = useTagsFilter(t, at, view.tags);
+  const filters = useMemo(() => [tagsFilter], [tagsFilter]);
+  const params = useMemo<TableParam[]>(() => [{ id: "prefix", title: t.folder, mono: true }], [t]);
+  const shown = useDataTable({
+    config: ARTICLES_TABLE,
+    search: view,
     columns,
     getRowId: (a) => a.path,
-    sort: search.sort,
-    onSort: (sort) => onView({ sort }),
+    filters,
+    params,
+    source: articlesSource(at, articleFilters(view)),
   });
+  // The page's `q` is the version's search (its results replace this table), so the table's text
+  // filter is `filter` in the URL: its setters write that instead of `q`.
+  const model: DataTableModel<ArticleSummary> = {
+    ...shown,
+    setQ: (filter) => write({ filter }),
+    clearFilters: () => write({ filter: undefined, tags: undefined, prefix: undefined }),
+  };
+
+  const host = hostName(library.host);
+  const actions = (article: ArticleSummary): RowAction<ArticleSummary>[] => {
+    const onHost = blobUrl(library.host, library.source_url, version.commit_sha, article.path);
+    const folder = folderOf(article.path);
+    return [
+      {
+        id: "open",
+        label: t.open,
+        icon: ArrowRight,
+        motion: "forward",
+        onSelect: () =>
+          void navigate({
+            to: "/libraries/$owner/$repo",
+            params: { owner, repo },
+            search: { version: search.version, path: article.path, tags: search.tags },
+          }),
+      },
+      {
+        id: "copy-path",
+        label: t.copyPath,
+        icon: Copy,
+        motion: "pop",
+        onSelect: () => copy(article.path, t.pathCopied),
+      },
+      {
+        id: "copy-link",
+        label: t.copyLink,
+        icon: Link2,
+        motion: "pop",
+        onSelect: () => {
+          // Pinned to this version's ref, whatever the default becomes later.
+          const { href } = router.buildLocation({
+            to: "/libraries/$owner/$repo",
+            params: { owner, repo },
+            search: { version: version.ref, path: article.path },
+          });
+          copy(new URL(href, window.location.href).href, t.linkCopied);
+        },
+      },
+      ...(onHost
+        ? [
+            {
+              id: "host",
+              label: t.openOn(host),
+              icon: ArrowUpRight,
+              motion: "out" as const,
+              onSelect: () => void window.open(onHost, "_blank", "noopener,noreferrer"),
+            },
+          ]
+        : []),
+      ...(folder && folder !== search.prefix
+        ? [
+            {
+              id: "folder",
+              label: t.inFolder,
+              icon: FolderOpen,
+              motion: "tilt" as const,
+              group: true,
+              onSelect: () => write({ prefix: folder }),
+            },
+          ]
+        : []),
+    ];
+  };
 
   return (
-    <section aria-labelledby={`${id}-h`} className="mt-8 border-t border-rule pt-5">
-      <h2 id={`${id}-h`} className="text-section font-semibold">
-        {t.articles}
-      </h2>
-      <search className="mt-3 mb-3 flex flex-wrap items-end gap-3">
-        <SearchFilter
-          id={`${id}-q`}
-          label={t.findArticle}
-          placeholder={t.pathOrTitle}
-          value={search.filter}
-          onCommit={(filter) => onView({ filter })}
+    <Section
+      id={`${id}-articles`}
+      title={t.articles}
+      icon={<FileText />}
+      description={model.total !== undefined && <span className="num">{t.count(model.total)}</span>}
+      className="mt-8 border-t border-rule pt-5"
+    >
+      <DataTableToolbar
+        model={model}
+        search={{ label: t.findArticle, placeholder: t.pathOrTitle }}
+      />
+      {model.status === "error" ? (
+        // The table's own retry, not the kit's "Try again": the file tree beside it has that one.
+        <TableMessage
+          role="alert"
+          icon={CircleAlert}
+          title={t.loadFailed}
+          action={
+            <Button variant="outline" size="sm" onClick={model.retry}>
+              <RotateCcw aria-hidden="true" data-icon-motion="refresh" />
+              {t.retry}
+            </Button>
+          }
         />
-        <ColumnsMenu table={table} />
-      </search>
-      {query.isError && !query.data ? (
-        <p role="alert">
-          {t.loadFailed}{" "}
-          <button
-            type="button"
-            onClick={() => void query.refetch()}
-            className="cursor-pointer font-medium underline"
-          >
-            {t.retry}
-          </button>
-        </p>
-      ) : query.data && articles.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-input px-4 py-5 text-body text-muted-foreground">
-          {search.filter || tags.length ? t.noMatch : t.none}
-        </p>
       ) : (
-        <>
-          <DataTable
-            table={table}
-            label={t.articles}
-            loadingMore={loadingMore || query.isPending}
-          />
-          {query.data && (
-            <ListFooter
-              shown={articles.length}
-              // An older server sends no total; what is shown is then all that is known.
-              total={pages.at(-1)?.total ?? articles.length}
-              hasMore={hasMore}
-              loadingMore={loadingMore}
-              onLoadMore={loadMore}
-            />
-          )}
-        </>
+        <DataTable
+          model={model}
+          label={t.articles}
+          rowActions={actions}
+          rowLabel={(a) => a.path}
+          empty={{ icon: FileText, title: t.none }}
+          noMatch={{ title: t.noMatch }}
+        />
       )}
-    </section>
+      <DataTablePagination model={model} />
+    </Section>
   );
 }
