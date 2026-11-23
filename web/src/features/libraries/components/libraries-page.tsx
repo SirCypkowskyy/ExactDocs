@@ -13,6 +13,7 @@ import {
 import { useMemo } from "react";
 import { toast } from "sonner";
 import { useLanguage, useMessages } from "@/shared/lib/i18n";
+import { useNow } from "@/shared/lib/use-now";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { Button } from "@/shared/ui/button";
 import { DataTable } from "@/shared/ui/data-table/data-table";
@@ -60,6 +61,7 @@ export function LibrariesPage() {
   const t = useMessages(listMessages);
   const heading = usePageTitle(t.title);
   const navigate = useNavigate();
+  const now = useNow();
   const syncs = useSyncStates();
   const syncNow = useSyncNow();
   const columns = useMemo(() => columnsOf(t), [t]);
@@ -70,7 +72,7 @@ export function LibrariesPage() {
     columns,
     getRowId: (library) => library.id,
     filters,
-    source: librariesSource(view),
+    source: librariesSource(view, now),
   });
 
   const actions = (library: Library): RowAction<Library>[] => {
