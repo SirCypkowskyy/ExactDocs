@@ -7,6 +7,7 @@ import { pill, pillTone } from "@/shared/ui/recipes";
 import { playgroundSearchQueryOptions } from "../api/playground-queries";
 import {
   fallbackSentence,
+  librariesRanked,
   MODE_LABEL,
   type PlaygroundHit,
   type PlaygroundMode,
@@ -52,6 +53,7 @@ export function ModeResults({
 }) {
   const headingId = useId();
   const { data, error, isFetching } = useQuery(playgroundSearchQueryOptions(q, mode, libraries));
+  const ranked = data ? librariesRanked(libraries, data) : 0;
   return (
     <section aria-labelledby={headingId} aria-busy={isFetching} className="min-w-0 space-y-3">
       <h2 id={headingId} className="text-section font-semibold">
@@ -78,7 +80,7 @@ export function ModeResults({
             Answered by <span className="font-medium text-foreground">{data.retrieval_mode}</span>
             {" · "}
             {data.results.length} result{data.results.length === 1 ? "" : "s"} from{" "}
-            {data.libraries_searched} librar{data.libraries_searched === 1 ? "y" : "ies"}
+            {ranked} librar{ranked === 1 ? "y" : "ies"}
           </p>
           {data.fallback_reason && (
             <Notice tone="note">

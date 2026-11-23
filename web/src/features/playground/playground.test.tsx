@@ -5,7 +5,12 @@ import { Suspense } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TestRouter } from "@/shared/lib/test-router";
 import { PlaygroundPage } from "./index";
-import { fallbackSentence, rankLabels, searchableLibraries } from "./model/playground";
+import {
+  fallbackSentence,
+  librariesRanked,
+  rankLabels,
+  searchableLibraries,
+} from "./model/playground";
 
 const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
 
@@ -132,6 +137,48 @@ describe("search playground", () => {
     expect(sent?.searchParams.get("mode")).toBe("hybrid");
     expect(sent?.searchParams.get("library")).toBe("/acme/payments,/acme/billing");
     expect(sent?.searchParams.get("q")).toBe("retry failed calls");
+  });
+
+  it("counts only the chosen libraries in the summary, not every library counted (#479)", async () => {
+    // The API counts every readable library's matches (`libraries_searched: 2`) even when one
+    // library is chosen; the results come from the chosen one only.
+    const fetchMock = serve((url) =>
+      Response.json(
+        result(url.searchParams.get("mode") ?? "bm25", [
+          hit("/acme/payments", { bm25_rank: 1 }),
+          hit("/acme/payments", { chunk_id: "c-2", bm25_rank: 2 }),
+        ]),
+      ),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByLabelText("/acme/payments"));
+    await user.type(screen.getByLabelText("Query"), "how do I retry failed calls");
+    await user.click(screen.getByLabelText("Compare two modes side by side"));
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    const summaries = await screen.findAllByText(/2 results from/);
+    expect(summaries).toHaveLength(2);
+    for (const line of summaries) expect(line).toHaveTextContent(/2 results from 1 library$/);
+    const sent = searches(fetchMock);
+    expect(sent.map((u) => u.searchParams.get("library"))).toEqual([
+      "/acme/payments",
+      "/acme/payments",
+    ]);
+  });
+
+  it("counts every library searched when none is chosen", async () => {
+    serve(() => Response.json(result("hybrid", [hit("/acme/payments")])));
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(await screen.findByLabelText("Query"), "retry");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(await screen.findByText(/1 result from/)).toHaveTextContent(
+      /1 result from 2 libraries$/,
+    );
   });
 
   it("compares two modes side by side for the same query, over all libraries", async () => {
@@ -348,6 +395,13 @@ describe("playground model", () => {
   it("offers only libraries with a default version, by ID", () => {
     const libraries = [summary("/b/b"), summary("/a/a"), summary("/c/c", null)];
     expect(searchableLibraries(libraries as never)).toEqual(["/a/a", "/b/b"]);
+  });
+
+  it("counts the chosen libraries as ranked, or every one searched when none is chosen", () => {
+    const counted = { libraries_searched: 2 };
+    expect(librariesRanked(["/acme/payments"], counted)).toBe(1);
+    expect(librariesRanked(["/acme/payments", "/ACME/Payments"], counted)).toBe(1);
+    expect(librariesRanked([], counted)).toBe(2);
   });
 
   it("explains a fallback in a sentence", () => {
