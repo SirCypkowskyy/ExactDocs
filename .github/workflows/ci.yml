@@ -19,10 +19,12 @@ env:
 jobs:
   python:
     name: Python (ruff, ty, pytest, behave)
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
-    timeout-minutes: 40
+    runs-on: ubuntu-24.04
+    # GitHub-hosted (#468): a smaller machine than the old self-hosted VM, so more room than the
+    # 35 minutes the suite took there.
+    timeout-minutes: 90
     # PostgreSQL for the adapter contract tests and the @postgres scenarios (#103): ParadeDB, which
-    # also has pg_search and pgvector. A service container on the runner VM's own Docker, on a
+    # also has pg_search and pgvector. A service container on the runner's own Docker, on a
     # free host port. Its POSTGRES_USER is a superuser: the tests create a database per test, and
     # a role without CREATEDB for the scenario that needs one.
     services:
@@ -115,7 +117,7 @@ jobs:
 
   web:
     name: Web (biome, fallow, react-doctor, vitest, build)
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
       run:
@@ -146,8 +148,8 @@ jobs:
 
   image:
     name: Docker image (lint, build, scan, smoke test)
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
-    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - name: hadolint
@@ -155,9 +157,11 @@ jobs:
           docker run --rm -i -v "$PWD/.hadolint.yaml:/.config/hadolint.yaml:ro" \
             hadolint/hadolint:v2.14.0@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e \
             < deploy/Dockerfile
-      # The runners are persistent VMs, so the daemon's own BuildKit (driver "docker") keeps layers
-      # and cache mounts between jobs: no remote cache to export or restore. (The default
-      # docker-container driver is deleted at the end of every job.) Each VM has its own cache.
+      # GitHub-hosted runners (#468) start with about 14 GB free; the image builds need more.
+      - name: Free disk space
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+      # The daemon's own BuildKit (driver "docker"): the image loads straight into the local
+      # store. On GitHub-hosted runners (#468) nothing is cached between runs.
       - uses: docker/setup-buildx-action@v4
         with:
           driver: docker
@@ -196,9 +200,9 @@ jobs:
         uses: ./.github/actions/trivy-gate
         with:
           image: exactdocs:ci
-      # Only the runtime-tools stage runs a command for the other architecture (apt, under QEMU);
-      # build just that and prove the tools run there. No Python: it crashes under QEMU.
-      - name: amd64 runtime-tools stage (QEMU) builds and runs git, ssh, tini
+      # The release also ships amd64; on the GitHub-hosted runners (#468) this stage is native.
+      # Build just the runtime-tools stage and prove the tools run there.
+      - name: amd64 runtime-tools stage builds and runs git, ssh, tini
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -255,9 +259,8 @@ jobs:
           EXACTDOCS_IMAGE: exactdocs:ci
           COMPOSE_PROJECT_NAME: exactdocs-ci-pg
         run: |
-          # The runner VMs declare their tools in deploy/runners/create-vms.sh; CI changes nothing on
-          # the host. A VM provisioned before the compose plugin was added gets a standalone, pinned
-          # compose binary in this job's temp directory instead, with a warning.
+          # GitHub-hosted runners (#468) have the compose plugin; a self-hosted VM without it gets a
+          # standalone, pinned compose binary in this job's temp directory instead, with a warning.
           compose=(docker compose)
           if ! docker compose version >/dev/null 2>&1; then
             echo "::warning::this runner lacks the docker compose plugin: install docker-compose-v2 on the VM (deploy/runners/README.md); using a pinned standalone compose for this job"
@@ -292,10 +295,13 @@ jobs:
   # `-local` one also searches with `--network none`, on the models baked into the image.
   image-variants:
     name: Docker image variants (-ai, -local)
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
-    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+      # GitHub-hosted runners (#468) start with about 14 GB free; the image builds need more.
+      - name: Free disk space
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
       - uses: docker/setup-buildx-action@v4
         with:
           driver: docker
@@ -316,8 +322,8 @@ jobs:
             REVISION=${{ github.sha }}
             CREATED=${{ steps.created.outputs.at }}
             DEBIAN_REFRESH=${{ steps.created.outputs.week }}
-      # The default models are pulled at their pinned revisions into a BuildKit cache mount on
-      # the runner VM: the first build on a VM downloads them (about 160 MB), later ones do not.
+      # The default models are pulled at their pinned revisions into a BuildKit cache mount
+      # (about 160 MB); on GitHub-hosted runners (#468) every run downloads them.
       - name: Build -local
         uses: docker/build-push-action@v7
         with:
@@ -378,10 +384,9 @@ jobs:
             echo "::endgroup::"
           done
       # #242: the vector store needs a Python that loads SQLite extensions: the image's own
-      # (python:3.14-slim-trixie) with the sqlite-vec of the [ai] extra, natively (arm64). amd64
-      # cannot be checked on this runner: tried once in #257 (run 42399925910), `docker run
-      # --platform linux/amd64` of the image's python3 died with "x86_64-binfmt-P: QEMU internal
-      # SIGSEGV" and then hung until killed. It was checked by hand on an amd64 host (PR #257).
+      # (python:3.14-slim-trixie) with the sqlite-vec of the [ai] extra, natively: amd64 on the
+      # GitHub-hosted runners (#468). arm64 was checked natively on the old self-hosted runners;
+      # under QEMU the image's python3 crashes (#257), so it is not checked here.
       - name: sqlite-vec loads and searches in the -ai image's Python
         if: ${{ !cancelled() }}
         run: |
@@ -405,8 +410,7 @@ jobs:
           test "$(docker inspect -f '{{.HostConfig.NetworkMode}}' exactdocs-ci-offline)" = none
           docker exec -i exactdocs-ci-offline python - file:///fixture/docs-repo /fixture/docs-repo v1.3.0 \
             < deploy/smoke_local.py
-      # The runner VMs are persistent (50 GiB): drop this run's variant images (about 1.4 GB
-      # together) so they do not pile up; the BuildKit cache keeps their layers for the next run.
+      # Drop this run's variant images (about 1.4 GB together); harmless on a fresh hosted runner.
       - name: Remove the variant images
         if: always()
         run: |
@@ -417,14 +421,14 @@ jobs:
   # them the way uvx does, upgrades a previous release's data directory with them (RUN-04), then
   # drives the whole loop in Chromium (e2e/, one test).
   #
-  # The self-hosted runner keeps uv's cache between runs, and uv reuses a cached wheel of the same
+  # setup-uv keeps uv's cache between runs, and uv reuses a cached wheel of the same
   # file name: with one version for every build, uvx served an older build. So the wheels get a
   # version unique to the commit, and every step that runs them uses a cache that starts empty in
   # this job (runner.temp is per job). Not --no-cache: the --offline step needs a filled cache.
   uvx:
     name: uvx smoke, upgrade + browser end-to-end (built wheel)
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
-    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
