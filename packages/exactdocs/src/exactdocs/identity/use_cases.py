@@ -2362,7 +2362,9 @@ class SavePreferencesUseCase:
         """Save the account's preferences, replacing the ones it had.
 
         Saving the defaults saves them too: the account then has preferences of its own, which
-        win over a browser's on the next sign-in.
+        win over a browser's on the next sign-in. A save that leaves ``leaderboard_opt_in`` out
+        (a client older than it) keeps the account's saved choice, so it neither opts the person
+        in nor drops an opt-in it never showed.
 
         Args:
             command: The account and its new preferences.
@@ -2370,8 +2372,14 @@ class SavePreferencesUseCase:
         Returns:
             The preferences as saved.
         """
+        account_id = AccountId(command.account_id)
         chosen = command.preferences.to_model()
-        await self.preferences.put(AccountId(command.account_id), chosen)
+        if "leaderboard_opt_in" not in command.preferences.model_fields_set:
+            saved = await self.preferences.get(account_id)
+            chosen = replace(
+                chosen, leaderboard_opt_in=saved is not None and saved.leaderboard_opt_in
+            )
+        await self.preferences.put(account_id, chosen)
         return AccountPreferences.from_model(chosen)
 
 

@@ -26,7 +26,9 @@ CHOSEN = {
     "large_targets": True,
     "language": "en",
     "library_logos": False,
+    "leaderboard_opt_in": True,
 }
+OPTIONAL = {"leaderboard_opt_in"}  # a client older than #510 leaves it out
 
 
 @pytest.fixture
@@ -62,11 +64,17 @@ async def test_the_openapi_document_describes_both_operations(client: httpx.Asyn
         assert {"ApiToken": []} in operation["security"]
         assert {"SessionCookie": []} in operation["security"]
     assert item["put"]["requestBody"]["required"] is True
-    assert sorted(body["required"]) == sorted(CHOSEN)
+    assert sorted(body["required"]) == sorted(set(CHOSEN) - OPTIONAL)
     assert body["additionalProperties"] is False
     assert body["properties"]["text_scale"]["enum"] == [90, 100, 110, 125, 150]
     assert body["properties"]["language"]["enum"] == ["system", "en", "pl"]
     assert body["properties"]["library_logos"]["type"] == "boolean"
+    assert body["properties"]["leaderboard_opt_in"] == {
+        "type": "boolean",
+        "default": False,
+        "description": body["properties"]["leaderboard_opt_in"]["description"],
+        "title": "Leaderboard Opt In",
+    }
     saved = spec["components"]["schemas"]["AccountPreferences"]
     assert sorted(saved["required"]) == ["preferences", "saved"]
 
@@ -99,9 +107,11 @@ def without(field: str) -> dict[str, Any]:
         ("library_logos", {**CHOSEN, "library_logos": "false"}),
         ("library_logos", {**CHOSEN, "library_logos": 0}),
         ("library_logos", without("library_logos")),
+        ("leaderboard_opt_in", {**CHOSEN, "leaderboard_opt_in": "true"}),
+        ("leaderboard_opt_in", {**CHOSEN, "leaderboard_opt_in": None}),
     ],
 )
-async def test_a_language_or_logo_choice_the_interface_does_not_offer_is_refused(
+async def test_a_choice_the_interface_does_not_offer_is_refused(
     client: httpx.AsyncClient, field: str, body: dict[str, Any]
 ) -> None:
     session = await _session(client)
@@ -112,3 +122,19 @@ async def test_a_language_or_logo_choice_the_interface_does_not_offer_is_refused
     assert refused.json()["error"] == "validation_error"
     assert [error["loc"] for error in refused.json()["fields"]] == [["body", field]]
     assert (await client.get(PATH, headers=session)).json()["saved"] is False
+
+
+async def test_a_client_that_does_not_know_the_leaderboard_opt_in_keeps_it(
+    client: httpx.AsyncClient,
+) -> None:
+    session = await _session(client)
+    opted = await client.put(PATH, json=CHOSEN, headers=session)
+    assert opted.status_code == 200, opted.text
+
+    older = {**without("leaderboard_opt_in"), "theme": "light"}
+    saved = await client.put(PATH, json=older, headers=session)
+
+    assert saved.status_code == 200, saved.text
+    expected = {"saved": True, "preferences": {**CHOSEN, "theme": "light"}}
+    assert saved.json() == expected
+    assert (await client.get(PATH, headers=session)).json() == expected

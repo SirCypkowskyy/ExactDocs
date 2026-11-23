@@ -136,12 +136,23 @@ def test_an_unknown_setting_is_refused() -> None:
     ]
 
 
-@pytest.mark.parametrize("field", list(DEFAULTS))
+def without(field: str) -> dict[str, Any]:
+    return {k: v for k, v in CHOSEN.items() if k != field}
+
+
+@pytest.mark.parametrize("field", [field for field in DEFAULTS if field != "leaderboard_opt_in"])
 def test_every_setting_is_required(field: str) -> None:
     with pytest.raises(ValidationError) as raised:
-        InterfacePreferences.model_validate({k: v for k, v in CHOSEN.items() if k != field})
+        InterfacePreferences.model_validate(without(field))
 
     assert [(e["loc"], e["type"]) for e in raised.value.errors()] == [((field,), "missing")]
+
+
+def test_the_leaderboard_opt_in_may_be_left_out_by_a_client_older_than_it() -> None:
+    sent = InterfacePreferences.model_validate(without("leaderboard_opt_in"))
+
+    assert sent.leaderboard_opt_in is False
+    assert "leaderboard_opt_in" not in sent.model_fields_set
 
 
 def test_the_boundary_offers_exactly_the_domains_choices() -> None:
@@ -361,3 +372,22 @@ async def test_opting_out_again_takes_a_person_off_and_a_disabled_one_is_never_o
     found = await identity.find_leaderboard_people(LeaderboardPeopleQuery(account_ids=[ada, bob]))
 
     assert found.people == []
+
+
+async def test_a_save_without_the_opt_in_keeps_the_one_saved() -> None:
+    # A web client from before #510 sends every other setting; it must not drop an opt-in.
+    identity, ada, bob = await _module()
+    await identity.save_preferences(save(ada, {**DEFAULTS, "leaderboard_opt_in": True}))
+
+    older = {k: v for k, v in CHOSEN.items() if k != "leaderboard_opt_in"}
+    kept = await identity.save_preferences(save(ada, older))
+    never = await identity.save_preferences(save(bob, older))
+
+    assert kept.preferences.leaderboard_opt_in is True
+    assert kept.preferences.theme == "dark"
+    assert never.preferences.leaderboard_opt_in is False
+    found = await identity.find_leaderboard_people(LeaderboardPeopleQuery(account_ids=[ada, bob]))
+    assert found.people == [LeaderboardPerson(id=ada, username="ada")]
+    # Sent explicitly, it is saved like any other setting.
+    out = await identity.save_preferences(save(ada, {**older, "leaderboard_opt_in": False}))
+    assert out.preferences.leaderboard_opt_in is False

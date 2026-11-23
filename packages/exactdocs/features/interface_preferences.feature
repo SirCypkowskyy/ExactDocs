@@ -43,6 +43,13 @@ Feature: Interface preferences follow the person
     And the admin signs in from another browser and reads their interface preferences
     Then they are the preferences the admin saved, with library logos hidden
 
+  Scenario: An interface older than the leaderboard opt-in keeps the person's choice
+    Given the admin saved a dark theme, more contrast, text at 125 percent, underlined links and Polish
+    When the admin opts in to the people leaderboard
+    And a browser with an interface older than the opt-in switches to English
+    And the admin signs in from another browser and reads their interface preferences
+    Then the admin is still opted in, with the rest as saved but in English
+
   Scenario: Each account has its own preferences
     Given the admin saved a dark theme, more contrast, text at 125 percent, underlined links and Polish
     And "bob" is signed in and has an API token
@@ -58,13 +65,14 @@ Feature: Interface preferences follow the person
     And the admin's interface preferences are still the ones the admin saved
 
     Examples:
-      | problem                                | field         |
-      | an unknown setting                     | sparkles      |
-      | a text size of 95 percent              | text_scale    |
-      | a theme it does not offer              | theme         |
-      | a language it does not offer           | language      |
-      | library logos neither shown nor hidden | library_logos |
-      | a missing setting                      | font          |
+      | problem                                        | field              |
+      | an unknown setting                             | sparkles           |
+      | a text size of 95 percent                      | text_scale         |
+      | a theme it does not offer                      | theme              |
+      | a language it does not offer                   | language           |
+      | library logos neither shown nor hidden         | library_logos      |
+      | a leaderboard opt-in neither given nor refused | leaderboard_opt_in |
+      | a missing setting                              | font               |
 
   Scenario: Nobody's preferences are read or saved without signing in
     When a signed-out client reads interface preferences

@@ -871,7 +871,11 @@ class AccessLogPage(_Dto):
 
 
 class InterfacePreferences(_Dto):
-    """How a person wants the interface to look and behave. Every setting is required."""
+    """How a person wants the interface to look and behave.
+
+    Every setting is required but `leaderboard_opt_in` (#510), which a client written before it
+    existed does not send.
+    """
 
     theme: Literal["light", "dark", "system"]
     """Colour scheme: `light`, `dark`, or `system` to follow the operating system. Default
@@ -899,10 +903,11 @@ class InterfacePreferences(_Dto):
     library_logos: StrictBool
     """Whether libraries show their logos, and generic icons where they have none; `false` hides
     both. Default `true`."""
-    leaderboard_opt_in: StrictBool
+    leaderboard_opt_in: StrictBool = False
     """Whether the person agrees to be shown by name on the people leaderboard while the operator
     has it on (`GET /stats/settings`). Without it they are on no people leaderboard, and nobody
-    sees their usage except as part of totals. Default `false`."""
+    sees their usage except as part of totals. Default `false`. The one setting a save may leave
+    out: a client that does not know it keeps the choice already saved (`false` if none)."""
 
     @classmethod
     def from_model(cls, preferences: Preferences) -> Self:

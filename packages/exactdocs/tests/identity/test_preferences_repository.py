@@ -16,6 +16,7 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteAccountRepository,
     SqlitePreferencesRepository,
 )
+from exactdocs.identity.constants import ACCOUNTS_PER_QUERY
 from exactdocs.identity.models import (
     Account,
     AccountId,
@@ -45,6 +46,7 @@ CHOSEN = Preferences(
     large_targets=True,
     language=Language.PL,
     library_logos=False,
+    leaderboard_opt_in=True,
 )
 
 
@@ -122,6 +124,10 @@ async def test_every_language_is_kept(store: Store) -> None:
         ({"library_logos": "no", "large_targets": 1}, Preferences()),
         ({"library_logos": None}, Preferences()),
         ({"library_logos": False}, Preferences(library_logos=False)),
+        # A row from before the people leaderboard (#510) has not opted in; only `true` has.
+        ({"leaderboard_opt_in": "yes"}, Preferences()),
+        ({"leaderboard_opt_in": 1}, Preferences()),
+        ({"leaderboard_opt_in": True}, Preferences(leaderboard_opt_in=True)),
         (["not", "an", "object"], Preferences()),
     ],
 )
@@ -137,3 +143,24 @@ async def test_a_setting_a_row_lacks_or_no_longer_offered_reads_as_its_default(
         )
 
     assert await store.repository.get(ADA) == read
+
+
+async def test_only_accounts_whose_saved_preferences_opt_in_are_found(store: Store) -> None:
+    assert await store.repository.opted_in({ADA, BOB}) == frozenset()
+
+    await store.repository.put(ADA, CHOSEN)
+    await store.repository.put(BOB, Preferences(font=Font.SYSTEM))
+
+    assert await store.repository.opted_in({ADA, BOB, AccountId("id-nobody")}) == {ADA}
+    assert await store.repository.opted_in({BOB}) == frozenset()
+    assert await store.repository.opted_in(set()) == frozenset()
+
+    await store.repository.put(ADA, Preferences())
+    assert await store.repository.opted_in({ADA, BOB}) == frozenset()
+
+
+async def test_who_opted_in_is_asked_in_turns_past_one_query_s_ids(store: Store) -> None:
+    await store.repository.put(BOB, Preferences(leaderboard_opt_in=True))
+    many = {AccountId(f"id-{n:04d}") for n in range(ACCOUNTS_PER_QUERY * 2 + 1)}
+
+    assert await store.repository.opted_in(many | {BOB}) == {BOB}
