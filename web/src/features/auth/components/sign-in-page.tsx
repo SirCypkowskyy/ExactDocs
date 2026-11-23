@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { LogIn } from "lucide-react";
+import { KeyRound, LogIn } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { useMessages } from "@/shared/lib/i18n";
 import { buttonVariants } from "@/shared/ui/button";
@@ -104,6 +104,8 @@ export function SignInPage({
                   href={externalSignInHref(provider.name, safeNext(next))}
                   className={buttonVariants({ variant: "outline", className: "w-full" })}
                 >
+                  {/* A generic provider's mark until the brand marks arrive (#506). */}
+                  <KeyRound aria-hidden="true" data-icon-motion="tilt" />
                   {t.signIn.withProvider(provider.display_name)}
                 </a>
               </li>

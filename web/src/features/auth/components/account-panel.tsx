@@ -1,10 +1,10 @@
-import { UserRound } from "lucide-react";
+import { ShieldCheck, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 import { useMessages } from "@/shared/lib/i18n";
 import { usePageTitle } from "@/shared/lib/use-page-title";
-import { cn } from "@/shared/lib/utils";
+import { Avatar } from "@/shared/ui/avatar";
+import { Badge } from "@/shared/ui/badge";
 import { Page, PageHeader } from "@/shared/ui/page";
-import { pill, pillTone } from "@/shared/ui/recipes";
 import { useSession } from "../hooks/use-session";
 import { messages, roleName } from "../messages";
 import { SignOutButton } from "./sign-out-button";
@@ -40,18 +40,20 @@ export function AccountPanel({
           </h2>
           <dl className="mt-4 grid grid-cols-[5.5rem_minmax(0,1fr)] items-baseline gap-y-3 text-body">
             <dt className="text-muted-foreground">{t.account.username}</dt>
-            <dd className="font-medium [overflow-wrap:anywhere]">{account?.username}</dd>
+            <dd className="flex min-w-0 items-center gap-2 font-medium">
+              {account && <Avatar name={account.username} />}
+              <span className="min-w-0 [overflow-wrap:anywhere]">{account?.username}</span>
+            </dd>
             <dt className="text-muted-foreground">{t.account.role}</dt>
             <dd>
-              <span
-                className={cn(
-                  pill,
-                  "capitalize",
-                  account?.role === "admin" ? pillTone.route : pillTone.neutral,
+              <Badge tone={account?.role === "admin" ? "route" : "neutral"} className="capitalize">
+                {account?.role === "admin" ? (
+                  <ShieldCheck aria-hidden="true" className="size-3" />
+                ) : (
+                  <UserRound aria-hidden="true" className="size-3" />
                 )}
-              >
                 {roleName(t.roles, account?.role)}
-              </span>
+              </Badge>
             </dd>
             {session?.source === "cloudflare_access" && (
               <>
