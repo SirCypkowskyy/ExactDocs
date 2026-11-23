@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronRight, ShieldOff } from "lucide-react";
+import { ChevronRight, RefreshCw, ShieldOff } from "lucide-react";
 import { type FormEvent, Fragment, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -54,6 +54,7 @@ import {
   type Problem,
 } from "../model/settings";
 import { useReportDirty } from "./dirty";
+import { SaveRow } from "./save-row";
 import { SettingsSection } from "./settings-section";
 
 interface Props {
@@ -84,7 +85,13 @@ export function AiSection({ owner, repo, activity, onStart }: Props) {
             id="ai-load-alert"
             message={explainRetrievalSave(retrieval.error, language).message}
           />
-          <Button type="button" variant="outline" onClick={() => retrieval.refetch()}>
+          <Button
+            type="button"
+            variant="outline"
+            aria-busy={retrieval.isFetching}
+            onClick={() => retrieval.refetch()}
+          >
+            <RefreshCw aria-hidden="true" data-icon-motion="refresh" />
             {sharedMessages[language].retry}
           </Button>
         </div>
@@ -203,7 +210,6 @@ function AiForm({
   const language = useLanguage();
   const t = retrievalMessages[language];
   const ai = aiLabels[language];
-  const shared = sharedMessages[language];
   const queryClient = useQueryClient();
   const saved = retrievalDraftOf(r);
   const [draft, setDraft] = useState<RetrievalDraft>(saved);
@@ -462,24 +468,12 @@ function AiForm({
             </fieldset>
           </div>
         </details>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <Button
-            type="submit"
-            pending={save.isPending}
-            aria-disabled={save.isPending || unchanged}
-            className="min-w-32 aria-disabled:cursor-default"
-          >
-            {save.isPending ? shared.saving : t.save}
-          </Button>
-          <p role="status" className="min-h-5 text-body">
-            {done && unchanged && activity.by === "ai" && (
-              <span className="fade-in inline-flex items-center gap-1.5">
-                <Check aria-hidden="true" className="size-4 text-route" />
-                {shared.saved}
-              </span>
-            )}
-          </p>
-        </div>
+        <SaveRow
+          label={t.save}
+          pending={save.isPending}
+          blocked={save.isPending || unchanged}
+          saved={done && unchanged && activity.by === "ai"}
+        />
       </div>
     </form>
   );
