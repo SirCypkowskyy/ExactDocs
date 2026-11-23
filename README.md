@@ -166,6 +166,9 @@ benchmark numbers. See [Search and AI models](docs/search.md).
   - [Milvus](docs/configuration.md#milvus) for the vector index, with native hybrid search
     (BM25 and dense vectors fused by Milvus' RRF ranker): a server or Zilliz Cloud
     (`exactdocs[milvus]`), or Milvus Lite in a local directory (`exactdocs[milvus-lite]`).
+  - [MongoDB](docs/configuration.md#mongodb) (Atlas Search and Atlas Vector Search, or MongoDB
+    with `mongot`) for the search and vector indexes (`exactdocs[mongodb]`), with native hybrid
+    search (`$rankFusion`).
   - [Qdrant](docs/configuration.md#qdrant) for the vector index (`exactdocs[qdrant]`),
     self-hosted or Qdrant Cloud, with optional native hybrid search.
   - [Redis](docs/configuration.md#redis) 8 (its Query Engine) for the search and vector indexes

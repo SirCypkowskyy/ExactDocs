@@ -91,6 +91,12 @@ redis = ["redis==8.1.0"]
 # `milvusdb/milvus` standalone server in CI and Milvus Lite on a temporary directory.
 milvus = ["pymilvus==3.0.2"]
 milvus-lite = ["pymilvus==3.0.2", "milvus-lite==3.2.2"]
+# MongoDB (Atlas Search and Atlas Vector Search, or MongoDB Community with `mongot`) as the search
+# and vector backend (#363, EXACTDOCS_SEARCH_BACKEND / EXACTDOCS_VECTOR_BACKEND=mongodb): pymongo's
+# own async API, imported only by `retrieval/adapters/driven/mongodb_index.py`, and only once an
+# operator names the backend. Not in the image. Exact pin, tested against the
+# `mongodb/mongodb-atlas-local` image (CI service).
+mongodb = ["pymongo==4.20.0"]
 
 [project.scripts]
 exactdocs = "exactdocs.bootstrap.cli:main"

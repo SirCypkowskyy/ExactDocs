@@ -454,6 +454,14 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             extra="milvus",
             packages=("pymilvus", "milvus_lite"),
         ),
+        "mongodb": IndexBackendKind(
+            name="mongodb",
+            module="exactdocs.retrieval.adapters.driven.mongodb_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="mongodb",
+            packages=("pymongo", "bson", "gridfs"),
+        ),
         "opensearch": IndexBackendKind(
             name="opensearch",
             module="exactdocs.retrieval.adapters.driven.opensearch_index",

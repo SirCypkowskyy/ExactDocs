@@ -24,6 +24,7 @@ dev = [
     "exactdocs[elasticsearch]",
     "exactdocs[lancedb]",
     "exactdocs[milvus-lite]",
+    "exactdocs[mongodb]",
     "exactdocs[opensearch]",
     "exactdocs[qdrant]",
     "exactdocs[redis]",

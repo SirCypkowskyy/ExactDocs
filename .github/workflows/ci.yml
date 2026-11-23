@@ -118,6 +118,17 @@ jobs:
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 2s --health-timeout 5s --health-retries 30
+      # #363: MongoDB with Atlas Search and Vector Search (mongot) in one container, for the
+      # MongoDB backend's contract tests and scenario (EXACTDOCS_TEST_MONGODB_URL), pinned to an
+      # exact version (multi-arch: the arm64 image runs here). A one-node replica set without
+      # authentication; directConnection because the node names itself by its container's host.
+      mongodb:
+        image: mongodb/mongodb-atlas-local:9.0.8@sha256:747a6c6b37b9358b45d9ecc63e4b8b6d59f8d11896d1c75f967f2520e12f4947
+        ports:
+          - 27017/tcp
+        options: >-
+          --health-cmd "/usr/local/bin/runner healthcheck"
+          --health-interval 2s --health-timeout 30s --health-retries 90
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
@@ -165,6 +176,8 @@ jobs:
           EXACTDOCS_TEST_REDIS_URL: redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}
           EXACTDOCS_REQUIRE_REDIS: "1" # the Redis cases and scenario never skip here (#364)
           EXACTDOCS_REQUIRE_MILVUS: "1" # the Milvus server cases and scenario never skip here (#360)
+          EXACTDOCS_TEST_MONGODB_URL: mongodb://127.0.0.1:${{ job.services.mongodb.ports['27017'] }}/?directConnection=true
+          EXACTDOCS_REQUIRE_MONGODB: "1" # the MongoDB cases and scenario never skip here (#363)
         run: uv run pytest --cov=exactdocs --cov=exactdocs_kernel --cov-report=term-missing --junitxml=reports/pytest.xml
       - name: behave (acceptance)
         env:
@@ -184,6 +197,8 @@ jobs:
           EXACTDOCS_TEST_REDIS_URL: redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}
           EXACTDOCS_REQUIRE_REDIS: "1"
           EXACTDOCS_REQUIRE_MILVUS: "1"
+          EXACTDOCS_TEST_MONGODB_URL: mongodb://127.0.0.1:${{ job.services.mongodb.ports['27017'] }}/?directConnection=true
+          EXACTDOCS_REQUIRE_MONGODB: "1"
         run: uv run behave --format=progress --junit --junit-directory=reports/behave
       # The shared ranking suite again, on Supabase's image (postgres_fts: it has no pg_search).
       - name: Ranking suite on supabase/postgres
