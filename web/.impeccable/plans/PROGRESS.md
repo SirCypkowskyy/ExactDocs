@@ -3,7 +3,7 @@
 Kept up to date by the overnight session that continues `HANDOFF.md`. Newest state first in each
 section. Read `HANDOFF.md` for the plan, the owner's decisions and the rules.
 
-_Last updated: 2026-11-23 23:40 UTC._
+_Last updated: 2026-11-24 00:15 UTC._
 
 ## Frontend (`feature/486-design-system`)
 
@@ -33,18 +33,29 @@ _Last updated: 2026-11-23 23:40 UTC._
   vitest, build (check-dist, bundle-size) all green. `/jobs` checked at 1440 and 390 px, dark,
   Polish, with menus and popovers open.
 
-### B. Per-feature pass: in progress
+### B. Per-feature pass: done (merged up to `dbfa558`)
 
-Five agents, one per feature group, each on a local branch cut from `15c42f9` and merged back
-here when green:
+Five agents, one per feature group, each on a local branch cut from `15c42f9`, merged here when
+green. The merged branch: typecheck, Biome (no warnings left), fallow arch + dead code,
+react-doctor, 59 files / 846 tests, build (check-dist, bundle-size) all green.
 
-| Group | Folders | State |
-|---|---|---|
-| libraries | `features/libraries` (libraries list, jobs, job problems, add library) | in progress |
-| browse | `features/browse`, `features/search` (articles table, reader, breadcrumb; global search stays a list) | in progress |
-| settings | `features/library-settings` (versions table, typed confirmations, reprocess) | in progress |
-| sharing | `features/sharing`, `access-log`, `ai`, `playground` (grants, access logs, AI usage; playground icons only) | in progress |
-| people | `features/users`, `tokens`, `auth` (users, tokens, account tabs, sign-in/setup) | in progress |
+| Group | What changed |
+|---|---|
+| libraries | Libraries list on DataTable v2 (server, AI / versions / imported facets, sync badge with popover, row menu + context menu incl. Sync now); Jobs header icon, state-facet icons, skeleton; inline job cancel on ConfirmDialog; job problems as a client table (local view state); add page and import progress icons and reactions |
+| browse | Articles table on DataTable v2 (server, tags facet, folder chip, row menu with copy link / open on host / folder); shared Breadcrumb; reader and tree buttons on IconButton/Button; `BrowseSkeleton`; prose.css specificity warnings fixed with zero computed-style differences across 552 elements; global search icons only |
+| settings | Versions table on DataTable v2 (kind / origin facets, imported preset, pinned default); both typed removals on TypedConfirmDialog (local `typed-confirm.tsx` deleted); re-process on ConfirmDialog; section icons; skeleton |
+| sharing | Grants table (kind / role facets, role select or pill, removal on ConfirmDialog); both access logs on DataTable v2 (change facet, library chip); AI usage as a client table; playground icons only (no table, as decided) |
+| people | Users table (avatars, role / sign-in / status badges, groups "+N" popover, disable on ConfirmDialog); API tokens as a client table (libraries / expires / used facets, revoke on ConfirmDialog); account tab reactions; sign-in provider buttons with KeyRound until #506's brand marks |
+
+Every server table uses the cursor walk with a `// #509:` note where offset paging goes.
+
+### Kit follow-ups from section B: in progress
+
+Row-menu focus return after a mouse-opened menu (one bug, found twice); future relative times;
+`EmptyState` icon at 32 px; `DataTableModel.error`; a local (non-URL) view option; `qParam`;
+TableError retry label; breadcrumb links 44 px on touch; keep the URL hash; row headers;
+`formatBytes` "B"; `DataTableSkeleton`; `LibraryCell` description; a shared "chips + N" cell;
+FormAlert's alert reaction. Then the local workarounds go.
 
 ### C. UI for finished backend branches: not started
 
@@ -74,5 +85,17 @@ here, so the BM25-on-PostgreSQL variants only run in CI.
 2. **Dialogs rule.** DESIGN.md says "no dialog except confirmations and showing a secret once",
    but create user, create token and share are dialogs. Keep the rule and turn those into pages
    or sheets, or relax the rule. Left as they are for now.
-3. **Commit identity.** Commits use the repository's existing identity (no AI attribution);
+3. **Logos turned off vs. no logo yet.** `LibraryMark` shows the generic icon on the library's
+   line colour when a library has no logo, and the monogram when logos are turned off. If "keep
+   the monogram bullet" meant the monogram until logos exist, the tables switch to
+   `LibraryBullet`.
+4. **Tags on the library page.** The table's Tags facet and the side panel's tag chips drive the
+   same filter; on desktop that is two controls for one filter. Keep both or drop the facet.
+5. **Libraries table.** Failed libraries no longer sort first (the server pages the list); the AI
+   column needs an `ai_enabled` field on `LibrarySummary`.
+6. **#506 defaults.** Discord / Google / Microsoft presets default to `auto_create_users = false`
+   (they link or sign in already-linked identities only); Microsoft `tenant` must be a GUID or
+   `organizations` / `common` / `consumers`; a link callback that fails before its attempt is
+   found lands on `/sign-in?error=…`.
+7. **Commit identity.** Commits use the repository's existing identity (no AI attribution);
    GitHub shows them as Unverified because they are not signed.
