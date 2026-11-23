@@ -22,10 +22,9 @@ import {
   usePreferences,
 } from "@/shared/lib/preferences";
 import { cn } from "@/shared/lib/utils";
-import { IconButton } from "./button";
+import { buttonVariants, IconButton } from "./button";
 import { menuContent, menuItem, menuLabel, menuSeparator } from "./dropdown-menu";
 import { interfaceMessages } from "./interface-messages";
-import { Tooltip } from "./tooltip";
 
 /*
  * The interface controls in the band (#486): text size, theme and language are one press away;
@@ -34,9 +33,11 @@ import { Tooltip } from "./tooltip";
  * in, saves to the account.
  */
 
-/** A square icon button for the band: 44 px on touch, 36 px with a mouse. */
-export const bandIconButton =
-  "relative inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-md text-band-muted outline-none transition-[color,background-color,transform] duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-band active:scale-[0.94] disabled:pointer-events-none disabled:opacity-40 data-[state=open]:bg-band-hover data-[state=open]:text-band-foreground fine:size-9 can-hover:hover:bg-band-hover can-hover:hover:text-band-foreground [&_svg]:size-[1.125rem]";
+/**
+ * The band's square icon button as classes, for a trigger that cannot be an `IconButton` (a
+ * Sheet trigger with its own name): 44 px on touch, 36 px with a mouse, press 0.94.
+ */
+export const bandIconButton = cn(buttonVariants({ variant: "band", size: "icon" }));
 
 const scaleIndex = (scale: TextScale) => TEXT_SCALES.indexOf(scale);
 
@@ -169,11 +170,8 @@ export function InterfaceMenu({
     prefs.large_targets;
   return (
     <M.Root>
-      <Tooltip label={t.interfaceAndAccessibility}>
-        <M.Trigger
-          aria-label={t.interfaceAndAccessibility}
-          className={cn(bandIconButton, className)}
-        >
+      <M.Trigger asChild>
+        <IconButton variant="band" label={t.interfaceAndAccessibility} className={className}>
           <Accessibility aria-hidden="true" data-icon-motion="pop" />
           {changed && (
             <span
@@ -181,8 +179,8 @@ export function InterfaceMenu({
               className="absolute top-2 right-2 size-1.5 rounded-full bg-selection fine:top-1.5 fine:right-1.5"
             />
           )}
-        </M.Trigger>
-      </Tooltip>
+        </IconButton>
+      </M.Trigger>
       <M.Portal>
         <M.Content
           align="end"
@@ -267,16 +265,17 @@ export function LanguageMenu({ className }: { className?: string }) {
   const browser = LANGUAGE_NAMES[resolveLanguage("system")];
   return (
     <M.Root>
-      <Tooltip label={t.languageNow(LANGUAGE_NAMES[language])}>
-        <M.Trigger
-          aria-label={t.languageNow(LANGUAGE_NAMES[language])}
-          className={cn(bandIconButton, className)}
+      <M.Trigger asChild>
+        <IconButton
+          variant="band"
+          label={t.languageNow(LANGUAGE_NAMES[language])}
+          className={className}
         >
           <span aria-hidden="true" className="text-small font-semibold tracking-wide uppercase">
             {language}
           </span>
-        </M.Trigger>
-      </Tooltip>
+        </IconButton>
+      </M.Trigger>
       <M.Portal>
         <M.Content
           align="end"
