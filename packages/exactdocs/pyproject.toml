@@ -104,6 +104,9 @@ mongodb = ["pymongo==4.20.0"]
 # is the latest release; for Python 3.14 it has a wheel for Linux x86_64 only (other platforms
 # build it from source, which needs Rust).
 libsql = ["libsql==0.1.11"]
+# Pinecone as the vector index (#362, EXACTDOCS_VECTOR_BACKEND=pinecone): imported only when the
+# operator names it. The 10.x SDK speaks HTTP (httpx, msgspec, orjson): no grpcio or protobuf.
+pinecone = ["pinecone==10.3.0"]
 
 [project.scripts]
 exactdocs = "exactdocs.bootstrap.cli:main"

@@ -478,6 +478,14 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             extra="opensearch",
             packages=("opensearchpy",),
         ),
+        "pinecone": IndexBackendKind(
+            name="pinecone",
+            module="exactdocs.retrieval.adapters.driven.pinecone_index",
+            search=None,
+            vectors="vector_backend",
+            extra="pinecone",
+            packages=("pinecone",),
+        ),
         "qdrant": IndexBackendKind(
             name="qdrant",
             module="exactdocs.retrieval.adapters.driven.qdrant_index",

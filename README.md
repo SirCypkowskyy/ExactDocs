@@ -172,6 +172,8 @@ benchmark numbers. See [Search and AI models](docs/search.md).
   - [MongoDB](docs/configuration.md#mongodb) (Atlas Search and Atlas Vector Search, or MongoDB
     with `mongot`) for the search and vector indexes (`exactdocs[mongodb]`), with native hybrid
     search (`$rankFusion`).
+  - [Pinecone](docs/configuration.md#pinecone) for the vector index (`exactdocs[pinecone]`), a
+    serverless index, with optional sparse-dense hybrid search.
   - [Qdrant](docs/configuration.md#qdrant) for the vector index (`exactdocs[qdrant]`),
     self-hosted or Qdrant Cloud, with optional native hybrid search.
   - [Redis](docs/configuration.md#redis) 8 (its Query Engine) for the search and vector indexes

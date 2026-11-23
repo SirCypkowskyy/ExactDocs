@@ -23,14 +23,15 @@ dev = [
     "exactdocs[duckdb]",
     "exactdocs[elasticsearch]",
     "exactdocs[lancedb]",
-    # libSQL's driver (#358) is only needed for a local file and has a Python 3.14 wheel for
-    # Linux x86_64 only.
-    "exactdocs[libsql] ; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "exactdocs[milvus-lite]",
     "exactdocs[mongodb]",
     "exactdocs[opensearch]",
+    "exactdocs[pinecone]",
     "exactdocs[qdrant]",
     "exactdocs[redis]",
+    # libSQL's driver (#358) is only needed for a local file and has a Python 3.14 wheel for
+    # Linux x86_64 only.
+    "exactdocs[libsql] ; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "httpx>=0.28",
     # The retrieval eval suite (packages/exactdocs/evals, docs/decisions/ai-retrieval.md):
     # exact pin, it moves with pydantic-ai-slim in the `ai` extra.
