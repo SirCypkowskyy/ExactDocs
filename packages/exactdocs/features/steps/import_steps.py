@@ -254,8 +254,17 @@ def start(
 
 @given('"{target}" is imported')
 def step_given_imported(context: Context, target: str) -> None:
+    given_imported(context, target)
+
+
+@given('"{target}" is imported with a chunk at every heading')
+def step_given_imported_every_heading(context: Context, target: str) -> None:
+    given_imported(context, target, chunking={"split_level": 6, "max_chars": None})
+
+
+def given_imported(context: Context, target: str, **settings: object) -> None:
     ref = target.removeprefix(LIBRARY + "/")
-    import_version(context, ref, include_paths=["docs/"])
+    import_version(context, ref, include_paths=["docs/"], **settings)
     assert context.job["state"] == "succeeded", context.job
     context.served = {ref: [a["path"] for a in articles_of(context, ref)]}
     context.commits = {ref: version_commit(context, ref)}
