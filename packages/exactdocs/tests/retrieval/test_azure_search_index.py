@@ -641,6 +641,28 @@ async def test_a_semantic_ranker_over_capacity_leaves_the_hybrid_order_not_reran
     assert [h.chunk_id for h in ranking.hits] == [h.chunk_id for h in hybrid]
 
 
+async def test_a_refused_semantic_ranker_answers_the_hybrid_query_alone(
+    service: FakeSearchService,
+    semantic: AzureSemanticVectorBackend,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    s = space()
+    await _put_guide(semantic, s)
+    hybrid = await semantic.hybrid(s, ["m14"], query(ASKED), [1, 0, 0], TagFilter(), 3)
+    service.semantic_quota_used = True  # the Free plan's monthly requests are used up
+    caplog.set_level(logging.WARNING)
+
+    ranking = await semantic.hybrid_reranked(s, ["m14"], query(ASKED), [1, 0, 0], TagFilter(), 3)
+
+    assert ranking.reranked == 0  # so ExactDocs' own reranker reranks, if one is configured
+    assert [h.chunk_id for h in ranking.hits] == [h.chunk_id for h in hybrid]
+    assert "free monthly requests are used up" in caplog.text
+    assert API_KEY not in caplog.text
+    service.unavailable = True  # a service that does not answer is unavailable, as before
+    with pytest.raises(IndexBackendUnavailableError, match="no answer"):
+        await semantic.hybrid_reranked(s, ["m14"], query(ASKED), [1, 0, 0], TagFilter(), 3)
+
+
 async def test_without_a_semantic_configuration_no_semantic_parameter_is_sent(
     service: FakeSearchService, vectors: AzureHybridVectorBackend
 ) -> None:

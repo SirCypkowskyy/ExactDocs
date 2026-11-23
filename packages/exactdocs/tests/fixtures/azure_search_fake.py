@@ -38,7 +38,9 @@ What it does for real (an adapter cannot pass by relying on the fake being lax):
   (0 to 4), the rest follow in their order. The ranker is a deterministic stand-in: the share of
   the semantic query's words the configuration's fields hold, times 4. With
   ``semantic_overloaded`` the ranker is over capacity: ``partial`` answers the query's own order
-  with ``@search.semanticPartialResponseReason``, ``fail`` is ``503``;
+  with ``@search.semanticPartialResponseReason``, ``fail`` is ``503``. With
+  ``semantic_quota_used`` the Free plan's monthly requests are used up and a semantic query is
+  refused (Azure documents an error, not its status: the fake answers ``403``);
 - authentication: the ``api-key`` header or a bearer token, ``401`` / ``403`` otherwise.
 
 Anything else the adapter would send is refused with ``400`` naming it, so a new use of the API
@@ -674,6 +676,8 @@ class FakeSearchService:
     unavailable: bool = False
     semantic_overloaded: bool = False
     """The semantic ranker is over capacity: semantic queries are answered without it."""
+    semantic_quota_used: bool = False
+    """The Free plan's monthly semantic requests are used up: semantic queries are refused."""
     requests: list[tuple[str, str]] = field(default_factory=list)
     bodies: list[Doc] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -913,6 +917,9 @@ class FakeSearchService:
         """Rerank the ordered results when the search asks for it, unless over capacity."""
         if semantic is None:
             return ordered, {}
+        if self.semantic_quota_used:
+            message = "The semantic ranker's free monthly requests are used up: choose a plan"
+            raise FakeError(403, message, "SemanticQuotaExceeded")
         if self.semantic_overloaded:
             if body.get("semanticErrorHandling", "fail") == "fail":
                 raise FakeError(503, "The semantic ranker is over capacity", "CapacityOverloaded")

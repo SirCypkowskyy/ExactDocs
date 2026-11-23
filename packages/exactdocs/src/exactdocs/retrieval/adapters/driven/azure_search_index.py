@@ -1556,7 +1556,9 @@ class AzureVectorBackend:
         The words and the vector are asked as ``hybrid_search`` asks them (the same filter,
         before ranking), with ``semanticConfiguration`` and the query's text as
         ``semanticQuery``; at least ``AZURE_SEARCH_SEMANTIC_DEPTH`` results are asked, so the
-        cut at ``limit`` comes after the reranking.
+        cut at ``limit`` comes after the reranking. A request the service refuses (the Free
+        plan's monthly semantic requests used up) is asked again without the ranker, with a
+        warning.
 
         Args:
             space: The space.
@@ -1568,7 +1570,10 @@ class AzureVectorBackend:
 
         Returns:
             The hits, the reranked ones first; without a semantic configuration or a query
-            text, the hybrid query's, none reranked.
+            text, or when the ranker was refused, the hybrid query's, none reranked.
+
+        Raises:
+            IndexBackendUnavailableError: The service did not answer.
         """
         text = " ".join(query.text.split())
         if self.semantic is None or not text:
@@ -1577,17 +1582,32 @@ class AzureVectorBackend:
         if not manifest_ids or limit < 1:
             return NativeRanking(hits=(), reranked=0)
         wanted = max(limit + AZURE_SEARCH_TIE_MARGIN, AZURE_SEARCH_SEMANTIC_DEPTH)
-        answer = await self.service.search(
-            self.space_index(space.id),
-            _Query(
-                where=_filter(manifest_ids, tag_filter),
-                terms=query.terms,
-                vectors=(self._vector_query(vector, max(wanted, RRF_DEPTH)),),
-                top=wanted,
-                semantic=self.semantic,
-                semantic_query=text,
-            ),
-        )
+        try:
+            answer = await self.service.search(
+                self.space_index(space.id),
+                _Query(
+                    where=_filter(manifest_ids, tag_filter),
+                    terms=query.terms,
+                    vectors=(self._vector_query(vector, max(wanted, RRF_DEPTH)),),
+                    top=wanted,
+                    semantic=self.semantic,
+                    semantic_query=text,
+                ),
+            )
+        except IndexBackendUnavailableError as error:
+            refused = error.__cause__
+            if not isinstance(refused, HttpResponseError):
+                raise  # the service did not answer: the plain query would not either
+            # The service refused the ranker (its plan's monthly requests used up, the
+            # configuration deleted): the hybrid query alone, so ExactDocs' reranker reranks.
+            logger.warning(
+                "%s: the semantic ranker refused the search (HTTP %s: %s); answering without it",
+                self.name,
+                refused.status_code,
+                _short(_server_message(refused), self.service.connection.hidden),
+            )
+            hits = await self.hybrid_search(space, manifest_ids, query, vector, tag_filter, limit)
+            return NativeRanking(hits=tuple(hits), reranked=0)
         return _reranked(answer.rows, limit)
 
     def _vector_query(self, vector: Sequence[float], k: int) -> VectorizedQuery:
