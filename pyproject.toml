@@ -220,9 +220,12 @@ pythonpath = [
 addopts = [
     "-ra", "--strict-markers", "--strict-config", "--import-mode=importlib",
     "-m", "not eval",  # docs/evals.md: the release runs them; `uv run pytest -m eval` locally
+    # The `integration` tests are deselected too, by tests/fixtures/integration.py (#507), unless
+    # `--integration` or EXACTDOCS_INTEGRATION=1 asks for them: the summary says how many.
 ]
 markers = [
     "eval: runs the retrieval eval suite end to end on the imported fixture (slow); skipped by default",
+    "integration(*variables): needs a container, a service, the network or a download, named by the variables (#507); deselected unless --integration or EXACTDOCS_INTEGRATION=1, skipped then while a variable is unset",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

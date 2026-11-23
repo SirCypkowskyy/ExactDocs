@@ -16,6 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+import integration
 from databases import ADMIN_URL, SECRET_KEY, PostgresDatabase, postgres_database
 from exactdocs.bootstrap import database
 from exactdocs.bootstrap.constants import WRITE_LOCK
@@ -40,7 +41,7 @@ from exactdocs.retrieval.models import (
     VectorCoverage,
 )
 
-pytestmark = pytest.mark.skipif(ADMIN_URL is None, reason="needs EXACTDOCS_TEST_POSTGRES_URL")
+pytestmark = integration.POSTGRES
 
 T0 = datetime(2026, 11, 7, 12, 0, tzinfo=UTC)
 SPEC = EmbeddingSpec(profile_kind="openai", model="a", dimensions=3)

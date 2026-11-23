@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+import integration
 from exactdocs.bootstrap.index_backends import build_index_backends
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.qdrant_index import (
@@ -44,12 +45,16 @@ T0 = datetime(2026, 11, 22, 12, 0, tzinfo=UTC)
 LIB = "/acme/payments"
 URL = "http://127.0.0.1:6333"
 
-needs_server = pytest.mark.skipif(
-    QDRANT_URL in {None, LOCAL}, reason="needs a Qdrant server: set EXACTDOCS_TEST_QDRANT_URL"
+needs_qdrant = integration.QDRANT
+"""Qdrant, a server or the client's local mode (``:memory:``): integration tests (#507)."""
+local_mode = pytest.mark.skipif(
+    QDRANT_URL == LOCAL, reason="needs a Qdrant server, not the client's local mode"
 )
-needs_qdrant = pytest.mark.skipif(
-    QDRANT_URL is None, reason="needs Qdrant: set EXACTDOCS_TEST_QDRANT_URL"
-)
+
+
+def needs_server[F](test: F) -> F:
+    """A Qdrant server: an integration test that the client's local mode (``:memory:``) skips."""
+    return needs_qdrant(local_mode(test))
 
 
 def manifest(manifest_id: str, ref: str = "v1") -> IndexedManifest:
@@ -278,6 +283,10 @@ async def test_a_hybrid_search_without_words_ranks_by_the_vector() -> None:
     assert [h.chunk_id for h in found] == ["near"]
 
 
-def test_the_contract_cases_cover_qdrant_when_a_server_is_given() -> None:
-    expected = {"qdrant", "qdrant_hybrid"} if QDRANT_URL else set()
-    assert expected <= set(VECTOR_BACKEND_CASES)
+def test_the_contract_cases_cover_qdrant_as_integration_cases() -> None:
+    cases = {name: VECTOR_BACKEND_CASES[name] for name in ("qdrant", "qdrant_hybrid")}
+
+    assert {name: case.marks for name, case in cases.items()} == {
+        "qdrant": integration.QDRANT,
+        "qdrant_hybrid": integration.QDRANT,
+    }
