@@ -100,6 +100,13 @@ jobs:
         options: >-
           --health-cmd "curl -fs http://127.0.0.1:9200/_cluster/health?wait_for_status=yellow"
           --health-interval 5s --health-timeout 5s --health-retries 40
+      # #361: Chroma, the vector backend's contract tests and scenario over HTTP
+      # (EXACTDOCS_TEST_CHROMA_URL), pinned to the version of the `chroma` extras' clients. The
+      # embedded client's cases need no server and run everywhere. Up long before the tests run.
+      chroma:
+        image: chromadb/chroma:1.5.9@sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6
+        ports:
+          - 8000/tcp
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
@@ -135,6 +142,8 @@ jobs:
           EXACTDOCS_REQUIRE_QDRANT: "1" # the Qdrant cases and scenario never skip here (#355)
           EXACTDOCS_TEST_ELASTICSEARCH_URL: http://127.0.0.1:${{ job.services.elasticsearch.ports['9200'] }}
           EXACTDOCS_TEST_OPENSEARCH_URL: http://127.0.0.1:${{ job.services.opensearch.ports['9200'] }}
+          EXACTDOCS_TEST_CHROMA_URL: http://127.0.0.1:${{ job.services.chroma.ports['8000'] }}
+          EXACTDOCS_REQUIRE_CHROMA: "1" # the Chroma HTTP cases and scenario never skip here (#361)
         run: uv run pytest --cov=exactdocs --cov=exactdocs_kernel --cov-report=term-missing --junitxml=reports/pytest.xml
       - name: behave (acceptance)
         env:
@@ -149,6 +158,8 @@ jobs:
           EXACTDOCS_REQUIRE_QDRANT: "1"
           EXACTDOCS_TEST_ELASTICSEARCH_URL: http://127.0.0.1:${{ job.services.elasticsearch.ports['9200'] }}
           EXACTDOCS_TEST_OPENSEARCH_URL: http://127.0.0.1:${{ job.services.opensearch.ports['9200'] }}
+          EXACTDOCS_TEST_CHROMA_URL: http://127.0.0.1:${{ job.services.chroma.ports['8000'] }}
+          EXACTDOCS_REQUIRE_CHROMA: "1"
         run: uv run behave --format=progress --junit --junit-directory=reports/behave
       # The shared ranking suite again, on Supabase's image (postgres_fts: it has no pg_search).
       - name: Ranking suite on supabase/postgres

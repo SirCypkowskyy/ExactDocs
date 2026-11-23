@@ -67,6 +67,16 @@ lancedb = ["lancedb==0.41.0"]
 # DuckDB checks its signature at LOAD. Both pins move together: the extension's wheel requires the
 # exact DuckDB release it was built for.
 duckdb = ["duckdb==2.0.0", "duckdb-extension-fts==2.0.0"]
+# Chroma as the vector backend (#361, EXACTDOCS_VECTOR_BACKEND=chroma): imported only by
+# `retrieval/adapters/driven/chroma_index.py`, and only once an operator names the backend. Not in
+# any image. `chroma` is the HTTP-only client (a Chroma server or Chroma Cloud: no onnxruntime, no
+# tokenizers, no model download); `chroma-local` is the full package, for the embedded persistent
+# client (`path = ...`), which also speaks HTTP. Both install the `chromadb` module, so they
+# conflict ([tool.uv] conflicts in the workspace root). Exact pins, tested against the
+# `chromadb/chroma` server of the same version (CI service). ExactDocs never uses Chroma's
+# embedding functions: it passes its own vectors.
+chroma = ["chromadb-client==1.5.9"]
+chroma-local = ["chromadb==1.5.9"]
 
 [project.scripts]
 exactdocs = "exactdocs.bootstrap.cli:main"

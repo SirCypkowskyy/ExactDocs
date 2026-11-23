@@ -414,6 +414,14 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             production=False,
         ),
+        "chroma": IndexBackendKind(
+            name="chroma",
+            module="exactdocs.retrieval.adapters.driven.chroma_index",
+            search=None,
+            vectors="vector_backend",
+            extra="chroma",
+            packages=("chromadb",),
+        ),
         "duckdb": IndexBackendKind(
             name="duckdb",
             module="exactdocs.retrieval.adapters.driven.duckdb_index",

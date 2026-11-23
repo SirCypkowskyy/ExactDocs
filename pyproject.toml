@@ -19,6 +19,7 @@ dev = [
     # contract tests run wherever a server is given (EXACTDOCS_TEST_<NAME>_URL) or, for an
     # embedded backend, everywhere; the architecture tests prove nothing but their adapter
     # imports them.
+    "exactdocs[chroma-local]",
     "exactdocs[duckdb]",
     "exactdocs[elasticsearch]",
     "exactdocs[lancedb]",
@@ -39,6 +40,11 @@ docs = ["zensical>=0.0.74"]
 [tool.uv]
 package = false
 default-groups = ["dev"]
+# `chroma` (the HTTP-only client) and `chroma-local` (the full package) both install the
+# `chromadb` module: never both (#361).
+conflicts = [
+    [{ package = "exactdocs", extra = "chroma" }, { package = "exactdocs", extra = "chroma-local" }],
+]
 # A new dependency release must be at least 4 days old (Dependabot's cooldown enforces it for
 # its own updates).
 
@@ -214,6 +220,9 @@ filterwarnings = [
     # google-genai 2.33 (the [ai] extra) touches typing's private _UnionGenericAlias on import,
     # deprecated in Python 3.14; third-party, harmless until 3.17.
     "ignore:'_UnionGenericAlias' is deprecated:DeprecationWarning:google.genai.types",
+    # chromadb 1.5.9 (the [chroma] extras, #361) calls asyncio.iscoroutinefunction on import,
+    # deprecated in Python 3.14; third-party, harmless until 3.16.
+    "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:chromadb.telemetry.opentelemetry",
 ]
 
 # ---------------------------------------------------------------- behave (BDD acceptance)
