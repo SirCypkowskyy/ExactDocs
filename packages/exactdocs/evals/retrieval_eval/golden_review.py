@@ -13,7 +13,7 @@ section's words favours keyword search), near-duplicate questions, and where the
 each ``unanswerable`` case occurs in its version. See docs/evals.md#reviewing-the-golden-set.
 """
 
-import datetime
+import datetime as dt
 import math
 import random
 import re
@@ -42,10 +42,13 @@ COPY_RUN: Final[int] = 5
 """A question that shares this many consecutive words with its expected section copies it."""
 COPY_CONTENT_WORDS: Final[int] = 3
 """... of which at least this many are not stop words."""
-NEAR_DUPLICATE: Final[float] = 0.75
-"""Questions of a project whose content words overlap this much (Jaccard) are near-duplicates."""
+NEAR_DUPLICATE: Final[float] = 0.5
+"""Questions of a project that share this share of their content words (Jaccard) are listed as
+near-duplicates."""
 UNANSWERABLE_FLAG: Final[float] = 0.75
 """An ``unanswerable`` case is checked by hand when one section holds this share of its words."""
+OUTMATCHED_RANK: Final[int] = 3
+"""The checks list the cases whose expected section ranks below this on the question's words."""
 
 type Verdict = Literal["correct", "fixed", "removed"]
 """What the review decided for a case."""
@@ -108,7 +111,7 @@ class ReviewEntry(_Model):
     """What was wrong; empty when correct."""
     reviewer: str = Field(min_length=1)
     """Who reviewed it."""
-    date: datetime.date
+    date: dt.date
     """When."""
     note: str = ""
     """Why: the source line that proves a defect, or what was checked."""
@@ -176,33 +179,46 @@ def review_problems(review: Review, cases: Sequence[tuple[str, GoldenCase]]) -> 
     problems = []
     seen: set[str] = set()
     for entry in review.entries:
-        name = entry.case
-        if name in seen:
-            problems.append(f"{name}: reviewed twice")
-        seen.add(name)
-        if entry.verdict == "removed" and name in names:
-            problems.append(f"{name}: is removed but still in the golden set")
-        if entry.verdict != "removed" and name not in names:
-            problems.append(f"{name}: is {entry.verdict} but not in the golden set")
-        if entry.verdict == "correct" and entry.problems:
-            problems.append(f"{name}: is correct but names problems")
-        if entry.verdict != "correct" and not entry.problems:
-            problems.append(f"{name}: is {entry.verdict} but names no problem")
-        if entry.verdict != "correct" and not entry.note.strip():
-            problems.append(f"{name}: is {entry.verdict} but has no note saying why")
-        if entry.was is not None and entry.was in names:
-            problems.append(f"{name}: was renamed from {entry.was!r}, which is still in the set")
-        if not name.startswith(f"{entry.project} "):
-            problems.append(f"{name}: is not a case of {entry.project}")
-    strata = Counter((e.project, e.kind) for e in review.entries)
-    projects = sorted({project for project, _ in cases})
-    for project in projects:
-        for kind in KINDS:
-            if (n := strata[project, kind]) != review.sample.per_stratum:
-                problems.append(
-                    f"{project} {kind}: {n} entries, not the sample's {review.sample.per_stratum}"
-                )
+        if entry.case in seen:
+            problems.append(f"{entry.case}: reviewed twice")
+        seen.add(entry.case)
+        problems.extend(f"{entry.case}: {p}" for p in _entry_problems(entry, names))
+    strata: Counter[tuple[str, str]] = Counter((e.project, e.kind) for e in review.entries)
+    want = review.sample.per_stratum
+    problems.extend(
+        f"{project} {kind}: {strata[project, kind]} entries, not the sample's {want}"
+        for project in sorted({project for project, _ in cases})
+        for kind in KINDS
+        if strata[project, kind] != want
+    )
     return problems
+
+
+def _entry_problems(entry: ReviewEntry, names: set[str | None]) -> Iterable[str]:
+    """Check one verdict.
+
+    Args:
+        entry: The verdict.
+        names: The name of every case in the set.
+
+    Yields:
+        Each broken rule.
+    """
+    verdict = entry.verdict
+    if verdict == "removed" and entry.case in names:
+        yield "is removed but still in the golden set"
+    if verdict != "removed" and entry.case not in names:
+        yield f"is {verdict} but not in the golden set"
+    if verdict == "correct" and entry.problems:
+        yield "is correct but names problems"
+    if verdict != "correct" and not entry.problems:
+        yield f"is {verdict} but names no problem"
+    if verdict != "correct" and not entry.note.strip():
+        yield f"is {verdict} but has no note saying why"
+    if entry.was is not None and entry.was in names:
+        yield f"was renamed from {entry.was!r}, which is still in the set"
+    if not entry.case.startswith(f"{entry.project} "):
+        yield f"is not a case of {entry.project}"
 
 
 def draw_sample(
@@ -228,7 +244,7 @@ def draw_sample(
     sample = []
     for (project, kind), members in sorted(strata.items()):
         members.sort(key=lambda pc: pc[1].name or "")
-        rng = random.Random(f"{seed}:{project}:{kind}")  # noqa: S311 -- a sample, not a secret
+        rng = random.Random(f"{seed}:{project}:{kind}")
         drawn = rng.sample(members, min(per_stratum, len(members)))
         sample.extend(sorted(drawn, key=lambda pc: pc[1].name or ""))
     return sample
@@ -332,13 +348,19 @@ def review_block(review: Review) -> str:
     dates = sorted({e.date for e in review.entries})
     when = dates[0].isoformat() if len(dates) == 1 else f"{dates[0]} to {dates[-1]}"
     lines = [
-        f"- Sample: {s.size} cases, {review.sample.per_stratum} per kind and project, seed "
-        f"{review.sample.seed}, drawn from golden set `{review.sample.drawn_from}`.",
+        (
+            f"- Sample: {s.size} cases, {review.sample.per_stratum} per kind and project, seed "
+            f"{review.sample.seed}, drawn from golden set `{review.sample.drawn_from}`."
+        ),
         f"- Reviewed by: {'; '.join(reviewers)}, {when}.",
-        f"- Verdicts: {s.verdicts['correct']} correct, {s.verdicts['fixed']} fixed, "
-        f"{s.verdicts['removed']} removed.",
-        f"- Wrong cases: {s.wrong} of {s.size}, {_pct(s.rate)} "
-        f"(95% Wilson interval {_pct(low)} to {_pct(high)}).",
+        (
+            f"- Verdicts: {s.verdicts['correct']} correct, {s.verdicts['fixed']} fixed, "
+            f"{s.verdicts['removed']} removed."
+        ),
+        (
+            f"- Wrong cases: {s.wrong} of {s.size}, {_pct(s.rate)} "
+            f"(95% Wilson interval {_pct(low)} to {_pct(high)})."
+        ),
         "",
         "| Problem | Cases |",
         "|---|---|",
@@ -429,18 +451,175 @@ def source_link(project: Project, commit: str, article: str, anchor: str = "") -
 
 _WORD: Final[re.Pattern[str]] = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*")
 _STOP: Final[frozenset[str]] = frozenset(
-    """a about above after again against all also am an and any are aren as at be because been
-    before being below between both but by can cannot could did didn do does doesn doing don down
-    during each else even ever every few for from further get gets got had has have having he her
-    here hers him his how i if in into is isn it its itself just let lets like make makes may me
-    might more most must my no nor not now of off on once one only or other our ours out over own
-    same shall she should so some such than that the their theirs them then there these they this
-    those through to too under until up upon us use used uses using very via was we were what when
-    where whether which while who whom why will with within without would yes yet you your yours
-    instead way ways need needs want wants still
-    """.split()
+    {
+        "a",
+        "about",
+        "above",
+        "after",
+        "again",
+        "against",
+        "all",
+        "also",
+        "am",
+        "an",
+        "and",
+        "any",
+        "are",
+        "aren",
+        "as",
+        "at",
+        "be",
+        "because",
+        "been",
+        "before",
+        "being",
+        "below",
+        "between",
+        "both",
+        "but",
+        "by",
+        "can",
+        "cannot",
+        "could",
+        "did",
+        "didn",
+        "do",
+        "does",
+        "doesn",
+        "doing",
+        "don",
+        "down",
+        "during",
+        "each",
+        "else",
+        "even",
+        "ever",
+        "every",
+        "few",
+        "for",
+        "from",
+        "further",
+        "get",
+        "gets",
+        "got",
+        "had",
+        "has",
+        "have",
+        "having",
+        "he",
+        "her",
+        "here",
+        "hers",
+        "him",
+        "his",
+        "how",
+        "i",
+        "if",
+        "in",
+        "into",
+        "is",
+        "isn",
+        "it",
+        "its",
+        "itself",
+        "just",
+        "let",
+        "lets",
+        "like",
+        "make",
+        "makes",
+        "may",
+        "me",
+        "might",
+        "more",
+        "most",
+        "must",
+        "my",
+        "no",
+        "nor",
+        "not",
+        "now",
+        "of",
+        "off",
+        "on",
+        "once",
+        "one",
+        "only",
+        "or",
+        "other",
+        "our",
+        "ours",
+        "out",
+        "over",
+        "own",
+        "same",
+        "shall",
+        "she",
+        "should",
+        "so",
+        "some",
+        "such",
+        "than",
+        "that",
+        "the",
+        "their",
+        "theirs",
+        "them",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "those",
+        "through",
+        "to",
+        "too",
+        "under",
+        "until",
+        "up",
+        "upon",
+        "us",
+        "use",
+        "used",
+        "uses",
+        "using",
+        "very",
+        "via",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "whether",
+        "which",
+        "while",
+        "who",
+        "whom",
+        "why",
+        "will",
+        "with",
+        "within",
+        "without",
+        "would",
+        "yes",
+        "yet",
+        "you",
+        "your",
+        "yours",
+        "instead",
+        "way",
+        "ways",
+        "need",
+        "needs",
+        "want",
+        "wants",
+        "still",
+    }
 )
 """English function words, and the words every how-to question uses, left out of the overlap."""
+_MIN_PLURAL: Final[int] = 3
+"""Words this short keep a final ``s``."""
 
 
 def words(text: str) -> list[str]:
@@ -467,7 +646,7 @@ def stem(word: str) -> str:
     for suffix, keep, replace in (("ies", 4, "y"), ("ing", 5, ""), ("ed", 4, ""), ("es", 4, "")):
         if len(word) > keep and word.endswith(suffix):
             return word[: -len(suffix)] + replace
-    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):  # noqa: PLR2004 -- len
+    if len(word) > _MIN_PLURAL and word.endswith("s") and not word.endswith("ss"):
         return word[:-1]
     return word
 
@@ -796,11 +975,14 @@ def checks_markdown(checks: Checks) -> str:
         "",
         "## Lexical overlap",
         "",
-        "Coverage: the IDF-weighted share of a question's content words (stemmed, stop words "
-        "left out) that a section holds, headings included. *Expected*: its best expected "
-        "section; *best other*: the best section of the same version that is not expected; "
-        "*rank 1*: no other section covers more. *Copied*: the question shares a run of "
-        f"{COPY_RUN} or more words ({COPY_CONTENT_WORDS} content words) with an expected section.",
+        (
+            "Coverage: the IDF-weighted share of a question's content words (stemmed, stop words "
+            "left out) that a section holds, headings included. *Expected*: its best expected "
+            "section; *best other*: the best section of the same version that is not expected; "
+            "*rank 1*: no other section covers more. *Copied*: the question shares a run of "
+            f"{COPY_RUN} or more words ({COPY_CONTENT_WORDS} content words) with an expected "
+            "section."
+        ),
         "",
         "| Kind | Cases | Expected | Best other | Lead | Rank 1 | Copied |",
         "|---|---|---|---|---|---|---|",
@@ -825,7 +1007,7 @@ def checks_markdown(checks: Checks) -> str:
             f"- {x.case}: rank {x.rank}, expected {_pct(x.expected)}, "
             f"best other {_pct(x.best_other)} ({x.other_section})"
             for x in sorted(o, key=lambda x: (-x.rank, x.case))
-            if x.rank > 3  # noqa: PLR2004 -- the report's cut-off
+            if x.rank > OUTMATCHED_RANK
         ),
     ]
     d = checks.duplicates
@@ -833,8 +1015,10 @@ def checks_markdown(checks: Checks) -> str:
         "",
         f"## Near-duplicate questions ({len(d)}; Jaccard of content words >= {NEAR_DUPLICATE})",
         "",
-        f"Same version: {sum(x.same_version for x in d)}; the same question of two versions: "
-        f"{sum(not x.same_version for x in d)}.",
+        (
+            f"Same version: {sum(x.same_version for x in d)}; the same question of two versions: "
+            f"{sum(not x.same_version for x in d)}."
+        ),
         "",
         *(
             f"- {x.similarity:.2f}{' SAME VERSION' if x.same_version else ''}: {x.a} | {x.b}"
@@ -846,8 +1030,10 @@ def checks_markdown(checks: Checks) -> str:
         "",
         f"## The vocabulary of the unanswerable cases ({len(v)})",
         "",
-        f"Flagged (one section holds {_pct(UNANSWERABLE_FLAG)} of the weighted words, check by "
-        f"hand): {sum(x.flagged for x in v)}.",
+        (
+            f"Flagged (one section holds {_pct(UNANSWERABLE_FLAG)} of the weighted words, check by "
+            f"hand): {sum(x.flagged for x in v)}."
+        ),
         "",
     ]
     for x in sorted(v, key=lambda x: (not x.flagged, x.case)):
@@ -885,11 +1071,13 @@ def sheet_markdown(
     lines = [
         f"# Golden-set review sheet (seed {seed}, {len(sample)} cases)",
         "",
-        "Check each case against the source at its pinned commit: every fact stated by the "
-        "expected sections; the reference right for that version; no other section answering as "
-        "well; the kind; an unanswerable case searched for in the whole docs tree; a "
-        "version-change case against the neighbouring versions. Record the verdict in "
-        "`packages/exactdocs/evals/golden/review.yaml`.",
+        (
+            "Check each case against the source at its pinned commit: every fact stated by the "
+            "expected sections; the reference right for that version; no other section answering "
+            "as well; the kind; an unanswerable case searched for in the whole docs tree; a "
+            "version-change case against the neighbouring versions. Record the verdict in "
+            "`packages/exactdocs/evals/golden/review.yaml`."
+        ),
     ]
     for n, (project_id, case) in enumerate(sample, 1):
         project = corpus.project(project_id)
@@ -902,8 +1090,10 @@ def sheet_markdown(
             "",
             f"## {n}. {case.name}",
             "",
-            f"- Kind: `{case.metadata.kind if case.metadata else '?'}`; version {version} "
-            f"at `{commit[:12]}`",
+            (
+                f"- Kind: `{case.metadata.kind if case.metadata else '?'}`; version {version} "
+                f"at `{commit[:12]}`"
+            ),
             f"- Question: {case.inputs.query}",
             f"- Reference: {expected.reference if expected else ''}",
             "- Facts:",
@@ -943,7 +1133,7 @@ def _evidence(
         if s.key in wanted:
             lines += ["", f"#### Expected: {_shown(s)}", "", "```text", s.text.strip(), "```"]
     idx = index(sections)
-    query = terms(case.inputs.query + " " + (expected.reference if expected else ""))
+    query = terms(f"{case.inputs.query} {(expected.reference or '') if expected else ''}")
     close = [(c, i) for c, i in idx.ranked(query) if sections[i].key not in wanted][:5]
     lines += ["", "#### Closest other sections (question and reference words)", ""]
     lines += [f"- {_pct(c)} {_shown(sections[i])}" for c, i in close]

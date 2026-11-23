@@ -224,7 +224,7 @@ def selected(corpus: Corpus, projects: str) -> list[Project]:
 
 
 def _validate(corpus: Corpus, cases_dir: Path, repos: dict[str, Path], projects: str) -> int:
-    """Check every case and the review's verdicts (``review.yaml`` beside the cases), print problems.
+    """Check every case and the review's verdicts (``review.yaml`` beside them); print problems.
 
     Args:
         corpus: The corpus.

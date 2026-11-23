@@ -4,7 +4,7 @@ See docs/evals.md#reviewing-the-golden-set.
 """
 
 import argparse
-import datetime
+import datetime as dt
 import json
 import sys
 from collections.abc import Sequence
@@ -97,7 +97,7 @@ def _draft(sample: Sequence[tuple[str, object]], seed: int, per_stratum: int, dr
     Returns:
         The YAML.
     """
-    today = datetime.datetime.now(tz=datetime.UTC).date().isoformat()
+    today = dt.datetime.now(tz=dt.UTC).date().isoformat()
     entries = [
         {
             "case": getattr(case, "name", ""),
