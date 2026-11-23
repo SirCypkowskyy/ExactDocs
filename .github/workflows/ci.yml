@@ -20,9 +20,9 @@ jobs:
   python:
     name: Python (ruff, ty, pytest, behave)
     runs-on: ubuntu-24.04
-    # GitHub-hosted (#468): a smaller machine than the old self-hosted VM, so more room than the
-    # 35 minutes the suite took there.
-    timeout-minutes: 90
+    # GitHub-hosted (#468): a smaller machine than the old self-hosted VM. With the E14 backends'
+    # service containers (#351) pytest alone took 53 minutes.
+    timeout-minutes: 120
     # PostgreSQL for the adapter contract tests and the @postgres scenarios (#103): ParadeDB, which
     # also has pg_search and pgvector. A service container on the runner's own Docker, on a
     # free host port. Its POSTGRES_USER is a superuser: the tests create a database per test, and
@@ -144,6 +144,10 @@ jobs:
         ports:
           - 5081/tcp
     steps:
+      # The service images and the backends' extras (#351) fill the ~14 GB a hosted runner starts
+      # with; MongoDB refuses writes under 500 MB free. Drop preinstalled SDKs first (about 20 GB).
+      - name: Free disk space
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
         with:
