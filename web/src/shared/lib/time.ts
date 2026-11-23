@@ -13,7 +13,6 @@ type Formats = {
   sameYear: Intl.DateTimeFormat;
   otherYear: Intl.DateTimeFormat;
   withZone: Intl.DateTimeFormat;
-  date: Intl.DateTimeFormat;
 };
 
 const cache = new Map<Language, Formats>();
@@ -38,7 +37,6 @@ function formats(language: Language): Formats {
         minute: "2-digit",
         timeZoneName: "short",
       }),
-      date: new Intl.DateTimeFormat(language, { dateStyle: "medium" }),
     };
     cache.set(language, found);
   }
@@ -79,9 +77,4 @@ export function absoluteTime(iso: string, language: Language = currentLanguage()
 /** For tooltips: adds the time zone, which the browser picked. */
 export function absoluteTimeWithZone(iso: string, language: Language = currentLanguage()): string {
   return formats(language).withZone.format(new Date(iso));
-}
-
-/** A date without the time: "Nov 4, 2026" ("4 lis 2026"). */
-export function mediumDate(iso: string | Date, language: Language = currentLanguage()): string {
-  return formats(language).date.format(typeof iso === "string" ? new Date(iso) : iso);
 }
