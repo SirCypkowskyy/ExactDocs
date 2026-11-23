@@ -641,7 +641,9 @@ shadcn/ui's data-table guide) is the one way to show a list with many rows.
 - **The view lives in the URL:** `q` (the global filter), each filter (`state=failed,queued`),
   `sort` (an API sort field, `-` for descending), `page` (from 2) and `size` (5, 20, 50 or 100;
   20 is left out). A new filter, sort or size goes back to page 1. The last size per table is
-  remembered in this browser; the URL wins, and a link to page *n* without a size means 20.
+  remembered in this browser; the URL wins, and a link to page *n* without a size means 20. A
+  route parses its view with `parseTableSearch` and `parseFacet` in `validateSearch`; the app
+  router's `stringifySearch` writes a validated list back as `a,b`.
 - **Server mode** (`source`): the API sorts, filters and pages. Pages are numbered over the
   cursor API: each cached page knows its cursor, so First, Previous and Next are one request (and
   the next page is fetched ahead); a page nobody reached yet walks forward in requests of at most
@@ -661,7 +663,8 @@ shadcn/ui's data-table guide) is the one way to show a list with many rows.
   the frame with a dashed border and the next step; an error is one sentence and Retry.
 - **Rows:** `aria-rowcount` and `aria-rowindex` place the page in the whole list. Below `md` rows
   become cards: the `meta.priority` 1 cell as the title, 2 and 3 under it with their column named
-  for screen readers, the row menu at the right. Page changes swap rows at once; only rows that
+  for screen readers, the row menu at the right; the Columns menu is not offered there. Give
+  every cell a reader needs to tell rows apart (the version, not only the library) a priority. Page changes swap rows at once; only rows that
   arrive on a refresh use `row-in`.
 - **Cells** (`cells.tsx`): `RelativeTime`, `VersionCell`, `LibraryCell`, `Person`, `StateBadge`,
   `Progress`, `Bytes`, `Count`, `Money`, `MonoCopy`; literals in mono, figures tabular and at
