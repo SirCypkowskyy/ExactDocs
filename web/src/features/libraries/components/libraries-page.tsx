@@ -23,13 +23,14 @@ import { useDataTable } from "@/shared/ui/data-table/use-data-table";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { librariesKeys, librariesSource } from "../api/libraries-query";
 import { syncLibrary } from "../api/sync-library";
+import { SyncContext } from "../hooks/sync-context";
 import { useSyncStates } from "../hooks/use-libraries";
 import { listMessages } from "../messages/list";
 import { explainSync, type Library, syncOutcome } from "../model/library";
 import { LIBRARIES_TABLE, parseListView } from "../model/list-view";
 import { AddLibraryLink } from "./add-library-link";
-import { columnsOf, FirstRun, filtersOf, PhoneSort } from "./libraries-list";
-import { SyncContext } from "./sync-status";
+import { FirstRun, PhoneSort } from "./libraries-list";
+import { columnsOf, filtersOf } from "./library-columns";
 
 /*
  * Every library the caller may read (blocks-map §2.3, "Libraries"): numbered pages sorted and

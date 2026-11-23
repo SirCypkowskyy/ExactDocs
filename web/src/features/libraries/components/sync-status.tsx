@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ChevronDown, CircleX, ListChecks, RefreshCw, TriangleAlert } from "lucide-react";
-import { createContext, useContext, useId, useState } from "react";
+import { useContext, useId, useState } from "react";
 import { useLanguage, useMessages } from "@/shared/lib/i18n";
 import { absoluteTime, absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 import { useNow } from "@/shared/lib/use-now";
@@ -15,7 +15,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { jobQueryOptions, librariesKeys } from "../api/libraries-query";
 import { reimportVersion } from "../api/reimport";
-import type { SyncState, SyncStates } from "../hooks/use-libraries";
+import { SyncContext } from "../hooks/sync-context";
+import type { SyncState } from "../hooks/use-libraries";
 import { listMessages } from "../messages/list";
 import { explainReimport, type LatestJob } from "../model/library";
 import { CancelJob } from "./cancel-job";
@@ -25,9 +26,6 @@ import { CancelJob } from "./cancel-job";
  * badge. A failed sync opens its details (the reason, the skipped files, the way to fix it) in a
  * popover from the badge, so the row keeps its height.
  */
-
-/** Every library's sync, from one request: cells read it here, so a poll never rebuilds the columns. */
-export const SyncContext = createContext<SyncStates | null>(null);
 
 const SKIPPED_SHOWN = 5;
 
