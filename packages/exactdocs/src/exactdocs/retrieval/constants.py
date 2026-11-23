@@ -131,6 +131,111 @@ EXTERNAL_HIT_MARGIN: Final[int] = 10
 MEMORY_BACKEND: Final[str] = "memory"
 """The registered name of the in-process reference index backend (tests only)."""
 
+# ------------------------------------------------------- adapters.driven.azure_search_index
+AZURE_SEARCH_BACKEND: Final[str] = "azure_search"
+"""The registered name of the Azure AI Search backend (#353)."""
+AZURE_SEARCH_DEFAULT_INDEX: Final[str] = "exactdocs"
+"""The ``index`` option's default: the search index's name; each embedding space's index is
+``<index>-space<id>``."""
+AZURE_SEARCH_INDEX_NAME: Final[re.Pattern[str]] = re.compile(r"[a-z0-9](?:-?[a-z0-9]){1,99}")
+"""What the ``index`` option may be: Azure's index names (lower-case letters, digits, single
+dashes, a letter or digit at both ends), short enough for the spaces' ``-space<id>``."""
+AZURE_SEARCH_SPACE: Final[str] = "-space"
+"""Between the ``index`` option and a space's ID in the space's index name."""
+AZURE_SEARCH_KEY_FIELD: Final[str] = "id"
+"""The key field: the entry's manifest and chunk IDs, URL-safe base64 (keys may only hold
+letters, digits, ``_``, ``-`` and ``=``)."""
+AZURE_SEARCH_TEXT_FIELDS: Final[tuple[str, str, str]] = ("heading", "path", "body")
+"""The words' fields: the section's heading, the headings above it, its text (weighted
+``HEADING_WEIGHT``, ``PATH_WEIGHT`` and ``TEXT_WEIGHT`` by the scoring profile, as the
+database's own indexes weigh them)."""
+AZURE_SEARCH_ANALYZER: Final[str] = "whitespace"
+"""The analyzer of the word fields: they hold ``identifier_tokens`` (already lower case and
+split), so only spaces split them and ``-``, ``_`` and ``.`` stay inside a token: ``retry_policy``
+is found whole, and ``retry`` finds it too."""
+AZURE_SEARCH_VECTOR_FIELD: Final[str] = "vector"
+"""A space's vector field (``Collection(Edm.Single)``, cosine)."""
+AZURE_SEARCH_SCORING_PROFILE: Final[str] = "exactdocs"
+"""The scoring profile weighing the word fields (the index's default, named in every query)."""
+AZURE_SEARCH_VECTOR_PROFILE: Final[str] = "exactdocs-vectors"
+"""The vector search profile of a space's vector field."""
+AZURE_SEARCH_HNSW: Final[str] = "exactdocs-hnsw"
+"""The HNSW algorithm configuration of the vector profile (cosine)."""
+AZURE_SEARCH_BM25: Final[str] = "#Microsoft.Azure.Search.BM25Similarity"
+"""The similarity every ExactDocs index ranks words with (BM25, ``k1`` 1.2, ``b`` 0.75)."""
+AZURE_SEARCH_FILTER_FIELDS: Final[tuple[str, ...]] = (
+    "manifest_id",
+    "library",
+    "version_id",
+    "chunk_id",
+    "write_id",
+)
+"""The filterable string fields: every query filters on ``manifest_id`` (and ``tags``) in Azure,
+before ranking; ``write_id`` marks each write, so a write waits until the index returns it."""
+AZURE_SEARCH_SORTED_FIELDS: Final[tuple[str, ...]] = ("manifest_id", "chunk_id")
+"""The sortable fields: ties of a search are ordered by chunk ID, then manifest ID."""
+AZURE_SEARCH_FACETED_FIELDS: Final[tuple[str, ...]] = ("manifest_id", "library")
+"""The facetable fields: what an index holds is counted per version (and listed per library)."""
+AZURE_SEARCH_FIELD_ATTRIBUTES: Final[tuple[str, ...]] = (
+    "key",
+    "searchable",
+    "filterable",
+    "sortable",
+    "facetable",
+)
+"""The field attributes ExactDocs' queries rely on: an existing index's fields must have them."""
+AZURE_SEARCH_DELIMITERS: Final[str] = "|,;~^"
+"""``search.in`` delimiters, tried in order: the first no value holds (else ``eq`` clauses)."""
+AZURE_SEARCH_DEFAULT_TIMEOUT_SECONDS: Final[int] = 10
+"""The ``timeout`` option's default: connecting, and reading each answer."""
+AZURE_SEARCH_DEFAULT_INDEX_TIMEOUT_SECONDS: Final[int] = 60
+"""The ``index_timeout`` option's default: how long a write waits until the index returns what
+it wrote (Azure AI Search indexes in near real time: about a second)."""
+AZURE_SEARCH_RETRIES: Final[int] = 2
+"""Retries of one request the SDK makes itself (throttled, unavailable); the job retries more."""
+AZURE_SEARCH_POLL_SECONDS: Final[tuple[float, float]] = (0.05, 1.0)
+"""The first and the longest wait between two looks at whether the index caught up (the wait
+doubles in between)."""
+AZURE_SEARCH_WRITE_BATCH: Final[int] = 100
+"""Documents per indexing request (Azure takes 1,000 or 16 MB; a 3,072-dimension vector is about
+60 kB as JSON)."""
+AZURE_SEARCH_PAGE: Final[int] = 1000
+"""Keys read per query when deleting a version (Azure's most ``top`` per page)."""
+AZURE_SEARCH_FACETS: Final[int] = 10_000
+"""Facet values asked when listing what an index holds (libraries, then each library's versions):
+more than it holds, so every shard returns every value and the counts are exact."""
+AZURE_SEARCH_TIE_MARGIN: Final[int] = 10
+"""Hits asked beyond the limit of a vector or hybrid query, so equal scores at the cut are
+ordered by chunk ID."""
+AZURE_SEARCH_LUCENE_SPECIAL: Final[frozenset[str]] = frozenset('+-&|!(){}[]^"~*?:\\/')
+"""Characters the full Lucene syntax gives a meaning: escaped in every term, so a query is never
+parsed as syntax."""
+AZURE_SEARCH_AUTH: Final[frozenset[str]] = frozenset({"api_key", "default", "managed_identity"})
+"""The ``auth`` option's values: an admin API key, ``DefaultAzureCredential`` (Entra ID: the
+environment, workload identity, managed identity, the Azure CLI), or a managed identity."""
+AZURE_SEARCH_VECTOR_SEARCH: Final[frozenset[str]] = frozenset({"approximate", "exact"})
+"""The ``vector_search`` option's values: HNSW, or every vector of the asked versions."""
+AZURE_SEARCH_OPTIONS: Final[frozenset[str]] = frozenset(
+    {
+        "endpoint",
+        "index",
+        "auth",
+        "api_key",
+        "api_key_file",
+        "client_id",
+        "audience",
+        "timeout",
+        "index_timeout",
+        "hybrid",
+        "vector_search",
+    }
+)
+"""The options ``[index_backends.azure_search]`` takes; any other is refused at start."""
+AZURE_SEARCH_TRUE: Final[frozenset[str]] = frozenset({"1", "true", "yes", "on"})
+"""How a switch option (``hybrid``) given as text is turned on."""
+AZURE_SEARCH_FALSE: Final[frozenset[str]] = frozenset({"0", "false", "no", "off", ""})
+"""How a switch option given as text is turned off."""
+
 # ---------------------------------------------------------------- adapters.driven.memory
 MEMORY_FORMAT: Final[int] = 1
 """Format version of the in-memory search index."""

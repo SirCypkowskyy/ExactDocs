@@ -414,6 +414,16 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             production=False,
         ),
+        "azure_search": IndexBackendKind(
+            name="azure_search",
+            module="exactdocs.retrieval.adapters.driven.azure_search_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="azure-search",
+            # `azure` is a namespace shared with the `ai` extra's azure-identity (sync): only
+            # this module imports the search SDK.
+            packages=("azure.search",),
+        ),
     }
 )
 """The external index backends, by name. Adding one is one adapter module in
