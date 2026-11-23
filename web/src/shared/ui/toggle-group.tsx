@@ -6,7 +6,9 @@ import { cn } from "@/shared/lib/utils";
  * ToggleGroup (shadcn/ui on Radix, MIT), restyled as a segmented control: one bordered group, the
  * pressed item on the lamp's wash (`selection-soft`) with ink text (The One Lamp Rule: it is the
  * one lit thing in the group). Arrow keys move between items (roving focus). For a choice of a
- * few views or periods that lives in the URL (leaderboard metric, subject, period).
+ * few views or periods that lives in the URL (leaderboard metric, subject, period). Single choice
+ * is a `radiogroup` of radios (name the group with `aria-label`); items are 44 px on touch, 32 px
+ * with a mouse.
  */
 
 function ToggleGroup({ className, ...props }: React.ComponentProps<typeof T.Root>) {
@@ -27,7 +29,7 @@ function ToggleGroupItem({ className, ...props }: React.ComponentProps<typeof T.
     <T.Item
       data-slot="toggle-group-item"
       className={cn(
-        "inline-flex h-10 cursor-pointer items-center justify-center gap-1.5 rounded-sm px-3 text-body font-medium whitespace-nowrap text-muted-foreground outline-none transition-[background-color,color,transform] duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 data-[state=on]:bg-selection-soft data-[state=on]:text-foreground fine:h-8 can-hover:hover:text-foreground [&_svg]:size-4 [&_svg]:shrink-0",
+        "inline-flex h-11 cursor-pointer items-center justify-center gap-1.5 rounded-sm px-3 text-body font-medium whitespace-nowrap text-muted-foreground outline-none transition-[background-color,color,transform] duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 data-[state=on]:bg-selection-soft data-[state=on]:text-foreground fine:h-8 can-hover:hover:text-foreground [&_svg]:size-4 [&_svg]:shrink-0",
         className,
       )}
       {...props}
