@@ -2134,24 +2134,6 @@
                 }
               }
             }
-          },
-          "429": {
-            "description": "Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "headers": {
-              "Retry-After": {
-                "description": "Seconds to wait before the next attempt.",
-                "schema": {
-                  "type": "integer"
-                }
-              }
-            }
           }
         }
       }
