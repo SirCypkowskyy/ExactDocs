@@ -181,10 +181,16 @@ export const progressMessages = defineMessages(
     skipped: {
       title: "Skipped files",
       leftOut: "These were left out of the version. The rest was imported.",
-      showMore: (n: number) => `Show ${n} more`,
       firstOnly: (n: number) =>
         `Showing the first ${n} skipped files. More were skipped for the same kinds of reasons.`,
       notes: "Imported with a note",
+      columns: { path: "Path", problem: "Problem", result: "Result" },
+      results: { skipped: "Skipped" },
+      find: "Find a file",
+      findPlaceholder: "Path or reason",
+      noMatch: "No file matches",
+      copyPath: "Copy path",
+      pathCopied: "Copied the path.",
     },
   },
   {
@@ -283,7 +289,6 @@ export const progressMessages = defineMessages(
     skipped: {
       title: "Pominięte pliki",
       leftOut: "Te pliki pominięto w tej wersji. Pozostałe zaimportowano.",
-      showMore: (n) => `Pokaż jeszcze ${formatNumber(n, "pl")}`,
       firstOnly: (n) =>
         `Wyświetlono ${plural.pl(n, {
           one: "pierwszy pominięty plik",
@@ -291,6 +296,13 @@ export const progressMessages = defineMessages(
           many: "pierwszych # pominiętych plików",
         })}. Więcej plików pominięto z podobnych powodów.`,
       notes: "Zaimportowane z uwagą",
+      columns: { path: "Ścieżka", problem: "Problem", result: "Wynik" },
+      results: { skipped: "Pominięty" },
+      find: "Znajdź plik",
+      findPlaceholder: "Ścieżka lub przyczyna",
+      noMatch: "Żaden plik nie pasuje",
+      copyPath: "Kopiuj ścieżkę",
+      pathCopied: "Skopiowano ścieżkę.",
     },
   },
 );
