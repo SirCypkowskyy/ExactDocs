@@ -1,35 +1,62 @@
-import { oneOf, pickSort, textParam } from "@/shared/lib/list-sort";
+import {
+  parseFacet,
+  parseTableSearch,
+  type TableConfig,
+  type TableSearch,
+} from "@/shared/ui/data-table/table-search";
 
 /** The grants table's view: what the sharing URL holds and what `GET .../grants` is asked for. */
 export const GRANT_KINDS = ["user", "group"] as const;
 export const GRANT_ROLES = ["viewer", "contributor", "admin", "creator"] as const;
-const SORT_FIELDS = ["kind", "subject", "role"];
 
-export interface SharingView {
-  q?: string | undefined;
-  kind?: (typeof GRANT_KINDS)[number] | undefined;
-  role?: (typeof GRANT_ROLES)[number] | undefined;
-  /** An API `sort` value: a field, `-` in front for descending. */
-  sort?: string | undefined;
+type GrantKind = (typeof GRANT_KINDS)[number];
+type GrantRole = (typeof GRANT_ROLES)[number];
+
+/** The grants table (DataTable v2): the API sorts by these, users then groups by default. */
+export const GRANTS_TABLE: TableConfig = {
+  id: "grants",
+  sortFields: ["kind", "subject", "role"],
+  defaultSort: "kind",
+};
+
+export interface SharingView extends TableSearch {
+  kind?: GrantKind[] | undefined;
+  role?: GrantRole[] | undefined;
 }
 
 /** Anything unknown in a shared or hand-edited URL is dropped, never sent to the API. */
 export const parseSharingView = (search: Record<string, unknown>): SharingView => ({
-  q: textParam(search.q),
-  kind: oneOf(search.kind, GRANT_KINDS),
-  role: oneOf(search.role, GRANT_ROLES),
-  sort: pickSort(search.sort, SORT_FIELDS),
+  ...parseTableSearch(search, GRANTS_TABLE),
+  kind: parseFacet(search.kind, GRANT_KINDS),
+  role: parseFacet(search.role, GRANT_ROLES),
 });
 
-export const sharingFiltered = (v: SharingView) => Boolean(v.q || v.kind || v.role);
+/** What `GET .../grants` filters and sorts by: the view without its page and size. */
+export interface GrantsFilters {
+  q?: string;
+  kind?: readonly string[];
+  role?: readonly string[];
+  sort?: string;
+}
 
-/** The query string of `GET /v1/libraries/{owner}/{repo}/grants` for a view and a cursor. */
-export function grantsParams(view: SharingView, cursor?: string | null): string {
-  const p = new URLSearchParams({ limit: "50" });
-  if (view.q) p.set("q", view.q);
-  if (view.kind) p.set("kind", view.kind);
-  if (view.role) p.set("role", view.role);
-  if (view.sort) p.set("sort", view.sort);
+export const grantsFilters = (view: SharingView): GrantsFilters => ({
+  ...(view.q && { q: view.q }),
+  ...(view.kind && { kind: view.kind }),
+  ...(view.role && { role: view.role }),
+  ...(view.sort && { sort: view.sort }),
+});
+
+/** The query string of `GET /v1/libraries/{owner}/{repo}/grants` for some filters and a page. */
+export function grantsParams(
+  filters: GrantsFilters,
+  limit: number,
+  cursor?: string | null,
+): string {
+  const p = new URLSearchParams({ limit: String(limit) });
+  if (filters.q) p.set("q", filters.q);
+  for (const kind of filters.kind ?? []) p.append("kind", kind);
+  for (const role of filters.role ?? []) p.append("role", role);
+  if (filters.sort) p.set("sort", filters.sort);
   if (cursor) p.set("cursor", cursor);
   return p.toString();
 }

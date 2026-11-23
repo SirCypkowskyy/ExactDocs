@@ -33,6 +33,13 @@ const whoEn = (w: Who) => (w.kind === "group" ? `the group ${w.subject}` : w.sub
 /** `who` at the start of a sentence: a username keeps its letter case. */
 const whoFirstEn = (w: Who) => (w.kind === "group" ? `The group ${w.subject}` : w.subject);
 
+/** Polish: "zmień rolę na: czytelnik" (nominative). */
+const ROLE_NOMINATIVE: Record<Role, string> = {
+  viewer: "czytelnik",
+  contributor: "współtwórca",
+  admin: "administrator",
+  creator: "twórca",
+};
 /** Polish: "jest teraz czytelnikiem" (instrumental), "traci rolę czytelnika" (genitive). */
 const ROLE_INSTRUMENTAL: Record<Role, string> = {
   viewer: "czytelnikiem",
@@ -76,7 +83,6 @@ export const messages = defineMessages(
       accessLog: "Access log",
       transfer: "Transfer ownership",
       share: "Share",
-      breadcrumb: "Breadcrumb",
       libraries: "Libraries",
       noCreator: "No creator: it was added before library roles, so operators manage it.",
       createdBy: (creator: ReactNode) => (
@@ -103,15 +109,15 @@ export const messages = defineMessages(
       who: "Who",
       kind: "Kind",
       role: "Role",
-      actions: "Actions",
       roleOf: (subject: string) => `Role of ${subject}`,
-      remove: (subject: string) => `Remove ${subject}`,
       find: "Find a person or group",
       findPlaceholder: "Username or group",
-      anyKind: "Any",
-      anyRole: "Any",
       nobody: "Nobody matches.",
-      clearFilters: "Clear filters",
+      /** Row actions: another role, taking the grant away, handing the library over. */
+      changeTo: (role: string) => `Change role to ${roleLowerEn(role)}`,
+      removeAction: "Remove…",
+      transferAction: "Transfer ownership…",
+      loadFailed: "Couldn't load who has access.",
     },
     remove: {
       title: (who: Who | undefined) => (who ? `Remove ${whoEn(who)}?` : "Remove access?"),
@@ -183,7 +189,6 @@ export const messages = defineMessages(
       accessLog: "Dziennik dostępu",
       transfer: "Przekaż własność",
       share: "Udostępnij",
-      breadcrumb: "Ścieżka nawigacyjna",
       libraries: "Biblioteki",
       noCreator:
         "Brak twórcy: biblioteka została dodana przed wprowadzeniem ról bibliotek, więc zarządzają nią operatorzy.",
@@ -212,15 +217,14 @@ export const messages = defineMessages(
       who: "Kto",
       kind: "Rodzaj",
       role: "Rola",
-      actions: "Akcje",
       roleOf: (subject) => `Rola: ${subject}`,
-      remove: (subject) => `Usuń: ${subject}`,
       find: "Znajdź osobę lub grupę",
       findPlaceholder: "Nazwa użytkownika lub grupa",
-      anyKind: "Dowolny",
-      anyRole: "Dowolna",
       nobody: "Nikogo nie znaleziono.",
-      clearFilters: "Wyczyść filtry",
+      changeTo: (role) => `Zmień rolę na: ${rolePl(ROLE_NOMINATIVE, role)}`,
+      removeAction: "Usuń…",
+      transferAction: "Przekaż własność…",
+      loadFailed: "Nie udało się wczytać listy osób z dostępem.",
     },
     remove: {
       title: (who) => (who ? `Usunąć dostęp ${whosePl(who)}?` : "Usunąć dostęp?"),

@@ -1,49 +1,60 @@
-import {
-  type InfiniteData,
-  type UseInfiniteQueryResult,
-  useInfiniteQuery,
-  useMutation,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { type UseQueryResult, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowRightLeft, History, Lock, UserPlus } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import {
+  ArrowRightLeft,
+  Eye,
+  Lock,
+  type LucideIcon,
+  Pencil,
+  ScrollText,
+  Share2,
+  ShieldCheck,
+  Trash2,
+  UserPlus,
+} from "lucide-react";
+import { type ReactNode, useRef, useState } from "react";
 import { toast } from "sonner";
 import { HttpError } from "@/shared/lib/http";
 import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { usePageTitle } from "@/shared/lib/use-page-title";
-import { usePrefetchedPages } from "@/shared/lib/use-prefetched-pages";
-import { Button, buttonVariants } from "@/shared/ui/button";
+import { cn } from "@/shared/lib/utils";
 import {
-  ConfirmAction,
-  ConfirmCancel,
-  ConfirmContent,
-  ConfirmDescription,
-  ConfirmRoot,
-  ConfirmTitle,
-} from "@/shared/ui/dialog";
-import { EmptyState, Page, PageHeader } from "@/shared/ui/page";
-import { LibraryBullet } from "@/shared/ui/route";
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/shared/ui/breadcrumb";
+import { Button, buttonVariants, type IconMotion } from "@/shared/ui/button";
+import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
+import { type RowAction, restoreRowFocus } from "@/shared/ui/data-table/row-actions";
+import { TableError, TableMessage } from "@/shared/ui/data-table/states";
+import { Page, PageHeader } from "@/shared/ui/page";
 import { Skeleton } from "@/shared/ui/skeleton";
-import { grantsQueryOptions, putGrant, revokeGrant, sharingKey } from "../api/grants";
+import { putGrant, revokeGrant, sharingKey, sharingSummaryQueryOptions } from "../api/grants";
 import { messages } from "../messages";
 import {
   explainSharingError,
   type Grant,
   type GrantedRole,
   type GrantList,
+  givableRoles,
   grantKey,
 } from "../model/grant";
-import { type SharingView, sharingFiltered } from "../model/grants-view";
 import { GrantsTable } from "./grants-table";
 import { ShareDialog } from "./share-dialog";
 import { TransferDialog } from "./transfer-dialog";
 
-const crumb =
-  "-ml-1 inline-flex min-h-11 items-center rounded px-1 outline-none transition-colors duration-(--dur-fast) hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-7";
+/** A role offered in a row's menu, by its icon and reaction. */
+const ROLE_ICONS: Record<GrantedRole, { icon: LucideIcon; motion: IconMotion }> = {
+  viewer: { icon: Eye, motion: "pop" },
+  contributor: { icon: Pencil, motion: "tilt" },
+  admin: { icon: ShieldCheck, motion: "pop" },
+};
 
-const NO_VIEW: SharingView = {};
-const ignore = () => {};
+/** Crumbs stay 44 px high on touch (DESIGN.md, Accessibility). */
+const crumbTarget = "inline-flex min-h-11 items-center fine:min-h-7";
 
 interface Props {
   owner: string;
@@ -51,31 +62,23 @@ interface Props {
   /** The library's ID (`/owner/repo`) and title, for the header. */
   libraryId: string;
   title?: string | undefined;
-  /** The grants table's filters and sort, held in the URL by the route. */
-  view?: SharingView;
-  onView?: (view: SharingView) => void;
 }
 
 /** Who may read, change and manage one library; its admins share it, its creator hands it over. */
-export function SharingPage({
-  owner,
-  repo,
-  libraryId,
-  title,
-  view = NO_VIEW,
-  onView = ignore,
-}: Props) {
+export function SharingPage({ owner, repo, libraryId, title }: Props) {
   const t = useMessages(messages);
+  const c = useMessages(common);
   const language = useLanguage();
   const heading = usePageTitle(t.page.documentTitle(title || libraryId));
   const queryClient = useQueryClient();
-  const query = useInfiniteQuery(grantsQueryOptions(owner, repo, view));
-  const first = query.data?.pages[0];
-  const caller = first?.caller_role;
+  const summary = useQuery(sharingSummaryQueryOptions(owner, repo));
+  const caller = summary.data?.caller_role;
   const [sharing, setSharing] = useState(false);
   const [transferring, setTransferring] = useState(false);
   const [removing, setRemoving] = useState<Grant>();
   const [announcement, setAnnouncement] = useState("");
+  // Once a grant is gone its row is too: focus goes to the heading instead of the row's menu.
+  const removed = useRef(false);
   const refresh = () => queryClient.invalidateQueries({ queryKey: sharingKey(owner, repo) });
   const say = (text: string) => {
     setAnnouncement(text);
@@ -90,13 +93,75 @@ export function SharingPage({
       toast.error(t.done.roleFailed(grant, explainSharingError(error, language))),
     onSettled: refresh,
   });
+  const onRole = (grant: Grant, role: GrantedRole) => {
+    if (!change.isPending) change.mutate({ grant, role });
+  };
+
+  const remove = useMutation({
+    mutationFn: (g: Grant) => revokeGrant(owner, repo, g.kind, g.subject),
+    onSuccess: (_, grant) => {
+      removed.current = true;
+      setRemoving(undefined);
+      void refresh();
+      say(t.done.noAccess(grant));
+    },
+  });
+
+  const shareButton = (
+    <Button onClick={() => setSharing(true)}>
+      <UserPlus aria-hidden="true" data-icon-motion="pop" />
+      {t.page.share}
+    </Button>
+  );
+
+  // One list for each row's kebab and its context menu: another role, removal, the hand-over.
+  const rowActions = (grant: Grant): RowAction<Grant>[] => {
+    if (!caller) return [];
+    if (grant.role === "creator") {
+      return caller === "creator"
+        ? [
+            {
+              id: "transfer",
+              label: t.table.transferAction,
+              icon: ArrowRightLeft,
+              motion: "forward",
+              onSelect: () => setTransferring(true),
+            },
+          ]
+        : [];
+    }
+    if (grant.role === "admin" && caller !== "creator") return [];
+    return [
+      ...givableRoles(caller)
+        .filter((role) => role !== grant.role)
+        .map(
+          (role): RowAction<Grant> => ({
+            id: `role-${role}`,
+            label: t.table.changeTo(role),
+            icon: ROLE_ICONS[role].icon,
+            motion: ROLE_ICONS[role].motion,
+            onSelect: (g) => onRole(g, role),
+          }),
+        ),
+      {
+        id: "remove",
+        label: t.table.removeAction,
+        icon: Trash2,
+        motion: "warn",
+        destructive: true,
+        group: true,
+        onSelect: setRemoving,
+      },
+    ];
+  };
 
   return (
     <Page>
       <PageHeader
         headingRef={heading}
+        icon={<Share2 />}
         title={t.page.title}
-        description={first ? <Owner creator={first.creator} /> : t.page.description}
+        description={summary.data ? <Owner creator={summary.data.creator} /> : t.page.description}
         actions={
           caller && (
             <>
@@ -105,42 +170,37 @@ export function SharingPage({
                 params={{ owner, repo }}
                 className={buttonVariants({ variant: "ghost" })}
               >
-                <History aria-hidden="true" />
+                <ScrollText aria-hidden="true" />
                 {t.page.accessLog}
               </Link>
               {caller === "creator" && (
                 <Button variant="outline" onClick={() => setTransferring(true)}>
-                  <ArrowRightLeft aria-hidden="true" />
+                  <ArrowRightLeft aria-hidden="true" data-icon-motion="forward" />
                   {t.page.transfer}
                 </Button>
               )}
-              <Button onClick={() => setSharing(true)}>
-                <UserPlus aria-hidden="true" />
-                {t.page.share}
-              </Button>
+              {shareButton}
             </>
           )
         }
-        above={<Breadcrumb owner={owner} repo={repo} libraryId={libraryId} />}
+        above={<SharingBreadcrumb owner={owner} repo={repo} libraryId={libraryId} />}
       />
       <p role="status" className="sr-only">
         {announcement}
       </p>
 
-      <GrantsBody query={query} view={view} onShare={() => setSharing(true)}>
-        {(grants) =>
-          caller && (
-            <GrantsTable
-              {...grants}
-              view={view}
-              onView={onView}
-              caller={caller}
-              busy={change.isPending ? grantKey(change.variables.grant) : undefined}
-              onRole={(grant, role) => !change.isPending && change.mutate({ grant, role })}
-              onRemove={setRemoving}
-            />
-          )
-        }
+      <GrantsBody summary={summary} shareAction={shareButton}>
+        {(callerRole) => (
+          <GrantsTable
+            owner={owner}
+            repo={repo}
+            caller={callerRole}
+            busy={change.isPending ? grantKey(change.variables.grant) : undefined}
+            onRole={onRole}
+            rowActions={rowActions}
+            shareAction={shareButton}
+          />
+        )}
       </GrantsBody>
 
       {caller && (
@@ -170,160 +230,80 @@ export function SharingPage({
           }}
         />
       )}
-      <RemoveDialog
-        owner={owner}
-        repo={repo}
-        grant={removing}
-        onClose={() => setRemoving(undefined)}
-        onRemoved={(grant) => {
-          setRemoving(undefined);
-          void refresh();
-          say(t.done.noAccess(grant));
+      <ConfirmDialog
+        open={removing !== undefined}
+        onOpenChange={(open) => {
+          if (!open) {
+            remove.reset();
+            setRemoving(undefined);
+          }
+        }}
+        title={t.remove.title(removing)}
+        description={
+          <>
+            {removing && t.remove.loses(removing, removing.role)}
+            {t.remove.description}
+          </>
+        }
+        confirmLabel={c.remove}
+        pending={remove.isPending}
+        error={remove.isError ? explainSharingError(remove.error, language) : undefined}
+        onConfirm={() => {
+          if (removing && !remove.isPending) remove.mutate(removing);
+        }}
+        onCloseAutoFocus={(event) => {
+          if (removed.current) {
+            removed.current = false;
+            event.preventDefault();
+            heading.current?.focus();
+            return;
+          }
+          restoreRowFocus(event);
         }}
       />
     </Page>
   );
 }
 
-interface LoadedGrants {
-  grants: Grant[];
-  total: number;
-  hasMore: boolean;
-  loadingMore: boolean;
-  onLoadMore: () => void;
-}
-
-/** The list in each of its states: loading, refused, failed, empty, or the table. */
+/** The grants in each of their states: loading, refused, failed, never shared, or the table. */
 function GrantsBody({
-  query,
-  view,
-  onShare,
+  summary,
+  shareAction,
   children,
 }: {
-  query: UseInfiniteQueryResult<InfiniteData<GrantList>>;
-  view: SharingView;
-  onShare: () => void;
-  children: (grants: LoadedGrants) => ReactNode;
+  summary: UseQueryResult<GrantList>;
+  shareAction: ReactNode;
+  children: (caller: GrantList["caller_role"]) => ReactNode;
 }) {
   const t = useMessages(messages);
-  const c = useMessages(common);
   const language = useLanguage();
-  const { pages, hasMore, loadingMore, loadMore } = usePrefetchedPages(query, view);
-  const total = pages.at(-1)?.total ?? 0;
-  if (query.isPending) return <GrantsSkeleton />;
-  if (query.error instanceof HttpError && query.error.status === 403) {
+  if (summary.isPending) return <GrantsSkeleton />;
+  if (summary.error instanceof HttpError && summary.error.status === 403) {
     return (
-      <EmptyState
-        icon={<Lock aria-hidden="true" />}
-        title={t.page.adminsOnlyTitle}
-        className="max-w-2xl"
-      >
+      <TableMessage icon={Lock} title={t.page.adminsOnlyTitle}>
         {t.page.adminsOnly}
-      </EmptyState>
+      </TableMessage>
     );
   }
-  if (query.isError && !query.data) {
+  if (summary.isError) {
     return (
-      <div
-        role="alert"
-        className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg bg-destructive-soft py-1.5 pr-1.5 pl-4"
-      >
-        <p className="text-body font-medium text-destructive-ink">
-          {explainSharingError(query.error, language)}
-        </p>
-        <Button variant="ghost" onClick={() => query.refetch()}>
-          {c.retry}
-        </Button>
-      </div>
+      <TableError
+        message={explainSharingError(summary.error, language)}
+        onRetry={() => void summary.refetch()}
+      />
     );
   }
-  if (total === 0 && !sharingFiltered(view)) {
+  if (summary.data.total === 0) {
     return (
-      <EmptyState
-        icon={<UserPlus aria-hidden="true" />}
-        title={t.page.emptyTitle}
-        className="max-w-2xl"
-        action={<Button onClick={onShare}>{t.page.share}</Button>}
-      >
+      <TableMessage icon={UserPlus} title={t.page.emptyTitle} action={shareAction}>
         {t.page.empty}
-      </EmptyState>
+      </TableMessage>
     );
   }
-  return children({
-    grants: pages.flatMap((p) => p.grants),
-    total,
-    hasMore,
-    loadingMore,
-    onLoadMore: loadMore,
-  });
+  return children(summary.data.caller_role);
 }
 
-/** Asks before a grant is taken away, and says why the server refused. */
-function RemoveDialog({
-  owner,
-  repo,
-  grant,
-  onClose,
-  onRemoved,
-}: {
-  owner: string;
-  repo: string;
-  grant: Grant | undefined;
-  onClose: () => void;
-  onRemoved: (grant: Grant) => void;
-}) {
-  const t = useMessages(messages);
-  const c = useMessages(common);
-  const language = useLanguage();
-  const remove = useMutation({
-    mutationFn: (g: Grant) => revokeGrant(owner, repo, g.kind, g.subject),
-    onSuccess: (_, g) => onRemoved(g),
-  });
-  return (
-    <ConfirmRoot
-      open={grant !== undefined}
-      onOpenChange={(open) => {
-        if (!open) {
-          remove.reset();
-          onClose();
-        }
-      }}
-    >
-      <ConfirmContent>
-        <ConfirmTitle>{t.remove.title(grant)}</ConfirmTitle>
-        <ConfirmDescription>
-          {grant && t.remove.loses(grant, grant.role)}
-          {t.remove.description}
-        </ConfirmDescription>
-        <p
-          role="alert"
-          className="mt-4 rounded-md bg-destructive-soft px-3 py-2.5 text-body font-medium text-destructive-ink empty:hidden"
-        >
-          {remove.isError && explainSharingError(remove.error, language)}
-        </p>
-        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <ConfirmCancel asChild>
-            <Button variant="ghost">{c.cancel}</Button>
-          </ConfirmCancel>
-          <ConfirmAction asChild>
-            <Button
-              variant="destructive-solid"
-              pending={remove.isPending}
-              onClick={(event) => {
-                event.preventDefault(); // stay open until the server answers
-                if (grant && !remove.isPending) remove.mutate(grant);
-              }}
-            >
-              {c.remove}
-            </Button>
-          </ConfirmAction>
-        </div>
-      </ConfirmContent>
-    </ConfirmRoot>
-  );
-}
-
-function Breadcrumb({
+function SharingBreadcrumb({
   owner,
   repo,
   libraryId,
@@ -334,30 +314,27 @@ function Breadcrumb({
 }) {
   const t = useMessages(messages);
   return (
-    <nav aria-label={t.page.breadcrumb} className="text-body text-muted-foreground">
-      <ol className="flex flex-wrap items-center gap-x-1.5">
-        <li>
-          <Link to="/" className={crumb}>
-            {t.page.libraries}
-          </Link>
-        </li>
-        <li aria-hidden="true">/</li>
-        <li className="inline-flex items-center gap-1.5">
-          <LibraryBullet id={libraryId} size="sm" />
-          <Link
-            to="/libraries/$owner/$repo"
-            params={{ owner, repo }}
-            className={`${crumb} font-mono text-small`}
-          >
-            {libraryId}
-          </Link>
-        </li>
-        <li aria-hidden="true">/</li>
-        <li aria-current="page" className="text-foreground">
-          {t.page.title}
-        </li>
-      </ol>
-    </nav>
+    <Breadcrumb>
+      <BreadcrumbList>
+        <BreadcrumbItem>
+          <BreadcrumbLink asChild className={crumbTarget}>
+            <Link to="/">{t.page.libraries}</Link>
+          </BreadcrumbLink>
+        </BreadcrumbItem>
+        <BreadcrumbSeparator />
+        <BreadcrumbItem>
+          <BreadcrumbLink asChild className={cn(crumbTarget, "font-mono text-small")}>
+            <Link to="/libraries/$owner/$repo" params={{ owner, repo }}>
+              {libraryId}
+            </Link>
+          </BreadcrumbLink>
+        </BreadcrumbItem>
+        <BreadcrumbSeparator />
+        <BreadcrumbItem>
+          <BreadcrumbPage>{t.page.title}</BreadcrumbPage>
+        </BreadcrumbItem>
+      </BreadcrumbList>
+    </Breadcrumb>
   );
 }
 
@@ -367,19 +344,64 @@ function Owner({ creator }: { creator: string | null }) {
   return <>{t.page.createdBy(<span className="font-medium text-foreground">{creator}</span>)}</>;
 }
 
+const SKELETON_ROWS = [
+  ["w-24", "w-14", "w-40"],
+  ["w-20", "w-14", "w-40"],
+  ["w-28", "w-14", "w-40"],
+  ["w-32", "w-16", "w-20"],
+] as const;
+
+/** The grants table as it will stand: the toolbar, then rows of who, kind and role. */
 function GrantsSkeleton() {
   const t = useMessages(messages);
   return (
-    <div aria-busy="true">
-      <span className="sr-only">{t.page.loading}</span>
-      <div aria-hidden="true" className="divide-y divide-rule border-y border-border">
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="flex items-center justify-between gap-4 py-4">
-            <Skeleton className="h-5 w-40" />
-            <Skeleton className="h-8 w-40" />
+    <div aria-busy="true" className="pending-in">
+      <p role="status" className="sr-only">
+        {t.page.loading}
+      </p>
+      <div aria-hidden="true">
+        <div className="mb-4 flex flex-wrap items-end gap-2">
+          <span className="flex w-full max-w-md flex-col gap-2">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-11 w-full fine:h-9" />
+          </span>
+          <Skeleton className="h-11 w-20 fine:h-8" />
+          <Skeleton className="h-11 w-20 fine:h-8" />
+        </div>
+        <div className="divide-y divide-rule rounded-lg border border-border">
+          <div className="flex gap-6 px-4 py-2.5">
+            <Skeleton className="h-4 w-12" />
+            <Skeleton className="h-4 w-12" />
+            <Skeleton className="h-4 w-12" />
           </div>
-        ))}
+          {SKELETON_ROWS.map(([who, kind, role]) => (
+            <div key={who} className="flex items-center gap-6 px-4 py-3">
+              <span className="flex flex-1 items-center gap-2">
+                <Skeleton className="size-6 flex-none rounded-full" />
+                <Skeleton className={cn("h-4", who)} />
+              </span>
+              <Skeleton className={cn("h-5 rounded-full max-md:hidden", kind)} />
+              <Skeleton className={cn("h-9 rounded-md", role)} />
+            </div>
+          ))}
+        </div>
       </div>
     </div>
+  );
+}
+
+/** The sharing page while its library loads (the route's `pendingComponent`). */
+export function SharingSkeleton() {
+  const t = useMessages(messages);
+  return (
+    <Page aria-busy="true" className="pending-in">
+      <PageHeader
+        icon={<Share2 />}
+        title={t.page.title}
+        description={<Skeleton className="mt-1 h-4 w-80 max-w-full" />}
+        above={<Skeleton className="h-4 w-56" />}
+      />
+      <GrantsSkeleton />
+    </Page>
   );
 }
