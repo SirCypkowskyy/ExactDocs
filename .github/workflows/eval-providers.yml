@@ -63,6 +63,8 @@ env:
 jobs:
   eval:
     name: Retrieval eval with real providers
+    # Nothing to measure without a provider (a local-models benchmark run leaves it unset).
+    if: ${{ vars.EVAL_PROVIDER_KIND != '' }}
     runs-on: [self-hosted, linux, ARM64, exactdocs]
     timeout-minutes: 60
     environment: eval-providers # its protection rules decide who may spend the keys
