@@ -477,6 +477,72 @@ REDIS_TRUE: Final[frozenset[str]] = frozenset({"1", "true", "yes", "on"})
 """How a switch option (``hybrid``) given as text is turned on."""
 REDIS_FALSE: Final[frozenset[str]] = frozenset({"0", "false", "no", "off", ""})
 """How a switch option given as text is turned off."""
+# ---------------------------------------------------------------- adapters.driven.milvus_index
+MILVUS_BACKEND: Final[str] = "milvus"
+"""The registered name of the Milvus vector backend (#360)."""
+MILVUS_DEFAULT_COLLECTION: Final[str] = "exactdocs"
+"""The ``collection`` option's default: each embedding space is the collection
+``<collection>_space<id>``."""
+MILVUS_COLLECTION_NAME: Final[re.Pattern[str]] = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,199}")
+"""What the ``collection`` option may be: a Milvus collection name, with room for the suffix."""
+MILVUS_SPACE_SUFFIX: Final[str] = "_space"
+"""Between the ``collection`` option and the space's ID in a collection's name."""
+MILVUS_SERVER_SCHEMES: Final[tuple[str, ...]] = ("http://", "https://", "tcp://", "unix:")
+"""What a server's ``uri`` starts with; any other ``uri`` is a Milvus Lite ``.db`` path."""
+MILVUS_LITE_SUFFIX: Final[str] = ".db"
+"""What a Milvus Lite ``uri`` (a local directory) must end with, as pymilvus requires."""
+MILVUS_DEFAULT_TIMEOUT_SECONDS: Final[float] = 30.0
+"""The ``timeout`` option's default: how long one call to Milvus may take."""
+MILVUS_CONSISTENCY_LEVELS: Final[frozenset[str]] = frozenset(
+    {"Strong", "Bounded", "Session", "Eventually"}
+)
+"""The ``consistency_level`` option's values (a new collection's default consistency)."""
+MILVUS_DEFAULT_CONSISTENCY: Final[str] = "Strong"
+"""The ``consistency_level`` option's default: a search sees every write made before it, as the
+database's own vector store does."""
+MILVUS_ID_LENGTH: Final[int] = 1024
+"""The longest ``manifest_id``, ``library`` and ``version_id`` a collection takes (bytes)."""
+MILVUS_TEXT_LENGTH: Final[int] = 65_535
+"""The longest VARCHAR Milvus takes (bytes): ``chunk_id``, ``article_path`` and the BM25 text;
+the text is cut at a word to fit (it only feeds native hybrid's word half)."""
+MILVUS_TAG_LENGTH: Final[int] = 1024
+"""The longest tag a collection takes (bytes)."""
+MILVUS_TAGS_CAPACITY: Final[int] = 4096
+"""The most tags of one chunk a collection takes (Milvus' largest array)."""
+MILVUS_TOP_K: Final[int] = 16_384
+"""The most hits one Milvus search returns (its ``topk`` limit), and the most rows one query."""
+MILVUS_VECTOR_FIELD: Final[str] = "vector"
+"""A collection's dense vector field: ExactDocs' own embedding of the chunk."""
+MILVUS_TEXT_FIELD: Final[str] = "text"
+"""A hybrid collection's analyzed field, the chunk's words, which the BM25 function reads."""
+MILVUS_SPARSE_FIELD: Final[str] = "sparse"
+"""A hybrid collection's sparse vector, the BM25 function's output."""
+MILVUS_RETURNED: Final[tuple[str, ...]] = ("manifest_id", "chunk_id")
+"""The fields a search returns: what a hit names."""
+MILVUS_UPSERT_BATCH: Final[int] = 256
+"""Entries sent to Milvus per upsert."""
+MILVUS_DELETE_BATCH: Final[int] = 1000
+"""Manifest or chunk IDs named per delete expression."""
+MILVUS_TIE_MARGIN: Final[int] = 10
+"""Hits asked beyond the limit, so equal distances at the cut are ordered by chunk ID here."""
+MILVUS_HYBRID_DEPTH: Final[int] = 100
+"""The fewest hits each half of a native hybrid search (BM25 and dense) gives the RRF ranker."""
+MILVUS_QUERY_BATCH: Final[int] = 1000
+"""Rows read per page when the drift check counts a collection's entries row by row (Milvus
+Lite, which has no grouped count)."""
+MILVUS_OPTIONS: Final[frozenset[str]] = frozenset(
+    {
+        "uri",
+        "collection",
+        "token",
+        "token_file",
+        "db_name",
+        "timeout",
+        "hybrid",
+        "consistency_level",
+    }
+)
+"""The options ``[index_backends.milvus]`` takes; any other is refused at start."""
 
 # ---------------------------------------------------------------- adapters.driven.memory
 MEMORY_FORMAT: Final[int] = 1
