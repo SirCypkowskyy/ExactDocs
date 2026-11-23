@@ -184,7 +184,9 @@ async def _set_up(container: Container, url: str, *, rechunk: bool) -> None:
         assert (await _finished(container, job.id)).state == "succeeded"
     edit = (
         UpdateLibrarySettingsCommand(
-            library=LIBRARY, include_paths=["docs/"], chunking=ChunkingIn(split_level=1)
+            library=LIBRARY,
+            include_paths=["docs/"],
+            chunking=ChunkingIn(split_level=1, max_chars=None),
         )
         if rechunk
         else UpdateLibrarySettingsCommand(
