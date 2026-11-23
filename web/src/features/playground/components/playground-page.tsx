@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { FlaskConical, Search, Sparkles } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { common, useMessages } from "@/shared/lib/i18n";
 import { Button } from "@/shared/ui/button";
@@ -141,7 +142,7 @@ export function PlaygroundPage() {
 
   return (
     <Page>
-      <PageHeader title={t.page.title} description={t.page.description} />
+      <PageHeader icon={<FlaskConical />} title={t.page.title} description={t.page.description} />
       <form
         onSubmit={submit}
         className="max-w-3xl space-y-5 rounded-lg border border-border bg-raised p-5"
@@ -187,6 +188,11 @@ export function PlaygroundPage() {
           </label>
         )}
         <Button type="submit" disabled={!q.trim()}>
+          {agentChosen ? (
+            <Sparkles aria-hidden="true" data-icon-motion="pop" />
+          ) : (
+            <Search aria-hidden="true" data-icon-motion="tilt" />
+          )}
           {agentChosen ? t.page.ask : c.search}
         </Button>
       </form>

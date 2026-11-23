@@ -1,3 +1,4 @@
+import { Sparkles } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { HttpError } from "@/shared/lib/http";
 import { useLanguage, useMessages } from "@/shared/lib/i18n";
@@ -9,7 +10,14 @@ import {
   type AnswerSource,
   noAnswerSentence,
 } from "../model/playground";
-import { Notice, ResultHead, ResultsSkeleton, resultCard, resultList } from "./parts";
+import {
+  Notice,
+  ResultHead,
+  ResultsHeading,
+  ResultsSkeleton,
+  resultCard,
+  resultList,
+} from "./parts";
 
 type State =
   | { status: "running"; progress: AnswerProgress | null }
@@ -121,9 +129,9 @@ export function AgentAnswer({ q, libraries }: { q: string; libraries: readonly s
       aria-busy={state.status === "running"}
       className="min-w-0 space-y-3"
     >
-      <h2 id={headingId} className="text-section font-semibold">
+      <ResultsHeading id={headingId} icon={Sparkles}>
         {t.agent.heading}
-      </h2>
+      </ResultsHeading>
       {state.status === "running" && (
         <>
           <p role="status" className="text-body text-muted-foreground">
