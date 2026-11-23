@@ -79,8 +79,8 @@ export function ModeResults({
           <p className="text-body text-muted-foreground">
             Answered by <span className="font-medium text-foreground">{data.retrieval_mode}</span>
             {" · "}
-            {data.results.length} result{data.results.length === 1 ? "" : "s"} from{" "}
-            {ranked} librar{ranked === 1 ? "y" : "ies"}
+            {data.results.length} result{data.results.length === 1 ? "" : "s"} from {ranked} librar
+            {ranked === 1 ? "y" : "ies"}
           </p>
           {data.fallback_reason && (
             <Notice tone="note">

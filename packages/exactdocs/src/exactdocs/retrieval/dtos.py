@@ -435,7 +435,9 @@ class SearchAllResult(_Dto):
     fallback_reason: FallbackReason | None = Field(default=None)
     """Set when BM25 answered a `vector` or `hybrid` search: says why."""
     libraries_searched: int
-    """Libraries whose default version was searched."""
+    """Libraries whose default version was searched for `libraries`' counts: every readable one
+    (up to a cap), the chosen ones included. With libraries chosen, `results` come from those
+    only, so this can count libraries that no result can come from."""
     libraries_omitted: int
     """Libraries with a default version left out because there are too many."""
     libraries_without_vectors: list[str] = Field(default_factory=list)
