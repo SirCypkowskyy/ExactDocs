@@ -152,7 +152,10 @@ benchmark numbers. See [Search and AI models](docs/search.md).
   `exactdocs index check` reports what it lost and `exactdocs index rebuild` writes it again.
   A backend is an optional extra behind one adapter; a backend that fuses keyword and vector
   search itself serves hybrid search natively. See
-  [External index backends](docs/architecture.md#external-index-backends).
+  [External index backends](docs/architecture.md#external-index-backends). Available:
+  - [Azure AI Search](docs/configuration.md#azure-ai-search) for the search and vector indexes
+    (`exactdocs[azure-search]`), with native hybrid search (Azure's hybrid query) and API key or
+    Entra ID (managed identity) sign-in.
 
 ## How it works
 

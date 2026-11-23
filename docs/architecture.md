@@ -1333,6 +1333,13 @@ keeps the backends in step:
   through `StoredVectors`), and without a scope deletes the orphans and the retired spaces'
   copies. It is safe while serving and to repeat.
 
+**The backends.**
+
+| Name | Indexes | Adapter | Extra | Native hybrid |
+|---|---|---|---|---|
+| `memory` | search, vectors | `memory_index.py` (in process, tests only) | none | yes (RRF of term counts and cosine) |
+| `azure_search` | search, vectors | `azure_search_index.py`: a document per chunk and version, in `<index>` and one `<index>-space<id>` per space, made when missing (a schema mismatch is refused, naming the index); the words in three `whitespace`-analysed fields ranked with BM25 and a weighting scoring profile, an HNSW cosine vector field of the model's dimensions, `manifest_id` / `library` / `version_id` / `chunk_id` / `tags` filterable (OData, vectors pre-filtered); writes return once the index counts them; API key or Entra ID. No emulator: CI runs it on an in-process fake of the REST API, a manual workflow on a real service ([Configuration](configuration.md#azure-ai-search)) | `azure-search` | with `hybrid` (on by default): one Azure hybrid query (RRF); the semantic ranker is not used |
+
 **Adding a backend** is one adapter module in `retrieval/adapters/driven/` (the reference is
 `memory_index.py`; it holds nothing across a restart and is for tests), its extra in
 `packages/exactdocs/pyproject.toml`, one `IndexBackendKind` in `INDEX_BACKENDS`
