@@ -159,131 +159,52 @@ function useWriteSearch() {
 const columnId = <T>(c: ColumnDef<T>): string | undefined =>
   c.id ?? ("accessorKey" in c && typeof c.accessorKey === "string" ? c.accessorKey : undefined);
 
-export function useDataTable<T>(options: DataTableOptions<T>): DataTableModel<T> {
-  const { config, search, getRowId, source, query: clientQuery } = options;
-  const values = search as Readonly<Record<string, unknown>>;
-  const filters = options.filters ?? [];
-  const params = options.params ?? [];
-  const mode = source ? "server" : "client";
-  const { page, size } = pageOf(search, config);
-  const sizes = sizesFor(config);
-  const write = useWriteSearch();
-  const frameRef = useRef<HTMLDivElement | null>(null);
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
-    options.initialColumnVisibility ?? {},
-  );
+const NONE: readonly never[] = [];
 
-  const selected = (id: string) => valuesOf(values[id]);
-  const sorting = sortingOf(search.sort ?? config.defaultSort);
-  const filterKey = JSON.stringify(filters.map((f) => [f.id, selected(f.id)]));
+type Status = DataTableModel<unknown>["status"];
 
-  // Server mode: one numbered page, its neighbours fetched ahead.
-  const pageQuery = useQuery({
-    ...pageQueryOptions((source ?? NO_SOURCE) as ServerSource<T>, page, size),
-    enabled: Boolean(source),
-  });
+/** Loaded, failed, or still on its way (no rows yet). */
+const statusOf = (data: unknown, isError: boolean | undefined): Status =>
+  data ? "ready" : isError ? "error" : "pending";
 
-  // Client mode: facet columns filter by "any of these values".
+/** The size as the URL writes it: left out at the default, so most links stay short. */
+const sizeParam = (size: PageSize) => (size === 20 ? undefined : size);
+
+/** Stands in for the source in client mode (the query is disabled). */
+const NO_SOURCE: ServerSource<never> = {
+  key: ["data-table", "no-source"],
+  fetchPage: () => Promise.reject(new Error("no source")),
+};
+
+/** Client mode: a facet column filters by "any of these values" unless it says otherwise. */
+function useTableColumns<T>(
+  mode: "server" | "client",
+  columns: ColumnDef<T>[],
+  filters: readonly TableFilter[],
+) {
   const filterIds = useMemo(() => new Set(filters.map((f) => f.id)), [filters]);
-  const columns = useMemo(
-    () =>
-      mode === "client"
-        ? options.columns.map((c) => {
-            const id = columnId(c);
-            return id && filterIds.has(id) && !c.filterFn
-              ? ({ ...c, filterFn: "arrIncludesSome" } as ColumnDef<T>)
-              : c;
-          })
-        : options.columns,
-    [mode, options.columns, filterIds],
-  );
-  const columnIds = useMemo(() => new Set(columns.map(columnId)), [columns]);
-  const columnFilters: ColumnFiltersState = useMemo(
-    () =>
-      (JSON.parse(filterKey) as [string, string[]][])
-        .filter(([id, values]) => values.length > 0 && columnIds.has(id))
-        .map(([id, value]) => ({ id, value })),
-    [filterKey, columnIds],
-  );
+  const shaped = useMemo(() => {
+    if (mode === "server") return columns;
+    return columns.map((c) => {
+      const id = columnId(c);
+      return id && filterIds.has(id) && !c.filterFn
+        ? ({ ...c, filterFn: "arrIncludesSome" } as ColumnDef<T>)
+        : c;
+    });
+  }, [mode, columns, filterIds]);
+  const ids = useMemo(() => new Set(shaped.map(columnId)), [shaped]);
+  return { columns: shaped, columnIds: ids };
+}
 
-  const serverRows = pageQuery.data?.rows;
-  const data = useMemo(
-    () => ((mode === "server" ? serverRows : clientQuery?.data) ?? []) as T[],
-    [mode, serverRows, clientQuery?.data],
-  );
-
-  const setSort = (updater: Updater<SortingState>) => {
-    const next = typeof updater === "function" ? updater(sorting) : updater;
-    const sort = sortOf(next);
-    write({ sort: sort === config.defaultSort ? undefined : sort }, false);
-  };
-
-  const table = useReactTable<T>({
-    data,
-    columns,
-    getRowId,
-    getCoreRowModel: getCoreRowModel(),
-    ...(mode === "client" && {
-      getSortedRowModel: getSortedRowModel(),
-      getFilteredRowModel: getFilteredRowModel(),
-      getPaginationRowModel: getPaginationRowModel(),
-      getFacetedRowModel: getFacetedRowModel(),
-      getFacetedUniqueValues: getFacetedUniqueValues(),
-    }),
-    manualSorting: mode === "server",
-    manualFiltering: mode === "server",
-    manualPagination: mode === "server",
-    // The view lives in the URL: never let the table reset it on its own (a reset on new data
-    // would be a state update per render, and a URL write).
-    autoResetAll: false,
-    enableSortingRemoval: true,
-    ...(mode === "server" && { rowCount: pageQuery.data?.total ?? -1 }),
-    state: {
-      sorting,
-      columnVisibility,
-      columnFilters,
-      globalFilter: search.q ?? "",
-      pagination: { pageIndex: page - 1, pageSize: size },
-    },
-    onSortingChange: setSort,
-    onColumnVisibilityChange: setColumnVisibility,
-  });
-
-  const total =
-    mode === "server"
-      ? pageQuery.data?.total
-      : clientQuery?.data
-        ? table.getFilteredRowModel().rows.length
-        : undefined;
-  const pageCount = Math.max(1, Math.ceil((total ?? 0) / size));
-  const status =
-    mode === "server"
-      ? pageQuery.data
-        ? "ready"
-        : pageQuery.isError
-          ? "error"
-          : "pending"
-      : clientQuery?.data
-        ? "ready"
-        : clientQuery?.isError
-          ? "error"
-          : "pending";
-
-  const goTo = (next: number) => {
-    const target = Math.min(Math.max(1, Math.round(next)), pageCount);
-    write({ page: target > 1 ? target : undefined, size: sizeParam(size) }, true);
-  };
-
-  // A page past the end (rows went away, a hand-edited URL): show the last one instead.
-  const clamp = useEffectEvent(() => goTo(pageCount));
-  useEffect(() => {
-    if (status === "ready" && total !== undefined && page > pageCount) clamp();
-  }, [status, total, page, pageCount]);
-
-  // Server mode: the pages on either side, fetched while the reader looks at this one.
+/** Server mode: the pages on either side, fetched while the reader looks at this one. */
+function usePrefetchNeighbours<T>(
+  source: ServerSource<T> | undefined,
+  loaded: boolean,
+  page: number,
+  pageCount: number,
+  size: PageSize,
+) {
   const client = useQueryClient();
-  const sourceKey = JSON.stringify(source?.key ?? null);
-  const loaded = Boolean(pageQuery.data) && !pageQuery.isPlaceholderData;
   const neighbours =
     source && loaded
       ? [page + 1, page - 1]
@@ -301,11 +222,192 @@ export function useDataTable<T>(options: DataTableOptions<T>): DataTableModel<T>
   useEffect(() => {
     if (neighboursKey !== "[]") prefetch();
   }, [neighboursKey]);
+}
 
-  const filtered =
-    Boolean(search.q) ||
-    filters.some((f) => selected(f.id).length > 0) ||
-    params.some((p) => values[p.id] !== undefined);
+/** A page past the end (rows went away, a hand-edited URL): show the last one instead. */
+function useClampPage(
+  ready: boolean,
+  page: number,
+  pageCount: number,
+  goTo: (page: number) => void,
+) {
+  const clamp = useEffectEvent(() => goTo(pageCount));
+  useEffect(() => {
+    if (ready && page > pageCount) clamp();
+  }, [ready, page, pageCount]);
+}
+
+/** The setters of the view: each writes the URL, and all but paging go back to page 1. */
+function viewSetters(
+  write: ReturnType<typeof useWriteSearch>,
+  config: TableConfig,
+  size: PageSize,
+  filters: readonly TableFilter[],
+  params: readonly TableParam[],
+) {
+  const keep = sizeParam(size);
+  return {
+    setQ: (q: string | undefined) => write({ q, size: keep }, false),
+    setFilter: (id: string, values: readonly string[]) =>
+      write({ [id]: values.length ? values.join(",") : undefined, size: keep }, false),
+    setParam: (id: string, value: string | undefined) => write({ [id]: value, size: keep }, false),
+    clearFilters: () =>
+      write(
+        Object.fromEntries([
+          ["q", undefined],
+          ...filters.map((f) => [f.id, undefined]),
+          ...params.map((p) => [p.id, undefined]),
+          ["size", keep],
+        ]),
+        false,
+      ),
+    setSize: (next: PageSize) => {
+      rememberSize(config, next);
+      write({ size: sizeParam(next) }, false);
+    },
+  };
+}
+
+/** Any filter (the search box included) narrows the list. */
+const isFiltered = (
+  values: Readonly<Record<string, unknown>>,
+  filters: readonly TableFilter[],
+  params: readonly TableParam[],
+) =>
+  Boolean(values.q) ||
+  filters.some((f) => valuesOf(values[f.id]).length > 0) ||
+  params.some((p) => values[p.id] !== undefined);
+
+/** Where the rows come from, the same shape in both modes. */
+interface Feed<T> {
+  rows: readonly T[] | undefined;
+  status: Status;
+  /** Rows of the previous view are shown while the new ones load. */
+  busy: boolean;
+  retry: () => void;
+}
+
+/** Server mode: one numbered page of the source (idle without one). */
+function useServerFeed<T>(source: ServerSource<T> | undefined, page: number, size: PageSize) {
+  const query = useQuery({
+    ...pageQueryOptions((source ?? NO_SOURCE) as ServerSource<T>, page, size),
+    enabled: Boolean(source),
+  });
+  const feed: Feed<T> & { total: number | undefined; loaded: boolean } = {
+    rows: query.data?.rows,
+    total: query.data?.total,
+    status: statusOf(query.data, query.isError),
+    busy: Boolean(query.isPlaceholderData),
+    retry: () => void query.refetch(),
+    loaded: Boolean(query.data) && !query.isPlaceholderData,
+  };
+  return feed;
+}
+
+/** Client mode: the whole bounded list from one query. */
+const clientFeed = <T>(query: ClientQuery<T> | undefined): Feed<T> => ({
+  rows: query?.data,
+  status: statusOf(query?.data, query?.isError),
+  busy: Boolean(query?.isPlaceholderData),
+  retry: () => void query?.refetch(),
+});
+
+/** The sort as the API writes it, from the header the person pressed. */
+function sortWriter(
+  write: ReturnType<typeof useWriteSearch>,
+  sorting: SortingState,
+  defaultSort: string | undefined,
+) {
+  return (updater: Updater<SortingState>) => {
+    const sort = sortOf(typeof updater === "function" ? updater(sorting) : updater);
+    write({ sort: sort === defaultSort ? undefined : sort }, false);
+  };
+}
+
+/** A narrowing parameter's value from the URL, when it has one. */
+const paramOf = (values: Readonly<Record<string, unknown>>, id: string) => {
+  const value = values[id];
+  return typeof value === "string" && value ? value : undefined;
+};
+
+export function useDataTable<T>(options: DataTableOptions<T>): DataTableModel<T> {
+  const { config, search, getRowId, source } = options;
+  const values = search as Readonly<Record<string, unknown>>;
+  const filters = options.filters ?? NONE;
+  const params = options.params ?? NONE;
+  const server = source !== undefined;
+  const mode = server ? "server" : "client";
+  const { page, size } = pageOf(search, config);
+  const write = useWriteSearch();
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
+    options.initialColumnVisibility ?? {},
+  );
+
+  const selected = (id: string) => valuesOf(values[id]);
+  const sorting = sortingOf(search.sort ?? config.defaultSort);
+  const filterKey = JSON.stringify(filters.map((f) => [f.id, selected(f.id)]));
+
+  // Server mode: one numbered page, its neighbours fetched ahead. Client mode: the whole list.
+  const serverFeed = useServerFeed(source, page, size);
+  const feed = server ? serverFeed : clientFeed(options.query);
+
+  const { columns, columnIds } = useTableColumns(mode, options.columns, filters);
+  const columnFilters: ColumnFiltersState = useMemo(
+    () =>
+      (JSON.parse(filterKey) as [string, string[]][])
+        .filter(([id, values]) => values.length > 0 && columnIds.has(id))
+        .map(([id, value]) => ({ id, value })),
+    [filterKey, columnIds],
+  );
+
+  const rows = feed.rows;
+  const data = useMemo(() => (rows ?? []) as T[], [rows]);
+
+  // The view lives in the URL: never let the table reset it on its own (a reset on new data would
+  // be a state update per render, and a URL write). Client mode sorts, filters, pages and counts
+  // facets in the browser; server mode leaves all of it to the API.
+  const rowModels = server
+    ? { rowCount: serverFeed.total ?? -1 }
+    : {
+        getSortedRowModel: getSortedRowModel<T>(),
+        getFilteredRowModel: getFilteredRowModel<T>(),
+        getPaginationRowModel: getPaginationRowModel<T>(),
+        getFacetedRowModel: getFacetedRowModel<T>(),
+        getFacetedUniqueValues: getFacetedUniqueValues<T>(),
+      };
+  const table = useReactTable<T>({
+    data,
+    columns,
+    getRowId,
+    getCoreRowModel: getCoreRowModel(),
+    ...rowModels,
+    manualSorting: server,
+    manualFiltering: server,
+    manualPagination: server,
+    autoResetAll: false,
+    enableSortingRemoval: true,
+    state: {
+      sorting,
+      columnVisibility,
+      columnFilters,
+      globalFilter: search.q ?? "",
+      pagination: { pageIndex: page - 1, pageSize: size },
+    },
+    onSortingChange: sortWriter(write, sorting, config.defaultSort),
+    onColumnVisibilityChange: setColumnVisibility,
+  });
+
+  // The client knows its total once the rows are in: the rows left after its filters.
+  const total = server ? serverFeed.total : rows && table.getFilteredRowModel().rows.length;
+  const pageCount = Math.max(1, Math.ceil((total ?? 0) / size));
+
+  const goTo = (next: number) => {
+    const target = Math.min(Math.max(1, Math.round(next)), pageCount);
+    write({ page: target > 1 ? target : undefined, size: sizeParam(size) }, true);
+  };
+  useClampPage(feed.status === "ready" && total !== undefined, page, pageCount, goTo);
+  usePrefetchNeighbours(source, serverFeed.loaded, page, pageCount, size);
 
   return {
     table,
@@ -314,58 +416,24 @@ export function useDataTable<T>(options: DataTableOptions<T>): DataTableModel<T>
     params,
     page,
     size,
-    sizes,
+    sizes: sizesFor(config),
     total,
     pageCount,
     rows: table.getRowModel().rows,
     offset: (page - 1) * size,
-    status,
-    busy:
-      mode === "server"
-        ? Boolean(pageQuery.isPlaceholderData)
-        : Boolean(clientQuery?.isPlaceholderData),
-    canJump: mode === "client" || source?.paging === "offset",
-    filtered,
-    viewKey: JSON.stringify([sourceKey, search.q, filterKey, search.sort, page, size]),
+    status: feed.status,
+    busy: feed.busy,
+    canJump: !server || source.paging === "offset",
+    filtered: isFiltered(values, filters, params),
+    viewKey: JSON.stringify([source?.key, search.q, filterKey, search.sort, page, size]),
     q: search.q,
     selected,
-    param: (id) => {
-      const value = values[id];
-      return typeof value === "string" && value ? value : undefined;
-    },
+    param: (id) => paramOf(values, id),
     counts: (id) =>
-      mode === "client" && columnIds.has(id)
-        ? table.getColumn(id)?.getFacetedUniqueValues()
-        : undefined,
-    setQ: (q) => write({ q, size: sizeParam(size) }, false),
-    setFilter: (id, values) =>
-      write({ [id]: values.length ? values.join(",") : undefined, size: sizeParam(size) }, false),
-    setParam: (id, value) => write({ [id]: value, size: sizeParam(size) }, false),
-    clearFilters: () =>
-      write(
-        Object.fromEntries([
-          ["q", undefined],
-          ...filters.map((f) => [f.id, undefined]),
-          ...params.map((p) => [p.id, undefined]),
-          ["size", sizeParam(size)],
-        ]),
-        false,
-      ),
+      columnIds.has(id) && !server ? table.getColumn(id)?.getFacetedUniqueValues() : undefined,
+    ...viewSetters(write, config, size, filters, params),
     goTo,
-    setSize: (next) => {
-      rememberSize(config, next);
-      write({ size: sizeParam(next) }, false);
-    },
-    retry: () => void (mode === "server" ? pageQuery.refetch() : clientQuery?.refetch()),
+    retry: feed.retry,
     frameRef,
   };
 }
-
-/** The size as the URL writes it: left out at the default, so most links stay short. */
-const sizeParam = (size: PageSize) => (size === 20 ? undefined : size);
-
-/** Stands in for the source in client mode (the query is disabled). */
-const NO_SOURCE: ServerSource<never> = {
-  key: ["data-table", "no-source"],
-  fetchPage: () => Promise.reject(new Error("no source")),
-};

@@ -62,155 +62,165 @@ function cellClass<T>(cell: Cell<T, unknown>) {
   return cn(meta?.align === "end" && "text-right", meta?.className);
 }
 
-export function DataTable<T>({
-  model,
-  label,
-  rowActions,
-  rowLabel,
-  empty,
-  noMatch,
-  errorMessage,
-}: DataTableProps<T>) {
-  const t = useMessages(messages).dataTable;
-  const phone = useMediaQuery(PHONE_QUERY);
-  const { table, status, rows } = model;
-  const fresh = useFreshRows(
-    model.viewKey,
-    rows.map((r) => r.id),
-    model.busy || status !== "ready",
-  );
-  const actionsOf = (row: Row<T>) => rowActions?.(row.original) ?? [];
-  const nameOf = (row: Row<T>) => rowLabel?.(row.original) ?? row.id;
+type TableStates = Pick<DataTableProps<unknown>, "empty" | "noMatch" | "errorMessage">;
 
-  let body: ReactNode;
-  if (status === "error") {
-    body = <TableError message={errorMessage} onRetry={model.retry} />;
-  } else if (status === "ready" && rows.length === 0 && !model.busy) {
-    body = model.filtered ? (
+/** The frame's message instead of rows: the list failed, is empty, or nothing matches. */
+function stateOf<T>(
+  model: DataTableModel<T>,
+  { empty, noMatch, errorMessage }: TableStates,
+): ReactNode {
+  if (model.status === "error") return <TableError message={errorMessage} onRetry={model.retry} />;
+  if (model.status !== "ready" || model.rows.length > 0 || model.busy) return null;
+  if (model.filtered) {
+    return (
       <TableNoMatch title={noMatch?.title} onClear={model.clearFilters}>
         {noMatch?.body}
       </TableNoMatch>
-    ) : (
-      <TableEmpty
-        {...(empty?.icon && { icon: empty.icon })}
-        title={empty?.title}
-        action={empty?.action}
-      >
-        {empty?.body}
-      </TableEmpty>
-    );
-  } else if (phone) {
-    body =
-      status === "ready" ? (
-        <Cards model={model} label={label} actionsOf={actionsOf} nameOf={nameOf} fresh={fresh} />
-      ) : (
-        <ul
-          aria-hidden="true"
-          className="pending-in divide-y divide-rule rounded-lg border border-border"
-        >
-          {Array.from({ length: Math.min(model.size, 20) }, (_, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: placeholders have no identity
-            <li key={i} className="flex flex-col gap-2 px-4 py-3">
-              <Skeleton className="h-4 w-2/3" />
-              <Skeleton className="h-3 w-1/2" />
-            </li>
-          ))}
-        </ul>
-      );
-  } else {
-    const columns = table.getVisibleLeafColumns();
-    body = (
-      <Table
-        aria-label={label}
-        aria-busy={model.busy || status === "pending" || undefined}
-        aria-rowcount={model.total !== undefined ? model.total + 1 : -1}
-        containerClassName="rounded-lg border border-border"
-      >
-        <TableHeader>
-          {table.getHeaderGroups().map((group) => (
-            <TableRow key={group.id} aria-rowindex={1} className="can-hover:hover:bg-transparent">
-              {group.headers.map((header) => {
-                const sorted = header.column.getIsSorted();
-                const meta = header.column.columnDef.meta;
-                return (
-                  <TableHead
-                    key={header.id}
-                    aria-sort={
-                      sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : undefined
-                    }
-                    className={cn(meta?.align === "end" && "text-right", meta?.className)}
-                  >
-                    {header.isPlaceholder ? null : <SortHeader header={header} />}
-                  </TableHead>
-                );
-              })}
-              {rowActions && (
-                <TableHead className="w-0">
-                  <span className="sr-only">{t.actions}</span>
-                </TableHead>
-              )}
-            </TableRow>
-          ))}
-        </TableHeader>
-        <TableBody className={cn(status === "pending" && "pending-in")}>
-          {status === "pending" ? (
-            <SkeletonRows columns={columns} rows={model.size} actions={Boolean(rowActions)} />
-          ) : (
-            rows.map((row, i) => {
-              const actions = actionsOf(row);
-              return (
-                <RowContextMenu key={row.id} row={row.original} actions={actions}>
-                  <TableRow
-                    tabIndex={-1}
-                    data-row-id={row.id}
-                    aria-rowindex={model.offset + i + 2}
-                    className={cn(fresh.has(row.id) && "row-in", model.busy && "opacity-60")}
-                  >
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id} className={cellClass(cell)}>
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </TableCell>
-                    ))}
-                    {rowActions && (
-                      <TableCell className="w-0 py-2 text-right">
-                        <RowActionsMenu
-                          row={row.original}
-                          actions={actions}
-                          rowLabel={nameOf(row)}
-                        />
-                      </TableCell>
-                    )}
-                  </TableRow>
-                </RowContextMenu>
-              );
-            })
-          )}
-        </TableBody>
-      </Table>
     );
   }
+  return (
+    <TableEmpty
+      {...(empty?.icon && { icon: empty.icon })}
+      title={empty?.title}
+      action={empty?.action}
+    >
+      {empty?.body}
+    </TableEmpty>
+  );
+}
 
+export function DataTable<T>({ model, label, rowActions, rowLabel, ...states }: DataTableProps<T>) {
+  const phone = useMediaQuery(PHONE_QUERY);
+  const fresh = useFreshRows(
+    model.viewKey,
+    model.rows.map((r) => r.id),
+    model.busy || model.status !== "ready",
+  );
+  const rows: RowsProps<T> = {
+    model,
+    label,
+    actions: Boolean(rowActions),
+    actionsOf: (row) => rowActions?.(row.original) ?? [],
+    nameOf: (row) => rowLabel?.(row.original) ?? row.id,
+    fresh,
+  };
   return (
     <div ref={model.frameRef} className="scroll-mt-20">
-      {body}
+      {stateOf(model, states) ?? (phone ? <PhoneRows {...rows} /> : <DesktopRows {...rows} />)}
     </div>
   );
 }
 
-/** Below `md`: each row a card, its title cell first, its meta cells under it, the kebab on the right. */
-function Cards<T>({
-  model,
-  label,
-  actionsOf,
-  nameOf,
-  fresh,
-}: {
+interface RowsProps<T> {
   model: DataTableModel<T>;
   label: string;
+  /** The table has row actions (a column for the kebab). */
+  actions: boolean;
   actionsOf: (row: Row<T>) => ReturnType<RowActions<T>>;
   nameOf: (row: Row<T>) => string;
   fresh: ReadonlySet<string>;
-}) {
+}
+
+/** From `md` up: the rows of one page in a table, the header sorting on the server or here. */
+function DesktopRows<T>({ model, label, actions, actionsOf, nameOf, fresh }: RowsProps<T>) {
+  const t = useMessages(messages).dataTable;
+  const { table, status, rows } = model;
+  return (
+    <Table
+      aria-label={label}
+      aria-busy={model.busy || status === "pending" || undefined}
+      aria-rowcount={model.total !== undefined ? model.total + 1 : -1}
+      containerClassName="rounded-lg border border-border"
+    >
+      <TableHeader>
+        {table.getHeaderGroups().map((group) => (
+          <TableRow key={group.id} aria-rowindex={1} className="can-hover:hover:bg-transparent">
+            {group.headers.map((header) => {
+              const sorted = header.column.getIsSorted();
+              const meta = header.column.columnDef.meta;
+              return (
+                <TableHead
+                  key={header.id}
+                  aria-sort={
+                    sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : undefined
+                  }
+                  className={cn(meta?.align === "end" && "text-right", meta?.className)}
+                >
+                  {header.isPlaceholder ? null : <SortHeader header={header} />}
+                </TableHead>
+              );
+            })}
+            {actions && (
+              <TableHead className="w-0">
+                <span className="sr-only">{t.actions}</span>
+              </TableHead>
+            )}
+          </TableRow>
+        ))}
+      </TableHeader>
+      <TableBody className={cn(status === "pending" && "pending-in")}>
+        {status === "pending" ? (
+          <SkeletonRows
+            columns={table.getVisibleLeafColumns()}
+            rows={model.size}
+            actions={actions}
+          />
+        ) : (
+          rows.map((row, i) => {
+            const rowActions = actionsOf(row);
+            return (
+              <RowContextMenu key={row.id} row={row.original} actions={rowActions}>
+                <TableRow
+                  tabIndex={-1}
+                  data-row-id={row.id}
+                  aria-rowindex={model.offset + i + 2}
+                  className={cn(fresh.has(row.id) && "row-in", model.busy && "opacity-60")}
+                >
+                  {row.getVisibleCells().map((cell) => (
+                    <TableCell key={cell.id} className={cellClass(cell)}>
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </TableCell>
+                  ))}
+                  {actions && (
+                    <TableCell className="w-0 py-2 text-right">
+                      <RowActionsMenu
+                        row={row.original}
+                        actions={rowActions}
+                        rowLabel={nameOf(row)}
+                      />
+                    </TableCell>
+                  )}
+                </TableRow>
+              </RowContextMenu>
+            );
+          })
+        )}
+      </TableBody>
+    </Table>
+  );
+}
+
+/** Below `md`: cards once the rows are here, two-line placeholders until then. */
+function PhoneRows<T>(props: RowsProps<T>) {
+  if (props.model.status === "ready") return <Cards {...props} />;
+  return (
+    <ul
+      aria-hidden="true"
+      className="pending-in divide-y divide-rule rounded-lg border border-border"
+    >
+      {Array.from({ length: Math.min(props.model.size, 20) }, (_, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: placeholders have no identity
+        <li key={i} className="flex flex-col gap-2 px-4 py-3">
+          <Skeleton className="h-4 w-2/3" />
+          <Skeleton className="h-3 w-1/2" />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Below `md`: each row a card, its title cell first, its meta cells under it, the kebab on the right. */
+function Cards<T>({ model, label, actionsOf, nameOf, fresh }: RowsProps<T>) {
   const visible = model.table.getVisibleLeafColumns();
   const title =
     visible.find((c) => c.columnDef.meta?.priority === 1)?.id ?? visible[0]?.id ?? undefined;

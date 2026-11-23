@@ -32,17 +32,19 @@ export function FacetedFilter<T>({
   const t = useMessages(messages).dataTable;
   const language = useLanguage();
   const picked = model.selected(filter.id);
+  const on = new Set(picked);
   const counts = model.counts(filter.id);
   const toggle = (value: string) => {
     if (filter.single) {
-      model.setFilter(filter.id, picked.includes(value) ? [] : [value]);
+      model.setFilter(filter.id, on.has(value) ? [] : [value]);
       return;
     }
-    const next = picked.includes(value) ? picked.filter((v) => v !== value) : [...picked, value];
+    const next = new Set(on);
+    if (!next.delete(value)) next.add(value);
     // Kept in the options' order, so the URL is the same whatever the order of the clicks.
     model.setFilter(
       filter.id,
-      filter.options.map((o) => o.value).filter((v) => next.includes(v)),
+      filter.options.map((o) => o.value).filter((v) => next.has(v)),
     );
   };
   return (
@@ -70,7 +72,7 @@ export function FacetedFilter<T>({
             <CommandEmpty>{t.noOptions}</CommandEmpty>
             <CommandGroup>
               {filter.options.map((option) => {
-                const on = picked.includes(option.value);
+                const checked = on.has(option.value);
                 const count = counts?.get(option.value);
                 const Icon = option.icon;
                 return (
@@ -78,7 +80,7 @@ export function FacetedFilter<T>({
                     key={option.value}
                     value={option.label}
                     keywords={[option.value]}
-                    aria-checked={on}
+                    aria-checked={checked}
                     onSelect={() => toggle(option.value)}
                   >
                     <span
@@ -86,12 +88,12 @@ export function FacetedFilter<T>({
                       className={cn(
                         "flex size-4 flex-none items-center justify-center border transition-colors duration-(--dur-fast)",
                         filter.single ? "rounded-full" : "rounded-sm",
-                        on
+                        checked
                           ? "border-selection bg-selection text-route-foreground"
                           : "border-input bg-background",
                       )}
                     >
-                      {on &&
+                      {checked &&
                         (filter.single ? (
                           <span className="size-1.5 rounded-full bg-current" />
                         ) : (
