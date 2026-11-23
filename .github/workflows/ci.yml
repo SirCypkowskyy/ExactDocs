@@ -1,17 +1,30 @@
 name: CI
 
+# Pull requests and pushes run the fast checks only (#507), as parallel jobs with no service
+# container and no image build: lint and types, the pytest suite in shards, the behave scenarios
+# that need no service, and the web client. "Python (ruff, ty, pytest, behave)" waits for the
+# Python jobs and fails if one did, so branch protection keeps its required check.
+#
+# The integration and end-to-end jobs (service containers, Docker images, uvx and the browser
+# test) are in integration.yml. They run on a pull request labelled `run integration`, on a manual
+# run of this workflow with the input `integration`, and in every release (docs/releasing.md).
+#
 # Runners (docs/releasing.md "CI/CD and runners"), switched by the repository variable RUNNER_MODE
 # (Settings -> Secrets and variables -> Actions -> Variables):
 #   hybrid (default, also when unset): every job on GitHub-hosted ubuntu-24.04 (amd64).
 #   self-hosted (when the GitHub-hosted minutes ran out): every job on the self-hosted ARM64
-#     runner [self-hosted, linux, ARM64, exactdocs]. Pinecone Local is amd64-only, so its service
-#     is not started and its cases skip; the libSQL local-file cases skip without the x86-only
-#     `libsql` wheel; every other service image is multi-arch. The images are built for arm64.
+#     runner [self-hosted, linux, ARM64, exactdocs], and pytest in two shards instead of six:
+#     there are two runners.
 on:
   pull_request:
   push:
     branches: [main, develop]
   workflow_dispatch:
+    inputs:
+      integration:
+        description: Also run the integration jobs (service containers, Docker images, uvx and the browser test)
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -24,274 +37,162 @@ env:
   FORCE_COLOR: "1"
 
 jobs:
-  python:
-    name: Python (ruff, ty, pytest, behave)
+  lint:
+    name: Lint (ruff, ty, hadolint)
     runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
-    # GitHub-hosted (#468): a smaller machine than the old self-hosted VM. With the E14 backends'
-    # service containers (#351) pytest alone took 53 minutes.
-    timeout-minutes: 120
-    # PostgreSQL for the adapter contract tests and the @postgres scenarios (#103): ParadeDB, which
-    # also has pg_search and pgvector. A service container on the runner's own Docker, on a
-    # free host port. Its POSTGRES_USER is a superuser: the tests create a database per test, and
-    # a role without CREATEDB for the scenario that needs one.
-    services:
-      postgres:
-        image: paradedb/paradedb:0.26.3-pg17@sha256:950f68abebc78e28fd2ecfc8ed915aa29d07b5dd8cba25b2f513ca4e211dda70
-        env:
-          POSTGRES_USER: exactdocs
-          POSTGRES_PASSWORD: exactdocs-ci
-          POSTGRES_DB: exactdocs
-        ports:
-          - 5432/tcp
-        options: >-
-          --health-cmd "pg_isready -h 127.0.0.1 -U exactdocs -d exactdocs"
-          --health-interval 2s --health-timeout 5s --health-retries 30
-      # #279: PgBouncer in transaction mode in front of that server (every database, as
-      # `exactdocs`), for the pooler scenario and tests (EXACTDOCS_TEST_PGBOUNCER_URL). It runs
-      # DISCARD ALL after every transaction, so session state never survives to the next one,
-      # whichever server connection that gets: the start-up probe must warn, every time.
-      pgbouncer:
-        image: edoburu/pgbouncer:v1.26.1-p0@sha256:488422e38cff912895d0d65d8963fcd306e6ac589a724398b6eb8e294e94d624
-        env:
-          DB_HOST: postgres
-          DB_USER: exactdocs
-          DB_PASSWORD: exactdocs-ci
-          AUTH_TYPE: scram-sha-256
-          POOL_MODE: transaction
-          SERVER_RESET_QUERY: DISCARD ALL
-          SERVER_RESET_QUERY_ALWAYS: "1"
-          MAX_PREPARED_STATEMENTS: "200"
-        ports:
-          - 5432/tcp
-        options: >-
-          --health-cmd "pg_isready -h 127.0.0.1 -U exactdocs -d exactdocs"
-          --health-interval 2s --health-timeout 5s --health-retries 30
-      # #355: Qdrant, the vector backend's contract tests and scenario (EXACTDOCS_TEST_QDRANT_URL),
-      # pinned to the version the `qdrant` extra's client is tested with. It requires an API key,
-      # so the key is used on every call (and refused when wrong). Up long before the tests run.
-      qdrant:
-        image: qdrant/qdrant:v1.20.0@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2
-        env:
-          QDRANT__SERVICE__API_KEY: exactdocs-ci
-          QDRANT__TELEMETRY_DISABLED: "true"
-        ports:
-          - 6333/tcp
-      # #354: the external index backends' contract suites, ranking suite and scenario run against
-      # these single-node clusters (EXACTDOCS_TEST_ELASTICSEARCH_URL / _OPENSEARCH_URL). Security
-      # is off (the adapters' TLS and sign-in options are the clients' own); Elasticsearch runs a
-      # trial licence so its RRF retriever (native hybrid) answers. 512 MB of heap each.
-      elasticsearch:
-        image: docker.elastic.co/elasticsearch/elasticsearch:9.5.6@sha256:79b4f1de4c15e6eca824723086a51e5934406d614d410cc11be77748cafac537
-        env:
-          discovery.type: single-node
-          xpack.security.enabled: "false"
-          xpack.license.self_generated.type: trial
-          xpack.ml.enabled: "false"
-          cluster.routing.allocation.disk.threshold_enabled: "false"
-          ES_JAVA_OPTS: -Xms512m -Xmx512m
-        ports:
-          - 9200/tcp
-        options: >-
-          --health-cmd "curl -fs http://127.0.0.1:9200/_cluster/health?wait_for_status=yellow"
-          --health-interval 5s --health-timeout 5s --health-retries 40
-      opensearch:
-        image: opensearchproject/opensearch:3.8.0@sha256:fafe3fc3587088674669235575aa166228c48bdb940294a8cdbbc1da75236a40
-        env:
-          discovery.type: single-node
-          DISABLE_SECURITY_PLUGIN: "true"
-          DISABLE_INSTALL_DEMO_CONFIG: "true"
-          cluster.routing.allocation.disk.threshold_enabled: "false"
-          OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
-        ports:
-          - 9200/tcp
-        options: >-
-          --health-cmd "curl -fs http://127.0.0.1:9200/_cluster/health?wait_for_status=yellow"
-          --health-interval 5s --health-timeout 5s --health-retries 40
-      # #361: Chroma, the vector backend's contract tests and scenario over HTTP
-      # (EXACTDOCS_TEST_CHROMA_URL), pinned to the version of the `chroma` extras' clients. The
-      # embedded client's cases need no server and run everywhere. Up long before the tests run.
-      chroma:
-        image: chromadb/chroma:1.5.9@sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6
-        ports:
-          - 8000/tcp
-      # #364: Redis 8 with its Query Engine, the search and vector backend's contract tests and
-      # scenario (EXACTDOCS_TEST_REDIS_URL), pinned to an exact version. A service takes no
-      # command line, so the default user has no password: the credentials test adds an ACL user
-      # with one and signs in as it.
-      redis:
-        image: redis:8.10.3@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53
-        ports:
-          - 6379/tcp
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 2s --health-timeout 5s --health-retries 30
-      # #363: MongoDB with Atlas Search and Vector Search (mongot) in one container, for the
-      # MongoDB backend's contract tests and scenario (EXACTDOCS_TEST_MONGODB_URL), pinned to an
-      # exact version (multi-arch). A one-node replica set without
-      # authentication; directConnection because the node names itself by its container's host.
-      mongodb:
-        image: mongodb/mongodb-atlas-local:9.0.8@sha256:747a6c6b37b9358b45d9ecc63e4b8b6d59f8d11896d1c75f967f2520e12f4947
-        ports:
-          - 27017/tcp
-        options: >-
-          --health-cmd "/usr/local/bin/runner healthcheck"
-          --health-interval 2s --health-timeout 30s --health-retries 90
-      # #362: Pinecone Local's single-index emulator, for the Pinecone backend's contract tests
-      # and scenario (EXACTDOCS_TEST_PINECONE_URL). It ignores sparse values: native hybrid stays
-      # with the manual pinecone.yml workflow on a real index and the adapter's stand-in tests.
-      # amd64 only: on the ARM64 runner (RUNNER_MODE self-hosted) the image is empty, so the
-      # service does not start, the URL below is empty and those cases skip.
-      pinecone:
-        image: ${{ vars.RUNNER_MODE != 'self-hosted' && 'ghcr.io/pinecone-io/pinecone-index:v1.0.0.rc0@sha256:d60708292452e1e1d0740da86f653706a73b3682f302e1f0c18908f59e7ec7e0' || '' }}
-        env:
-          PORT: "5081"
-          INDEX_TYPE: serverless
-          VECTOR_TYPE: dense
-          DIMENSION: "256"
-          METRIC: dotproduct
-        ports:
-          - 5081/tcp
+    timeout-minutes: 20
     steps:
-      # The service images and the backends' extras (#351) fill the ~14 GB a hosted runner starts
-      # with; MongoDB refuses writes under 500 MB free. Drop preinstalled SDKs first (about 20 GB;
-      # hosted runners only).
-      - name: Free disk space
-        if: runner.environment == 'github-hosted'
-        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
         with:
           enable-cache: true
       - name: Install
         run: uv sync --locked
-      # #244: Supabase's own PostgreSQL image, with SSL on (a throwaway certificate), for the
-      # @supabase scenarios and the ranking suite: its `postgres` role is no superuser, as on a
-      # Supabase project, and each scenario sets up a role of its own with deploy/supabase.sql.
-      - name: Start supabase/postgres
-        run: |
-          url=$(deploy/supabase-test-db.sh "exactdocs-supabase-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}")
-          password=${url#postgresql://postgres:}
-          echo "::add-mask::${password%%@*}" # on its own: a log may show it outside the URL
-          echo "::add-mask::$url"
-          echo "EXACTDOCS_TEST_SUPABASE_URL=$url" >> "$GITHUB_ENV"
-      # #360: the Milvus standalone server (embedded etcd, local storage), for the vector backend's
-      # contract tests and scenario (EXACTDOCS_TEST_MILVUS_URL); Milvus Lite's cases need no
-      # server. A step: a service container cannot be given its `milvus run standalone` command.
-      - name: Start Milvus
-        run: |
-          url=$(deploy/milvus-test-server.sh "exactdocs-milvus-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}")
-          echo "EXACTDOCS_TEST_MILVUS_URL=$url" >> "$GITHUB_ENV"
-      # #358: a libSQL server (sqld, the pinned ghcr.io/tursodatabase/libsql-server image) with JWT
-      # auth, for the libSQL backend's contract tests and scenario. Started here, not as a service:
-      # its key is made per run, and the token signed with it is masked.
-      - name: Start libSQL server
-        run: |
-          { read -r url; read -r token; } < <(deploy/libsql-test-server.sh "exactdocs-libsql-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}")
-          echo "::add-mask::$token"
-          {
-            echo "EXACTDOCS_TEST_LIBSQL_URL=$url"
-            echo "EXACTDOCS_TEST_LIBSQL_AUTH_TOKEN=$token"
-            echo "EXACTDOCS_REQUIRE_LIBSQL=1" # the libSQL server cases never skip here
-          } >> "$GITHUB_ENV"
-      # #474: a second libSQL server, empty, for ExactDocs' own database: the persistence suite runs
-      # on it below (each SQLite case wipes it), apart from the index backend's tables above.
-      - name: Start libSQL server (database)
-        run: |
-          { read -r url; read -r token; } < <(deploy/libsql-test-server.sh "exactdocs-libsql-db-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}")
-          echo "::add-mask::$token"
-          echo "LIBSQL_DATABASE_URL=$url" >> "$GITHUB_ENV"
-          echo "LIBSQL_DATABASE_TOKEN=$token" >> "$GITHUB_ENV"
       - name: ruff format
         run: uv run ruff format --check --diff .
       - name: ruff check
         run: uv run ruff check --output-format=github .
       - name: ty
         run: uv run ty check --output-format=github
-      - name: pytest (unit, integration, architecture; adapters on SQLite and PostgreSQL)
+      # Lints the Dockerfile; no image is built.
+      - name: hadolint
+        run: |
+          docker run --rm -i -v "$PWD/.hadolint.yaml:/.config/hadolint.yaml:ro" \
+            hadolint/hadolint:v2.14.0@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e \
+            < deploy/Dockerfile
+
+  # The suite without the integration tests (deselected by default: tests/fixtures/integration.py),
+  # split by pytest-split into groups of about the same time, from the durations recorded in
+  # .test_durations (refresh it: docs/releasing.md "Fast and integration tests"). Each shard writes
+  # its coverage data; the `python` job combines them.
+  pytest:
+    name: pytest (${{ matrix.group }}/${{ strategy.job-total }})
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        group: ${{ fromJSON(vars.RUNNER_MODE == 'self-hosted' && '[1, 2]' || '[1, 2, 3, 4, 5, 6]') }}
+    # Every service variable names a port where nothing listens: a test that needs a service but
+    # lacks the `integration` marker fails here, at once, instead of passing by skipping.
+    env:
+      EXACTDOCS_TEST_POSTGRES_URL: postgresql://exactdocs:unused@127.0.0.1:9/exactdocs
+      EXACTDOCS_TEST_PG_SEARCH: "1"
+      EXACTDOCS_TEST_PGBOUNCER_URL: postgresql://exactdocs:unused@127.0.0.1:9/exactdocs
+      EXACTDOCS_TEST_SUPABASE_URL: postgresql://postgres:unused@127.0.0.1:9/postgres
+      EXACTDOCS_TEST_LIBSQL_DATABASE_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_LIBSQL_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_QDRANT_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_ELASTICSEARCH_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_OPENSEARCH_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_CHROMA_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_REDIS_URL: redis://127.0.0.1:9
+      EXACTDOCS_TEST_MILVUS_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_MONGODB_URL: mongodb://127.0.0.1:9/?directConnection=true
+      EXACTDOCS_TEST_PINECONE_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_AZURE_SEARCH_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_MODELS_DIR: /nonexistent/models
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked
+      - name: pytest (unit, architecture, adapters on SQLite and the embedded backends)
         env:
-          EXACTDOCS_TEST_POSTGRES_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/exactdocs
-          EXACTDOCS_REQUIRE_POSTGRES: "1"
-          EXACTDOCS_TEST_PGBOUNCER_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.pgbouncer.ports['5432'] }}/exactdocs
-          EXACTDOCS_REQUIRE_PGBOUNCER: "1" # the pooler tests and scenario never skip here
-          EXACTDOCS_TEST_PG_SEARCH: "1" # the server has pg_search: the BM25 variants run (#104)
-          EXACTDOCS_TEST_QDRANT_URL: http://127.0.0.1:${{ job.services.qdrant.ports['6333'] }}
-          EXACTDOCS_TEST_QDRANT_API_KEY: exactdocs-ci
-          EXACTDOCS_REQUIRE_QDRANT: "1" # the Qdrant cases and scenario never skip here (#355)
-          EXACTDOCS_TEST_ELASTICSEARCH_URL: http://127.0.0.1:${{ job.services.elasticsearch.ports['9200'] }}
-          EXACTDOCS_TEST_OPENSEARCH_URL: http://127.0.0.1:${{ job.services.opensearch.ports['9200'] }}
-          EXACTDOCS_TEST_CHROMA_URL: http://127.0.0.1:${{ job.services.chroma.ports['8000'] }}
-          EXACTDOCS_REQUIRE_CHROMA: "1" # the Chroma HTTP cases and scenario never skip here (#361)
-          EXACTDOCS_TEST_REDIS_URL: redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}
-          EXACTDOCS_REQUIRE_REDIS: "1" # the Redis cases and scenario never skip here (#364)
-          EXACTDOCS_REQUIRE_MILVUS: "1" # the Milvus server cases and scenario never skip here (#360)
-          EXACTDOCS_TEST_MONGODB_URL: mongodb://127.0.0.1:${{ job.services.mongodb.ports['27017'] }}/?directConnection=true
-          EXACTDOCS_REQUIRE_MONGODB: "1" # the MongoDB cases and scenario never skip here (#363)
-          EXACTDOCS_TEST_PINECONE_URL: ${{ vars.RUNNER_MODE != 'self-hosted' && format('http://127.0.0.1:{0}', job.services.pinecone.ports['5081']) || '' }}
-        run: uv run pytest --cov=exactdocs --cov=exactdocs_kernel --cov-report=term-missing --junitxml=reports/pytest.xml
+          COVERAGE_FILE: reports/coverage/.coverage.${{ matrix.group }}
+        run: >-
+          uv run pytest --splits ${{ strategy.job-total }} --group ${{ matrix.group }}
+          --splitting-algorithm least_duration
+          --cov=exactdocs --cov=exactdocs_kernel --cov-report=
+          --junitxml=reports/pytest-${{ matrix.group }}.xml
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: pytest-${{ matrix.group }}
+          path: reports/
+          include-hidden-files: true # the coverage data file
+          retention-days: 3
+
+  # The scenarios that need no service; the @integration ones are left out (features/environment.py).
+  behave:
+    name: behave (no service)
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    env:
+      EXACTDOCS_TEST_POSTGRES_URL: postgresql://exactdocs:unused@127.0.0.1:9/exactdocs
+      EXACTDOCS_TEST_PG_SEARCH: "1"
+      EXACTDOCS_TEST_PGBOUNCER_URL: postgresql://exactdocs:unused@127.0.0.1:9/exactdocs
+      EXACTDOCS_TEST_SUPABASE_URL: postgresql://postgres:unused@127.0.0.1:9/postgres
+      EXACTDOCS_TEST_LIBSQL_DATABASE_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_LIBSQL_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_QDRANT_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_ELASTICSEARCH_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_OPENSEARCH_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_CHROMA_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_REDIS_URL: redis://127.0.0.1:9
+      EXACTDOCS_TEST_MILVUS_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_MONGODB_URL: mongodb://127.0.0.1:9/?directConnection=true
+      EXACTDOCS_TEST_PINECONE_URL: http://127.0.0.1:9
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked
       - name: behave (acceptance)
-        env:
-          EXACTDOCS_TEST_POSTGRES_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/exactdocs
-          EXACTDOCS_REQUIRE_POSTGRES: "1"
-          EXACTDOCS_TEST_PGBOUNCER_URL: postgresql://exactdocs:exactdocs-ci@127.0.0.1:${{ job.services.pgbouncer.ports['5432'] }}/exactdocs
-          EXACTDOCS_REQUIRE_PGBOUNCER: "1" # the pooler tests and scenario never skip here
-          EXACTDOCS_TEST_PG_SEARCH: "1"
-          EXACTDOCS_REQUIRE_SUPABASE: "1" # the @supabase scenarios never skip here
-          EXACTDOCS_TEST_LIBSQL_DATABASE_URL: ${{ env.LIBSQL_DATABASE_URL }} # the @libsql_database scenario (#474)
-          EXACTDOCS_TEST_LIBSQL_DATABASE_AUTH_TOKEN: ${{ env.LIBSQL_DATABASE_TOKEN }}
-          EXACTDOCS_TEST_QDRANT_URL: http://127.0.0.1:${{ job.services.qdrant.ports['6333'] }}
-          EXACTDOCS_TEST_QDRANT_API_KEY: exactdocs-ci
-          EXACTDOCS_REQUIRE_QDRANT: "1"
-          EXACTDOCS_TEST_ELASTICSEARCH_URL: http://127.0.0.1:${{ job.services.elasticsearch.ports['9200'] }}
-          EXACTDOCS_TEST_OPENSEARCH_URL: http://127.0.0.1:${{ job.services.opensearch.ports['9200'] }}
-          EXACTDOCS_TEST_CHROMA_URL: http://127.0.0.1:${{ job.services.chroma.ports['8000'] }}
-          EXACTDOCS_REQUIRE_CHROMA: "1"
-          EXACTDOCS_TEST_REDIS_URL: redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}
-          EXACTDOCS_REQUIRE_REDIS: "1"
-          EXACTDOCS_REQUIRE_MILVUS: "1"
-          EXACTDOCS_TEST_MONGODB_URL: mongodb://127.0.0.1:${{ job.services.mongodb.ports['27017'] }}/?directConnection=true
-          EXACTDOCS_REQUIRE_MONGODB: "1"
-          EXACTDOCS_TEST_PINECONE_URL: ${{ vars.RUNNER_MODE != 'self-hosted' && format('http://127.0.0.1:{0}', job.services.pinecone.ports['5081']) || '' }}
         run: uv run behave --format=progress --junit --junit-directory=reports/behave
-      # The shared ranking suite again, on Supabase's image (postgres_fts: it has no pg_search).
-      - name: Ranking suite on supabase/postgres
-        run: |
-          EXACTDOCS_TEST_POSTGRES_URL="$EXACTDOCS_TEST_SUPABASE_URL" EXACTDOCS_REQUIRE_POSTGRES=1 \
-            uv run pytest packages/exactdocs/tests/retrieval/ranking -k postgres_fts \
-            --junitxml=reports/pytest-supabase-ranking.xml
-      # #474: the persistence contract suite again, its SQLite cases on a libSQL server (sqld) as
-      # ExactDocs' database (EXACTDOCS_TEST_LIBSQL_DATABASE_URL; the known differences are skipped
-      # there, naming why).
-      - name: Persistence suite on libSQL
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: behave
+          path: reports/
+          retention-days: 3
+
+  # The required check (branch protection): waits for the Python jobs, fails unless every one
+  # passed, and combines the shards' coverage into one report.
+  python:
+    name: Python (ruff, ty, pytest, behave)
+    needs: [lint, pytest, behave]
+    if: ${{ !cancelled() }}
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7 # the sources the coverage report names
+      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: pytest-*
+          path: reports
+          merge-multiple: true
+      # coverage at the version uv.lock pins, without installing the project.
+      - name: Coverage, all shards combined
+        if: ${{ needs.pytest.result == 'success' }}
         env:
-          EXACTDOCS_TEST_LIBSQL_DATABASE_URL: ${{ env.LIBSQL_DATABASE_URL }}
-          EXACTDOCS_TEST_LIBSQL_DATABASE_AUTH_TOKEN: ${{ env.LIBSQL_DATABASE_TOKEN }}
+          COVERAGE_FILE: reports/coverage/.coverage
         run: |
-          uv run pytest -k sqlite --junitxml=reports/pytest-libsql-database.xml \
-            packages/exactdocs/tests/catalog packages/exactdocs/tests/identity \
-            packages/exactdocs/tests/ingestion packages/exactdocs/tests/retrieval \
-            packages/exactdocs/tests/bootstrap/test_secret_box.py \
-            packages/exactdocs/tests/bootstrap/test_cancel_real_backend.py \
-            packages/exactdocs/tests/bootstrap/test_identity_lists_api.py \
-            packages/exactdocs/tests/bootstrap/test_sources_texts_backends.py \
-            packages/exactdocs/tests/bootstrap/test_libsql_database.py
-      - name: Stop supabase/postgres
-        if: ${{ always() }}
-        run: docker rm -f "exactdocs-supabase-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null || true
-      - name: Stop Milvus
-        if: ${{ always() }}
-        run: docker rm -f "exactdocs-milvus-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null || true
-      - name: Stop libSQL server
-        if: ${{ always() }}
-        run: docker rm -f "exactdocs-libsql-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null || true
-      - name: Stop libSQL server (database)
-        if: ${{ always() }}
-        run: docker rm -f "exactdocs-libsql-db-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null || true
+          version=$(uv export --frozen --all-groups --no-hashes | sed -n 's/^coverage==\([^ ;]*\).*/\1/p')
+          uvx "coverage==$version" combine --keep reports/coverage
+          uvx "coverage==$version" report --show-missing --skip-covered
+          uvx "coverage==$version" report --format=total | xargs printf 'Total coverage: %s%%\n' \
+            | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
           name: python-reports
           path: reports/
+          include-hidden-files: true
           retention-days: 14
+      - name: Every Python job passed
+        if: ${{ always() }}
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$RESULTS" | jq -e 'all(.[]; .result == "success")' >/dev/null \
+            || { echo "::error::a Python job did not pass (above)"; exit 1; }
 
   web:
     name: Web (biome, fallow, react-doctor, vitest, build)
@@ -324,414 +225,8 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
-  image:
-    name: Docker image (lint, build, scan, smoke test)
-    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-      - name: hadolint
-        run: |
-          docker run --rm -i -v "$PWD/.hadolint.yaml:/.config/hadolint.yaml:ro" \
-            hadolint/hadolint:v2.14.0@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e \
-            < deploy/Dockerfile
-      # GitHub-hosted runners (#468) start with about 14 GB free; the image builds need more.
-      - name: Free disk space
-        if: runner.environment == 'github-hosted'
-        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
-      # The daemon's own BuildKit (driver "docker"): the image loads straight into the local
-      # store. On GitHub-hosted runners (#468) nothing is cached between runs.
-      - uses: docker/setup-buildx-action@v4
-        with:
-          driver: docker
-      - id: created
-        run: |
-          echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
-      - uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: deploy/Dockerfile
-          target: base
-          load: true
-          tags: exactdocs:ci
-          build-args: |
-            VERSION=0.0.0.dev0
-            REVISION=${{ github.sha }}
-            CREATED=${{ steps.created.outputs.at }}
-            DEBIAN_REFRESH=${{ steps.created.outputs.week }}
-      # RUN-02: size budgets, no ML package and no model weights (budgets and reasoning:
-      # docs/releasing.md). The -ai and -local variants: job image-variants.
-      - name: Image size budget, no ML package and no model files
-        run: python3 deploy/check_artifacts.py image exactdocs:ci base
-      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
-      - name: Wheel size budget, no model files, no ML dependencies
-        run: |
-          cid=$(docker create exactdocs:ci)
-          web_path=$(docker run --rm --entrypoint /app/.venv/bin/python exactdocs:ci \
-            -c 'import sysconfig; print(sysconfig.get_path("purelib") + "/exactdocs/_web")')
-          docker cp "$cid:$web_path" packages/exactdocs/src/exactdocs/_web
-          docker rm "$cid" >/dev/null
-          UV_DYNAMIC_VERSIONING_BYPASS=0.0.0.dev0 uv build --wheel --package exactdocs --out-dir "$RUNNER_TEMP/dist"
-          python3 deploy/check_artifacts.py wheel "$RUNNER_TEMP"/dist/exactdocs-*.whl
-      # Fails on a fixable CRITICAL/HIGH finding; accepted ones are in .trivyignore (docs/releasing.md).
-      - name: Trivy scan
-        uses: ./.github/actions/trivy-gate
-        with:
-          image: exactdocs:ci
-      # The release also ships amd64; on the GitHub-hosted runners (#468) this stage is native, on
-      # the ARM64 runner it runs under QEMU (apt-get, dpkg: no Python). Build just the
-      # runtime-tools stage and prove the tools run there.
-      - uses: docker/setup-qemu-action@v4
-        if: runner.arch == 'ARM64'
-        with:
-          platforms: amd64
-      - name: amd64 runtime-tools stage builds and runs git, ssh, tini
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: deploy/Dockerfile
-          platforms: linux/amd64
-          target: runtime-tools
-          load: true
-          tags: exactdocs:ci-amd64
-          build-args: |
-            VERSION=0.0.0.dev0
-            REVISION=${{ github.sha }}
-            CREATED=${{ steps.created.outputs.at }}
-            DEBIAN_REFRESH=${{ steps.created.outputs.week }}
-      - run: |
-          for tool in "git --version" "ssh -V" "tini --version"; do
-            # shellcheck disable=SC2086 # the command and its argument, split on purpose
-            docker run --rm --platform linux/amd64 --entrypoint ${tool%% *} exactdocs:ci-amd64 ${tool#* }
-          done
-      - name: Build a fixture docs repository
-        run: python3 packages/exactdocs/tests/fixtures/fixture_repo.py "$RUNNER_TEMP/fixture-repo"
-      - name: Smoke test (read-only rootfs, no capabilities)
-        run: |
-          flags=(--read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges)
-          # The fixture repository is owned by the runner user; the importer lets git read local
-          # repositories of other owners (safe.directory), so it is imported as it is.
-          # RUN-01: the clock covers docker run through the whole smoke flow, web UI and token
-          # checks included (the image is already built). No step needs the network (the only
-          # repository URL is file://); the default bridge does not enforce that.
-          docker volume rm -f exactdocs-ci-data >/dev/null  # a stale volume would not be a fresh instance
-          start=$(date +%s)
-          docker run -d --rm --name exactdocs-ci "${flags[@]}" -p 127.0.0.1::3000 \
-            -v exactdocs-ci-data:/data -v "$RUNNER_TEMP/fixture-repo:/fixture/docs-repo:ro" exactdocs:ci
-          trap 'docker logs exactdocs-ci; docker stop exactdocs-ci; docker volume rm exactdocs-ci-data || true' EXIT
-          port=$(docker port exactdocs-ci 3000/tcp | head -n1 | cut -d: -f2)
-          # setup, sign in, token, import the fixture, list/read, search, MCP query-docs (deploy/smoke.sh)
-          deploy/smoke.sh "http://127.0.0.1:${port}" file:///fixture/docs-repo /fixture/docs-repo v1.3.0 \
-            "$(git -C "$RUNNER_TEMP/fixture-repo" rev-parse v1.3.0)"
-          elapsed=$(( $(date +%s) - start ))
-          echo "docker run to end of smoke flow: ${elapsed}s (limit 300s)" | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
-          test "$elapsed" -lt 300
-          # Hardening as built: unprivileged, tini is PID 1, no pip, no setuid files.
-          test "$(docker exec exactdocs-ci id -u)" = 10001
-          test "$(docker exec exactdocs-ci cat /proc/1/comm)" = tini
-          docker exec exactdocs-ci sh -c '! command -v pip && test -z "$(find / -xdev -perm /6000 -type f 2>/dev/null)"'
-          # What the importer needs: ssh, and git reading a repository over file://. The fixture is
-          # owned by the runner user, so this stand-alone check needs safe.directory (the importer
-          # sets it for its own git calls).
-          docker exec exactdocs-ci ssh -V
-          docker run --rm "${flags[@]}" -v "$RUNNER_TEMP/fixture-repo:/fixture:ro" --entrypoint sh exactdocs:ci \
-            -c 'git config --global safe.directory "*" && git ls-remote file:///fixture | grep -q refs/heads/'
-      # #103: the README's PostgreSQL example as written (two server processes on ParadeDB), with
-      # this build's image and the fixture repository mounted; the smoke flow runs against it.
-      - name: PostgreSQL compose example (README) runs the smoke flow
-        env:
-          EXACTDOCS_IMAGE: exactdocs:ci
-          COMPOSE_PROJECT_NAME: exactdocs-ci-pg
-        run: |
-          # GitHub-hosted runners (#468) have the compose plugin; a self-hosted VM without it gets a
-          # standalone, pinned compose binary in this job's temp directory instead, with a warning.
-          compose=(docker compose)
-          if ! docker compose version >/dev/null 2>&1; then
-            echo "::warning::this runner lacks the docker compose plugin: install docker-compose-v2 on the VM (deploy/runners/README.md); using a pinned standalone compose for this job"
-            # docker/compose v2.32.4 (released 2025-01), linux-aarch64 (the runners are ARM64);
-            # sha256 from the release's docker-compose-linux-aarch64.sha256.
-            curl -fsSL -o "$RUNNER_TEMP/docker-compose" \
-              https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-aarch64
-            echo "0c4591cf3b1ed039adcd803dbbeddf757375fc08c11245b0154135f838495a2f  $RUNNER_TEMP/docker-compose" \
-              | sha256sum -c -
-            chmod +x "$RUNNER_TEMP/docker-compose"
-            compose=("$RUNNER_TEMP/docker-compose")
-          fi
-          POSTGRES_PASSWORD=$(openssl rand -hex 16)
-          EXACTDOCS_SECRET_KEY=$(openssl rand -base64 32)
-          export POSTGRES_PASSWORD EXACTDOCS_SECRET_KEY
-          cat > "$RUNNER_TEMP/compose.fixture.yaml" <<YAML
-          services:
-            exactdocs:
-              volumes: ["$RUNNER_TEMP/fixture-repo:/fixture/docs-repo:ro"]
-          YAML
-          compose+=(-f deploy/compose.postgres.yaml -f "$RUNNER_TEMP/compose.fixture.yaml")
-          trap '"${compose[@]}" logs; "${compose[@]}" down -v' EXIT
-          "${compose[@]}" up -d --wait --wait-timeout 180
-          deploy/smoke.sh http://127.0.0.1:3000 file:///fixture/docs-repo /fixture/docs-repo v1.3.0 \
-            "$(git -C "$RUNNER_TEMP/fixture-repo" rev-parse v1.3.0)"
-          # Both server processes run DBOS, each under an executor slot of its own.
-          slots=$("${compose[@]}" exec -T db psql -U exactdocs -d exactdocs -Atc \
-            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = 1163412547 AND objsubid = 2")
-          test "$slots" = 2 || { echo "::error::expected 2 executor slots, got $slots"; exit 1; }
-
-  # #246: the two AI variants of the image, from the same Dockerfile (targets `ai` and `local`),
-  # one after the other in one job: `local` builds on `ai`'s layers, and the runners are two.
-  # Each gets its own size budget, package and model-file check, Trivy scan and smoke test; the
-  # `-local` one also searches with `--network none`, on the models baked into the image.
-  image-variants:
-    name: Docker image variants (-ai, -local)
-    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v7
-      # GitHub-hosted runners (#468) start with about 14 GB free; the image builds need more.
-      - name: Free disk space
-        if: runner.environment == 'github-hosted'
-        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
-      - uses: docker/setup-buildx-action@v4
-        with:
-          driver: docker
-      - id: created
-        run: |
-          echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
-      - name: Build -ai
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: deploy/Dockerfile
-          target: ai
-          load: true
-          tags: exactdocs:ci-ai
-          build-args: |
-            VERSION=0.0.0.dev0
-            REVISION=${{ github.sha }}
-            CREATED=${{ steps.created.outputs.at }}
-            DEBIAN_REFRESH=${{ steps.created.outputs.week }}
-      # The default models are pulled at their pinned revisions into a BuildKit cache mount
-      # (about 160 MB); on GitHub-hosted runners (#468) every run downloads them.
-      - name: Build -local
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: deploy/Dockerfile
-          target: local
-          load: true
-          tags: exactdocs:ci-local
-          build-args: |
-            VERSION=0.0.0.dev0
-            REVISION=${{ github.sha }}
-            CREATED=${{ steps.created.outputs.at }}
-            DEBIAN_REFRESH=${{ steps.created.outputs.week }}
-      # Budgets and reasoning: docs/releasing.md. -ai: no ML package but pydantic-ai, no model
-      # file; -local: the default models at their pinned revisions, read-only. Neither: aiohttp.
-      - name: Image size budgets, packages and models
-        if: ${{ !cancelled() }}
-        run: |
-          status=0
-          python3 deploy/check_artifacts.py image exactdocs:ci-ai ai || status=1
-          python3 deploy/check_artifacts.py image exactdocs:ci-local local || status=1
-          exit "$status"
-      - name: Trivy scan (-ai)
-        if: ${{ !cancelled() }}
-        uses: ./.github/actions/trivy-gate
-        with:
-          image: exactdocs:ci-ai
-          report-name: trivy-report-ai
-      - name: Trivy scan (-local)
-        if: ${{ !cancelled() }}
-        uses: ./.github/actions/trivy-gate
-        with:
-          image: exactdocs:ci-local
-          report-name: trivy-report-local
-      - name: Build a fixture docs repository
-        if: ${{ !cancelled() }}
-        run: python3 packages/exactdocs/tests/fixtures/fixture_repo.py "$RUNNER_TEMP/fixture-repo"
-      # The same flow as the base image's smoke test, with no model configured: both variants
-      # stay BM25 servers until a role is set (RUN-02).
-      - name: Smoke test -ai and -local (read-only rootfs, no capabilities)
-        if: ${{ !cancelled() }}
-        run: |
-          flags=(--read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges)
-          sha=$(git -C "$RUNNER_TEMP/fixture-repo" rev-parse v1.3.0)
-          # The loop stops each container (--rm removes it); the trap only cleans up after a
-          # failure, so a container that is already gone is no error.
-          trap 'for n in ai local; do docker logs "exactdocs-ci-$n" 2>&1 | tail -n 50 || true; docker stop "exactdocs-ci-$n" >/dev/null 2>&1 || true; done' EXIT
-          for variant in ai local; do
-            name="exactdocs-ci-$variant"
-            echo "::group::$variant"
-            docker run -d --rm --name "$name" "${flags[@]}" -p 127.0.0.1::3000 \
-              -v "$RUNNER_TEMP/fixture-repo:/fixture/docs-repo:ro" "exactdocs:ci-$variant"
-            port=$(docker port "$name" 3000/tcp | head -n1 | cut -d: -f2)
-            deploy/smoke.sh "http://127.0.0.1:${port}" file:///fixture/docs-repo /fixture/docs-repo v1.3.0 "$sha"
-            test "$(docker exec "$name" id -u)" = 10001
-            docker exec "$name" sh -c '! command -v pip && test -z "$(find / -xdev -perm /6000 -type f 2>/dev/null)"'
-            docker stop "$name"
-            echo "::endgroup::"
-          done
-      # #242: the vector store needs a Python that loads SQLite extensions: the image's own
-      # (python:3.14-slim-trixie) with the sqlite-vec of the [ai] extra, natively: amd64 on the
-      # GitHub-hosted runners (#468), arm64 on the self-hosted runner (RUNNER_MODE self-hosted).
-      # Never under QEMU: the image's python3 crashes there (#257).
-      - name: sqlite-vec loads and searches in the -ai image's Python
-        if: ${{ !cancelled() }}
-        run: |
-          docker run --rm -i --network none --read-only --tmpfs /tmp --cap-drop ALL \
-            --entrypoint python exactdocs:ci-ai - < deploy/check_sqlite_vec.py
-      # The scenario of #246: no network at all, the fixture imported and searched in hybrid
-      # mode with the default embedding model and reranker of the image. The reranker's timeout
-      # is raised as in the release's local-models eval: a runner's CPU may take more than 5 s
-      # for 32 long candidates, and a timed-out rerank would say `reranked: false`.
-      - name: -local with --network none searches hybrid, reranked
-        if: ${{ !cancelled() }}
-        run: |
-          docker run -d --rm --name exactdocs-ci-offline --network none \
-            --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
-            -e EXACTDOCS_AI__PROVIDERS__LOCAL__KIND=local \
-            -e EXACTDOCS_AI__EMBEDDING__MODEL=local:BAAI/bge-small-en-v1.5 \
-            -e EXACTDOCS_AI__RERANKER__MODEL=local:Xenova/ms-marco-MiniLM-L-6-v2 \
-            -e EXACTDOCS_AI__RERANKER__TIMEOUT=30 \
-            -v "$RUNNER_TEMP/fixture-repo:/fixture/docs-repo:ro" exactdocs:ci-local
-          trap 'docker logs exactdocs-ci-offline 2>&1 | tail -n 80 || true; docker stop exactdocs-ci-offline >/dev/null 2>&1 || true' EXIT
-          test "$(docker inspect -f '{{.HostConfig.NetworkMode}}' exactdocs-ci-offline)" = none
-          docker exec -i exactdocs-ci-offline python - file:///fixture/docs-repo /fixture/docs-repo v1.3.0 \
-            < deploy/smoke_local.py
-      # Drop this run's variant images (about 1.4 GB together); harmless on a fresh hosted runner.
-      - name: Remove the variant images
-        if: always()
-        run: |
-          docker image rm exactdocs:ci-ai exactdocs:ci-local >/dev/null 2>&1 || true
-          docker image prune -f
-
-  # RUN-01: what a `uvx exactdocs serve` user gets. Builds the wheels with the web UI inside, starts
-  # them the way uvx does, upgrades a previous release's data directory with them (RUN-04), then
-  # drives the whole loop in Chromium (e2e/, one test).
-  #
-  # setup-uv keeps uv's cache between runs, and uv reuses a cached wheel of the same
-  # file name: with one version for every build, uvx served an older build. So the wheels get a
-  # version unique to the commit, and every step that runs them uses a cache that starts empty in
-  # this job (runner.temp is per job). Not --no-cache: the --offline step needs a filled cache.
-  uvx:
-    name: uvx smoke, upgrade + browser end-to-end (built wheel)
-    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-tags: true # only for a manual run on a tagged checkout: CI has no tag builds, and a PR's HEAD is the merge commit
-      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
-        with:
-          enable-cache: true
-      - uses: pnpm/action-setup@v6
-        with:
-          package_json_file: web/package.json
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: web/.nvmrc
-          cache: pnpm
-          cache-dependency-path: |
-            web/pnpm-lock.yaml
-            e2e/pnpm-lock.yaml
-      - name: Build the web UI into the package, then the wheels
-        run: |
-          (cd web && pnpm install --frozen-lockfile && pnpm build)
-          cp -r web/dist packages/exactdocs/src/exactdocs/_web
-          version="0.0.0.dev0+g${GITHUB_SHA::7}"
-          echo "WHEEL_VERSION=$version" >> "$GITHUB_ENV"
-          export UV_DYNAMIC_VERSIONING_BYPASS="$version"
-          uv build --wheel --package exactdocs-kernel --out-dir "$RUNNER_TEMP/dist"
-          uv build --wheel --package exactdocs --out-dir "$RUNNER_TEMP/dist"
-          python3 deploy/check_artifacts.py wheel "$RUNNER_TEMP"/dist/exactdocs-0*.whl
-      # What the build under test must report, taken from the checkout (not from that build).
-      - name: Alembic head of this checkout
-        run: |
-          head=$(python3 deploy/upgrade_check.py --print-head)
-          echo "ALEMBIC_HEAD=$head" | tee -a "$GITHUB_ENV"
-      # The cache above starts empty, so uvx resolves and downloads every dependency first: 40 s
-      # and more on this runner. Done here, on its own, the readiness wait below times only the
-      # server's startup (a few seconds), and the later steps reuse what this one installed.
-      - name: Install the wheels with uvx (resolve and download, before any server starts)
-        env:
-          UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache
-        run: |
-          start=$SECONDS
-          uvx --prerelease=allow --find-links "$RUNNER_TEMP/dist" --from "exactdocs==$WHEEL_VERSION" \
-            exactdocs --version
-          echo "uvx install: $((SECONDS - start))s"
-      - name: uvx exactdocs serve answers /api/health
-        env:
-          UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache
-        run: |
-          export EXACTDOCS_DATA_DIR="$RUNNER_TEMP/smoke-data"
-          port=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
-          log="$RUNNER_TEMP/smoke-server.log"
-          # --offline: installed by the step above, so nothing is downloaded inside the wait
-          uvx --offline --prerelease=allow --find-links "$RUNNER_TEMP/dist" --from "exactdocs==$WHEEL_VERSION" \
-            exactdocs serve --port "$port" >"$log" 2>&1 &
-          pid=$!
-          # on failure, show what the server said (or that it said nothing)
-          trap 'rc=$?; kill $pid 2>/dev/null || true; [ "$rc" = 0 ] || { echo "--- server log ---"; cat "$log"; }' EXIT
-          # readiness, not liveness: /api/health answers before the database does
-          start=$SECONDS ready=
-          for _ in $(seq 1 60); do
-            kill -0 "$pid" 2>/dev/null || { echo "::error::the server exited early"; exit 1; }
-            curl -fsS "http://127.0.0.1:$port/readyz" 2>/dev/null && { ready=1; break; }
-            sleep 1
-          done
-          [ -n "$ready" ] || { echo "::error::the server did not answer /readyz in 60 s"; exit 1; }
-          echo "serve to /readyz: $((SECONDS - start))s"
-          health=$(curl -fsS "http://127.0.0.1:$port/api/health")
-          echo "$health"
-          # the build under test, not a cached one: it migrated to this checkout's head
-          grep -q "\"schema_revision\":\"$ALEMBIC_HEAD\"" <<<"$health" \
-            || { echo "::error::schema_revision is not $ALEMBIC_HEAD: a stale wheel ran"; exit 1; }
-          curl -fsS "http://127.0.0.1:$port/" | grep -qi '<div id="root"'
-      - name: Without git on PATH, start fails with a clear message
-        env:
-          UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache
-        run: |
-          # only what uv and the generated entry point need; git is not linked
-          bin="$RUNNER_TEMP/no-git-bin"; mkdir "$bin"
-          for tool in uvx sh realpath dirname; do ln -s "$(command -v "$tool")" "$bin/$tool"; done
-          if out=$(timeout 120 env PATH="$bin" EXACTDOCS_DATA_DIR="$RUNNER_TEMP/nogit-data" uvx --offline --prerelease=allow \
-              --find-links "$RUNNER_TEMP/dist" --from "exactdocs==$WHEEL_VERSION" exactdocs serve 2>&1); then
-            echo "::error::serve started without git"; exit 1
-          fi
-          echo "$out"
-          grep -q "git is not installed" <<<"$out"
-      # RUN-04: a data directory written by the newest stable release (from PyPI) is migrated and
-      # served unchanged by these wheels, and `exactdocs reindex` runs while it serves.
-      - name: Upgrade from the previous release, then reindex while serving
-        env:
-          UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache
-        run: python3 deploy/upgrade_check.py --wheels "$RUNNER_TEMP/dist" --head "$ALEMBIC_HEAD"
-      # The runners may have no browser: cache Playwright's (keyed by its version) and install the
-      # missing part only. Probe rendering before attempting bounded system library installation.
-      - name: Playwright
-        working-directory: e2e
-        run: |
-          pnpm install --frozen-lockfile
-          node --test probe-chromium.test.cjs
-      - id: playwright
-        run: echo "version=$(node -p "require('./e2e/node_modules/@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v6
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
-      - name: Install Chromium
-        working-directory: e2e
-        run: bash install-chromium.sh
-      - name: Browser end-to-end test (server started with uvx from the wheel)
-        env:
-          UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache
-        run: python3 e2e/run.py --wheels "$RUNNER_TEMP/dist"
-      - uses: actions/upload-artifact@v7
-        if: ${{ !cancelled() }}
-        with:
-          name: e2e-screenshots
-          path: |
-            e2e/shots/
-            e2e/test-results/
-          retention-days: 14
+  # A manual run with the input `integration`: the integration and end-to-end jobs too.
+  integration:
+    name: Integration
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.integration }}
+    uses: ./.github/workflows/integration.yml

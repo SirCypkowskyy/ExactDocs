@@ -131,14 +131,10 @@ def select(config: pytest.Config, items: list[pytest.Item]) -> int:
     """
     mark_by_fixture(items)
     marked = [item for item in items if item.get_closest_marker(MARKER) is not None]
-    if enabled():
-        for item in marked:
-            if names := missing(item):
-                item.add_marker(
-                    pytest.mark.skip(reason=f"integration test: set {', '.join(names)}")
-                )
-        return 0
-    if MARKER in (config.option.markexpr or ""):
+    for item in marked:  # kept, `-m integration` without the switch included
+        if names := missing(item):
+            item.add_marker(pytest.mark.skip(reason=f"integration test: set {', '.join(names)}"))
+    if enabled() or MARKER in (config.option.markexpr or ""):
         return 0
     if marked:
         left_out = set(marked)
