@@ -96,6 +96,26 @@ retrieval run of #347 kept aggregates only; BM25 was run again for #489 and its 
 quality numbers matched the recorded ones exactly), but the model configurations show intervals
 and tests only after the next recorded run.
 
+## Scoring tools that return text
+
+ExactDocs' results are scored by their chunk IDs. Tools that return text (Context7, Grounded
+Docs, a grep or fixed-window baseline) are scored from the text alone, with the same metrics. Each
+pinned version's articles are cut at every heading with the importer's own parser and chunker,
+and texts are compared as sets of 5-word shingles after dropping markup, link targets and case. A
+result answers a section when it holds at least 80% of the section's own text, or when at least
+80% of the result lies in the section with its subsections; it is of the right version, of
+another version, version-neutral (the text is the same in both) or unmatched by the versions
+whose sections it matches. Besides the retrieval metrics, a tool scored from text is reported
+with the share of version-neutral and unmatched results, the tokens of context it returned per
+question (characters / 4) and up to its first hit, and the share of the case's facts its text
+holds.
+
+The scorer was calibrated on ExactDocs' own BM25 results for the whole golden set, scored both
+ways: at the `default` chunking it takes 99.5% of the hit and miss decisions (each expected
+section's rank in the top 10, or a miss) as chunk-ID scoring does, against a criterion of 98%.
+The threshold, the sweep that chose it and every disagreement are in
+[Scoring text results](../evals.md#scoring-text-results).
+
 ## Ingestion metrics
 
 Coverage is the share of the golden set's expected sections that start a chunk (a section held
@@ -149,12 +169,13 @@ budgets; between chunkings of one budget the best one wins outright.
 
 | Run | Where | Models |
 |---|---|---|
-| quick tests of all three benchmarks | every pull request (`uv run pytest`, `uv run behave`) | stand-ins only, tiny local corpora |
+| quick tests of all three benchmarks and the text scorer | every pull request (`uv run pytest`, `uv run behave`) | stand-ins only, tiny local corpora |
 | `just golden-validate` rules | every pull request (pytest) | none |
 | ingestion benchmark `--check` | every release, *Retrieval eval* job | none |
 | retrieval benchmark, BM25 at `default`, `--check` | every release, *Retrieval eval* job | none |
 | retrieval benchmark with local models | by hand (`just retrieval-bench --offline`) | local, pulled with `exactdocs models pull` |
 | retrieval benchmark, hosted configurations | by hand: the manual *Retrieval eval (real providers)* workflow (`eval-providers.yml`) with the `benchmark` input ticked | hosted |
+| text scorer calibration | by hand (`just text-bench --offline`), when the matcher or the chunker changes | none |
 | agent benchmark | by hand: the manual *Agent benchmark (real providers)* workflow (`agent-bench.yml`), or `just agent-bench run` locally | hosted |
 
 No CI or release run calls a hosted model or needs a secret.

@@ -7,7 +7,7 @@ Feature: ExactDocs runs on Supabase, with BM25 that works without pg_search
   # `postgres` role over SSL): each one sets up a role and schemas of its own with
   # deploy/supabase.sql, as an operator would in Supabase's SQL editor.
 
-  @supabase
+  @integration @supabase
   Scenario: Search works on Supabase without pg_search
     Given a Supabase database set up with "deploy/supabase.sql"
     And ExactDocs serves from it with "sslmode=require", as a role that cannot create databases
@@ -17,14 +17,14 @@ Feature: ExactDocs runs on Supabase, with BM25 that works without pg_search
     And DBOS keeps its tables in the role's schema "dbos" and no database was created
     And every connection ExactDocs and DBOS opened uses SSL
 
-  @supabase
+  @integration @supabase
   Scenario: The ranking suite on Supabase
     Given a Supabase database set up with "deploy/supabase.sql"
     When the ranking suite runs on Supabase
     Then every expected query ranks its section first, as on SQLite
     And the health check names the search engine "postgres_fts"
 
-  @supabase
+  @integration @supabase
   Scenario: Hybrid search on Supabase
     Given a Supabase database set up with "deploy/supabase.sql"
     And ExactDocs runs on it with "vector" enabled in schema "extensions"

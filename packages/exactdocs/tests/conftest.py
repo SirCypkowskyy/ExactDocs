@@ -1,9 +1,11 @@
+import os
 from collections.abc import Generator, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+import integration
 from databases import (
     LIBSQL_DATABASE_URL,
     SECRET_KEY,
@@ -69,6 +71,35 @@ DEMO_LIBRARIES = [
         versions=frozenset({_version("main", RefKind.BRANCH, "2a")}),
     ),
 ]
+
+
+DESELECTED = pytest.StashKey[int]()
+"""How many integration tests this run left out (#507)."""
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        integration.OPTION,
+        action="store_true",
+        help="also run the integration tests: they need PostgreSQL or another service, or the "
+        "network (or set EXACTDOCS_INTEGRATION=1; tests/fixtures/integration.py)",
+    )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    if config.getoption(integration.OPTION):
+        os.environ[integration.VARIABLE] = "1"  # helpers and subprocesses see it too
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    config.stash[DESELECTED] = integration.select(config, items)
+
+
+def pytest_terminal_summary(
+    terminalreporter: pytest.TerminalReporter, config: pytest.Config
+) -> None:
+    if deselected := config.stash.get(DESELECTED, 0):
+        terminalreporter.write_sep("=", integration.summary(deselected), yellow=True)
 
 
 # An admin that can never sign in (the "hash" is not a hash): it only ends the setup state, so
@@ -158,7 +189,8 @@ def sqlite_cases_on_libsql(
 
     A test whose parameters include ``"sqlite"`` (the persistence contract tests, parametrized on
     ``SQL_BACKENDS``) then gets an empty libSQL server as ``EXACTDOCS_DATABASE_URL`` (#474).
-    Every other test is left as it is.
+    Every other test is left as it is. Only in a run with the integration tests (#507): by
+    default the SQLite cases stay on a file, whatever the variable says.
 
     Args:
         request: The test, for its parameters.
@@ -167,7 +199,7 @@ def sqlite_cases_on_libsql(
     """
     del isolated_data_dir
     callspec = getattr(request.node, "callspec", None)
-    if LIBSQL_DATABASE_URL is None or callspec is None:
+    if LIBSQL_DATABASE_URL is None or callspec is None or not integration.enabled():
         return
     if not any(value == "sqlite" for value in callspec.params.values()):
         return

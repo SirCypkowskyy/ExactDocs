@@ -5,7 +5,7 @@
 #
 #   { read -r url; read -r token; } < <(deploy/libsql-test-server.sh exactdocs-libsql)
 #   export EXACTDOCS_TEST_LIBSQL_URL=$url EXACTDOCS_TEST_LIBSQL_AUTH_TOKEN=$token
-#   uv run pytest packages/exactdocs/tests/retrieval -k libsql
+#   uv run pytest --integration packages/exactdocs/tests/retrieval -k libsql   # integration tests (#507)
 #   docker rm -f exactdocs-libsql
 #
 # The server gets a throwaway Ed25519 key (only its public half is given to it) and a free port
