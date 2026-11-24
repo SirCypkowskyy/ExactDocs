@@ -2,7 +2,8 @@
 
 The shared contract suites (``test_search_index.py``, ``test_vector_index.py``,
 ``test_index_backends.py``) run on both engines when ``EXACTDOCS_TEST_ELASTICSEARCH_URL`` /
-``EXACTDOCS_TEST_OPENSEARCH_URL`` name a cluster (``tests/fixtures/index_backends.py``). This
+``EXACTDOCS_TEST_OPENSEARCH_URL`` name a cluster (``tests/fixtures/index_backends.py``), as
+integration tests (#507), like the cluster cases here. This
 file adds what only these adapters have: their options and secrets, the start-up checks, the
 analyzer that keeps identifiers searchable, the keyword fields every search filters by, and the
 native hybrid query with its fallback.
@@ -14,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+import integration
 from exactdocs.bootstrap.database import StartupError
 from exactdocs.bootstrap.index_backends import build_index_backends
 from exactdocs.bootstrap.settings import Settings
@@ -40,7 +42,11 @@ from exactdocs.retrieval.ports import NativeHybrid
 from index_backends import cluster_options, drop_indexes
 
 ENGINES = {"elasticsearch": elasticsearch_index, "opensearch": opensearch_index}
-CLUSTERS = [name for name in ENGINES if cluster_options(name) is not None]
+CLUSTERS = [
+    pytest.param("elasticsearch", marks=integration.ELASTICSEARCH),
+    pytest.param("opensearch", marks=integration.OPENSEARCH),
+]
+"""The test clusters (``EXACTDOCS_TEST_<NAME>_URL``): integration cases (#507)."""
 T0 = datetime(2026, 11, 22, 12, 0, tzinfo=UTC)
 NO_TAGS = TagFilter()
 UNREACHABLE = "http://127.0.0.1:9"  # the discard port: nothing answers
@@ -323,9 +329,9 @@ async def test_hybrid_is_native_and_falls_back_to_fusing_here(
         assert {h.chunk_id for h in found} == {"words", "meaning"}
 
 
+@integration.ELASTICSEARCH
+@integration.OPENSEARCH
 async def test_the_other_engine_is_refused_at_open() -> None:
-    if len(CLUSTERS) < len(ENGINES):
-        pytest.skip("needs both test clusters")
     es, os_ = cluster_options("elasticsearch"), cluster_options("opensearch")
     assert es is not None
     assert os_ is not None

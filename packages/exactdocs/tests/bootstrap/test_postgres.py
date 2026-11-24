@@ -1,7 +1,8 @@
 """ExactDocs on PostgreSQL: what several processes sharing one database rely on.
 
-Every test gets a new database (``on_postgres``). Without ``EXACTDOCS_TEST_POSTGRES_URL`` this
-module is skipped as a whole; CI sets ``EXACTDOCS_REQUIRE_POSTGRES=1``, so there it always runs.
+Every test gets a new database (``on_postgres``), so every test here is an integration test
+(#507): it needs ``EXACTDOCS_TEST_POSTGRES_URL`` and runs with ``--integration``; CI's integration
+job sets ``EXACTDOCS_REQUIRE_POSTGRES=1``, so there it always runs.
 """
 
 import asyncio
@@ -23,6 +24,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+import integration
 from databases import ADMIN_URL, TERMINATE_WAIT_MS, PostgresDatabase
 from exactdocs.bootstrap import database
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
@@ -44,10 +46,7 @@ from exactdocs.retrieval.adapters.driven.sqlite import SqliteSpendLedger
 from exactdocs.retrieval.models import SpendEntry, SpendWindow
 from import_child import big_repository, page, run
 
-if ADMIN_URL is None:
-    pytest.skip("needs a PostgreSQL server (EXACTDOCS_TEST_POSTGRES_URL)", allow_module_level=True)
-
-pytestmark = pytest.mark.usefixtures("on_postgres")
+pytestmark = [integration.POSTGRES, pytest.mark.usefixtures("on_postgres")]
 
 FILES = 200
 

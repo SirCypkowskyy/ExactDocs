@@ -503,8 +503,9 @@ something differs: the vector store searches with libSQL's `vector_distance_cos`
 loading sqlite-vec (`SqliteVectorIndex(native=True)`), no PRAGMA but `foreign_keys` is set, and
 read-only access and `exactdocs backup` are refused. The driver's errors become `sqlite3`'s, and
 a statement outside a transaction is sent again once when the server had dropped the idle
-stream. CI runs the persistence contract tests' SQLite cases on a `sqld` server
-(`EXACTDOCS_TEST_LIBSQL_DATABASE_URL`, its own step). See *ExactDocs' own database on libSQL* in
+stream. CI's integration job runs the persistence contract tests' SQLite cases on a `sqld` server
+(`EXACTDOCS_TEST_LIBSQL_DATABASE_URL` with `--integration`, its own step;
+[Fast and integration tests](releasing.md#fast-and-integration-tests)). See *ExactDocs' own database on libSQL* in
 configuration.md for what an operator sees.
 
 ### Data model

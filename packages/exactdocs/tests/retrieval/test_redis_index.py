@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from redis.asyncio import Redis
 
+import integration
 from exactdocs.bootstrap.database import StartupError
 from exactdocs.bootstrap.index_backends import build_index_backends
 from exactdocs.bootstrap.settings import Settings
@@ -41,16 +42,14 @@ from exactdocs.retrieval.models import (
     search_terms,
 )
 from exactdocs.retrieval.ports import NativeHybrid
-from redis_server import REDIS_URL, admin, drop, options, redis_search, redis_vectors
+from redis_server import admin, drop, options, redis_search, redis_vectors
 
 T0 = datetime(2026, 11, 22, 12, 0, tzinfo=UTC)
 LIB = "/acme/payments"
 URL = "redis://127.0.0.1:6379"
 NO_TAGS = TagFilter()
 
-needs_redis = pytest.mark.skipif(
-    REDIS_URL is None, reason="needs a Redis 8 server: set EXACTDOCS_TEST_REDIS_URL"
-)
+needs_redis = integration.REDIS
 
 
 def manifest(manifest_id: str, library: str = LIB, ref: str = "v1") -> IndexedManifest:

@@ -1,14 +1,13 @@
 """Steps for Chroma as the vector backend (#361).
 
 The instance is built from the settings an operator writes (``EXACTDOCS_VECTOR_BACKEND`` and
-``[index_backends.chroma]``), through the registry and the adapter's factory: a Chroma server
-when ``EXACTDOCS_TEST_CHROMA_URL`` is set (CI's pinned ``chromadb/chroma`` service), otherwise
-the embedded client in a temporary directory. The steps look into Chroma with a client of their
-own; each scenario's collections (or directory) are removed after it.
+``[index_backends.chroma]``), through the registry and the adapter's factory: the embedded
+client in a temporary directory, or the Chroma server ``EXACTDOCS_TEST_CHROMA_URL`` names (CI's
+pinned ``chromadb/chroma`` service; an ``@integration`` example, #507). The steps look into Chroma
+with a client of their own; each scenario's collections (or directory) are removed after it.
 """
 
 import math
-import os
 import secrets
 import tempfile
 from collections.abc import Sequence
@@ -35,17 +34,15 @@ QUERY = "how do I retry failed calls"
 SAME_DIRECTION = 1 - 1e-6  # float32 vectors: the same vector, give or take rounding
 
 
-@given("ExactDocs is configured with a Chroma server URL (or a local path) and a collection name")
-def step_chroma_instance(context: Context) -> None:
+@given("ExactDocs is configured with a Chroma {place} and a collection name")
+def step_chroma_instance(context: Context, place: str) -> None:
     stack = ExitStack()
     context.add_cleanup(stack.close)
     collection = f"behave_{secrets.token_hex(6)}"
-    if chroma_server.CHROMA_URL:
+    if place == "server URL":  # an @integration example: environment.py skips it without one
+        assert chroma_server.CHROMA_URL, "EXACTDOCS_TEST_CHROMA_URL is not set"
         context.chroma_options = chroma_server.options(collection)
         context.add_cleanup(chroma_server.drop_collections, f"{collection}_")
-    elif os.environ.get("EXACTDOCS_REQUIRE_CHROMA") == "1":  # CI: the server, never skipped
-        message = "EXACTDOCS_REQUIRE_CHROMA=1 but EXACTDOCS_TEST_CHROMA_URL is not set"
-        raise RuntimeError(message)
     else:
         directory = stack.enter_context(tempfile.TemporaryDirectory(prefix="exactdocs-chroma-"))
         context.chroma_options = {"path": directory, "collection": collection}

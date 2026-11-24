@@ -3,8 +3,8 @@
 The options an operator writes (and the ones refused at start), the token kept out of the file and
 the logs, native hybrid switched off, a query without terms, filter values that need quoting, the
 BM25 text cut to Milvus' field size, and a Milvus Lite directory found again after a restart. The
-behaviour cases run on Milvus Lite everywhere and on the server ``EXACTDOCS_TEST_MILVUS_URL``
-names when it is set (``tests/fixtures/milvus_server.py``).
+behaviour cases run on Milvus Lite everywhere and, as integration tests (#507), on the server
+``EXACTDOCS_TEST_MILVUS_URL`` names (``tests/fixtures/milvus_server.py``).
 """
 
 from collections.abc import AsyncIterator
@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+import integration
 import milvus_server
 from exactdocs.bootstrap.database import StartupError
 from exactdocs.bootstrap.index_backends import build_index_backends
@@ -49,7 +50,8 @@ SPACE = EmbeddingSpace(
     state=SpaceState.ACTIVE,
     created_at=T0,
 )
-MODES = ["lite", "server"]
+MODES = ["lite", pytest.param("server", marks=integration.MILVUS)]
+"""Milvus Lite everywhere; the server (``EXACTDOCS_TEST_MILVUS_URL``): integration (#507)."""
 
 
 def manifest(manifest_id: str, library: str = LIB) -> IndexedManifest:
@@ -84,8 +86,6 @@ def query(text: str) -> TextQuery:
 
 @pytest.fixture(params=MODES)
 def mode(request: pytest.FixtureRequest) -> str:
-    if request.param == "server" and not milvus_server.MILVUS_URL:
-        pytest.skip("EXACTDOCS_TEST_MILVUS_URL is not set")
     return request.param
 
 
