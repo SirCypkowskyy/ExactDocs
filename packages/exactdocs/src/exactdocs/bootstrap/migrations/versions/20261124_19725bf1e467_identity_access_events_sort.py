@@ -7,13 +7,13 @@ serve a library's log and the actor and subject filters in that order. The ``(li
 index stays: it serves the sort by library and a library's events since its last removal.
 
 Revision ID: 19725bf1e467
-Revises: 9d4f2b7e1c83
+Revises: b7e2c4a91d58
 """
 
 from alembic import op
 
 revision = "19725bf1e467"
-down_revision = "9d4f2b7e1c83"
+down_revision = "b7e2c4a91d58"
 branch_labels = None
 depends_on = None
 
