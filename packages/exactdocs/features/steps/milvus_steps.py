@@ -1,13 +1,12 @@
 """Steps for Milvus as the vector backend (#360).
 
 The instance is built from the settings an operator writes (``EXACTDOCS_VECTOR_BACKEND`` and
-``[index_backends.milvus]``), through the registry and the adapter's factory: a Milvus server
-when ``EXACTDOCS_TEST_MILVUS_URL`` is set (CI's pinned ``milvusdb/milvus`` standalone),
-otherwise Milvus Lite in a temporary directory. The steps look into Milvus with a client of
-their own; each scenario's collections (or directory) are removed after it.
+``[index_backends.milvus]``), through the registry and the adapter's factory: Milvus Lite in a
+temporary directory, or the Milvus server ``EXACTDOCS_TEST_MILVUS_URL`` names (CI's pinned
+``milvusdb/milvus`` standalone; an ``@integration`` example, #507). The steps look into Milvus
+with a client of their own; each scenario's collections (or directory) are removed after it.
 """
 
-import os
 import secrets
 import tempfile
 from contextlib import ExitStack
@@ -36,17 +35,15 @@ QUERY = "how do I retry failed calls"
 SCALAR_KEYS = ("manifest_id", "library", "version_id")
 
 
-@given("ExactDocs is configured with a Milvus URI and a collection name")
-def step_milvus_instance(context: Context) -> None:
+@given("ExactDocs is configured with a Milvus {place} URI and a collection name")
+def step_milvus_instance(context: Context, place: str) -> None:
     stack = ExitStack()
     context.add_cleanup(stack.close)
     collection = f"behave_{secrets.token_hex(6)}"
-    if milvus_server.MILVUS_URL:
+    if place == "server":  # an @integration example: environment.py skips it without one
+        assert milvus_server.MILVUS_URL, "EXACTDOCS_TEST_MILVUS_URL is not set"
         context.milvus_options = milvus_server.options(collection)
         context.add_cleanup(milvus_server.drop_collections, f"{collection}_")
-    elif os.environ.get("EXACTDOCS_REQUIRE_MILVUS") == "1":  # CI: the server, never skipped
-        message = "EXACTDOCS_REQUIRE_MILVUS=1 but EXACTDOCS_TEST_MILVUS_URL is not set"
-        raise RuntimeError(message)
     else:
         directory = stack.enter_context(tempfile.TemporaryDirectory(prefix="exactdocs-milvus-"))
         context.milvus_options = {

@@ -3,6 +3,14 @@
 A guard bounds each scenario (#304): one that runs, cleanups included, for longer than
 ``SCENARIO_SECONDS`` makes the run print every thread's stack and exit with status 1, instead of
 using up the CI job's timeout without a trace.
+
+Integration scenarios (#507) carry ``@integration`` and a tag naming their service (``SERVICES``:
+``@postgres``, ``@qdrant`` ...); a service tag without ``@integration`` is an error. They are
+left out unless ``EXACTDOCS_INTEGRATION=1`` (``just bdd-integration``), and the run ends saying
+how many; with it, one whose service is not configured is skipped, naming the variable (CI's
+integration job sets ``EXACTDOCS_REQUIRE_<NAME>=1``, which turns that into an error).
+``--tags=@integration`` runs only them. The same switch and services as pytest's
+(``tests/fixtures/integration.py``).
 """
 
 import faulthandler
@@ -33,6 +41,29 @@ report for that run."""
 fixture_repo = import_module("fixture_repo")
 databases = import_module("databases")  # raises when CI requires PostgreSQL and has none
 index_backends = import_module("index_backends")
+integration = import_module("integration")
+
+INTEGRATION_TAG = "integration"
+SERVICES: dict[str, tuple[str, ...]] = {
+    "postgres": integration.POSTGRES.args,
+    "pg_search": integration.POSTGRES_PG_SEARCH.args,
+    "pgbouncer": integration.PGBOUNCER.args,
+    "supabase": integration.SUPABASE.args,
+    "libsql_database": integration.LIBSQL_DATABASE.args,
+    "libsql_server": integration.LIBSQL.args,
+    "elasticsearch": integration.ELASTICSEARCH.args,
+    "opensearch": integration.OPENSEARCH.args,
+    "qdrant": integration.QDRANT.args,
+    "redis": integration.REDIS.args,
+    "mongodb": integration.MONGODB.args,
+    "chroma_server": integration.CHROMA.args,
+    "milvus_server": integration.MILVUS.args,
+    "pinecone": integration.PINECONE.args,
+}
+"""The tags that name a service, and the variables that configure it: a scenario with one is an
+integration scenario."""
+LEFT_OUT: list[str] = []
+"""The integration scenarios this run left out (their locations)."""
 
 
 def before_all(context: Context) -> None:
@@ -48,6 +79,15 @@ def before_all(context: Context) -> None:
 def after_all(context: Context) -> None:
     faulthandler.cancel_dump_traceback_later()
     context.stack.close()
+    if LEFT_OUT:
+        # On the real stdout: behave captures sys.stdout in hooks.
+        print(
+            f"\n{len(LEFT_OUT)} integration scenarios left out (they need PostgreSQL, a search or"
+            " vector server or another service): run them with EXACTDOCS_INTEGRATION=1"
+            " uv run behave (just bdd-integration)\n",
+            file=sys.__stdout__,
+            flush=True,
+        )
 
 
 def after_feature(context: Context, feature: Feature) -> None:
@@ -59,28 +99,22 @@ def after_feature(context: Context, feature: Feature) -> None:
 def before_scenario(context: Context, scenario: Scenario) -> None:
     # Re-armed for each scenario; it fires only if this one, or its cleanups, hang.
     faulthandler.dump_traceback_later(SCENARIO_SECONDS, exit=True, file=STDERR)
-    # PostgreSQL scenarios need a server (EXACTDOCS_TEST_POSTGRES_URL); CI always has one and
-    # sets EXACTDOCS_REQUIRE_POSTGRES=1, so there they can never be skipped.
     del context
-    if "postgres" in scenario.effective_tags and databases.ADMIN_URL is None:
-        scenario.skip("needs a PostgreSQL server: set EXACTDOCS_TEST_POSTGRES_URL")
-    # CI's ParadeDB has pg_search and sets EXACTDOCS_TEST_PG_SEARCH=1: never skipped there.
-    elif "pg_search" in scenario.effective_tags and not databases.PG_SEARCH:
-        scenario.skip("needs a PostgreSQL server with the pg_search extension")
-    # Supabase scenarios need the supabase/postgres image (EXACTDOCS_TEST_SUPABASE_URL); CI runs
-    # one and sets EXACTDOCS_REQUIRE_SUPABASE=1, so there they can never be skipped.
-    elif "supabase" in scenario.effective_tags and databases.SUPABASE_URL is None:
-        scenario.skip("needs the supabase/postgres image: set EXACTDOCS_TEST_SUPABASE_URL")
-    # ExactDocs' database on libSQL (#474) needs a libSQL server of its own; CI starts one.
-    elif "libsql_database" in scenario.effective_tags and databases.LIBSQL_DATABASE_URL is None:
-        scenario.skip("needs a libSQL server: set EXACTDOCS_TEST_LIBSQL_DATABASE_URL")
-    # Pooler scenarios need PgBouncer in transaction mode (EXACTDOCS_TEST_PGBOUNCER_URL, #279);
-    # CI runs one and sets EXACTDOCS_REQUIRE_PGBOUNCER=1, so there they can never be skipped.
-    elif "pgbouncer" in scenario.effective_tags and (
-        databases.ADMIN_URL is None or databases.PGBOUNCER_URL is None
-    ):
-        scenario.skip("needs PgBouncer in transaction mode: set EXACTDOCS_TEST_PGBOUNCER_URL")
-    # Elasticsearch and OpenSearch scenarios (#354) need a test cluster; CI runs both.
-    for cluster in ("elasticsearch", "opensearch"):
-        if cluster in scenario.effective_tags and index_backends.cluster_options(cluster) is None:
-            scenario.skip(f"needs a test cluster: set EXACTDOCS_TEST_{cluster.upper()}_URL")
+    tags = set(scenario.effective_tags)
+    services = sorted(tags & SERVICES.keys())
+    if services and INTEGRATION_TAG not in tags:
+        message = f"{scenario.location}: @{services[0]} needs a service, so tag it @integration too"
+        raise AssertionError(message)
+    if INTEGRATION_TAG not in tags:
+        return
+    if not integration.enabled():
+        LEFT_OUT.append(str(scenario.location))
+        scenario.skip("an integration scenario: EXACTDOCS_INTEGRATION=1 runs it")
+        return
+    # CI's integration job sets EXACTDOCS_REQUIRE_<NAME>=1 for each service it runs (databases.py
+    # and index_backends.py raise without its URL), so there these can never be skipped.
+    missing = sorted(
+        {name for tag in services for name in SERVICES[tag] if not os.environ.get(name)}
+    )
+    if missing:
+        scenario.skip(f"an integration scenario: set {', '.join(missing)}")

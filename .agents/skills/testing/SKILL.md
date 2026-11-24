@@ -12,12 +12,14 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
 | Acceptance | **behave** (Gherkin) | `packages/exactdocs/features/*.feature`, steps in `features/steps/` | the issue's *Expected behavior*, through the public HTTP API | fast (in-process) |
 | Unit | pytest | `packages/exactdocs/tests/<domain>/` | use cases and models: business rules, edge cases | very fast |
 | Integration | pytest + httpx `ASGITransport` / FastMCP `Client` | `packages/exactdocs/tests/bootstrap/` | wiring, HTTP status mapping, MCP tool schema and annotations | fast |
-| Adapter contract | pytest, parametrized over adapters | `packages/exactdocs/tests/<domain>/` | every driven adapter (memory, sqlite, postgres) behaves the same | slower for DBs |
+| Adapter contract | pytest, parametrized over adapters | `packages/exactdocs/tests/<domain>/` | every driven adapter (memory, sqlite, postgres) behaves the same; the PostgreSQL and server cases are integration tests (below) | slower for DBs |
+| Service integration | pytest marker `integration`, behave tag `@integration` | next to the code they test | PostgreSQL, PgBouncer, Supabase, libSQL and every search or vector server, the local models; off by default (below) | minutes, needs containers |
 | Architecture | pytest + **ArchUnitPython** | `packages/exactdocs/tests/architecture/` | boundaries in `docs/architecture.md` | fast |
 | Web | vitest + Testing Library | `web/src/**/*.test.tsx` | components and query logic of a feature | fast |
 | Retrieval eval | Pydantic Evals, `just eval` | `packages/exactdocs/evals/` (tests in `tests/evals/`; the end-to-end ones are marked `eval`) | recall, wrong-version rate, latency and cost per retrieval mode; gates in docs/evals.md; runs on releases, not in CI | minutes |
 | Ingestion benchmark | `just ingestion-bench` (needs the golden corpus cache) | `packages/exactdocs/evals/retrieval_eval/ingestion*.py` (tests in `tests/evals/test_ingestion.py`) | coverage, cut blocks, chunk sizes and heading paths per chunking configuration, with BM25 recall; `--check` against `evals/results/ingestion.json`; runs on releases, not in CI | about a minute per configuration |
 | Retrieval benchmark | `just retrieval-bench` (golden corpus cache; local models from `exactdocs models pull`) | `packages/exactdocs/evals/retrieval_eval/retrieval_bench*.py` (tests in `tests/evals/test_retrieval_bench.py`, `retrieval_bench.feature`) | recall, MRR, nDCG@10, wrong version, unanswerable handling, latency and cost of every mode, model and reranker at every chunking configuration, with the default per budget; BM25 at `default` is checked on releases; hosted models only through the manual real-providers workflow | a minute model-free; hours with every local model |
+| Text scorer | `just text-bench --offline` (golden corpus cache) | `packages/exactdocs/evals/retrieval_eval/text_match.py`, `text_bench*.py` (tests in `tests/evals/test_text_match.py`, `test_text_bench.py`, `text_scorer.feature`) | scores any tool's text results with the retrieval benchmark's metrics; the calibration checks it agrees with chunk-ID scoring on ≥ 98% of decisions on BM25's results at `default`; by hand, not in CI | about two minutes per chunking |
 
 ## Rules of thumb
 
@@ -50,6 +52,24 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   app stops.
 - A test that imports the fixture and runs the retrieval eval suite end to end gets
   `@pytest.mark.eval` (deselected by default, run at release; docs/evals.md).
+- **A test that needs a container, a service, the network or a download is an integration test**
+  (#507): deselected by default, so `uv run pytest` and `uv run behave` need nothing but the
+  checkout, and the run ends saying how many it left out. Mark it from what it takes, in
+  `tests/fixtures/integration.py`: PostgreSQL through `on_postgres` / `SQL_BACKENDS` /
+  `SEARCH_BACKENDS` and an index backend through its `BackendCase(marks=integration.<NAME>)` are
+  marked for you; anything else gets `@integration.POSTGRES`, `pytestmark = integration.REDIS`,
+  `integration.needs("EXACTDOCS_TEST_<NAME>_URL")` ... (the variables it reads). A behave scenario
+  gets `@integration` and its service's tag (`@postgres`, `@qdrant` ...; `SERVICES` in
+  `features/environment.py`, which refuses a service tag without `@integration`). Never a bare
+  `skipif` on a missing variable: with the switch on, a test whose variable is unset is skipped
+  naming it, and CI's fast jobs point every variable at a dead port, so an unmarked test that
+  reaches a service fails there.
+- **Pull request CI runs the fast suite only**, in parallel shards (pytest by `pytest-split`,
+  behave by feature file, balanced by `.test_durations` and `.behave_durations`; refresh them with
+  `just test-durations` / `just bdd-durations` when many tests were added or became slower). The integration jobs run on a PR labelled `run integration`, on a manual CI run with
+  the input `integration`, and in every release ([docs/releasing.md](../../../docs/releasing.md#fast-and-integration-tests)).
+  Add the label when the change touches an adapter on a server, PostgreSQL, the Dockerfile,
+  the wheel or the end-to-end flow.
 - Async tests need no decorator (`asyncio_mode = "auto"`). Warnings are errors (`filterwarnings = error`).
 - **Close every SQLite connection a test opens**, or the garbage collector finalizes it during a
   later test, which then fails with "unclosed database". An autouse guard
@@ -78,8 +98,11 @@ A dependency bump can also change it; check that the diff is only generated nois
 ## Commands
 
 ```bash
-uv run pytest                                    # everything but the slow eval tests
+uv run pytest                                    # everything but the eval and integration tests
 uv run pytest -m eval                            # the retrieval eval suite end to end
+uv run pytest --integration                      # with the integration tests (or EXACTDOCS_INTEGRATION=1;
+just test-integration -m integration             #   just test-integration): only them, here
+EXACTDOCS_INTEGRATION=1 uv run behave            # with the @integration scenarios (just bdd-integration)
 uv run pytest packages/exactdocs/tests/catalog   # one domain
 uv run pytest -k version                         # by name
 uv run pytest --cov=exactdocs --cov-report=term-missing

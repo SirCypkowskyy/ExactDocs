@@ -21,7 +21,8 @@ import chromadb
 import pytest
 from chromadb.api.client import Client
 
-from chroma_server import CHROMA_URL, chroma_vectors, place
+import integration
+from chroma_server import chroma_vectors, place
 from exactdocs.bootstrap.index_backends import build_index_backends
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.chroma_index import (
@@ -48,7 +49,8 @@ from exactdocs.retrieval.models import (
 T0 = datetime(2026, 11, 22, 12, 0, tzinfo=UTC)
 LIB = "/acme/payments"
 TOKEN = "s3cr3t-chroma-token"  # a test value, sent to a loopback stub only
-MODES = ["local", *(["http"] if CHROMA_URL else [])]
+MODES = ["local", pytest.param("http", marks=integration.CHROMA)]
+"""The embedded client everywhere; a server (``EXACTDOCS_TEST_CHROMA_URL``): integration (#507)."""
 
 
 def manifest(manifest_id: str, ref: str = "v1") -> IndexedManifest:
