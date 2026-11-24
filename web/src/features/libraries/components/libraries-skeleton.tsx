@@ -1,9 +1,9 @@
 import { LibraryBig } from "lucide-react";
 import { useMessages } from "@/shared/lib/i18n";
+import { DataTableSkeleton } from "@/shared/ui/data-table/states";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { listMessages } from "../messages/list";
-import { TableSkeleton } from "./table-skeleton";
 
 /** The list's final layout with grey bars where the values will be, so nothing jumps when they land. */
 export function LibrariesSkeleton() {
@@ -20,7 +20,7 @@ export function LibrariesSkeleton() {
       <p role="status" className="sr-only">
         {t.loading}
       </p>
-      <TableSkeleton
+      <DataTableSkeleton
         filters={3}
         columns={[
           { id: "library", header: c.library, shape: "avatar" },

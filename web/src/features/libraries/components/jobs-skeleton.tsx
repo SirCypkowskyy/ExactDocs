@@ -1,9 +1,9 @@
 import { Activity } from "lucide-react";
 import { useMessages } from "@/shared/lib/i18n";
+import { DataTableSkeleton } from "@/shared/ui/data-table/states";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { jobsMessages } from "../messages/jobs";
-import { TableSkeleton } from "./table-skeleton";
 
 /** The jobs page before its first page of jobs: the final layout, bars where the values go. */
 export function JobsSkeleton() {
@@ -19,7 +19,7 @@ export function JobsSkeleton() {
       <p role="status" className="sr-only">
         {t.loading}
       </p>
-      <TableSkeleton
+      <DataTableSkeleton
         filters={3}
         columns={[
           { id: "id", header: "#", shape: "mono", className: "max-lg:hidden" },

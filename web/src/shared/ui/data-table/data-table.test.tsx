@@ -23,6 +23,7 @@ import { DataTablePagination } from "./pagination";
 import type { RowAction } from "./row-actions";
 import { restoreRowFocus } from "./row-actions";
 import type { ServerSource } from "./server-pages";
+import { DataTableSkeleton } from "./states";
 import { parseFacet, parseTableSearch, stringifySearch, type TableConfig } from "./table-search";
 import { DataTableToolbar } from "./toolbar";
 import {
@@ -298,6 +299,29 @@ describe("DataTable v2 in client mode", () => {
     expect(JSON.parse(localStorage.getItem("exactdocs-table-sizes") ?? "{}")).toEqual({
       things: 5,
     });
+  });
+});
+
+describe("DataTableSkeleton", () => {
+  it("holds a route's final layout: headers, rows in each column's shape, hidden from readers", () => {
+    const { container } = render(
+      <DataTableSkeleton
+        filters={2}
+        rows={5}
+        columns={[
+          { id: "name", header: "Name", shape: "avatar" },
+          { id: "size", header: "Size", shape: "number", className: "max-lg:hidden" },
+        ]}
+      />,
+    );
+    const frame = container.querySelector("[data-slot=data-table-skeleton]") as HTMLElement;
+    expect(frame).toHaveAttribute("aria-hidden", "true");
+    const heads = [...frame.querySelectorAll("thead th")];
+    expect(heads.map((h) => h.textContent)).toEqual(["Name", "Size", ""]);
+    expect(heads[1]).toHaveClass("max-lg:hidden");
+    const rows = frame.querySelectorAll("tbody tr");
+    expect(rows).toHaveLength(5);
+    expect(rows[0]?.querySelectorAll("td")[1]).toHaveClass("max-lg:hidden");
   });
 });
 

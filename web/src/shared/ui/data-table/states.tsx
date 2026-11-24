@@ -1,4 +1,3 @@
-import type { Column } from "@tanstack/react-table";
 import { CircleAlert, Inbox, type LucideIcon, RefreshCw, SearchX, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { common, useMessages } from "@/shared/lib/i18n";
@@ -6,7 +5,7 @@ import { cn } from "@/shared/lib/utils";
 import { Button } from "../button";
 import { messages } from "../messages";
 import { Skeleton } from "../skeleton";
-import { TableCell, TableRow } from "../table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../table";
 import type { SkeletonShape } from "./columns";
 
 /*
@@ -35,13 +34,21 @@ const SHAPES: Record<SkeletonShape, ReactNode> = {
   ),
 };
 
+/** A column as a skeleton draws it: the shape of its values and its own classes. */
+export interface SkeletonCell {
+  id: string;
+  shape?: SkeletonShape | undefined;
+  /** The column's own classes (`max-lg:hidden`), so the frame has the final columns. */
+  className?: string | undefined;
+}
+
 /** `rows` placeholder rows, one cell per visible column in its final shape. */
-export function SkeletonRows<T>({
+export function SkeletonRows({
   columns,
   rows,
   actions,
 }: {
-  columns: Column<T>[];
+  columns: readonly SkeletonCell[];
   rows: number;
   actions: boolean;
 }) {
@@ -49,8 +56,8 @@ export function SkeletonRows<T>({
     // biome-ignore lint/suspicious/noArrayIndexKey: placeholders have no identity
     <TableRow key={i} aria-hidden="true" className="can-hover:hover:bg-transparent">
       {columns.map((column) => (
-        <TableCell key={column.id} className={column.columnDef.meta?.className}>
-          {SHAPES[column.columnDef.meta?.skeleton ?? "text"]}
+        <TableCell key={column.id} className={column.className}>
+          {SHAPES[column.shape ?? "text"]}
         </TableCell>
       ))}
       {actions && (
@@ -161,5 +168,80 @@ export function TableError({ message, onRetry }: { message?: ReactNode; onRetry:
         </Button>
       }
     />
+  );
+}
+
+/** A column of the table a page will show: its header, and how its skeleton cells look. */
+export interface SkeletonColumn extends SkeletonCell {
+  header: ReactNode;
+}
+
+/**
+ * A DataTable v2 page before its first rows (a route's `pendingComponent`, inside the page's
+ * header): the toolbar, the table's frame with its real headers and skeleton rows in each
+ * column's shape, the pagination's line; cards on a phone. No pulse; nothing moves when the rows
+ * land. Hidden from assistive technology: the page says "Loading" in a status line.
+ */
+export function DataTableSkeleton({
+  columns,
+  filters = 0,
+  search = true,
+  actions = true,
+  rows = 8,
+}: {
+  columns: readonly SkeletonColumn[];
+  /** How many filter buttons the toolbar has. */
+  filters?: number;
+  /** The toolbar has a search box. */
+  search?: boolean;
+  /** The table has a column of row menus. */
+  actions?: boolean;
+  rows?: number;
+}) {
+  return (
+    <div aria-hidden="true" data-slot="data-table-skeleton">
+      {(search || filters > 0) && (
+        <div className="mb-4 flex flex-wrap items-end gap-2">
+          {search && (
+            <div className="flex min-w-0 max-w-md flex-1 basis-60 flex-col gap-2">
+              <Skeleton className="h-5 w-28" />
+              <Skeleton className="h-11 w-full fine:h-9" />
+            </div>
+          )}
+          {Array.from({ length: filters }, (_, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: placeholders have no identity
+            <Skeleton key={i} className="h-11 w-24 fine:h-8" />
+          ))}
+        </div>
+      )}
+      <Table containerClassName="rounded-lg border border-border max-md:hidden">
+        <TableHeader>
+          <TableRow className="can-hover:hover:bg-transparent">
+            {columns.map((c) => (
+              <TableHead key={c.id} className={c.className}>
+                {c.header}
+              </TableHead>
+            ))}
+            {actions && <TableHead className="w-0" />}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          <SkeletonRows columns={columns} rows={rows} actions={actions} />
+        </TableBody>
+      </Table>
+      <ul className="divide-y divide-rule rounded-lg border border-border md:hidden">
+        {Array.from({ length: rows }, (_, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: placeholders have no identity
+          <li key={i} className="flex flex-col gap-2 px-4 py-3">
+            <Skeleton className="h-4 w-2/3" />
+            <Skeleton className="h-3 w-1/2" />
+          </li>
+        ))}
+      </ul>
+      <div className="mt-4 flex items-center justify-between gap-4">
+        <Skeleton className="h-4 w-28" />
+        <Skeleton className="h-8 w-40" />
+      </div>
+    </div>
   );
 }

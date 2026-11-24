@@ -180,7 +180,11 @@ function DesktopRows<T>({ model, label, actions, actionsOf, nameOf, fresh }: Row
       <TableBody className={cn(status === "pending" && "pending-in")}>
         {status === "pending" ? (
           <SkeletonRows
-            columns={table.getVisibleLeafColumns()}
+            columns={table.getVisibleLeafColumns().map((c) => ({
+              id: c.id,
+              shape: c.columnDef.meta?.skeleton,
+              className: c.columnDef.meta?.className,
+            }))}
             rows={model.size}
             actions={actions}
           />
