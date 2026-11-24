@@ -57,9 +57,17 @@ lint:
     uv run ty check
     cd {{ web }} && pnpm lint
 
-# Python tests: unit, integration, architecture (pass extra pytest args; `just test -m eval`: the slow eval tests)
+# Python tests: unit, in-process integration, architecture (pass extra pytest args; `just test -m eval`: the slow eval tests)
 test *args:
     uv run pytest {{ args }}
+
+# Python tests with the integration tests too: they need PostgreSQL, a search or vector server, Docker or the network, each named by an EXACTDOCS_TEST_<NAME>_URL (docs/releasing.md); `just test-integration -m integration`: only them
+test-integration *args:
+    uv run pytest --integration {{ args }}
+
+# Refresh .test_durations, which CI's pytest shards are balanced by (the default suite, timed)
+test-durations:
+    uv run pytest --store-durations --clean-durations -q
 
 # Architecture rules only (ArchUnitPython)
 arch:
@@ -68,6 +76,16 @@ arch:
 # Acceptance scenarios (behave); e.g. `just bdd packages/exactdocs/features/search.feature`
 bdd *args:
     uv run behave {{ args }}
+
+# Refresh .behave_durations, which CI's behave shards are balanced by (every scenario but the @integration ones, timed)
+bdd-durations:
+    rm -rf reports/behave-durations
+    uv run behave --format=progress --junit --junit-directory=reports/behave-durations
+    uv run python deploy/behave_shards.py --store reports/behave-durations
+
+# Acceptance scenarios with the @integration ones too (their services: docs/releasing.md); `just bdd-integration --tags=@integration`: only them
+bdd-integration *args:
+    EXACTDOCS_INTEGRATION=1 uv run behave {{ args }}
 
 # Retrieval eval suite (runs on releases, not in CI): modes compared on the fixture docs repository (docs/evals.md); `just eval --help`
 eval *args:
@@ -92,6 +110,10 @@ ingestion-bench *args:
 # Retrieval benchmark: modes, models, rerankers and chunking measured on the golden set (docs/evals.md)
 retrieval-bench *args:
     uv run python packages/exactdocs/evals/run_retrieval_bench.py {{ args }}
+
+# Text scorer: calibrate scoring from a result's text against chunk-ID scoring on BM25 (docs/evals.md)
+text-bench *args:
+    uv run python packages/exactdocs/evals/run_text_bench.py {{ args }}
 
 # Agent benchmark (never in CI): an agent with only the ExactDocs MCP tools answers the golden set (docs/evals.md); `just agent-bench run --offline`
 agent-bench *args:

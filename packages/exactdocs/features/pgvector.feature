@@ -1,4 +1,4 @@
-@postgres
+@integration @postgres
 Feature: Vectors are stored in pgvector on PostgreSQL
   As the operator of a team's instance on PostgreSQL
   I want hybrid search's vectors kept in the same database, with pgvector
