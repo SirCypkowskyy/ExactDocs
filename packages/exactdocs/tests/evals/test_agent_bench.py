@@ -691,3 +691,22 @@ async def test_stand_in_agents_answer_through_exactdocs_as_shipped(tmp_path: Pat
         assert cell.reference == ("bm25" if cell.retrieval == "hybrid" else None)
         assert all(v.cases == 3 and v.accuracy is not None for v in cell.versus)
     assert "## Against the other arms, on the same cases" in markdown(report)
+
+    # a resumed run in the same work directory imports into a new data directory, asks nothing
+    done = {
+        (q.agent_model, q.arm, q.retrieval, q.case): q
+        for q in report.questions
+        if q.arm == "exactdocs" and q.retrieval == "bm25"
+    }
+    again = await run_bench(
+        [("demo", c) for c in cases],
+        corpus,
+        repos,
+        agent_models=OFFLINE_AGENTS,
+        judge_model=OFFLINE_JUDGE,
+        arms=parse_arms(["exactdocs"]),
+        retrieval=[RetrievalConfig.parse("bm25:mode=bm25")],
+        work_dir=tmp_path / "work",
+        done=done,
+    )
+    assert again.questions == list(done.values())

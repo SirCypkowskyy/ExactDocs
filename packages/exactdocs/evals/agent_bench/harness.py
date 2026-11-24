@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
@@ -527,11 +528,16 @@ class ArmServers:
             config: The retrieval configuration.
 
         Returns:
-            The data directory the corpus is imported into (embedded with its model).
+            The data directory the corpus is imported into (embedded with its model): a new one in
+            the work directory, so a work directory kept from an earlier run (``--resume``) is
+            never imported into twice.
         """
         embedding = config.env.get(EMBEDDING_VARIABLE, os.environ.get(EMBEDDING_VARIABLE, ""))
         if embedding not in self.imports:
-            data_dir = self.work_dir / f"data-{len(self.imports)}"
+            self.work_dir.mkdir(parents=True, exist_ok=True)
+            data_dir = Path(
+                tempfile.mkdtemp(prefix=f"data-{len(self.imports)}-", dir=self.work_dir)
+            )
             records = await import_golden(data_dir, self.projects, self.repos, config.env)
             self.imports[embedding] = data_dir
             self.records = self.records or records
