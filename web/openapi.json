@@ -1192,7 +1192,7 @@
           "identity"
         ],
         "summary": "Get Users",
-        "description": "List the local accounts, disabled ones included, oldest first unless `sort` says otherwise, a page at a time. Filter with `q`, `role` and `disabled`; `total` counts every match. Operators only (`admin`): any other signed-in account is refused with `forbidden` (403). Needs a signed-in session; an API token is refused (401), so a leaked token cannot create accounts. There is no self-signup: accounts are created here, by `exactdocs user create` or, for the first admin, by the setup.",
+        "description": "List the local accounts, disabled ones included, oldest first unless `sort` says otherwise, a page at a time. Filter with `q`, `role`, `disabled` and `provider`; `total` counts every match. Each account shows when it was last active (to the hour), where it signs in and how many live API tokens it holds; every account's tokens are at `GET /users/tokens`. Operators only (`admin`): any other signed-in account is refused with `forbidden` (403). Needs a signed-in session; an API token is refused (401), so a leaked token cannot create accounts. There is no self-signup: accounts are created here, by `exactdocs user create` or, for the first admin, by the setup.",
         "operationId": "identity-get_users",
         "security": [
           {
@@ -1285,10 +1285,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Sort by one of created_at, username, role; prefix `-` for descending. Default: `created_at`. An unknown field is a 422.",
+              "description": "Sort by one of created_at, username, role, last_active_at, token_count; prefix `-` for descending. Default: `created_at`. An unknown field is a 422.",
               "title": "Sort"
             },
-            "description": "Sort by one of created_at, username, role; prefix `-` for descending. Default: `created_at`. An unknown field is a 422."
+            "description": "Sort by one of created_at, username, role, last_active_at, token_count; prefix `-` for descending. Default: `created_at`. An unknown field is a 422."
           },
           {
             "name": "role",
@@ -1332,6 +1332,28 @@
               "title": "Disabled"
             },
             "description": "`true`: only disabled accounts; `false`: only enabled ones."
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 256
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only accounts that sign in through one of these: `password` for a local account, else the provider's name, as `provider` shows it (the provider the account was created through); repeat for several.",
+              "title": "Provider"
+            },
+            "description": "Only accounts that sign in through one of these: `password` for a local account, else the provider's name, as `provider` shows it (the provider the account was created through); repeat for several."
           }
         ],
         "responses": {
@@ -1740,6 +1762,240 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PasswordReset"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/tokens": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "List All Tokens",
+        "description": "List the API tokens of every account, newest first, never their secrets. Operators only.\n\nEach token comes with its owner (`owner_id`, `owner`), its prefix, its expiry and its\nlast use, expired ones not yet removed included. Filter with `q` (the token's name),\n`owner_id`, `expired` and `unused`; order with `sort`; `total` counts every match. Needs\na signed-in session; an API token is refused (401).",
+        "operationId": "identity-list_all_tokens",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "How many items per page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "How many items per page."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it.",
+              "title": "Cursor"
+            },
+            "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 10000,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it.",
+              "title": "Offset"
+            },
+            "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only items whose name contains this text, any case: a user's username, a token's name, a\ngrant's username or group.",
+              "title": "Q"
+            },
+            "description": "Only items whose name contains this text, any case: a user's username, a token's name, a\ngrant's username or group."
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort by one of created_at, name, expires_at, last_used_at, owner; prefix `-` for descending. Default: `-created_at`. A token that never expires or was never used sorts first by `expires_at` or `last_used_at`; `owner` sorts by username. An unknown field is a 422.",
+              "title": "Sort"
+            },
+            "description": "Sort by one of created_at, name, expires_at, last_used_at, owner; prefix `-` for descending. Default: `-created_at`. A token that never expires or was never used sorts first by `expires_at` or `last_used_at`; `owner` sorts by username. An unknown field is a 422."
+          },
+          {
+            "name": "owner_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only the tokens of the account with this id.",
+              "title": "Owner Id"
+            },
+            "description": "Only the tokens of the account with this id."
+          },
+          {
+            "name": "expired",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`true`: only tokens whose expiry has passed (they no longer work); `false`: only the\nothers.",
+              "title": "Expired"
+            },
+            "description": "`true`: only tokens whose expiry has passed (they no longer work); `false`: only the\nothers."
+          },
+          {
+            "name": "unused",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`true`: only tokens that never authenticated a request; `false`: only used ones.",
+              "title": "Unused"
+            },
+            "description": "`true`: only tokens that never authenticated a request; `false`: only used ones."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllTokensList"
                 }
               }
             }
@@ -13157,6 +13413,99 @@
         "title": "AccountSummary",
         "description": "An account as the outside world sees it (never the password hash)."
       },
+      "AccountTokenSummary": {
+        "properties": {
+          "library_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 256,
+                  "pattern": "^/[^/]+/[^/]+$"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Ids",
+            "description": "Selected library IDs; omit or use null for all libraries the user can access."
+          },
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Stable identifier of the token, used to revoke it."
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Label the token was given when it was created."
+          },
+          "prefix": {
+            "type": "string",
+            "title": "Prefix",
+            "description": "The first characters of the secret (`exd_` and four more), to recognise the token."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "When the token was created."
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At",
+            "description": "When the token stops working; `null` for a token that never expires."
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At",
+            "description": "When the token last authenticated a request; `null` if it was never used."
+          },
+          "owner_id": {
+            "type": "string",
+            "title": "Owner Id",
+            "description": "The id of the account that holds the token."
+          },
+          "owner": {
+            "type": "string",
+            "title": "Owner",
+            "description": "The username of the account that holds the token."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "created_at",
+          "expires_at",
+          "last_used_at",
+          "owner_id",
+          "owner"
+        ],
+        "title": "AccountTokenSummary",
+        "description": "A token as an operator sees it in the list of every token: with its owner, no secret."
+      },
       "AddLibraryCommand": {
         "properties": {
           "url": {
@@ -13476,6 +13825,44 @@
         ],
         "title": "AiUsageOut",
         "description": "Spend and budget left per scope: the instance, embedding runs, each library and user."
+      },
+      "AllTokensList": {
+        "properties": {
+          "tokens": {
+            "items": {
+              "$ref": "#/components/schemas/AccountTokenSummary"
+            },
+            "type": "array",
+            "title": "Tokens",
+            "description": "The tokens of this page."
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Pass as `cursor` to get the next page; null on the last page."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "How many tokens match the filters, across every page."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tokens",
+          "next_cursor",
+          "total"
+        ],
+        "title": "AllTokensList",
+        "description": "A page of every account's tokens, newest first unless sorted otherwise."
       },
       "AnswerAvailabilityOut": {
         "properties": {
@@ -21847,7 +22234,7 @@
               }
             ],
             "title": "Provider",
-            "description": "The sign-in provider the account signs in through; `null` for a local account (password)."
+            "description": "The sign-in provider the account signs in through; `null` for a local account (password).\nAn account created through a provider keeps that provider here."
           },
           "groups": {
             "items": {
@@ -21856,6 +22243,25 @@
             "type": "array",
             "title": "Groups",
             "description": "The account's groups at its identity provider, as of its latest sign-in or revalidation\n(with the provider's `group_prefix`); empty for a local account."
+          },
+          "last_active_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Active At",
+            "description": "The hour (UTC, minutes always zero) of the account's latest sign-in or request with one\nof its sessions or API tokens; `null` while it has not been active since this was recorded."
+          },
+          "token_count": {
+            "type": "integer",
+            "title": "Token Count",
+            "description": "How many API tokens the account holds that have not expired.",
+            "default": 0
           }
         },
         "additionalProperties": false,

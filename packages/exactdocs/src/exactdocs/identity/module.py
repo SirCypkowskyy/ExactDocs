@@ -46,6 +46,7 @@ from exactdocs.identity.ports.driving import (
     IdentifyToken,
     ListAccessLog,
     ListAccountProviders,
+    ListAllTokens,
     ListLibraryAccessLog,
     ListLibraryGrants,
     ListTokens,
@@ -87,6 +88,7 @@ from exactdocs.identity.use_cases import (
     IdentifyTokenUseCase,
     ListAccessLogUseCase,
     ListAccountProvidersUseCase,
+    ListAllTokensUseCase,
     ListLibraryAccessLogUseCase,
     ListLibraryGrantsUseCase,
     ListTokensUseCase,
@@ -146,6 +148,8 @@ class IdentityModule:
     """Exchange credentials for an API token (the CLI's login)."""
     list_tokens: ListTokens
     """List the caller's API tokens."""
+    list_all_tokens: ListAllTokens
+    """List every account's API tokens with their owners (operators)."""
     revoke_token: RevokeToken
     """Revoke one of the caller's API tokens."""
     identify_token: IdentifyToken
@@ -303,7 +307,9 @@ class IdentityModule:
                 failures=failures,
                 clock=clock,
             ),
-            list_users=ListUsersUseCase(accounts=repository, externals=externals),
+            list_users=ListUsersUseCase(
+                accounts=repository, externals=externals, tokens=tokens, clock=clock
+            ),
             create_user=CreateUserUseCase(
                 accounts=repository, hasher=hasher, failures=failures, clock=clock
             ),
@@ -319,12 +325,17 @@ class IdentityModule:
                 authenticate=authenticate, create_token=create_token
             ),
             list_tokens=ListTokensUseCase(tokens=tokens),
+            list_all_tokens=ListAllTokensUseCase(tokens=tokens, accounts=repository, clock=clock),
             revoke_token=RevokeTokenUseCase(tokens=tokens),
             identify_token=IdentifyTokenUseCase(
                 tokens=tokens, accounts=repository, externals=externals, clock=clock
             ),
             identify_external_token=IdentifyExternalTokenUseCase(
-                providers=providers, policies=policies, accounts=repository, externals=externals
+                providers=providers,
+                policies=policies,
+                accounts=repository,
+                externals=externals,
+                clock=clock,
             ),
             start_external_sign_in=StartExternalSignInUseCase(
                 providers=providers, policies=policies, attempts=attempts, clock=clock

@@ -118,6 +118,17 @@ class AccountRepository(Protocol):
         """
         ...
 
+    async def record_activity(self, account_id: AccountId, hour: datetime) -> None:
+        """Move the account's ``last_active_at`` forward to ``hour``, never back.
+
+        One conditional write: a later hour recorded meanwhile (another process) stays.
+
+        Args:
+            account_id: The account's id.
+            hour: The hour it was active (``activity_hour``).
+        """
+        ...
+
 
 class SessionRepository(Protocol):
     """Persistence for sessions, keyed by token hash."""
@@ -215,6 +226,25 @@ class TokenRepository(Protocol):
 
         Returns:
             The tokens, newest first.
+        """
+        ...
+
+    async def list_all(self) -> list[ApiToken]:
+        """Return every account's tokens, expired ones not yet removed included, newest first.
+
+        Returns:
+            The tokens, newest first.
+        """
+        ...
+
+    async def count_by_account(self, now: datetime) -> Mapping[AccountId, int]:
+        """Count each account's tokens that have not expired at ``now``, in one query.
+
+        Args:
+            now: The current time.
+
+        Returns:
+            The count per account; an account without a live token is absent.
         """
         ...
 

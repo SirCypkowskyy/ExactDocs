@@ -1,3 +1,4 @@
+from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -137,6 +138,19 @@ class InMemoryAccountRepository:
         """
         return bool(self.accounts)
 
+    async def record_activity(self, account_id: AccountId, hour: datetime) -> None:
+        """Move the account's ``last_active_at`` forward to ``hour``, never back.
+
+        Args:
+            account_id: The account's id.
+            hour: The hour it was active.
+        """
+        account = await self.get_by_id(account_id)
+        if account is not None and (
+            account.last_active_at is None or account.last_active_at < hour
+        ):
+            self.accounts[account.username] = replace(account, last_active_at=hour)
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class InMemorySessionRepository:
@@ -255,6 +269,25 @@ class InMemoryTokenRepository:
         """
         own = [t for t in self.tokens.values() if t.account_id == account_id]
         return sorted(own, key=lambda t: (t.created_at, t.id), reverse=True)
+
+    async def list_all(self) -> list[ApiToken]:
+        """Return every account's tokens, newest first.
+
+        Returns:
+            The tokens, newest first.
+        """
+        return sorted(self.tokens.values(), key=lambda t: (t.created_at, t.id), reverse=True)
+
+    async def count_by_account(self, now: datetime) -> Mapping[AccountId, int]:
+        """Count each account's tokens that have not expired at ``now``.
+
+        Args:
+            now: The current time.
+
+        Returns:
+            The count per account; an account without a live token is absent.
+        """
+        return Counter(t.account_id for t in self.tokens.values() if not t.is_expired(now))
 
     async def touch(self, token_hash: str, at: datetime) -> None:
         """Record that the token was used at ``at``.

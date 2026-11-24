@@ -7,6 +7,8 @@ from exactdocs.identity.dtos import (
     AccountPreferences,
     AccountProviders,
     AccountSummary,
+    AllTokensList,
+    AllTokensQuery,
     ApiTokenIdentity,
     AuthenticateQuery,
     ChangePasswordCommand,
@@ -328,6 +330,21 @@ class ListTokens(Protocol):
 
         Args:
             account: The account whose tokens to list.
+            query: The filters, the sort and the page.
+
+        Returns:
+            A page of the tokens, newest first unless sorted otherwise.
+        """
+        ...
+
+
+class ListAllTokens(Protocol):
+    """Every account's tokens with their owners, never their secrets, for an operator."""
+
+    async def __call__(self, query: AllTokensQuery) -> AllTokensList:
+        """Run the use case.
+
+        Args:
             query: The filters, the sort and the page.
 
         Returns:

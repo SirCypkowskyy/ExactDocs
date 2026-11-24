@@ -83,7 +83,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   return `next_cursor` (`null` on the last page). Pass it back unchanged; a malformed cursor is a
   422 `invalid_cursor`. Helper: `exactdocs_kernel.paginate`.
 - **Jumping to a page**: the lists of libraries, versions, jobs (global and per library), articles,
-  users, API tokens, a library's grants and both access logs (global and per library) also take
+  users, API tokens (the caller's and every account's), a library's grants and both access logs (global and per library) also take
   `offset` (0 to 10000), which skips that many matches and starts the page there: page *n* of
   size `limit` is `offset=(n-1)*limit`, and the last one (`total` > 0) is
   `offset=⌊(total-1)/limit⌋*limit` (233 jobs, 20 a page: `offset=220`, 13 jobs). The
@@ -96,10 +96,11 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   10000, or reverse the `sort` to reach the end of a longer list. Helpers:
   `exactdocs_kernel.page_offset`, `MAX_OFFSET`.
 - **Sort, filter and total**: the lists of libraries, versions, jobs (global and per library),
-  articles, users, API tokens, a library's grants and both access logs also take `sort` (one whitelisted field,
-  `-field` for descending) and filters such as `q` (text, any case), `state`, `kind`, `role`,
-  `disabled`, `ai_enabled`, `has_versions`, `origin` (jobs), `sync_state` (libraries) and date
-  ranges (`updated_after`, `created_before`, `at_after`, ...); each parameter's description in the OpenAPI schema names its fields. They run in the
+  articles, users, API tokens (the caller's and every account's), a library's grants and both
+  access logs also take `sort` (one whitelisted field, `-field` for descending) and filters such
+  as `q` (text, any case), `state`, `kind`, `role`, `disabled`, `provider`, `expired`, `unused`,
+  `ai_enabled`, `has_versions`, `origin` (jobs), `sync_state` (libraries) and date ranges
+  (`updated_after`, `created_before`, `at_after`, ...); each parameter's description in the OpenAPI schema names its fields. They run in the
   database, permissions apply before paging, and a cursor only works with the `sort` and filters
   of the request that returned it. Every one of these pages carries `total`, the number of rows
   that match the filters across all pages. An unknown sort field is a 422 `invalid_sort` naming
@@ -201,7 +202,22 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   (the first admin only), by `exactdocs user create`, by a first sign-in through an identity
   provider, or here. `GET /users` lists a page of the accounts (`id`, `username`, `role`, `created_at`,
   `disabled`, `provider` (`null` for a local account) and `groups` (the provider's, as of the
-  latest sign-in or revalidation); oldest first; `q`, `role`, `disabled`, `sort`). `POST /users`
+  latest sign-in or revalidation), `last_active_at` and `token_count`; oldest first; `q`, `role`,
+  `disabled`, `provider`, `sort` by `created_at`, `username`, `role`, `last_active_at` or
+  `token_count`). `provider` (repeat for several) is `password` for a local account, else the name
+  of the provider the account was created through, as `provider` shows it; no identity provider
+  may be named `password`. `last_active_at` is the hour (UTC, minutes always zero: kept to the
+  hour on purpose) of the account's latest activity, `null` until there is any: a sign-in (a
+  password, an identity provider) or a request authenticated as the account (its session cookie,
+  an API token, a provider's ID token over MCP, Cloudflare Access). It is written at most once per
+  hour per account, by the request that was reading the account anyway, best effort (a failed
+  write is logged and the request goes on); activity before the upgrade is not known.
+  `token_count` counts the account's API tokens that have not expired, in one query for the
+  whole list. `GET /users/tokens` lists every account's API tokens for an operator to tidy up:
+  the fields of `GET /tokens` plus `owner_id` and `owner` (the username), never the secret or its
+  hash; expired tokens not yet purged included; newest first; `q` (the token's name),
+  `owner_id`, `expired` and `unused` (`true` or `false`), `sort` by the token fields or `owner`;
+  `cursor` or `offset` like every list. `POST /users`
   (`{"username", "password", "role"?}`, role `user` (default) or `admin`) answers 201 with the
   account; a taken name (compared case-insensitively) is 409 `username_taken`, and a name holding
   `@address:` (the sign-in throttle's own key separator) is 422 `invalid_username`.

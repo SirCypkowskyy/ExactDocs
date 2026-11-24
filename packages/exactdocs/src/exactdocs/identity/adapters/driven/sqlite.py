@@ -88,6 +88,7 @@ accounts = Table(
     Column("role", Text, nullable=False),
     Column("created_at", Text, nullable=False),  # ISO 8601 with offset
     Column("disabled_at", Text),  # see `_stamp`; NULL while the account may sign in
+    Column("last_active_at", Text),  # an hour, see `_stamp`; NULL while never active
 )
 sessions = Table(
     "identity_sessions",
@@ -225,6 +226,18 @@ def _stamp(moment: datetime) -> str:
         The time as stored, e.g. ``2026-01-02T03:04:05.000000+00:00``.
     """
     return moment.astimezone(UTC).isoformat(timespec="microseconds")
+
+
+def _optional_stamp(moment: datetime | None) -> str | None:
+    """Store an optional time like ``_stamp``.
+
+    Args:
+        moment: A timezone-aware time, or ``None``.
+
+    Returns:
+        The time as stored, or ``None``.
+    """
+    return None if moment is None else _stamp(moment)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -371,6 +384,25 @@ class SqliteAccountRepository:
         async with self.engine.connect() as connection:
             return bool((await connection.execute(select(exists(select(accounts.c.id))))).scalar())
 
+    async def record_activity(self, account_id: AccountId, hour: datetime) -> None:
+        """Move the account's ``last_active_at`` forward to ``hour``, never back, in one UPDATE.
+
+        Args:
+            account_id: The account's id.
+            hour: The hour it was active.
+        """
+        stamp = _stamp(hour)
+        statement = (
+            update(accounts)
+            .where(
+                accounts.c.id == account_id,
+                or_(accounts.c.last_active_at.is_(None), accounts.c.last_active_at < stamp),
+            )
+            .values(last_active_at=stamp)
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(statement)
+
 
 def _account_values(account: Account) -> dict[str, Any]:
     """Return the ``accounts`` row of a further account.
@@ -388,6 +420,7 @@ def _account_values(account: Account) -> dict[str, Any]:
         "role": account.role.value,
         "created_at": account.created_at.isoformat(),
         "disabled_at": None if account.disabled_at is None else _stamp(account.disabled_at),
+        "last_active_at": _optional_stamp(account.last_active_at),
     }
 
 
@@ -407,6 +440,7 @@ def _account(row: Row[Any]) -> Account:
         role=Role(row.role),
         created_at=datetime.fromisoformat(row.created_at),
         disabled_at=None if row.disabled_at is None else datetime.fromisoformat(row.disabled_at),
+        last_active_at=_moment(row.last_active_at),
     )
 
 
@@ -587,6 +621,34 @@ class SqliteTokenRepository:
         )
         async with self.engine.connect() as connection:
             return [_token(row) for row in await connection.execute(query)]
+
+    async def list_all(self) -> list[ApiToken]:
+        """Return every account's tokens, newest first.
+
+        Returns:
+            The tokens, newest first.
+        """
+        query = select(api_tokens).order_by(api_tokens.c.created_at.desc(), api_tokens.c.id.desc())
+        async with self.engine.connect() as connection:
+            return [_token(row) for row in await connection.execute(query)]
+
+    async def count_by_account(self, now: datetime) -> Mapping[AccountId, int]:
+        """Count each account's tokens that have not expired at ``now``, in one grouped query.
+
+        Args:
+            now: The current time.
+
+        Returns:
+            The count per account; an account without a live token is absent.
+        """
+        query = (
+            select(api_tokens.c.account_id, func.count())
+            .where(or_(api_tokens.c.expires_at.is_(None), api_tokens.c.expires_at > _stamp(now)))
+            .group_by(api_tokens.c.account_id)
+        )
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(query)).all()
+        return {AccountId(account_id): count for account_id, count in rows}
 
     async def touch(self, token_hash: str, at: datetime) -> None:
         """Record that the token was used at ``at``.

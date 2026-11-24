@@ -371,6 +371,10 @@ async def test_before_the_setup_no_external_sign_in_starts() -> None:
             "lower-case letters, digits and hyphens",
         ),
         (
+            {"auth": {"providers": {"password": provider()}}},
+            "it names local \\(password\\) accounts",
+        ),
+        (
             {"auth": {"providers": {"corp": provider(issuer="http://idp.example.com")}}},
             "issuer must be an https:// URL",
         ),
