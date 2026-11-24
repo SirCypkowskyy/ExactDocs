@@ -606,10 +606,6 @@ def install(home: Path, *, offline: bool) -> NodeGroundedDocs:
         RuntimeError: Node.js or npm is missing, the install failed, it is not there offline, or
             the installed package is not the pinned release.
     """
-    node = shutil.which("node")
-    if node is None:
-        message = "Grounded Docs needs Node.js 22 or later (node is not on PATH)"
-        raise RuntimeError(message)
     prefix = home / VERSION
     entry = prefix / "node_modules" / PACKAGE / "dist" / "index.js"
     if not entry.exists():
@@ -637,6 +633,10 @@ def install(home: Path, *, offline: bool) -> NodeGroundedDocs:
             f"{prefix} holds {PACKAGE} {package.get('version')} ({package.get('integrity')}), "
             f"not {VERSION} ({INTEGRITY})"
         )
+        raise RuntimeError(message)
+    node = shutil.which("node")
+    if node is None:
+        message = "Grounded Docs needs Node.js 22 or later (node is not on PATH)"
         raise RuntimeError(message)
     return NodeGroundedDocs(node=Path(node), entry=entry, config=home / "config.yaml")
 
@@ -1351,6 +1351,7 @@ def _models_dir(given: Path | None) -> Path:
 def main(
     argv: Sequence[str] | None = None,
     tool: Callable[[Path, bool], GroundedDocs] | None = None,
+    embedder: Callable[[str], LocalEmbedding] | None = None,
 ) -> int:
     """Run the benchmark.
 
@@ -1358,6 +1359,8 @@ def main(
         argv: The arguments; ``sys.argv`` by default.
         tool: Builds Grounded Docs from ``(home, offline)`` (tests: a stand-in); ``install``
             by default.
+        embedder: Loads an embedding model by name (tests: a stand-in); ``load_local`` from
+            ``--models-dir`` by default.
 
     Returns:
         The exit code: 1 when the corpus cannot be fetched, Grounded Docs cannot be installed or
@@ -1396,7 +1399,7 @@ def main(
                 grounded,
                 plan,
                 [known[name] for name in wanted],
-                lambda model: load_local(plan.models_dir, model),
+                embedder or (lambda model: load_local(plan.models_dir, model)),
                 args.recorded,
             )
         )
