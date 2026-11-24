@@ -7,12 +7,12 @@ import type {
   AddedVersion,
   JobList,
   LibraryAccess,
+  ListedVersion,
   ReimportedVersion,
   RemovalResult,
   SavedSettings,
   SelectionDraft,
   SettingsLibrary,
-  SettingsVersion,
   SyncedLibrary,
   VersionList,
 } from "../model/settings";
@@ -61,7 +61,7 @@ export function versionsSource(
   repo: string,
   view: VersionsView,
   now: number = Date.now(),
-): ServerSource<SettingsVersion> {
+): ServerSource<ListedVersion> {
   const filters = versionsFilters(view, now);
   return {
     key: [...BROWSE_KEY, owner, repo, "versions", filters],

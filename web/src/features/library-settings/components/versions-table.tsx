@@ -18,7 +18,7 @@ import { libraryRetrievalQueryOptions } from "../api/retrieval";
 import { versionsSource } from "../api/settings";
 import { versionsMessages } from "../messages/versions";
 import type { LibraryRetrieval } from "../model/retrieval";
-import type { SettingsVersion } from "../model/settings";
+import type { ListedVersion, SettingsVersion } from "../model/settings";
 import {
   IMPORTED_WITHIN,
   parseVersionsView,
@@ -86,7 +86,7 @@ const columnsOf = (
   t: Texts,
   pinned: boolean,
   none: NoEmbedding | undefined,
-): ColumnDef<SettingsVersion>[] => [
+): ColumnDef<ListedVersion>[] => [
   {
     accessorKey: "ref",
     header: t.columns.version,
@@ -190,7 +190,7 @@ export function VersionsTable({ owner, repo, pinned, onRemove }: Props) {
     source: versionsSource(owner, repo, view, now),
   });
 
-  const actions = (v: SettingsVersion): RowAction<SettingsVersion>[] => [
+  const actions = (v: ListedVersion): RowAction<ListedVersion>[] => [
     {
       id: "browse",
       label: t.actions.browse,

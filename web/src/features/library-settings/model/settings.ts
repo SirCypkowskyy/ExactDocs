@@ -24,6 +24,8 @@ import { syncMessages } from "../messages/sync";
 
 export type SettingsLibrary = components["schemas"]["LibraryDetail"];
 export type SettingsVersion = components["schemas"]["VersionOut"];
+/** A row of `GET .../versions`: the version and its sizes (#513). */
+export type ListedVersion = components["schemas"]["ListedVersion"];
 export type VersionList = components["schemas"]["VersionList"];
 export type AddedVersion = components["schemas"]["AddedVersion"];
 export type SyncedLibrary = components["schemas"]["SyncedLibrary"];

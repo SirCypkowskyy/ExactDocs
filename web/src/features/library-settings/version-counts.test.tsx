@@ -231,10 +231,7 @@ describe("the versions table's sizes in Polish", () => {
   it("says the articles with the Polish plural on a phone card", async () => {
     setPreferences({ language: "pl" });
     onPhone();
-    serve(
-      [version("v3", 1, 1, 1), version("v2", 2, 2, 0), version("v1", 5, 0, 0)],
-      retrieval([]),
-    );
+    serve([version("v3", 1, 1, 1), version("v2", 2, 2, 0), version("v1", 5, 0, 0)], retrieval([]));
     renderTable();
     const cards = await screen.findByRole("list", { name: "Zaimportowane wersje" });
     const [one, two, five] = within(cards).getAllByRole("listitem") as HTMLElement[];
