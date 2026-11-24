@@ -396,6 +396,38 @@ def safe_return_to(raw: str | None) -> str:
     return raw
 
 
+class BuiltInIcon(StrEnum):
+    """An icon the web UI ships for a well-known provider; named, never served by ExactDocs."""
+
+    DISCORD = "discord"
+    GITHUB = "github"
+    GOOGLE = "google"
+    MICROSOFT = "microsoft"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ProviderIcon:
+    """An operator's own icon for a sign-in provider, checked and sanitised when it was read.
+
+    ExactDocs serves it from its own origin; ``version`` changes with the content, so a URL that
+    carries it may be cached.
+    """
+
+    media_type: str
+    """``image/png``, ``image/webp`` or ``image/svg+xml``."""
+    content: bytes = field(repr=False)
+    """The file's bytes (an SVG's rebuilt from the allowlist)."""
+
+    @property
+    def version(self) -> str:
+        """A short digest of the content.
+
+        Returns:
+            The first 16 hex digits of its SHA-256.
+        """
+        return hashlib.sha256(self.content).hexdigest()[:16]
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SignInPolicy:
     """Who a sign-in provider admits, with which role and groups, and for how long.
@@ -403,6 +435,8 @@ class SignInPolicy:
     ``allowed_groups`` and ``admin_groups`` name groups as the identity provider sends them;
     ``group_prefix`` only changes the name ExactDocs stores. Only ``allowed_groups`` (or
     ``allow_any_user``) admits anyone: an admin group decides the role of who is admitted.
+    With ``auto_create_users`` off, only identities linked to an account already sign in (people
+    link them from Account settings); nobody gets a new account through the provider.
     """
 
     name: str
@@ -422,14 +456,24 @@ class SignInPolicy:
     grace: timedelta
     """How long access lasts without a successful check: the provider unreachable, or no
     refresh token at all."""
+    auto_create_users: bool = True
+    """Create the account of an identity's first sign-in; when off, only linked identities sign
+    in."""
+    icon: BuiltInIcon | None = None
+    """The built-in icon its buttons show; ``None`` for none (or for ``icon_file``)."""
+    icon_file: ProviderIcon | None = None
+    """The operator's own icon, served by ExactDocs; not together with ``icon``."""
 
     def __post_init__(self) -> None:
-        """Check the name and that the policy admits someone on purpose.
+        """Check the name, that the policy admits someone on purpose, and its one icon.
 
         Raises:
             ValueError: The name is not ``[a-z0-9-]``, nobody is admitted without
-                ``allow_any_user``, or a duration is not positive.
+                ``allow_any_user``, a duration is not positive, or both icons are set.
         """
+        if self.icon is not None and self.icon_file is not None:
+            message = f"sign-in provider {self.name!r}: set icon or icon_file, not both"
+            raise ValueError(message)
         if not re.fullmatch(PROVIDER_NAME_PATTERN, self.name):
             message = f"sign-in provider name {self.name!r} must match {PROVIDER_NAME_PATTERN}"
             raise ValueError(message)
@@ -517,7 +561,13 @@ class ExternalGrant:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ExternalIdentity:
-    """An identity at a provider, linked to one account by (issuer, subject) and nothing else."""
+    """An identity at a provider, linked to one account by (issuer, subject) and nothing else.
+
+    An account has at most one identity per provider. The one it was created through is its
+    *origin* (``linked_at`` is ``None``): an account without a password follows it, its role, its
+    groups and its access (``access_until``). The others were linked by the account's owner from
+    Account settings: they only sign the account in, and their times of access mean nothing.
+    """
 
     issuer: str
     """The provider's issuer."""
@@ -539,6 +589,18 @@ class ExternalIdentity:
     access_until: datetime
     """Sessions and API tokens of the account are refused from then on, until a sign-in or a
     revalidation moves it forward."""
+    linked_at: datetime | None = None
+    """When the account's owner linked it from Account settings; ``None`` for the account's
+    origin (the identity it was created through)."""
+
+    @property
+    def is_origin(self) -> bool:
+        """Whether the account was created through this identity (and follows it).
+
+        Returns:
+            ``True`` unless it was linked from Account settings.
+        """
+        return self.linked_at is None
 
     def has_access(self, now: datetime) -> bool:
         """Whether the account may be used at ``now``.
@@ -573,6 +635,10 @@ class SignInAttempt:
     """Where the browser goes once signed in (a same-origin path)."""
     created_at: datetime
     """When the sign-in was started."""
+    link_session_hash: str | None = field(default=None, repr=False)
+    """For a link from Account settings: the hash of the session that started it, which the
+    callback must come back with (the identity is linked to its account, nobody is signed in);
+    ``None`` for a sign-in."""
 
     def is_expired(self, now: datetime) -> bool:
         """Whether the attempt came back too late.

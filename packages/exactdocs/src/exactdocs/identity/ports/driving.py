@@ -4,6 +4,7 @@ from typing import Protocol
 
 from exactdocs.identity.dtos import (
     AccessLogPage,
+    AccountProviders,
     AccountSummary,
     ApiTokenIdentity,
     AuthenticateQuery,
@@ -28,6 +29,7 @@ from exactdocs.identity.dtos import (
     ListLibraryGrantsQuery,
     LoginForTokenCommand,
     PasswordReset,
+    ProviderIconFile,
     ResetPasswordCommand,
     RevalidationReport,
     RevokeLibraryRoleCommand,
@@ -35,6 +37,7 @@ from exactdocs.identity.dtos import (
     SessionState,
     SetupState,
     SetUserDisabledCommand,
+    StartAccountLinkCommand,
     StartExternalSignInCommand,
     TokenGrant,
     TokenList,
@@ -398,11 +401,14 @@ class StartExternalSignIn(Protocol):
 
 
 class FinishExternalSignIn(Protocol):
-    """Finish an external sign-in and start a session.
+    """Finish an external sign-in and start a session, or finish a link from Account settings.
 
-    Refuses with ``ExternalSignInFailedError`` (forged, replayed, expired or invalid),
-    ``SignInCancelledError``, ``NotAllowedError``, ``AccountDisabledError``,
-    ``UsernameUnavailableError`` or ``ProviderUnavailableError``; no session is created then.
+    A sign-in refuses with ``ExternalSignInFailedError`` (forged, replayed, expired or invalid),
+    ``SignInCancelledError``, ``NotAllowedError``, ``NoLinkedAccountError``,
+    ``AccountDisabledError``, ``UsernameUnavailableError``, ``ProviderAccessRevokedError`` or
+    ``ProviderUnavailableError``; no session is created then. A link (an attempt started by
+    ``StartAccountLink``) creates no session either way; once its attempt is found, a refusal is
+    a ``LinkRefusedError`` naming where the browser goes back to.
     """
 
     async def __call__(
@@ -416,6 +422,81 @@ class FinishExternalSignIn(Protocol):
 
         Returns:
             The new session, and where to send the browser.
+        """
+        ...
+
+
+class GetProviderIcon(Protocol):
+    """Return a provider's own icon; ``UnknownSignInProviderError`` or ``NoProviderIconError``."""
+
+    async def __call__(self, provider: str) -> ProviderIconFile:
+        """Run the use case.
+
+        Args:
+            provider: The provider's name.
+
+        Returns:
+            The icon, as ExactDocs serves it.
+        """
+        ...
+
+
+class ListAccountProviders(Protocol):
+    """List the signed-in account's ways to sign in: its password, its providers, linked or not."""
+
+    async def __call__(self, account: AccountSummary) -> AccountProviders:
+        """Run the use case.
+
+        Args:
+            account: The signed-in account.
+
+        Returns:
+            Whether it has a password, and every provider with whether it is linked.
+        """
+        ...
+
+
+class StartAccountLink(Protocol):
+    """Start linking an identity of a provider to the signed-in account.
+
+    The attempt is bound to the browser (the binding returned) and to the session that started
+    it; the provider's callback then links instead of signing in (``FinishExternalSignIn``).
+    Refuses with ``UnknownSignInProviderError``, ``ProviderAlreadyLinkedError``,
+    ``NotSignedInError`` (no session to bind to) or ``ProviderUnavailableError``.
+    """
+
+    async def __call__(
+        self, account: AccountSummary, command: StartAccountLinkCommand, session_token: str | None
+    ) -> ExternalSignInStart:
+        """Run the use case.
+
+        Args:
+            account: The signed-in account.
+            command: The provider and where to come back to.
+            session_token: The session the link is started from.
+
+        Returns:
+            The provider's authorization URL and the binding for the browser.
+        """
+        ...
+
+
+class UnlinkProvider(Protocol):
+    """Unlink the signed-in account's identity of a provider.
+
+    Refuses with ``ProviderNotLinkedError``, or ``LastSignInMethodError`` for the provider an
+    account without a password was created through.
+    """
+
+    async def __call__(self, account: AccountSummary, provider: str) -> AccountProviders:
+        """Run the use case.
+
+        Args:
+            account: The signed-in account.
+            provider: The provider's name.
+
+        Returns:
+            The account's providers afterwards.
         """
         ...
 

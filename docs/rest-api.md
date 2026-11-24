@@ -29,7 +29,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   the session cookie, or `Authorization: Bearer exd_...` with an API token (a wrong bearer is
   refused even if a valid cookie is sent too). Exempt: `POST /setup`, the three `/session`
   operations, `POST /tokens/login`, the two external sign-in navigations
-  (`GET /auth/{provider}/start` and `/callback`) and the OpenAPI document; a test pins that list, and
+  (`GET /auth/{provider}/start` and `/callback`), a provider's own icon (`GET /auth/{provider}/icon`)
+  and the OpenAPI document; a test pins that list, and
   the OpenAPI document marks every other operation with the `SessionCookie` security scheme.
   `POST /session` (`{"username", "password"}`) answers 201 with the session state and sets the
   `exactdocs_session` cookie; a wrong password and an unknown user are the same 401
@@ -45,7 +46,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   live in the server's memory on SQLite (a restart clears them) and in the database on
   PostgreSQL, where every server process shares them. `PUT /account/password` checks the current
   password under the same throttle (see *Own password*); only these three operations document 429. `GET /session` returns `{"state": "setup_required" | "signed_out" |
-  "signed_in", "account": {"id", "username", "role", "has_password"}, "providers": [{"name", "display_name"}]}` and never fails
+  "signed_in", "account": {"id", "username", "role", "has_password"}, "providers": [{"name", "display_name", "icon", "icon_url"}]}` and never fails
   (`providers` lists the configured identity providers, empty while setup is due); `DELETE /session` ends the session on the server
   and is always 204. The cookie is an opaque random token (stored hashed), HttpOnly,
   SameSite=Lax, `Secure` over HTTPS (or with `EXACTDOCS_SECURE_COOKIES`, or an `https://` `EXACTDOCS_PUBLIC_URL`), `Path=/api`, ends after
@@ -69,7 +70,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   an ID token that fails a check), `sign_in_cancelled` (the provider answered an error),
   `not_allowed` (in no allowed group; any access the account had ends), `account_disabled`,
   `username_unavailable` (the username and `<username>@<provider>` are both taken) or
-  `provider_unavailable` (also from `start`). An unknown provider is 404 `unknown_provider`.
+  `not_linked` (the provider creates no accounts, see *Linked sign-in providers*, and nobody
+  linked this identity), `provider_access_revoked` (a linked identity of an account whose own
+  provider ended its access) or `provider_unavailable` (also from `start`). An unknown provider
+  is 404 `unknown_provider`.
   The redirect URI is `<EXACTDOCS_PUBLIC_URL>/api/v1/auth/{provider}/callback`, never built from
   the request. An external account's sessions and API tokens are refused once its access ends
   (a lost group or a revoked refresh token at revalidation, or no successful check within the
@@ -229,6 +233,40 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `account` of `GET /session` (and of `GET /users`) is `false` for it, so the UI hides the form.
   It needs the **session cookie**; an API token is 401, so a stolen token cannot take the
   account over.
+- **Linked sign-in providers** (#506): an account keeps the identity it was created through (its
+  *origin*; an account without a password follows it: role, groups and access) and may link one
+  identity of every other configured provider, which then only signs it in (the account's own
+  role and groups stand). `GET /account/providers` answers `{"has_password", "providers"}`: every
+  configured provider in configuration order, then each identity linked through a provider no
+  longer configured (`configured: false`), each with `name`, `display_name`, `icon`, `icon_url`,
+  `linked`, `origin`, `linked_at` (`null` for the origin), `last_signed_in_at`, `can_link` and
+  `can_unlink`. `POST /account/providers/{provider}/link` (body optional:
+  `{"return_to": "/path"}`, default `/account`) answers `{"redirect_url"}` and sets the
+  `exactdocs_sign_in` binding cookie exactly as `GET /auth/{provider}/start` does; the attempt
+  also holds the SHA-256 of the session that started it. The browser goes to `redirect_url`; the
+  provider comes back to `GET /auth/{provider}/callback`, which, for a link, needs the binding
+  cookie, the `state` **and the same session cookie**, links the identity to that session's
+  account, sets no cookie but clears the binding one, and redirects to `return_to` with
+  `?linked=<provider>`, or `?link_error=<code>`: `sign_in_failed` (another session, or none, or a
+  callback that fails a check), `sign_in_cancelled`, `not_allowed`, `identity_linked_elsewhere`
+  (the identity is another account's), `provider_linked`, `unauthenticated` (the session ended
+  meanwhile) or `provider_unavailable`. `return_to` is a path on this server (anything else is
+  `/`). The start is refused with 409 `provider_linked` when the account has an identity of the
+  provider already, 404 `unknown_provider`, or 429 `provider_unavailable`.
+  `DELETE /account/providers/{provider}` unlinks the account's identity of the provider (it no
+  longer signs the account in; sessions stay) and answers the list again; 404
+  `provider_not_linked`, or 409 `last_sign_in_method` for the origin of an account without a
+  password (its only way in). Every `/account/providers` route needs the **session cookie**: an
+  API token is 401, so a stolen token cannot link an identity that signs in as its account. A
+  provider with `auto_create_users = false` (the default of the Discord, Google and Microsoft
+  presets) signs in linked identities only: anyone else is refused with `not_linked`, at sign-in
+  and over MCP OAuth. `GET /auth/{provider}/icon` serves a provider's own icon (`icon_file`),
+  the `icon_url` the provider lists (`?v=<version>`, which changes with the icon): `image/png`,
+  `image/webp` or a sanitised `image/svg+xml`, with `ETag` (304 on `If-None-Match`),
+  `Cache-Control: public, max-age=86400`, `X-Content-Type-Options: nosniff` and a
+  `Content-Security-Policy` that runs and loads nothing. A built-in icon (`icon`: `discord`,
+  `github`, `google` or `microsoft`) is the web UI's own and has no `icon_url`; a provider
+  without an icon file is 404 `no_icon`. The icon needs no caller.
 - **Library roles** (ACL-02): `viewer < contributor < admin < creator` on each library, granted
   to users and to groups; an account's role is the highest it holds, and an operator (role
   `admin`) is `creator` of every library. Every library route asks for one: `viewer` reads and
