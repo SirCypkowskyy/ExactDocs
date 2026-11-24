@@ -249,6 +249,16 @@ The *AI* page of the web UI (admins only) lists the providers and roles (never a
 per profile, the embedding progress of each space (`GET /api/v1/ai/embedding`), and the usage and
 budgets described below.
 
+<figure class="xd-shot" markdown>
+
+![The AI page: an openai-compatible profile named gateway, used for the embedding role; the embedding space at 100%, 136 of 136 chunks and 4 of 4 versions; and today's and this month's usage of the instance, the embedding runs and each library, with no budget set.](assets/screenshots/ai-light.webp#only-light){ loading=lazy }
+![The AI page: an openai-compatible profile named gateway, used for the embedding role; the embedding space at 100%, 136 of 136 chunks and 4 of 4 versions; and today's and this month's usage of the instance, the embedding runs and each library, with no budget set.](assets/screenshots/ai-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>The <em>AI</em> page, with a stand-in embedding model behind an OpenAI-compatible
+profile.</figcaption>
+
+</figure>
+
 ### Per-library settings
 
 `PUT /api/v1/libraries/{owner}/{repo}/retrieval` sets, for one library:

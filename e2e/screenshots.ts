@@ -69,10 +69,15 @@ async function ready(page: Page) {
   await settled(page);
 }
 
-/** The viewport, `height` CSS pixels tall, as `<name>-<scheme>.png`. */
-async function shoot(page: Page, name: string, scheme: string, height: number) {
-  await page.setViewportSize({ width: WIDTH, height });
+/** The viewport as `<name>-<scheme>.png`, once nothing moves and nothing is hovered. */
+async function shoot(page: Page, name: string, scheme: string) {
+  const { width, height } = page.viewportSize() ?? { width: WIDTH, height: 900 };
+  await page.mouse.move(width - 2, height - 2); // off whatever was clicked
   await ready(page);
+  // Two frames, for whatever a resize observer or a font swap still lays out.
+  await page.evaluate(
+    () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+  );
   await page.screenshot({ path: `${OUT}/${name}-${scheme}.png`, animations: "disabled" });
 }
 
@@ -132,57 +137,101 @@ function mcpFigure(replies: Reply[]): string {
 
 const READER = "/libraries/acme/payments?version=v1.4.0&path=docs%2Fguide%2Fresilience.md";
 
+/** Each picture: its name, the viewport's height, and how to bring the page to it. */
+const SHOTS: { name: string; height: number; open: (page: Page) => Promise<void> }[] = [
+  {
+    name: "libraries",
+    height: 520,
+    open: async (page) => {
+      await page.goto("/");
+      await expect(page.getByRole("link", { name: "Acme Store", exact: true })).toBeVisible();
+    },
+  },
+  {
+    name: "library",
+    height: 520,
+    open: async (page) => {
+      await page.goto("/libraries/acme/payments");
+      await page.getByRole("button", { name: /Change version/ }).click();
+      await expect(page.getByRole("list", { name: "Versions" })).toBeVisible();
+    },
+  },
+  {
+    name: "reader",
+    height: 900,
+    open: async (page) => {
+      await page.goto(READER);
+      await expect(page.locator(".doc-code")).toBeVisible();
+    },
+  },
+  {
+    name: "search",
+    height: 1200,
+    open: async (page) => {
+      await page.goto("/search?q=retry");
+      await expect(page.locator("[data-result]").first()).toBeVisible();
+    },
+  },
+  {
+    // Before the playground: its searches would add to the spend shown here.
+    name: "ai",
+    height: 1120,
+    open: async (page) => {
+      await page.goto("/ai");
+      await expect(page.getByText("100%")).toBeVisible();
+    },
+  },
+  {
+    name: "connect",
+    height: 800,
+    open: async (page) => {
+      await page.goto("/account");
+      await expect(page.getByRole("heading", { name: "Connect an agent" })).toBeVisible();
+      await expect(page.getByText("Claude Code", { exact: true })).toBeVisible();
+    },
+  },
+  {
+    name: "playground",
+    height: 1200,
+    open: async (page) => {
+      await page.goto("/playground");
+      await page.getByLabel("Query", { exact: true }).fill("how do I retry failed calls");
+      await page.getByRole("checkbox", { name: "/acme/payments" }).check();
+      await page.getByLabel("Mode", { exact: true }).selectOption("hybrid");
+      await page.getByRole("checkbox", { name: "Compare two modes side by side" }).check();
+      await page.getByLabel("Compare with", { exact: true }).selectOption("bm25");
+      await page.getByRole("button", { name: "Search" }).click();
+      await expect(page.getByRole("list", { name: /results$/ })).toHaveCount(2);
+    },
+  },
+];
+
 test("the README's and the documentation's screenshots", async ({ browser }) => {
   const replies: Reply[] = JSON.parse(readFileSync(env("SHOTS_MCP"), "utf-8"));
-  for (const scheme of ["light", "dark"] as const) {
+  const pages: [string, Page][] = [];
+  for (const colorScheme of ["light", "dark"] as const) {
     // Nothing stored: the theme follows the system's, set before the first paint.
-    const context = await browser.newContext({ colorScheme: scheme });
+    const context = await browser.newContext({ colorScheme });
     await stableContext(context);
     const page = await context.newPage();
     await signIn(page, USER, PASSWORD);
-
-    await page.goto("/");
-    await expect(page.getByRole("link", { name: "Acme Store", exact: true })).toBeVisible();
-    await shoot(page, "libraries", scheme, 520);
-
-    await page.goto("/libraries/acme/payments");
-    await page.getByRole("button", { name: /Change version/ }).click();
-    await expect(page.getByRole("list", { name: "Versions" })).toBeVisible();
-    await shoot(page, "library", scheme, 720);
-
-    await page.goto(READER);
-    await expect(page.locator(".doc-code")).toBeVisible();
-    await shoot(page, "reader", scheme, 900);
-
-    await page.goto("/search?q=retry");
-    await expect(page.locator("[data-result]").first()).toBeVisible();
-    await shoot(page, "search", scheme, 900);
-
-    await page.goto("/playground");
-    await page.getByLabel("Query", { exact: true }).fill("how do I retry failed calls");
-    await page.getByRole("checkbox", { name: "/acme/payments" }).check();
-    await page.getByLabel("Mode", { exact: true }).selectOption("hybrid");
-    await page.getByRole("checkbox", { name: "Compare two modes side by side" }).check();
-    await page.getByLabel("Compare with", { exact: true }).selectOption("bm25");
-    await page.getByRole("button", { name: "Search" }).click();
-    await expect(page.getByRole("list", { name: /results$/ })).toHaveCount(2);
-    await shoot(page, "playground", scheme, 1200);
-
-    await page.goto("/ai");
-    await expect(page.getByText("100%")).toBeVisible();
-    await shoot(page, "ai", scheme, 1120);
-
-    await page.goto("/account");
-    await expect(page.getByRole("heading", { name: "Connect an agent" })).toBeVisible();
-    await expect(page.getByText("Claude Code", { exact: true })).toBeVisible();
-    await shoot(page, "connect", scheme, 800);
-
-    // The MCP figure: two real replies, drawn with the UI's own colours and type.
+    pages.push([colorScheme, page]);
+  }
+  // A picture at a time in both themes, so both show the instance in the same state.
+  for (const { name, height, open } of SHOTS) {
+    for (const [scheme, page] of pages) {
+      await page.setViewportSize({ width: WIDTH, height }); // before the page lays out
+      await open(page);
+      await shoot(page, name, scheme);
+    }
+  }
+  // The MCP figure: the two real replies, drawn with the UI's own colours and type.
+  for (const [scheme, page] of pages) {
     await page.evaluate((html) => {
       document.body.innerHTML = html;
     }, mcpFigure(replies));
     await ready(page);
     await page.locator("#figure").screenshot({ path: `${OUT}/mcp-${scheme}.png` });
-    await context.close();
+    await page.context().close();
   }
 });

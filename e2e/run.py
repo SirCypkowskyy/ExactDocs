@@ -44,7 +44,11 @@ def wait_healthy(url: str, server: subprocess.Popen[bytes]) -> None:
 
 
 def server_command(wheels: Path | None = None) -> list[str]:
-    """`exactdocs` from the checkout, or from the wheels in `wheels` through uvx."""
+    """The command that runs `exactdocs`.
+
+    Returns:
+        `exactdocs` from the checkout, or from the wheels in `wheels` through uvx.
+    """
     if not wheels:
         return ["uv", "run", "--project", str(ROOT), "exactdocs"]
     [wheel] = wheels.glob("exactdocs-[0-9]*.whl")
@@ -64,7 +68,11 @@ def server_command(wheels: Path | None = None) -> list[str]:
 def exactdocs(
     cmd: list[str], data_dir: Path, env: Mapping[str, str] | None = None
 ) -> Generator[str]:
-    """Serve ExactDocs on a free port with `data_dir` until the block ends; yield its URL."""
+    """Serve ExactDocs on a free port with `data_dir` until the block ends.
+
+    Yields:
+        Its URL, once it answers its health check.
+    """
     port = free_port()
     url = f"http://127.0.0.1:{port}"
     server_env = {**(os.environ if env is None else env), "EXACTDOCS_DATA_DIR": str(data_dir)}
@@ -82,7 +90,11 @@ def exactdocs(
 
 
 def playwright(args: list[str], env: Mapping[str, str]) -> int:
-    """Run `playwright test` in this directory; return its exit code."""
+    """Run `playwright test` in this directory.
+
+    Returns:
+        Its exit code.
+    """
     return subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
         ["pnpm", "exec", "playwright", "test", *args],  # ruff: ignore[start-process-with-partial-path]
         env=env,

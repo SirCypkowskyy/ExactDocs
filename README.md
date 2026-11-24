@@ -83,9 +83,25 @@ differ.</sub>
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/libraries-dark.webp">
-        <img width="100%" src="docs/assets/screenshots/libraries-light.webp" alt="The libraries page: Acme Payments with versions v1.4.0, v1.3.0 and next, and ExactDocs with v0.4.0, v0.3.1 and v0.2.0, each default version shown with its commit.">
+        <img width="100%" src="docs/assets/screenshots/libraries-light.webp" alt="The libraries page: Acme Payments with versions v1.4.0, v1.3.0 and next, and Acme Store with v2.1.0, each default version shown with its commit.">
       </picture>
       <br><sub>Each library with its imported versions; the default one shows its commit.</sub>
+    </td>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/library-dark.webp">
+        <img width="100%" src="docs/assets/screenshots/library-light.webp" alt="The Acme Payments library at its default version, v1.4.0, with the version picker open: v1.4.0 at commit 3fb0656, v1.3.0 at db8b674 and the next branch at cefb01d.">
+      </picture>
+      <br><sub>A library and its versions, each a tag, branch or commit pinned to its SHA.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/search-dark.webp">
+        <img width="100%" src="docs/assets/screenshots/search-light.webp" alt="Search results for retry across every library: 7 results in 2 libraries, grouped by library and version, each with its heading path, its file and the matching text highlighted.">
+      </picture>
+      <br><sub>One search across the default version of every library.</sub>
     </td>
     <td width="50%">
       <picture>
@@ -96,6 +112,9 @@ differ.</sub>
     </td>
   </tr>
 </table>
+
+<sub>`just screenshots` takes every picture here from the running UI, with the test fixture
+libraries and a stand-in embedding model.</sub>
 
 ## Quick start
 

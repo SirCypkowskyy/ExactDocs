@@ -52,6 +52,16 @@ revoked. Create, list and revoke them on the **Account** page of the web UI, wit
 `exactdocs token`, or over the REST API with a signed-in session. The token routes do not accept a
 token, so a leaked token cannot mint successors.
 
+<figure class="xd-shot" markdown>
+
+![The Account page: two API tokens, Claude Code for every library the account can read and Cursor for /acme/payments only, expiring in 90 days; below them, the MCP client config to paste, with the URL http://localhost:3000/mcp and a placeholder where the token goes.](assets/screenshots/connect-light.webp#only-light){ loading=lazy }
+![The Account page: two API tokens, Claude Code for every library the account can read and Cursor for /acme/payments only, expiring in 90 days; below them, the MCP client config to paste, with the URL http://localhost:3000/mcp and a placeholder where the token goes.](assets/screenshots/connect-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>The <strong>Account</strong> page: the tokens, and the config for this server with a
+placeholder for the token.</figcaption>
+
+</figure>
+
 ```bash
 curl -c jar.txt -H 'content-type: application/json' http://localhost:3000/api/v1/session \
   -d '{"username": "ada", "password": "a long passphrase"}'
