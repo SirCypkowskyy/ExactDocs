@@ -1,5 +1,6 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { Pin } from "lucide-react";
+import { PHONE_QUERY, useMediaQuery } from "@/shared/lib/use-media-query";
 import { Count, LibraryCell, RelativeTime, VersionCell } from "@/shared/ui/data-table/cells";
 import type { TableFilter } from "@/shared/ui/data-table/use-data-table";
 import { Tooltip } from "@/shared/ui/tooltip";
@@ -32,6 +33,13 @@ function DefaultVersion({ library, t }: { library: Library; t: ListMessages["row
   );
 }
 
+/** The default version's articles: a figure under the header, "120 articles" on a phone card. */
+function Articles({ value, t }: { value: number; t: ListMessages["row"] }) {
+  const phone = useMediaQuery(PHONE_QUERY);
+  if (phone) return <span className="num">{t.articles(value)}</span>;
+  return <Count value={value} muted={value === 0} />;
+}
+
 // Built once per language: a cell is rendered as a component, so a new function would remount it.
 export const columnsOf = (t: ListMessages): ColumnDef<Library>[] => [
   {
@@ -62,6 +70,14 @@ export const columnsOf = (t: ListMessages): ColumnDef<Library>[] => [
     sortDescFirst: true,
     meta: { align: "end", skeleton: "number", className: "max-lg:hidden" },
     cell: ({ row }) => <Count value={row.original.version_count} />,
+  },
+  {
+    // The default version's articles (#513); not a sort field of `GET /libraries`.
+    accessorKey: "article_count",
+    header: t.columns.articles,
+    enableSorting: false,
+    meta: { priority: 3, align: "end", skeleton: "number", className: "max-lg:hidden" },
+    cell: ({ row }) => <Articles value={row.original.article_count} t={t.row} />,
   },
   {
     accessorKey: "last_imported_at",
