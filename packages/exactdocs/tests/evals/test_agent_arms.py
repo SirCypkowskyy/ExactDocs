@@ -147,6 +147,11 @@ def test_recorded_settings_and_errors_never_hold_a_key() -> None:
     text = "401: key abcd1234efgh5678 refused; Authorization: Bearer sk-abcdefghijk"
     assert scrub(text, env) == f"401: key {SECRET} refused; Authorization: Bearer {SECRET}"
     assert scrub("max token limit reached", env) == "max token limit reached"
+    limit = "429: you (someone.name) have reached your session usage limit; mail ops@example.com"
+    assert scrub(limit, env) == (
+        f"429: you ({SECRET}) have reached your session usage limit; mail {SECRET}"
+    )
+    assert scrub("if you (as the user) ask twice", env) == "if you (as the user) ask twice"
 
 
 def test_the_exactdocs_server_gets_its_own_settings_but_not_the_agents_keys(

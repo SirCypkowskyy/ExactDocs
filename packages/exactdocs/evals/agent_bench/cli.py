@@ -46,7 +46,7 @@ from agent_bench.models import (
     thinking_setting,
 )
 from agent_bench.offline import OFFLINE_AGENTS, OFFLINE_JUDGE
-from agent_bench.redact import recorded_settings
+from agent_bench.redact import recorded_settings, scrub
 from agent_bench.report import (
     BenchReport,
     CorpusCommit,
@@ -197,7 +197,8 @@ def load_rows(path: Path) -> dict[JobKey, QuestionResult]:
         path: The ``.rows.jsonl`` file.
 
     Returns:
-        Each question's latest record; nothing when there is no file.
+        Each question's latest record, its reason scrubbed again (``redact.scrub``); nothing when
+        there is no file.
     """
     rows: dict[JobKey, QuestionResult] = {}
     if not path.exists():
@@ -205,6 +206,7 @@ def load_rows(path: Path) -> dict[JobKey, QuestionResult]:
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():
             row = QuestionResult.model_validate_json(line)
+            row = row.model_copy(update={"judge_reason": scrub(row.judge_reason)})
             rows[row.agent_model, row.arm, row.retrieval, row.case] = row
     return rows
 
