@@ -1854,6 +1854,20 @@ export interface components {
             readonly redirect_url: string;
         };
         /**
+         * AccountPreferences
+         * @description An account's interface preferences, and whether it saved them.
+         */
+        readonly AccountPreferences: {
+            /**
+             * Saved
+             * @description `false` while the account never saved any: `preferences` then holds the defaults, and a
+             *     browser keeps (and may save) the ones it already applies.
+             */
+            readonly saved: boolean;
+            /** @description The saved preferences, or the defaults when `saved` is `false`. */
+            readonly preferences: components["schemas"]["InterfacePreferences"];
+        };
+        /**
          * AccountProvider
          * @description A provider as the signed-in person's Account settings show it: linked or not.
          */
