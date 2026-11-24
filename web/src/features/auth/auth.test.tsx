@@ -415,6 +415,43 @@ describe("sign-in through an identity provider", () => {
     );
   });
 
+  it("shows each provider's mark, the built-in brands first (#506)", () => {
+    renderWithClient(
+      <SignInPage
+        providers={[
+          { name: "corp", display_name: "Corp SSO", icon_url: "/api/v1/auth/corp/icon?v=2" },
+          { name: "google", display_name: "Google", icon: "google" },
+          { name: "plain", display_name: "Plain OIDC" },
+          { name: "gh", display_name: "GitHub", icon: "github" },
+          { name: "ms", display_name: "Microsoft", icon: "microsoft" },
+          { name: "dc", display_name: "Discord", icon: "discord" },
+        ]}
+        onSignedIn={vi.fn()}
+      />,
+    );
+    const links = screen.getAllByRole("link");
+    expect(links.map((l) => l.textContent)).toEqual([
+      "Sign in with Google",
+      "Sign in with GitHub",
+      "Sign in with Microsoft",
+      "Sign in with Discord",
+      "Sign in with Corp SSO",
+      "Sign in with Plain OIDC",
+    ]);
+    expect(links.slice(0, 4).map((l) => l.querySelector("svg")?.dataset.brand)).toEqual([
+      "google",
+      "github",
+      "microsoft",
+      "discord",
+    ]);
+    const own = links[4]?.querySelector("img");
+    expect(own).toHaveAttribute("src", "/api/v1/auth/corp/icon?v=2");
+    expect(own).toHaveAttribute("alt", "");
+    expect(links[5]?.querySelector("svg")).toHaveClass("lucide-key-round");
+    // Full width, 44 px on touch: the outline SocialButton.
+    for (const link of links) expect(link).toHaveClass("w-full", "h-11");
+  });
+
   it("shows no provider section when none is configured", () => {
     renderWithClient(<SignInPage onSignedIn={vi.fn()} />);
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
@@ -433,6 +470,7 @@ describe("sign-in through an identity provider", () => {
     ["provider_unavailable", /can't be reached/],
     ["sign_in_cancelled", /did not sign you in/],
     ["sign_in_failed", /could not be completed/],
+    ["not_linked", /not linked to an account on this server/],
   ])("explains a refused sign-in (%s)", (code, message) => {
     renderWithClient(<SignInPage error={code} providers={providers} onSignedIn={vi.fn()} />);
     expect(screen.getByRole("alert")).toHaveTextContent(message);

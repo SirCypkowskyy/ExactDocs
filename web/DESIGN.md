@@ -549,7 +549,8 @@ and the lamp on the one lit thing.
 | `Breadcrumb` and its parts | `ui/breadcrumb.tsx` | Slash separators, the way back in muted ink, the current page in ink with `aria-current`. One for the library page, settings, sharing and the library's access log. `BreadcrumbLink` is a 44px target on touch and a line high with a mouse on its own. |
 | `Mark`, `Wordmark` | `ui/wordmark.tsx` | The small mole (28px) and the lockup; light and dark files swap with the theme. |
 | `TextSizeControl`, `ThemeButton`, `LanguageMenu`, `InterfaceMenu`, `InterfaceCluster` | `ui/interface-controls.tsx` | The band's interface console (#486); every trigger is a band `IconButton`. |
-| `InterfaceSettings` | `ui/interface-settings.tsx` | Account → Interface: every preference, with a reset. |
+| `InterfaceSettings`, `PreferenceToggle` | `ui/interface-settings.tsx` | Account → Interface: every preference, with a reset. `children` adds settings after the built-in ones (the auth feature's "Show me on the leaderboard", an account-only choice); `PreferenceToggle` is the switch row they use (label, a `description` node, `disabled` while the choice cannot be changed, said in the description). |
+| `ProviderMark` | `ui/brand-marks.tsx` | A sign-in provider's mark: Google's G and Microsoft's four squares in their own colours (their sign-in guidelines ask for them), GitHub and Discord in the text colour, all inline SVG (no icon package, no remote loads); else the operator's icon from this server (`icon_url`, a same-origin path only, fitted with `object-contain`, `alt=""`); else, or when it fails to load, `KeyRound`. Always decorative, the name is written beside it. `sm` 16px in buttons, `md` 20px in lists. `isBrandIcon` puts the brands first on the sign-in page. |
 | `Tooltip` | `ui/tooltip.tsx` | A short name or a key for an icon control. `IconButton` brings its own. |
 | `Tabs` | `ui/tabs.tsx` | Underline tabs with one sliding indicator. |
 | `AlertDialog` and its parts | `ui/alert-dialog.tsx` | The one way to confirm: `role="alertdialog"`, Cancel focused first, Escape cancels, a click outside does nothing; 12px corners, 24px padding. |
@@ -782,6 +783,7 @@ inline script in `index.html`, and synced to the account when signed in (GET/PUT
 | Font | default, hyperlegible, dyslexic, system | `data-font` |
 | Underline links | on, off | `data-links="underline"` |
 | Large targets | on, off | `data-targets="large"`: the `fine:` variant stops applying, so 44px stays |
+| Show me on the leaderboard | on, off (default off) | nothing on the page: consent to be named on the people leaderboard (#510). Offered only while signed in, changeable only once the account's answer is read, and always taken from the account at sign-in (the browser's copy may be someone else's) |
 
 Components read these through the `fine:`, `can-hover:`, `motion-safe:` and `motion-reduce:`
 variants, never the raw media queries.
