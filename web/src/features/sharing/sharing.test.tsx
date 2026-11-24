@@ -22,7 +22,7 @@ const refuse = (status: number, error: string, detail = error) =>
 /**
  * A tiny in-memory sharing API for one library, called as `me`: the creator holds `creator`,
  * anyone else here is an admin (an operator would be `creator` too). It filters by `kind` and
- * `role` (repeatable) and `q`, and pages with `limit` and an offset cursor (`o<n>`).
+ * `role` (repeatable) and `q`, and pages with `limit` and an `offset` (or a cursor, `o<n>`).
  */
 function stubApi(me: string, rows: Row[] = defaultRows()) {
   let grants = [...rows];
@@ -43,7 +43,7 @@ function stubApi(me: string, rows: Row[] = defaultRows()) {
           (kinds.length === 0 || kinds.includes(g.kind)) &&
           g.subject.includes(q),
       );
-      const start = Number(params.get("cursor")?.slice(1) ?? 0);
+      const start = Number(params.get("offset") ?? params.get("cursor")?.slice(1) ?? 0);
       const limit = Number(params.get("limit"));
       return json({
         grants: shown.slice(start, start + limit),
@@ -188,6 +188,7 @@ describe("the sharing view", () => {
         "c1",
       ),
     ).toBe("limit=20&q=b&kind=user&role=viewer&role=admin&sort=subject&cursor=c1");
+    expect(grantsParams({}, 20, null, 20)).toBe("limit=20&offset=20");
   });
 
   it("lets only the creator give, change or take away admin", () => {
@@ -400,7 +401,9 @@ describe("sharing page", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: "Sort by Role" }));
-    await waitFor(() => expect(listed(fetchMock)).toContain(`${BASE}/grants?limit=20&sort=-role`));
+    await waitFor(() =>
+      expect(listed(fetchMock)).toContain(`${BASE}/grants?limit=20&sort=-role&offset=0`),
+    );
     expect(history.location.search).toContain("sort=-role");
 
     await userEvent.click(screen.getByRole("button", { name: "Kind" }));
@@ -409,7 +412,7 @@ describe("sharing page", () => {
     );
     await userEvent.keyboard("{Escape}");
     await waitFor(() =>
-      expect(listed(fetchMock)).toContain(`${BASE}/grants?limit=20&kind=group&sort=-role`),
+      expect(listed(fetchMock)).toContain(`${BASE}/grants?limit=20&kind=group&sort=-role&offset=0`),
     );
     expect(history.location.search).toContain("kind=group");
     expect(await screen.findByText("1–1 of 1")).toBeInTheDocument();
@@ -426,7 +429,7 @@ describe("sharing page", () => {
     expect(history.location.search).toBe("?sort=-role");
   });
 
-  it("pages through many grants, the next page asked for with the first one's cursor", async () => {
+  it("pages through many grants, each page asked for by its offset", async () => {
     const people: Row[] = Array.from({ length: 24 }, (_, i) => ({
       kind: "user",
       subject: `user${String(i + 1).padStart(2, "0")}`,
@@ -444,7 +447,12 @@ describe("sharing page", () => {
     expect(await screen.findByText("21–25 of 25")).toBeInTheDocument();
     expect(row("user24").getByRole("combobox", { name: "Role of user24" })).toBeInTheDocument();
     expect(history.location.search).toContain("page=2");
-    expect(listed(fetchMock)).toContain(`${BASE}/grants?limit=20&cursor=o20`);
+    expect(listed(fetchMock)).toContain(`${BASE}/grants?limit=20&offset=20`);
+    expect(listed(fetchMock).every((u) => !u.includes("cursor="))).toBe(true);
+    expect(screen.getByRole("button", { name: "Page 2" })).toHaveAttribute("aria-current", "page");
+
+    await userEvent.click(screen.getByRole("button", { name: "Page 1" }));
+    expect(await screen.findByText("1–20 of 25")).toBeInTheDocument();
   });
 
   it("tells someone who isn't an admin of the library that they can't manage it", async () => {

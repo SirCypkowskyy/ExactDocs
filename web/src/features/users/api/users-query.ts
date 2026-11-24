@@ -8,16 +8,16 @@ type UserList = components["schemas"]["UserList"];
 
 export const usersKey = ["users"] as const;
 
-/** The accounts a view shows, a numbered page at a time, sorted and filtered by the server. */
+/** The accounts a view shows, a numbered page at a time (by offset), sorted and filtered by the server. */
 export function usersSource(view: UsersView): ServerSource<User> {
   const filters = usersFilters(view);
   return {
     key: [...usersKey, "list", filters],
-    fetchPage: ({ limit, cursor, signal }) =>
-      getJson<UserList>(`/v1/users?${usersParams(filters, limit, cursor)}`, { signal }).then(
-        (list) => ({ rows: list.users, total: list.total, nextCursor: list.next_cursor }),
-      ),
-    // #509: `paging: "offset"` (and `offset` in the params) once `GET /users` takes an offset.
+    paging: "offset",
+    fetchPage: ({ limit, cursor, offset, signal }) =>
+      getJson<UserList>(`/v1/users?${usersParams(filters, limit, cursor, offset)}`, {
+        signal,
+      }).then((list) => ({ rows: list.users, total: list.total, nextCursor: list.next_cursor })),
   };
 }
 

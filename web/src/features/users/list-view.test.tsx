@@ -19,15 +19,17 @@ const user = (n: number) => ({
 });
 
 /**
- * A users API over `count` accounts that honours `limit` and an offset cursor (`o<n>`); `q=nobody`
- * matches nothing.
+ * A users API over `count` accounts that honours `limit` and an `offset` (or a cursor, `o<n>`);
+ * `q=nobody` matches nothing.
  */
 function serve(count = 45) {
   const all = Array.from({ length: count }, (_, i) => user(i + 1));
   const fetchMock = vi.fn(async (input: string) => {
     const url = new URL(String(input), "http://x");
     const rows = url.searchParams.get("q") === "nobody" ? [] : all;
-    const start = Number(url.searchParams.get("cursor")?.slice(1) ?? 0);
+    const start = Number(
+      url.searchParams.get("offset") ?? url.searchParams.get("cursor")?.slice(1) ?? 0,
+    );
     const limit = Number(url.searchParams.get("limit"));
     return Response.json({
       users: rows.slice(start, start + limit),
@@ -97,6 +99,7 @@ describe("the users table", () => {
         "c1",
       ),
     ).toBe("limit=20&q=b&role=user&disabled=false&sort=role&cursor=c1");
+    expect(usersParams({ sort: "role" }, 20, null, 60)).toBe("limit=20&sort=role&offset=60");
     // Every role, or both states, is no filter at all.
     expect(usersFilters({ role: ["admin", "user"], status: ["active", "disabled"] })).toEqual({});
   });
@@ -109,14 +112,30 @@ describe("the users table", () => {
     expect(screen.getByText("45 accounts")).toBeInTheDocument();
     const table = screen.getByRole("table", { name: "User accounts" });
     expect(table).toHaveAttribute("aria-rowcount", "46");
-    expect(urls(fetchMock)[0]).toBe("/api/v1/users?limit=20");
+    expect(urls(fetchMock)[0]).toBe("/api/v1/users?limit=20&offset=0");
 
     await userEvent.click(screen.getByRole("button", { name: "Next page" }));
 
     expect(await screen.findByText("21–40 of 45")).toBeInTheDocument();
     expect(within(screen.getByRole("table")).getByText("user21")).toBeInTheDocument();
     expect(history.location.search).toContain("page=2");
-    expect(urls(fetchMock)).toContain("/api/v1/users?limit=20&cursor=o20");
+    expect(urls(fetchMock)).toContain("/api/v1/users?limit=20&offset=20");
+
+    await userEvent.click(screen.getByRole("button", { name: "Last page" }));
+
+    expect(await screen.findByText("41–45 of 45")).toBeInTheDocument();
+    expect(urls(fetchMock)).toContain("/api/v1/users?limit=20&offset=40");
+    expect(urls(fetchMock).every((u) => !u.includes("cursor="))).toBe(true);
+  });
+
+  it("opens a linked page with one request", async () => {
+    const fetchMock = serve();
+    renderPage("/users?page=2&size=5");
+    expect(await screen.findByText("6–10 of 45")).toBeInTheDocument();
+    expect(urls(fetchMock)[0]).toBe("/api/v1/users?limit=5&offset=5");
+    await userEvent.click(screen.getByRole("button", { name: "Page 4" }));
+    expect(await screen.findByText("16–20 of 45")).toBeInTheDocument();
+    expect(urls(fetchMock)).toContain("/api/v1/users?limit=5&offset=15");
   });
 
   it("asks the server to sort when a column header is pressed", async () => {
@@ -131,7 +150,9 @@ describe("the users table", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Sort by Account" }));
 
-    await waitFor(() => expect(urls(fetchMock)).toContain("/api/v1/users?limit=20&sort=username"));
+    await waitFor(() =>
+      expect(urls(fetchMock)).toContain("/api/v1/users?limit=20&sort=username&offset=0"),
+    );
     expect(history.location.search).toContain("sort=username");
     expect(screen.getByRole("columnheader", { name: /Account/ })).toHaveAttribute(
       "aria-sort",
@@ -152,7 +173,7 @@ describe("the users table", () => {
     await userEvent.keyboard("{Escape}");
 
     await waitFor(() =>
-      expect(urls(fetchMock)).toContain("/api/v1/users?limit=20&role=admin&disabled=true"),
+      expect(urls(fetchMock)).toContain("/api/v1/users?limit=20&role=admin&disabled=true&offset=0"),
     );
     expect(history.location.search).toContain("role=admin");
     expect(history.location.search).toContain("status=disabled");
@@ -169,7 +190,7 @@ describe("the users table", () => {
     const history = renderPage("/users?q=nobody&status=disabled");
 
     expect(await screen.findByText("No accounts match")).toBeInTheDocument();
-    expect(urls(fetchMock)[0]).toBe("/api/v1/users?limit=20&q=nobody&disabled=true");
+    expect(urls(fetchMock)[0]).toBe("/api/v1/users?limit=20&q=nobody&disabled=true&offset=0");
     await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
 
     expect(await screen.findByText("1–20 of 45")).toBeInTheDocument();

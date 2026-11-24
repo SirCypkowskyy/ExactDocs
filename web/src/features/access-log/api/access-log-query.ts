@@ -16,8 +16,6 @@ const rowsOf = (page: AccessLogPage) => ({
   nextCursor: page.next_cursor,
 });
 
-// #509: both logs set `paging: "offset"` once their endpoints take an `offset` (Last, jumps).
-
 /** One library's access log, newest first, a page at a time (library admins and operators). */
 export function libraryAccessLogSource(
   owner: string,
@@ -28,10 +26,12 @@ export function libraryAccessLogSource(
   const lib = `/v1/libraries/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}` as const;
   return {
     key: [...accessLogKey, "library", owner, repo, filters],
-    fetchPage: ({ limit, cursor, signal }) =>
-      getJson<AccessLogPage>(`${lib}/access-log?${accessLogParams(filters, limit, cursor)}`, {
-        signal,
-      }).then(rowsOf),
+    paging: "offset",
+    fetchPage: ({ limit, cursor, offset, signal }) =>
+      getJson<AccessLogPage>(
+        `${lib}/access-log?${accessLogParams(filters, limit, cursor, offset)}`,
+        { signal },
+      ).then(rowsOf),
   };
 }
 
@@ -40,8 +40,9 @@ export function accessLogSource(view: AccessLogView): ServerSource<AccessEvent> 
   const filters = accessLogFilters(view);
   return {
     key: [...accessLogKey, "all", filters],
-    fetchPage: ({ limit, cursor, signal }) =>
-      getJson<AccessLogPage>(`/v1/access-log?${accessLogParams(filters, limit, cursor)}`, {
+    paging: "offset",
+    fetchPage: ({ limit, cursor, offset, signal }) =>
+      getJson<AccessLogPage>(`/v1/access-log?${accessLogParams(filters, limit, cursor, offset)}`, {
         signal,
       }).then(rowsOf),
   };

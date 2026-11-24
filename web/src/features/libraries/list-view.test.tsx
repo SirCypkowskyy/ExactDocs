@@ -21,14 +21,16 @@ const library = (n: number) => ({
   last_imported_at: "2026-11-01T10:00:00Z",
 });
 
-/** `count` libraries behind an API that honours `limit` and an offset cursor (`o<n>`). */
+/** `count` libraries behind an API that honours `limit` and an `offset` (or a cursor, `o<n>`). */
 function serve(count = 25) {
   const all = Array.from({ length: count }, (_, i) => library(i + 1));
   const fetchMock = vi.fn(async (input: string) => {
     const url = new URL(String(input), "http://x");
     if (url.pathname.endsWith("/v1/libraries")) {
       const rows = url.searchParams.get("q") === "nothing" ? [] : all;
-      const start = Number(url.searchParams.get("cursor")?.slice(1) ?? 0);
+      const start = Number(
+        url.searchParams.get("offset") ?? url.searchParams.get("cursor")?.slice(1) ?? 0,
+      );
       const limit = Number(url.searchParams.get("limit"));
       return Response.json({
         libraries: rows.slice(start, start + limit),
@@ -94,6 +96,8 @@ describe("the libraries list view", () => {
     expect(
       listParams(listFilters({ q: "a b", sort: "-last_imported_at", ai: "off" }, now), 20, "c1"),
     ).toBe("limit=20&q=a+b&sort=-last_imported_at&ai_enabled=false&cursor=c1");
+    // A page by offset sends no cursor, even when one is known.
+    expect(listParams(listFilters({ q: "a" }, now), 20, "c1", 40)).toBe("limit=20&q=a&offset=40");
     expect(listParams(listFilters({ versions: "some", imported: "24h" }, now), 5)).toBe(
       "limit=5&has_versions=true&updated_after=2026-11-22T12%3A00%3A00.000Z",
     );
@@ -108,7 +112,7 @@ describe("the libraries list view", () => {
 
     expect(await screen.findByText("1–20 of 25")).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "Libraries" })).toHaveAttribute("aria-rowcount", "26");
-    await waitFor(() => expect(urls(fetchMock)).toContain("/api/v1/libraries?limit=20&cursor=o20"));
+    await waitFor(() => expect(urls(fetchMock)).toContain("/api/v1/libraries?limit=20&offset=20"));
 
     await userEvent.click(screen.getByRole("button", { name: "Next page" }));
 
@@ -117,13 +121,29 @@ describe("the libraries list view", () => {
     expect(history.location.search).toContain("page=2");
   });
 
+  it("opens a linked page and the last page with one request each", async () => {
+    const fetchMock = serve(130);
+    const history = renderPage("/?page=3");
+
+    expect(await screen.findByText("41–60 of 130")).toBeInTheDocument();
+    expect(urls(fetchMock)[0]).toBe("/api/v1/libraries?limit=20&offset=40");
+    const asked = urls(fetchMock).length;
+
+    await userEvent.click(screen.getByRole("button", { name: "Last page" }));
+
+    expect(await screen.findByText("121–130 of 130")).toBeInTheDocument();
+    expect(urls(fetchMock)[asked]).toBe("/api/v1/libraries?limit=20&offset=120");
+    expect(history.location.search).toContain("page=7");
+    expect(urls(fetchMock).every((u) => !u.includes("cursor="))).toBe(true);
+  });
+
   it("reads the view from the URL and sends it to the API", async () => {
     const fetchMock = serve();
     renderPage("/?q=azure&sort=-version_count&ai=on&size=5");
 
     await screen.findByText("Library 1");
     expect(urls(fetchMock)[0]).toBe(
-      "/api/v1/libraries?limit=5&q=azure&sort=-version_count&ai_enabled=true",
+      "/api/v1/libraries?limit=5&q=azure&sort=-version_count&ai_enabled=true&offset=0",
     );
     expect(screen.getByRole("searchbox")).toHaveValue("azure");
     const chips = screen.getByRole("list", { name: "Active filters" });
@@ -138,7 +158,9 @@ describe("the libraries list view", () => {
     await userEvent.click(screen.getByRole("button", { name: "Sort by Last imported" }));
 
     await waitFor(() =>
-      expect(urls(fetchMock)).toContain("/api/v1/libraries?limit=20&sort=-last_imported_at"),
+      expect(urls(fetchMock)).toContain(
+        "/api/v1/libraries?limit=20&sort=-last_imported_at&offset=0",
+      ),
     );
     expect(history.location.search).toContain("sort=-last_imported_at");
     expect(screen.getByRole("columnheader", { name: /Last imported/ })).toHaveAttribute(
@@ -157,7 +179,7 @@ describe("the libraries list view", () => {
     await userEvent.keyboard("{Escape}");
 
     await waitFor(() =>
-      expect(urls(fetchMock)).toContain("/api/v1/libraries?limit=20&has_versions=false"),
+      expect(urls(fetchMock)).toContain("/api/v1/libraries?limit=20&has_versions=false&offset=0"),
     );
     expect(history.location.search).toContain("versions=none");
   });
@@ -170,7 +192,7 @@ describe("the libraries list view", () => {
     await userEvent.type(screen.getByRole("searchbox"), "nothing");
 
     expect(await screen.findByText("No libraries match")).toBeInTheDocument();
-    expect(urls(fetchMock).at(-1)).toBe("/api/v1/libraries?limit=20&q=nothing");
+    expect(urls(fetchMock).at(-1)).toBe("/api/v1/libraries?limit=20&q=nothing&offset=0");
     expect(history.location.search).toContain("q=nothing");
 
     await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));

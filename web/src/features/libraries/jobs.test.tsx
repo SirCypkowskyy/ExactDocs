@@ -35,8 +35,8 @@ const job = (n: number, over: Record<string, unknown> = {}) => ({
 });
 
 /**
- * A jobs API over `count` jobs that honours `limit` and an offset cursor (`o<n>`), filters by
- * `state` (repeatable) and answers a cancel. Job 2 failed, job 3 is running and may be cancelled.
+ * A jobs API over `count` jobs that honours `limit` and an `offset` (or a cursor, `o<n>`, never
+ * both), filters by `state` (repeatable) and answers a cancel. Job 2 failed, job 3 is running and may be cancelled.
  */
 function serve(count = 45) {
   const all = Array.from({ length: count }, (_, i) =>
@@ -52,7 +52,12 @@ function serve(count = 45) {
     }
     const states = url.searchParams.getAll("state");
     const rows = states.length ? all.filter((j) => states.includes(j.state)) : all;
-    const start = Number(url.searchParams.get("cursor")?.slice(1) ?? 0);
+    const offset = url.searchParams.get("offset");
+    const cursor = url.searchParams.get("cursor");
+    if (offset !== null && cursor !== null) {
+      return Response.json({ code: "cursor_with_offset" }, { status: 422 });
+    }
+    const start = Number(offset ?? cursor?.slice(1) ?? 0);
     const limit = Number(url.searchParams.get("limit"));
     const page = rows.slice(start, start + limit);
     return Response.json({
@@ -137,9 +142,11 @@ describe("the jobs table", () => {
       { state: ["failed", "queued"], library: "/a/b", sort: "state", created: "24h" },
       Date.parse("2026-11-02T10:00:30Z"),
     );
-    expect(jobsParams(filters, 20, "c1")).toBe(
-      "limit=20&state=failed&state=queued&library=%2Fa%2Fb&created_after=2026-11-01T10%3A00%3A00.000Z&sort=state&cursor=c1",
+    expect(jobsParams(filters, 20, null, 40)).toBe(
+      "limit=20&state=failed&state=queued&library=%2Fa%2Fb&created_after=2026-11-01T10%3A00%3A00.000Z&sort=state&offset=40",
     );
+    // Past the API's offset bound the table goes on by cursor, and never sends both.
+    expect(jobsParams({}, 20, "c1")).toBe("limit=20&cursor=c1");
   });
 
   it("reads the view from the URL, sends it to the API and shows the total", async () => {
@@ -149,7 +156,7 @@ describe("the jobs table", () => {
     const table = await screen.findByRole("table", { name: "Jobs" });
     expect(await within(table).findByRole("link", { name: "/acme/lib2" })).toBeInTheDocument();
     expect(urls(fetchMock)[0]).toBe(
-      "/api/v1/jobs?limit=20&state=failed&library=%2Fazure%2Fstorage&sort=-created_at",
+      "/api/v1/jobs?limit=20&state=failed&library=%2Fazure%2Fstorage&sort=-created_at&offset=0",
     );
     const chips = screen.getByRole("list", { name: "Active filters" });
     expect(within(chips).getByText("/azure/storage")).toBeInTheDocument();
@@ -165,8 +172,8 @@ describe("the jobs table", () => {
     expect(await screen.findByText("1–20 of 45")).toBeInTheDocument();
     expect(screen.getByText("Page 1 of 3")).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "Jobs" })).toHaveAttribute("aria-rowcount", "46");
-    // The next page is asked for in the background, from the first page's cursor.
-    await waitFor(() => expect(urls(fetchMock)).toContain("/api/v1/jobs?limit=20&cursor=o20"));
+    // The next page is asked for in the background, by its offset (never a cursor).
+    await waitFor(() => expect(urls(fetchMock)).toContain("/api/v1/jobs?limit=20&offset=20"));
     const asked = urls(fetchMock).length;
 
     await userEvent.click(screen.getByRole("button", { name: "Next page" }));
@@ -175,24 +182,38 @@ describe("the jobs table", () => {
     expect(screen.getByRole("link", { name: "/acme/lib21" })).toBeInTheDocument();
     expect(history.location.search).toContain("page=2");
     // Already fetched: Next costs nothing.
-    expect(urls(fetchMock).slice(asked)).not.toContain("/api/v1/jobs?limit=20&cursor=o20");
+    expect(urls(fetchMock).slice(asked)).not.toContain("/api/v1/jobs?limit=20&offset=20");
     // Focus stays on the button; the move is announced.
     expect(screen.getByRole("button", { name: "Next page" })).toHaveFocus();
     expect(screen.getByText("Page 2 of 3", { selector: "[role=status]" })).toBeInTheDocument();
-    // Without an offset in the API there is no Last.
-    expect(screen.queryByRole("button", { name: "Last page" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Page 2" })).toHaveAttribute("aria-current", "page");
 
     await userEvent.click(screen.getByRole("button", { name: "First page" }));
     expect(await screen.findByText("1–20 of 45")).toBeInTheDocument();
     expect(history.location.search).not.toContain("page=");
+    expect(urls(fetchMock).every((u) => !u.includes("cursor="))).toBe(true);
   });
 
-  it("opens a page from a link by walking forward once, and keeps the size in the URL", async () => {
+  it("jumps to the last page with one request", async () => {
+    const fetchMock = serve(233);
+    const history = renderPage();
+    await screen.findByText("1–20 of 233");
+    const asked = urls(fetchMock).length;
+
+    await userEvent.click(screen.getByRole("button", { name: "Last page" }));
+
+    // docs/rest-api.md's example: 233 jobs, 20 a page, the last one is offset 220 (13 jobs).
+    expect(await screen.findByText("221–233 of 233")).toBeInTheDocument();
+    expect(urls(fetchMock)[asked]).toBe("/api/v1/jobs?limit=20&offset=220");
+    expect(history.location.search).toContain("page=12");
+  });
+
+  it("opens a page from a link with one request, and keeps the size in the URL", async () => {
     const fetchMock = serve();
     const history = renderPage("/jobs?page=3");
     expect(await screen.findByText("41–45 of 45")).toBeInTheDocument();
-    // One request reaches page 3: 40 rows to skip and 20 to show.
-    expect(urls(fetchMock)[0]).toBe("/api/v1/jobs?limit=60");
+    // Page 3 by its offset: no walk from the start.
+    expect(urls(fetchMock)[0]).toBe("/api/v1/jobs?limit=20&offset=40");
     expect(screen.getByRole("button", { name: "Next page" })).toHaveAttribute(
       "aria-disabled",
       "true",
@@ -203,7 +224,7 @@ describe("the jobs table", () => {
     expect(await screen.findByText("1–45 of 45")).toBeInTheDocument();
     expect(history.location.search).toContain("size=50");
     expect(history.location.search).not.toContain("page=");
-    expect(urls(fetchMock)).toContain("/api/v1/jobs?limit=50");
+    expect(urls(fetchMock)).toContain("/api/v1/jobs?limit=50&offset=0");
     expect(JSON.parse(localStorage.getItem("exactdocs-table-sizes") ?? "{}")).toEqual({ jobs: 50 });
   });
 
@@ -219,7 +240,9 @@ describe("the jobs table", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Sort by State" }));
 
-    await waitFor(() => expect(urls(fetchMock)).toContain("/api/v1/jobs?limit=20&sort=state"));
+    await waitFor(() =>
+      expect(urls(fetchMock)).toContain("/api/v1/jobs?limit=20&sort=state&offset=0"),
+    );
     expect(history.location.search).toContain("sort=state");
     expect(screen.getByRole("columnheader", { name: /State/ })).toHaveAttribute(
       "aria-sort",
@@ -238,7 +261,9 @@ describe("the jobs table", () => {
     await userEvent.keyboard("{Escape}");
 
     await waitFor(() =>
-      expect(urls(fetchMock)).toContain("/api/v1/jobs?limit=20&state=running&state=failed"),
+      expect(urls(fetchMock)).toContain(
+        "/api/v1/jobs?limit=20&state=running&state=failed&offset=0",
+      ),
     );
     expect(history.location.search).toContain("state=running%2Cfailed");
     expect(screen.getByRole("button", { name: "State, 2 selected" })).toBeInTheDocument();

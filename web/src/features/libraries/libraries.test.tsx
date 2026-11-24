@@ -121,7 +121,10 @@ describe("libraries slice", () => {
     expect(within(row).getByText("3")).toBeInTheDocument();
     expect(within(row).getByText("3 days ago")).toBeInTheDocument();
     expect(await within(row).findByText("Synced")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/libraries?limit=20", expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/libraries?limit=20&offset=0",
+      expect.anything(),
+    );
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/jobs/latest", expect.anything());
     // One request for every library's sync, never one per library.
     expect(fetchMock.mock.calls.filter(([u]) => String(u).includes("jobs"))).toHaveLength(1);

@@ -15,17 +15,17 @@ export const librariesKeys = {
 };
 
 /**
- * The libraries a view asks for, as a DataTable v2 source: numbered pages over the cursor API,
- * sorted and filtered by the server. `now` anchors a "last imported within" preset.
+ * The libraries a view asks for, as a DataTable v2 source: numbered pages by offset (any page in
+ * one request), sorted and filtered by the server. `now` anchors a "last imported within" preset.
  */
 export function librariesSource(view: ListView, now: number = Date.now()): ServerSource<Library> {
   const filters = listFilters(view, now);
   return {
     // Under `list()`, so a finished import that refreshes the list refreshes every page of it.
     key: [...librariesKeys.list(), filters],
-    // #509: `paging: "offset"` once `GET /v1/libraries` takes an offset (Last, one-request jumps).
-    fetchPage: ({ limit, cursor, signal }) =>
-      getJson<LibrariesResponse>(`/v1/libraries?${listParams(filters, limit, cursor)}`, {
+    paging: "offset",
+    fetchPage: ({ limit, cursor, offset, signal }) =>
+      getJson<LibrariesResponse>(`/v1/libraries?${listParams(filters, limit, cursor, offset)}`, {
         signal,
       }).then((list) => ({
         rows: list.libraries,
@@ -42,17 +42,17 @@ export const librariesPageQueryOptions = (view: ListView) => {
 };
 
 /**
- * The jobs a view asks for, as a DataTable v2 source: numbered pages over the cursor API, sorted
- * and filtered by the server. The shown page is asked for again every 2 s while one of its jobs
+ * The jobs a view asks for, as a DataTable v2 source: numbered pages by offset, sorted and
+ * filtered by the server. The shown page is asked for again every 2 s while one of its jobs
  * is unfinished. `now` anchors a "queued within" preset (see `jobsFilters`).
  */
 export function jobsSource(view: JobsView, now: number = Date.now()): ServerSource<Job> {
   const filters = jobsFilters(view, now);
   return {
     key: [...librariesKeys.all, "jobs", filters],
-    // #509: `paging: "offset"` once `GET /v1/jobs` takes an offset (Last, one-request jumps).
-    fetchPage: ({ limit, cursor, signal }) =>
-      getJson<JobList>(`/v1/jobs?${jobsParams(filters, limit, cursor)}`, { signal }).then(
+    paging: "offset",
+    fetchPage: ({ limit, cursor, offset, signal }) =>
+      getJson<JobList>(`/v1/jobs?${jobsParams(filters, limit, cursor, offset)}`, { signal }).then(
         (list) => ({ rows: list.jobs, total: list.total, nextCursor: list.next_cursor }),
       ),
     refetchInterval: (page) =>

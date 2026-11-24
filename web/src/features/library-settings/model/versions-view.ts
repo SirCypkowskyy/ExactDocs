@@ -74,6 +74,7 @@ export function versionsParams(
   filters: VersionsFilters,
   limit: number,
   cursor?: string | null,
+  offset?: number,
 ): string {
   const p = new URLSearchParams({ limit: String(limit) });
   if (filters.q) p.set("q", filters.q);
@@ -81,7 +82,8 @@ export function versionsParams(
   for (const origin of filters.origin ?? []) p.append("origin", origin);
   if (filters.imported_after) p.set("imported_after", filters.imported_after);
   if (filters.sort) p.set("sort", filters.sort);
-  // #509: once the endpoint takes `offset`, the source asks with it here instead of a cursor.
-  if (cursor) p.set("cursor", cursor);
+  // A page by offset (0 to 10000) or after a cursor, never both (422 `cursor_with_offset`).
+  if (offset !== undefined) p.set("offset", String(offset));
+  else if (cursor) p.set("cursor", cursor);
   return p.toString();
 }
