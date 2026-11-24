@@ -686,6 +686,21 @@ See [AI retrieval decisions](decisions/ai-retrieval.md) for the kinds and what e
   per-library ones, with `usd_left` and `tokens_left` against it; where the instance's is lower (it was lowered after
   the library set its own), `own_usd_limit` / `own_tokens_limit` give the library's own ceiling,
   otherwise they are `null`.
+- `GET /ai/usage/history?scope=&id=&window=&from=&to=`: what one scope spent per UTC day or month,
+  for charts: `{"scope", "id", "window", "first", "last", "entries": [{"window_start",
+  "input_tokens", "output_tokens", "tokens", "local_tokens", "requests", "usd",
+  "unpriced_requests"}]}`, one entry per window from `first` to `last` (both included, oldest
+  first), counted as in `GET /ai/usage` and zero for a window with no spend. `scope` and `id` name
+  a scope as `GET /ai/usage` does: `instance` (the default) and `embedding` take no `id`;
+  `library` needs the library ID (any letter case; `id` comes back case-folded, as the ledger keeps
+  it) and `user` the account ID. `window` is `day` (the default) or `month`. `from` and `to` are
+  UTC dates (`YYYY-MM-DD`); for months any day of a month stands for it, and `first` / `last` are
+  the windows' first days. Without `to` the range ends with today's window; without `from` it holds
+  30 days or 12 months up to `to`. A range ends after it starts and holds at most 366 days or 60
+  months; otherwise, or for an `id` that does not fit the `scope`, it is 422
+  `invalid_spend_history`. Dates in the future are allowed (zero). Operators only, like the rest of
+  `/ai`. Libraries and accounts that no longer exist keep their rows, so their history is still
+  shown.
 
 ## Jobs, access and health
 

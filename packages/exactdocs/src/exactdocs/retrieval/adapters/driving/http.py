@@ -3,7 +3,7 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Path, Query, status
@@ -68,6 +68,9 @@ from exactdocs.retrieval.dtos import (
     SearchDocsResult,
     SetLibraryRetrievalCommand,
     SetRoleThinkingCommand,
+    SpendHistoryOut,
+    SpendHistoryQuery,
+    SpendScope,
 )
 from exactdocs.retrieval.models import (
     AnthropicPlatform,
@@ -75,6 +78,7 @@ from exactdocs.retrieval.models import (
     ModelRole,
     RepoGuidance,
     RerankWith,
+    SpendWindow,
     TagMatch,
     ThinkingLevel,
 )
@@ -89,6 +93,7 @@ from exactdocs.retrieval.ports.driving import (
     GetEmbeddingProgress,
     GetLibraryRetrieval,
     GetProvider,
+    GetSpendHistory,
     ListProviders,
     ListRoles,
     QueryDocs,
@@ -963,6 +968,72 @@ def _embedding_routes(
         return await get_embedding_progress()
 
 
+def _usage_routes(
+    router: APIRouter, get_ai_usage: GetAiUsage, get_spend_history: GetSpendHistory
+) -> None:
+    """Add the spend routes to the AI router: the usage and budgets now, and the history.
+
+    Args:
+        router: The AI router.
+        get_ai_usage: Shows spend and budget left per scope.
+        get_spend_history: Shows one scope's spend per UTC day or month.
+    """
+
+    @router.get("/usage", name="get_ai_usage")
+    async def usage() -> AiUsageOut:
+        """Show what AI calls spent today and this month, and the budget left, per scope.
+
+        Scopes: the instance, embedding runs (instance-wide), then every library and account
+        that spent something this month. Windows are UTC days and months. Tokens and requests
+        are what the providers reported; `unpriced_requests` were calls to a model without a
+        known price.
+
+        Returns:
+            The usage.
+        """
+        return await get_ai_usage()
+
+    @router.get("/usage/history", name="get_ai_spend_history")
+    async def usage_history(
+        scope: SpendScope = "instance",
+        scope_id: Annotated[
+            str,
+            Query(alias="id", max_length=MAX_NAME, description="Library or account ID."),
+        ] = "",
+        window: SpendWindow = SpendWindow.DAY,
+        first: Annotated[
+            date | None, Query(alias="from", description="A day of the first window (UTC).")
+        ] = None,
+        last: Annotated[
+            date | None, Query(alias="to", description="A day of the last window (UTC).")
+        ] = None,
+    ) -> SpendHistoryOut:
+        """Show what one scope spent per UTC day or month: one entry per window, zero-filled.
+
+        `scope` and `id` name a scope as `GET /ai/usage` does (`library` and `user` need an
+        `id`; `instance` and `embedding` take none). Any day of a month stands for the month.
+        Without `to` the range ends today; without `from` it holds 30 days or 12 months. At
+        most 366 days or 60 months (422 `invalid_spend_history`, also when `to` is before
+        `from` or the `id` does not fit the scope).
+
+        Args:
+            scope: The scope kind.
+            scope_id: The library or account ID.
+            window: `day` or `month`.
+            first: A day of the first window.
+            last: A day of the last window.
+
+        Returns:
+            The entries, oldest first.
+        """
+        query = _command(
+            lambda: SpendHistoryQuery(
+                scope=scope, id=scope_id, window=window, first=first, last=last
+            )
+        )
+        return await get_spend_history(query)
+
+
 def build_ai_router(
     *,
     list_providers: ListProviders,
@@ -975,6 +1046,7 @@ def build_ai_router(
     estimate_embedding: EstimateEmbedding,
     get_embedding_progress: GetEmbeddingProgress,
     get_ai_usage: GetAiUsage,
+    get_spend_history: GetSpendHistory,
 ) -> APIRouter:
     """Build the routes of the AI provider profiles and roles (RET-01..03), admins only.
 
@@ -989,6 +1061,7 @@ def build_ai_router(
         estimate_embedding: Estimates what embedding the versions not embedded yet costs.
         get_embedding_progress: Shows how far each embedding space has got.
         get_ai_usage: Shows spend and budget left per scope.
+        get_spend_history: Shows one scope's spend per UTC day or month.
 
     Returns:
         The router.
@@ -1119,18 +1192,6 @@ def build_ai_router(
 
     _embedding_routes(router, estimate_embedding, get_embedding_progress)
 
-    @router.get("/usage", name="get_ai_usage")
-    async def usage() -> AiUsageOut:
-        """Show what AI calls spent today and this month, and the budget left, per scope.
-
-        Scopes: the instance, embedding runs (instance-wide), then every library and account
-        that spent something this month. Windows are UTC days and months. Tokens and requests
-        are what the providers reported; `unpriced_requests` were calls to a model without a
-        known price.
-
-        Returns:
-            The usage.
-        """
-        return await get_ai_usage()
+    _usage_routes(router, get_ai_usage, get_spend_history)
 
     return router

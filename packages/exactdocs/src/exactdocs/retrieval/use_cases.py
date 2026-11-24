@@ -134,6 +134,9 @@ from exactdocs.retrieval.dtos import (
     SetChunkOut,
     SetLibraryRetrievalCommand,
     SetRoleThinkingCommand,
+    SpendHistoryEntryOut,
+    SpendHistoryOut,
+    SpendHistoryQuery,
     SpentOut,
     UnembeddedVersionsOut,
     UnembeddedVersionsQuery,
@@ -259,6 +262,7 @@ from exactdocs.retrieval.models import (
     SectionRef,
     SpaceState,
     SpendEntry,
+    SpendHistorySpan,
     SpendKey,
     SpendWindow,
     StoredChunk,
@@ -996,6 +1000,45 @@ class GetAiUsageUseCase:
                 )
                 for limit in budgets.limits
                 if limit.scope_kind == kind
+            ],
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GetSpendHistoryUseCase:
+    """Implements ``ports.driving.GetSpendHistory``."""
+
+    spend: AiSpend
+    """The ledger, and the clock that says which day today is."""
+
+    async def __call__(self, query: SpendHistoryQuery) -> SpendHistoryOut:
+        """Read the scope's rows of the range in one read and fill the windows without one.
+
+        Args:
+            query: The scope, the window and the range.
+
+        Returns:
+            One entry per window, oldest first.
+        """
+        span = SpendHistorySpan.of(
+            scope_kind=query.scope,
+            scope_id=query.id,
+            window=query.window,
+            first=query.first,
+            last=query.last,
+            today=SpendWindow.DAY.start(self.spend.clock.now()),
+        )
+        keys = span.keys()
+        rows = await self.spend.ledger.get(keys)
+        return SpendHistoryOut(
+            scope=query.scope,
+            id=span.scope_id,
+            window=span.window,
+            first=span.first,
+            last=span.last,
+            entries=[
+                SpendHistoryEntryOut.from_model(rows.get(key) or SpendEntry.empty(key))
+                for key in keys
             ],
         )
 

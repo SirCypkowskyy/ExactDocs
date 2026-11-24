@@ -83,6 +83,7 @@ from exactdocs.retrieval.ports.driving import (
     GetLibraryRetrieval,
     GetProvider,
     GetSearchIndexState,
+    GetSpendHistory,
     GetVectorStoreState,
     IndexManifest,
     ListProviders,
@@ -133,6 +134,7 @@ from exactdocs.retrieval.use_cases import (
     GetLibraryRetrievalUseCase,
     GetProviderUseCase,
     GetSearchIndexStateUseCase,
+    GetSpendHistoryUseCase,
     GetVectorStoreStateUseCase,
     HybridPipeline,
     HydePipeline,
@@ -370,6 +372,8 @@ class RetrievalModule:
     """How far each embedding space has got (``GET /api/v1/ai/embedding``)."""
     get_ai_usage: GetAiUsage
     """Spend and budget left per scope (``GET /api/v1/ai/usage``)."""
+    get_spend_history: GetSpendHistory
+    """One scope's spend per UTC day or month (``GET /api/v1/ai/usage/history``)."""
     prune_hypotheses: PruneHypotheses
     """Deletes HyDE's cached answers past their TTL or of models no longer configured."""
     answer_question: AnswerQuestion
@@ -773,4 +777,5 @@ class RetrievalModule:
             estimate_embedding=EstimateEmbeddingUseCase(runs=runs),
             get_embedding_progress=GetEmbeddingProgressUseCase(runs=runs),
             get_ai_usage=GetAiUsageUseCase(spend=ai_spend),
+            get_spend_history=GetSpendHistoryUseCase(spend=ai_spend),
         )

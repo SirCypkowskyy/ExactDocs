@@ -2247,6 +2247,66 @@ class AiUsageOut(_Dto):
     something this month."""
 
 
+SpendScope = Literal["instance", "embedding", "library", "user"]
+"""A spend ledger scope kind (``SPEND_SCOPE_KINDS``), as the usage and its history name it."""
+
+
+class SpendHistoryQuery(_Dto):
+    """Which scope's spend to show per UTC day or month, over which range."""
+
+    scope: SpendScope = "instance"
+    """`instance`, `embedding` (embedding runs, instance-wide), `library` or `user`."""
+    id: Annotated[str, StringConstraints(max_length=MAX_NAME)] = ""
+    """The library ID (any letter case) or the account ID; empty for `instance` and
+    `embedding`."""
+    window: SpendWindow = SpendWindow.DAY
+    """`day` or `month`."""
+    first: date | None = None
+    """A day of the first window (any day of a month stands for the month); default: 30 days or
+    12 months before `last`, that one included."""
+    last: date | None = None
+    """A day of the last window; default: today (UTC)."""
+
+
+class SpendHistoryEntryOut(SpentOut):
+    """What the scope spent in one window; zero for a window it spent nothing in."""
+
+    window_start: date
+    """The window's first day (UTC)."""
+
+    @classmethod
+    def from_model(cls, spent: SpendEntry) -> Self:
+        """Show a ledger row's totals with the window they are of.
+
+        Args:
+            spent: The row.
+
+        Returns:
+            The DTO.
+        """
+        return cls(
+            window_start=spent.window_start,
+            **SpentOut.from_model(spent).model_dump(),
+        )
+
+
+class SpendHistoryOut(_Dto):
+    """What one scope spent per UTC day or month: one entry per window, oldest first."""
+
+    scope: SpendScope
+    """The scope kind."""
+    id: str
+    """The library ID (case-folded) or the account ID; empty for `instance` and `embedding`."""
+    window: SpendWindow
+    """`day` or `month`."""
+    first: date
+    """The first window's first day."""
+    last: date
+    """The last window's first day."""
+    entries: list[SpendHistoryEntryOut]
+    """Every window from `first` to `last`, both included, each once."""
+
+
 class PrunedHypothesesOut(_Dto):
     """What a prune of HyDE's cache deleted."""
 
