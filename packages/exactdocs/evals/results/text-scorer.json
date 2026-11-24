@@ -1,0 +1,989 @@
+{
+  "schema_version": 1,
+  "golden": "sha256:39f6f9d5e909d128",
+  "cases": 321,
+  "projects": [
+    "starlette",
+    "pydantic",
+    "tanstack-query",
+    "zod",
+    "electron"
+  ],
+  "corpus": [
+    {
+      "project": "starlette",
+      "version": "0.27.0",
+      "commit": "0c4b68ac4e179a788e38bac28f299dcad0f36e99"
+    },
+    {
+      "project": "starlette",
+      "version": "0.52.1",
+      "commit": "e5b8a5d200504a2608bed11fe6f66b1d20b9ae2c"
+    },
+    {
+      "project": "starlette",
+      "version": "1.10.0",
+      "commit": "8aa828ceaff764a2e57932fb42fdf105a47c4c83"
+    },
+    {
+      "project": "pydantic",
+      "version": "v1.10.22",
+      "commit": "5e6e87f7da283d8d13965d0186c88acdd531eda9"
+    },
+    {
+      "project": "pydantic",
+      "version": "v2.5.3",
+      "commit": "9f58e785a5f1f2c34437f6e9b6adcd5b969e0df4"
+    },
+    {
+      "project": "pydantic",
+      "version": "v2.14.3",
+      "commit": "ea492e04654ab7f7a1f9287ea912419452ead4dd"
+    },
+    {
+      "project": "tanstack-query",
+      "version": "v4.36.1",
+      "commit": "6532ed3cbe49f04b3cb31f80ea88b5886416d51a"
+    },
+    {
+      "project": "tanstack-query",
+      "version": "v5.0.0",
+      "commit": "3be9b4580ef8face761e354e5dc57bb56c9ff4a1"
+    },
+    {
+      "project": "tanstack-query",
+      "version": "v5.90.3",
+      "commit": "4d8da1e29e97ad5b0c151822d4962849515b4478"
+    },
+    {
+      "project": "zod",
+      "version": "v3.23.8",
+      "commit": "ca42965df46b2f7e2747db29c40a26bcb32a51d5"
+    },
+    {
+      "project": "zod",
+      "version": "v4.0.17",
+      "commit": "cc63f950158db212c5e9b75e7d22faca851ea624"
+    },
+    {
+      "project": "zod",
+      "version": "v4.6.7",
+      "commit": "b500a2ee95134f81d74da7911d7378dd2853d042"
+    },
+    {
+      "project": "electron",
+      "version": "v30.0.0",
+      "commit": "c37c7fd3c48d686e4b98431aaf1a1187f603e758"
+    },
+    {
+      "project": "electron",
+      "version": "v38.0.0",
+      "commit": "79433861fe10e4f7841153461fd3778b400a4c0b"
+    },
+    {
+      "project": "electron",
+      "version": "v45.3.2",
+      "commit": "9ee9e7718172287d068cee397097c2d79a137eec"
+    }
+  ],
+  "environment": {
+    "exactdocs_commit": "5f128d4d008eef1c1471232dd8abc656608242a4",
+    "python": "3.14.6",
+    "platform": "Linux x86_64",
+    "cpus": "4",
+    "exactdocs": "0.0.0.post104.dev0+fc34ae2",
+    "fastembed": "0.9.1",
+    "onnxruntime": "1.31.0",
+    "pydantic-ai-slim": "2.60.0",
+    "pydantic-evals": "2.60.0"
+  },
+  "scorer": {
+    "shingle_words": 5,
+    "threshold": 0.8,
+    "fact_share": 0.75,
+    "min_agreement": 0.98,
+    "gated_chunking": "default"
+  },
+  "calibrations": [
+    {
+      "chunking": "default",
+      "threshold": 0.8,
+      "agreement": {
+        "decisions": 384,
+        "agreed": 382,
+        "rate": 0.9948,
+        "hit_miss_rate": 0.9974
+      },
+      "held_agreement": {
+        "decisions": 384,
+        "agreed": 383,
+        "rate": 0.9974,
+        "hit_miss_rate": 1.0
+      },
+      "rendered_agreement": {
+        "decisions": 384,
+        "agreed": 382,
+        "rate": 0.9948,
+        "hit_miss_rate": 0.9974
+      },
+      "wrong_version_agreement": 1.0,
+      "sweep": [
+        {
+          "threshold": 0.5,
+          "rate": 0.9714,
+          "rendered_rate": 0.9714
+        },
+        {
+          "threshold": 0.6,
+          "rate": 0.974,
+          "rendered_rate": 0.974
+        },
+        {
+          "threshold": 0.7,
+          "rate": 0.9844,
+          "rendered_rate": 0.9844
+        },
+        {
+          "threshold": 0.8,
+          "rate": 0.9948,
+          "rendered_rate": 0.9948
+        },
+        {
+          "threshold": 0.9,
+          "rate": 0.9974,
+          "rendered_rate": 0.9922
+        },
+        {
+          "threshold": 1.0,
+          "rate": 0.9974,
+          "rendered_rate": 0.8984
+        }
+      ],
+      "disagreements": [
+        {
+          "case": "starlette 1.10.0: Do Jinja2Templates escape HTML in variables by default now?",
+          "section": "1.10.0 docs/release-notes.md [1.0.0rc1 (February 23, 2026) > Fixed]",
+          "chunk_id_rank": null,
+          "text_rank": 8,
+          "why": "the chunk at rank 8 holds the section under another heading path (1.10.0 docs/release-notes.md [1.0.0rc1 (February 23, 2026) > Removed]), which the nested rule does not count"
+        },
+        {
+          "case": "tanstack-query v5.90.3: How do I stream useSuspenseQuery results from the server in Next.js without prefetching, and what is the cost?",
+          "section": "v5.90.3 docs/framework/react/guides/suspense.md [Suspense on the Server with streaming]",
+          "chunk_id_rank": 7,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 (v5.90.3 docs/framework/react/guides/advanced-ssr.md [Experimental streaming without prefetching in Next.js]) holds the section's text, but is another article or version"
+        }
+      ],
+      "chunk_id": {
+        "questions": 321,
+        "answerable": 267,
+        "unanswerable": 54,
+        "recall_at_1": 0.5206,
+        "recall_at_5": 0.8165,
+        "recall_at_10": 0.8914,
+        "mrr": 0.6513,
+        "ndcg_at_10": 0.7047,
+        "section_recall_at_5": 0.7537,
+        "section_recall_at_10": 0.8511,
+        "wrong_version_rate": 0.0,
+        "unanswerable_clean_rate": 1.0,
+        "no_answer_rate": 0.0,
+        "answerable_empty_rate": 0.0,
+        "latency_p50_ms": 77.797,
+        "latency_p95_ms": 115.286,
+        "tokens_per_question": 0.0,
+        "usd_per_question": 0.0
+      },
+      "text": {
+        "metrics": {
+          "questions": 321,
+          "answerable": 267,
+          "unanswerable": 54,
+          "recall_at_1": 0.5206,
+          "recall_at_5": 0.8165,
+          "recall_at_10": 0.8914,
+          "mrr": 0.6513,
+          "ndcg_at_10": 0.7055,
+          "section_recall_at_5": 0.7537,
+          "section_recall_at_10": 0.853,
+          "wrong_version_rate": 0.0,
+          "unanswerable_clean_rate": 1.0,
+          "no_answer_rate": 0.0,
+          "answerable_empty_rate": 0.0,
+          "latency_p50_ms": 77.797,
+          "latency_p95_ms": 115.286,
+          "tokens_per_question": 0.0,
+          "usd_per_question": 0.0
+        },
+        "results_per_question": 10.0,
+        "version_neutral_share": 0.7224,
+        "unmatched_share": 0.0,
+        "context_tokens_per_question": 3464.2,
+        "context_tokens_p95": 5945.0,
+        "tokens_to_first_hit": 735.9,
+        "facts_found_rate": 0.8664
+      },
+      "facts_in_expected_sections": 0.8012,
+      "facts_in_other_results": 0.2481
+    },
+    {
+      "chunking": "h6",
+      "threshold": 0.8,
+      "agreement": {
+        "decisions": 384,
+        "agreed": 383,
+        "rate": 0.9974,
+        "hit_miss_rate": 1.0
+      },
+      "held_agreement": {
+        "decisions": 384,
+        "agreed": 383,
+        "rate": 0.9974,
+        "hit_miss_rate": 1.0
+      },
+      "rendered_agreement": {
+        "decisions": 384,
+        "agreed": 383,
+        "rate": 0.9974,
+        "hit_miss_rate": 1.0
+      },
+      "wrong_version_agreement": 1.0,
+      "sweep": [
+        {
+          "threshold": 0.5,
+          "rate": 0.9661,
+          "rendered_rate": 0.9661
+        },
+        {
+          "threshold": 0.6,
+          "rate": 0.9688,
+          "rendered_rate": 0.9688
+        },
+        {
+          "threshold": 0.7,
+          "rate": 0.9844,
+          "rendered_rate": 0.9844
+        },
+        {
+          "threshold": 0.8,
+          "rate": 0.9974,
+          "rendered_rate": 0.9974
+        },
+        {
+          "threshold": 0.9,
+          "rate": 1.0,
+          "rendered_rate": 0.9974
+        },
+        {
+          "threshold": 1.0,
+          "rate": 1.0,
+          "rendered_rate": 0.9062
+        }
+      ],
+      "disagreements": [
+        {
+          "case": "tanstack-query v5.90.3: How do I stream useSuspenseQuery results from the server in Next.js without prefetching, and what is the cost?",
+          "section": "v5.90.3 docs/framework/react/guides/suspense.md [Suspense on the Server with streaming]",
+          "chunk_id_rank": 7,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 (v5.90.3 docs/framework/react/guides/advanced-ssr.md [Experimental streaming without prefetching in Next.js]) holds the section's text, but is another article or version"
+        }
+      ],
+      "chunk_id": {
+        "questions": 321,
+        "answerable": 267,
+        "unanswerable": 54,
+        "recall_at_1": 0.4981,
+        "recall_at_5": 0.7978,
+        "recall_at_10": 0.8689,
+        "mrr": 0.6258,
+        "ndcg_at_10": 0.6836,
+        "section_recall_at_5": 0.7406,
+        "section_recall_at_10": 0.8293,
+        "wrong_version_rate": 0.0,
+        "unanswerable_clean_rate": 1.0,
+        "no_answer_rate": 0.0,
+        "answerable_empty_rate": 0.0,
+        "latency_p50_ms": 108.646,
+        "latency_p95_ms": 163.887,
+        "tokens_per_question": 0.0,
+        "usd_per_question": 0.0
+      },
+      "text": {
+        "metrics": {
+          "questions": 321,
+          "answerable": 267,
+          "unanswerable": 54,
+          "recall_at_1": 0.4981,
+          "recall_at_5": 0.7978,
+          "recall_at_10": 0.8689,
+          "mrr": 0.6258,
+          "ndcg_at_10": 0.6836,
+          "section_recall_at_5": 0.7406,
+          "section_recall_at_10": 0.8293,
+          "wrong_version_rate": 0.0,
+          "unanswerable_clean_rate": 1.0,
+          "no_answer_rate": 0.0,
+          "answerable_empty_rate": 0.0,
+          "latency_p50_ms": 108.646,
+          "latency_p95_ms": 163.887,
+          "tokens_per_question": 0.0,
+          "usd_per_question": 0.0
+        },
+        "results_per_question": 10.0,
+        "version_neutral_share": 0.7215,
+        "unmatched_share": 0.0,
+        "context_tokens_per_question": 2875.7,
+        "context_tokens_p95": 5345.0,
+        "tokens_to_first_hit": 648.6,
+        "facts_found_rate": 0.8386
+      },
+      "facts_in_expected_sections": 0.8012,
+      "facts_in_other_results": 0.2144
+    },
+    {
+      "chunking": "h2",
+      "threshold": 0.8,
+      "agreement": {
+        "decisions": 384,
+        "agreed": 358,
+        "rate": 0.9323,
+        "hit_miss_rate": 0.9349
+      },
+      "held_agreement": {
+        "decisions": 384,
+        "agreed": 383,
+        "rate": 0.9974,
+        "hit_miss_rate": 1.0
+      },
+      "rendered_agreement": {
+        "decisions": 384,
+        "agreed": 357,
+        "rate": 0.9297,
+        "hit_miss_rate": 0.9323
+      },
+      "wrong_version_agreement": 1.0,
+      "sweep": [
+        {
+          "threshold": 0.5,
+          "rate": 0.9141,
+          "rendered_rate": 0.9141
+        },
+        {
+          "threshold": 0.6,
+          "rate": 0.9193,
+          "rendered_rate": 0.9193
+        },
+        {
+          "threshold": 0.7,
+          "rate": 0.9245,
+          "rendered_rate": 0.9245
+        },
+        {
+          "threshold": 0.8,
+          "rate": 0.9323,
+          "rendered_rate": 0.9297
+        },
+        {
+          "threshold": 0.9,
+          "rate": 0.9349,
+          "rendered_rate": 0.9219
+        },
+        {
+          "threshold": 1.0,
+          "rate": 0.9349,
+          "rendered_rate": 0.8333
+        }
+      ],
+      "disagreements": [
+        {
+          "case": "electron v45.3.2: How do I wipe the saved bounds of a window that uses state persistence?",
+          "section": "v45.3.2 docs/api/base-window.md [BaseWindow > Class: BaseWindow > Static Methods > BaseWindow.clearPersistedState(name)]",
+          "chunk_id_rank": null,
+          "text_rank": 9,
+          "why": "the chunk at rank 9 holds the section under another heading path (v45.3.2 docs/api/base-window.md [BaseWindow > Class: BaseWindow > Instance Events > Event: 'sheet-end' macOS]), which the nested rule does not count"
+        },
+        {
+          "case": "electron v30.0.0: What does requestSingleInstanceLock return and what should my app do with it?",
+          "section": "v30.0.0 docs/api/app.md [app > Methods > app.requestSingleInstanceLock([additionalData])]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v30.0.0 docs/api/app.md [app > Methods > app.getApplicationNameForProtocol(url)]), which the nested rule does not count"
+        },
+        {
+          "case": "electron v30.0.0: Links with target=_blank open a new Electron window; how do I send them to the default browser?",
+          "section": "v30.0.0 docs/tutorial/security.md [Security > Checklist: Security recommendations > 14. Disable or limit creation of new windows > How?]",
+          "chunk_id_rank": null,
+          "text_rank": 3,
+          "why": "the chunk at rank 3 holds the section under another heading path (v30.0.0 docs/tutorial/security.md [Security > Checklist: Security recommendations > 12. Verify WebView options before creation > How?]), which the nested rule does not count"
+        },
+        {
+          "case": "electron v38.0.0: session.setPreloads is deprecated. How do I register a preload for every frame in a session now?",
+          "section": "v38.0.0 docs/api/session.md [session > Class: Session > Instance Methods > ses.registerPreloadScript(script)]",
+          "chunk_id_rank": null,
+          "text_rank": 2,
+          "why": "the chunk at rank 2 holds the section under another heading path (v38.0.0 docs/api/session.md [session > Class: Session > Instance Methods > ses.createInterruptedDownload(options)]), which the nested rule does not count"
+        },
+        {
+          "case": "electron v45.3.2: How do I move my safeStorage code off the deprecated synchronous calls?",
+          "section": "v45.3.2 docs/breaking-changes.md [Breaking Changes > Breaking API Changes (45.0) > Deprecated: safeStorage.isEncryptionAvailable(), safeStorage.encryptString() and safeStorage.decryptString()]",
+          "chunk_id_rank": null,
+          "text_rank": 6,
+          "why": "the chunk at rank 6 holds the section under another heading path (v45.3.2 docs/breaking-changes.md [Breaking Changes > Breaking API Changes (45.0) > Default Changed: document.requestStorageAccessFor is disabled]), which the nested rule does not count"
+        },
+        {
+          "case": "pydantic v2.5.3: What is orm_mode called in Pydantic V2?",
+          "section": "v2.5.3 docs/migration.md [Migration guide > Changes to config]",
+          "chunk_id_rank": null,
+          "text_rank": 2,
+          "why": "the chunk at rank 2 holds the section under another heading path (v2.5.3 docs/migration.md [Migration guide > Changes to dataclasses]), which the nested rule does not count"
+        },
+        {
+          "case": "pydantic v2.5.3: Where did BaseSettings go after upgrading to v2?",
+          "section": "v2.5.3 docs/migration.md [Migration guide > BaseSettings has moved to pydantic-settings]",
+          "chunk_id_rank": null,
+          "text_rank": 4,
+          "why": "the chunk at rank 4 holds the section under another heading path (v2.5.3 docs/migration.md [Migration guide > Changes to JSON schema generation]), which the nested rule does not count"
+        },
+        {
+          "case": "pydantic v2.5.3: My Field(regex=...) with a lookahead stopped working after the upgrade; why?",
+          "section": "v2.5.3 docs/migration.md [Migration guide > Changes to Handling of Standard Types > Patterns / regex on strings]",
+          "chunk_id_rank": null,
+          "text_rank": 5,
+          "why": "the chunk at rank 5 holds the section under another heading path (v2.5.3 docs/migration.md [Migration guide > Changes to Handling of Standard Types > Required, optional, and nullable fields]), which the nested rule does not count"
+        },
+        {
+          "case": "pydantic v2.5.3: How do I port a ConstrainedInt subclass to v2?",
+          "section": "v2.5.3 docs/migration.md [Migration guide > Constrained types]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v2.5.3 docs/migration.md [Migration guide > Changes to JSON schema generation]), which the nested rule does not count"
+        },
+        {
+          "case": "pydantic v2.14.3: v1 accepted 10.2 for an int field; what does v2 do with it?",
+          "section": "v2.14.3 docs/migration.md [Migration guide > Type conversion from floats to integers]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v2.14.3 docs/migration.md [Migration guide > Input types are not preserved]), which the nested rule does not count"
+        },
+        {
+          "case": "pydantic v2.5.3: How do I replace parse_obj_as(List[Item], data) in v2?",
+          "section": "v2.5.3 docs/migration.md [Migration guide > Introduction of TypeAdapter]",
+          "chunk_id_rank": null,
+          "text_rank": 6,
+          "why": "the chunk at rank 6 holds the section under another heading path (v2.5.3 docs/migration.md [Migration guide > Changes to Handling of Standard Types > Required, optional, and nullable fields]), which the nested rule does not count"
+        },
+        {
+          "case": "pydantic v2.5.3: How do I port a v1 @validator that used each_item=True and the field argument?",
+          "section": "v2.5.3 docs/migration.md [Migration guide > Changes to validators > @validator and @root_validator are deprecated]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v2.5.3 docs/migration.md [Migration guide > Changes to dataclasses]), which the nested rule does not count"
+        },
+        {
+          "case": "starlette 1.10.0: My sync tests define a pytest event_loop fixture, but TestClient ignores it. Where should I create my async resources?",
+          "section": "1.10.0 docs/testclient.md [Asynchronous tests]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (1.10.0 docs/testclient.md [Testing WebSocket sessions]), which the nested rule does not count"
+        },
+        {
+          "case": "tanstack-query v5.0.0: What happened to the cacheTime option?",
+          "section": "v5.0.0 docs/react/guides/migrating-to-v5.md [Breaking Changes > Rename cacheTime to gcTime]",
+          "chunk_id_rank": null,
+          "text_rank": 4,
+          "why": "the chunk at rank 4 holds the section under another heading path (v5.0.0 docs/react/guides/migrating-to-v5.md [Breaking Changes > The deprecated custom logger has been removed]), which the nested rule does not count"
+        },
+        {
+          "case": "tanstack-query v5.0.0: useErrorBoundary is rejected after upgrading, what is that option called now?",
+          "section": "v5.0.0 docs/react/guides/migrating-to-v5.md [Breaking Changes > The useErrorBoundary option has been renamed to throwOnError]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v5.0.0 docs/react/guides/migrating-to-v5.md [Breaking Changes > The deprecated custom logger has been removed]), which the nested rule does not count"
+        },
+        {
+          "case": "tanstack-query v5.0.0: keepPreviousData no longer exists, how do I keep the old page while paginating?",
+          "section": "v5.0.0 docs/react/guides/migrating-to-v5.md [Breaking Changes > Removed keepPreviousData in favor of placeholderData identity function]",
+          "chunk_id_rank": null,
+          "text_rank": 2,
+          "why": "the chunk at rank 2 holds the section under another heading path (v5.0.0 docs/react/guides/migrating-to-v5.md [Breaking Changes > The deprecated custom logger has been removed]), which the nested rule does not count"
+        },
+        {
+          "case": "tanstack-query v5.0.0: What do isPending and isLoading mean now that the loading status is gone?",
+          "section": "v5.0.0 docs/react/guides/migrating-to-v5.md [Breaking Changes > status: loading has been changed to status: pending and isLoading has been changed to isPending and isInitialLoading has now been renamed to isLoading]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v5.0.0 docs/react/guides/migrating-to-v5.md [Breaking Changes > New dehydrate API]), which the nested rule does not count"
+        },
+        {
+          "case": "tanstack-query v5.0.0: My v4 infinite query defaulted pageParam in the queryFn signature, what must change and how do I say there is no next page?",
+          "section": "v5.0.0 docs/react/guides/migrating-to-v5.md [Breaking Changes > Infinite queries now need a initialPageParam]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v5.0.0 docs/react/guides/migrating-to-v5.md [Breaking Changes > New dehydrate API]), which the nested rule does not count"
+        },
+        {
+          "case": "tanstack-query v5.90.3: Where did hashQueryKey go, and why was it renamed?",
+          "section": "v5.90.3 docs/framework/react/guides/migrating-to-v5.md [Breaking Changes > hashQueryKey has been renamed to hashKey]",
+          "chunk_id_rank": null,
+          "text_rank": 2,
+          "why": "the chunk at rank 2 holds the section under another heading path (v5.90.3 docs/framework/react/guides/migrating-to-v5.md [Breaking Changes > Removed refetchPage in favor of maxPages]), which the nested rule does not count"
+        },
+        {
+          "case": "tanstack-query v5.90.3: How do I stream useSuspenseQuery results from the server in Next.js without prefetching, and what is the cost?",
+          "section": "v5.90.3 docs/framework/react/guides/suspense.md [Suspense on the Server with streaming]",
+          "chunk_id_rank": 7,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 (v5.90.3 docs/framework/react/guides/advanced-ssr.md [Experimental streaming without prefetching in Next.js]) holds the section's text, but is another article or version"
+        },
+        {
+          "case": "zod v3.23.8: How can I make a function accept only data that went through my schema, not any object of the same shape?",
+          "section": "v3.23.8 README.md [Schema methods > .brand]",
+          "chunk_id_rank": null,
+          "text_rank": 6,
+          "why": "the chunk at rank 6 holds the section under another heading path (v3.23.8 README.md [Schema methods > .transform]), which the nested rule does not count"
+        },
+        {
+          "case": "zod v4.6.7: Is there a built-in validator for international bank account numbers?",
+          "section": "v4.6.7 packages/docs/content/api.mdx [String formats > IBANs]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v4.6.7 packages/docs/content/api.mdx [String formats > ISO times]), which the nested rule does not count"
+        },
+        {
+          "case": "zod v3.23.8: z.coerce.date() accepts null and z.coerce.bigint() throws on null; how do I restrict what gets coerced?",
+          "section": "v3.23.8 README.md [Schema methods > .pipe > You can use .pipe() to fix common issues with z.coerce.]",
+          "chunk_id_rank": null,
+          "text_rank": 2,
+          "why": "the chunk at rank 2 holds the section under another heading path (v3.23.8 README.md [Schema methods > .readonly]), which the nested rule does not count"
+        },
+        {
+          "case": "zod v3.23.8: What is the difference between .default() and .catch() on a schema?",
+          "section": "v3.23.8 README.md [Schema methods > .catch]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v3.23.8 README.md [Schema methods > .transform]), which the nested rule does not count"
+        },
+        {
+          "case": "zod v3.23.8: What is the difference between .default() and .catch() on a schema?",
+          "section": "v3.23.8 README.md [Schema methods > .default]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v3.23.8 README.md [Schema methods > .transform]), which the nested rule does not count"
+        },
+        {
+          "case": "zod v4.6.7: Is there a deep partial again, and how is it called now?",
+          "section": "v4.6.7 packages/docs/content/api.mdx [Objects > z.deepPartial() [#deep-partial]]",
+          "chunk_id_rank": null,
+          "text_rank": 10,
+          "why": "the chunk at rank 10 holds the section under another heading path (v4.6.7 packages/docs/content/api.mdx [Objects > .exactPartial()]), which the nested rule does not count"
+        }
+      ],
+      "chunk_id": {
+        "questions": 321,
+        "answerable": 267,
+        "unanswerable": 54,
+        "recall_at_1": 0.5169,
+        "recall_at_5": 0.7603,
+        "recall_at_10": 0.8165,
+        "mrr": 0.6258,
+        "ndcg_at_10": 0.6649,
+        "section_recall_at_5": 0.7047,
+        "section_recall_at_10": 0.7765,
+        "wrong_version_rate": 0.0,
+        "unanswerable_clean_rate": 1.0,
+        "no_answer_rate": 0.0,
+        "answerable_empty_rate": 0.0,
+        "latency_p50_ms": 40.761,
+        "latency_p95_ms": 59.935,
+        "tokens_per_question": 0.0,
+        "usd_per_question": 0.0
+      },
+      "text": {
+        "metrics": {
+          "questions": 321,
+          "answerable": 267,
+          "unanswerable": 54,
+          "recall_at_1": 0.5543,
+          "recall_at_5": 0.8277,
+          "recall_at_10": 0.9026,
+          "mrr": 0.6773,
+          "ndcg_at_10": 0.7158,
+          "section_recall_at_5": 0.7615,
+          "section_recall_at_10": 0.8439,
+          "wrong_version_rate": 0.0,
+          "unanswerable_clean_rate": 1.0,
+          "no_answer_rate": 0.0,
+          "answerable_empty_rate": 0.0,
+          "latency_p50_ms": 40.761,
+          "latency_p95_ms": 59.935,
+          "tokens_per_question": 0.0,
+          "usd_per_question": 0.0
+        },
+        "results_per_question": 10.0,
+        "version_neutral_share": 0.7548,
+        "unmatched_share": 0.0,
+        "context_tokens_per_question": 7065.0,
+        "context_tokens_p95": 11346.0,
+        "tokens_to_first_hit": 1525.4,
+        "facts_found_rate": 0.9245
+      },
+      "facts_in_expected_sections": 0.8012,
+      "facts_in_other_results": 0.4198
+    },
+    {
+      "chunking": "merge-400",
+      "threshold": 0.8,
+      "agreement": {
+        "decisions": 384,
+        "agreed": 349,
+        "rate": 0.9089,
+        "hit_miss_rate": 0.9141
+      },
+      "held_agreement": {
+        "decisions": 384,
+        "agreed": 382,
+        "rate": 0.9948,
+        "hit_miss_rate": 0.9974
+      },
+      "rendered_agreement": {
+        "decisions": 384,
+        "agreed": 349,
+        "rate": 0.9089,
+        "hit_miss_rate": 0.9141
+      },
+      "wrong_version_agreement": 1.0,
+      "sweep": [
+        {
+          "threshold": 0.5,
+          "rate": 0.888,
+          "rendered_rate": 0.888
+        },
+        {
+          "threshold": 0.6,
+          "rate": 0.8958,
+          "rendered_rate": 0.8958
+        },
+        {
+          "threshold": 0.7,
+          "rate": 0.8984,
+          "rendered_rate": 0.8984
+        },
+        {
+          "threshold": 0.8,
+          "rate": 0.9089,
+          "rendered_rate": 0.9089
+        },
+        {
+          "threshold": 0.9,
+          "rate": 0.9115,
+          "rendered_rate": 0.9062
+        },
+        {
+          "threshold": 1.0,
+          "rate": 0.9115,
+          "rendered_rate": 0.8177
+        }
+      ],
+      "disagreements": [
+        {
+          "case": "electron v38.0.0: Which names can I pass to app.getPath?",
+          "section": "v38.0.0 docs/api/app.md [app > Methods > app.getPath(name)]",
+          "chunk_id_rank": null,
+          "text_rank": 5,
+          "why": "the chunk at rank 5 holds the section under another heading path (v38.0.0 docs/api/app.md [app > Methods > app.getAppPath()]), which the nested rule does not count"
+        },
+        {
+          "case": "electron v45.3.2: What does safeStorage.decryptStringAsync resolve with?",
+          "section": "v45.3.2 docs/api/safe-storage.md [safeStorage > Methods > safeStorage.decryptStringAsync(encrypted)]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v45.3.2 docs/api/safe-storage.md [safeStorage > Methods > safeStorage.encryptStringAsync(plainText)]), which the nested rule does not count"
+        },
+        {
+          "case": "electron v38.0.0: I set titleBarStyle hidden and lost the minimize and close buttons on Windows. How do I get them back?",
+          "section": "v38.0.0 docs/tutorial/custom-title-bar.md [Custom Title Bar > Basic tutorial > Add native window controls Windows Linux]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v38.0.0 docs/tutorial/custom-title-bar.md [Custom Title Bar > Basic tutorial > Remove the default title bar]), which the nested rule does not count"
+        },
+        {
+          "case": "electron v38.0.0: Why does child_process.spawn fail on a binary that lives inside app.asar?",
+          "section": "v38.0.0 docs/tutorial/asar-archives.md [Limitations of the Node API > Executing Binaries Inside ASAR archive]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v38.0.0 docs/tutorial/asar-archives.md [Limitations of the Node API > Fake Stat Information of fs.stat]), which the nested rule does not count"
+        },
+        {
+          "case": "electron v38.0.0: session.setPreloads is deprecated. How do I register a preload for every frame in a session now?",
+          "section": "v38.0.0 docs/api/session.md [session > Class: Session > Instance Methods > ses.registerPreloadScript(script)]",
+          "chunk_id_rank": null,
+          "text_rank": 3,
+          "why": "the chunk at rank 3 holds the section under another heading path (v38.0.0 docs/api/session.md [session > Class: Session > Instance Methods > ses.getPreloads() Deprecated]), which the nested rule does not count"
+        },
+        {
+          "case": "electron v45.3.2: How do I move my safeStorage code off the deprecated synchronous calls?",
+          "section": "v45.3.2 docs/api/safe-storage.md [safeStorage > Methods > safeStorage.decryptStringAsync(encrypted)]",
+          "chunk_id_rank": null,
+          "text_rank": 9,
+          "why": "the chunk at rank 9 holds the section under another heading path (v45.3.2 docs/api/safe-storage.md [safeStorage > Methods > safeStorage.encryptStringAsync(plainText)]), which the nested rule does not count"
+        },
+        {
+          "case": "electron v45.3.2: Walk me through serving the renderer's Prompt API from a model in a utility process.",
+          "section": "v45.3.2 docs/tutorial/local-ai-handler.md [Local AI Handler > Quick start > 1. Create the utility process script]",
+          "chunk_id_rank": null,
+          "text_rank": 4,
+          "why": "the chunk at rank 4 holds the section under another heading path (v45.3.2 docs/tutorial/local-ai-handler.md [Local AI Handler > Prerequisites]), which the nested rule does not count"
+        },
+        {
+          "case": "electron v30.0.0: What do I need on the signing side before autoUpdater can update my Mac app?",
+          "section": "v30.0.0 docs/tutorial/code-signing.md [Signing & notarizing macOS builds]",
+          "chunk_id_rank": 10,
+          "text_rank": null,
+          "why": "the chunk at rank 10 (v30.0.0 docs/tutorial/code-signing.md [Signing & notarizing macOS builds > Signing Mac App Store applications]) holds less than the threshold of the section's text"
+        },
+        {
+          "case": "pydantic v1.10.22: How do I create a model from an ORM object?",
+          "section": "v1.10.22 docs/usage/models.md [ORM Mode (aka Arbitrary Class Instances)]",
+          "chunk_id_rank": 3,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v1.10.22 docs/usage/models.md [Recursive Models]), which the nested rule does not count"
+        },
+        {
+          "case": "pydantic v1.10.22: My validator does not run when the field is omitted; how do I make it run anyway?",
+          "section": "v1.10.22 docs/usage/validators.md [Validate Always]",
+          "chunk_id_rank": null,
+          "text_rank": 7,
+          "why": "the chunk at rank 7 holds the section under another heading path (v1.10.22 docs/usage/validators.md [Subclass Validators and each_item]), which the nested rule does not count"
+        },
+        {
+          "case": "pydantic v1.10.22: My custom type uses __get_validators__; how do I also control its JSON schema?",
+          "section": "v1.10.22 docs/usage/types.md [Custom Data Types > Classes with __get_validators__]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v1.10.22 docs/usage/types.md [ByteSize]), which the nested rule does not count"
+        },
+        {
+          "case": "pydantic v1.10.22: My @validate_arguments function takes an argument of my own plain class; how do I allow it?",
+          "section": "v1.10.22 docs/usage/validation_decorator.md [Custom Config]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v1.10.22 docs/usage/validation_decorator.md [Async Functions]), which the nested rule does not count"
+        },
+        {
+          "case": "starlette 0.27.0: How do I get the IP address of the client that made the request?",
+          "section": "0.27.0 docs/requests.md [Request > Client Address]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (0.27.0 docs/requests.md [Request > Query Parameters]), which the nested rule does not count"
+        },
+        {
+          "case": "starlette 0.27.0: How do I restrict an endpoint to admins and hide it with a 404 from everyone else?",
+          "section": "0.27.0 docs/authentication.md [Permissions]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (0.27.0 docs/authentication.md [AuthCredentials]), which the nested rule does not count"
+        },
+        {
+          "case": "starlette 0.27.0: Why wrap my SECRET_KEY setting in Secret, and how do I get the real value back?",
+          "section": "0.27.0 docs/config.md [Secrets]",
+          "chunk_id_rank": null,
+          "text_rank": 3,
+          "why": "the chunk at rank 3 holds the section under another heading path (0.27.0 docs/config.md [Configuration precedence]), which the nested rule does not count"
+        },
+        {
+          "case": "starlette 0.27.0: Are on_startup and on_shutdown still the recommended way to run setup code?",
+          "section": "0.27.0 docs/release-notes.md [0.26.0 > Deprecated]",
+          "chunk_id_rank": null,
+          "text_rank": 2,
+          "why": "the chunk at rank 2 holds the section under another heading path (0.27.0 docs/release-notes.md [0.26.0 > Changed]), which the nested rule does not count"
+        },
+        {
+          "case": "starlette 0.52.1: Do I still put request inside the context dict when calling TemplateResponse?",
+          "section": "0.52.1 docs/release-notes.md [0.29.0 (July 13, 2023) > Added]",
+          "chunk_id_rank": null,
+          "text_rank": 8,
+          "why": "the chunk at rank 8 holds the section under another heading path (0.52.1 docs/release-notes.md [0.31.0 (July 24, 2023) > Fixed]), which the nested rule does not count"
+        },
+        {
+          "case": "starlette 0.52.1: How do I feed SessionMiddleware a secret key from the environment without it showing up in logs?",
+          "section": "0.52.1 docs/config.md [A full example]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (0.52.1 docs/config.md [Custom encoding for environment files]), which the nested rule does not count"
+        },
+        {
+          "case": "starlette 0.52.1: How do I feed SessionMiddleware a secret key from the environment without it showing up in logs?",
+          "section": "0.52.1 docs/config.md [Secrets]",
+          "chunk_id_rank": null,
+          "text_rank": 4,
+          "why": "the chunk at rank 4 holds the section under another heading path (0.52.1 docs/config.md [Configuration precedence]), which the nested rule does not count"
+        },
+        {
+          "case": "starlette 1.10.0: Do Jinja2Templates escape HTML in variables by default now?",
+          "section": "1.10.0 docs/templates.md [Autoescape]",
+          "chunk_id_rank": null,
+          "text_rank": 2,
+          "why": "the chunk at rank 2 holds the section under another heading path (1.10.0 docs/templates.md [Using custom jinja2.Environment instance]), which the nested rule does not count"
+        },
+        {
+          "case": "starlette 1.10.0: My sync tests define a pytest event_loop fixture, but TestClient ignores it. Where should I create my async resources?",
+          "section": "1.10.0 docs/testclient.md [Asynchronous tests]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (1.10.0 docs/testclient.md [Testing WebSocket sessions > Closing the connection]), which the nested rule does not count"
+        },
+        {
+          "case": "tanstack-query v4.36.1: How do I save the query cache to localStorage so it survives a reload, and what cacheTime does that need?",
+          "section": "v4.36.1 docs/react/plugins/persistQueryClient.md [How It Works]",
+          "chunk_id_rank": null,
+          "text_rank": 7,
+          "why": "the chunk at rank 7 holds the section under another heading path (v4.36.1 docs/react/plugins/persistQueryClient.md [Build Persisters]), which the nested rule does not count"
+        },
+        {
+          "case": "tanstack-query v5.0.0: keepPreviousData no longer exists, how do I keep the old page while paginating?",
+          "section": "v5.0.0 docs/react/guides/migrating-to-v5.md [Breaking Changes > Removed keepPreviousData in favor of placeholderData identity function]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v5.0.0 docs/react/guides/migrating-to-v5.md [Breaking Changes > eslint prefer-query-object-syntax rule is removed]), which the nested rule does not count"
+        },
+        {
+          "case": "tanstack-query v5.90.3: Is there a util to test whether a given query matches a set of query filters?",
+          "section": "v5.90.3 docs/framework/react/guides/filters.md [Utils > matchQuery]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v5.90.3 docs/framework/react/guides/filters.md [Mutation Filters]), which the nested rule does not count"
+        },
+        {
+          "case": "tanstack-query v5.90.3: How do I stream useSuspenseQuery results from the server in Next.js without prefetching, and what is the cost?",
+          "section": "v5.90.3 docs/framework/react/guides/suspense.md [Suspense on the Server with streaming]",
+          "chunk_id_rank": 7,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 (v5.90.3 docs/framework/react/guides/advanced-ssr.md [Experimental streaming without prefetching in Next.js]) holds the section's text, but is another article or version"
+        },
+        {
+          "case": "zod v3.23.8: How can I make a function accept only data that went through my schema, not any object of the same shape?",
+          "section": "v3.23.8 README.md [Schema methods > .brand]",
+          "chunk_id_rank": null,
+          "text_rank": 9,
+          "why": "the chunk at rank 9 holds the section under another heading path (v3.23.8 README.md [Schema methods > .and]), which the nested rule does not count"
+        },
+        {
+          "case": "zod v4.0.17: How do I validate strings shaped like `${number}px` or `hello, ${string}!` and get that exact type?",
+          "section": "v4.0.17 packages/docs/content/api.mdx [Template literals]",
+          "chunk_id_rank": null,
+          "text_rank": 2,
+          "why": "the chunk at rank 2 holds the section under another heading path (v4.0.17 packages/docs/content/api.mdx [String formats > JWTs]), which the nested rule does not count"
+        },
+        {
+          "case": "zod v4.6.7: Is there a built-in validator for international bank account numbers?",
+          "section": "v4.6.7 packages/docs/content/api.mdx [String formats > IBANs]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v4.6.7 packages/docs/content/api.mdx [String formats > Currency codes]), which the nested rule does not count"
+        },
+        {
+          "case": "zod v4.6.7: How do I parse an ISO string into a Date and also turn the Date back into the string when sending it?",
+          "section": "v4.6.7 packages/docs/content/codecs.mdx [How encoding works > isoDatetimeToDate]",
+          "chunk_id_rank": null,
+          "text_rank": 4,
+          "why": "the chunk at rank 4 holds the section under another heading path (v4.6.7 packages/docs/content/codecs.mdx [How encoding works > numberToBigInt]), which the nested rule does not count"
+        },
+        {
+          "case": "zod v4.0.17: Can I now call .min() after .refine() on a string schema?",
+          "section": "v4.0.17 packages/docs/content/v4/index.mdx [Refinements live inside schemas]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v4.0.17 packages/docs/content/v4/index.mdx [Multiple values in z.literal()]), which the nested rule does not count"
+        },
+        {
+          "case": "zod v4.6.7: z.iso.datetime() now rejects \"2020-01-01T06:15Z\"; how do I still accept times without seconds?",
+          "section": "v4.6.7 packages/docs/content/api.mdx [String formats > ISO datetimes]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v4.6.7 packages/docs/content/api.mdx [String formats > Phone numbers]), which the nested rule does not count"
+        },
+        {
+          "case": "zod v4.6.7: How do I give a schema a title and description that show up in the generated JSON Schema?",
+          "section": "v4.6.7 packages/docs/content/json-schema.mdx [z.toJSONSchema() > metadata]",
+          "chunk_id_rank": null,
+          "text_rank": 2,
+          "why": "the chunk at rank 2 holds the section under another heading path (v4.6.7 packages/docs/content/json-schema.mdx [z.toJSONSchema() > target]), which the nested rule does not count"
+        },
+        {
+          "case": "zod v4.6.7: After switching to zod/mini every issue message just says \"Invalid input\"; how do I get real messages, in Polish for example?",
+          "section": "v4.6.7 packages/docs/content/packages/mini.mdx [No default locale]",
+          "chunk_id_rank": null,
+          "text_rank": 3,
+          "why": "the chunk at rank 3 holds the section under another heading path (v4.6.7 packages/docs/content/packages/mini.mdx [ZodMiniType > .clone(def)]), which the nested rule does not count"
+        },
+        {
+          "case": "zod v4.0.17: How do I define a validated async function now that z.function() has no .args() and .returns()?",
+          "section": "v4.0.17 packages/docs/content/v4/changelog.mdx [z.function()]",
+          "chunk_id_rank": null,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 holds the section under another heading path (v4.0.17 packages/docs/content/v4/changelog.mdx [z.promise() deprecated]), which the nested rule does not count"
+        },
+        {
+          "case": "zod v4.0.17: How do I add length limits and a custom refine to a string in zod/mini, and why are they not methods there?",
+          "section": "v4.0.17 packages/docs/content/packages/mini.mdx [ZodMiniType > .check()]",
+          "chunk_id_rank": null,
+          "text_rank": 3,
+          "why": "the chunk at rank 3 holds the section under another heading path (v4.0.17 packages/docs/content/packages/mini.mdx [ZodMiniType > .parse]), which the nested rule does not count"
+        }
+      ],
+      "chunk_id": {
+        "questions": 321,
+        "answerable": 267,
+        "unanswerable": 54,
+        "recall_at_1": 0.4906,
+        "recall_at_5": 0.7416,
+        "recall_at_10": 0.8052,
+        "mrr": 0.6024,
+        "ndcg_at_10": 0.6451,
+        "section_recall_at_5": 0.6923,
+        "section_recall_at_10": 0.775,
+        "wrong_version_rate": 0.0,
+        "unanswerable_clean_rate": 1.0,
+        "no_answer_rate": 0.0,
+        "answerable_empty_rate": 0.0,
+        "latency_p50_ms": 62.457,
+        "latency_p95_ms": 93.15,
+        "tokens_per_question": 0.0,
+        "usd_per_question": 0.0
+      },
+      "text": {
+        "metrics": {
+          "questions": 321,
+          "answerable": 267,
+          "unanswerable": 54,
+          "recall_at_1": 0.5393,
+          "recall_at_5": 0.8165,
+          "recall_at_10": 0.8876,
+          "mrr": 0.6619,
+          "ndcg_at_10": 0.7114,
+          "section_recall_at_5": 0.7603,
+          "section_recall_at_10": 0.8536,
+          "wrong_version_rate": 0.0,
+          "unanswerable_clean_rate": 1.0,
+          "no_answer_rate": 0.0,
+          "answerable_empty_rate": 0.0,
+          "latency_p50_ms": 62.457,
+          "latency_p95_ms": 93.15,
+          "tokens_per_question": 0.0,
+          "usd_per_question": 0.0
+        },
+        "results_per_question": 10.0,
+        "version_neutral_share": 0.733,
+        "unmatched_share": 0.0,
+        "context_tokens_per_question": 3534.0,
+        "context_tokens_p95": 5957.0,
+        "tokens_to_first_hit": 732.6,
+        "facts_found_rate": 0.867
+      },
+      "facts_in_expected_sections": 0.8012,
+      "facts_in_other_results": 0.2622
+    }
+  ]
+}

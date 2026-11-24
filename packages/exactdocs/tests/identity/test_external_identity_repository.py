@@ -8,7 +8,8 @@ from typing import Any
 
 import pytest
 
-from databases import ADMIN_URL, SQL_BACKENDS
+import integration
+from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.database import open_database
 from exactdocs.bootstrap.settings import Settings
@@ -368,7 +369,7 @@ async def test_expired_attempts_are_pruned_by_the_next_one(stores: Stores) -> No
     assert await stores.attempts.take("new") == attempt("new")
 
 
-@pytest.mark.skipif(ADMIN_URL is None, reason="needs EXACTDOCS_TEST_POSTGRES_URL")
+@integration.POSTGRES
 async def test_two_processes_never_claim_one_link_twice(on_postgres: None) -> None:
     """Two engines (two processes' pools) share the work through ``FOR UPDATE SKIP LOCKED``."""
     del on_postgres

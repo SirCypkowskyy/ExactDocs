@@ -1,4 +1,4 @@
-@libsql_database
+@integration @libsql_database
 Feature: ExactDocs' own database runs on a libSQL server
   As an operator who runs libSQL (a sqld server, or a Turso database)
   I want ExactDocs' own database on it, as on a SQLite file

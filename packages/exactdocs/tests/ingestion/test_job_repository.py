@@ -11,7 +11,8 @@ import pytest
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from databases import ADMIN_URL, SQL_BACKENDS, PostgresDatabase
+import integration
+from databases import SQL_BACKENDS, PostgresDatabase
 from exactdocs.bootstrap.database import is_libsql, migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.ingestion.adapters.driven.memory import InMemoryJobRepository
@@ -236,7 +237,7 @@ SKEWED_JOBS = 3000
 for CI."""
 
 
-@pytest.mark.skipif(ADMIN_URL is None, reason="needs EXACTDOCS_TEST_POSTGRES_URL")
+@integration.POSTGRES
 async def test_every_page_of_an_old_large_library_is_a_range_of_its_index_on_postgresql(
     on_postgres: PostgresDatabase,
 ) -> None:
