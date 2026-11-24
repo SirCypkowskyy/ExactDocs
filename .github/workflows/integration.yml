@@ -297,13 +297,17 @@ jobs:
             --junitxml=reports/pytest-supabase-ranking.xml
       # #474: the persistence contract suite again, its SQLite cases on a libSQL server (sqld) as
       # ExactDocs' database (EXACTDOCS_TEST_LIBSQL_DATABASE_URL, only with --integration; the known
-      # differences are skipped there, naming why).
+      # differences are skipped there, naming why), and every test of test_libsql_database.py: its
+      # server cases (several processes on one database among them, #517) are not named sqlite.
+      # Only this step sets the variable: every test that needs it must be selected here
+      # (tests/ci/test_integration_tests.py checks). -rA: the log names each test that passed.
       - name: Persistence suite on libSQL
         env:
           EXACTDOCS_TEST_LIBSQL_DATABASE_URL: ${{ env.LIBSQL_DATABASE_URL }}
           EXACTDOCS_TEST_LIBSQL_DATABASE_AUTH_TOKEN: ${{ env.LIBSQL_DATABASE_TOKEN }}
         run: |
-          uv run pytest --integration -k sqlite --junitxml=reports/pytest-libsql-database.xml \
+          uv run pytest --integration -k "sqlite or libsql_database" -rA \
+            --junitxml=reports/pytest-libsql-database.xml \
             packages/exactdocs/tests/catalog packages/exactdocs/tests/identity \
             packages/exactdocs/tests/ingestion packages/exactdocs/tests/retrieval \
             packages/exactdocs/tests/bootstrap/test_secret_box.py \

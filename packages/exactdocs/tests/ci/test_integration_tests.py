@@ -4,24 +4,30 @@ The default is proved the way ``uv run pytest`` runs: a fresh interpreter collec
 suite with every service variable set (to addresses nothing listens on, as in CI's fast jobs),
 and a probe records what it selected. Nothing selected takes a service fixture, a server's case
 or the ``integration`` marker, and the run ends saying how many it left out and how to run them.
+A test whose server only one step of the integration workflow starts is selected by that step
+(#517).
 """
 
 import importlib.util
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
 
+import yaml
 from behave.parser import parse_file
 
 import integration
 from index_backends import EXTERNAL_BACKENDS
 
 ROOT = Path(__file__).resolve().parents[4]
+TESTS = ROOT / "packages" / "exactdocs" / "tests"
 FEATURES = ROOT / "packages" / "exactdocs" / "features"
+WORKFLOW = ROOT / ".github" / "workflows" / "integration.yml"
 BACKENDS = ROOT / "packages" / "exactdocs" / "tests" / "retrieval" / "test_index_backends.py"
 NOWHERE = "127.0.0.1:9"  # the discard port: nothing answers
 SERVICES = {
@@ -58,6 +64,7 @@ def pytest_collection_finish(session):
             "marked": item.get_closest_marker("integration") is not None,
             "fixtures": list(getattr(item, "fixturenames", ())),
             "params": [str(v) for v in callspec.params.values()] if callspec else [],
+            "needs": sorted({str(a) for m in item.iter_markers("integration") for a in m.args}),
         })
     with open(os.environ["PROBE_OUT"], "w", encoding="utf-8") as out:
         json.dump(rows, out)
@@ -90,6 +97,19 @@ def _collect(tmp_path: Path, *args: str, switch: bool = False) -> tuple[list[dic
     )
     assert done.returncode == 0, done.stdout[-3000:] + done.stderr[-3000:]
     return json.loads(out.read_text(encoding="utf-8")), done.stdout
+
+
+def _pytest_args(step: str) -> list[str]:
+    """The arguments a step of the integration workflow's Python job gives pytest, but its report.
+
+    Returns:
+        What follows ``uv run pytest`` in the step's command, without ``--junitxml``.
+    """
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    (run,) = [s["run"] for s in workflow["jobs"]["python"]["steps"] if s.get("name") == step]
+    words = shlex.split(run.replace("\\\n", " "))
+    assert words[:3] == ["uv", "run", "pytest"], run
+    return [word for word in words[3:] if not word.startswith("--junitxml")]
 
 
 def _behave_environment() -> ModuleType:
@@ -167,3 +187,19 @@ def test_every_scenario_with_a_service_tag_is_an_integration_scenario() -> None:
     assert untagged == []
     assert len(tagged) >= len(services)  # at least one scenario per service
     assert services <= set(_behave_environment().SERVICES)
+
+
+def test_the_libsql_database_step_runs_every_test_that_needs_its_server(tmp_path: Path) -> None:
+    variable = "EXACTDOCS_TEST_LIBSQL_DATABASE_URL"  # the integration workflow sets it there only
+    args = _pytest_args("Persistence suite on libSQL")
+    paths = [arg for arg in args if (ROOT / arg).exists()]
+    options = [arg for arg in args if arg not in paths]
+    mentions = [p for p in TESTS.rglob("test_*.py") if "LIBSQL_DATABASE" in p.read_text("utf-8")]
+    found, _ = _collect(tmp_path, *(str(path) for path in mentions), switch=True)
+    needing = {row["id"] for row in found if variable in row["needs"]}
+    files = sorted({test.split("::")[0] for test in needing})
+    selected, output = _collect(tmp_path, *options, *files, switch=True)
+
+    assert "packages/exactdocs/tests/bootstrap/test_libsql_database.py" in files
+    assert [f for f in files if not any(f == p or f.startswith(f"{p}/") for p in paths)] == []
+    assert sorted(needing - {row["id"] for row in selected}) == [], output[-2000:]
