@@ -53,7 +53,7 @@ from exactdocs.retrieval.models import (
 from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.ports import ChunkRepository, SearchBackend, SearchIndex
 from exactdocs.retrieval.use_cases import ExternalIndexes, ExternalSearchIndex
-from index_backends import SEARCH_BACKEND_CASES
+from index_backends import SEARCH_BACKEND_CASES, params
 
 T0 = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 LIB = "/acme/payments"
@@ -240,9 +240,7 @@ async def _external_world(
         )
 
 
-@pytest.fixture(
-    params=["memory", *SEARCH_BACKENDS, *(f"external:{name}" for name in SEARCH_BACKEND_CASES)]
-)
+@pytest.fixture(params=["memory", *SEARCH_BACKENDS, *params(SEARCH_BACKEND_CASES, "external:")])
 async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
     clock = Clock()
     build = partial(_module, clock)

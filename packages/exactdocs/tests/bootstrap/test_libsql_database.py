@@ -1,9 +1,10 @@
 """#474: ExactDocs' own database on a libSQL server, SQLite's dialect over ``turso-serverless``.
 
 The URL, the engine and the driver's adaption are checked everywhere (a fake stands for the
-driver's connection). The cases marked ``server`` need ``EXACTDOCS_TEST_LIBSQL_DATABASE_URL``, an
-empty libSQL server they wipe (CI starts one and runs them in its *Persistence suite on libSQL*
-step, with the persistence contract tests' SQLite cases on the same server).
+driver's connection). The cases marked ``server`` are integration tests (#507): they need
+``EXACTDOCS_TEST_LIBSQL_DATABASE_URL``, an empty libSQL server they wipe (CI's integration job
+starts one and runs them in its *Persistence suite on libSQL* step, with the persistence contract
+tests' SQLite cases on the same server).
 """
 
 import asyncio
@@ -20,6 +21,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 
 import databases
+import integration
 from exactdocs.bootstrap.backup import BackupError, database_path
 from exactdocs.bootstrap.container import Container, vector_index
 from exactdocs.bootstrap.database import (
@@ -37,9 +39,7 @@ SERVER_URL = "libsql://db.example.com:8443?authToken=not-a-real-token"
 EXPIRED = "HTTP status 400: The stream has expired due to inactivity"
 PROCESSES = 3
 
-server = pytest.mark.skipif(
-    databases.LIBSQL_DATABASE_URL is None, reason="needs EXACTDOCS_TEST_LIBSQL_DATABASE_URL"
-)
+server = integration.LIBSQL_DATABASE
 
 
 def test_a_libsql_url_runs_on_sqlites_dialect_over_turso() -> None:

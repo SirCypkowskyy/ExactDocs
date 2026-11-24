@@ -18,7 +18,11 @@ Feature: libSQL holds the search and vector indexes
     Then libSQL holds each version's chunks in FTS5 and the vectors of "v1.4.0" in its vector index
     And libSQL searches answer as on SQLite, filtered to the asked version
 
-    Examples:
+    Examples: A local file
       | place             |
-      | libSQL server     |
       | local libSQL file |
+
+    @integration @libsql_server
+    Examples: A server
+      | place         |
+      | libSQL server |

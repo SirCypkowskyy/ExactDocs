@@ -306,6 +306,7 @@ def create_app(container: Container) -> FastAPI:
             get_asset=container.catalog.get_asset,
             update_library=container.catalog.update_library,
             pin_default_version=container.catalog.pin_default_version,
+            get_logo=container.catalog.get_logo,
         )
     )
     protected.include_router(

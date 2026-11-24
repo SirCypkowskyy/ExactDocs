@@ -2,8 +2,9 @@
 
 ``EXACTDOCS_TEST_POSTGRES_URL`` names a server and a role that may create databases and roles
 (CI: the ParadeDB service, its superuser; locally e.g. ``postgresql://postgres@127.0.0.1/postgres``).
-Without it the PostgreSQL variants are not collected: the SQLite and in-memory ones still run. CI
-sets ``EXACTDOCS_REQUIRE_POSTGRES=1``, which makes a missing URL an error instead.
+The PostgreSQL variants are integration tests (#507, ``integration.py``): always collected,
+deselected unless the run includes them (``--integration``), and skipped then without the URL. CI's
+integration job sets ``EXACTDOCS_REQUIRE_POSTGRES=1``, which makes a missing URL an error instead.
 """
 
 import os
@@ -16,9 +17,12 @@ from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
 import psycopg
+import pytest
 import turso_serverless
 from psycopg import sql
 from sqlalchemy.engine import make_url
+
+from integration import POSTGRES, POSTGRES_PG_SEARCH
 
 ADMIN_URL = os.environ.get("EXACTDOCS_TEST_POSTGRES_URL") or None
 if ADMIN_URL is None and os.environ.get("EXACTDOCS_REQUIRE_POSTGRES") == "1":
@@ -28,8 +32,8 @@ if ADMIN_URL is None and os.environ.get("EXACTDOCS_REQUIRE_POSTGRES") == "1":
 TERMINATE_WAIT_MS = 5000
 """How long ``pg_terminate_backend`` waits for a backend to exit (and release its locks)."""
 
-SQL_BACKENDS = ["sqlite", "postgres"] if ADMIN_URL else ["sqlite"]
-"""The SQL backends the contract tests run on here."""
+SQL_BACKENDS = ["sqlite", pytest.param("postgres", marks=POSTGRES)]
+"""The SQL backends the contract tests run on: PostgreSQL's case is an integration test."""
 
 
 # A fixed, valid key: every process of one test shares it, as a deployment's must.
@@ -58,11 +62,11 @@ does): the BM25 variants run. Declared rather than asked, so importing this modu
 (the no-outbound tests import it inside a namespace without a network)."""
 SEARCH_BACKENDS = [
     *SQL_BACKENDS,
-    *(["postgres_c"] if ADMIN_URL else []),
-    *(["pg_search"] if PG_SEARCH else []),
+    pytest.param("postgres_c", marks=POSTGRES),
+    pytest.param("pg_search", marks=POSTGRES_PG_SEARCH),
 ]
 """The search index's contract also runs on a PostgreSQL database in the ``C`` locale (full-text
-search) and, where the server has it, on ``pg_search``."""
+search) and, where the server has it (``EXACTDOCS_TEST_PG_SEARCH=1``), on ``pg_search``."""
 
 
 @contextmanager

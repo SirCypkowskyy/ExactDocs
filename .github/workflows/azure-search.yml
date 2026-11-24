@@ -36,6 +36,8 @@ permissions:
 env:
   FORCE_COLOR: "1"
 
+# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing.md "CI/CD and
+# runners"); it uses none of the GitHub-hosted minutes.
 jobs:
   contract:
     name: Contract suites against Azure AI Search
@@ -77,7 +79,7 @@ jobs:
           EXACTDOCS_REQUIRE_AZURE_SEARCH: "1" # no endpoint: fail, never skip
           EXACTDOCS_TEST_AZURE_SEARCH_KEY: ${{ inputs.auth == 'api_key' && secrets.AZURE_SEARCH_API_KEY || '' }}
         run: >-
-          uv run pytest -v
+          uv run pytest --integration -v
           packages/exactdocs/tests/retrieval/test_index_backends.py
           packages/exactdocs/tests/retrieval/test_search_index.py
           packages/exactdocs/tests/retrieval/test_vector_index.py

@@ -585,10 +585,31 @@ answerable one by the result list today.
 For each budget, cheapest first, the candidates are the results that ran with no wrong version,
 no read outside the version, no error and no reranker fallback. The best of a budget, by recall@5,
 then nDCG@10, MRR, lower USD and lower p95, becomes its default only when its recall@5 beats the
-cheaper budget's default by 5 points (the suite's `DEFAULT_MARGIN_POINTS`); otherwise the cheaper
-default stays, and the reason says by how much the dearer one fell short. Each recommendation
-gives its USD per 1000 questions and its numbers. A budget nothing of which ran is "not measured
-yet"; for hosted models that means a real-providers run is needed.
+cheaper budget's default by 5 points (the suite's `DEFAULT_MARGIN_POINTS`) **and** McNemar's test
+(mid-p) of its recall@5 against that default, on the answerable cases both answered, is
+significant at 5% (#489). Otherwise the cheaper default stays, and the reason says which it
+missed: by how much the dearer one fell short of the margin, or that the difference is not
+significant, with its p-value. A result without per-case outcomes (`rows`) cannot be tested and
+does not become a default. Each recommendation gives its USD per 1000 questions, its numbers and
+the test (`test`). A budget nothing of which ran is "not measured yet"; for hosted models that
+means a real-providers run is needed.
+
+### Intervals and paired tests
+
+Every rate and mean of `metrics`, `by_kind` and `by_project` (recall@k, MRR, nDCG@10, section
+recall, the wrong-version, clean, no-answer and empty rates, tokens and USD per question; not the
+latency percentiles) has a 95% interval in `intervals`: a percentile bootstrap over the cases,
+10,000 resamples drawn from `random.Random(489)`. The draws depend only on the seed and the
+number of cases, and the rows are taken in case order, so every configuration that answered the
+same cases is resampled with the same draws (paired). Each result is then tested against its
+budget's default (`versus_default`) on the answerable cases both answered: McNemar's test (mid-p)
+for recall@1, @5 and @10, and a paired sign-flip permutation test (10,000 random sign patterns,
+same seed) for MRR and nDCG@10, each with the difference and its paired bootstrap interval. The
+summary shows the intervals in brackets and the tests under *Against the budget's default*.
+The definitions, and why mid-p and a permutation test, are in
+[Intervals and significance](benchmark/method.md#intervals-and-significance); the code is
+`retrieval_eval/stats.py`, tested on synthetic runs with known answers in
+`tests/evals/test_stats.py`.
 
 ### Reproducing a result
 
@@ -604,14 +625,21 @@ yet"; for hosted models that means a real-providers run is needed.
   `reason`; `models` (each role's `<profile>:<model>`, the profile's `kind` and `base_url`, and for
   a local model the Hub `revision` it was pulled at and its `dimensions`); `settings` (the `ai`
   settings it ran with: the roles, `rerank_with`, the reranker's `top_n` and timeout, the judge's
-  timeout, HyDE and agentic limits; never a key); `metrics`, `by_kind`, `by_project`, `index`,
-  `fallbacks`, `reranked`, `rerank_fallbacks`, `misses`, `errors`, `wrong_version_cases`,
-  `left_version_cases`;
-- `recommendations`: per `budget`, the `configuration`, `chunking`, `usd_per_1000_questions` and
-  the `reasons`.
+  timeout, HyDE and agentic limits; never a key); `metrics`, `by_kind`, `by_project` (each with
+  its `intervals`), `index`, `fallbacks`, `reranked`, `rerank_fallbacks`, `misses`, `errors`,
+  `wrong_version_cases`, `left_version_cases`; `rows`, every case's outcome by case name (its
+  kind, project, rank, nDCG, section ranks, wrong version, empty, search time, tokens and USD),
+  from which the metrics, intervals and tests can be recomputed; `rows_from`, set when the rows
+  come from a later run than the metrics (below); and `versus_default`, the paired tests
+  against its budget's default;
+- `recommendations`: per `budget`, the `configuration`, `chunking`, `usd_per_1000_questions`,
+  the `reasons` and the recall@5 `test` against the cheaper default;
+- `statistics`: how the intervals and tests were computed (`seed`, `resamples`, `confidence`,
+  `alpha` and the methods).
 
 The recorded run is `packages/exactdocs/evals/results/retrieval.json` and `retrieval.md`.
-`schema_version` changes when a field is renamed or removed.
+`schema_version` changes when a field is renamed or removed; #489 only added fields, so it is
+still 1, and a report without them still reads.
 
 ### The recorded run
 
@@ -640,6 +668,15 @@ BM25 is best at `default`, split level 3 and 4,000 characters (recall@5 81.7%, a
 3 points more, under the 5-point margin, so BM25 stays the default for both the no-model and the
 local budget; the cross-encoder adds as much as hybrid at `h6` and loses recall at `h2`, whose
 chunks are longer than its window; arctic-embed-s is below BM25 (75.3%).
+
+The run kept aggregates only, so it had no per-case outcomes for intervals and tests (#489).
+BM25 was run again at every chunking for #489 (`just retrieval-bench --offline --configs bm25`,
+on Linux x86_64 with 4 CPUs); its recall@k, MRR, nDCG@10, section recall and rates matched the
+recorded ones exactly overall, per kind and per project, so its `rows` were added to the four
+recorded BM25 results, with `rows_from` saying where they come from (their `search_ms` are that
+re-run's; the recorded latencies stay), and the intervals, tests and recommendation were derived
+again. The model configurations were not run again: they have no rows, so no interval and no
+test, until the next recorded run, which keeps rows for every result.
 
 ### Running it with local models
 
@@ -684,6 +721,168 @@ On releases, the *Retrieval eval* job runs BM25 at the `default` chunking throug
 or recall@5 or nDCG@10 more than 2 points below the recorded run (the same golden set and projects
 are required). The local and hosted parts never run in CI; refresh the recorded run by hand when
 ranking, chunking or a model changes. Pull request CI runs the quick tests only.
+
+## Scoring text results
+
+The retrieval benchmark scores ExactDocs by reading each result's chunk ID back. Other
+documentation tools return text: Context7's context endpoint, Grounded Docs' search, a grep or a
+fixed-window RAG baseline. The text scorer (#491) decides from the text alone which sections of
+the golden corpus a result holds, in every pinned version of the project, and scores the results
+with the retrieval benchmark's own metrics. It is deterministic and needs no model. The matcher is
+`retrieval_eval/text_match.py`; the rows, metrics, calibration and report are
+`retrieval_eval/text_bench.py`. The runs of other tools (#492, #493, #494) score with it.
+
+```bash
+just text-bench --offline                                         # calibrate at `default`: about two minutes
+just text-bench --offline --chunkings default,h6,h2,merge-400     # at every chunking
+just text-bench --offline --chunkings default,h6,h2,merge-400 --out packages/exactdocs/evals/results   # refresh the recorded run
+```
+
+### Matching a text to sections
+
+- **Sections.** Each pinned version's articles (the files the importer takes, read at the pinned
+  commit) are cut with the importer's own parser and chunker, every heading starting a section and
+  no size bound (`SECTION_CHUNKING`, the golden set's `h6`): a section is one heading's own text, up
+  to the next heading. `golden-validate` cuts the same headings, so these are the sections the
+  cases name. A heading path that occurs twice in an article is one section with two texts.
+- **Normalized text.** HTML entities are decoded (and the text NFKC-normalized); code fence info
+  strings, ordered-list numbers, Markdown link targets, bare URLs and HTML or JSX tags are dropped;
+  the rest is case folded and split into words of letters and digits (`on_startup` is
+  `on startup`). A text is compared as the set of its 5-word shingles (`SHINGLE_WORDS`); a text of
+  fewer words is one shingle. A reflowed paragraph, another list marker, Markdown rendered as
+  plain text or a link without its URL still matches; a paraphrase does not.
+- **A result answers a section** when it holds at least 80% (`MATCH_THRESHOLD`) of the shingles
+  of the section's own text (the section is inside it: a coarser result, such as a chunk of
+  several sections), or when at least 80% of its own shingles are in the section with its
+  subsections (it is a part of the section: a finer result, such as a window of it or a part of a
+  long section). These are the text forms of the nested rule chunk-ID scoring matches hits with
+  (`golden_run.nested_match`, in [the ingestion benchmark](#the-ingestion-benchmark)), so both
+  scorings count the same hits.
+- **Version.** For a question about version V, a result is *right* when its text matches sections
+  of V and of no other pinned version; *version-neutral* when it matches sections of V and of
+  another version (the text is the same in both, so it cannot say which it came from);
+  *wrong-version* when it matches sections of another version and none of V; *unmatched* when it
+  matches no section at all (text from elsewhere, or too little of it).
+
+### Metrics of text results
+
+A tool's answer to a question is the text of each of its results, best first (`TextAnswer`);
+each tool's harness splits the tool's response into its results, in the tool's order. Each case
+becomes the retrieval benchmark's own `Row`, so the metrics are computed by the same code
+(`metrics_of`) with [the same definitions](#the-retrieval-benchmark): recall@1/5/10, MRR, section
+recall and nDCG@10 over the top 10, the wrong-version rate, unanswerable clean, no answer,
+answerable empty, and latency, model tokens and USD when the harness measures them. A hit is the
+first result in the top 10 that answers the expected section; a case is wrong-version when any of
+its results is. Next to them:
+
+| Metric | Over | Definition |
+|---|---|---|
+| version-neutral | every result returned | share whose text matches the version asked and another pinned version |
+| unmatched | every result returned | share whose text matches no section of any pinned version |
+| results / question | every case | results returned |
+| context tokens / question, p95 | every case | estimated tokens of all the text returned (characters / 4, as `CHARS_PER_TOKEN`); tools return very different amounts of text, so a hit costs a different number of tokens in each |
+| tokens to first hit | answerable cases whose first expected section is in the top 10 | estimated tokens of the results up to and including the one that answers it |
+| facts found | answerable cases | the share of the case's facts the returned text holds, averaged over the cases |
+
+**Facts found** is a second signal, independent of the sections: a fact is found when at least
+75% (`FACT_SHARE`) of its content words are in the text the tool returned (words normalized as
+above, a fixed list of stopwords left out, a plural `s` cut). It is lexical: a fact the docs
+phrase otherwise can be missed, and a lot of text finds more facts by chance. So the calibration
+gives both bounds on ExactDocs' results: the share of facts in the expected sections' own text
+(about the most a tool can reach), and in the results of another question of the same version
+(what text that does not answer reaches).
+
+`TextResult.of(tool, rows)` aggregates one tool's rows overall, by question kind and by project,
+and `results_table` renders tools side by side.
+
+**Version-neutral results.** Most text of a pinned version is the same in the other pinned
+versions of its project, so most results, right or wrong, are version-neutral, and a result of
+another version is caught as wrong only where the text changed. The text scorer's wrong-version
+rate is in effect a lower bound of the rate chunk-ID scoring would give; the version-neutral share
+says how much of what a tool returned no check on the text alone can attribute.
+
+### Calibration
+
+`just text-bench` checks the text scorer against chunk-ID scoring on ExactDocs' own results. For
+each chunking configuration it imports the corpus as the ingestion benchmark does, asks every
+golden question with BM25 in its project's library, reads each result back by its chunk ID and
+keeps the chunk's content as the result's text. Then it scores the results both ways, chunk IDs
+with the retrieval benchmark's nested rule. A decision is where an expected section of an
+answerable case is in the top 10 (its rank), or that it is not; the two agree on a decision when
+they give the same rank, or both a miss. The criterion is 98% agreement at `default`, the
+chunking ExactDocs ships (`MIN_AGREEMENT`, `GATED_CHUNKING`); below it the command exits with 1.
+The report (`text-scorer.json` and `text-scorer.md`, in `reports/evals/` or `--out`) also gives:
+
+- the agreement on hit or miss alone, whatever the rank;
+- the agreement on the same results rendered as plain text (the Markdown rendered and the tags
+  dropped), as a tool that renders its results returns them;
+- the agreement with a chunk-ID rule that also counts a chunk holding the expected section's
+  heading under another heading path (below);
+- the agreement on each case's wrong-version decision;
+- the agreement at each threshold from 0.5 to 1, on the results as returned and as rendered;
+- both scorings' metrics side by side, the text-only metrics, and every disagreement with what
+  the result at the earlier rank is.
+
+**The recorded calibration** is `packages/exactdocs/evals/results/text-scorer.json` and
+`text-scorer.md`, on the whole golden set (321 cases, 384 decisions), about two minutes per
+chunking on 4 CPUs:
+
+| chunking | same rank | hit / miss | rendered as plain text | counting held headings | BM25 recall@5, text (chunk ID) |
+|---|---|---|---|---|---|
+| `default` | **99.5%** | 99.7% | 99.5% | 99.7% | 81.7% (81.7%) |
+| `h6` | 99.7% | 100.0% | 99.7% | 99.7% | 79.8% (79.8%) |
+| `h2` | 93.2% | 93.5% | 93.0% | 99.7% | 82.8% (76.0%) |
+| `merge-400` | 90.9% | 91.4% | 90.9% | 99.5% | 81.7% (74.2%) |
+
+The criterion is met at `default`. Both scorings take the same wrong-version decision on every
+case at every chunking (BM25 returns nothing of another version, and no result's text is only in
+another version). At `default`, 72% of BM25's results are version-neutral; its ten results hold
+3,464 tokens of context on average, 736 of them up to the first hit; they hold 87% of the cases'
+facts, where the expected sections' own text holds 80% and another question's results 25%.
+
+The threshold is 0.8 because of the sweep: below it, results of other articles that share part of
+a section's text count as hits (at `default`, 98.4% agreement at 0.7, 97.1% at 0.5); above it the
+results as returned agree as well, but rendered ones less (99.2% at 0.9, 89.8% at 1), since a
+rendering loses a little text. Shingles of 5 words are the usual size for near-duplicate text; in
+trial runs, 3 to 9 words moved the agreement at 0.8 by less than a point.
+
+What still disagrees, and why:
+
+- **The same text in two articles.** TanStack Query v5.90.3 explains streaming with
+  `useSuspenseQuery` in `guides/suspense.md` and again, nearly word for word, in
+  `guides/advanced-ssr.md`. BM25 returns the second at rank 1 and the expected one at rank 7; the
+  text scorer finds the expected section's text at rank 1. Text alone cannot say which article a
+  result came from; a tool that returns it does answer the question.
+- **A section held under another heading path.** At `default`, Starlette's 1.0.0rc1 release notes
+  are longer than 4,000 characters, so they are cut again at their `####` headings and the chunk
+  `1.0.0rc1 > Removed` also holds `Added`, `Fixed` and `Changed`. The question about Jinja2
+  autoescaping expects `Fixed`: the text scorer finds it in that chunk at rank 8, the nested rule
+  does not, since it counts a chunk for its own section, the sections inside it and its parents,
+  not for a sibling it holds. `h2` and `merge-400` put sibling sections into one chunk far more
+  often (a section with all its subsections; small sections merged with the next), which is 25 of
+  `h2`'s 26 disagreements and 33 of `merge-400`'s 35: with the rule that counts held headings they
+  agree on 99.7% and 99.5%. The text scorer is right there, and the nested rule undercounts those
+  chunkings' hits: scored from text, BM25's recall@5 is 82.8% at `h2` and 81.7% at `merge-400`,
+  not 76.0% and 74.2%.
+- **A part of a section that runs past it.** At `merge-400`, one chunk named after a subsection
+  of the expected section was merged with the start of the next section: the nested rule counts
+  it as part of the expected section, the text scorer does not, since less than 80% of its text
+  is.
+
+### The JSON report
+
+`text-scorer.json` (`schema_version` 1) records `golden` (the golden set's fingerprint), `cases`,
+`projects`, `corpus` (every pinned version's commit), `environment` (as the retrieval benchmark
+records it), `scorer` (`shingle_words`, `threshold`, `fact_share`, `min_agreement`,
+`gated_chunking`) and, per chunking, in `calibrations`: `agreement`, `held_agreement` and
+`rendered_agreement` (each `decisions`, `agreed`, `rate`, `hit_miss_rate`),
+`wrong_version_agreement`, `sweep` (`threshold`, `rate`, `rendered_rate`), `disagreements`
+(`case`, `section`, `chunk_id_rank`, `text_rank`, `why`), `chunk_id` (the retrieval benchmark's
+metrics), `text` (the same scored from text, with the metrics only text gives),
+`facts_in_expected_sections` and `facts_in_other_results`. Like the other benchmarks, it runs by
+hand, not in CI: run it when the matcher, the parser or the chunker changes, and record it in the
+same pull request. Pull request CI runs the quick tests (`tests/evals/test_text_match.py`,
+`test_text_bench.py`, `text_scorer.feature`) on small local corpora.
 
 ## The agent benchmark
 
@@ -760,8 +959,16 @@ one cell per agent model and retrieval configuration:
   its facts are stated;
 - *Read another version*: questions where the agent read something of the asked library at
   another version;
-- tool calls, tokens and USD per question, median wall time, and how the searches were answered.
+- tool calls, tokens and USD per question, median wall time, and how the searches were answered;
+- the 95% interval of accuracy (overall, per kind and per project), of *Read the answer* and of
+  the means per question (`intervals`, a percentile bootstrap over the questions as in
+  [Intervals and paired tests](#intervals-and-paired-tests));
+- for each retrieval configuration but the run's first, McNemar's test (mid-p) of its accuracy
+  against the first configuration's, for the same agent model and the questions both asked
+  (`reference`, `versus_reference`), shown under *Against the first retrieval configuration*.
+  Put the baseline first (`--retrieval`), e.g. BM25 when comparing models.
 
+`statistics` records the seed, resamples, confidence and level of the intervals and tests.
 `meta` holds what a rerun needs: the agent models, the judge model, each configuration's
 settings, the limits, the instructions and prompt, the ExactDocs version and repository commit,
 and every imported version with its pinned and recorded commit. `questions` holds every question's

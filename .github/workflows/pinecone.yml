@@ -37,6 +37,8 @@ concurrency:
 permissions:
   contents: read
 
+# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing.md "CI/CD and
+# runners"); it uses none of the GitHub-hosted minutes.
 jobs:
   contract:
     name: Pinecone contract tests
@@ -69,12 +71,13 @@ jobs:
         env:
           EXACTDOCS_TEST_PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
         run: >-
-          uv run pytest -p no:cacheprovider -q
+          uv run pytest --integration -p no:cacheprovider -q
           packages/exactdocs/tests/retrieval/test_index_backends.py
           packages/exactdocs/tests/retrieval/test_vector_index.py
           packages/exactdocs/tests/retrieval/test_pinecone_index.py
           -k "pinecone"
       - name: Pinecone scenario
         env:
+          EXACTDOCS_INTEGRATION: "1" # an @integration scenario (#507)
           EXACTDOCS_TEST_PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
         run: uv run behave packages/exactdocs/features/pinecone_index.feature

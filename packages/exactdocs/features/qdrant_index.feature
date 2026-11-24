@@ -1,4 +1,4 @@
-@qdrant
+@integration @qdrant
 Feature: Qdrant holds the vector index
   As an operator who runs Qdrant (self-hosted or Qdrant Cloud)
   I want ExactDocs' vectors stored and searched there, filtered to the asked version
