@@ -72,9 +72,8 @@ disk full) leaves its service containers, `exactdocs-supabase-<run>` or a releas
 builder behind, and the next job on that VM inherits them: the hook removes every container,
 anonymous volume and buildx builder state before each job, since a runner takes one job at a
 time, and at 80% disk or more also build cache and images older than 72 hours. Named volumes
-such as `exactdocs-ci-data` and recent layers stay. To install it on registered runners without
-registering again, run `register.sh` again with a fresh token: it replaces the registration
-and leaves the hook in place.
+such as `exactdocs-ci-data` and recent layers stay. Runners registered before the hook existed
+get it from another `register.sh` run with a fresh token (`--replace` keeps their names).
 
 Add a third runner: `create-vms.sh 3`, then `RUNNERS=3 register.sh ...`.
 
