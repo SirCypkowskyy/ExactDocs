@@ -14,6 +14,7 @@ from exactdocs.identity.constants import (
     ACCESS_ASSERTION_HEADER,
     ACCESS_COOKIE,
     ACCESS_LOG_ACTION,
+    ALL_TOKENS_ACTION,
     CHANGE_PASSWORD_DESCRIPTION,
     COOKIE_ATTRS,
     CREATE_TOKEN_DESCRIPTION,
@@ -32,8 +33,11 @@ from exactdocs.identity.dtos import (
     AccessLogPage,
     AccessLogQuery,
     AccountLinkStart,
+    AccountPreferences,
     AccountProviders,
     AccountSummary,
+    AllTokensList,
+    AllTokensQuery,
     AuthenticateQuery,
     ChangePasswordCommand,
     CreateFirstAdminCommand,
@@ -41,8 +45,10 @@ from exactdocs.identity.dtos import (
     CreateUserCommand,
     ExternalSignInResult,
     FinishExternalSignInCommand,
+    GetPreferencesQuery,
     GrantLibraryRoleCommand,
     GrantListQuery,
+    InterfacePreferences,
     LibraryAccessLogQuery,
     LibraryGrantList,
     LibraryGrantRequest,
@@ -56,6 +62,7 @@ from exactdocs.identity.dtos import (
     PasswordReset,
     ResetPasswordCommand,
     RevokeLibraryRoleCommand,
+    SavePreferencesCommand,
     SessionState,
     SetUserDisabledCommand,
     StartAccountLinkCommand,
@@ -83,6 +90,7 @@ from exactdocs.identity.ports.driving import (
     CreateToken,
     CreateUser,
     FinishExternalSignIn,
+    GetPreferences,
     GetProviderIcon,
     GetSessionState,
     GrantLibraryRole,
@@ -91,6 +99,7 @@ from exactdocs.identity.ports.driving import (
     IdentifyToken,
     ListAccessLog,
     ListAccountProviders,
+    ListAllTokens,
     ListLibraryAccessLog,
     ListLibraryGrants,
     ListTokens,
@@ -99,6 +108,7 @@ from exactdocs.identity.ports.driving import (
     ResetPassword,
     RevokeLibraryRole,
     RevokeToken,
+    SavePreferences,
     SetUserDisabled,
     SignIn,
     SignOut,
@@ -500,8 +510,10 @@ def build_users_router(
     @router.get(
         "/users",
         description=f"List the local accounts, disabled ones included, oldest first unless "
-        f"`sort` says otherwise, a page at a time. Filter with `q`, `role` and `disabled`; "
-        f"`total` counts every match. {USERS_DESCRIPTION}",
+        f"`sort` says otherwise, a page at a time. Filter with `q`, `role`, `disabled` and "
+        f"`provider`; `total` counts every match. Each account shows when it was last active "
+        f"(to the hour), where it signs in and how many live API tokens it holds; every "
+        f"account's tokens are at `GET /users/tokens`. {USERS_DESCRIPTION}",
     )
     async def get_users(query: Annotated[UserListQuery, Query()]) -> UserList:
         """List a page of the local accounts, disabled ones included.
@@ -577,6 +589,44 @@ def build_users_router(
     return router
 
 
+def build_all_tokens_router(
+    *, list_all_tokens: ListAllTokens, session_caller: CurrentCaller
+) -> APIRouter:
+    """Expose ``GET /users/tokens``: every account's API tokens, for an operator to tidy up.
+
+    It needs a signed-in session of an ``admin`` (an API token is refused with 401, as for
+    ``/users``); anyone else gets 403.
+
+    Args:
+        list_all_tokens: The driving port that lists every token.
+        session_caller: The dependency that requires a signed-in session.
+
+    Returns:
+        The router.
+    """
+    operator = build_operator(caller=session_caller, action=ALL_TOKENS_ACTION)
+    router = APIRouter(tags=["identity"], dependencies=[Depends(operator)])
+
+    @router.get("/users/tokens", name="list_all_tokens")
+    async def get_all_tokens(query: Annotated[AllTokensQuery, Query()]) -> AllTokensList:
+        """List the API tokens of every account, newest first, never their secrets. Operators only.
+
+        Each token comes with its owner (`owner_id`, `owner`), its prefix, its expiry and its
+        last use, expired ones not yet removed included. Filter with `q` (the token's name),
+        `owner_id`, `expired` and `unused`; order with `sort`; `total` counts every match. Needs
+        a signed-in session; an API token is refused (401).
+
+        Args:
+            query: The filters, the sort, the page size and the cursor or offset.
+
+        Returns:
+            The page of tokens, its next cursor and the total.
+        """
+        return await list_all_tokens(query)
+
+    return router
+
+
 def build_access_log_router(
     *, list_access_log: ListAccessLog, session_caller: CurrentCaller
 ) -> APIRouter:
@@ -604,11 +654,12 @@ def build_access_log_router(
 
         Creations, grants (a new role, or another one), revocations, ownership transfers and
         removals, each with who made it and when; a removed library's events stay. Filter with
-        `library` and `change`; `total` counts every match.
+        `library`, `change`, `actor`, `subject`, `at_after` and `at_before`, and order with
+        `sort`; `total` counts every match.
 
         Args:
             who: The caller.
-            query: The filters, the page size and the cursor of the previous page.
+            query: The filters, the sort, the page size and the cursor of the previous page.
 
         Returns:
             The page of events, its next cursor and the total.
@@ -1183,14 +1234,15 @@ def build_grants_router(
 
         Its creation, grants (a new role, or another one), revocations and ownership transfers,
         each with who made it and when. Operators see every event under the library's ID;
-        anyone else only those since it was last removed. Filter with `change`; `total` counts
-        every match.
+        anyone else only those since it was last removed. Filter with `change`, `actor`,
+        `subject`, `at_after` and `at_before`, and order with `sort`; `total` counts every
+        match.
 
         Args:
             owner: The library's owner segment.
             repo: The library's repository segment.
             who: The caller.
-            query: The filter, the page size and the cursor of the previous page.
+            query: The filters, the sort, the page size and the cursor of the previous page.
 
         Returns:
             The page of events, its next cursor and the total.
@@ -1202,6 +1254,67 @@ def build_grants_router(
                 library=f"/{owner}/{repo}",
                 **query.model_dump(exclude_unset=True),
             )
+        )
+
+    return router
+
+
+def build_preferences_router(
+    *,
+    get_preferences: GetPreferences,
+    save_preferences: SavePreferences,
+    caller: CurrentCaller,
+) -> APIRouter:
+    """Expose ``/account/preferences``: the caller's interface preferences.
+
+    A session or an API token may call them: a token acts as its account, as on the library
+    routes. Each account has its own; nobody reads or saves another's.
+
+    Args:
+        get_preferences: The driving port that reads an account's preferences.
+        save_preferences: The driving port that saves them.
+        caller: The dependency that names the calling account.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["identity"], dependencies=[Depends(caller)])
+    account = Annotated[AccountSummary, Depends(caller)]
+
+    @router.get("/account/preferences", name="get_account_preferences")
+    async def get_account_preferences(who: account) -> AccountPreferences:
+        """Return the caller's interface preferences.
+
+        `saved` is `false` while the account never saved any: `preferences` then holds the
+        defaults, and a browser signing in keeps the preferences it already applies (and saves
+        them). Once `saved` is `true`, the account's preferences win over a browser's.
+
+        Args:
+            who: The caller.
+
+        Returns:
+            The preferences, and whether the account saved them.
+        """
+        return await get_preferences(GetPreferencesQuery(account_id=who.id))
+
+    @router.put("/account/preferences", name="save_account_preferences")
+    async def save_account_preferences(
+        preferences: InterfacePreferences, who: account
+    ) -> AccountPreferences:
+        """Save the caller's interface preferences, replacing the ones it had.
+
+        Every preference is required. An unknown key or a value the interface does not offer is
+        a 422 `validation_error` naming the field, and nothing is saved.
+
+        Args:
+            preferences: The new preferences.
+            who: The caller.
+
+        Returns:
+            The preferences as saved (`saved` is `true`).
+        """
+        return await save_preferences(
+            SavePreferencesCommand(account_id=who.id, preferences=preferences)
         )
 
     return router

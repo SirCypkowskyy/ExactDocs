@@ -18,11 +18,15 @@ from exactdocs.identity.constants import (
     ACCESS_LINK_LIFETIME,
     ACCESS_LINK_REFRESH,
     ACCESS_LOG_ACTION,
+    ACCESS_LOG_DEFAULT_SORT,
+    ACCESS_LOG_SORT_FIELDS,
     ACCESS_PROVIDER,
     ACCOUNT_PAGE,
+    ALL_TOKENS_SORT_FIELDS,
     CODE_VERIFIER_BYTES,
     GRANT_SORT_FIELDS,
     IDLE_TIMEOUT,
+    LOCAL_SIGN_IN,
     MAX_TOKENS_PER_ACCOUNT,
     PREFIX_SHOWN,
     RESERVED_IN_USERNAME,
@@ -39,9 +43,13 @@ from exactdocs.identity.constants import (
 from exactdocs.identity.dtos import (
     AccessEventSummary,
     AccessLogPage,
+    AccountPreferences,
     AccountProvider,
     AccountProviders,
     AccountSummary,
+    AccountTokenSummary,
+    AllTokensList,
+    AllTokensQuery,
     ApiTokenIdentity,
     AuthenticateQuery,
     ChangePasswordCommand,
@@ -54,7 +62,12 @@ from exactdocs.identity.dtos import (
     ExternalSignInStart,
     ExternalTokenIdentity,
     FinishExternalSignInCommand,
+    GetPreferencesQuery,
     GrantLibraryRoleCommand,
+    LeaderboardPeople,
+    LeaderboardPeopleQuery,
+    LeaderboardPerson,
+    LibraryAccessLogQuery,
     LibraryCreationQuery,
     LibraryGrantList,
     LibraryGrants,
@@ -70,6 +83,7 @@ from exactdocs.identity.dtos import (
     ResetPasswordCommand,
     RevalidationReport,
     RevokeLibraryRoleCommand,
+    SavePreferencesCommand,
     SessionGrant,
     SessionState,
     SetupState,
@@ -146,6 +160,7 @@ from exactdocs.identity.models import (
     SubjectKind,
     Username,
     access_username_candidates,
+    activity_hour,
     address_key,
     effective_role,
     hash_token,
@@ -161,6 +176,7 @@ from exactdocs.identity.ports.driven import (
     FailedSignInLog,
     LibraryGrantRepository,
     PasswordHasher,
+    PreferencesRepository,
     SecretBox,
     SessionRepository,
     SignInAttemptRepository,
@@ -176,9 +192,11 @@ from exactdocs.identity.ports.driving import (
 from exactdocs_kernel import (
     Clock,
     DomainError,
+    InvalidCursorError,
     SealedTextUnreadableError,
-    decode_cursor,
-    encode_cursor,
+    Sort,
+    decode_sort_cursor,
+    encode_sort_cursor,
     page_offset,
     parse_sort,
     sorted_page,
@@ -318,10 +336,33 @@ class AuthenticateUseCase:
         if address and known:
             await self.failures.refund(address, now)
             await self.failures.remember_sign_in(known, self.clock.now())
+        await _record_activity(self.repository, account, now)
         return AccountSummary.from_model(account)
 
 
 logger = logging.getLogger(__name__)
+
+
+async def _record_activity(accounts: AccountRepository, account: Account, now: datetime) -> None:
+    """Record that the account was active at ``now``: at most one write per hour.
+
+    Activity is a sign-in (a password, an identity provider) or a request authenticated as the
+    account (a session, an API token, a provider's ID token through MCP, Cloudflare Access). It is
+    kept to the hour (``activity_hour``), so the write is skipped while the recorded hour is the
+    current one, and the account was read for the request anyway: no extra read either. A write
+    that fails is logged, never raised: bookkeeping must not refuse a valid caller.
+
+    Args:
+        accounts: Where accounts are stored.
+        account: The account, as read for this request.
+        now: When it was active.
+    """
+    if not account.activity_due(now):
+        return
+    try:
+        await accounts.record_activity(account.id, activity_hour(now))
+    except Exception:  # ruff: ignore[blind-except] - bookkeeping must not break a valid caller
+        logger.warning("could not record account activity")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -493,6 +534,7 @@ class IdentifyCallerUseCase:
             raise NotSignedInError
         if now - session.last_used_at >= TOUCH_INTERVAL:
             await self.sessions.touch(token_hash, now)
+        await _record_activity(self.accounts, account, now)
         return AccountSummary.from_model(account)
 
 
@@ -606,6 +648,7 @@ class IdentifyAccessCallerUseCase:
             account = await self._person(self.policy, claims)
         if account is None:
             raise NotSignedInError
+        await _record_activity(self.accounts, account, self.clock.now())
         return AccountSummary.from_model(account)
 
     async def _service_account(self, policy: AccessPolicy, client_id: str) -> Account | None:
@@ -974,12 +1017,20 @@ async def _forget_throttle(forget: Callable[[], Awaitable[bool]], what: str) -> 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ListUsersUseCase:
-    """Implements ``ports.driving.ListUsers``."""
+    """Implements ``ports.driving.ListUsers``.
+
+    Three reads whatever the page: the accounts, the links (provider and groups) and the live
+    token count of every account (one grouped query, not one per account).
+    """
 
     accounts: AccountRepository
     """Where accounts are stored."""
     externals: ExternalIdentityRepository
     """The links of external accounts, for their provider and groups."""
+    tokens: TokenRepository
+    """Where API tokens are stored, for each account's count."""
+    clock: Clock
+    """The current time: expired tokens are not counted."""
 
     async def __call__(self, query: UserListQuery) -> UserList:
         """List a page of the accounts, disabled ones included, with where each signs in.
@@ -992,16 +1043,22 @@ class ListUsersUseCase:
         """
         sort = parse_sort(query.sort, allowed=USER_SORT_FIELDS, default="created_at")
         links = await self.externals.groups_by_account()
+        counts = await self.tokens.count_by_account(self.clock.now())
         users = []
         for account in await self.accounts.list_all():
             provider, groups = links.get(account.id, (None, []))
-            users.append(UserSummary.from_model(account, provider=provider, groups=groups))
+            users.append(
+                UserSummary.from_model(
+                    account, provider=provider, groups=groups, token_count=counts.get(account.id, 0)
+                )
+            )
         users = [
             u
             for u in users
             if _contains(u.username, query.q)
             and (query.role is None or u.role in query.role)
             and (query.disabled is None or u.disabled is query.disabled)
+            and (query.provider is None or (u.provider or LOCAL_SIGN_IN) in query.provider)
         ]
         page = sorted_page(
             users,
@@ -1011,6 +1068,8 @@ class ListUsersUseCase:
                 "created_at": lambda u: _sortable(u.created_at),
                 "username": lambda u: u.username,
                 "role": lambda u: u.role,
+                "last_active_at": lambda u: _sortable(u.last_active_at),
+                "token_count": lambda u: u.token_count,
             },
             key=lambda u: u.id,
             limit=query.limit,
@@ -1248,6 +1307,59 @@ class ListTokensUseCase:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class ListAllTokensUseCase:
+    """Implements ``ports.driving.ListAllTokens``.
+
+    Two reads whatever the page: every token and every account (for the owners' usernames).
+    """
+
+    tokens: TokenRepository
+    """Where API tokens are stored."""
+    accounts: AccountRepository
+    """Where accounts are stored, for the owners' usernames."""
+    clock: Clock
+    """The current time, for the ``expired`` filter."""
+
+    async def __call__(self, query: AllTokensQuery) -> AllTokensList:
+        """List a page of every account's tokens with their owners, without their secrets.
+
+        Args:
+            query: The filters, the sort and the page.
+
+        Returns:
+            The page, its next cursor and how many tokens match.
+        """
+        sort = parse_sort(query.sort, allowed=ALL_TOKENS_SORT_FIELDS, default="-created_at")
+        now = self.clock.now()
+        owners = {a.id: a.username.value for a in await self.accounts.list_all()}
+        tokens = [
+            AccountTokenSummary.of(t, owners.get(t.account_id, ""))
+            for t in await self.tokens.list_all()
+            if _contains(t.name, query.q)
+            and (query.owner_id is None or t.account_id == query.owner_id)
+            and (query.expired is None or t.is_expired(now) is query.expired)
+            and (query.unused is None or (t.last_used_at is None) is query.unused)
+        ]
+        page = sorted_page(
+            tokens,
+            sort=sort,
+            key_field="id",
+            values={
+                "created_at": lambda t: _sortable(t.created_at),
+                "name": lambda t: t.name.casefold(),
+                "expires_at": lambda t: _sortable(t.expires_at),
+                "last_used_at": lambda t: _sortable(t.last_used_at),
+                "owner": lambda t: t.owner,
+            },
+            key=lambda t: t.id,
+            limit=query.limit,
+            cursor=query.cursor,
+            offset=query.offset,
+        )
+        return AllTokensList.from_page(page)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RevokeTokenUseCase:
     """Implements ``ports.driving.RevokeToken``."""
 
@@ -1319,6 +1431,7 @@ class IdentifyTokenUseCase:
                 await self.tokens.touch(token_hash, now)
             except Exception:  # ruff: ignore[blind-except] - bookkeeping must not break a valid token
                 logger.warning("could not record API token use")
+        await _record_activity(self.accounts, account, now)
         return ApiTokenIdentity(
             **AccountSummary.from_model(account).model_dump(),
             token_id=found.id,
@@ -1370,6 +1483,8 @@ class IdentifyExternalTokenUseCase:
     """Where accounts are stored."""
     externals: ExternalIdentityRepository
     """The links of external identities to accounts."""
+    clock: Clock
+    """The current time, for the linked account's last activity."""
 
     async def __call__(self, provider: str, token: str) -> ExternalTokenIdentity:
         """Validate the token and return who it acts as.
@@ -1407,6 +1522,7 @@ class IdentifyExternalTokenUseCase:
             # A linked identity only signs in: the account's own role and groups stand.
             role, groups = account.role.value, await self.externals.groups_of(account.id)
         if account is not None:
+            await _record_activity(self.accounts, account, self.clock.now())
             caller = AccountSummary(
                 id=account.id,
                 username=account.username.value,
@@ -1566,6 +1682,7 @@ class FinishExternalSignInUseCase:
             )
         grant = await _exchange(provider, policy, attempt, command)
         account = await self._account_for(policy, grant)
+        await _record_activity(self.accounts, account, self.clock.now())
         session = await _start_session(
             self.sessions, self.clock, AccountSummary.from_model(account), previous_token
         )
@@ -2486,28 +2603,80 @@ class Sharing:
             _access_event(self.clock, grant.library, caller_id, change, grant, previous_role)
         )
 
+    async def account_id_of(self, shown: str) -> AccountId:
+        """Return the account a person in the access log stands for, as the log shows them.
+
+        The log shows an account by its username, and by its ID once it no longer exists.
+
+        Args:
+            shown: A username (any case), or an account ID.
+
+        Returns:
+            The ID of the account with that username; otherwise ``shown`` itself, as an ID.
+        """
+        try:
+            username = Username(shown)
+        except InvalidUsernameError:
+            return AccountId(shown)
+        account = await self.accounts.get(username)
+        return AccountId(shown) if account is None else account.id
+
+    async def log_filter(
+        self, query: LibraryAccessLogQuery, *, library: str | None, newer_than: str | None = None
+    ) -> AccessLogFilter:
+        """Turn the filters of a request for the access log into the log's filter.
+
+        ``actor`` and ``subject`` name people as the log shows them (``account_id_of``); a
+        ``subject`` matches the user and the group of that name.
+
+        Args:
+            query: The request's filters.
+            library: Only this library's events (lower-case); ``None`` for every library.
+            newer_than: Only events recorded after the one with this ID.
+
+        Returns:
+            The filter.
+        """
+        subjects = None
+        if query.subject is not None:
+            user = await self.account_id_of(query.subject)
+            subjects = frozenset({(SubjectKind.USER, user), (SubjectKind.GROUP, query.subject)})
+        return AccessLogFilter(
+            library=library,
+            changes=_changes(query.change),
+            newer_than=newer_than,
+            actor=None if query.actor is None else await self.account_id_of(query.actor),
+            subjects=subjects,
+            at_after=query.at_after,
+            at_before=query.at_before,
+        )
+
     async def log_page(
         self,
         where: AccessLogFilter,
         *,
+        sort: str | None,
         limit: int,
         cursor: str | None,
         offset: int | None = None,
     ) -> AccessLogPage:
-        """Read a page of the access log, newest first, people by their names.
+        """Read a page of the access log in ``sort`` order, people by their names.
 
         Args:
             where: Which events.
+            sort: The sort as sent (``field`` or ``-field``); ``None``: newest first.
             limit: Most events on the page.
             cursor: The ``next_cursor`` of the previous page; ``None`` for the first.
             offset: How many matching events to skip instead of a cursor; ``None``: none.
 
         Returns:
-            The page, its next cursor and how many events match.
+            The page, its next cursor and how many events match. A malformed cursor, or one
+            made for another sort, is refused (``InvalidCursorError``).
         """
+        order = parse_sort(sort, allowed=ACCESS_LOG_SORT_FIELDS, default=ACCESS_LOG_DEFAULT_SORT)
         skip = page_offset(cursor=cursor, offset=offset)
-        older_than = None if cursor is None else decode_cursor(cursor)
-        found = await self.log.newest(where, older_than=older_than, limit=limit + 1, offset=skip)
+        after = None if cursor is None else _access_log_after(cursor, order)
+        found = await self.log.search(where, sort=order, after=after, limit=limit + 1, offset=skip)
         events, more = found[:limit], len(found) > limit
         people = {e.actor for e in events if e.actor is not None} | {
             e.subject for e in events if e.kind is SubjectKind.USER and e.subject is not None
@@ -2526,11 +2695,36 @@ class Sharing:
             )
             for event in events
         ]
+        last = events[-1] if more else None
         return AccessLogPage(
             events=shown,
-            next_cursor=encode_cursor(events[-1].id) if more else None,
+            next_cursor=None
+            if last is None
+            else encode_sort_cursor(
+                order, key_field="id", value=last.sort_value(order.field), key=last.id
+            ),
             total=await self.log.count(where),
         )
+
+
+def _access_log_after(cursor: str, sort: Sort) -> tuple[str, str]:
+    """Return the sort value and ID of the last event before a cursor's page.
+
+    Args:
+        cursor: A ``next_cursor`` of the access log.
+        sort: The sort of this request.
+
+    Returns:
+        The sort value and the event ID.
+
+    Raises:
+        InvalidCursorError: The cursor is malformed, was made for another sort, or holds
+            something no event sorts by (every value of the log is text without NUL).
+    """
+    value, key = decode_sort_cursor(cursor, sort, key_field="id")
+    if not isinstance(value, str) or "\x00" in value or "\x00" in key:
+        raise InvalidCursorError
+    return value, key
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2771,11 +2965,12 @@ class ListLibraryAccessLogUseCase:
             deleted = AccessLogFilter(
                 library=library, changes=frozenset({AccessChange.LIBRARY_DELETED})
             )
-            last = await self.sharing.log.newest(deleted, older_than=None, limit=1)
+            newest = Sort(field="at", descending=True)
+            last = await self.sharing.log.search(deleted, sort=newest, after=None, limit=1)
             since = last[0].id if last else None
-        where = AccessLogFilter(library=library, changes=_changes(query.change), newer_than=since)
+        where = await self.sharing.log_filter(query, library=library, newer_than=since)
         return await self.sharing.log_page(
-            where, limit=query.limit, cursor=query.cursor, offset=query.offset
+            where, sort=query.sort, limit=query.limit, cursor=query.cursor, offset=query.offset
         )
 
 
@@ -2801,12 +2996,10 @@ class ListAccessLogUseCase:
         caller = await self.sharing.accounts.get_by_id(AccountId(query.caller_id))
         if caller is None or caller.is_disabled or not caller.is_operator:
             raise NotAnOperatorError(ACCESS_LOG_ACTION)
-        where = AccessLogFilter(
-            library=None if query.library is None else query.library.casefold(),
-            changes=_changes(query.change),
-        )
+        library = None if query.library is None else query.library.casefold()
+        where = await self.sharing.log_filter(query, library=library)
         return await self.sharing.log_page(
-            where, limit=query.limit, cursor=query.cursor, offset=query.offset
+            where, sort=query.sort, limit=query.limit, cursor=query.cursor, offset=query.offset
         )
 
 
@@ -2852,3 +3045,85 @@ class CanCreateLibraryUseCase:
             or query.account_id in self.policy.users
             or bool(self.policy.groups.intersection(groups))
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GetPreferencesUseCase:
+    """Implements ``ports.driving.GetPreferences``."""
+
+    preferences: PreferencesRepository
+    """Where each account's interface preferences are saved."""
+
+    async def __call__(self, query: GetPreferencesQuery) -> AccountPreferences:
+        """Return the account's saved preferences, or the defaults when it saved none.
+
+        Args:
+            query: The account.
+
+        Returns:
+            Its preferences, and whether it saved them.
+        """
+        return AccountPreferences.from_model(
+            await self.preferences.get(AccountId(query.account_id))
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SavePreferencesUseCase:
+    """Implements ``ports.driving.SavePreferences``."""
+
+    preferences: PreferencesRepository
+    """Where each account's interface preferences are saved."""
+
+    async def __call__(self, command: SavePreferencesCommand) -> AccountPreferences:
+        """Save the account's preferences, replacing the ones it had.
+
+        Saving the defaults saves them too: the account then has preferences of its own, which
+        win over a browser's on the next sign-in. A save that leaves ``leaderboard_opt_in`` out
+        (a client older than it) keeps the account's saved choice, so it neither opts the person
+        in nor drops an opt-in it never showed.
+
+        Args:
+            command: The account and its new preferences.
+
+        Returns:
+            The preferences as saved.
+        """
+        account_id = AccountId(command.account_id)
+        chosen = command.preferences.to_model()
+        if "leaderboard_opt_in" not in command.preferences.model_fields_set:
+            saved = await self.preferences.get(account_id)
+            chosen = replace(
+                chosen, leaderboard_opt_in=saved is not None and saved.leaderboard_opt_in
+            )
+        await self.preferences.put(account_id, chosen)
+        return AccountPreferences.from_model(chosen)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FindLeaderboardPeopleUseCase:
+    """Implements ``ports.driving.FindLeaderboardPeople``."""
+
+    preferences: PreferencesRepository
+    """Where each account's interface preferences are saved."""
+    accounts: AccountRepository
+    """The accounts, for their usernames and whether they are disabled."""
+
+    async def __call__(self, query: LeaderboardPeopleQuery) -> LeaderboardPeople:
+        """Return the accounts among those asked about that opted in, exist and are enabled.
+
+        One query finds who opted in; only those accounts are then read, one by one.
+
+        Args:
+            query: The accounts asked about.
+
+        Returns:
+            Those that may be shown by name, sorted by ID.
+        """
+        opted = await self.preferences.opted_in({AccountId(i) for i in query.account_ids})
+        people = []
+        for account_id in sorted(opted):
+            account = await self.accounts.get_by_id(account_id)
+            if account is not None and not account.is_disabled:
+                people.append(LeaderboardPerson(id=account.id, username=str(account.username)))
+        return LeaderboardPeople(people=people)

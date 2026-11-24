@@ -121,7 +121,8 @@ def step_no_sign_up(context: Context) -> None:
         assert status in {HTTPStatus.UNAUTHORIZED, HTTPStatus.NOT_FOUND}, (path, status)
     assert _sign_in(context, "mallory", body["password"]).status_code == HTTPStatus.UNAUTHORIZED
     # And the API publishes no open operation but setup, the session, the token login and the
-    # external sign-in navigations (which create an account only for an allowed identity)
+    # external sign-in navigations (which create an account only for an allowed identity), the
+    # providers' icons for the sign-in page (#506)
     # and the push webhook (which checks the library's webhook secret, and creates no account).
     spec = _send(context, "GET", "/api/v1/openapi.json").json()
     open_operations = {
@@ -138,6 +139,7 @@ def step_no_sign_up(context: Context) -> None:
         ("POST", "/api/v1/tokens/login"),
         ("GET", "/api/v1/auth/{provider}/start"),
         ("GET", "/api/v1/auth/{provider}/callback"),
+        ("GET", "/api/v1/auth/{provider}/icon"),
         ("POST", "/api/v1/webhooks/{owner}/{repo}"),
     }, open_operations
 

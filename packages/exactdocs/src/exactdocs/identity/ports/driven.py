@@ -16,12 +16,14 @@ from exactdocs.identity.models import (
     ExternalIdentity,
     FailedSignIns,
     LibraryGrant,
+    Preferences,
     Role,
     Session,
     SignInAttempt,
     SubjectKind,
     Username,
 )
+from exactdocs_kernel import Sort, SortValue
 
 
 class AccountRepository(Protocol):
@@ -113,6 +115,17 @@ class AccountRepository(Protocol):
 
         Returns:
             ``True`` once an account exists.
+        """
+        ...
+
+    async def record_activity(self, account_id: AccountId, hour: datetime) -> None:
+        """Move the account's ``last_active_at`` forward to ``hour``, never back.
+
+        One conditional write: a later hour recorded meanwhile (another process) stays.
+
+        Args:
+            account_id: The account's id.
+            hour: The hour it was active (``activity_hour``).
         """
         ...
 
@@ -213,6 +226,25 @@ class TokenRepository(Protocol):
 
         Returns:
             The tokens, newest first.
+        """
+        ...
+
+    async def list_all(self) -> list[ApiToken]:
+        """Return every account's tokens, expired ones not yet removed included, newest first.
+
+        Returns:
+            The tokens, newest first.
+        """
+        ...
+
+    async def count_by_account(self, now: datetime) -> Mapping[AccountId, int]:
+        """Count each account's tokens that have not expired at ``now``, in one query.
+
+        Args:
+            now: The current time.
+
+        Returns:
+            The count per account; an account without a live token is absent.
         """
         ...
 
@@ -829,19 +861,30 @@ class AccessLog(Protocol):
         """
         ...
 
-    async def newest(
-        self, where: AccessLogFilter, *, older_than: str | None, limit: int, offset: int = 0
+    async def search(
+        self,
+        where: AccessLogFilter,
+        *,
+        sort: Sort,
+        after: tuple[SortValue, str] | None,
+        limit: int,
+        offset: int = 0,
     ) -> list[AccessEvent]:
-        """Return the newest events that match, newest first.
+        """Return the events that match, in ``sort`` order, after the ``after`` key.
+
+        The order is the sort field's value (``AccessEvent.sort_value``), then the ID, both in
+        the sort's direction.
 
         Args:
             where: Which events.
-            older_than: Only events recorded before the one with this ID (a page's cursor).
+            sort: The order (a field of ``ACCESS_LOG_SORT_FIELDS``).
+            after: The sort value and ID of the last event of the previous page; ``None``
+                starts at the first.
             limit: Most events returned.
-            offset: How many of the matching events, newest first, to skip first.
+            offset: How many of the matching events in order (after ``after``) to skip first.
 
         Returns:
-            Up to ``limit`` events, by ID descending.
+            Up to ``limit`` events, in order.
         """
         ...
 
@@ -853,5 +896,41 @@ class AccessLog(Protocol):
 
         Returns:
             How many there are.
+        """
+        ...
+
+
+class PreferencesRepository(Protocol):
+    """The interface preferences of each account."""
+
+    async def get(self, account_id: AccountId) -> Preferences | None:
+        """Return the preferences an account saved, or ``None`` when it never saved any.
+
+        Args:
+            account_id: The account.
+
+        Returns:
+            Its preferences, or ``None``.
+        """
+        ...
+
+    async def put(self, account_id: AccountId, preferences: Preferences) -> None:
+        """Save an account's preferences, replacing the ones it had.
+
+        Args:
+            account_id: The account, which exists.
+            preferences: Its new preferences.
+        """
+        ...
+
+    async def opted_in(self, account_ids: Collection[AccountId]) -> frozenset[AccountId]:
+        """Return the accounts among these that agreed to be on the people leaderboard (#510).
+
+        Args:
+            account_ids: The accounts to ask about.
+
+        Returns:
+            Those whose saved preferences say ``leaderboard_opt_in``; one that never saved any
+            has not agreed.
         """
         ...

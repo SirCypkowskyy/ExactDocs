@@ -1,3 +1,4 @@
+from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -17,6 +18,7 @@ from exactdocs.identity.models import (
     FailedSignIns,
     LibraryGrant,
     LibraryRole,
+    Preferences,
     Role,
     Session,
     SignInAttempt,
@@ -25,6 +27,7 @@ from exactdocs.identity.models import (
     known_sign_ins_prefix,
 )
 from exactdocs.identity.ports.driven import AttachOutcome, LinkOutcome
+from exactdocs_kernel import Sort, SortValue, is_after
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -134,6 +137,19 @@ class InMemoryAccountRepository:
             ``True`` once an account exists.
         """
         return bool(self.accounts)
+
+    async def record_activity(self, account_id: AccountId, hour: datetime) -> None:
+        """Move the account's ``last_active_at`` forward to ``hour``, never back.
+
+        Args:
+            account_id: The account's id.
+            hour: The hour it was active.
+        """
+        account = await self.get_by_id(account_id)
+        if account is not None and (
+            account.last_active_at is None or account.last_active_at < hour
+        ):
+            self.accounts[account.username] = replace(account, last_active_at=hour)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -253,6 +269,25 @@ class InMemoryTokenRepository:
         """
         own = [t for t in self.tokens.values() if t.account_id == account_id]
         return sorted(own, key=lambda t: (t.created_at, t.id), reverse=True)
+
+    async def list_all(self) -> list[ApiToken]:
+        """Return every account's tokens, newest first.
+
+        Returns:
+            The tokens, newest first.
+        """
+        return sorted(self.tokens.values(), key=lambda t: (t.created_at, t.id), reverse=True)
+
+    async def count_by_account(self, now: datetime) -> Mapping[AccountId, int]:
+        """Count each account's tokens that have not expired at ``now``.
+
+        Args:
+            now: The current time.
+
+        Returns:
+            The count per account; an account without a live token is absent.
+        """
+        return Counter(t.account_id for t in self.tokens.values() if not t.is_expired(now))
 
     async def touch(self, token_hash: str, at: datetime) -> None:
         """Record that the token was used at ``at``.
@@ -865,43 +900,60 @@ class InMemoryAccessLog:
         self.events.append(event)
 
     def _matching(self, where: AccessLogFilter) -> list[AccessEvent]:
-        """Return the events that match, newest first.
+        """Return the events that match, in the order they were recorded.
 
         Args:
             where: Which events.
 
         Returns:
-            The events, by ID descending.
+            The events.
         """
-        return sorted(
-            (
-                e
-                for e in self.events
-                if (where.library is None or e.library == where.library)
-                and (where.changes is None or e.change in where.changes)
-                and (where.newer_than is None or e.id > where.newer_than)
-            ),
-            key=lambda e: e.id,
-            reverse=True,
-        )
+        return [
+            e
+            for e in self.events
+            if (where.library is None or e.library == where.library)
+            and (where.changes is None or e.change in where.changes)
+            and (where.newer_than is None or e.id > where.newer_than)
+            and (where.actor is None or e.actor == where.actor)
+            and (
+                where.subjects is None
+                or (e.kind is not None and (e.kind, e.subject) in where.subjects)
+            )
+            and (where.at_after is None or e.at >= where.at_after)
+            and (where.at_before is None or e.at < where.at_before)
+        ]
 
-    async def newest(
-        self, where: AccessLogFilter, *, older_than: str | None, limit: int, offset: int = 0
+    async def search(
+        self,
+        where: AccessLogFilter,
+        *,
+        sort: Sort,
+        after: tuple[SortValue, str] | None,
+        limit: int,
+        offset: int = 0,
     ) -> list[AccessEvent]:
-        """Return the newest events that match, newest first.
+        """Return the events that match, in ``sort`` order, after the ``after`` key.
 
         Args:
             where: Which events.
-            older_than: Only events recorded before the one with this ID.
+            sort: The order.
+            after: The sort value and ID of the last event of the previous page.
             limit: Most events returned.
-            offset: How many of the matching events, newest first, to skip first.
+            offset: How many of the matching events in order (after ``after``) to skip first.
 
         Returns:
-            Up to ``limit`` events, by ID descending.
+            Up to ``limit`` events, in order.
         """
-        found = self._matching(where)
-        older = [e for e in found if older_than is None or e.id < older_than]
-        return older[offset : offset + limit]
+        ordered = sorted(
+            self._matching(where),
+            key=lambda e: (e.sort_value(sort.field), e.id),
+            reverse=sort.descending,
+        )
+        if after is not None:
+            ordered = [
+                e for e in ordered if is_after((e.sort_value(sort.field), e.id), after, sort=sort)
+            ]
+        return ordered[offset : offset + limit]
 
     async def count(self, where: AccessLogFilter) -> int:
         """Count the events that match.
@@ -913,6 +965,49 @@ class InMemoryAccessLog:
             How many there are.
         """
         return len(self._matching(where))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryPreferencesRepository:
+    """Implements ``ports.driven.PreferencesRepository``. For tests."""
+
+    preferences: dict[AccountId, Preferences] = field(default_factory=dict)
+    """The saved preferences, by account."""
+
+    async def get(self, account_id: AccountId) -> Preferences | None:
+        """Return the preferences an account saved, or ``None`` when it never saved any.
+
+        Args:
+            account_id: The account.
+
+        Returns:
+            Its preferences, or ``None``.
+        """
+        return self.preferences.get(account_id)
+
+    async def put(self, account_id: AccountId, preferences: Preferences) -> None:
+        """Save an account's preferences, replacing the ones it had.
+
+        Args:
+            account_id: The account.
+            preferences: Its new preferences.
+        """
+        self.preferences[account_id] = preferences
+
+    async def opted_in(self, account_ids: Collection[AccountId]) -> frozenset[AccountId]:
+        """Return the accounts among these that agreed to be on the people leaderboard.
+
+        Args:
+            account_ids: The accounts to ask about.
+
+        Returns:
+            Those that opted in.
+        """
+        return frozenset(
+            account_id
+            for account_id in account_ids
+            if (saved := self.preferences.get(account_id)) is not None and saved.leaderboard_opt_in
+        )
 
 
 def _revision(link: ExternalIdentity) -> tuple[object, ...]:

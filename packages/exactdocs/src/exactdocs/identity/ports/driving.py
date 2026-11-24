@@ -4,8 +4,11 @@ from typing import Protocol
 
 from exactdocs.identity.dtos import (
     AccessLogPage,
+    AccountPreferences,
     AccountProviders,
     AccountSummary,
+    AllTokensList,
+    AllTokensQuery,
     ApiTokenIdentity,
     AuthenticateQuery,
     ChangePasswordCommand,
@@ -18,7 +21,10 @@ from exactdocs.identity.dtos import (
     ExternalSignInStart,
     ExternalTokenIdentity,
     FinishExternalSignInCommand,
+    GetPreferencesQuery,
     GrantLibraryRoleCommand,
+    LeaderboardPeople,
+    LeaderboardPeopleQuery,
     LibraryCreationQuery,
     LibraryGrantList,
     LibraryGrants,
@@ -33,6 +39,7 @@ from exactdocs.identity.dtos import (
     ResetPasswordCommand,
     RevalidationReport,
     RevokeLibraryRoleCommand,
+    SavePreferencesCommand,
     SessionGrant,
     SessionState,
     SetupState,
@@ -323,6 +330,21 @@ class ListTokens(Protocol):
 
         Args:
             account: The account whose tokens to list.
+            query: The filters, the sort and the page.
+
+        Returns:
+            A page of the tokens, newest first unless sorted otherwise.
+        """
+        ...
+
+
+class ListAllTokens(Protocol):
+    """Every account's tokens with their owners, never their secrets, for an operator."""
+
+    async def __call__(self, query: AllTokensQuery) -> AllTokensList:
+        """Run the use case.
+
+        Args:
             query: The filters, the sort and the page.
 
         Returns:
@@ -676,5 +698,54 @@ class CanCreateLibrary(Protocol):
 
         Returns:
             Whether the caller may create a library.
+        """
+        ...
+
+
+class GetPreferences(Protocol):
+    """An account's interface preferences, or the defaults when it never saved any."""
+
+    async def __call__(self, query: GetPreferencesQuery) -> AccountPreferences:
+        """Run the use case.
+
+        Args:
+            query: The account.
+
+        Returns:
+            Its preferences, and whether it saved them.
+        """
+        ...
+
+
+class SavePreferences(Protocol):
+    """Save an account's interface preferences, replacing the ones it had."""
+
+    async def __call__(self, command: SavePreferencesCommand) -> AccountPreferences:
+        """Run the use case.
+
+        Args:
+            command: The account and its new preferences, every setting given.
+
+        Returns:
+            The preferences as saved.
+        """
+        ...
+
+
+class FindLeaderboardPeople(Protocol):
+    """Tell which accounts may be shown by name on the people leaderboard (#510).
+
+    Only accounts that exist, are enabled and opted in (``leaderboard_opt_in``); whether the
+    operator turned the board on is not identity's to know.
+    """
+
+    async def __call__(self, query: LeaderboardPeopleQuery) -> LeaderboardPeople:
+        """Run the use case.
+
+        Args:
+            query: The accounts asked about.
+
+        Returns:
+            Those that may be shown, with their usernames.
         """
         ...

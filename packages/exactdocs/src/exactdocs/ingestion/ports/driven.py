@@ -28,12 +28,15 @@ from exactdocs.ingestion.models import (
     IncludeRefused,
     InstructionPolicy,
     Job,
+    JobDayCount,
     JobFilter,
     JobId,
+    JobState,
     KnownLibrary,
     NewLibrary,
     ParsedArticle,
     PathSelection,
+    Person,
     ProblemCode,
     ProjectLogo,
     ProposedId,
@@ -215,6 +218,26 @@ class JobRepository(Protocol):
         """
         ...
 
+    async def sync_states(self) -> Mapping[str, JobState]:
+        """Return the state of every library's newest ``import`` or ``refresh`` job, in one query.
+
+        Returns:
+            The state by library, as spelled in the jobs; a library without such a job is left out.
+        """
+        ...
+
+    async def daily_counts(self, *, start: datetime, end: datetime) -> Sequence[JobDayCount]:
+        """Count the jobs queued in ``[start, end)`` by UTC day, current state and kind, at once.
+
+        Args:
+            start: The first moment counted (UTC midnight of the first day).
+            end: The first moment no longer counted (UTC midnight after the last day).
+
+        Returns:
+            One count per (day, state, kind) that has jobs, in no particular order.
+        """
+        ...
+
     async def delete_for(self, library: str, version: str | None = None) -> None:
         """Delete the library's jobs (only those of ``version`` when given). Not running ones.
 
@@ -251,6 +274,19 @@ class JobRepository(Protocol):
 
         Returns:
             The started job, or ``None``.
+        """
+        ...
+
+
+class Requester(Protocol):
+    """Names the person whose request is being served, to record who queued a job."""
+
+    async def __call__(self) -> Person | None:
+        """Name the person of the current request.
+
+        Returns:
+            Their account, or ``None`` when no person asked (the instance's own work, a webhook,
+            the command line).
         """
         ...
 

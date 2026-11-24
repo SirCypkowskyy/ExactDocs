@@ -1,6 +1,6 @@
 """Data crossing the identity boundary (into and out of driving ports). Immutable, validated."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Literal, Self
 
 from pydantic import (
@@ -9,14 +9,19 @@ from pydantic import (
     ConfigDict,
     Field,
     SecretStr,
+    StrictBool,
     field_serializer,
     field_validator,
     model_validator,
 )
 
 from exactdocs.identity.constants import (
+    ACCESS_LOG_DEFAULT_SORT,
+    ACCESS_LOG_SORT_FIELDS,
+    ALL_TOKENS_SORT_FIELDS,
     GRANT_SORT_FIELDS,
     ICON_PATH,
+    LOCAL_SIGN_IN,
     MAX_PASSWORD_LENGTH,
     MAX_RETURN_TO_LENGTH,
     MAX_TOKEN_NAME_INPUT,
@@ -33,9 +38,18 @@ from exactdocs.identity.models import (
     AccessEvent,
     Account,
     ApiToken,
+    Contrast,
+    Font,
+    Language,
     LibraryGrant,
     LibraryRole,
+    Motion,
+    Preferences,
     SignInPolicy,
+    TextScale,
+    TextSpacing,
+    Theme,
+    activity_hour,
 )
 from exactdocs_kernel import (
     DEFAULT_LIMIT,
@@ -286,14 +300,25 @@ class UserSummary(AccountSummary):
     """`true` while the account is disabled: it cannot sign in, and its sessions and tokens are
     refused."""
     provider: str | None = None
-    """The sign-in provider the account signs in through; `null` for a local account (password)."""
+    """The sign-in provider the account signs in through; `null` for a local account (password).
+    An account created through a provider keeps that provider here."""
     groups: list[str] = Field(default_factory=list)
     """The account's groups at its identity provider, as of its latest sign-in or revalidation
     (with the provider's `group_prefix`); empty for a local account."""
+    last_active_at: datetime | None = None
+    """The hour (UTC, minutes always zero) of the account's latest sign-in or request with one
+    of its sessions or API tokens; `null` while it has not been active since this was recorded."""
+    token_count: int = 0
+    """How many API tokens the account holds that have not expired."""
 
     @classmethod
     def from_model(
-        cls, account: Account, *, provider: str | None = None, groups: list[str] | None = None
+        cls,
+        account: Account,
+        *,
+        provider: str | None = None,
+        groups: list[str] | None = None,
+        token_count: int = 0,
     ) -> Self:
         """Map a domain entity to its boundary representation.
 
@@ -301,11 +326,13 @@ class UserSummary(AccountSummary):
             account: The account.
             provider: The provider of an external account.
             groups: The groups of an external account.
+            token_count: How many live API tokens the account holds.
 
         Returns:
-            Its summary, with when it was created, whether it is disabled, and where it signs
-            in.
+            Its summary, with when it was created, whether it is disabled, where it signs in,
+            when it was last active (to the hour) and how many tokens it holds.
         """
+        active = account.last_active_at
         return cls(
             id=account.id,
             username=account.username.value,
@@ -315,6 +342,8 @@ class UserSummary(AccountSummary):
             disabled=account.is_disabled,
             provider=provider,
             groups=groups or [],
+            last_active_at=None if active is None else activity_hour(active),
+            token_count=token_count,
         )
 
 
@@ -336,6 +365,15 @@ class UserListQuery(_PageQuery):
     """Only accounts with one of these roles."""
     disabled: bool | None = None
     """`true`: only disabled accounts; `false`: only enabled ones."""
+    provider: list[Annotated[str, Field(max_length=MAX_NAME)]] | None = Field(
+        default=None,
+        description=(
+            f"Only accounts that sign in through one of these: `{LOCAL_SIGN_IN}` for a local "
+            "account, else the provider's name, as `provider` shows it (the provider the account "
+            "was created through); repeat for several."
+        ),
+    )
+    """Only accounts with one of these sign-in providers (``LOCAL_SIGN_IN`` for a local one)."""
 
 
 class UserList(_Dto):
@@ -654,6 +692,76 @@ class TokenList(_Dto):
         return cls(tokens=list(page.items), next_cursor=page.next_cursor, total=page.total or 0)
 
 
+class AccountTokenSummary(TokenSummary):
+    """A token as an operator sees it in the list of every token: with its owner, no secret."""
+
+    owner_id: str
+    """The id of the account that holds the token."""
+    owner: str
+    """The username of the account that holds the token."""
+
+    @classmethod
+    def of(cls, token: ApiToken, owner: str) -> Self:
+        """Map a token and its owner's username to their boundary representation.
+
+        Args:
+            token: The token.
+            owner: The username of its account.
+
+        Returns:
+            Its summary, with its owner, without the secret.
+        """
+        return cls(
+            **TokenSummary.from_model(token).model_dump(), owner_id=token.account_id, owner=owner
+        )
+
+
+class AllTokensQuery(_PageQuery):
+    """How the list of every account's tokens is filtered, sorted and paged."""
+
+    sort: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description=(
+            f"Sort by one of {', '.join(ALL_TOKENS_SORT_FIELDS)}; prefix `-` for descending. "
+            "Default: `-created_at`. A token that never expires or was never used sorts first "
+            "by `expires_at` or `last_used_at`; `owner` sorts by username. An unknown field is "
+            "a 422."
+        ),
+    )
+    """The sort field; its schema description names ``ALL_TOKENS_SORT_FIELDS``."""
+    owner_id: str | None = Field(default=None, max_length=MAX_NAME)
+    """Only the tokens of the account with this id."""
+    expired: bool | None = None
+    """`true`: only tokens whose expiry has passed (they no longer work); `false`: only the
+    others."""
+    unused: bool | None = None
+    """`true`: only tokens that never authenticated a request; `false`: only used ones."""
+
+
+class AllTokensList(_Dto):
+    """A page of every account's tokens, newest first unless sorted otherwise."""
+
+    tokens: list[AccountTokenSummary]
+    """The tokens of this page."""
+    next_cursor: str | None
+    """Pass as `cursor` to get the next page; null on the last page."""
+    total: int
+    """How many tokens match the filters, across every page."""
+
+    @classmethod
+    def from_page(cls, page: Page[AccountTokenSummary]) -> Self:
+        """Wrap a page of tokens.
+
+        Args:
+            page: The tokens and the cursor of the next page.
+
+        Returns:
+            The page at the boundary.
+        """
+        return cls(tokens=list(page.items), next_cursor=page.next_cursor, total=page.total or 0)
+
+
 class TokenGrant(TokenSummary):
     """A new token. ``token`` is the only copy of the secret and is never shown again."""
 
@@ -882,24 +990,75 @@ _Change = Literal[
 
 
 class LibraryAccessLogQuery(_Dto):
-    """How a page of one library's access log is filtered and paged (newest first)."""
+    """How a page of one library's access log is filtered, sorted and paged (newest first)."""
 
     limit: Annotated[int, Field(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT
     """How many events per page."""
     cursor: str | None = None
     """Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
-    filters of the request that returned it."""
+    `sort` and filters of the request that returned it (another `sort` is a 422
+    `invalid_cursor`)."""
     offset: Annotated[int, Field(ge=0, le=MAX_OFFSET)] | None = None
     """Jump to a page: skip this many matches, in the order and with the filters of the cursor
     walk. Not with `cursor`; the page's `next_cursor` goes on from it."""
+    sort: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description=(
+            f"Sort by one of {', '.join(ACCESS_LOG_SORT_FIELDS)}; prefix `-` for descending. "
+            f"Default: `{ACCESS_LOG_DEFAULT_SORT}` (newest first). Ties go by the event's ID "
+            "(the order it was recorded in), in the same direction. An unknown field is a 422."
+        ),
+    )
+    """The sort field; its schema description names ``ACCESS_LOG_SORT_FIELDS``."""
     change: list[_Change] | None = Field(
         default=None, description="Only events of these changes; repeat for several."
     )
     """Only events of these changes."""
+    actor: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_NAME,
+        description=(
+            "Only changes made by this person: a username (any case), or the account ID the "
+            "log shows as `actor` for an account that no longer exists. Changes the instance "
+            "made (`actor` null) never match."
+        ),
+    )
+    """Who made the change, as the log shows it."""
+    subject: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_NAME,
+        description=(
+            "Only changes about this user or group: a username (any case), the account ID the "
+            "log shows as `subject` for an account that no longer exists, or a group name "
+            "(exact case, as the log shows it). A user and a group of the same name both "
+            "match. Deletions, which are about nobody, never match."
+        ),
+    )
+    """Who the change is about, as the log shows it."""
+    at_after: datetime | None = None
+    """Only events that happened at or after this time (ISO 8601; no offset means UTC)."""
+    at_before: datetime | None = None
+    """Only events that happened before this time (ISO 8601; no offset means UTC)."""
+
+    @field_validator("at_after", "at_before")
+    @classmethod
+    def _utc(cls, value: datetime | None) -> datetime | None:
+        """Read a time without an offset as UTC.
+
+        Args:
+            value: The time as sent.
+
+        Returns:
+            The time with an offset, or ``None``.
+        """
+        return value if value is None or value.tzinfo else value.replace(tzinfo=UTC)
 
 
 class AccessLogQuery(LibraryAccessLogQuery):
-    """How a page of the instance's access log is filtered and paged (newest first)."""
+    """How a page of the instance's access log is filtered, sorted and paged (newest first)."""
 
     library: _LibraryId | None = None
     """Only the events of this library (`/owner/repo`, any case), removed ones included."""
@@ -971,11 +1130,160 @@ class AccessEventSummary(_Dto):
 
 
 class AccessLogPage(_Dto):
-    """A page of the access log, newest first."""
+    """A page of the access log, newest first unless sorted otherwise."""
 
     events: list[AccessEventSummary]
     """The events of this page."""
     next_cursor: str | None
-    """Pass as `cursor` to get the next (older) page; null on the last page."""
+    """Pass as `cursor` (with the same `sort` and filters) to get the next page; null on the
+    last page."""
     total: int
     """How many events match the filters, across every page."""
+
+
+class InterfacePreferences(_Dto):
+    """How a person wants the interface to look and behave.
+
+    Every setting is required but `leaderboard_opt_in` (#510), which a client written before it
+    existed does not send.
+    """
+
+    theme: Literal["light", "dark", "system"]
+    """Colour scheme: `light`, `dark`, or `system` to follow the operating system. Default
+    `system`."""
+    contrast: Literal["standard", "more"]
+    """Contrast of text and controls: `standard` or `more`. Default `standard`."""
+    text_scale: TextScale
+    """Text size in percent of the default size: 90, 100, 110, 125 or 150. Default 100."""
+    text_spacing: Literal["standard", "wide"]
+    """Spacing of lines, words and letters: `standard`, or `wide` (WCAG 1.4.12's minimums).
+    Default `standard`."""
+    motion: Literal["system", "reduced", "full"]
+    """Animations: `system` follows the operating system's reduced-motion setting; `reduced` and
+    `full` override it. Default `system`."""
+    font: Literal["default", "hyperlegible", "dyslexic", "system"]
+    """Typeface: `default`, `hyperlegible` (a typeface for low vision), `dyslexic` (one for
+    dyslexic readers) or `system` (the operating system's). Default `default`."""
+    underline_links: StrictBool
+    """Whether every link is underlined, not only told apart by its colour. Default `false`."""
+    large_targets: StrictBool
+    """Whether buttons and links get larger hit areas. Default `false`."""
+    language: Literal["system", "en", "pl"]
+    """Interface language: `en` (English), `pl` (Polish), or `system` to follow the browser's.
+    Default `system`."""
+    library_logos: StrictBool
+    """Whether libraries show their logos, and generic icons where they have none; `false` hides
+    both. Default `true`."""
+    leaderboard_opt_in: StrictBool = False
+    """Whether the person agrees to be shown by name on the people leaderboard while the operator
+    has it on (`GET /stats/settings`). Without it they are on no people leaderboard, and nobody
+    sees their usage except as part of totals. Default `false`. The one setting a save may leave
+    out: a client that does not know it keeps the choice already saved (`false` if none)."""
+
+    @classmethod
+    def from_model(cls, preferences: Preferences) -> Self:
+        """Map the domain's preferences to their boundary representation.
+
+        Args:
+            preferences: The preferences.
+
+        Returns:
+            Their representation.
+        """
+        return cls(
+            theme=preferences.theme.value,
+            contrast=preferences.contrast.value,
+            text_scale=preferences.text_scale,
+            text_spacing=preferences.text_spacing.value,
+            motion=preferences.motion.value,
+            font=preferences.font.value,
+            underline_links=preferences.underline_links,
+            large_targets=preferences.large_targets,
+            language=preferences.language.value,
+            library_logos=preferences.library_logos,
+            leaderboard_opt_in=preferences.leaderboard_opt_in,
+        )
+
+    def to_model(self) -> Preferences:
+        """Convert to the domain value.
+
+        Returns:
+            The preferences.
+        """
+        return Preferences(
+            theme=Theme(self.theme),
+            contrast=Contrast(self.contrast),
+            text_scale=self.text_scale,
+            text_spacing=TextSpacing(self.text_spacing),
+            motion=Motion(self.motion),
+            font=Font(self.font),
+            underline_links=self.underline_links,
+            large_targets=self.large_targets,
+            language=Language(self.language),
+            library_logos=self.library_logos,
+            leaderboard_opt_in=self.leaderboard_opt_in,
+        )
+
+
+class GetPreferencesQuery(_Dto):
+    """Read an account's interface preferences."""
+
+    account_id: str
+    """The account, as the caller is signed in."""
+
+
+class SavePreferencesCommand(_Dto):
+    """Save an account's interface preferences, replacing the ones it had."""
+
+    account_id: str
+    """The account, as the caller is signed in."""
+    preferences: InterfacePreferences
+    """Its new preferences, every setting given."""
+
+
+class AccountPreferences(_Dto):
+    """An account's interface preferences, and whether it saved them."""
+
+    saved: bool
+    """`false` while the account never saved any: `preferences` then holds the defaults, and a
+    browser keeps (and may save) the ones it already applies."""
+    preferences: InterfacePreferences
+    """The saved preferences, or the defaults when `saved` is `false`."""
+
+    @classmethod
+    def from_model(cls, preferences: Preferences | None) -> Self:
+        """Map what an account saved to its boundary representation.
+
+        Args:
+            preferences: The saved preferences, or ``None`` when the account never saved any.
+
+        Returns:
+            The preferences, or the defaults, and whether they were saved.
+        """
+        return cls(
+            saved=preferences is not None,
+            preferences=InterfacePreferences.from_model(preferences or Preferences()),
+        )
+
+
+class LeaderboardPeopleQuery(_Dto):
+    """Which of these accounts may be shown by name on the people leaderboard (#510)."""
+
+    account_ids: list[str]
+    """The accounts asked about (any number; unknown IDs are simply not among the answer)."""
+
+
+class LeaderboardPerson(_Dto):
+    """An account that agreed to be shown by name on the people leaderboard."""
+
+    id: str
+    """The account ID."""
+    username: str
+    """Its username, as everyone sees it."""
+
+
+class LeaderboardPeople(_Dto):
+    """The accounts among those asked about that may be shown by name."""
+
+    people: list[LeaderboardPerson]
+    """Existing, enabled accounts that opted in (`leaderboard_opt_in`), sorted by ID."""

@@ -100,12 +100,30 @@ TOKEN_NAME_DESCRIPTION: Final[str] = (
     "refused with `invalid_token_name` (422)."
 )
 """OpenAPI description of a new token's name, built from the limits so they cannot drift."""
-USER_SORT_FIELDS: Final[tuple[str, ...]] = ("created_at", "username", "role")
+USER_SORT_FIELDS: Final[tuple[str, ...]] = (
+    "created_at",
+    "username",
+    "role",
+    "last_active_at",
+    "token_count",
+)
 """What the users list can be sorted by; `created_at` (oldest first) is the default."""
+LOCAL_SIGN_IN: Final[str] = "password"
+"""The users list's `provider` filter value of a local account (it signs in with a password); no
+identity provider may take this name."""
 TOKEN_SORT_FIELDS: Final[tuple[str, ...]] = ("created_at", "name", "expires_at", "last_used_at")
 """What the token list can be sorted by; `-created_at` (newest first) is the default."""
+ALL_TOKENS_SORT_FIELDS: Final[tuple[str, ...]] = (*TOKEN_SORT_FIELDS, "owner")
+"""What the list of every account's tokens can be sorted by; `-created_at` is the default."""
+ALL_TOKENS_ACTION: Final[str] = "lists the API tokens of every account"
+"""What only an instance operator does, for the 403 of the list of every token."""
 GRANT_SORT_FIELDS: Final[tuple[str, ...]] = ("kind", "subject", "role")
 """What a library's grants can be sorted by; `kind` (users, then groups, by name) is the default."""
+ACCESS_LOG_SORT_FIELDS: Final[tuple[str, ...]] = ("at", "library", "change")
+"""What the access log can be sorted by; `-at` (newest first) is the default. Ties go by the
+event's ID, in the same direction."""
+ACCESS_LOG_DEFAULT_SORT: Final[str] = "-at"
+"""The access log's order without a ``sort``: newest first."""
 ACCESS_LOG_ACTION: Final[str] = "reads the access log of every library"
 """What only an instance operator does, for the 403 of the instance-wide access log."""
 
@@ -411,3 +429,11 @@ OAUTH_CLIENT_BASIC: Final[str] = "client_secret_basic"
 
 OAUTH_CLIENT_POST: Final[str] = "client_secret_post"
 """OAuth client authentication using token form fields (GitHub OAuth Apps)."""
+
+TEXT_SCALES: Final[tuple[int, ...]] = (90, 100, 110, 125, 150)
+"""The text sizes the interface offers, in percent of its default size (#487); the same as
+``models.TextScale``, which types them."""
+
+ACCOUNTS_PER_QUERY: Final[int] = 500
+"""How many account IDs one ``IN (...)`` list holds when the leaderboard asks who opted in
+(#510); longer lists are asked in turns, within every database's limit on bound parameters."""

@@ -6,9 +6,9 @@ import re
 import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import NewType
+from typing import Literal, NewType
 from urllib.parse import urlsplit
 
 from exactdocs.identity.constants import (
@@ -29,8 +29,13 @@ from exactdocs.identity.constants import (
     PROVIDER_NAME_PATTERN,
     RESERVED_IN_USERNAME,
     SIGN_IN_ATTEMPT_LIFETIME,
+    TEXT_SCALES,
 )
-from exactdocs.identity.errors import InvalidTokenNameError, InvalidUsernameError
+from exactdocs.identity.errors import (
+    InvalidPreferencesError,
+    InvalidTokenNameError,
+    InvalidUsernameError,
+)
 
 AccountId = NewType("AccountId", str)
 
@@ -101,6 +106,9 @@ class Account:
     """When the account was created."""
     disabled_at: datetime | None = None
     """When an operator disabled the account; ``None`` while it may sign in."""
+    last_active_at: datetime | None = None
+    """The hour (UTC, see ``activity_hour``) of the account's latest sign-in or authenticated
+    request; ``None`` while it was never active (or not since activity was recorded)."""
 
     @property
     def is_disabled(self) -> bool:
@@ -120,6 +128,17 @@ class Account:
         """
         return self.password_hash is None
 
+    def activity_due(self, now: datetime) -> bool:
+        """Whether activity at ``now`` moves the recorded hour forward (once per hour at most).
+
+        Args:
+            now: When the account was active.
+
+        Returns:
+            ``True`` when ``now`` falls in a later hour than the recorded one, or none is.
+        """
+        return self.last_active_at is None or self.last_active_at < activity_hour(now)
+
     @property
     def is_operator(self) -> bool:
         """Whether the account manages the instance's local accounts.
@@ -128,6 +147,18 @@ class Account:
             ``True`` for an ``admin``.
         """
         return self.role is Role.ADMIN
+
+
+def activity_hour(moment: datetime) -> datetime:
+    """Return the hour an account's activity is recorded as: kept to the hour, for privacy.
+
+    Args:
+        moment: A timezone-aware time.
+
+    Returns:
+        The start of its hour, in UTC.
+    """
+    return moment.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
 
 
 def hash_token(token: str) -> str:
@@ -907,6 +938,29 @@ class AccessEvent:
             message = "a library_deleted event names no subject or role"
             raise ValueError(message)
 
+    def sort_value(self, field: str) -> str:
+        """Return what the event sorts by in the log sorted by ``field``.
+
+        Args:
+            field: One of ``ACCESS_LOG_SORT_FIELDS``.
+
+        Returns:
+            ``at`` as fixed-width UTC ISO 8601 text with microseconds (as the log stores it, so
+            the text sorts in time order), or the library ID, or the change.
+
+        Raises:
+            ValueError: The log cannot be sorted by ``field``.
+        """
+        match field:
+            case "at":
+                return self.at.astimezone(UTC).isoformat(timespec="microseconds")
+            case "library":
+                return self.library
+            case "change":
+                return self.change.value
+        message = f"the access log cannot be sorted by {field!r}"
+        raise ValueError(message)
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AccessLogFilter:
@@ -918,6 +972,15 @@ class AccessLogFilter:
     """Only events of these changes; ``None`` for all."""
     newer_than: str | None = None
     """Only events recorded after the one with this ID."""
+    actor: AccountId | None = None
+    """Only events made by this account; ``None``: by anyone, the instance included."""
+    subjects: frozenset[tuple[SubjectKind, str]] | None = None
+    """Only events about one of these users (account IDs) or groups (names as stored);
+    ``None``: about anyone, deletions included."""
+    at_after: datetime | None = None
+    """Only events that happened at or after this time."""
+    at_before: datetime | None = None
+    """Only events that happened before this time."""
 
 
 def effective_role(grants: Iterable[LibraryGrant]) -> LibraryRole | None:
@@ -940,3 +1003,98 @@ class LibraryCreationPolicy:
     """Exact stable account IDs, including verified unlinked provider:subject IDs."""
     groups: frozenset[str] = frozenset()
     """Exact mapped group names, including any provider prefix."""
+
+
+class Theme(StrEnum):
+    """The colour scheme of the interface; ``system`` follows the operating system's."""
+
+    LIGHT = "light"
+    DARK = "dark"
+    SYSTEM = "system"
+
+
+class Contrast(StrEnum):
+    """How strongly text and controls stand out from their background."""
+
+    STANDARD = "standard"
+    MORE = "more"
+
+
+class TextSpacing(StrEnum):
+    """The spacing of lines, words and letters (``wide`` meets WCAG 1.4.12's minimums)."""
+
+    STANDARD = "standard"
+    WIDE = "wide"
+
+
+class Motion(StrEnum):
+    """Animations: ``system`` follows the operating system's reduced-motion setting."""
+
+    SYSTEM = "system"
+    REDUCED = "reduced"
+    FULL = "full"
+
+
+class Font(StrEnum):
+    """The typeface of the interface's text."""
+
+    DEFAULT = "default"
+    HYPERLEGIBLE = "hyperlegible"
+    DYSLEXIC = "dyslexic"
+    SYSTEM = "system"
+
+
+class Language(StrEnum):
+    """The language of the interface; ``system`` follows the browser's."""
+
+    SYSTEM = "system"
+    EN = "en"
+    PL = "pl"
+
+
+# The text sizes the interface offers, in percent: ``TEXT_SCALES`` as a type.
+TextScale = Literal[90, 100, 110, 125, 150]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Preferences:
+    """How one person wants the interface to look and behave, saved to their account (#487).
+
+    The defaults are what an account that never saved any gets: follow the operating system and
+    change nothing else.
+    """
+
+    theme: Theme = Theme.SYSTEM
+    """The colour scheme."""
+    contrast: Contrast = Contrast.STANDARD
+    """The contrast level."""
+    text_scale: TextScale = 100
+    """The text size in percent, one of ``TEXT_SCALES``."""
+    text_spacing: TextSpacing = TextSpacing.STANDARD
+    """The spacing of lines, words and letters."""
+    motion: Motion = Motion.SYSTEM
+    """Whether the interface animates."""
+    font: Font = Font.DEFAULT
+    """The typeface."""
+    underline_links: bool = False
+    """Whether every link is underlined, not only told apart by its colour."""
+    large_targets: bool = False
+    """Whether buttons and links get larger hit areas."""
+    language: Language = Language.SYSTEM
+    """The language of the interface."""
+    library_logos: bool = True
+    """Whether libraries show their logos (and generic icons where they have none)."""
+    leaderboard_opt_in: bool = False
+    """Whether the person agreed to be shown by name on the people leaderboard (#510), while the
+    operator has it on; nobody is shown without agreeing."""
+
+    def __post_init__(self) -> None:
+        """Check the text size.
+
+        Raises:
+            InvalidPreferencesError: The text size is not one of ``TEXT_SCALES``.
+        """
+        if self.text_scale not in TEXT_SCALES:
+            sizes = ", ".join(str(scale) for scale in TEXT_SCALES)
+            message = f"text_scale must be one of {sizes} (percent)"
+            raise InvalidPreferencesError(message)

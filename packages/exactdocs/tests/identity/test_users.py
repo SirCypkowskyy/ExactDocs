@@ -235,6 +235,9 @@ class LateAccounts:
     async def any_exists(self) -> bool:
         return await self.inner.any_exists()
 
+    async def record_activity(self, account_id: AccountId, hour: datetime) -> None:
+        await self.inner.record_activity(account_id, hour)
+
 
 async def test_a_lost_race_for_a_username_is_refused_too(world: World) -> None:
     await create(world)
