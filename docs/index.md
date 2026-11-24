@@ -127,8 +127,8 @@ and its headings.</figcaption>
 
 <figure class="xd-shot" markdown>
 
-![The Acme Payments library at its default version, v1.4.0, with the version picker open: v1.4.0 at commit 3fb0656, v1.3.0 at db8b674 and the next branch at cefb01d.](assets/screenshots/library-light.webp#only-light){ loading=lazy }
-![The Acme Payments library at its default version, v1.4.0, with the version picker open: v1.4.0 at commit 3fb0656, v1.3.0 at db8b674 and the next branch at cefb01d.](assets/screenshots/library-dark.webp#only-dark){ loading=lazy }
+![The Acme Payments library at its default version, v1.4.0, with the version picker open: v1.4.0 at commit 3fb0656, v1.3.0 at db8b674 and the next branch at 30b96c1.](assets/screenshots/library-light.webp#only-light){ loading=lazy }
+![The Acme Payments library at its default version, v1.4.0, with the version picker open: v1.4.0 at commit 3fb0656, v1.3.0 at db8b674 and the next branch at 30b96c1.](assets/screenshots/library-dark.webp#only-dark){ loading=lazy }
 
 <figcaption>A library and its versions, each a tag, branch or commit pinned to its SHA.</figcaption>
 
