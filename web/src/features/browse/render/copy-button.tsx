@@ -1,14 +1,10 @@
 import { Check, Copy } from "lucide-react";
 import { type RefObject, useEffect, useState } from "react";
+import { common, useMessages } from "@/shared/lib/i18n";
+import { messages } from "../messages";
 import "./copy-button.css";
 
 type State = "idle" | "copied" | "select" | "failed";
-const LABEL: Record<State, string> = {
-  idle: "Copy",
-  copied: "Copied",
-  select: "Press Ctrl+C",
-  failed: "Copy failed",
-};
 
 function select(element: HTMLElement | null) {
   const selection = window.getSelection();
@@ -31,8 +27,17 @@ export function CopyButton({
   text: string;
   /** The element to select when the clipboard API is missing. */
   target: RefObject<HTMLElement | null>;
-  what?: string;
+  /** What is copied, said after the label to a screen reader. */
+  what?: "code" | "file";
 }) {
+  const t = useMessages(messages).render;
+  const c = useMessages(common);
+  const label: Record<State, string> = {
+    idle: c.copy,
+    copied: c.copied,
+    select: t.pressCtrlC,
+    failed: t.copyFailed,
+  };
   const [state, setState] = useState<State>("idle");
   useEffect(() => {
     if (state === "idle") return;
@@ -58,9 +63,9 @@ export function CopyButton({
     <button type="button" className="doc-copy" onClick={() => void copy()}>
       <Icon aria-hidden="true" className="size-3.5" />
       <span role="status" className="min-w-[4.5rem] text-left">
-        {LABEL[state]}
+        {label[state]}
       </span>
-      <span className="sr-only">{what}</span>
+      <span className="sr-only">{t[what]}</span>
     </button>
   );
 }

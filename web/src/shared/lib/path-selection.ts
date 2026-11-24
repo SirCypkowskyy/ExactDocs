@@ -1,5 +1,30 @@
 // A library's file selection and tag rules as typed in a form: the add form and the settings page share them.
+import { currentLanguage, defineMessages, type Language } from "./i18n";
 import { isTagShaped } from "./tags";
+
+/** What the path and tag rule checks say. Paths and patterns stay as typed. */
+const messages = defineMessages(
+  {
+    absolute: (pattern: string) =>
+      `“${pattern}” starts with /. Paths are relative to the repository root, like docs/.`,
+    parent: (pattern: string) => `“${pattern}” uses “..”. Paths stay inside the repository.`,
+    tagRuleHint:
+      "Start with a letter or digit, then letters, digits, spaces and . + - _ (40 characters at most).",
+    pathMissing: "Add a path, like docs/api/**.",
+    pathOutside: "Use a path inside the repository, like docs/api/**.",
+    tagMissing: "Add a tag, like api.",
+  },
+  {
+    absolute: (pattern) =>
+      `„${pattern}” zaczyna się od /. Ścieżki są względne wobec katalogu głównego repozytorium, np. docs/.`,
+    parent: (pattern) => `„${pattern}” zawiera „..”. Ścieżki muszą pozostać wewnątrz repozytorium.`,
+    tagRuleHint:
+      "Zacznij od litery lub cyfry, potem używaj liter, cyfr, spacji oraz . + - _ (najwyżej 40 znaków).",
+    pathMissing: "Dodaj ścieżkę, np. docs/api/**.",
+    pathOutside: "Użyj ścieżki wewnątrz repozytorium, np. docs/api/**.",
+    tagMissing: "Dodaj tag, np. api.",
+  },
+);
 
 /** Most tag rules a library may have (the API's limit). */
 export const MAX_TAG_RULES = 64;
@@ -12,12 +37,14 @@ export const lines = (text: string) =>
     .filter(Boolean);
 
 /** Patterns are repo-relative: never absolute, never `..`. Returns the first bad line. */
-export function validatePatterns(text: string): string | undefined {
+export function validatePatterns(
+  text: string,
+  language: Language = currentLanguage(),
+): string | undefined {
+  const t = messages[language];
   for (const pattern of lines(text)) {
-    if (pattern.startsWith("/"))
-      return `“${pattern}” starts with /. Paths are relative to the repository root, like docs/.`;
-    if (pattern.split("/").includes(".."))
-      return `“${pattern}” uses “..”. Paths stay inside the repository.`;
+    if (pattern.startsWith("/")) return t.absolute(pattern);
+    if (pattern.split("/").includes("..")) return t.parent(pattern);
   }
   return undefined;
 }
@@ -29,20 +56,24 @@ export interface TagRuleDraft {
 }
 
 /** What a tag may look like; the server stores it normalized (`Getting Started` is `getting-started`). */
-export const TAG_RULE_HINT =
-  "Start with a letter or digit, then letters, digits, spaces and . + - _ (40 characters at most).";
+export const tagRuleHint = (language: Language = currentLanguage()) =>
+  messages[language].tagRuleHint;
 
-export function validateRule(rule: TagRuleDraft): { pattern?: string; tag?: string } {
+export function validateRule(
+  rule: TagRuleDraft,
+  language: Language = currentLanguage(),
+): { pattern?: string; tag?: string } {
+  const t = messages[language];
   const problems: { pattern?: string; tag?: string } = {};
   const pattern = rule.pattern.trim();
   const tag = rule.tag.trim();
-  if (!pattern) problems.pattern = "Add a path, like docs/api/**.";
+  if (!pattern) problems.pattern = t.pathMissing;
   else if (pattern.startsWith("/") || pattern.split("/").includes("..")) {
-    problems.pattern = "Use a path inside the repository, like docs/api/**.";
+    problems.pattern = t.pathOutside;
   }
-  if (!tag) problems.tag = "Add a tag, like api.";
+  if (!tag) problems.tag = t.tagMissing;
   else if (!isTagShaped(tag)) {
-    problems.tag = TAG_RULE_HINT;
+    problems.tag = t.tagRuleHint;
   }
   return problems;
 }

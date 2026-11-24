@@ -1,0 +1,161 @@
+/*
+ * Icon reactions (DESIGN.md, "Icons and motion"): an icon inside something you can press reacts
+ * when that thing is hovered, focused by keyboard, highlighted in a menu or pressed, in a way that
+ * says what the action does: an arrow moves where it leads, "refresh" turns, "copy" gives,
+ * "delete" warns. Opt in per icon with `data-icon-motion="<name>"` on the lucide <svg>.
+ *
+ * Rules: the `transform` property only (Tailwind's rotate/scale/translate utilities use their own
+ * properties, so they compose), `clip-path` for the one-off "draw"; 120-180 ms on the house
+ * ease-out; at most 2 px of travel; hover only where a pointer can hover; keyboard focus gets the
+ * same as hover; reduced motion (the person's choice or the system's, both land on
+ * data-reduce-motion) turns all of it off.
+ */
+
+/* Where each reaction goes. */
+[data-icon-motion="forward"] {
+  --icon-to: translateX(2px);
+}
+[data-icon-motion="back"] {
+  --icon-to: translateX(-2px);
+}
+[data-icon-motion="out"] {
+  --icon-to: translate(1.5px, -1.5px);
+}
+[data-icon-motion="down"] {
+  --icon-to: translateY(1.5px);
+}
+[data-icon-motion="up"] {
+  --icon-to: translateY(-1.5px);
+}
+[data-icon-motion="turn"] {
+  --icon-to: rotate(90deg);
+}
+[data-icon-motion="cog"],
+[data-icon-motion="refresh"] {
+  --icon-to: rotate(60deg);
+}
+[data-icon-motion="tilt"] {
+  --icon-to: rotate(-10deg);
+}
+[data-icon-motion="pop"] {
+  --icon-to: scale(1.12);
+}
+
+:root:not([data-reduce-motion]) [data-icon-motion] {
+  transform-origin: center;
+  transition: transform var(--dur) var(--ease-out);
+}
+
+/* Hovered (where a pointer can hover). */
+@media (hover: hover) {
+  :root:not([data-reduce-motion])
+    :is(
+      a,
+      button,
+      summary,
+      label,
+      [role="button"],
+      [role="link"],
+      [role="tab"],
+      [role="option"],
+      [role="menuitem"],
+      [role="menuitemradio"],
+      [role="menuitemcheckbox"],
+      [data-icon-host]
+    ):hover:not(:disabled, [aria-disabled="true"])
+    [data-icon-motion] {
+    transform: var(--icon-to, none);
+  }
+}
+
+/* Focused by keyboard, or highlighted in a menu or list. */
+:root:not([data-reduce-motion])
+  :is(
+    a,
+    button,
+    summary,
+    [role="button"],
+    [role="link"],
+    [role="tab"],
+    [role="option"],
+    [role="menuitem"],
+    [role="menuitemradio"],
+    [role="menuitemcheckbox"],
+    [data-icon-host]
+  ):is(:focus-visible, [data-highlighted])
+  [data-icon-motion] {
+  transform: var(--icon-to, none);
+}
+
+/* Pressed: a short answer to the press itself. */
+:root:not([data-reduce-motion])
+  :is(a, button, [role="button"], [role="menuitem"]):active
+  [data-icon-motion] {
+  transition-duration: var(--dur-fast);
+}
+:root:not([data-reduce-motion])
+  :is(a, button, [role="button"], [role="menuitem"]):active
+  [data-icon-motion="pop"] {
+  transform: scale(0.9);
+}
+:root:not([data-reduce-motion])
+  :is(a, button, [role="button"], [role="menuitem"]):active
+  :is([data-icon-motion="refresh"], [data-icon-motion="cog"]) {
+  transform: rotate(180deg);
+}
+
+/* A warning on hover or focus: delete, revoke, disable. One small swing, never a loop. */
+@media (hover: hover) {
+  :root:not([data-reduce-motion])
+    :is(a, button, [role="button"], [role="menuitem"], [data-icon-host]):hover:not(
+      :disabled,
+      [aria-disabled="true"]
+    )
+    [data-icon-motion="warn"] {
+    animation: icon-warn 360ms var(--ease-out);
+  }
+}
+:root:not([data-reduce-motion])
+  :is(a, button, [role="button"], [role="menuitem"]):is(:focus-visible, [data-highlighted])
+  [data-icon-motion="warn"] {
+  animation: icon-warn 360ms var(--ease-out);
+}
+
+/* Busy: the refresh or sync icon of a running action turns until it is done. */
+:root:not([data-reduce-motion]) [aria-busy="true"] [data-icon-motion="refresh"],
+:root:not([data-reduce-motion]) [data-icon-motion="refresh"][data-busy] {
+  animation: spin 900ms linear infinite;
+}
+
+/* Arriving icons: a success check draws itself once, an alert gives one nudge. */
+:root:not([data-reduce-motion]) [data-icon-motion="draw"] {
+  animation: icon-draw var(--dur-slow) var(--ease-out) both;
+}
+:root:not([data-reduce-motion]) [data-icon-motion="alert"] {
+  animation: icon-warn 360ms var(--ease-out) 60ms both;
+}
+
+@keyframes icon-warn {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  25% {
+    transform: rotate(-9deg);
+  }
+  55% {
+    transform: rotate(6deg);
+  }
+  80% {
+    transform: rotate(-2deg);
+  }
+}
+
+@keyframes icon-draw {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}

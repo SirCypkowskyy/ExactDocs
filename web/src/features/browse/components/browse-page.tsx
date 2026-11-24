@@ -1,13 +1,23 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowUpRight, Info, Settings, Users } from "lucide-react";
+import { ArrowUpRight, GitBranch, Info, Settings, Share2 } from "lucide-react";
+import { useLanguage, useMessages } from "@/shared/lib/i18n";
 import { absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 import { usePageTitle } from "@/shared/lib/use-page-title";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/shared/ui/breadcrumb";
 import { buttonVariants } from "@/shared/ui/button";
+import { LibraryMark } from "@/shared/ui/library-mark";
 import { EmptyState, Page, PageHeader } from "@/shared/ui/page";
 import { kbd } from "@/shared/ui/recipes";
-import { LibraryBullet } from "@/shared/ui/route";
 import { libraryQueryOptions } from "../api/browse-queries";
+import { messages } from "../messages";
 import {
   type BrowseSearch,
   type LibraryDetail,
@@ -39,29 +49,29 @@ function Overview({
   version: Version;
   searchable: boolean;
 }) {
+  const t = useMessages(messages).page;
   return (
     <div className="fade-in max-w-[72ch]">
       <h2 className="text-section font-semibold">
-        Browsing <span className="font-mono">{version.ref}</span>
+        {t.browsing(<span className="font-mono">{version.ref}</span>)}
       </h2>
       {library.description && (
         <p className="mt-2 text-section text-pretty text-foreground">{library.description}</p>
       )}
       <ul className="mt-6 grid gap-x-8 gap-y-4 border-t border-rule pt-5 text-body text-muted-foreground sm:grid-cols-2">
         <li>
-          <span className="block font-medium text-foreground">Read an article</span>
-          Pick a file from the tree. The text is exactly as imported from commit{" "}
-          <code className="font-mono text-foreground">{shortSha(version.commit_sha)}</code>.
+          <span className="block font-medium text-foreground">{t.readArticle}</span>
+          {t.readArticleHint(
+            <code className="font-mono text-foreground">{shortSha(version.commit_sha)}</code>,
+          )}
         </li>
         {searchable && (
           <li>
-            <span className="block font-medium text-foreground">Search {version.ref}</span>
-            Every article of this version, and nothing from another one
-            <span className="hidden lg:inline">
-              {" "}
-              (press <kbd className={kbd}>/</kbd>)
+            <span className="block font-medium text-foreground">
+              {t.searchVersion(version.ref)}
             </span>
-            .
+            {t.searchHint}
+            <span className="hidden lg:inline"> {t.press(<kbd className={kbd}>/</kbd>)}</span>.
           </li>
         )}
       </ul>
@@ -81,6 +91,7 @@ function VersionBrowser({
   search,
   slots,
 }: BrowsePageProps & { library: LibraryDetail; version: Version }) {
+  const t = useMessages(messages).page;
   const scope = {
     ref: version.ref,
     sha: version.commit_sha,
@@ -103,7 +114,7 @@ function VersionBrowser({
         q={slots ? search.q : undefined}
         match={search.match}
       />
-      <section aria-label={searching ? "Search" : "Article"} className="min-w-0">
+      <section aria-label={searching ? t.searchRegion : t.articleRegion} className="min-w-0">
         {searching ? (
           slots.results(scope)
         ) : search.path ? (
@@ -122,8 +133,8 @@ function VersionBrowser({
             <ArticlesTable
               owner={owner}
               repo={repo}
-              versionRef={version.ref}
-              sha={version.commit_sha}
+              library={library}
+              version={version}
               search={search}
             />
           </>
@@ -134,6 +145,7 @@ function VersionBrowser({
 }
 
 function UnknownVersion({ missing, shown }: { missing: string; shown: string }) {
+  const t = useMessages(messages).page;
   return (
     <div className="reveal mb-6 max-w-2xl">
       <p
@@ -142,8 +154,10 @@ function UnknownVersion({ missing, shown }: { missing: string; shown: string }) 
       >
         <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
         <span>
-          <span className="font-mono">{missing}</span> is not an imported version of this library.
-          Showing <span className="font-mono">{shown}</span> instead.
+          {t.unknownVersion(
+            <span className="font-mono">{missing}</span>,
+            <span className="font-mono">{shown}</span>,
+          )}
         </span>
       </p>
     </div>
@@ -151,6 +165,8 @@ function UnknownVersion({ missing, shown }: { missing: string; shown: string }) 
 }
 
 export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
+  const t = useMessages(messages).page;
+  const language = useLanguage();
   const { data: library } = useSuspenseQuery(libraryQueryOptions(owner, repo));
   const { version, missing } = resolveVersion(library, search.version);
   const heading = usePageTitle(library.title || library.id);
@@ -161,26 +177,25 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
       <PageHeader
         headingRef={heading}
         title={library.title || library.id}
+        mark={<LibraryMark id={library.id} logo={library.logo} size="xl" />}
         above={
-          <nav aria-label="Breadcrumb" className="min-w-0 text-body text-muted-foreground">
-            <ol className="flex min-w-0 flex-wrap items-center gap-x-1.5">
-              <li>
-                <Link
-                  to="/"
-                  className="-ml-1 inline-flex min-h-11 items-center rounded px-1 outline-none transition-colors duration-(--dur-fast) hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-7"
-                >
-                  Libraries
-                </Link>
-              </li>
-              <li aria-hidden="true">/</li>
-              <li className="inline-flex min-w-0 items-center gap-1.5">
-                <LibraryBullet id={library.id} size="sm" />
-                <span aria-current="page" className="truncate font-mono text-mono text-foreground">
+          <Breadcrumb>
+            <BreadcrumbList>
+              <BreadcrumbItem>
+                <BreadcrumbLink asChild>
+                  <Link to="/" className="-ml-1 px-1">
+                    {t.libraries}
+                  </Link>
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage className="font-mono text-mono font-normal">
                   {library.id}
-                </span>
-              </li>
-            </ol>
-          </nav>
+                </BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
         }
         description={
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -192,18 +207,22 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
                 className="inline-flex min-h-8 max-w-full items-center gap-1 rounded outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <span className="truncate">{web.replace(/^https?:\/\//, "")}</span>
-                <ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
-                <span className="sr-only">(opens the repository)</span>
+                <ArrowUpRight
+                  aria-hidden="true"
+                  data-icon-motion="out"
+                  className="size-3 shrink-0"
+                />
+                <span className="sr-only">{t.opensRepository}</span>
               </a>
             )}
             {version && (
               <span>
-                {version.kind === "tag" ? "Imported" : `${capitalize(version.kind)} · imported`}{" "}
+                {t.imported(version.kind)}{" "}
                 <time
                   dateTime={version.imported_at}
-                  title={absoluteTimeWithZone(version.imported_at)}
+                  title={absoluteTimeWithZone(version.imported_at, language)}
                 >
-                  {relativeTime(version.imported_at, Date.now())}
+                  {relativeTime(version.imported_at, Date.now(), language)}
                 </time>
               </span>
             )}
@@ -221,8 +240,8 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
                 className: "max-sm:hidden",
               })}
             >
-              <Users aria-hidden="true" />
-              Share
+              <Share2 aria-hidden="true" data-icon-motion="out" />
+              {t.share}
             </Link>
             <Link
               to="/libraries/$owner/$repo/settings"
@@ -233,8 +252,8 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
                 className: "max-sm:w-11 max-sm:px-0",
               })}
             >
-              <Settings aria-hidden="true" />
-              <span className="max-sm:sr-only">Settings</span>
+              <Settings aria-hidden="true" data-icon-motion="cog" />
+              <span className="max-sm:sr-only">{t.settings}</span>
             </Link>
           </>
         }
@@ -251,12 +270,14 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
           version={version}
         />
       ) : (
-        <EmptyState title="Nothing imported yet" className="max-w-xl">
-          This library has no versions. Once its first import finishes they appear here.
+        <EmptyState
+          icon={<GitBranch aria-hidden="true" />}
+          title={t.nothingImported}
+          className="max-w-xl"
+        >
+          {t.noVersions}
         </EmptyState>
       )}
     </Page>
   );
 }
-
-const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
