@@ -1,13 +1,15 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { KeyRound, LogIn } from "lucide-react";
+import { LogIn } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { useMessages } from "@/shared/lib/i18n";
+import { ProviderMark } from "@/shared/ui/brand-marks";
 import { buttonVariants } from "@/shared/ui/button";
 import { Field } from "@/shared/ui/field";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { externalSignInHref, signIn } from "../api/session-query";
 import { messages } from "../messages";
 import { explainError, explainSignInRefusal, type FormProblem } from "../model/errors";
+import { brandsFirst } from "../model/providers";
 import { type SignInProvider, safeNext, validateSignIn } from "../model/session";
 import { AuthLayout } from "./auth-layout";
 import { focusField } from "./focus-field";
@@ -97,15 +99,16 @@ export function SignInPage({
           >
             {t.signIn.or}
           </h2>
+          {/* After the free shadcnblocks Social Button (`social-button`): outline, full width,
+              the provider's mark, brands first (#506). */}
           <ul className="mt-4 flex flex-col gap-2">
-            {providers.map((provider) => (
+            {brandsFirst(providers).map((provider) => (
               <li key={provider.name}>
                 <a
                   href={externalSignInHref(provider.name, safeNext(next))}
                   className={buttonVariants({ variant: "outline", className: "w-full" })}
                 >
-                  {/* A generic provider's mark until the brand marks arrive (#506). */}
-                  <KeyRound aria-hidden="true" data-icon-motion="tilt" />
+                  <ProviderMark icon={provider.icon} iconUrl={provider.icon_url} />
                   {t.signIn.withProvider(provider.display_name)}
                 </a>
               </li>

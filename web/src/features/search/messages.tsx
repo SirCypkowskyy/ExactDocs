@@ -79,6 +79,7 @@ export const messages = defineMessages(
       library: (library: string, n: number) =>
         `${library}, ${plural.en(n, { one: "# match", other: "# matches" })}`,
       more: (n: number) => `+${plural.en(n, { one: "# more library", other: "# more libraries" })}`,
+      matches: (n: number) => plural.en(n, { one: "# match", other: "# matches" }),
     },
     empty: {
       noResults: "No results",
@@ -181,6 +182,7 @@ export const messages = defineMessages(
         `${library}, ${plural.pl(n, { one: "# trafienie", few: "# trafienia", many: "# trafień" })}`,
       more: (n) =>
         `+${plural.pl(n, { one: "# kolejna biblioteka", few: "# kolejne biblioteki", many: "# kolejnych bibliotek" })}`,
+      matches: (n) => plural.pl(n, { one: "# trafienie", few: "# trafienia", many: "# trafień" }),
     },
     empty: {
       noResults: "Brak wyników",

@@ -24,8 +24,6 @@ export const messages = defineMessages(
         library_deleted: "Removals",
       } satisfies Record<Change, string>,
       library: "Library",
-      filter: "Filter",
-      libraryInvalid: "Write the library's ID as /owner/repo.",
       libraryHint: "The full ID; removed libraries keep their log.",
       emptyTitle: "Nothing recorded yet",
       emptyBody:
@@ -58,8 +56,33 @@ export const messages = defineMessages(
       actions: {
         openLibrary: "Open library",
         libraryEntries: "Show this library's entries",
+        actorEntries: "Show this person's entries",
+        subjectEntries: "Show entries about this person",
+        groupEntries: "Show entries about this group",
       },
       row: (sentence: string, library: string) => `${sentence} (${library})`,
+      /** Who made a change (`actor`) and whom it was about (`subject`): exact names, any case. */
+      actor: "Changed by",
+      actorPlaceholder: "Username or account ID",
+      subject: "Person or group",
+      subjectPlaceholder: "Username, account ID or group name",
+      /** The date filter: presets, and a custom range of days. */
+      within: {
+        "24h": "Last 24 hours",
+        "7d": "Last 7 days",
+        "30d": "Last 30 days",
+      },
+      customDates: "Custom dates",
+      customDatesTitle: "Changes between two days",
+      from: "From",
+      to: "To (included)",
+      rangeHint: "Days in your time zone. Leave one empty for an open end.",
+      rangeEmpty: "Pick a start, an end or both.",
+      rangeBackwards: "The start must not come after the end.",
+      apply: "Apply",
+      range: (from: string, to: string) => `${from} – ${to}`,
+      since: (from: string) => `From ${from}`,
+      until: (to: string) => `Until ${to}`,
     },
     /** The words of an event's sentence; names and roles go between them. */
     sentence: {
@@ -117,8 +140,6 @@ export const messages = defineMessages(
         library_deleted: "Usunięcia bibliotek",
       },
       library: "Biblioteka",
-      filter: "Filtruj",
-      libraryInvalid: "Wpisz identyfikator biblioteki w postaci /owner/repo.",
       libraryHint: "Pełny identyfikator; usunięte biblioteki zachowują swój dziennik.",
       emptyTitle: "Nic jeszcze nie zarejestrowano",
       emptyBody:
@@ -148,8 +169,32 @@ export const messages = defineMessages(
       actions: {
         openLibrary: "Otwórz bibliotekę",
         libraryEntries: "Pokaż wpisy tej biblioteki",
+        actorEntries: "Pokaż zmiany wprowadzone przez tę osobę",
+        subjectEntries: "Pokaż wpisy dotyczące tej osoby",
+        groupEntries: "Pokaż wpisy dotyczące tej grupy",
       },
       row: (sentence, library) => `${sentence} (${library})`,
+      actor: "Autor zmiany",
+      actorPlaceholder: "Nazwa użytkownika lub ID konta",
+      subject: "Osoba lub grupa",
+      subjectPlaceholder: "Nazwa użytkownika, ID konta lub nazwa grupy",
+      within: {
+        "24h": "Ostatnie 24 godziny",
+        "7d": "Ostatnie 7 dni",
+        "30d": "Ostatnie 30 dni",
+      },
+      customDates: "Wybrane dni",
+      customDatesTitle: "Zmiany z wybranych dni",
+      from: "Od",
+      to: "Do (włącznie)",
+      rangeHint:
+        "Dni w Twojej strefie czasowej. Zostaw jedno pole puste, aby nie ograniczać zakresu z tej strony.",
+      rangeEmpty: "Wybierz początek, koniec albo oba.",
+      rangeBackwards: "Początek nie może być późniejszy niż koniec.",
+      apply: "Zastosuj",
+      range: (from, to) => `${from} – ${to}`,
+      since: (from) => `Od ${from}`,
+      until: (to) => `Do ${to}`,
     },
     // Polish verbs in the past tense carry a gender, so the sentence names the actor as
     // "Użytkownik alice" (a masculine noun, whoever the person is) and the verbs agree with it.

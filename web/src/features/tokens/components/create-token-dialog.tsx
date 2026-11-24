@@ -9,9 +9,10 @@ import { Button } from "@/shared/ui/button";
 import { DialogContent, DialogDescription, DialogRoot, DialogTitle } from "@/shared/ui/dialog";
 import { Field } from "@/shared/ui/field";
 import { FormAlert } from "@/shared/ui/form-alert";
+import { LibraryCombobox } from "@/shared/ui/library-combobox";
 import { codeWell } from "@/shared/ui/recipes";
 import { SelectField } from "@/shared/ui/select-field";
-import { createToken, tokensKey } from "../api/tokens-query";
+import { createToken, scopeLibrariesQueryOptions, tokensKey } from "../api/tokens-query";
 import { messages } from "../messages";
 import {
   EXPIRY_CHOICES,
@@ -81,7 +82,7 @@ function Body({
   const [name, setName] = useState("");
   const [expiry, setExpiry] = useState<ExpiryChoice>("never");
   const [scope, setScope] = useState("all");
-  const [libraries, setLibraries] = useState("");
+  const [libraries, setLibraries] = useState<string[]>([]);
   const [nameMissing, setNameMissing] = useState(false);
   // The failure itself, so its words follow the language if it changes meanwhile.
   const [failure, setFailure] = useState<{ error: unknown }>();
@@ -106,7 +107,7 @@ function Body({
       const grant = await createToken(
         trimmed,
         expiresAt(expiry),
-        scope === "all" ? undefined : libraries.split(/[\s,]+/).filter(Boolean),
+        scope === "all" ? undefined : libraries,
       );
       setSecret(grant.token);
       onCreated(grant.name);
@@ -173,13 +174,13 @@ function Body({
           <option value="selected">{t.selectedLibraries}</option>
         </SelectField>
         {scope === "selected" && (
-          <Field
+          <LibraryCombobox
+            multiple
             id="token-libraries"
-            label={t.libraryIds}
+            label={t.libraries}
+            query={scopeLibrariesQueryOptions}
             value={libraries}
-            onChange={(e) => setLibraries(e.target.value)}
-            placeholder="/owner/repo, /owner/another"
-            className="font-mono"
+            onChange={setLibraries}
           />
         )}
       </div>

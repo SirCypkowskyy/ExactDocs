@@ -21,6 +21,7 @@ from exactdocs.catalog.dtos import (
     ListLibrariesQuery,
     ListTagsQuery,
     ListVersionsQuery,
+    Offset,
     PinDefaultVersionCommand,
     RenameAnswer,
     RenameDirection,
@@ -95,8 +96,9 @@ def build_router(
     async def list_all(query: Annotated[ListLibrariesQuery, Query()]) -> LibraryList:
         """List the libraries the caller may read, a page at a time; sort by ID unless told.
 
-        Filter with `q`, `has_versions`, `ai_enabled`, `updated_after` and `updated_before`;
-        `total` counts every match (never a library hidden from the caller).
+        Filter with `q`, `has_versions`, `ai_enabled`, `sync_state` (the state of the library's
+        newest import job), `updated_after` and `updated_before`; `total` counts every match
+        (never a library hidden from the caller).
 
         Args:
             query: The filters, the sort, the page size and the cursor of the previous page.
@@ -204,6 +206,16 @@ def build_router(
         ] = None,
         limit: Limit = DEFAULT_LIMIT,
         cursor: str | None = None,
+        offset: Annotated[
+            Offset | None,
+            Query(
+                description=(
+                    "Jump to a page: skip this many matches, in the order and with the filters "
+                    "of the cursor walk. Not with `cursor`; the page's `next_cursor` goes on "
+                    "from it."
+                )
+            ),
+        ] = None,
     ) -> ArticleList:
         """List a version's articles (no ref: the default version), sorted by path.
 
@@ -218,6 +230,7 @@ def build_router(
             sort: The sort field, `-` for descending.
             limit: How many articles per page.
             cursor: The previous page's `next_cursor`.
+            offset: How many matches to skip instead of a cursor.
 
         Returns:
             The page, with its next cursor.
@@ -234,6 +247,7 @@ def build_router(
             sort=sort,
             limit=limit,
             cursor=cursor,
+            offset=offset,
         )
         return await list_articles(query)
 

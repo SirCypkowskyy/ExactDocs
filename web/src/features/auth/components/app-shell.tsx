@@ -5,12 +5,14 @@ import {
   Cpu,
   FlaskConical,
   KeyRound,
+  LayoutDashboard,
   LibraryBig,
   LogOut,
   type LucideIcon,
   Menu,
   ScrollText,
   Search,
+  Trophy,
   Users,
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
@@ -57,7 +59,16 @@ import { messages, roleName } from "../messages";
  * direct links, the rest in two panels, and the interface console; the page lives on the sheet.
  */
 
-type To = "/" | "/jobs" | "/search" | "/playground" | "/ai" | "/users" | "/access-log";
+type To =
+  | "/"
+  | "/jobs"
+  | "/search"
+  | "/playground"
+  | "/leaderboard"
+  | "/overview"
+  | "/ai"
+  | "/users"
+  | "/access-log";
 type Nav = (typeof messages)["en"]["nav"];
 /** `motion`: the icon's reaction when its row is hovered or focused (app/icon-motion.css). */
 type Motion = "tilt" | "pop" | "down";
@@ -84,6 +95,13 @@ const groups = (t: Nav): Group[] => [
         motion: "tilt",
       },
       { to: "/jobs", label: t.jobs, description: t.jobsHint, icon: Activity, motion: "pop" },
+      {
+        to: "/leaderboard",
+        label: t.leaderboard,
+        description: t.leaderboardHint,
+        icon: Trophy,
+        motion: "pop",
+      },
     ],
   },
   {
@@ -91,6 +109,13 @@ const groups = (t: Nav): Group[] => [
     label: t.admin,
     admin: true,
     items: [
+      {
+        to: "/overview",
+        label: t.overview,
+        description: t.overviewHint,
+        icon: LayoutDashboard,
+        motion: "pop",
+      },
       { to: "/ai", label: t.ai, description: t.aiHint, icon: Cpu, motion: "pop" },
       { to: "/users", label: t.users, description: t.usersHint, icon: Users, motion: "pop" },
       {
@@ -354,7 +379,16 @@ function MobileNav({ entries, groups }: { entries: Entry[]; groups: Group[] }) {
 }
 
 /** Header band and the sheet for signed-in pages. The auth pages bring their own frame. */
-export function AppShell({ children, search }: { children: ReactNode; search?: ReactNode }) {
+export function AppShell({
+  children,
+  search,
+  banner,
+}: {
+  children: ReactNode;
+  search?: ReactNode;
+  /** Notices at the top of the sheet, above the page (the instance banner). */
+  banner?: ReactNode;
+}) {
   const session = useSession();
   usePreferencesSync(Boolean(session?.account));
   const t = useMessages(messages);
@@ -409,6 +443,7 @@ export function AppShell({ children, search }: { children: ReactNode; search?: R
       {/* The sheet: the page's own <main> lives inside. view-transition-name lets route changes
           cross-fade this region only (styles.css). */}
       <div className="flex min-w-0 flex-1 flex-col bg-background [view-transition-name:page] md:mx-2 md:mb-2 md:rounded-sheet md:border md:border-border">
+        {banner}
         {children}
       </div>
     </div>

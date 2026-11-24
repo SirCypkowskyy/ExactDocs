@@ -75,7 +75,7 @@ function Choice<T extends string | number>({
             key={String(option.value)}
             value={String(option.value)}
             lang={option.lang}
-            className="group flex min-h-11 cursor-pointer flex-col items-start justify-center gap-0.5 rounded-md border border-input bg-background px-3 py-2 text-left outline-none transition-[border-color,background-color,box-shadow,transform] duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.98] data-[state=checked]:border-selection data-[state=checked]:bg-selection-soft data-[state=checked]:shadow-[inset_0_0_0_1px_var(--selection)] can-hover:hover:border-muted-foreground/50"
+            className="group flex min-h-11 cursor-pointer flex-col items-start justify-center gap-0.5 rounded-md border border-input bg-background px-3 py-2 text-left outline-none transition-[border-color,background-color,box-shadow,transform] duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.98] data-[state=checked]:border-selection data-[state=checked]:bg-selection-soft data-[state=checked]:shadow-[inset_0_0_0_1px_var(--route)] can-hover:hover:border-muted-foreground/50"
           >
             {preview?.(option)}
             <span className="text-body font-medium">{option.label}</span>
@@ -87,16 +87,23 @@ function Choice<T extends string | number>({
   );
 }
 
-function Toggle({
+/**
+ * One on/off preference: its name, a sentence on what it does, and a switch. Exported so a
+ * feature can add a setting of its own to the tab (through `InterfaceSettings`' children).
+ */
+export function PreferenceToggle({
   label,
   description,
   checked,
   onChange,
+  disabled,
 }: {
   label: string;
-  description: string;
+  description: React.ReactNode;
   checked: boolean;
   onChange: (value: boolean) => void;
+  /** Shown but not changeable now; say why in `description`. */
+  disabled?: boolean | undefined;
 }) {
   const id = useId();
   return (
@@ -105,15 +112,16 @@ function Toggle({
         {label}
       </label>
       <div className="flex items-start justify-between gap-6">
-        <p className="text-body text-muted-foreground" id={`${id}-d`}>
+        <div className="text-body text-muted-foreground" id={`${id}-d`}>
           {description}
-        </p>
+        </div>
         <S.Root
           id={id}
           checked={checked}
           onCheckedChange={onChange}
+          disabled={disabled}
           aria-describedby={`${id}-d`}
-          className="relative inline-flex h-6 w-10 flex-none cursor-pointer items-center rounded-full border border-input bg-secondary p-0.5 outline-none transition-colors duration-(--dur) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=checked]:border-selection data-[state=checked]:bg-selection [&::before]:absolute [&::before]:-inset-2.5 [&::before]:content-['']"
+          className="relative inline-flex h-6 w-10 flex-none cursor-pointer items-center rounded-full border border-input bg-secondary p-0.5 outline-none transition-colors duration-(--dur) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=checked]:border-selection data-[state=checked]:bg-selection disabled:cursor-not-allowed disabled:opacity-50 [&::before]:absolute [&::before]:-inset-2.5 [&::before]:content-['']"
         >
           <S.Thumb className="block size-4.5 rounded-full bg-background ring-1 ring-input transition-transform duration-(--dur) ease-(--ease-out) data-[state=checked]:translate-x-4" />
         </S.Root>
@@ -122,7 +130,14 @@ function Toggle({
   );
 }
 
-export function InterfaceSettings({ status }: { status?: React.ReactNode }) {
+export function InterfaceSettings({
+  status,
+  children,
+}: {
+  status?: React.ReactNode;
+  /** More settings after the built-in ones (an account-only choice, from a feature). */
+  children?: React.ReactNode;
+}) {
   const { prefs } = usePreferences();
   const t = useMessages(interfaceMessages);
   const scaleHint: Partial<Record<number, string>> = {
@@ -250,26 +265,27 @@ export function InterfaceSettings({ status }: { status?: React.ReactNode }) {
         onChange={(text_spacing) => set({ text_spacing })}
       />
 
-      <Toggle
+      <PreferenceToggle
         label={t.underlineLinks}
         description={t.underlineLinksDescription}
         checked={prefs.underline_links}
         onChange={(underline_links) => set({ underline_links })}
       />
 
-      <Toggle
+      <PreferenceToggle
         label={t.largerTargets}
         description={t.largerTargetsDescription}
         checked={prefs.large_targets}
         onChange={(large_targets) => set({ large_targets })}
       />
 
-      <Toggle
+      <PreferenceToggle
         label={t.libraryLogos}
         description={t.libraryLogosDescription}
         checked={prefs.library_logos}
         onChange={(library_logos) => set({ library_logos })}
       />
+      {children}
     </div>
   );
 }

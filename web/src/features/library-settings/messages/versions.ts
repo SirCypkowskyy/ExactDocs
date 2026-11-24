@@ -1,4 +1,4 @@
-import { defineMessages } from "@/shared/lib/i18n";
+import { defineMessages, formatNumber, plural } from "@/shared/lib/i18n";
 
 /** The Versions section: the add form, the table and removing a version. */
 export const versionsMessages = defineMessages(
@@ -42,8 +42,26 @@ export const versionsMessages = defineMessages(
         commit: "Commit",
         origin: "Origin",
         imported: "Imported",
+        articles: "Articles",
+        embedding: "Embedding",
         actions: "Actions",
       },
+      /** A version's articles in words, where no column header names them (a phone card). */
+      articles: (n: number) => plural.en(n, { one: "# article", other: "# articles" }),
+      /** The embedding meter's name and tooltip. */
+      embedded: (done: number, total: number) =>
+        `${formatNumber(done, "en")} of ${plural.en(total, { one: "# chunk", other: "# chunks" })} embedded`,
+      /** The share beside the meter on a phone card, where no header names it. */
+      embeddedShare: (percent: string) => `${percent} embedded`,
+      notEmbedded: "Not embedded",
+      /** Why a version has no vectors, in the tooltip of "Not embedded". */
+      notEmbeddedWhy: {
+        noModel: "This instance has no embedding model configured.",
+        aiOff: "AI is off for this library, so none of it is embedded.",
+      },
+      notIndexed: "Not indexed: this version has no chunks yet.",
+      /** "Not indexed" on a phone card, where the dash has no tooltip to explain it. */
+      notIndexedShort: "Not indexed",
       kinds: { tag: "tag", branch: "branch", commit: "commit" },
       origins: { manual: "manual", auto: "auto" },
       default: "default",
@@ -112,8 +130,25 @@ export const versionsMessages = defineMessages(
         commit: "Commit",
         origin: "Pochodzenie",
         imported: "Zaimportowano",
+        articles: "Artykuły",
+        embedding: "Embeddingi",
         actions: "Działania",
       },
+      articles: (n) => plural.pl(n, { one: "# artykuł", few: "# artykuły", many: "# artykułów" }),
+      embedded: (done, total) =>
+        `Embeddingi: ${formatNumber(done, "pl")} z ${plural.pl(total, {
+          one: "# fragmentu",
+          few: "# fragmentów",
+          many: "# fragmentów",
+        })}`,
+      embeddedShare: (percent) => `embeddingi: ${percent}`,
+      notEmbedded: "Bez embeddingów",
+      notEmbeddedWhy: {
+        noModel: "Ta instancja nie ma skonfigurowanego modelu embeddingów.",
+        aiOff: "AI jest wyłączone dla tej biblioteki, więc nic z niej nie trafia do embeddingów.",
+      },
+      notIndexed: "Nie zaindeksowano: ta wersja nie ma jeszcze fragmentów.",
+      notIndexedShort: "Nie zaindeksowano",
       kinds: { tag: "tag", branch: "gałąź", commit: "commit" },
       origins: { manual: "ręcznie", auto: "automatycznie" },
       default: "domyślna",

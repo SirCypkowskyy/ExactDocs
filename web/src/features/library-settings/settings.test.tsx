@@ -38,6 +38,9 @@ const library = {
       commit_sha: SHA,
       imported_at: "2026-11-01T10:00:00Z",
       is_default: true,
+      articles: 12,
+      chunks: 40,
+      embedded_chunks: 40,
     },
     {
       ref: "main",
@@ -45,6 +48,9 @@ const library = {
       commit_sha: SHA,
       imported_at: "2026-11-01T10:00:00Z",
       is_default: false,
+      articles: 12,
+      chunks: 40,
+      embedded_chunks: 0,
     },
   ],
 };
@@ -985,11 +991,14 @@ describe("the versions table", () => {
     imported_at: "2026-11-01T10:00:00Z",
     is_default: n === 1,
     origin: n % 2 ? "manual" : "auto",
+    articles: n,
+    chunks: 4 * n,
+    embedded_chunks: 2 * n,
   });
 
   /**
-   * A versions API over `count` versions that honours `limit`, an offset cursor (`o<n>`) and the
-   * repeatable `kind` filter; everything else as `serve` answers it.
+   * A versions API over `count` versions that honours `limit`, an `offset` (or a cursor, `o<n>`)
+   * and the repeatable `kind` filter; everything else as `serve` answers it.
    */
   function serveVersions(count: number) {
     const calls = serve();
@@ -1001,7 +1010,9 @@ describe("the versions table", () => {
       const url = new URL(String(input), "http://x");
       const kinds = url.searchParams.getAll("kind");
       const rows = kinds.length ? all.filter((v) => kinds.includes(v.kind)) : all;
-      const start = Number(url.searchParams.get("cursor")?.slice(1) ?? 0);
+      const start = Number(
+        url.searchParams.get("offset") ?? url.searchParams.get("cursor")?.slice(1) ?? 0,
+      );
       const limit = Number(url.searchParams.get("limit"));
       return Promise.resolve(
         Response.json({
@@ -1025,18 +1036,24 @@ describe("the versions table", () => {
     expect(await screen.findByText("1–20 of 45")).toBeInTheDocument();
     expect(within(table).getByText("v1.1.0")).toBeInTheDocument();
     expect(within(table).getByText("default")).toBeInTheDocument();
-    expect(listed(calls)[0]).toBe("/api/v1/libraries/acme/payments/versions?limit=20");
+    expect(listed(calls)[0]).toBe("/api/v1/libraries/acme/payments/versions?limit=20&offset=0");
 
     await userEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(await screen.findByText("21–40 of 45")).toBeInTheDocument();
     expect(within(table).getByText("v1.21.0")).toBeInTheDocument();
+    expect(listed(calls)).toContain("/api/v1/libraries/acme/payments/versions?limit=20&offset=20");
+
+    await userEvent.click(screen.getByRole("button", { name: "Last page" }));
+    expect(await screen.findByText("41–45 of 45")).toBeInTheDocument();
+    expect(listed(calls)).toContain("/api/v1/libraries/acme/payments/versions?limit=20&offset=40");
+    expect(listed(calls).every((u) => !u.includes("cursor="))).toBe(true);
 
     await userEvent.click(screen.getByRole("button", { name: "Kind" }));
     await userEvent.click(await screen.findByRole("option", { name: "branch" }));
     await userEvent.keyboard("{Escape}");
     await waitFor(() =>
       expect(listed(calls)).toContain(
-        "/api/v1/libraries/acme/payments/versions?limit=20&kind=branch",
+        "/api/v1/libraries/acme/payments/versions?limit=20&kind=branch&offset=0",
       ),
     );
     // A new filter starts again at page 1.
@@ -1045,7 +1062,7 @@ describe("the versions table", () => {
     await userEvent.click(screen.getByRole("button", { name: "Sort by Imported" }));
     await waitFor(() =>
       expect(listed(calls)).toContain(
-        "/api/v1/libraries/acme/payments/versions?limit=20&kind=branch&sort=-imported_at",
+        "/api/v1/libraries/acme/payments/versions?limit=20&kind=branch&sort=-imported_at&offset=0",
       ),
     );
   });
@@ -1058,7 +1075,7 @@ describe("the versions table", () => {
     );
     await screen.findByRole("table", { name: "Imported versions" });
     expect(listed(calls)[0]).toBe(
-      "/api/v1/libraries/acme/payments/versions?limit=20&kind=tag&kind=branch&origin=auto&sort=-origin",
+      "/api/v1/libraries/acme/payments/versions?limit=20&kind=tag&kind=branch&origin=auto&sort=-origin&offset=0",
     );
     const chips = screen.getByRole("list", { name: "Active filters" });
     expect(

@@ -33,6 +33,7 @@ const library = {
   default_pinned: false,
   source_url: "https://github.com/acme/payments.git",
   version_count: 2,
+  article_count: 12345,
   refs: ["v1.4.0", "main"].map((ref) => ({
     ref,
     kind: ref === "main" ? "branch" : "tag",
@@ -105,13 +106,21 @@ describe("the libraries slice in Polish", () => {
     expect(screen.getByText("1 biblioteka")).toHaveAttribute("role", "status");
     expect(screen.getByLabelText("Znajdź bibliotekę")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Dodaj bibliotekę" })).toBeInTheDocument();
-    for (const header of ["Wersja domyślna", "Wersje", "Ostatni import", "Synchronizacja"]) {
+    for (const header of [
+      "Wersja domyślna",
+      "Wersje",
+      "Artykuły",
+      "Ostatni import",
+      "Synchronizacja",
+    ]) {
       expect(
         within(table).getByRole("columnheader", { name: new RegExp(header) }),
       ).toBeInTheDocument();
     }
     expect(screen.getByRole("button", { name: "Ostatni import" })).toBeInTheDocument();
     expect(within(row).getByText("3 dni temu")).toBeInTheDocument();
+    // Polish groups from five digits.
+    expect(within(row).getByText("12 345")).toBeInTheDocument();
     expect(await within(row).findByText("Zsynchronizowano, pominięto 2")).toBeInTheDocument();
     expect(screen.getByText("1–1 z 1")).toBeInTheDocument();
     await userEvent.click(
@@ -120,6 +129,50 @@ describe("the libraries slice in Polish", () => {
     const menu = await screen.findByRole("menu");
     expect(within(menu).getByRole("menuitem", { name: "Synchronizuj teraz" })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Pokaż jej zadania" })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Synchronizacja" }));
+    expect(
+      await screen.findByRole("option", { name: "Synchronizacja nieudana" }),
+    ).toBeInTheDocument();
+  });
+
+  it("says the articles with the Polish plural on a phone card", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        matches: query === "(max-width: 47.99rem)",
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      })),
+    );
+    const counts = [1, 2, 5, 22, 1234];
+    serve((url) => {
+      if (url.includes("/v1/libraries?")) {
+        return {
+          libraries: counts.map((n) => ({
+            ...library,
+            id: `/acme/lib${n}`,
+            title: `Lib ${n}`,
+            article_count: n,
+          })),
+          next_cursor: null,
+          total: counts.length,
+        };
+      }
+      if (url.endsWith("/v1/jobs/latest")) return { jobs: [] };
+      return undefined;
+    });
+    renderWith(<TestRouter pages={{ "/": LibrariesPage }} />);
+    const cards = await screen.findByRole("list", { name: "Biblioteki" });
+    const texts = within(cards)
+      .getAllByRole("listitem")
+      .map((card) => card.textContent);
+    expect(texts[0]).toContain("Artykuły: 1 artykuł");
+    expect(texts[1]).toContain("Artykuły: 2 artykuły");
+    expect(texts[2]).toContain("Artykuły: 5 artykułów");
+    expect(texts[3]).toContain("Artykuły: 22 artykuły");
+    expect(texts[4]).toContain("Artykuły: 1234 artykuły");
   });
 
   it("shows a library's logo in the Polish list too, and its monogram with logos off", async () => {
@@ -180,29 +233,45 @@ describe("the libraries slice in Polish", () => {
             jobs: [
               job({ id: "j1" }),
               job({ id: "j2", state: "failed", kind: "reprocess", version: null }),
+              job({ id: "j3", origin: "auto", created_by: null }),
+              job({ id: "j4", origin: "manual", created_by: { id: "u1", username: "alice" } }),
             ],
             next_cursor: null,
-            total: 2,
+            total: 4,
           }
         : undefined,
     );
     renderWith(<TestRouter pages={{ "/jobs": JobsPage }} start="/jobs" />);
 
     expect(await screen.findByRole("heading", { name: "Zadania" })).toBeInTheDocument();
-    expect(await screen.findByText("2 zadania")).toBeInTheDocument();
+    expect(await screen.findByText("4 zadania")).toBeInTheDocument();
     const table = screen.getByRole("table");
     expect(within(table).getByRole("columnheader", { name: /Stan/ })).toBeInTheDocument();
     expect(within(table).getByText("nieudane")).toBeInTheDocument();
     expect(within(table).getByText("ponowne przetwarzanie")).toBeInTheDocument();
     expect(within(table).getByText("wszystkie")).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: "Zlecone przez" })).toBeInTheDocument();
+    expect(within(table).getByText("Automatycznie")).toBeInTheDocument();
+    expect(within(table).getByText("alice")).toBeInTheDocument();
+    expect(within(table).getAllByText("Nie zapisano")).toHaveLength(2);
     // The pagination bar speaks Polish too.
     const pages = screen.getByRole("navigation", { name: "Stronicowanie" });
-    expect(within(pages).getByText("1–2 z 2")).toBeInTheDocument();
+    expect(within(pages).getByText("1–4 z 4")).toBeInTheDocument();
     expect(within(pages).getByText("Strona 1 z 1")).toBeInTheDocument();
     expect(within(pages).getByLabelText("Wierszy na stronie")).toHaveValue("20");
     expect(within(pages).getByRole("button", { name: "Następna strona" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Stan" }));
     expect(await screen.findByRole("option", { name: "w toku" })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Źródło" }));
+    expect(await screen.findByRole("option", { name: "automatyczne" })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    // The library filter's picker, and its failure, in Polish (this stub knows no libraries list).
+    await userEvent.click(screen.getByRole("button", { name: "Biblioteka" }));
+    expect(screen.getByRole("combobox", { name: "Znajdź bibliotekę" })).toBeInTheDocument();
+    const failed = await screen.findByRole("alert");
+    expect(failed).toHaveTextContent("Nie udało się wczytać bibliotek.");
+    expect(within(failed).getByRole("button", { name: "Spróbuj ponownie" })).toBeInTheDocument();
   });
 
   it("follows an import in Polish", async () => {

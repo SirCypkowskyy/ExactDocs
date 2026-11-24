@@ -8,7 +8,7 @@
 
 React client served by the ExactDocs backend from `web/dist` in production.
 
-Stack: Vite 8, React 19, TypeScript (strict), TanStack Router (file-based) and TanStack Query, shadcn/ui on Tailwind v4, Biome, react-doctor, fallow, Vitest.
+Stack: Vite 8, React 19, TypeScript (strict), TanStack Router (file-based) and TanStack Query, shadcn/ui on Tailwind v4, Recharts (only in the overview's lazily loaded chart chunk), Biome, react-doctor, fallow, Vitest.
 
 Requires Node 26 LTS (`.nvmrc`) and pnpm 12 (`packageManager` in `package.json`).
 
@@ -41,7 +41,7 @@ flowchart TD
     parts --> shared
 ```
 
-The features are `access-log`, `ai`, `auth`, `browse`, `libraries`, `library-settings`, `playground`, `search`, `sharing`, `tokens` and `users`. An
+The features are `access-log`, `ai`, `auth`, `browse`, `instance-status`, `leaderboard`, `libraries`, `library-settings`, `overview`, `playground`, `search`, `sharing`, `tokens` and `users`. An
 arrow is an allowed import; anything not drawn is forbidden (a feature never imports another
 feature, `app/` or `routes/`; `shared/` imports nothing from the rest).
 

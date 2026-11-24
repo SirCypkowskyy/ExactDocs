@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -160,3 +160,19 @@ async def test_two_admins_disabled_at_once_leave_one_enabled(
 
     assert sorted(results) == [False, True]
     assert [a.is_disabled for a in await repository.list_all()].count(False) == 1
+
+
+async def test_activity_is_stored_and_only_moves_forward(repository: AccountRepository) -> None:
+    await repository.add_first(account("ada"))
+    await repository.add(account("bob", Role.USER, minute=1))
+    hour = datetime(2026, 11, 13, 10, tzinfo=UTC)
+
+    await repository.record_activity(AccountId("id-ada"), hour)
+    await repository.record_activity(AccountId("id-ada"), hour - timedelta(hours=3))
+    await repository.record_activity(AccountId("id-nobody"), hour)
+
+    assert await repository.get(Username("ada")) == replace(account("ada"), last_active_at=hour)
+    assert (await repository.get_by_id(AccountId("id-bob"))) == account("bob", Role.USER, minute=1)
+    later = hour + timedelta(hours=1)
+    await repository.record_activity(AccountId("id-ada"), later)
+    assert [a.last_active_at for a in await repository.list_all()] == [later, None]

@@ -24,6 +24,7 @@ from exactdocs.bootstrap.mcp import build_mcp
 from exactdocs.bootstrap.probes import ProbeAwareHostCheck, build_probes
 from exactdocs.bootstrap.rest import SetupGuard, add_error_handlers, error_responses, v1_openapi
 from exactdocs.bootstrap.telemetry import build_metrics_router, is_untraced, start_telemetry
+from exactdocs.bootstrap.usage_meter import UsageMeter, counted
 from exactdocs.catalog.adapters.driving import http as catalog_http
 from exactdocs.catalog.dtos import GetLibraryQuery
 from exactdocs.identity.adapters.driving import http as identity_http
@@ -33,6 +34,7 @@ from exactdocs.identity.dtos import AccountSummary, ApiTokenIdentity
 from exactdocs.identity.models import Role
 from exactdocs.ingestion.adapters.driving import http as ingestion_http
 from exactdocs.retrieval.adapters.driving import http as retrieval_http
+from exactdocs.usage.adapters.driving import http as usage_http
 from exactdocs_kernel import ForbiddenError
 
 
@@ -62,11 +64,36 @@ def _username_of(
     return username
 
 
+def _include_external_sign_in_routers(v1: APIRouter, container: Container) -> None:
+    """Add the routes of sign-in through an identity provider, reachable without a caller.
+
+    The browser navigations to and back from the provider (behind the setup guard too), and the
+    providers' own icons, which the sign-in page shows to people not signed in yet.
+
+    Args:
+        v1: The ``/api/v1`` router.
+        container: The wired domains.
+    """
+    v1.include_router(
+        identity_http.build_external_sign_in_router(
+            start_external_sign_in=container.identity.start_external_sign_in,
+            finish_external_sign_in=container.identity.finish_external_sign_in,
+            secure_cookies=container.settings.cookies_always_secure,
+        )
+    )
+    v1.include_router(
+        identity_http.build_provider_icon_router(
+            get_provider_icon=container.identity.get_provider_icon
+        )
+    )
+
+
 def _include_session_routers(v1: APIRouter, container: Container) -> identity_http.CurrentCaller:
     """Add the routes that take a signed-in session and never an API token.
 
     ``/tokens`` (a leaked token must not mint its own successor), ``/users`` (nor create
-    accounts; operators only) and ``/access-log`` (operators only).
+    accounts; operators only), ``/access-log`` and ``/stats/usage`` (operators only) and
+    ``/account`` (nor change the password of the account it acts as).
 
     Args:
         v1: The ``/api/v1`` router.
@@ -97,8 +124,31 @@ def _include_session_routers(v1: APIRouter, container: Container) -> identity_ht
         )
     )
     v1.include_router(
+        identity_http.build_all_tokens_router(
+            list_all_tokens=container.identity.list_all_tokens, session_caller=session_caller
+        )
+    )
+    v1.include_router(
         identity_http.build_access_log_router(
             list_access_log=container.identity.list_access_log, session_caller=session_caller
+        )
+    )
+    v1.include_router(
+        usage_http.build_stats_router(
+            get_usage_stats=container.usage.get_usage_stats,
+            require_operator=identity_http.build_operator(
+                caller=session_caller, action="reads the instance's usage"
+            ),
+        )
+    )
+    v1.include_router(
+        identity_http.build_account_router(
+            change_password=container.identity.change_password,
+            list_account_providers=container.identity.list_account_providers,
+            start_account_link=container.identity.start_account_link,
+            unlink_provider=container.identity.unlink_provider,
+            session_caller=session_caller,
+            secure_cookies=container.settings.cookies_always_secure,
         )
     )
     return session_caller
@@ -107,7 +157,7 @@ def _include_session_routers(v1: APIRouter, container: Container) -> identity_ht
 def _protected_router(
     container: Container, current_caller: identity_http.CurrentCaller
 ) -> APIRouter:
-    """Build the router of everything that needs a caller, with the library grants routes.
+    """Build the router of everything that needs a caller, with grants, preferences and stats.
 
     Every route of it names the caller to the library roles (``bind_caller``), so each use case
     it reaches checks the role of whoever is calling.
@@ -132,7 +182,9 @@ def _protected_router(
             Control to the protected request.
         """
         binding = bind_caller(
-            account.id, api_identity=account if isinstance(account, ApiTokenIdentity) else None
+            account.id,
+            api_identity=account if isinstance(account, ApiTokenIdentity) else None,
+            username=account.username,
         )
         try:
             yield
@@ -159,7 +211,83 @@ def _protected_router(
             require_library=require_library,
         )
     )
+    # Job statistics (#512): every library's jobs, so operators only (a session or a token).
+    router.include_router(
+        ingestion_http.build_stats_router(
+            get_job_stats=container.ingestion.get_job_stats,
+            require_operator=identity_http.build_operator(
+                caller=current_caller, action="reads the job statistics"
+            ),
+        )
+    )
+    router.include_router(
+        identity_http.build_preferences_router(
+            get_preferences=container.identity.get_preferences,
+            save_preferences=container.identity.save_preferences,
+            caller=current_caller,
+        )
+    )
     return router
+
+
+def _include_reading_routers(
+    protected: APIRouter,
+    container: Container,
+    *,
+    caller: Callable[..., Awaitable[str]],
+) -> None:
+    """Add the routes that browse, read, search and answer, and the usage they are counted to.
+
+    Reads, searches and answers are counted per day (#510): the catalog and retrieval routes
+    get the counted ports of ``usage_meter``.
+
+    Args:
+        protected: The router of the routes that need a caller.
+        container: The wired domains.
+        caller: The dependency naming the request's account (session or API token).
+    """
+    reads = counted(
+        container.catalog,
+        container.retrieval,
+        UsageMeter(record_usage=container.usage.record_usage),
+    )
+    protected.include_router(
+        catalog_http.build_router(
+            list_libraries=container.list_libraries,
+            get_library=container.catalog.get_library,
+            resolve_version=container.catalog.resolve_version,
+            list_versions=container.list_versions,
+            list_articles=container.catalog.list_articles,
+            list_tags=container.catalog.list_tags,
+            get_article=reads.get_article,
+            resolve_renamed_path=container.catalog.resolve_renamed_path,
+            get_asset=container.catalog.get_asset,
+            update_library=container.catalog.update_library,
+            pin_default_version=container.catalog.pin_default_version,
+            get_logo=container.catalog.get_logo,
+        )
+    )
+    protected.include_router(
+        retrieval_http.build_router(
+            search_docs=reads.search_docs,
+            search_all_libraries=reads.search_all_libraries,
+            read_chunk=reads.read_chunk,
+            article_outline=container.retrieval.article_outline,
+            resolve_library_id=container.retrieval.resolve_library_id,
+            query_docs=reads.query_docs,
+            answer_question=reads.answer_question,
+            get_answer_availability=container.retrieval.get_answer_availability,
+            caller=caller,
+        )
+    )
+    protected.include_router(
+        usage_http.build_router(
+            get_account_usage=container.usage.get_account_usage,
+            get_leaderboard=container.usage.get_leaderboard,
+            get_usage_settings=container.usage.get_usage_settings,
+            caller=caller,
+        )
+    )
 
 
 def create_app(container: Container) -> FastAPI:
@@ -256,14 +384,7 @@ def create_app(container: Container) -> FastAPI:
             secure_cookies=settings.cookies_always_secure,
         )
     )
-    # Browser navigations to and back from an identity provider (behind the setup guard too).
-    v1.include_router(
-        identity_http.build_external_sign_in_router(
-            start_external_sign_in=container.identity.start_external_sign_in,
-            finish_external_sign_in=container.identity.finish_external_sign_in,
-            secure_cookies=settings.cookies_always_secure,
-        )
-    )
+    _include_external_sign_in_routers(v1, container)
     session_caller = _include_session_routers(v1, container)
     # Everything else needs a caller: a session cookie or an API token. Add new domain routers here.
     current_caller = identity_http.build_current_caller(
@@ -293,35 +414,7 @@ def create_app(container: Container) -> FastAPI:
         """
         await session_caller(request, request.cookies.get(SESSION_COOKIE))
 
-    protected.include_router(
-        catalog_http.build_router(
-            list_libraries=container.list_libraries,
-            get_library=container.catalog.get_library,
-            resolve_version=container.catalog.resolve_version,
-            list_versions=container.catalog.list_versions,
-            list_articles=container.catalog.list_articles,
-            list_tags=container.catalog.list_tags,
-            get_article=container.catalog.get_article,
-            resolve_renamed_path=container.catalog.resolve_renamed_path,
-            get_asset=container.catalog.get_asset,
-            update_library=container.catalog.update_library,
-            pin_default_version=container.catalog.pin_default_version,
-            get_logo=container.catalog.get_logo,
-        )
-    )
-    protected.include_router(
-        retrieval_http.build_router(
-            search_docs=container.retrieval.search_docs,
-            search_all_libraries=container.retrieval.search_all_libraries,
-            read_chunk=container.retrieval.read_chunk,
-            article_outline=container.retrieval.article_outline,
-            resolve_library_id=container.retrieval.resolve_library_id,
-            query_docs=container.retrieval.query_docs,
-            answer_question=container.retrieval.answer_question,
-            get_answer_availability=container.retrieval.get_answer_availability,
-            caller=caller_id,
-        )
-    )
+    _include_reading_routers(protected, container, caller=caller_id)
     protected.include_router(
         retrieval_http.build_library_retrieval_router(
             get_library_retrieval=container.retrieval.get_library_retrieval,
@@ -342,6 +435,7 @@ def create_app(container: Container) -> FastAPI:
             estimate_embedding=container.retrieval.estimate_embedding,
             get_embedding_progress=container.retrieval.get_embedding_progress,
             get_ai_usage=container.retrieval.get_ai_usage,
+            get_spend_history=container.retrieval.get_spend_history,
         ),
         dependencies=[
             Depends(

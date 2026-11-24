@@ -9,7 +9,7 @@ export type SignInProvider = components["schemas"]["SignInProviderSummary"];
 
 // Mirrors the backend's rules (identity/dtos.py, identity/model); the server stays the authority.
 export const MIN_PASSWORD_LENGTH = 12;
-const MAX_PASSWORD_LENGTH = 1024;
+export const MAX_PASSWORD_LENGTH = 1024;
 const MAX_USERNAME_LENGTH = 64;
 
 /** Where a visitor may be: behind the session (`app`), or on one of the two public pages. */

@@ -117,21 +117,26 @@ function ServerThings({ source }: { source: ServerSource<Thing> }) {
   );
 }
 
-/** A list API over `count` things that pages by offset (G8) and records each request. */
+/**
+ * A list API over `count` things that pages by offset (up to 10,000, as the real one) and goes on
+ * by cursor (`o<n>`), and records each request.
+ */
 function offsetSource(count: number) {
-  const asked: { limit: number; offset: number | undefined }[] = [];
+  const asked: { limit: number; offset?: number; cursor?: string }[] = [];
   const source: ServerSource<Thing> = {
     key: ["remote things", count],
     paging: "offset",
-    fetchPage: async ({ limit, offset }) => {
-      asked.push({ limit, offset });
-      const start = offset ?? 0;
+    fetchPage: async ({ limit, offset, cursor }) => {
+      asked.push({ limit, ...(offset !== undefined && { offset }), ...(cursor && { cursor }) });
+      if (offset !== undefined && cursor) throw new Error("cursor_with_offset");
+      if (offset !== undefined && offset > 10_000) throw new Error("offset over 10000");
+      const start = offset ?? (cursor ? Number(cursor.slice(1)) : 0);
       const rows = Array.from({ length: Math.max(0, Math.min(limit, count - start)) }, (_, i) => ({
         id: `r${start + i + 1}`,
         name: `Remote ${start + i + 1}`,
         state: "queued" as const,
       }));
-      return { rows, total: count, nextCursor: null };
+      return { rows, total: count, nextCursor: start + limit < count ? `o${start + limit}` : null };
     },
   };
   return { source, asked };
@@ -548,6 +553,20 @@ function FailingThings({ query }: { query?: ClientQuery<Thing> }) {
   );
 }
 
+/** A table narrowed by an owner's ID, whose chip names the owner. */
+function OwnerThings() {
+  const raw = useSearch({ strict: false }) as Record<string, unknown>;
+  const model = useDataTable({
+    config: CLIENT,
+    search: { ...parseTableSearch(raw, CLIENT), owner: raw.owner } as never,
+    columns,
+    getRowId: (t) => t.id,
+    params: [{ id: "owner", title: "Owner", format: (id) => (id === "u1" ? "alice" : id) }],
+    query: ready(THINGS),
+  });
+  return <DataTableToolbar model={model} columns={false} />;
+}
+
 describe("DataTable v2's view options", () => {
   it("keeps the URL's hash when it writes the view", async () => {
     const history = renderAt("/things#versions", () => <ClientThings query={ready(THINGS)} />);
@@ -590,6 +609,18 @@ describe("DataTable v2's view options", () => {
 
     expect(await screen.findByText("1–7 of 7")).toBeInTheDocument();
     expect(history.location.search).toBe("?q=page%20search");
+  });
+
+  it("names a narrowing parameter's value in its chip when the page says how", async () => {
+    const history = renderAt("/things?owner=u1", () => <OwnerThings />);
+    const chips = await screen.findByRole("list", { name: "Active filters" });
+    expect(within(chips).getByText("alice")).toBeInTheDocument();
+    expect(within(chips).queryByText("u1")).not.toBeInTheDocument();
+    // The chip removes the parameter itself, whatever it shows.
+    await userEvent.click(
+      within(chips).getByRole("button", { name: "Remove filter Owner: alice" }),
+    );
+    await waitFor(() => expect(params(history).get("owner")).toBeNull());
   });
 
   it("hands the page why a client list failed", async () => {
@@ -658,35 +689,156 @@ describe("DataTable v2 over an offset API", () => {
     await userEvent.click(screen.getByRole("button", { name: "Last page" }));
 
     expect(await screen.findByText("81–95 of 95")).toBeInTheDocument();
-    // One page per request, from its offset: no walk from the start.
+    // One page per request, from its offset: no walk from the start, and never a cursor.
     expect(asked).toContainEqual({ limit: 20, offset: 80 });
-    expect(asked.every((a) => a.limit === 20)).toBe(true);
+    expect(asked.every((a) => a.limit === 20 && a.cursor === undefined)).toBe(true);
     expect(params(history).get("page")).toBe("5");
     expect(screen.getByText("Page 5 of 5", { selector: "[role=status]" })).toBeInTheDocument();
+  });
+
+  it("numbers the pages and jumps to one in one request", async () => {
+    const { source, asked } = offsetSource(95);
+    const history = renderAt("/things", () => <ServerThings source={source} />);
+    const nav = await screen.findByRole("navigation", { name: "Pagination" });
+    await within(nav).findByText("1–20 of 95");
+    expect(within(nav).getByRole("button", { name: "Page 1" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    asked.length = 0;
+
+    await userEvent.click(within(nav).getByRole("button", { name: "Page 4" }));
+
+    expect(await within(nav).findByText("61–80 of 95")).toBeInTheDocument();
+    expect(asked[0]).toEqual({ limit: 20, offset: 60 });
+    expect(params(history).get("page")).toBe("4");
+    expect(within(nav).getByRole("button", { name: "Page 4" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(nav).getByText("Page 4 of 5", { selector: "[role=status]" })).toBeInTheDocument();
+  });
+
+  it("keeps both ends and the pages around the shown one, with gaps between", async () => {
+    const { source } = offsetSource(400);
+    renderAt("/things?page=10", () => <ServerThings source={source} />);
+    const nav = await screen.findByRole("navigation", { name: "Pagination" });
+    await within(nav).findByText("181–200 of 400");
+    const numbers = within(nav)
+      .getAllByRole("button", { name: /^Page \d+$/ })
+      .map((b) => b.textContent);
+    expect(numbers).toEqual(["1", "9", "10", "11", "20"]);
+  });
+
+  it("loads a link to a deep page with one request, no walk from the start", async () => {
+    const { source, asked } = offsetSource(5_000);
+    renderAt("/things?page=137", () => <ServerThings source={source} />);
+    expect(await screen.findByText("2,721–2,740 of 5,000")).toBeInTheDocument();
+    expect(asked[0]).toEqual({ limit: 20, offset: 2_720 });
+    // Then only the neighbours, ahead of Previous and Next, each by its own offset.
+    await waitFor(() => expect(asked).toHaveLength(3));
+    expect(asked.slice(1)).toEqual(
+      expect.arrayContaining([
+        { limit: 20, offset: 2_740 },
+        { limit: 20, offset: 2_700 },
+      ]),
+    );
+  });
+
+  it("does not jump past the API's 10,000 rows, and says why", async () => {
+    const { source, asked } = offsetSource(12_345);
+    renderAt("/things?page=500", () => <ServerThings source={source} />);
+    const nav = await screen.findByRole("navigation", { name: "Pagination" });
+    await within(nav).findByText("9,981–10,000 of 12,345");
+
+    const reason = "out of reach: jumps stop at page 501; go on with Next page";
+    const last = within(nav).getByRole("button", { name: `Last page (${reason})` });
+    expect(last).toHaveAttribute("aria-disabled", "true");
+    expect(within(nav).getByRole("button", { name: `Page 618 (${reason})` })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(
+      within(nav).getByText("Jumps stop at page 501; later pages open with Next page."),
+    ).toBeInTheDocument();
+    asked.length = 0;
+    await userEvent.click(last);
+    expect(asked).toEqual([]);
+
+    // Page 501 starts at offset 10,000, the last a jump reaches.
+    await userEvent.click(within(nav).getByRole("button", { name: "Page 501" }));
+    await within(nav).findByText("10,001–10,020 of 12,345");
+    expect(asked).toContainEqual({ limit: 20, offset: 10_000 });
+
+    // Past it, Next goes on from the shown page's cursor.
+    await userEvent.click(within(nav).getByRole("button", { name: "Next page" }));
+    expect(await within(nav).findByText("10,021–10,040 of 12,345")).toBeInTheDocument();
+    expect(asked).toContainEqual({ limit: 20, cursor: "o10020" });
+    expect(asked.some((a) => (a.offset ?? 0) > 10_000)).toBe(false);
+  });
+
+  it("walks from the 10,000th row to a linked page past it", async () => {
+    const { source, asked } = offsetSource(12_345);
+    renderAt("/things?page=520", () => <ServerThings source={source} />);
+    expect(await screen.findByText("10,381–10,400 of 12,345")).toBeInTheDocument();
+    expect(asked.slice(0, 2)).toEqual([
+      { limit: 200, offset: 10_000 },
+      { limit: 200, cursor: "o10200" },
+    ]);
   });
 });
 
 describe("DataTable v2 in Polish", () => {
   it("names the pagination and formats its figures the Polish way", async () => {
     setPreferences({ language: "pl" });
-    const { source } = offsetSource(12_345);
+    const { source } = offsetSource(1_234);
     renderAt("/things", () => <ServerThings source={source} />);
 
     const nav = await screen.findByRole("navigation", { name: "Stronicowanie" });
-    expect(await within(nav).findByText(/^1–20 z 12\s345$/)).toBeInTheDocument();
-    expect(within(nav).getByText("Strona 1 z 618")).toBeInTheDocument();
+    expect(await within(nav).findByText(/^1–20 z 1\s?234$/)).toBeInTheDocument();
+    expect(within(nav).getByText("Strona 1 z 62")).toBeInTheDocument();
     expect(within(nav).getByLabelText("Wierszy na stronie")).toBeInTheDocument();
     expect(within(nav).getByRole("button", { name: "Pierwsza strona" })).toHaveAttribute(
       "aria-disabled",
       "true",
     );
-    expect(within(nav).getByRole("button", { name: "Ostatnia strona" })).toBeInTheDocument();
+    expect(within(nav).getByRole("button", { name: "Strona 1" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(nav).getByRole("button", { name: "Strona 62" })).toBeInTheDocument();
+    expect(within(nav).getByRole("button", { name: "Ostatnia strona" })).not.toHaveAttribute(
+      "aria-disabled",
+    );
 
     await userEvent.click(within(nav).getByRole("button", { name: "Następna strona" }));
 
-    expect(await within(nav).findByText(/^21–40 z 12\s345$/)).toBeInTheDocument();
+    expect(await within(nav).findByText(/^21–40 z 1\s?234$/)).toBeInTheDocument();
     expect(
-      within(nav).getByText("Strona 2 z 618", { selector: "[role=status]" }),
+      within(nav).getByText("Strona 2 z 62", { selector: "[role=status]" }),
+    ).toBeInTheDocument();
+  });
+
+  it("says in Polish why a page past 10,000 rows is out of reach", async () => {
+    setPreferences({ language: "pl" });
+    const { source } = offsetSource(12_345);
+    renderAt("/things", () => <ServerThings source={source} />);
+
+    const nav = await screen.findByRole("navigation", { name: "Stronicowanie" });
+    expect(await within(nav).findByText(/^1–20 z 12\s345$/)).toBeInTheDocument();
+    const reason =
+      /\(poza zasięgiem: skoki kończą się na stronie 501; dalej przejdź przyciskiem „Następna strona”\)$/;
+    expect(within(nav).getByRole("button", { name: /^Ostatnia strona / })).toHaveAccessibleName(
+      reason,
+    );
+    expect(within(nav).getByRole("button", { name: /^Strona 618 / })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(
+      within(nav).getByText(
+        "Skoki kończą się na stronie 501; dalsze strony otwiera przycisk „Następna strona”.",
+      ),
     ).toBeInTheDocument();
   });
 });

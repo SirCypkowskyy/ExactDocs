@@ -3,6 +3,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import {
   ArrowRight,
   ArrowRightLeft,
+  CalendarRange,
   ListFilter,
   type LucideIcon,
   Plus,
@@ -11,27 +12,28 @@ import {
   UserCheck,
   UserMinus,
   UserPen,
+  UserRound,
   Users,
 } from "lucide-react";
-import { useId, useMemo, useState } from "react";
-import { useLanguage, useMessages } from "@/shared/lib/i18n";
+import { useId, useMemo } from "react";
+import { type Language, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { Badge, type BadgeTone } from "@/shared/ui/badge";
-import { Button } from "@/shared/ui/button";
 import { LibraryCell, Person, RelativeTime } from "@/shared/ui/data-table/cells";
 import { DataTable } from "@/shared/ui/data-table/data-table";
 import { DataTablePagination } from "@/shared/ui/data-table/pagination";
 import type { RowAction } from "@/shared/ui/data-table/row-actions";
+import { SearchFilter } from "@/shared/ui/data-table/search-filter";
 import type { ServerSource } from "@/shared/ui/data-table/server-pages";
 import type { TableConfig } from "@/shared/ui/data-table/table-search";
 import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";
 import {
-  type DataTableModel,
   type TableFilter,
   type TableParam,
   useDataTable,
 } from "@/shared/ui/data-table/use-data-table";
-import { Input } from "@/shared/ui/input";
+import { LibraryCombobox } from "@/shared/ui/library-combobox";
+import { filterLibrariesQueryOptions } from "../api/access-log-query";
 import { messages } from "../messages";
 import {
   type AccessEvent,
@@ -41,12 +43,18 @@ import {
   describeEvent,
   explainAccessLogError,
   isLibraryId,
+  parseRange,
+  rangeLabel,
+  WHEN_PRESETS,
 } from "../model/access-log";
+import { CustomDates } from "./when-filter";
 
 /*
  * The access log as a table (blocks-map §2.3, "Access log"): who changed access, how and when,
- * newest first, numbered pages over the cursor API, the change filter (and, for operators, the
- * library) in the URL. On a phone each row is a card titled by the event's sentence.
+ * newest first unless sorted by another header (when, library, change), numbered pages by offset,
+ * and the filters in the URL: the changes, who made them, whom they were about, when (a preset or
+ * custom days) and, for operators, the library. A new sort starts from page 1 with a new request,
+ * since a cursor is made for one sort. On a phone each row is a card titled by the event's sentence.
  */
 
 type Messages = (typeof messages)["en"];
@@ -142,7 +150,7 @@ function Actor({ event }: { event: AccessEvent }) {
 }
 
 // Built once per language (and log): a cell is rendered as a component, so a new function would
-// remount it. Nothing sorts: the API lists newest first only.
+// remount it. The API sorts by when, library and change.
 const columnsOf = (t: Messages, everyLibrary: boolean): ColumnDef<AccessEvent>[] => [
   {
     // The sentence titles a phone's card; on a wider screen the columns below say the same.
@@ -156,7 +164,7 @@ const columnsOf = (t: Messages, everyLibrary: boolean): ColumnDef<AccessEvent>[]
   {
     accessorKey: "at",
     header: t.list.columns.when,
-    enableSorting: false,
+    sortDescFirst: true,
     enableHiding: false,
     meta: { priority: 2 },
     cell: ({ row }) => <RelativeTime iso={row.original.at} />,
@@ -166,7 +174,6 @@ const columnsOf = (t: Messages, everyLibrary: boolean): ColumnDef<AccessEvent>[]
         {
           accessorKey: "library",
           header: t.list.columns.library,
-          enableSorting: false,
           meta: { priority: 3, skeleton: "avatar" },
           cell: ({ row }) => <LibraryCell id={row.original.library} />,
         } satisfies ColumnDef<AccessEvent>,
@@ -175,7 +182,6 @@ const columnsOf = (t: Messages, everyLibrary: boolean): ColumnDef<AccessEvent>[]
   {
     accessorKey: "change",
     header: t.list.columns.change,
-    enableSorting: false,
     meta: { skeleton: "pill" },
     cell: ({ row }) => <ChangeBadge event={row.original} />,
   },
@@ -202,7 +208,15 @@ const columnsOf = (t: Messages, everyLibrary: boolean): ColumnDef<AccessEvent>[]
   },
 ];
 
-const filtersOf = (t: Messages): TableFilter[] => [
+/** The value of `when` in words: a preset's name, or the custom days. */
+function whenLabel(value: string, t: Messages, language: Language): string {
+  if (value in t.list.within) return t.list.within[value as keyof Messages["list"]["within"]];
+  const range = parseRange(value);
+  return range ? rangeLabel(range, t.list, language) : value;
+}
+
+/** The facets; `when` also lists a custom range the URL holds, so its chip names the days. */
+const filtersOf = (t: Messages, language: Language, when: string | undefined): TableFilter[] => [
   {
     id: "change",
     title: t.list.columns.change,
@@ -212,61 +226,24 @@ const filtersOf = (t: Messages): TableFilter[] => [
       icon: CHANGE_LOOKS[c].icon,
     })),
   },
+  {
+    id: "when",
+    title: t.list.columns.when,
+    single: true,
+    options: [
+      ...WHEN_PRESETS.map((w) => ({ value: w, label: t.list.within[w] })),
+      ...(when && parseRange(when)
+        ? [{ value: when, label: whenLabel(when, t, language), icon: CalendarRange }]
+        : []),
+    ],
+  },
 ];
 
-const paramsOf = (t: Messages): TableParam[] => [
-  { id: "library", title: t.list.library, mono: true },
+const paramsOf = (t: Messages, everyLibrary: boolean): TableParam[] => [
+  ...(everyLibrary ? [{ id: "library", title: t.list.library, mono: true }] : []),
+  { id: "actor", title: t.list.actor },
+  { id: "subject", title: t.list.subject },
 ];
-
-/** The operators' library filter: a typed `/owner/repo`, checked before it reaches the URL. */
-function LibraryFilter<T>({ model }: { model: DataTableModel<T> }) {
-  const id = useId();
-  const t = useMessages(messages).list;
-  const current = model.param("library");
-  const [library, setLibrary] = useState(current ?? "");
-  const [shown, setShown] = useState(current);
-  // A removed chip (or a row's action) changes the filter from outside: the field follows it.
-  if (shown !== current) {
-    setShown(current);
-    setLibrary(current ?? "");
-  }
-  const invalid = library.trim() !== "" && !isLibraryId(library);
-  return (
-    <form
-      className="flex min-w-0 flex-1 basis-60 flex-col gap-2"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!invalid) model.setParam("library", library.trim() || undefined);
-      }}
-    >
-      <label htmlFor={`${id}-library`} className="text-body font-medium">
-        {t.library}
-      </label>
-      <div className="flex gap-2">
-        <Input
-          id={`${id}-library`}
-          type="search"
-          value={library}
-          aria-invalid={invalid || undefined}
-          aria-describedby={`${id}-library-hint`}
-          onChange={(e) => {
-            setLibrary(e.target.value);
-            if (!e.target.value.trim() && current) model.setParam("library", undefined);
-          }}
-          placeholder="/owner/repo"
-          className="font-mono"
-        />
-        <Button type="submit" variant="outline">
-          <ListFilter aria-hidden="true" data-icon-motion="tilt" />
-          {t.filter}
-        </Button>
-      </div>
-      <p id={`${id}-library-hint`} className="text-small text-muted-foreground">
-        {invalid ? t.libraryInvalid : t.libraryHint}
-      </p>
-    </form>
-  );
-}
 
 interface Props {
   view: AccessLogView;
@@ -276,14 +253,15 @@ interface Props {
   everyLibrary?: boolean;
 }
 
-/** The access log: who changed access, how and when, newest first, a page at a time. */
+/** The access log: who changed access, how and when, newest first unless sorted, a page at a time. */
 export function AccessLogTable({ view, config, source, everyLibrary = false }: Props) {
+  const id = useId();
   const t = useMessages(messages);
   const language = useLanguage();
   const navigate = useNavigate();
   const columns = useMemo(() => columnsOf(t, everyLibrary), [t, everyLibrary]);
-  const filters = useMemo(() => filtersOf(t), [t]);
-  const params = useMemo(() => (everyLibrary ? paramsOf(t) : []), [t, everyLibrary]);
+  const filters = useMemo(() => filtersOf(t, language, view.when), [t, language, view.when]);
+  const params = useMemo(() => paramsOf(t, everyLibrary), [t, everyLibrary]);
   const model = useDataTable({
     config,
     search: view,
@@ -295,12 +273,11 @@ export function AccessLogTable({ view, config, source, everyLibrary = false }: P
   });
 
   const actions = (event: AccessEvent): RowAction<AccessEvent>[] => {
-    if (!everyLibrary) return [];
     const [, owner = "", repo = ""] = event.library.split("/");
+    const { actor, subject } = event;
     return [
-      ...(event.change === "library_deleted"
-        ? []
-        : [
+      ...(everyLibrary && event.change !== "library_deleted"
+        ? [
             {
               id: "open",
               label: t.list.actions.openLibrary,
@@ -309,21 +286,82 @@ export function AccessLogTable({ view, config, source, everyLibrary = false }: P
               onSelect: () =>
                 void navigate({ to: "/libraries/$owner/$repo", params: { owner, repo } }),
             },
-          ]),
-      {
-        id: "library-entries",
-        label: t.list.actions.libraryEntries,
-        icon: ListFilter,
-        motion: "tilt",
-        onSelect: () => model.setParam("library", event.library),
-      },
+          ]
+        : []),
+      ...(everyLibrary
+        ? [
+            {
+              id: "library-entries",
+              label: t.list.actions.libraryEntries,
+              icon: ListFilter,
+              motion: "tilt" as const,
+              onSelect: () => model.setParam("library", event.library),
+            },
+          ]
+        : []),
+      // The log names a person as it shows them (a username, or the ID of a removed account),
+      // which is what the filters take. Changes the instance made name nobody.
+      ...(actor
+        ? [
+            {
+              id: "actor-entries",
+              label: t.list.actions.actorEntries,
+              icon: UserRound,
+              motion: "tilt" as const,
+              onSelect: () => model.setParam("actor", actor),
+            },
+          ]
+        : []),
+      ...(subject && event.change !== "library_deleted"
+        ? [
+            {
+              id: "subject-entries",
+              label:
+                event.kind === "group"
+                  ? t.list.actions.groupEntries
+                  : t.list.actions.subjectEntries,
+              icon: event.kind === "group" ? Users : UserRound,
+              motion: "tilt" as const,
+              onSelect: () => model.setParam("subject", subject),
+            },
+          ]
+        : []),
     ];
   };
 
   return (
     <>
       <DataTableToolbar model={model}>
-        {everyLibrary && <LibraryFilter model={model} />}
+        <CustomDates model={model} />
+        {/* The text fields on a row of their own, under the buttons and Columns, top-aligned:
+            the library's hint hangs below its box without pushing the others' boxes down. */}
+        <div className="order-last flex basis-full flex-wrap items-start gap-2">
+          {everyLibrary && (
+            <LibraryCombobox
+              label={t.list.library}
+              hint={t.list.libraryHint}
+              query={filterLibrariesQueryOptions}
+              custom={isLibraryId}
+              value={model.param("library")}
+              onChange={(library) => model.setParam("library", library)}
+              className="flex-1 basis-60"
+            />
+          )}
+          <SearchFilter
+            id={`${id}-actor`}
+            label={t.list.actor}
+            placeholder={t.list.actorPlaceholder}
+            value={model.param("actor")}
+            onCommit={(actor) => model.setParam("actor", actor)}
+          />
+          <SearchFilter
+            id={`${id}-subject`}
+            label={t.list.subject}
+            placeholder={t.list.subjectPlaceholder}
+            value={model.param("subject")}
+            onCommit={(subject) => model.setParam("subject", subject)}
+          />
+        </div>
       </DataTableToolbar>
       <DataTable
         model={model}

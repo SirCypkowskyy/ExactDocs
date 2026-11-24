@@ -80,7 +80,7 @@ export const messages = defineMessages(
         "Access always follows your current permissions. An empty selection allows no libraries.",
       allLibraries: "All libraries I can access",
       selectedLibraries: "Selected libraries",
-      libraryIds: "Library IDs",
+      libraries: "Libraries",
       submit: "Create token",
       revealTitle: "Copy your token now",
       revealWarning:
@@ -192,7 +192,7 @@ export const messages = defineMessages(
         "Dostęp zawsze wynika z Twoich bieżących uprawnień. Pusty wybór nie daje dostępu do żadnej biblioteki.",
       allLibraries: "Wszystkie biblioteki, do których mam dostęp",
       selectedLibraries: "Wybrane biblioteki",
-      libraryIds: "Identyfikatory bibliotek",
+      libraries: "Biblioteki",
       submit: "Utwórz token",
       revealTitle: "Skopiuj teraz swój token",
       revealWarning:

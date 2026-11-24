@@ -545,18 +545,21 @@ and the lamp on the one lit thing.
 | `codeWell`, `kbd` | `recipes.ts` | Literal text (tokens, snippets) and key hints. |
 | `LibraryBullet`, `VersionStation`, `Commit`, `RouteStrip` | `ui/route.tsx` | Use them wherever a library, version or commit is named. |
 | `LibraryMark` | `ui/library-mark.tsx` | A library's logo on the `logo-tile`, else a generic icon on its line colour; the monogram bullet when the person turned logos off. Takes the library's `logo` as the API sends it (its version) and builds `/api/v1/libraries/{owner}/{repo}/logo?v=<logo>`; a fixed box, `loading="lazy"`, a failed image falls back to the generic icon. Sizes `sm` 24, `md` 28, `lg` 36, `xl` 48. |
-| `Page`, `PageHeader`, `Section`, `EmptyState` | `ui/page.tsx` | The page frame. `PageHeader` takes the page's nav `icon`, `description`, `actions` and `above` (a breadcrumb); a library's own pages pass its `LibraryMark` as `mark` instead of the icon (`xl` on the library page, `lg` on its settings, sharing and access log). `EmptyState` draws its `icon` at 32px with a 1.5 stroke (like a table's empty frame), takes `headingLevel` when its title is the page's answer ("No results") and `role="alert"` when it says something failed. |
+| `Page`, `PageHeader`, `Section`, `EmptyState` | `ui/page.tsx` | The page frame. `PageHeader` takes the page's nav `icon`, `description`, `actions` (they wrap within the row on a phone) and `above` (a breadcrumb); a library's own pages pass its `LibraryMark` as `mark` instead of the icon (`xl` on the library page, `lg` on its settings, sharing and access log). `EmptyState` draws its `icon` at 32px with a 1.5 stroke (like a table's empty frame), takes `headingLevel` when its title is the page's answer ("No results") and `role="alert"` when it says something failed. |
 | `Breadcrumb` and its parts | `ui/breadcrumb.tsx` | Slash separators, the way back in muted ink, the current page in ink with `aria-current`. One for the library page, settings, sharing and the library's access log. `BreadcrumbLink` is a 44px target on touch and a line high with a mouse on its own. |
 | `Mark`, `Wordmark` | `ui/wordmark.tsx` | The small mole (28px) and the lockup; light and dark files swap with the theme. |
 | `TextSizeControl`, `ThemeButton`, `LanguageMenu`, `InterfaceMenu`, `InterfaceCluster` | `ui/interface-controls.tsx` | The band's interface console (#486); every trigger is a band `IconButton`. |
-| `InterfaceSettings` | `ui/interface-settings.tsx` | Account → Interface: every preference, with a reset. |
+| `InterfaceSettings`, `PreferenceToggle` | `ui/interface-settings.tsx` | Account → Interface: every preference, with a reset. `children` adds settings after the built-in ones (the auth feature's "Show me on the leaderboard", an account-only choice); `PreferenceToggle` is the switch row they use (label, a `description` node, `disabled` while the choice cannot be changed, said in the description). |
+| `ProviderMark` | `ui/brand-marks.tsx` | A sign-in provider's mark: Google's G and Microsoft's four squares in their own colours (their sign-in guidelines ask for them), GitHub and Discord in the text colour, all inline SVG (no icon package, no remote loads); else the operator's icon from this server (`icon_url`, a same-origin path only, fitted with `object-contain`, `alt=""`); else, or when it fails to load, `KeyRound`. Always decorative, the name is written beside it. `sm` 16px in buttons, `md` 20px in lists. `isBrandIcon` puts the brands first on the sign-in page. |
 | `Tooltip` | `ui/tooltip.tsx` | A short name or a key for an icon control. `IconButton` brings its own. |
-| `Tabs` | `ui/tabs.tsx` | Underline tabs with one sliding indicator. |
+| `Tabs` | `ui/tabs.tsx` | Underline tabs with one sliding indicator. `TabsContent` is focusable (Radix) and shows the focus ring; space it from the list with margin, not padding, so the ring hugs the panel. |
 | `AlertDialog` and its parts | `ui/alert-dialog.tsx` | The one way to confirm: `role="alertdialog"`, Cancel focused first, Escape cancels, a click outside does nothing; 12px corners, 24px padding. |
 | `ConfirmDialog`, `TypedConfirmDialog` | `ui/confirm-dialog.tsx` | The usual confirmation built on AlertDialog: a question as the title, what happens, Cancel and the verb. The confirm runs `onConfirm` and the dialog stays open until the caller closes it, so a refusal shows inside it (`error`, with `errorLink` for its way out, e.g. Sign in); while `pending` it cannot be closed. The typed one keeps the confirm inert until the field holds `phrase` exactly. Focus goes back to what opened it. |
-| `DropdownMenu`, `ContextMenu` | `ui/dropdown-menu.tsx`, `ui/context-menu.tsx` | One menu feel (Menus below). A context menu only mirrors a visible menu. |
+| `DropdownMenu`, `ContextMenu` | `ui/dropdown-menu.tsx`, `ui/context-menu.tsx` | One menu feel (Menus below). A context menu only mirrors a visible menu. `DropdownMenu` is not modal by default: a modal menu sets `aria-hidden` on a page that keeps focusable controls (axe `aria-hidden-focus`); focus still stays in the menu, and a Radix menu built directly passes `modal={false}` too. |
 | `Popover`, `Command` | `ui/popover.tsx`, `ui/command.tsx` | A floating card like a menu, and the filterable list (cmdk) inside pickers and faceted filters; rows use the menu recipe. |
-| `Table` and its parts | `ui/table.tsx` | The shadcn table primitives on the tokens: headers `text-small` muted, rows on `rule` hairlines, figures tabular. `TableRowHeader` is a body cell that names its row (`<th scope="row">`), set like any cell. |
+| `LibraryCombobox` | `ui/library-combobox.tsx` | The one library picker (Playground, a token's scope, the jobs and access-log library filters, the global search's other libraries): a Popover with a Command list, "Recent" (the last five picked in this browser, `localStorage`, never required) then every library, grouped by owner above 20. Each row is the `LibraryMark` (sm), the mono ID and the title when it says more; `detail` puts a count at the end. `multiple` ticks several (`aria-multiselectable`, the list stays open, the choice shows as removable `Tag`s under a field); single closes on a pick and offers Clear. `variant` `field` (label above, `trigger` recipe box) or `filter` (an outline toolbar button naming the chosen library); `children` is a trigger of the caller's own. Data from the feature: `options` (with `loading`, `failed`, `onRetry`) or `query` (text to the feature's queryOptions, asked on first open, debounced 200 ms, the old answer filtered meanwhile; `total` above the list's length says "Showing 200 of 340. Type to narrow the list."). `custom` offers a typed value that passes (a removed library's `/owner/repo`). Keyboard: arrows, Home, End, Enter, Escape (focus back on the trigger); the input is a `combobox` pointing at the highlighted `option` with `aria-activedescendant`, and a live line counts the matches. |
+| `Tag`, `TagList` | `ui/tags.tsx` | The chip of every tag filter and active filter: 44px on touch, 32px with a mouse, full round on `secondary`. `pressed` + `onClick` is a toggle (`aria-pressed`, picked = solid `route`; the browse and search tag filters through `TagChips`); `onRemove` + `removeLabel` adds the remove `IconButton` (the table's active filters, a picker's chosen libraries); neither is a plain chip. `TagList` is the named `<ul>`; one `<li>` per chip. |
+| `Table` and its parts | `ui/table.tsx` | The shadcn table primitives on the tokens: headers `text-small` muted, rows on `rule` hairlines, figures tabular (`.num`, which DataTable's end-aligned cells get; not the whole table, as tabular figures widen this face's comma and full stop). `TableRowHeader` is a body cell that names its row (`<th scope="row">`), set like any cell. |
 | `DataTable` (v2) | `ui/data-table/` | Every list with many rows (Data tables below): `useDataTable`, `DataTable`, `DataTableToolbar`, `DataTablePagination`, row actions and the cell kit. `ui/data-table.tsx` is v1 ("Load more"), kept until the last page moves. |
 | `Skeleton` | `ui/skeleton.tsx` | A flat bar at the size of the value it stands for; no pulse. |
 | `Dialog`, `Sheet` | `ui/` | shadcn on these tokens. A dialog only for confirmations (as an `AlertDialog`) and for showing a secret once. |
@@ -580,6 +583,10 @@ and the lamp on the one lit thing.
 ### Pills and chips
 - **Style:** 20px high, full radius, 12px / 500, `-soft` ground with `-ink` text. The route tone is
   the lamp's wash with ink text.
+- **Chips** (`Tag`) are the pill grown to a target: 44px on touch, 32px with a mouse, on
+  `secondary`. A filter you toggle reads in body text and fills solid `route` when on; a chip that
+  narrows a list reads `Title: value` in small text with its remove button. One component for both,
+  so the tag panel, the articles' Tags facet chips and every active filter look like one family.
 
 ### Navigation (the band)
 Built on shadcn's Navigation Menu after the free shadcnblocks `navbar1`, `navbar5` and `navbar35`.
@@ -644,10 +651,14 @@ shadcn/ui's data-table guide) is the one way to show a list with many rows.
   remembered in this browser; the URL wins, and a link to page *n* without a size means 20. A
   route parses its view with `parseTableSearch` and `parseFacet` in `validateSearch`; the app
   router's `stringifySearch` writes a validated list back as `a,b`.
-- **Server mode** (`source`): the API sorts, filters and pages. Pages are numbered over the
-  cursor API: each cached page knows its cursor, so First, Previous and Next are one request (and
-  the next page is fetched ahead); a page nobody reached yet walks forward in requests of at most
-  200 rows. Last and a reload on page *n* in one request need `paging: "offset"`.
+- **Server mode** (`source`): the API sorts, filters and pages. Every list of the app pages by
+  offset (`paging: "offset"`, docs/rest-api.md "Jumping to a page"): page *n* is one request of
+  `limit = size` and `offset = (n - 1) × size`, never with a cursor, so numbered jumps, Last and a
+  link to page *n* each cost one request (and the pages on either side are fetched ahead).
+  The API's offset stops at 10,000: a page past it is reached with Next or Previous, which go on
+  by cursor from the page beside it (a link straight to it walks by cursor from row 10,000, in
+  requests of at most 200 rows). A source without `paging: "offset"` walks the same way from the
+  start and offers no jumps or Last.
 - **Client mode** (`query`): a bounded list arrives in one request and is sorted, filtered,
   paged and counted in the browser; `maxRows` hides sizes above the list's cap; Last is offered.
 - **A table inside another page** whose URL is not its own (a job's problems) uses
@@ -657,10 +668,21 @@ shadcn/ui's data-table guide) is the one way to show a list with many rows.
 - **Filterable and sortable** only where the server filters and sorts (never a client filter over
   one server page). Enum filters are faceted multi-selects (an outline button with a count pill,
   a Popover with a Command list, counts per value in client mode); date filters are single presets.
-  Active filters show as chips (`pill-neutral` with a remove `IconButton`) and Clear all.
-- **Pagination bar:** "21–40 of 233", Rows per page, "Page 2 of 12", then First, Previous, Next
-  (and Last) as `icon-sm` IconButtons. An end that cannot be passed is `aria-disabled` so focus
-  stays; a live region says the page after a move; the table's top scrolls into view.
+  Active filters show as `Tag` chips (with a remove `IconButton`) and Clear all. A library filter
+  is the `LibraryCombobox` (`variant="filter"`) in the toolbar, its value a `TableParam` chip. A
+  narrowing parameter (`TableParam`: a library, a version, an owner) shows its value as is, in mono
+  with `mono`; `format` names it instead when the URL holds an ID the page can put in words (the
+  all-tokens owner chip shows the username once a row names it). The chip still removes the
+  parameter itself.
+- **Pagination bar:** "21–40 of 233", Rows per page, "Page 2 of 12", then First and Previous
+  (`icon-sm` IconButtons), the numbered pages (at most seven slots: both ends, the shown page and
+  its neighbours, "…" for the gaps; the shown one outlined with `aria-current="page"`, each named
+  "Page 5"; from `sm` up, phones keep the arrows), then Next and Last. An end that cannot be passed
+  is `aria-disabled` so focus stays; a live region says the page after a move; the table's top
+  scrolls into view. In a list longer than the API's offset bound (more than 10,000 rows), Last
+  and the numbers past page `lastJump` are `aria-disabled` and say why in their name and tooltip
+  ("Last page (out of reach: jumps stop at page 501; go on with Next page)"), and a line under the
+  bar says the same for touch screens.
 - **States in the frame:** loading is skeleton rows at the page size, each cell in its column's
   shape (`meta.skeleton`: text, mono, pill, avatar, number, meter), shown after 150ms; while
   another page or view loads the shown rows stay, at 60% with `aria-busy`; empty and no-match keep
@@ -772,6 +794,7 @@ inline script in `index.html`, and synced to the account when signed in (GET/PUT
 | Font | default, hyperlegible, dyslexic, system | `data-font` |
 | Underline links | on, off | `data-links="underline"` |
 | Large targets | on, off | `data-targets="large"`: the `fine:` variant stops applying, so 44px stays |
+| Show me on the leaderboard | on, off (default off) | nothing on the page: consent to be named on the people leaderboard (#510). Offered only while signed in, changeable only once the account's answer is read, and always taken from the account at sign-in (the browser's copy may be someone else's) |
 
 Components read these through the `fine:`, `can-hover:`, `motion-safe:` and `motion-reduce:`
 variants, never the raw media queries.

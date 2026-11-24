@@ -696,6 +696,24 @@ class UnknownSpendKeyError(ValidationError):
         super().__init__(f"not a spend ledger key: {_data(key)}")
 
 
+class InvalidSpendHistoryError(ValidationError):
+    """A spend history that cannot be shown as asked.
+
+    A scope ID that does not fit its kind, a range that ends before it starts, or one longer
+    than the most windows a history shows.
+    """
+
+    code = "invalid_spend_history"
+
+    def __init__(self, reason: str) -> None:
+        """Say what is wrong with it.
+
+        Args:
+            reason: A text naming the problem (no caller input but dates and counts).
+        """
+        super().__init__(f"invalid spend history: {reason}")
+
+
 class InvalidBudgetError(ValidationError):
     """A spend limit or rate limit that cannot be enforced as written."""
 

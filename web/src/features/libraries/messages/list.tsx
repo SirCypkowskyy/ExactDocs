@@ -17,6 +17,7 @@ export const listMessages = defineMessages(
       library: "Library",
       defaultVersion: "Default version",
       versions: "Versions",
+      articles: "Articles",
       lastImported: "Last imported",
       sync: "Sync",
     },
@@ -41,6 +42,14 @@ export const listMessages = defineMessages(
         "30d": "Last 30 days",
         older: "More than 30 days ago",
       },
+      /** The sync filter: the state of each library's latest import or refresh. */
+      syncStates: {
+        queued: "Queued",
+        running: "Importing",
+        succeeded: "Synced",
+        failed: "Sync failed",
+        cancelled: "Sync cancelled",
+      },
       sortBy: "Sort by",
       sortDefault: "Default",
       nameAsc: "Name, A to Z",
@@ -57,6 +66,8 @@ export const listMessages = defineMessages(
     row: {
       pinnedDefaultVersion: "Pinned default version",
       pinnedDefault: " (pinned default)",
+      /** The default version's articles in words, where no column header names them (a phone card). */
+      articles: (n: number) => plural.en(n, { one: "# article", other: "# articles" }),
     },
     actions: {
       open: "Open library",
@@ -146,6 +157,7 @@ export const listMessages = defineMessages(
       library: "Biblioteka",
       defaultVersion: "Wersja domyślna",
       versions: "Wersje",
+      articles: "Artykuły",
       lastImported: "Ostatni import",
       sync: "Synchronizacja",
     },
@@ -170,6 +182,13 @@ export const listMessages = defineMessages(
         "30d": "Ostatnie 30 dni",
         older: "Ponad 30 dni temu",
       },
+      syncStates: {
+        queued: "W kolejce",
+        running: "Importowanie",
+        succeeded: "Zsynchronizowano",
+        failed: "Synchronizacja nieudana",
+        cancelled: "Synchronizacja anulowana",
+      },
       sortBy: "Sortuj według",
       sortDefault: "Domyślnie",
       nameAsc: "Nazwa, A–Z",
@@ -186,6 +205,7 @@ export const listMessages = defineMessages(
     row: {
       pinnedDefaultVersion: "Przypięta wersja domyślna",
       pinnedDefault: " (przypięta domyślna)",
+      articles: (n) => plural.pl(n, { one: "# artykuł", few: "# artykuły", many: "# artykułów" }),
     },
     actions: {
       open: "Otwórz bibliotekę",

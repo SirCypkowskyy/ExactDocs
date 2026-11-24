@@ -2,8 +2,9 @@ import { X } from "lucide-react";
 import { type ReactNode, useId } from "react";
 import { useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
-import { Button, IconButton } from "../button";
+import { Button } from "../button";
 import { messages } from "../messages";
+import { Tag, TagList } from "../tags";
 import { ColumnsMenu } from "./columns";
 import { FacetedFilter } from "./faceted-filter";
 import { SearchFilter } from "./search-filter";
@@ -12,8 +13,7 @@ import type { DataTableModel } from "./use-data-table";
 /*
  * The table's toolbar (blocks-map §2.2), after the free shadcnblocks Data Table 1 (`data-table1`):
  * the global filter (`q`), one button per faceted filter, the Columns menu at the end, and under
- * them the active filters as chips (pill-neutral with a remove button, after the free kibo-ui
- * `tags` composition's idea; own code) and Clear all.
+ * them the active filters as `Tag` chips (with a remove button) and Clear all.
  */
 export function DataTableToolbar<T>({
   model,
@@ -99,7 +99,7 @@ export function ActiveFilters<T>({ model }: { model: DataTableModel<T> }) {
       chips.push({
         key: param.id,
         title: param.title,
-        value,
+        value: param.format?.(value) ?? value,
         ...(param.mono && { mono: true }),
         remove: () => model.setParam(param.id, undefined),
       });
@@ -109,30 +109,21 @@ export function ActiveFilters<T>({ model }: { model: DataTableModel<T> }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
       {chips.length > 0 && (
-        <ul aria-label={t.activeFilters} className="flex flex-wrap items-center gap-2">
+        <TagList label={t.activeFilters}>
           {chips.map((chip) => (
-            <li
-              key={chip.key}
-              className="reveal inline-flex h-11 items-center gap-0.5 rounded-full bg-secondary pl-3 text-small font-medium text-muted-foreground fine:h-8"
-            >
-              <span>
+            <li key={chip.key} className="reveal flex min-w-0">
+              <Tag
+                removeLabel={t.removeFilter(t.chip(chip.title, chip.value))}
+                onRemove={chip.remove}
+              >
                 {chip.title}:{" "}
                 <span className={cn("text-foreground", chip.mono && "font-mono")}>
                   {chip.value}
                 </span>
-              </span>
-              <IconButton
-                label={t.removeFilter(t.chip(chip.title, chip.value))}
-                size="icon-sm"
-                motion="turn"
-                className="rounded-full text-muted-foreground hover:bg-background/70"
-                onClick={chip.remove}
-              >
-                <X aria-hidden="true" />
-              </IconButton>
+              </Tag>
             </li>
           ))}
-        </ul>
+        </TagList>
       )}
       <Button variant="ghost" size="sm" onClick={model.clearFilters}>
         <X aria-hidden="true" data-icon-motion="turn" />

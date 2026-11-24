@@ -99,10 +99,20 @@ function renderPage() {
   );
 }
 
+/** Picks libraries in the Libraries combobox, then closes it. */
+async function choose(user: ReturnType<typeof userEvent.setup>, ...ids: string[]) {
+  await user.click(await screen.findByRole("button", { name: /^(Libraries|Biblioteki)/ }));
+  for (const id of ids) await user.click(await screen.findByRole("option", { name: id }));
+  await user.keyboard("{Escape}");
+}
+
 const searches = (fetchMock: ReturnType<typeof serve>) =>
   fetchMock.mock.calls
     .map(([input]) => new URL(input, "http://localhost"))
     .filter((u) => u.pathname.endsWith("/v1/search"));
+
+// The picker's Recent group lives in this browser; each test starts without one.
+beforeEach(() => localStorage.removeItem("exactdocs-recent-libraries"));
 
 describe("search playground", () => {
   afterEach(() => {
@@ -129,9 +139,12 @@ describe("search playground", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText("/acme/payments"));
-    await user.click(screen.getByLabelText("/acme/billing"));
-    expect(screen.queryByLabelText("/x/empty")).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Libraries All libraries" }));
+    expect(await screen.findByRole("option", { name: "/acme/billing" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "/x/empty" })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await choose(user, "/acme/payments", "/acme/billing");
+    expect(screen.getByRole("button", { name: "Libraries 2 libraries chosen" })).toBeVisible();
     await user.type(screen.getByLabelText("Query"), "retry failed calls");
     await user.click(screen.getByRole("button", { name: "Search" }));
 
@@ -158,11 +171,11 @@ describe("search playground", () => {
     const user = userEvent.setup();
     renderPage();
     const src = `/api/v1/libraries/acme/payments/logo?v=${LOGO}`;
-    const payments = (await screen.findByLabelText("/acme/payments")).closest("label");
-    expect(payments?.querySelector("img")).toHaveAttribute("src", src);
-    expect(
-      screen.getByLabelText("/acme/billing").closest("label")?.querySelector("img"),
-    ).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "Libraries All libraries" }));
+    const payments = await screen.findByRole("option", { name: "/acme/payments" });
+    expect(payments.querySelector("img")).toHaveAttribute("src", src);
+    expect(screen.getByRole("option", { name: "/acme/billing" }).querySelector("img")).toBeNull();
+    await user.keyboard("{Escape}");
     await user.type(screen.getByLabelText("Query"), "retry");
     await user.click(screen.getByRole("button", { name: "Search" }));
     const list = await screen.findByRole("list", { name: "Hybrid (BM25 + vectors) results" });
@@ -187,7 +200,7 @@ describe("search playground", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText("/acme/payments"));
+    await choose(user, "/acme/payments");
     await user.type(screen.getByLabelText("Query"), "how do I retry failed calls");
     await user.click(screen.getByLabelText("Compare two modes side by side"));
     await user.click(screen.getByRole("button", { name: "Search" }));
@@ -354,7 +367,7 @@ describe("agent answer in the playground", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText("/acme/payments"));
+    await choose(user, "/acme/payments");
     await user.type(screen.getByLabelText("Query"), "retry failed calls");
     await user.selectOptions(
       screen.getByLabelText("Mode"),
@@ -469,8 +482,10 @@ describe("playground in Polish", () => {
     expect(
       await screen.findByRole("heading", { level: 1, name: "Piaskownica wyszukiwania" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Wszystkie biblioteki" })).toBeChecked();
-    await user.click(await screen.findByLabelText("/acme/payments"));
+    expect(
+      await screen.findByRole("button", { name: "Biblioteki Wszystkie biblioteki" }),
+    ).toBeInTheDocument();
+    await choose(user, "/acme/payments");
     await user.type(screen.getByLabelText("Zapytanie"), "retry");
     expect(screen.getByLabelText("Tryb")).toHaveValue("hybrid");
     expect(screen.getByLabelText("Porównaj dwa tryby obok siebie")).not.toBeChecked();

@@ -18,6 +18,9 @@ import { useSyncExternalStore } from "react";
  *   large_targets  data-targets="large" (44 px controls with a mouse too)
  *   language       lang="en" | "pl" (the strings themselves come from shared/lib/i18n.ts)
  *   library_logos  read by the components that show a library's logo or generic icon (#504)
+ *   leaderboard_opt_in  not applied to the page: the person's consent to be shown by name on the
+ *                  people leaderboard (#510). It belongs to the account, so the UI offers it only
+ *                  while signed in, and the sync always takes the account's copy of it.
  *
  * index.html runs the same `applyPreferences` logic inline before first paint, so nothing flashes.
  */
@@ -43,6 +46,8 @@ export type Preferences = {
   large_targets: boolean;
   language: LanguageChoice;
   library_logos: boolean;
+  /** Agrees to be shown by name on the people leaderboard while the operator has it on (#510). */
+  leaderboard_opt_in: boolean;
 };
 
 const THEMES: readonly Theme[] = ["light", "dark", "system"];
@@ -62,6 +67,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   large_targets: false,
   language: "system",
   library_logos: true,
+  leaderboard_opt_in: false,
 };
 
 /** localStorage key; index.html reads the same key before first paint. Kept across sign-outs. */
@@ -90,6 +96,8 @@ export function normalizePreferences(raw: unknown): Preferences {
     large_targets: typeof v.large_targets === "boolean" ? v.large_targets : d.large_targets,
     language: oneOf<LanguageChoice>(["system", "en", "pl"], v.language, d.language),
     library_logos: typeof v.library_logos === "boolean" ? v.library_logos : d.library_logos,
+    // Only an explicit `true` is consent; anything else is no.
+    leaderboard_opt_in: v.leaderboard_opt_in === true,
   };
 }
 

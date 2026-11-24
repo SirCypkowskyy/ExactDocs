@@ -8,8 +8,10 @@ export const Route = createFileRoute("/_app/users")({
   // link shows the same rows.
   validateSearch: parseUsersView,
   component: function Users() {
-    const account = useSession()?.account;
+    const session = useSession();
+    const account = session?.account;
     if (account?.role !== "admin") return <NotFound />;
-    return <UsersPage currentUserId={account.id} />;
+    // The sign-in filter offers the providers configured now (the session lists them).
+    return <UsersPage currentUserId={account.id} providers={session?.providers} />;
   },
 });

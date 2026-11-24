@@ -51,12 +51,15 @@ export function grantsParams(
   filters: GrantsFilters,
   limit: number,
   cursor?: string | null,
+  offset?: number,
 ): string {
   const p = new URLSearchParams({ limit: String(limit) });
   if (filters.q) p.set("q", filters.q);
   for (const kind of filters.kind ?? []) p.append("kind", kind);
   for (const role of filters.role ?? []) p.append("role", role);
   if (filters.sort) p.set("sort", filters.sort);
-  if (cursor) p.set("cursor", cursor);
+  // A page by offset (0 to 10000) or after a cursor, never both (422 `cursor_with_offset`).
+  if (offset !== undefined) p.set("offset", String(offset));
+  else if (cursor) p.set("cursor", cursor);
   return p.toString();
 }

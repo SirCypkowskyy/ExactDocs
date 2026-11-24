@@ -32,8 +32,16 @@ export const menuItemTone =
 export const menuIndicator =
   "pointer-events-none absolute left-2 flex size-3.5 items-center justify-center";
 
-function DropdownMenu({ ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
-  return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" {...props} />;
+/**
+ * Not modal by default: a modal menu hides the rest of the page from assistive technology with
+ * `aria-hidden` while its links and buttons stay focusable (axe `aria-hidden-focus`). The menu
+ * still keeps focus (Tab does not leave it), and Escape or a click outside closes it.
+ */
+function DropdownMenu({
+  modal = false,
+  ...props
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
+  return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" modal={modal} {...props} />;
 }
 
 function DropdownMenuPortal({

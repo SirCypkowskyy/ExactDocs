@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore } from "react";
-import { type ApiPath, getJson, HttpError, sendJson } from "@/shared/lib/http";
+import { getJson, HttpError, sendJson } from "@/shared/lib/http";
 import { useMessages } from "@/shared/lib/i18n";
 import {
   adoptAccountPreferences,
@@ -14,14 +14,18 @@ import { messages } from "../messages";
  * Interface preferences follow the person (#487). Before sign-in they live in this browser; at
  * sign-in an account with nothing saved takes the browser's choices, an account with saved choices
  * wins; while signed in every change is saved (debounced, so a run of clicks is one request).
+ *
+ * `leaderboard_opt_in` (#510) is consent, not a look: it is always the account's own. A browser's
+ * copy may be someone else's (the person before on a shared computer), so at sign-in the account's
+ * answer replaces it even when the account saved nothing else, and only then is it sent back.
  */
 
-// Not in the generated schema until the backend ships it (#487); see web/openapi.json.
-const PATH = "/v1/account/preferences" as ApiPath;
+const PATH = "/v1/account/preferences";
 const SAVE_DELAY_MS = 500;
 
 type AccountPreferences = { saved: boolean; preferences: Preferences };
-type Status = "browser" | "saving" | "saved" | "unavailable" | "error";
+export type PreferencesSyncStatus = "browser" | "saving" | "saved" | "unavailable" | "error";
+type Status = PreferencesSyncStatus;
 
 let status: Status = "browser";
 const listeners = new Set<() => void>();
@@ -50,7 +54,14 @@ export function usePreferencesSync(signedIn: boolean) {
         const remote = await getJson<AccountPreferences>(PATH);
         if (cancelled) return;
         if (remote.saved) adoptAccountPreferences(normalizePreferences(remote.preferences));
-        else await sendJson<AccountPreferences>("PUT", PATH, readPreferences());
+        else {
+          const consent = normalizePreferences(remote.preferences).leaderboard_opt_in;
+          const local = readPreferences();
+          if (local.leaderboard_opt_in !== consent) {
+            adoptAccountPreferences({ ...local, leaderboard_opt_in: consent });
+          }
+          await sendJson<AccountPreferences>("PUT", PATH, readPreferences());
+        }
         if (cancelled) return;
         setStatus("saved");
         stop = onPreferencesChange((prefs, source) => {
@@ -73,10 +84,12 @@ export function usePreferencesSync(signedIn: boolean) {
   }, [signedIn]);
 }
 
-/** One sentence on where the choices are kept, for the Interface tab. */
-export function usePreferencesStatus(): string {
-  const t = useMessages(messages);
-  const current = useSyncExternalStore(
+/**
+ * Where the choices are kept now. `saved` and `saving` mean the account's copy was read, so an
+ * account-only choice (the leaderboard opt-in) shows the account's answer.
+ */
+export function usePreferencesSyncStatus(): PreferencesSyncStatus {
+  return useSyncExternalStore(
     (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -84,5 +97,10 @@ export function usePreferencesStatus(): string {
     () => status,
     () => status,
   );
-  return t.preferences[current];
+}
+
+/** One sentence on where the choices are kept, for the Interface tab. */
+export function usePreferencesStatus(): string {
+  const t = useMessages(messages);
+  return t.preferences[usePreferencesSyncStatus()];
 }

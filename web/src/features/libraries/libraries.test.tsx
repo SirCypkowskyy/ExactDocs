@@ -20,6 +20,7 @@ const library = (over: Record<string, unknown> = {}) => {
     default_pinned: false,
     source_url: "https://github.com/acme/payments.git",
     version_count: versions.length,
+    article_count: 1234,
     refs: versions.map((ref) => ({
       ref,
       kind: ref === "main" ? "branch" : "tag",
@@ -119,13 +120,48 @@ describe("libraries slice", () => {
     expect(within(row).getByText("v1.4.0")).toBeInTheDocument();
     expect(within(row).getByText("a1b2c3d")).toBeInTheDocument();
     expect(within(row).getByText("3")).toBeInTheDocument();
+    expect(within(row).getByText("1,234")).toBeInTheDocument();
     expect(within(row).getByText("3 days ago")).toBeInTheDocument();
     expect(await within(row).findByText("Synced")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/libraries?limit=20", expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/libraries?limit=20&offset=0",
+      expect.anything(),
+    );
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/jobs/latest", expect.anything());
     // One request for every library's sync, never one per library.
     expect(fetchMock.mock.calls.filter(([u]) => String(u).includes("jobs"))).toHaveLength(1);
     expect(summary()).toHaveTextContent("1 library");
+  });
+
+  it("counts the default version's articles in a column the API does not sort", async () => {
+    serve([library(), library({ id: "/acme/empty", title: "Empty", article_count: 0 })]);
+    renderPage();
+    const table = await screen.findByRole("table", { name: "Libraries" });
+    expect(within(table).getByRole("columnheader", { name: "Articles" })).toBeInTheDocument();
+    expect(within(table).queryByRole("button", { name: /Sort by Articles/ })).toBeNull();
+    const count = await within(table).findByText("1,234");
+    // It makes room below `lg`, like the versions count.
+    expect(count.closest("td")).toHaveClass("max-lg:hidden");
+    const empty = (await within(table).findByRole("link", { name: "Empty" })).closest("tr");
+    expect(within(empty as HTMLElement).getByText("0")).toHaveClass("text-muted-foreground");
+  });
+
+  it("says the articles in words on a phone card", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        matches: query === "(max-width: 47.99rem)",
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      })),
+    );
+    serve([library(), library({ id: "/acme/one", title: "One", article_count: 1 })]);
+    renderPage();
+    const cards = await screen.findByRole("list", { name: "Libraries" });
+    const [many, one] = within(cards).getAllByRole("listitem") as HTMLElement[];
+    expect(many).toHaveTextContent("Articles: 1,234 articles");
+    expect(one).toHaveTextContent("Articles: 1 article");
   });
 
   it("shows a library's logo beside its name, and the generic mark when it has none", async () => {

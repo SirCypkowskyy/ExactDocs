@@ -21,11 +21,12 @@ export function LibrariesSkeleton() {
         {t.loading}
       </p>
       <DataTableSkeleton
-        filters={3}
+        filters={4}
         columns={[
           { id: "library", header: c.library, shape: "avatar" },
           { id: "default", header: c.defaultVersion, shape: "mono" },
           { id: "versions", header: c.versions, shape: "number", className: "max-lg:hidden" },
+          { id: "articles", header: c.articles, shape: "number", className: "max-lg:hidden" },
           { id: "imported", header: c.lastImported },
           { id: "sync", header: c.sync, shape: "pill" },
         ]}

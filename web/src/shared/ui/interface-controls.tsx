@@ -170,7 +170,7 @@ export function InterfaceMenu({
     prefs.large_targets ||
     !prefs.library_logos;
   return (
-    <M.Root>
+    <M.Root modal={false}>
       <M.Trigger asChild>
         <IconButton variant="band" label={t.interfaceAndAccessibility} className={className}>
           <Accessibility aria-hidden="true" data-icon-motion="pop" />
@@ -271,7 +271,7 @@ export function LanguageMenu({ className }: { className?: string }) {
   const t = useMessages(interfaceMessages);
   const browser = LANGUAGE_NAMES[resolveLanguage("system")];
   return (
-    <M.Root>
+    <M.Root modal={false}>
       <M.Trigger asChild>
         <IconButton
           variant="band"

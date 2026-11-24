@@ -35,14 +35,17 @@ const job = (n: number, over: Record<string, unknown> = {}) => ({
 });
 
 /**
- * A jobs API over `count` jobs that honours `limit` and an offset cursor (`o<n>`), filters by
- * `state` (repeatable) and answers a cancel. Job 2 failed, job 3 is running and may be cancelled.
+ * A jobs API over `count` jobs that honours `limit` and an `offset` (or a cursor, `o<n>`, never
+ * both), filters by `state` (repeatable) and answers a cancel. Job 2 failed, job 3 is running and may be cancelled.
  */
 function serve(count = 45) {
   const all = Array.from({ length: count }, (_, i) =>
     job(i + 1, {
       ...(i === 1 && { state: "failed", error: "unreachable", error_code: "repo_unreachable" }),
       ...(i === 2 && { state: "running", finished_at: null, cancellable: true, done: 2, total: 5 }),
+      // Job 1 was queued by alice; jobs 4 and 5 by the instance on its own.
+      ...(i === 0 && { created_by: { id: "u1", username: "alice" } }),
+      ...((i === 3 || i === 4) && { origin: "auto", created_by: null }),
     }),
   );
   const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
@@ -50,9 +53,26 @@ function serve(count = 45) {
     if (init?.method === "POST") {
       return Response.json({ ...all[2], cancelled_at: "2026-11-01T10:02:00Z", cancellable: false });
     }
+    if (url.pathname.endsWith("/v1/libraries")) {
+      const q = url.searchParams.get("q") ?? "";
+      const libraries = ["/acme/lib1", "/acme/lib3", "/azure/storage"]
+        .filter((id) => id.includes(q))
+        .map((id) => ({ id, title: id.split("/")[2], logo: null }));
+      return Response.json({ libraries, next_cursor: null, total: libraries.length, notice: "" });
+    }
     const states = url.searchParams.getAll("state");
-    const rows = states.length ? all.filter((j) => states.includes(j.state)) : all;
-    const start = Number(url.searchParams.get("cursor")?.slice(1) ?? 0);
+    const origins = url.searchParams.getAll("origin");
+    const rows = all.filter(
+      (j) =>
+        (!states.length || states.includes(j.state)) &&
+        (!origins.length || origins.includes(j.origin)),
+    );
+    const offset = url.searchParams.get("offset");
+    const cursor = url.searchParams.get("cursor");
+    if (offset !== null && cursor !== null) {
+      return Response.json({ code: "cursor_with_offset" }, { status: 422 });
+    }
+    const start = Number(offset ?? cursor?.slice(1) ?? 0);
     const limit = Number(url.searchParams.get("limit"));
     const page = rows.slice(start, start + limit);
     return Response.json({
@@ -109,6 +129,7 @@ describe("the jobs table", () => {
       size: 50,
       state: ["queued", "failed"],
       kind: ["embed"],
+      origin: undefined,
       created: "7d",
       library: "/a/b",
       version: undefined,
@@ -129,6 +150,7 @@ describe("the jobs table", () => {
       size: undefined,
       state: undefined,
       kind: undefined,
+      origin: undefined,
       created: undefined,
       library: undefined,
       version: undefined,
@@ -137,9 +159,11 @@ describe("the jobs table", () => {
       { state: ["failed", "queued"], library: "/a/b", sort: "state", created: "24h" },
       Date.parse("2026-11-02T10:00:30Z"),
     );
-    expect(jobsParams(filters, 20, "c1")).toBe(
-      "limit=20&state=failed&state=queued&library=%2Fa%2Fb&created_after=2026-11-01T10%3A00%3A00.000Z&sort=state&cursor=c1",
+    expect(jobsParams(filters, 20, null, 40)).toBe(
+      "limit=20&state=failed&state=queued&library=%2Fa%2Fb&created_after=2026-11-01T10%3A00%3A00.000Z&sort=state&offset=40",
     );
+    // Past the API's offset bound the table goes on by cursor, and never sends both.
+    expect(jobsParams({}, 20, "c1")).toBe("limit=20&cursor=c1");
   });
 
   it("reads the view from the URL, sends it to the API and shows the total", async () => {
@@ -149,7 +173,7 @@ describe("the jobs table", () => {
     const table = await screen.findByRole("table", { name: "Jobs" });
     expect(await within(table).findByRole("link", { name: "/acme/lib2" })).toBeInTheDocument();
     expect(urls(fetchMock)[0]).toBe(
-      "/api/v1/jobs?limit=20&state=failed&library=%2Fazure%2Fstorage&sort=-created_at",
+      "/api/v1/jobs?limit=20&state=failed&library=%2Fazure%2Fstorage&sort=-created_at&offset=0",
     );
     const chips = screen.getByRole("list", { name: "Active filters" });
     expect(within(chips).getByText("/azure/storage")).toBeInTheDocument();
@@ -159,14 +183,48 @@ describe("the jobs table", () => {
     expect(screen.getByText("1 job")).toBeInTheDocument();
   });
 
+  it("filters by library with the library combobox, and the chip takes it off", async () => {
+    const fetchMock = serve();
+    const history = renderPage();
+    await screen.findByText("1–20 of 45");
+    const filter = screen.getByRole("button", { name: "Library" });
+    await userEvent.click(filter);
+    // The libraries are asked for only once the list opens.
+    await userEvent.type(screen.getByRole("combobox", { name: "Find a library" }), "lib3");
+    const listbox = screen.getByRole("listbox", { name: "Library" });
+    // The typed text goes to the API (after a short rest), which searches every library.
+    const libraryUrls = () =>
+      fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u.includes("/v1/libraries?"));
+    await waitFor(() =>
+      expect(libraryUrls()).toEqual([
+        "/api/v1/libraries?limit=200&sort=id",
+        "/api/v1/libraries?limit=200&sort=id&q=lib3",
+      ]),
+    );
+    expect(within(listbox).getAllByRole("option")).toHaveLength(1);
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(history.location.search).toContain("library=%2Facme%2Flib3"));
+    await waitFor(() =>
+      expect(urls(fetchMock).at(-1)).toBe("/api/v1/jobs?limit=20&library=%2Facme%2Flib3&offset=0"),
+    );
+    const trigger = screen.getByRole("button", { name: "Library: /acme/lib3" });
+    await waitFor(() => expect(trigger).toHaveFocus());
+    const chips = screen.getByRole("list", { name: "Active filters" });
+    await userEvent.click(
+      within(chips).getByRole("button", { name: "Remove filter Library: /acme/lib3" }),
+    );
+    await waitFor(() => expect(history.location.search).not.toContain("library"));
+    expect(screen.getByRole("button", { name: "Library" })).toBeInTheDocument();
+  });
+
   it("pages with numbered pages, the next one fetched ahead", async () => {
     const fetchMock = serve();
     const history = renderPage();
     expect(await screen.findByText("1–20 of 45")).toBeInTheDocument();
     expect(screen.getByText("Page 1 of 3")).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "Jobs" })).toHaveAttribute("aria-rowcount", "46");
-    // The next page is asked for in the background, from the first page's cursor.
-    await waitFor(() => expect(urls(fetchMock)).toContain("/api/v1/jobs?limit=20&cursor=o20"));
+    // The next page is asked for in the background, by its offset (never a cursor).
+    await waitFor(() => expect(urls(fetchMock)).toContain("/api/v1/jobs?limit=20&offset=20"));
     const asked = urls(fetchMock).length;
 
     await userEvent.click(screen.getByRole("button", { name: "Next page" }));
@@ -175,24 +233,38 @@ describe("the jobs table", () => {
     expect(screen.getByRole("link", { name: "/acme/lib21" })).toBeInTheDocument();
     expect(history.location.search).toContain("page=2");
     // Already fetched: Next costs nothing.
-    expect(urls(fetchMock).slice(asked)).not.toContain("/api/v1/jobs?limit=20&cursor=o20");
+    expect(urls(fetchMock).slice(asked)).not.toContain("/api/v1/jobs?limit=20&offset=20");
     // Focus stays on the button; the move is announced.
     expect(screen.getByRole("button", { name: "Next page" })).toHaveFocus();
     expect(screen.getByText("Page 2 of 3", { selector: "[role=status]" })).toBeInTheDocument();
-    // Without an offset in the API there is no Last.
-    expect(screen.queryByRole("button", { name: "Last page" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Page 2" })).toHaveAttribute("aria-current", "page");
 
     await userEvent.click(screen.getByRole("button", { name: "First page" }));
     expect(await screen.findByText("1–20 of 45")).toBeInTheDocument();
     expect(history.location.search).not.toContain("page=");
+    expect(urls(fetchMock).every((u) => !u.includes("cursor="))).toBe(true);
   });
 
-  it("opens a page from a link by walking forward once, and keeps the size in the URL", async () => {
+  it("jumps to the last page with one request", async () => {
+    const fetchMock = serve(233);
+    const history = renderPage();
+    await screen.findByText("1–20 of 233");
+    const asked = urls(fetchMock).length;
+
+    await userEvent.click(screen.getByRole("button", { name: "Last page" }));
+
+    // docs/rest-api.md's example: 233 jobs, 20 a page, the last one is offset 220 (13 jobs).
+    expect(await screen.findByText("221–233 of 233")).toBeInTheDocument();
+    expect(urls(fetchMock)[asked]).toBe("/api/v1/jobs?limit=20&offset=220");
+    expect(history.location.search).toContain("page=12");
+  });
+
+  it("opens a page from a link with one request, and keeps the size in the URL", async () => {
     const fetchMock = serve();
     const history = renderPage("/jobs?page=3");
     expect(await screen.findByText("41–45 of 45")).toBeInTheDocument();
-    // One request reaches page 3: 40 rows to skip and 20 to show.
-    expect(urls(fetchMock)[0]).toBe("/api/v1/jobs?limit=60");
+    // Page 3 by its offset: no walk from the start.
+    expect(urls(fetchMock)[0]).toBe("/api/v1/jobs?limit=20&offset=40");
     expect(screen.getByRole("button", { name: "Next page" })).toHaveAttribute(
       "aria-disabled",
       "true",
@@ -203,7 +275,7 @@ describe("the jobs table", () => {
     expect(await screen.findByText("1–45 of 45")).toBeInTheDocument();
     expect(history.location.search).toContain("size=50");
     expect(history.location.search).not.toContain("page=");
-    expect(urls(fetchMock)).toContain("/api/v1/jobs?limit=50");
+    expect(urls(fetchMock)).toContain("/api/v1/jobs?limit=50&offset=0");
     expect(JSON.parse(localStorage.getItem("exactdocs-table-sizes") ?? "{}")).toEqual({ jobs: 50 });
   });
 
@@ -219,7 +291,9 @@ describe("the jobs table", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Sort by State" }));
 
-    await waitFor(() => expect(urls(fetchMock)).toContain("/api/v1/jobs?limit=20&sort=state"));
+    await waitFor(() =>
+      expect(urls(fetchMock)).toContain("/api/v1/jobs?limit=20&sort=state&offset=0"),
+    );
     expect(history.location.search).toContain("sort=state");
     expect(screen.getByRole("columnheader", { name: /State/ })).toHaveAttribute(
       "aria-sort",
@@ -238,7 +312,9 @@ describe("the jobs table", () => {
     await userEvent.keyboard("{Escape}");
 
     await waitFor(() =>
-      expect(urls(fetchMock)).toContain("/api/v1/jobs?limit=20&state=running&state=failed"),
+      expect(urls(fetchMock)).toContain(
+        "/api/v1/jobs?limit=20&state=running&state=failed&offset=0",
+      ),
     );
     expect(history.location.search).toContain("state=running%2Cfailed");
     expect(screen.getByRole("button", { name: "State, 2 selected" })).toBeInTheDocument();
@@ -258,6 +334,47 @@ describe("the jobs table", () => {
     await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(await screen.findByText("1–20 of 45")).toBeInTheDocument();
     expect(history.location.search).toBe("");
+  });
+
+  it("names who queued each job, the instance's own work as automatic", async () => {
+    serve();
+    renderPage();
+    const table = await screen.findByRole("table", { name: "Jobs" });
+    expect(within(table).getByRole("columnheader", { name: "Started by" })).toBeInTheDocument();
+    await within(table).findByRole("link", { name: "/acme/lib1" });
+    const rowOf = (library: string) =>
+      within(table).getByRole("link", { name: library }).closest("tr") as HTMLElement;
+    expect(within(rowOf("/acme/lib1")).getByText("alice")).toBeInTheDocument();
+    expect(within(rowOf("/acme/lib4")).getByText("Automatic")).toBeInTheDocument();
+    // A manual job without a person: the command line, or from before it was recorded.
+    expect(within(rowOf("/acme/lib2")).getByText("Not recorded")).toBeInTheDocument();
+  });
+
+  it("filters by origin on the server, in the URL", async () => {
+    const fetchMock = serve();
+    const history = renderPage();
+    await screen.findByText("1–20 of 45");
+
+    await userEvent.click(screen.getByRole("button", { name: "Origin" }));
+    await userEvent.click(await screen.findByRole("option", { name: "auto" }));
+    await userEvent.keyboard("{Escape}");
+
+    await waitFor(() =>
+      expect(urls(fetchMock)).toContain("/api/v1/jobs?limit=20&origin=auto&offset=0"),
+    );
+    expect(history.location.search).toContain("origin=auto");
+    expect(await screen.findByText("1–2 of 2")).toBeInTheDocument();
+    const chips = screen.getByRole("list", { name: "Active filters" });
+    expect(within(chips).getByText("auto")).toBeInTheDocument();
+  });
+
+  it("reads the origin from a link; both origins are no filter at all", async () => {
+    expect(parseJobsView({ origin: "auto,manual,robot" }).origin).toEqual(["manual", "auto"]);
+    expect(jobsFilters({ origin: ["manual", "auto"] }, 0)).toEqual({});
+    const fetchMock = serve();
+    renderPage("/jobs?origin=manual");
+    expect(await screen.findByText("1–20 of 43")).toBeInTheDocument();
+    expect(urls(fetchMock)[0]).toBe("/api/v1/jobs?limit=20&origin=manual&offset=0");
   });
 
   it("hides and shows a column", async () => {

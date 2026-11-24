@@ -83,8 +83,8 @@ export const articlesPageQueryOptions = ({
   });
 
 /**
- * The articles table's rows (DataTable v2, server mode): numbered pages over the API's cursor,
- * sorted and filtered (path or title, tags, folder) by the server. The key carries the commit and
+ * The articles table's rows (DataTable v2, server mode): numbered pages by offset (any page in
+ * one request), sorted and filtered (path or title, tags, folder) by the server. The key carries the commit and
  * the view, never the page or the size.
  */
 export function articlesSource(
@@ -93,15 +93,16 @@ export function articlesSource(
 ): ServerSource<ArticleSummary> {
   return {
     key: [...BROWSE_KEY, owner, repo, ref, sha, "article-table", filters] as const,
-    // #509: `paging: "offset"` once the endpoint takes `offset`: Last, and one request per page.
-    fetchPage: ({ limit, cursor, signal }) => {
+    paging: "offset",
+    fetchPage: ({ limit, cursor, offset, signal }) => {
       const query: QueryOf<"/api/v1/libraries/{owner}/{repo}/articles"> = {
         ref,
         tags: filters.tags,
         q: filters.q ?? null,
         sort: filters.sort ?? null,
         limit,
-        cursor,
+        // A page by offset, or after a cursor past the offset's bound; never both.
+        ...(offset !== undefined ? { offset } : { cursor }),
         // Left out for the whole version (an empty prefix is the tree's root listing).
         ...(filters.prefix && { path_prefix: filters.prefix }),
       };

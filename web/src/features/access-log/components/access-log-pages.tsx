@@ -1,6 +1,7 @@
 import { Link, useSearch } from "@tanstack/react-router";
 import { ScrollText } from "lucide-react";
 import { useMessages } from "@/shared/lib/i18n";
+import { useNow } from "@/shared/lib/use-now";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import {
   Breadcrumb,
@@ -42,6 +43,7 @@ export function LibraryAccessLogPage({
   const t = useMessages(messages).pages;
   const heading = usePageTitle(t.libraryTitle(id));
   const view = parseLibraryAccessLogView(useRawSearch());
+  const now = useNow();
   return (
     <Page>
       <PageHeader
@@ -84,7 +86,7 @@ export function LibraryAccessLogPage({
       <AccessLogTable
         view={view}
         config={LIBRARY_ACCESS_LOG_TABLE}
-        source={libraryAccessLogSource(owner, repo, view)}
+        source={libraryAccessLogSource(owner, repo, view, now)}
       />
     </Page>
   );
@@ -95,6 +97,7 @@ export function AccessLogPage() {
   const t = useMessages(messages).pages;
   const heading = usePageTitle(t.title);
   const view = parseAccessLogView(useRawSearch());
+  const now = useNow();
   return (
     <Page>
       <PageHeader
@@ -106,7 +109,7 @@ export function AccessLogPage() {
       <AccessLogTable
         view={view}
         config={ACCESS_LOG_TABLE}
-        source={accessLogSource(view)}
+        source={accessLogSource(view, now)}
         everyLibrary
       />
     </Page>

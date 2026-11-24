@@ -2,7 +2,7 @@
 
 import unicodedata
 from collections.abc import Collection, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
@@ -16,6 +16,7 @@ from exactdocs.ingestion.constants import (
     DEFAULT_SPLIT_LEVEL,
     ERROR_CODE,
     FULL_SHA,
+    JOB_KINDS,
     JOB_SORT_FIELDS,
     MAX_CHUNK_CHARS,
     MAX_HEADING_LEVEL,
@@ -26,6 +27,7 @@ from exactdocs.ingestion.constants import (
     MAX_SOURCE_REFS,
     MAX_SOURCE_TITLE,
     MAX_SOURCES,
+    MAX_STATS_DAYS,
     MAX_TAG_PATTERN,
     MAX_TAG_RULES,
     MIN_INTERVAL_MINUTES,
@@ -51,8 +53,10 @@ from exactdocs.ingestion.models import (
     DeployKey,
     FileProblem,
     Job,
+    JobDayCount,
     JobState,
     LibraryUpdate,
+    Person,
     ProblemCode,
     RefKind,
     RepositoryHost,
@@ -70,6 +74,7 @@ from exactdocs_kernel import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
     MAX_NAME,
+    MAX_OFFSET,
     MAX_PATH,
     MAX_TAG_INPUT,
     MAX_TAGS,
@@ -109,6 +114,27 @@ class FileProblemSummary(_Dto):
             reason=problem.reason,
             is_skip=problem.code.is_skip,
         )
+
+
+class PersonSummary(_Dto):
+    """A person as the jobs show them: their account's ID and user name, nothing else."""
+
+    id: str
+    """The account's stable ID."""
+    username: str
+    """The account's user name, as it was when they asked."""
+
+    @classmethod
+    def of(cls, person: Person | None) -> Self | None:
+        """Map a person, if there is one.
+
+        Args:
+            person: The person, or ``None``.
+
+        Returns:
+            Their summary, or ``None``.
+        """
+        return None if person is None else cls(id=person.id, username=person.username)
 
 
 class JobSummary(_Dto):
@@ -157,7 +183,11 @@ class JobSummary(_Dto):
     error_code: str | None = Field(description=ERROR_CODE)
     """The stable code of `error`; its schema description is ``ERROR_CODE``."""
     origin: VersionOrigin = Field(default=VersionOrigin.MANUAL)
-    """`auto` when the scheduled check queued it, `manual` otherwise."""
+    """`auto` when the instance queued it on its own (the scheduled check, a repository's
+    webhook, the embedding of what an import stored), `manual` otherwise."""
+    created_by: PersonSummary | None = None
+    """The person whose request queued the job; null for the instance's own work (`auto`), the
+    command line, and jobs queued before ExactDocs recorded who queued them."""
     created_at: datetime
     """When the job was queued."""
     started_at: datetime | None
@@ -201,6 +231,7 @@ class JobSummary(_Dto):
             error=job.error,
             error_code=job.error_code,
             origin=job.origin,
+            created_by=PersonSummary.of(job.created_by),
             created_at=job.created_at,
             started_at=job.started_at,
             finished_at=job.finished_at,
@@ -270,6 +301,11 @@ class LatestJob(_Dto):
     """Why the job failed, for people; null unless it failed."""
     error_code: str | None = Field(description=ERROR_CODE)
     """The stable code of `error`; its schema description is ``ERROR_CODE``."""
+    origin: VersionOrigin = Field(default=VersionOrigin.MANUAL)
+    """`auto` when the instance queued it on its own, `manual` otherwise."""
+    created_by: PersonSummary | None = None
+    """The person whose request queued the job; null when no person did (or before it was
+    recorded)."""
     created_at: datetime
     """When the job was queued."""
     started_at: datetime | None
@@ -307,6 +343,8 @@ class LatestJob(_Dto):
             skipped=job.skipped_count,
             error=job.error,
             error_code=job.error_code,
+            origin=job.origin,
+            created_by=PersonSummary.of(job.created_by),
             created_at=job.created_at,
             started_at=job.started_at,
             finished_at=job.finished_at,
@@ -369,6 +407,14 @@ class JobListQuery(_Dto):
         description="Only jobs of one of these kinds (`import`, `embed`, ...); repeatable.",
     )
     """Only jobs of one of these kinds."""
+    origin: list[VersionOrigin] | None = Field(
+        default=None,
+        description=(
+            "Only jobs with one of these origins: `auto` (the instance queued it on its own) or "
+            "`manual`; repeat the parameter for both."
+        ),
+    )
+    """Only jobs with one of these origins."""
     version: str | None = Field(
         default=None, max_length=MAX_NAME, description="Only jobs for this exact ref."
     )
@@ -397,6 +443,9 @@ class JobListQuery(_Dto):
     cursor: str | None = None
     """The `next_cursor` of the previous page, which only works with the same `sort` and filters;
     null for the first page."""
+    offset: Annotated[int, Field(ge=0, le=MAX_OFFSET)] | None = None
+    """Jump to a page: skip this many matches, in the order and with the filters of the cursor
+    walk. Not with `cursor`; the page's `next_cursor` goes on from it."""
 
     @field_validator("created_after", "created_before")
     @classmethod
@@ -426,6 +475,108 @@ class ListJobsQuery(JobListQuery):
         default=None, min_length=1, description="Only jobs of this library, `/owner/repo`."
     )
     """Only jobs of this library."""
+
+
+class JobStatsQuery(_Dto):
+    """Which UTC days the job statistics cover, both included; at most ``MAX_STATS_DAYS``."""
+
+    model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
+
+    bucket: Literal["day"] = "day"
+    """How jobs are grouped: `day` (UTC days) is the only bucket."""
+    start: date | None = Field(
+        default=None,
+        alias="from",
+        description=(
+            "The first UTC day counted (`YYYY-MM-DD`); default: 29 days before `to`. At most "
+            f"{MAX_STATS_DAYS} days are counted at once."
+        ),
+    )
+    """The first day counted, sent as `from`; its schema description names ``MAX_STATS_DAYS``."""
+    end: date | None = Field(
+        default=None,
+        alias="to",
+        description="The last UTC day counted (`YYYY-MM-DD`), included; default: today (UTC).",
+    )
+    """The last day counted, sent as `to`."""
+
+
+class JobDayStats(_Dto):
+    """The jobs queued on one UTC day, counted by the state they are in now and by kind."""
+
+    day: date
+    """The UTC day the jobs were queued on."""
+    total: int
+    """How many jobs were queued that day."""
+    by_state: dict[JobState, int]
+    """How many of them are in each state now; every state is listed, 0 included."""
+    by_kind: dict[str, int]
+    """How many of them are of each kind; every kind is listed, 0 included."""
+
+
+class JobStats(_Dto):
+    """Jobs per UTC day, every day of the range listed (a day without jobs counts 0)."""
+
+    bucket: Literal["day"]
+    """How the jobs are grouped: `day`."""
+    start: date = Field(serialization_alias="from")
+    """The first day counted, as `from`."""
+    end: date = Field(serialization_alias="to")
+    """The last day counted, included, as `to`."""
+    days: list[JobDayStats]
+    """One entry per day from `from` to `to`, oldest first."""
+
+    @classmethod
+    def of(cls, counts: Sequence[JobDayCount], *, start: date, end: date) -> Self:
+        """Spread the counts over every day of the range, zero-filling the days without jobs.
+
+        Args:
+            counts: The counts per (day, state, kind) that have jobs.
+            start: The first day.
+            end: The last day, included.
+
+        Returns:
+            The statistics, one entry per day.
+        """
+        kinds = list(JOB_KINDS) + sorted({c.kind for c in counts} - set(JOB_KINDS))
+        days: dict[date, tuple[dict[JobState, int], dict[str, int]]] = {}
+        day = start
+        while day <= end:
+            days[day] = (dict.fromkeys(JobState, 0), dict.fromkeys(kinds, 0))
+            day = date.fromordinal(day.toordinal() + 1)
+        for count in counts:
+            if count.day in days:
+                by_state, by_kind = days[count.day]
+                by_state[count.state] += count.count
+                by_kind[count.kind] += count.count
+        return cls(
+            bucket="day",
+            start=start,
+            end=end,
+            days=[
+                JobDayStats(
+                    day=day,
+                    total=sum(by_state.values()),
+                    by_state=by_state,
+                    by_kind=by_kind,
+                )
+                for day, (by_state, by_kind) in days.items()
+            ],
+        )
+
+
+class SyncStatesQuery(_Dto):
+    """Which libraries to find by the state of their latest sync."""
+
+    states: list[JobState] = Field(min_length=1)
+    """The states the library's newest `import` or `refresh` job may be in."""
+
+
+class LibrariesInSyncStates(_Dto):
+    """The libraries the caller may read whose latest sync is in one of the states asked for."""
+
+    libraries: list[str]
+    """Their IDs, case-folded and sorted; a library that never synced is in none."""
 
 
 class GetLibraryAccessQuery(_Dto):

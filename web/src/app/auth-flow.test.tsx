@@ -157,3 +157,32 @@ describe("route errors", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"));
   });
 });
+
+describe("account tabs", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const api = (url: string) =>
+    json(
+      url.includes("/tokens?")
+        ? { tokens: [], next_cursor: null, total: 0 }
+        : { ...signedIn, account: { ...account, has_password: true } },
+    );
+
+  it("opens the Sign-in tab from the URL, with the password form", async () => {
+    mount("/account?tab=sign-in", api);
+    const tab = await screen.findByRole("tab", { name: "Sign-in" });
+    expect(tab).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("heading", { name: "Password" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Current password")).toBeInTheDocument();
+  });
+
+  it("keeps the chosen tab in the URL; API tokens stays the default without one", async () => {
+    const { router } = mount("/account", api);
+    const tokens = await screen.findByRole("tab", { name: "API tokens" });
+    expect(tokens).toHaveAttribute("aria-selected", "true");
+    await userEvent.click(screen.getByRole("tab", { name: "Sign-in" }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ tab: "sign-in" }));
+    await userEvent.click(screen.getByRole("tab", { name: "API tokens" }));
+    await waitFor(() => expect(router.state.location.search).toEqual({}));
+  });
+});

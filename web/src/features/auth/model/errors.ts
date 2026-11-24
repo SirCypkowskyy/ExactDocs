@@ -55,6 +55,8 @@ export function explainSignInRefusal(
       return t.cancelled;
     case "sign_in_failed":
       return t.failed;
+    case "not_linked":
+      return t.notLinked;
     default:
       return undefined;
   }

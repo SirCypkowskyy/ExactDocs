@@ -297,6 +297,21 @@ being used.
 JOB_SORT_FIELDS: Final[tuple[str, ...]] = ("id", "created_at", "state", "kind", "library")
 """What the jobs lists can be sorted by (columns that are never null); `-id` is the default, which
 is newest first."""
+JOB_KINDS: Final[tuple[JobKind, ...]] = (
+    IMPORT_JOB,
+    REFRESH_JOB,
+    REPROCESS_JOB,
+    RETAG_JOB,
+    RECHUNK_JOB,
+    COLLECT_JOB,
+    EMBED_JOB,
+    PUSH_JOB,
+)
+"""Every kind of job, in the order the job statistics list them (each day counts every one)."""
+DEFAULT_STATS_DAYS: Final[int] = 30
+"""Days the job statistics cover when the request names no start: the last 30, today included."""
+MAX_STATS_DAYS: Final[int] = 366
+"""The most days one request for job statistics may cover (a leap year): the range is bounded."""
 ABOVE_EVERY_JOB_ID: Final[str] = "\U0010ffff"
 """The first page's cursor in the SQL job repository: the last Unicode code point sorts after
 every job ID (a UUID string), by code point in Python and SQLite and byte-wise in PostgreSQL's

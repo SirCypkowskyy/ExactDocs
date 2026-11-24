@@ -29,7 +29,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   the session cookie, or `Authorization: Bearer exd_...` with an API token (a wrong bearer is
   refused even if a valid cookie is sent too). Exempt: `POST /setup`, the three `/session`
   operations, `POST /tokens/login`, the two external sign-in navigations
-  (`GET /auth/{provider}/start` and `/callback`) and the OpenAPI document; a test pins that list, and
+  (`GET /auth/{provider}/start` and `/callback`), a provider's own icon (`GET /auth/{provider}/icon`)
+  and the OpenAPI document; a test pins that list, and
   the OpenAPI document marks every other operation with the `SessionCookie` security scheme.
   `POST /session` (`{"username", "password"}`) answers 201 with the session state and sets the
   `exactdocs_session` cookie; a wrong password and an unknown user are the same 401
@@ -43,8 +44,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   forgotten after an hour without an attempt; a right password takes its attempt back (without restarting the wait), clears
   its username's count, and lets that address skip the username's count for 30 days. The counts
   live in the server's memory on SQLite (a restart clears them) and in the database on
-  PostgreSQL, where every server process shares them. Only these two operations document 429. `GET /session` returns `{"state": "setup_required" | "signed_out" |
-  "signed_in", "account": ..., "providers": [{"name", "display_name"}]}` and never fails
+  PostgreSQL, where every server process shares them. `PUT /account/password` checks the current
+  password under the same throttle (see *Own password*); only these three operations document 429. `GET /session` returns `{"state": "setup_required" | "signed_out" |
+  "signed_in", "account": {"id", "username", "role", "has_password"}, "providers": [{"name", "display_name", "icon", "icon_url"}]}` and never fails
   (`providers` lists the configured identity providers, empty while setup is due); `DELETE /session` ends the session on the server
   and is always 204. The cookie is an opaque random token (stored hashed), HttpOnly,
   SameSite=Lax, `Secure` over HTTPS (or with `EXACTDOCS_SECURE_COOKIES`, or an `https://` `EXACTDOCS_PUBLIC_URL`), `Path=/api`, ends after
@@ -68,7 +70,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   an ID token that fails a check), `sign_in_cancelled` (the provider answered an error),
   `not_allowed` (in no allowed group; any access the account had ends), `account_disabled`,
   `username_unavailable` (the username and `<username>@<provider>` are both taken) or
-  `provider_unavailable` (also from `start`). An unknown provider is 404 `unknown_provider`.
+  `not_linked` (the provider creates no accounts, see *Linked sign-in providers*, and nobody
+  linked this identity), `provider_access_revoked` (a linked identity of an account whose own
+  provider ended its access) or `provider_unavailable` (also from `start`). An unknown provider
+  is 404 `unknown_provider`.
   The redirect URI is `<EXACTDOCS_PUBLIC_URL>/api/v1/auth/{provider}/callback`, never built from
   the request. An external account's sessions and API tokens are refused once its access ends
   (a lost group or a revoked refresh token at revalidation, or no successful check within the
@@ -77,11 +82,25 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Pagination**: list endpoints take `limit` (1 to 200, default 50) and an opaque `cursor`, and
   return `next_cursor` (`null` on the last page). Pass it back unchanged; a malformed cursor is a
   422 `invalid_cursor`. Helper: `exactdocs_kernel.paginate`.
+- **Jumping to a page**: the lists of libraries, versions, jobs (global and per library), articles,
+  users, API tokens (the caller's and every account's), a library's grants and both access logs (global and per library) also take
+  `offset` (0 to 10000), which skips that many matches and starts the page there: page *n* of
+  size `limit` is `offset=(n-1)*limit`, and the last one (`total` > 0) is
+  `offset=⌊(total-1)/limit⌋*limit` (233 jobs, 20 a page: `offset=220`, 13 jobs). The
+  order, the filters and `total` are those of the cursor walk with the same `sort` and filters, and
+  the page's `next_cursor` goes on from its last item, so a client can jump and then walk on.
+  An offset past the last match is an empty page with `next_cursor: null` and the same `total`.
+  `offset` and `cursor` are exclusive: sending both is a 422 `cursor_with_offset`; an offset below
+  0 or above 10000 is a 422 `validation_error` naming `offset`. The bound keeps a deep page cheap
+  (a database skips rows by reading them); past it, walk on with `next_cursor` from the page at
+  10000, or reverse the `sort` to reach the end of a longer list. Helpers:
+  `exactdocs_kernel.page_offset`, `MAX_OFFSET`.
 - **Sort, filter and total**: the lists of libraries, versions, jobs (global and per library),
-  articles, users, API tokens and a library's grants also take `sort` (one whitelisted field,
-  `-field` for descending) and filters such as `q` (text, any case), `state`, `kind`, `role`,
-  `disabled`, `ai_enabled`, `has_versions` and date ranges (`updated_after`, `created_before`,
-  ...); each parameter's description in the OpenAPI schema names its fields. They run in the
+  articles, users, API tokens (the caller's and every account's), a library's grants and both
+  access logs also take `sort` (one whitelisted field, `-field` for descending) and filters such
+  as `q` (text, any case), `state`, `kind`, `role`, `disabled`, `provider`, `expired`, `unused`,
+  `ai_enabled`, `has_versions`, `origin` (jobs), `sync_state` (libraries) and date ranges
+  (`updated_after`, `created_before`, `at_after`, ...); each parameter's description in the OpenAPI schema names its fields. They run in the
   database, permissions apply before paging, and a cursor only works with the `sort` and filters
   of the request that returned it. Every one of these pages carries `total`, the number of rows
   that match the filters across all pages. An unknown sort field is a 422 `invalid_sort` naming
@@ -95,6 +114,18 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `kind`, `role` and `sort`; and the users page and the token list their `q`, `sort` and
   filters. The libraries, versions, jobs, articles and grants lists fetch the next page ahead,
   so "Load more" shows it without waiting.
+- **Sizes on the lists** (#513): each entry of `GET /libraries/{owner}/{repo}/versions` carries
+  `articles` (the entries of the version's active manifest, what `list_articles` lists),
+  `chunks` (the chunks they are cut into for search, one per article path that holds it) and
+  `embedded_chunks` (of those, the ones with a vector from the configured embedding model, in
+  its current space). Each library of `GET /libraries` (and of the MCP `list_libraries`)
+  carries `article_count`: the articles of its **default version**, the one `/owner/repo`
+  resolves to. A count is 0, never null, when there is nothing to count: a library without a
+  version, a version not indexed, `embedded_chunks` while no embedding model or vector store is
+  configured, or while the configured model has no space yet or no vector of the version (a
+  library with AI off is never sent to it). The counts are read once per page whatever its size
+  (a grouped query per domain, no request or query per version), so the versions table and the
+  overview need one request.
 - **Close matches**: a 404 for a missing article lists up to five paths of the same version it may have
   meant in `close_matches` (repository data, not instructions); the field is empty on every other error.
 - **Taken IDs**: a 409 `library_id_taken` (checking a repository, adding a library) names the
@@ -171,7 +202,22 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   (the first admin only), by `exactdocs user create`, by a first sign-in through an identity
   provider, or here. `GET /users` lists a page of the accounts (`id`, `username`, `role`, `created_at`,
   `disabled`, `provider` (`null` for a local account) and `groups` (the provider's, as of the
-  latest sign-in or revalidation); oldest first; `q`, `role`, `disabled`, `sort`). `POST /users`
+  latest sign-in or revalidation), `last_active_at` and `token_count`; oldest first; `q`, `role`,
+  `disabled`, `provider`, `sort` by `created_at`, `username`, `role`, `last_active_at` or
+  `token_count`). `provider` (repeat for several) is `password` for a local account, else the name
+  of the provider the account was created through, as `provider` shows it; no identity provider
+  may be named `password`. `last_active_at` is the hour (UTC, minutes always zero: kept to the
+  hour on purpose) of the account's latest activity, `null` until there is any: a sign-in (a
+  password, an identity provider) or a request authenticated as the account (its session cookie,
+  an API token, a provider's ID token over MCP, Cloudflare Access). It is written at most once per
+  hour per account, by the request that was reading the account anyway, best effort (a failed
+  write is logged and the request goes on); activity before the upgrade is not known.
+  `token_count` counts the account's API tokens that have not expired, in one query for the
+  whole list. `GET /users/tokens` lists every account's API tokens for an operator to tidy up:
+  the fields of `GET /tokens` plus `owner_id` and `owner` (the username), never the secret or its
+  hash; expired tokens not yet purged included; newest first; `q` (the token's name),
+  `owner_id`, `expired` and `unused` (`true` or `false`), `sort` by the token fields or `owner`;
+  `cursor` or `offset` like every list. `POST /users`
   (`{"username", "password", "role"?}`, role `user` (default) or `admin`) answers 201 with the
   account; a taken name (compared case-insensitively) is 409 `username_taken`, and a name holding
   `@address:` (the sign-in throttle's own key separator) is 422 `invalid_username`.
@@ -188,6 +234,73 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   operator: an API token is 401 (a stolen token cannot create accounts), and a signed-in account
   that is not an `admin` gets 403 `forbidden`. Library roles (who may read or change a library)
   are separate: see the *Library roles* bullet below.
+- **Interface preferences** (#487): `GET /api/v1/account/preferences` answers the caller's
+  `{"saved", "preferences"}`; `saved` is `false` while the account never saved any, and
+  `preferences` then holds the defaults (so the UI keeps, and saves, what the browser already
+  applies on a first sign-in). `PUT` takes the whole `preferences` object and answers the same
+  shape with `saved: true`: `theme` (`light`, `dark`, `system`), `contrast` (`standard`, `more`),
+  `text_scale` (90, 100, 110, 125 or 150 percent), `text_spacing` (`standard`, `wide`), `motion`
+  (`system`, `reduced`, `full`), `font` (`default`, `hyperlegible`, `dyslexic`, `system`),
+  `underline_links` and `large_targets` (booleans), `language` (`system`, `en`, `pl`; `system`
+  follows the browser's), `library_logos` (boolean; `false` hides library logos and generic
+  icons, #504), `leaderboard_opt_in` (boolean; `true` agrees to be shown by name on the people
+  leaderboard while the operator has it on, #510); defaults `system`, `standard`, 100, `standard`,
+  `system`, `default`, `false`, `false`, `system`, `true`, `false`. Every key is required but
+  `leaderboard_opt_in`: a `PUT` without it (an interface older than #510) keeps the choice already
+  saved (`false` if none), so it neither opts the person in nor drops their opt-in. An unknown key
+  or a value not listed is 422 `validation_error` naming the field, and nothing is saved. They are stored per account
+  (`identity_preferences`, one JSON object: a key a stored row lacks, or a value no longer
+  offered, reads as its default), so they follow the person to every browser; a session or an
+  API token may call both, and each acts as its own account only.
+- **Own password** (#505): `PUT /account/password` (`{"current_password", "new_password"}`)
+  changes the signed-in account's own password; the new one follows the setup's limits (12 to
+  1024 characters, else 422 `validation_error`). The current password is checked like a sign-in,
+  under the same throttle: a wrong one is 403 `wrong_password` (the caller stays signed in) and
+  counts as a failed sign-in of its address and username, and once they are past the free
+  failures the change, like `POST /session`, is 429 `rate_limited` with `Retry-After`, its
+  password unchecked. On success it answers 204: every other session of the account ends and
+  the one that made the change stays; API tokens keep working (revoke them under `/tokens` if
+  they may have leaked); the username's throttle count and every address remembered for it
+  (they signed in with the old password) are dropped, as after an operator's reset, and the
+  caller's own address is remembered again. An account without a password (it signs in through
+  an identity provider or Cloudflare Access) is 409 `external_account`: `has_password` in the
+  `account` of `GET /session` (and of `GET /users`) is `false` for it, so the UI hides the form.
+  It needs the **session cookie**; an API token is 401, so a stolen token cannot take the
+  account over.
+- **Linked sign-in providers** (#506): an account keeps the identity it was created through (its
+  *origin*; an account without a password follows it: role, groups and access) and may link one
+  identity of every other configured provider, which then only signs it in (the account's own
+  role and groups stand). `GET /account/providers` answers `{"has_password", "providers"}`: every
+  configured provider in configuration order, then each identity linked through a provider no
+  longer configured (`configured: false`), each with `name`, `display_name`, `icon`, `icon_url`,
+  `linked`, `origin`, `linked_at` (`null` for the origin), `last_signed_in_at`, `can_link` and
+  `can_unlink`. `POST /account/providers/{provider}/link` (body optional:
+  `{"return_to": "/path"}`, default `/account`) answers `{"redirect_url"}` and sets the
+  `exactdocs_sign_in` binding cookie exactly as `GET /auth/{provider}/start` does; the attempt
+  also holds the SHA-256 of the session that started it. The browser goes to `redirect_url`; the
+  provider comes back to `GET /auth/{provider}/callback`, which, for a link, needs the binding
+  cookie, the `state` **and the same session cookie**, links the identity to that session's
+  account, sets no cookie but clears the binding one, and redirects to `return_to` with
+  `?linked=<provider>`, or `?link_error=<code>`: `sign_in_failed` (another session, or none, or a
+  callback that fails a check), `sign_in_cancelled`, `not_allowed`, `identity_linked_elsewhere`
+  (the identity is another account's), `provider_linked`, `unauthenticated` (the session ended
+  meanwhile) or `provider_unavailable`. `return_to` is a path on this server (anything else is
+  `/`). The start is refused with 409 `provider_linked` when the account has an identity of the
+  provider already, 404 `unknown_provider`, or 429 `provider_unavailable`.
+  `DELETE /account/providers/{provider}` unlinks the account's identity of the provider (it no
+  longer signs the account in; sessions stay) and answers the list again; 404
+  `provider_not_linked`, or 409 `last_sign_in_method` for the origin of an account without a
+  password (its only way in). Every `/account/providers` route needs the **session cookie**: an
+  API token is 401, so a stolen token cannot link an identity that signs in as its account. A
+  provider with `auto_create_users = false` (the default of the Discord, Google and Microsoft
+  presets) signs in linked identities only: anyone else is refused with `not_linked`, at sign-in
+  and over MCP OAuth. `GET /auth/{provider}/icon` serves a provider's own icon (`icon_file`),
+  the `icon_url` the provider lists (`?v=<version>`, which changes with the icon): `image/png`,
+  `image/webp` or a sanitised `image/svg+xml`, with `ETag` (304 on `If-None-Match`),
+  `Cache-Control: public, max-age=86400`, `X-Content-Type-Options: nosniff` and a
+  `Content-Security-Policy` that runs and loads nothing. A built-in icon (`icon`: `discord`,
+  `github`, `google` or `microsoft`) is the web UI's own and has no `icon_url`; a provider
+  without an icon file is 404 `no_icon`. The icon needs no caller.
 - **Library roles** (ACL-02): `viewer < contributor < admin < creator` on each library, granted
   to users and to groups; an account's role is the highest it holds, and an operator (role
   `admin`) is `creator` of every library. Every library route asks for one: `viewer` reads and
@@ -221,16 +334,64 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   [{"id", "library", "at", "actor", "change", "kind", "subject", "role", "previous_role"}],
   "next_cursor", "total"}`; `change` is `library_created`, `granted`, `revoked`,
   `ownership_transferred` or `library_deleted`; `actor` is a username, null when the instance
-  made the change; `role` is the role given, or taken away for `revoked`; filter with `change`,
-  repeated). It needs `admin` on the library. Operators see every event recorded under the
-  library's ID; anyone else only those since it was last removed. `GET /access-log` is the
-  operators' log of every library, removed ones included (filter with `library` and `change`); like
-  `/users` it needs the session cookie of an `admin` (an API token is 401, anyone else 403).
+  made the change; `role` is the role given, or taken away for `revoked`). It needs `admin` on
+  the library. Operators see every event recorded under the library's ID; anyone else only those
+  since it was last removed. `GET /access-log` is the operators' log of every library, removed
+  ones included (it also filters with `library`); like `/users` it needs the session cookie of an
+  `admin` (an API token is 401, anyone else 403). Both logs (#514) take `sort` (`at`, `library`
+  or `change`, `-` for descending; default `-at`, newest first; ties go by the order the events
+  were recorded in, in the same direction) and these filters, which compose with each other and
+  with `offset` and the cursor:
+  - `change`, repeated: only those changes.
+  - `actor`: only changes made by that person, named as the log shows them: a username (any
+    case), or the account ID the log shows for an account that no longer exists. Changes the
+    instance made (`actor` null) never match.
+  - `subject`: only changes about that user or group, named as the log shows them: a username
+    (any case), the account ID of an account that no longer exists, or a group name (exact case,
+    `group_prefix` included). A user and a group with the same name both match (`kind` tells
+    them apart); a `library_deleted` event is about nobody and never matches.
+  - `at_after` / `at_before`: only events at or after / before that time (ISO 8601; no offset
+    means UTC). The last 7 days are `at_after=<now − 7 days>`.
+
+  A cursor is made for one `sort`: sending it with another is a 422 `invalid_cursor` (cursors
+  from before this change, which held the event ID alone, are refused the same way; start again
+  from the first page). An unknown sort field is a 422 `invalid_sort`.
+
   A transfer records one `granted` entry per creator before (now `admin`, `previous_role`
   `creator`) and then one `ownership_transferred` entry whose subject is the new creator (`role`
   `creator`, `previous_role` the role they held, if any), with the caller as actor.
   Giving someone the role they already hold records nothing. Changes made before the upgrade
   that added the log are not in it.
+- **Usage** (#510): every read (an article or a chunk, over REST, MCP or its resources), search
+  (one library, several or all, `query-docs` and `/c7/docs` included) and agent answer is counted
+  per UTC day, account, API token, library and operation, and nothing else: no query, no path, no
+  text. A request that fails is not counted, nor are the agent's own reads or a stdio MCP process
+  (read-only). A search or an answer over more than one library counts to no library. Counts are
+  added up in memory and written every 10 s and when the server stops (a report writes the pending
+  ones first), and the days older than `EXACTDOCS_USAGE__RETENTION_MONTHS` (13 by default) are
+  deleted every night. `GET /stats/usage` is the instance's usage for operators (like `/users`, the
+  session cookie of an `admin`: an API token is 401, anyone else 403): `period` (`day`, `week`
+  (ISO, Monday first), `month`, `year`; UTC), `periods` (how many, 1 to 400; default 30 days, 12
+  weeks, 12 months or 2 years), `until` (a day of the last period; default today), `by` (`none`,
+  `library`, `account`, `token`), `library` and `limit` (groups, 1 to 200, default 50). It answers
+  `{"period", "since", "until", "by", "total", "series", "groups", "groups_total"}`: `series` has one
+  bucket per period (`start`, `end`, `reads`, `searches`, `answers`), zeros included; `groups` the
+  breakdown over the whole range, most reads first. People are named (`account_id`, `username`)
+  only while the people leaderboard is on and only if they opted in; everyone else, and requests
+  without an account, are summed into one last group with `others: true`, so an operator sees
+  them in aggregate only. `GET /account/usage` is the same report over the caller's own counts
+  (`by`: `none`, `library`, `token`; `token_id: null` is their browser sessions and OAuth
+  sign-ins); a session or an API token may ask, and nobody can ask for someone else's.
+  `GET /stats/leaderboard?subject=libraries|people&metric=reads|searches|answers&period=day|week|month|year&at=&limit=`
+  ranks over the period holding `at` (default today, so the current period so far): `{"subject",
+  "metric", "period", "start", "end", "previous_start", "previous_end", "total", "ranked",
+  "entries", "you"}`, each entry with `rank` (equal values share one: 1, 2, 2, 4),
+  `previous_rank` (among the same subjects in the period before; `null` when it had nothing
+  counted) and `value`. `libraries` (the default) is always on and lists only libraries the caller
+  may read. `people` is 403 `people_leaderboard_off` until the operator sets
+  `EXACTDOCS_USAGE__PEOPLE_LEADERBOARD`, and then ranks only enabled accounts that opted in
+  (`leaderboard_opt_in`); the caller's entry has `you: true`, and comes in `you` when ranked beyond
+  `limit`. `GET /stats/settings` tells any caller `{"people_leaderboard", "retention_months"}`.
 - **Editing a library**: `PATCH /libraries/{owner}/{repo}` (`{"title"?, "description"?}`). An edited
   field is kept across re-imports instead of following the default version's `context7.json` or
   root README (LIB-07).
@@ -703,6 +864,21 @@ See [AI retrieval decisions](decisions/ai-retrieval.md) for the kinds and what e
   per-library ones, with `usd_left` and `tokens_left` against it; where the instance's is lower (it was lowered after
   the library set its own), `own_usd_limit` / `own_tokens_limit` give the library's own ceiling,
   otherwise they are `null`.
+- `GET /ai/usage/history?scope=&id=&window=&from=&to=`: what one scope spent per UTC day or month,
+  for charts: `{"scope", "id", "window", "first", "last", "entries": [{"window_start",
+  "input_tokens", "output_tokens", "tokens", "local_tokens", "requests", "usd",
+  "unpriced_requests"}]}`, one entry per window from `first` to `last` (both included, oldest
+  first), counted as in `GET /ai/usage` and zero for a window with no spend. `scope` and `id` name
+  a scope as `GET /ai/usage` does: `instance` (the default) and `embedding` take no `id`;
+  `library` needs the library ID (any letter case; `id` comes back case-folded, as the ledger keeps
+  it) and `user` the account ID. `window` is `day` (the default) or `month`. `from` and `to` are
+  UTC dates (`YYYY-MM-DD`); for months any day of a month stands for it, and `first` / `last` are
+  the windows' first days. Without `to` the range ends with today's window; without `from` it holds
+  30 days or 12 months up to `to`. A range ends after it starts and holds at most 366 days or 60
+  months; otherwise, or for an `id` that does not fit the `scope`, it is 422
+  `invalid_spend_history`. Dates in the future are allowed (zero). Operators only, like the rest of
+  `/ai`. Libraries and accounts that no longer exist keep their rows, so their history is still
+  shown.
 
 ## Jobs, access and health
 
@@ -710,6 +886,35 @@ See [AI retrieval decisions](decisions/ai-retrieval.md) for the kinds and what e
   `collect`, `embed` or `push`; state `queued`,
   `running`, `succeeded`, `failed` or `cancelled`; `done` / `total` files, or chunks for `embed`; `chunked` / `reused`; `parsed` / `taken`; problems;
   `cancelled_by` / `cancelled_at`; `cancellable`, whether the caller may cancel it now).
+- **Who queued a job**: every job (also on `GET /jobs`, a library's jobs and `/jobs/latest`) has
+  `created_by`, the person whose request queued it, as `{"id": <account ID>, "username": ...}`:
+  the account of the session or API token (REST) or OAuth/API token (MCP), never the token or
+  its ID. The user name is the one the account had then, so a job keeps naming its person after
+  the account is removed. It is `null` when no person queued the job: the instance's own work,
+  the command line on the server (`exactdocs ...` without the API), and every job queued before
+  ExactDocs recorded it (upgrading leaves those `null`; nothing can tell who queued them).
+  `origin` is stored with the job: `auto` when the instance queued it on its own (the scheduled
+  check's tag imports and branch syncs, with the failures and recoveries they record; a
+  repository webhook's `push` job and the sync or imports it queues; the `embed` jobs the
+  instance queues after an import, at start and nightly), `manual` otherwise. An `auto` job
+  never names a person. Jobs queued before this release keep the origin they were stored with
+  (a scheduled branch sync was `manual` then). Filter with `origin=auto` or `origin=manual` on
+  `GET /jobs` and `GET /libraries/{owner}/{repo}/jobs`.
+- **Libraries by sync state**: `GET /libraries?sync_state=failed` (repeatable, any job state)
+  lists the libraries whose latest sync, their newest `import` or `refresh` job, is in one of
+  those states; a library that never synced matches none, and a newer job of another kind
+  (`embed`, `collect`, ...) does not change it. The catalog still filters, sorts and pages, so
+  the filter works with every other filter, `cursor` and `offset`, and `total` counts the
+  matches. The instance reads every library's latest sync in one grouped query.
+- **Job statistics**: `GET /stats/jobs?bucket=day&from=2026-11-01&to=2026-11-30` counts the jobs
+  queued on each UTC day from `from` to `to` (both `YYYY-MM-DD`, both included) by the state
+  they are in now (`by_state`) and by kind (`by_kind`), with each day's `total`. Every day of the
+  range is listed, oldest first, and every state and kind with it, 0 included, so a chart needs
+  no filling in. `bucket` is `day` (the default and only bucket); `to` defaults to today (UTC)
+  and `from` to 29 days before `to`. A range that ends before it starts, or covers more than
+  366 days, is a 422 `invalid_range`. Operators only (a session or an API token of an `admin`;
+  403 `forbidden` otherwise): the counts cover every library. One grouped query on an index of
+  the jobs' creation time.
 - **Cancelling a job**: `POST /jobs/{id}/cancel` needs the `contributor` role on the job's library
   (operators always may; 403 `forbidden` otherwise). A `queued` job becomes `cancelled` at once and
   never starts: its version stays as it was, or is never created for a first import. A `running`

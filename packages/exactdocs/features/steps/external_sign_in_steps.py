@@ -88,7 +88,7 @@ def _client(context: Context) -> TestClient:
     return context.external_client
 
 
-def _send(
+def send(
     context: Context, method: str, path: str, *, session: str | None = None, **kwargs: Any
 ) -> httpx2.Response:
     """A request with exactly this session (the jar's cookies are not sent)."""
@@ -102,9 +102,9 @@ def _send(
     return response
 
 
-def _admin_session(context: Context) -> str:
+def admin_session(context: Context) -> str:
     username, password = ADMIN
-    response = _send(
+    response = send(
         context, "POST", "/api/v1/session", json={"username": username, "password": password}
     )
     assert response.status_code == HTTPStatus.CREATED, response.text
@@ -112,12 +112,12 @@ def _admin_session(context: Context) -> str:
 
 
 def _users(context: Context) -> dict[str, dict[str, Any]]:
-    response = _send(context, "GET", "/api/v1/users", session=_admin_session(context))
+    response = send(context, "GET", "/api/v1/users", session=admin_session(context))
     assert response.status_code == HTTPStatus.OK, response.text
     return {user["username"]: user for user in response.json()["users"]}
 
 
-def _person(
+def person(
     context: Context,
     name: str,
     subject: str,
@@ -147,14 +147,14 @@ def _callback(context: Context, url: str) -> httpx2.Response:
     return context.response
 
 
-def _sign_in(context: Context, subject: str) -> httpx2.Response:
+def sign_in(context: Context, subject: str) -> httpx2.Response:
     """The whole browser flow for ``subject``, from a browser holding no session."""
     _client(context).cookies.clear()
     callback = context.issuer.authorize(_start(context), subject)
     return _callback(context, callback)
 
 
-def _session_of(response: httpx2.Response) -> str:
+def session_of(response: httpx2.Response) -> str:
     assert response.status_code == HTTPStatus.SEE_OTHER, response.text
     assert response.headers["location"] == "/libraries", response.headers["location"]
     token = response.cookies.get(SESSION_COOKIE)
@@ -163,7 +163,7 @@ def _session_of(response: httpx2.Response) -> str:
 
 
 def _whoami(context: Context, session: str) -> dict[str, Any]:
-    response = _send(context, "GET", "/api/v1/session", session=session)
+    response = send(context, "GET", "/api/v1/session", session=session)
     assert response.status_code == HTTPStatus.OK, response.text
     return response.json()
 
@@ -192,8 +192,8 @@ def step_no_link(context: Context, subject: str) -> None:
 @when('"{name}" (subject "{subject}", group "{group}") signs in through "{provider}"')
 def step_signs_in(context: Context, name: str, subject: str, group: str, provider: str) -> None:
     assert provider == context.provider
-    _person(context, name, subject, email=f"{name}@example.com", groups=[group])
-    context.session = _session_of(_sign_in(context, subject))
+    person(context, name, subject, email=f"{name}@example.com", groups=[group])
+    context.session = session_of(sign_in(context, subject))
 
 
 @then('an account "{name}" with role "{role}" is created and linked to that issuer and subject')
@@ -202,7 +202,7 @@ def step_created(context: Context, name: str, role: str) -> None:
     assert user["role"] == role, user
     assert user["provider"] == context.provider, user
     # Linked by (issuer, subject): the same subject reaches the same account again.
-    again = _whoami(context, _session_of(_sign_in(context, context.people[name])))
+    again = _whoami(context, session_of(sign_in(context, context.people[name])))
     assert again["account"]["id"] == user["id"], again
 
 
@@ -225,15 +225,15 @@ def step_usual_cookie(context: Context) -> None:
 @given('"{name}" signed in through "{provider}" once as subject "{subject}"')
 def step_signed_in_once(context: Context, name: str, provider: str, subject: str) -> None:
     assert provider == context.provider
-    _person(context, name, subject, email=f"{name}@example.com")
-    context.account_id = _whoami(context, _session_of(_sign_in(context, subject)))["account"]["id"]
+    person(context, name, subject, email=f"{name}@example.com")
+    context.account_id = _whoami(context, session_of(sign_in(context, subject)))["account"]["id"]
 
 
 @when('subject "{subject}" signs in again with another email and username')
 def step_new_email(context: Context, subject: str) -> None:
     user = context.issuer.users[subject]
     user.username, user.email = "alice.renamed", "alice.renamed@example.com"
-    context.session = _session_of(_sign_in(context, subject))
+    context.session = session_of(sign_in(context, subject))
 
 
 @then("she reaches the same account")
@@ -246,7 +246,7 @@ def step_same_account(context: Context) -> None:
 @then("a different subject with alice's old email gets an account of its own")
 def step_other_subject(context: Context) -> None:
     context.issuer.add_user("u-999", None, email="alice@example.com")
-    account = _whoami(context, _session_of(_sign_in(context, "u-999")))["account"]
+    account = _whoami(context, session_of(sign_in(context, "u-999")))["account"]
     assert account["id"] != context.account_id, account
     assert account["username"] == "alice@corp", account
 
@@ -257,7 +257,7 @@ def step_other_subject(context: Context) -> None:
 @given('a local account "{name}" exists')
 def step_local_account(context: Context, name: str) -> None:
     body = {"username": name, "password": f"{name}'s long passphrase"}
-    response = _send(context, "POST", "/api/v1/users", session=_admin_session(context), json=body)
+    response = send(context, "POST", "/api/v1/users", session=admin_session(context), json=body)
     assert response.status_code == HTTPStatus.CREATED, response.text
     context.local_id = response.json()["id"]
 
@@ -265,8 +265,8 @@ def step_local_account(context: Context, name: str) -> None:
 @when('subject "{subject}" with username "{username}" signs in through "{provider}"')
 def step_same_name(context: Context, subject: str, username: str, provider: str) -> None:
     assert provider == context.provider
-    _person(context, f"{username} at {provider}", subject, username=username)
-    context.session = _session_of(_sign_in(context, subject))
+    person(context, f"{username} at {provider}", subject, username=username)
+    context.session = session_of(sign_in(context, subject))
 
 
 @then('the local account "{name}" is unchanged and still signs in with its password')
@@ -275,7 +275,7 @@ def step_local_unchanged(context: Context, name: str) -> None:
     assert local["id"] == context.local_id, local
     assert local["provider"] is None, local
     body = {"username": name, "password": f"{name}'s long passphrase"}
-    response = _send(context, "POST", "/api/v1/session", json=body)
+    response = send(context, "POST", "/api/v1/session", json=body)
     assert response.status_code == HTTPStatus.CREATED, response.text
     assert response.json()["account"]["id"] == context.local_id
 
@@ -292,12 +292,12 @@ def step_named(context: Context, username: str) -> None:
 
 @given('the IdP puts "{name}" in group "{group}"')
 def step_in_group(context: Context, name: str, group: str) -> None:
-    _person(context, name, f"subject-of-{name}", groups=[group])
+    person(context, name, f"subject-of-{name}", groups=[group])
 
 
 @when('"{name}" signs in through OIDC')
 def step_signs_in_oidc(context: Context, name: str) -> None:
-    context.session = _session_of(_sign_in(context, context.people[name]))
+    context.session = session_of(sign_in(context, context.people[name]))
 
 
 @then('she is a member of ExactDocs group "{group}"')
@@ -308,7 +308,7 @@ def step_member(context: Context, group: str) -> None:
 @then("when the IdP removes her from it, her next sign-in removes her membership")
 def step_membership_removed(context: Context) -> None:
     context.issuer.users[context.people["alice"]].groups = []
-    _session_of(_sign_in(context, context.people["alice"]))
+    session_of(sign_in(context, context.people["alice"]))
     assert _users(context)["alice"]["groups"] == []
 
 
@@ -327,8 +327,8 @@ def step_allowed_group(context: Context, name: str, group: str) -> None:
 
 @given('"{name}" signed in as a member of "{group}" and is an admin')
 def step_admin_member(context: Context, name: str, group: str) -> None:
-    _person(context, name, f"subject-of-{name}", groups=[group])
-    context.session = _session_of(_sign_in(context, context.people[name]))
+    person(context, name, f"subject-of-{name}", groups=[group])
+    context.session = session_of(sign_in(context, context.people[name]))
     assert _whoami(context, context.session)["account"]["role"] == "admin"
 
 
@@ -346,15 +346,15 @@ def step_demoted(context: Context, role: str) -> None:
     report = _revalidate(context)
     assert report.extended == 1, report
     assert _whoami(context, context.session)["account"]["role"] == role
-    session = _session_of(_sign_in(context, context.people["alice"]))
+    session = session_of(sign_in(context, context.people["alice"]))
     assert _whoami(context, session)["account"]["role"] == role
 
 
 @given('"{name}" signed in as a member of "{group}" and has an API token')
 def step_member_with_token(context: Context, name: str, group: str) -> None:
-    _person(context, name, f"subject-of-{name}", groups=[group])
-    context.session = _session_of(_sign_in(context, context.people[name]))
-    response = _send(
+    person(context, name, f"subject-of-{name}", groups=[group])
+    context.session = session_of(sign_in(context, context.people[name]))
+    response = send(
         context, "POST", "/api/v1/tokens", session=context.session, json={"name": "laptop"}
     )
     assert response.status_code == HTTPStatus.CREATED, response.text
@@ -364,7 +364,7 @@ def step_member_with_token(context: Context, name: str, group: str) -> None:
 
 def _libraries_with_token(context: Context) -> int:
     headers = {"authorization": f"Bearer {context.api_token}"}
-    return _send(context, "GET", "/api/v1/libraries", headers=headers).status_code
+    return send(context, "GET", "/api/v1/libraries", headers=headers).status_code
 
 
 @then("after the revalidation interval her session ends and her API token is refused")
@@ -379,7 +379,7 @@ def step_lost_access(context: Context) -> None:
 
 @then('her next sign-in is refused with "{code}"')
 def step_next_refused(context: Context, code: str) -> None:
-    response = _sign_in(context, context.people["carol"])
+    response = sign_in(context, context.people["carol"])
     assert _refusal(response) == code
     assert SESSION_COOKIE not in response.cookies
     assert _libraries_with_token(context) == HTTPStatus.UNAUTHORIZED
@@ -390,11 +390,11 @@ def step_next_refused(context: Context, code: str) -> None:
 
 @given('an operator disabled the account linked to subject "{subject}"')
 def step_disabled(context: Context, subject: str) -> None:
-    _person(context, "alice", subject)
-    _session_of(_sign_in(context, subject))
+    person(context, "alice", subject)
+    session_of(sign_in(context, subject))
     user = _users(context)["alice"]
-    response = _send(
-        context, "POST", f"/api/v1/users/{user['id']}/disable", session=_admin_session(context)
+    response = send(
+        context, "POST", f"/api/v1/users/{user['id']}/disable", session=admin_session(context)
     )
     assert response.status_code == HTTPStatus.OK, response.text
 
@@ -402,7 +402,7 @@ def step_disabled(context: Context, subject: str) -> None:
 @when('subject "{subject}" signs in through "{provider}"')
 def step_subject_signs_in(context: Context, subject: str, provider: str) -> None:
     assert provider == context.provider
-    _sign_in(context, subject)
+    sign_in(context, subject)
 
 
 @then('the external sign-in is refused with "{code}"')
@@ -424,7 +424,7 @@ def step_no_session(context: Context) -> None:
 
 @when("the callback arrives with {forgery}")
 def step_forged(context: Context, forgery: str) -> None:
-    _person(context, "mallory", "u-666")
+    person(context, "mallory", "u-666")
     issuer = context.issuer
     client = _client(context)
     tampers = {
@@ -437,7 +437,7 @@ def step_forged(context: Context, forgery: str) -> None:
     }
     if forgery in tampers:
         issuer.tamper = tampers[forgery]
-        _sign_in(context, "u-666")
+        sign_in(context, "u-666")
     elif forgery == "a state that was not issued to this browser":
         # The attacker's own sign-in, finished in the victim's browser (login CSRF).
         client.cookies.clear()
@@ -454,7 +454,7 @@ def step_forged(context: Context, forgery: str) -> None:
         client.cookies.clear()
         callback = issuer.authorize(_start(context), "u-666")
         binding = client.cookies[SIGN_IN_COOKIE]
-        _session_of(client.get(callback, follow_redirects=False))
+        session_of(client.get(callback, follow_redirects=False))
         client.cookies.clear()
         context.response = client.get(
             callback, headers={"cookie": f"{SIGN_IN_COOKIE}={binding}"}, follow_redirects=False
@@ -473,8 +473,8 @@ def step_no_refresh(context: Context) -> None:
 
 @when('"{name}" signs in through it')
 def step_signs_in_through_it(context: Context, name: str) -> None:
-    _person(context, name, f"subject-of-{name}")
-    context.session = _session_of(_sign_in(context, context.people[name]))
+    person(context, name, f"subject-of-{name}")
+    context.session = session_of(sign_in(context, context.people[name]))
 
 
 @then("her session ends after the revalidation grace period and she signs in again")
@@ -485,7 +485,7 @@ def step_short_session(context: Context) -> None:
     assert (report.extended, report.revoked) == (0, 0), report  # nothing to refresh with
     context.clock.advance(timedelta(minutes=2))
     assert _whoami(context, context.session)["state"] == "signed_out"
-    again = _session_of(_sign_in(context, context.people["erin"]))
+    again = session_of(sign_in(context, context.people["erin"]))
     assert _whoami(context, again)["state"] == "signed_in"
 
 
@@ -501,7 +501,7 @@ def step_down(context: Context) -> None:
 @when("the local admin signs in with username and password")
 def step_admin_password(context: Context) -> None:
     username, password = ADMIN
-    context.response = _send(
+    context.response = send(
         context, "POST", "/api/v1/session", json={"username": username, "password": password}
     )
 
@@ -539,7 +539,7 @@ def generic_provider(context: Context) -> None:
 
 @when("Alice completes the generic OAuth2 sign-in")
 def generic_sign_in(context: Context) -> None:
-    context.session = _session_of(_sign_in(context, "u-123"))
+    context.session = session_of(sign_in(context, "u-123"))
 
 
 @then("her OAuth2 account is linked to the configured subject and groups")
@@ -579,7 +579,7 @@ def github_restricted(context: Context, restriction: str) -> None:
 
 @when("the GitHub user completes external sign-in")
 def github_sign_in(context: Context) -> None:
-    context.github_response = _sign_in(context, "123")
+    context.github_response = sign_in(context, "123")
 
 
 @then('GitHub sign-in is refused with code "{code}"')
@@ -592,8 +592,8 @@ def github_refused(context: Context, code: str) -> None:
 @given("the GitHub user has an active session and API token")
 def github_session_token(context: Context) -> None:
 
-    context.session = _session_of(_sign_in(context, "123"))
-    response = _send(
+    context.session = session_of(sign_in(context, "123"))
+    response = send(
         context, "POST", "/api/v1/tokens", session=context.session, json={"name": "cli"}
     )
     assert response.status_code == HTTPStatus.CREATED, response.text
@@ -612,7 +612,7 @@ def github_loses_team(context: Context) -> None:
 def github_credentials_refused(context: Context) -> None:
 
     assert _whoami(context, context.session)["state"] == "signed_out"
-    response = _send(
+    response = send(
         context,
         "GET",
         "/api/v1/libraries",
@@ -621,3 +621,24 @@ def github_credentials_refused(context: Context) -> None:
     assert response.status_code == HTTPStatus.UNAUTHORIZED, response.text
     github_sign_in(context)
     github_refused(context, "github_team_required")
+
+
+# ---------------------------------------------------------------- shared with other features
+
+
+def signed_in_through_provider(context: Context, name: str, subject: str) -> str:
+    """Sign ``name`` in through the configured provider in a fresh browser; return the session.
+
+    For features about something else that need an account of an identity provider (no password).
+    """
+    person(context, name, subject, email=f"{name}@example.com", groups=[])
+    return session_of(sign_in(context, subject))
+
+
+# Shared with other features (linked providers): the instance, the browser and the people
+# (`send`, `admin_session`, `person`, `sign_in` and `session_of` are shared under their own names).
+instance_client = _client
+send_as = send
+add_person = person
+browser_sign_in = sign_in
+whoami = _whoami

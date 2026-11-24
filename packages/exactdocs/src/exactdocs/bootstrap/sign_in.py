@@ -12,18 +12,31 @@ from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from types import MappingProxyType
 
 import httpx2
 
-from exactdocs.bootstrap.constants import SIGN_IN_STOP_SECONDS, V1_PREFIX
+from exactdocs.bootstrap.constants import (
+    GOOGLE_AUTHORIZATION_PARAMS,
+    SIGN_IN_STOP_SECONDS,
+    V1_PREFIX,
+)
+from exactdocs.bootstrap.database import StartupError
 from exactdocs.bootstrap.settings import Settings, SignInProviderSettings
 from exactdocs.identity.adapters.driven.cloudflare_access import CloudflareAccessVerifier
 from exactdocs.identity.adapters.driven.github import GithubProvider, github_api_url
+from exactdocs.identity.adapters.driven.icons import read_icon
 from exactdocs.identity.adapters.driven.oauth2 import OAuth2ClaimNames, OAuth2Provider
 from exactdocs.identity.adapters.driven.oidc import OidcClaimNames, OidcProvider
 from exactdocs.identity.constants import OIDC_TIMEOUT
-from exactdocs.identity.models import AccessPolicy, SignInPolicy, Username
+from exactdocs.identity.models import (
+    AccessPolicy,
+    BuiltInIcon,
+    ProviderIcon,
+    SignInPolicy,
+    Username,
+)
 from exactdocs.identity.ports.driven import SignInProvider
 from exactdocs.identity.ports.driving import RevalidateExternalAccounts
 from exactdocs_kernel import Clock
@@ -72,22 +85,21 @@ def sign_in_providers(
     providers: dict[str, SignInProvider] = {}
     policies: dict[str, SignInPolicy] = {}
     for name, config in settings.auth.providers.items():
+        icon = config.built_in_icon
         policies[name] = SignInPolicy(
             name=name,
             display_name=config.display_name or name,
             allowed_groups=frozenset(config.allowed_groups),
-            allow_any_user=config.allow_any_user
-            or (
-                config.kind == "github"
-                and not config.allowed_groups
-                and bool(config.allowed_orgs or config.allowed_teams)
-            ),
+            allow_any_user=config.admits_anyone,
             admin_groups=frozenset(config.admin_groups),
             group_prefix=config.group_prefix,
             revalidate_every=timedelta(minutes=config.revalidate_minutes),
             grace=timedelta(minutes=config.revalidate_grace_minutes),
+            auto_create_users=config.creates_accounts,
+            icon=None if icon is None else BuiltInIcon(icon),
+            icon_file=None if config.icon_file is None else _icon(name, config.icon_file),
         )
-        if config.kind == "github":
+        if config.protocol == "github":
             providers[name] = GithubProvider(
                 base_url=config.base_url.rstrip("/"),
                 api_url=github_api_url(config.base_url, config.api_url),
@@ -99,7 +111,7 @@ def sign_in_providers(
                 client=client,
             )
             continue
-        if config.kind == "oauth2":
+        if config.protocol == "oauth2":
             providers[name] = OAuth2Provider(
                 issuer=config.issuer,
                 authorization_endpoint=config.authorization_url or "",
@@ -132,8 +144,30 @@ def sign_in_providers(
             ),
             client=client,
             clock=clock,
+            discovery_url=config.discovery_url,
+            authorization_params=GOOGLE_AUTHORIZATION_PARAMS if config.kind == "google" else {},
         )
     return providers, policies
+
+
+def _icon(name: str, path: Path) -> ProviderIcon:
+    """Read and check a provider's own icon file.
+
+    Args:
+        name: The provider's name, for the message.
+        path: The ``icon_file`` setting.
+
+    Returns:
+        The icon, an SVG sanitised.
+
+    Raises:
+        StartupError: The file cannot be read, or it is not an acceptable icon.
+    """
+    try:
+        return read_icon(path)
+    except ValueError as error:
+        message = f"sign-in provider {name!r}: icon_file {str(path)!r}: {error}"
+        raise StartupError(message) from None
 
 
 def cloudflare_access(

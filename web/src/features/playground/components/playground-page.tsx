@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { FlaskConical, Search, Sparkles } from "lucide-react";
-import { type FormEvent, useContext, useMemo, useState } from "react";
+import { type FormEvent, useMemo, useState } from "react";
 import { common, useMessages } from "@/shared/lib/i18n";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { Button } from "@/shared/ui/button";
 import { Field } from "@/shared/ui/field";
-import { LibraryMark } from "@/shared/ui/library-mark";
+import { LibraryCombobox, type LibraryOption } from "@/shared/ui/library-combobox";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { SelectField } from "@/shared/ui/select-field";
 import {
@@ -24,53 +24,6 @@ import {
 import { AgentAnswer } from "./agent-answer";
 import { LibraryLogos } from "./library-logos";
 import { ModeResults } from "./mode-results";
-
-function LibraryPicker({
-  libraries,
-  chosen,
-  onChange,
-}: {
-  libraries: readonly string[];
-  chosen: readonly string[];
-  onChange: (next: string[]) => void;
-}) {
-  const t = useMessages(messages);
-  const logos = useContext(LibraryLogos);
-  const picked = new Set(chosen);
-  const toggle = (id: string) =>
-    onChange(picked.has(id) ? chosen.filter((c) => c !== id) : [...chosen, id]);
-  return (
-    <fieldset className="space-y-2">
-      <legend className="text-body font-medium">{t.page.libraries}</legend>
-      <div className="flex flex-wrap gap-x-5 gap-y-1">
-        <label className="flex min-h-11 cursor-pointer items-center gap-2.5 text-body md:min-h-9">
-          <input
-            type="checkbox"
-            checked={chosen.length === 0}
-            onChange={() => onChange([])}
-            className="size-4 cursor-pointer accent-primary"
-          />
-          {t.page.allLibraries}
-        </label>
-        {libraries.map((id) => (
-          <label
-            key={id}
-            className="flex min-h-11 cursor-pointer items-center gap-2.5 text-body md:min-h-9"
-          >
-            <input
-              type="checkbox"
-              checked={picked.has(id)}
-              onChange={() => toggle(id)}
-              className="size-4 cursor-pointer accent-primary"
-            />
-            <LibraryMark id={id} logo={logos.get(id)} size="sm" />
-            <span className="font-mono text-mono">{id}</span>
-          </label>
-        ))}
-      </div>
-    </fieldset>
-  );
-}
 
 function ModeSelect({
   id,
@@ -132,12 +85,22 @@ function RunButton({ agent, disabled }: { agent: boolean; disabled: boolean }) {
 export function PlaygroundPage() {
   const t = useMessages(messages);
   const heading = usePageTitle(t.page.title);
-  const { data: summaries } = useQuery(playgroundLibrariesQueryOptions());
-  const libraries = searchableLibraries(summaries ?? []);
+  const librariesQuery = useQuery(playgroundLibrariesQueryOptions());
+  const summaries = librariesQuery.data;
   const logos = useMemo(
     () => new Map((summaries ?? []).map((l) => [l.id, l.logo] as const)),
     [summaries],
   );
+  // The picker offers the libraries that can be searched (a default version), by ID.
+  const options = useMemo((): LibraryOption[] | undefined => {
+    if (!summaries) return undefined;
+    const byId = new Map(summaries.map((l) => [l.id, l]));
+    return searchableLibraries(summaries).map((id) => ({
+      id,
+      title: byId.get(id)?.title,
+      logo: byId.get(id)?.logo,
+    }));
+  }, [summaries]);
   const [q, setQ] = useState("");
   const [chosen, setChosen] = useState<string[]>([]);
   const { data: availability } = useQuery(answerAvailabilityQueryOptions());
@@ -187,7 +150,18 @@ export function PlaygroundPage() {
             placeholder={t.page.queryPlaceholder}
             maxLength={2000}
           />
-          <LibraryPicker libraries={libraries} chosen={chosen} onChange={setChosen} />
+          <LibraryCombobox
+            multiple
+            label={t.page.libraries}
+            placeholder={t.page.allLibraries}
+            options={options}
+            loading={librariesQuery.isPending}
+            failed={librariesQuery.isError}
+            onRetry={() => void librariesQuery.refetch()}
+            value={chosen}
+            onChange={setChosen}
+            className="max-w-md"
+          />
           <div className="grid gap-4 sm:grid-cols-2">
             <ModeSelect
               id="playground-mode"

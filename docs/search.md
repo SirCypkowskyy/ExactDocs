@@ -350,7 +350,8 @@ model it does not know gets `input_usd_per_mtok` and `output_usd_per_mtok` under
 
 **Usage**: `GET /api/v1/ai/usage` (admins) shows what the instance, embedding runs, each library and
 each account spent today and this month, and what is left of each budget (a library's own budget
-where it is tighter). `/metrics` has pydantic-ai's `gen_ai.client.token.usage` and
+where it is tighter); `GET /api/v1/ai/usage/history` shows one of those scopes per UTC day or
+month, zero-filled, for up to 366 days or 60 months ([REST API](rest-api.md)). `/metrics` has pydantic-ai's `gen_ai.client.token.usage` and
 `operation.cost`, `exactdocs_ai_fallbacks_total` by mode and reason, and
 `exactdocs_ai_cache_hits_total` (searches whose LLM step a cache answered) by cache
 (`agentic_answer`, `hyde_answer`) and mode, never by library, user or query. Spans never carry
