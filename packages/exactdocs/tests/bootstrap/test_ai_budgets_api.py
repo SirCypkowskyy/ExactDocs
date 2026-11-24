@@ -8,7 +8,7 @@ configured model, or the server refuses to start.
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -188,6 +188,79 @@ async def test_the_usage_route_needs_a_signed_in_caller(app: tuple[FastAPI, Cont
         transport=httpx.ASGITransport(app=app[0]), base_url="http://localhost"
     ) as anonymous:
         assert (await anonymous.get("/api/v1/ai/usage")).status_code == 401
+        assert (await anonymous.get("/api/v1/ai/usage/history")).status_code == 401
+
+
+async def test_the_spend_history_is_one_entry_per_window_of_a_scope(
+    app: tuple[FastAPI, Container], ada: httpx.AsyncClient
+) -> None:
+    _, container = app
+    ledger = SqliteSpendLedger(engine=container.engine)
+    for day, usd in ((date(2026, 11, 3), 2_500_000), (T0.date(), 500_000)):
+        await ledger.add(
+            [
+                SpendEntry(
+                    scope_kind="library",
+                    scope_id=LIBRARY.casefold(),
+                    window=window,
+                    window_start=window.containing(day),
+                    input_tokens=10,
+                    output_tokens=5,
+                    requests=1,
+                    usd_micros=usd,
+                )
+                for window in SpendWindow
+            ]
+        )
+
+    daily = await ada.get(
+        "/api/v1/ai/usage/history",
+        params={"scope": "library", "id": LIBRARY.upper(), "from": "2026-11-01"},
+    )
+    monthly = await ada.get(
+        "/api/v1/ai/usage/history",
+        params={"scope": "library", "id": LIBRARY, "window": "month", "from": "2026-10-31"},
+    )
+
+    assert daily.status_code == 200, daily.text
+    body = daily.json()
+    assert (body["scope"], body["id"], body["window"], body["first"], body["last"]) == (
+        "library",
+        LIBRARY.casefold(),
+        "day",
+        "2026-11-01",
+        T0.date().isoformat(),  # to: today by default
+    )
+    spent = {e["window_start"]: (e["tokens"], e["requests"], e["usd"]) for e in body["entries"]}
+    assert list(spent) == [f"2026-11-0{d}" for d in range(1, 8)]
+    assert (spent["2026-11-03"], spent["2026-11-07"]) == ((15, 1, 2.5), (15, 1, 0.5))
+    assert spent["2026-11-01"] == (0, 0, 0)
+    assert [(e["window_start"], e["usd"]) for e in monthly.json()["entries"]] == [
+        ("2026-10-01", 0),
+        ("2026-11-01", 3.0),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("params", "error"),
+    [
+        ({"from": "2025-01-01", "to": "2026-11-07"}, "invalid_spend_history"),
+        ({"window": "month", "from": "2020-01-01", "to": "2026-11-07"}, "invalid_spend_history"),
+        ({"from": "2026-11-07", "to": "2026-11-01"}, "invalid_spend_history"),
+        ({"scope": "user"}, "invalid_spend_history"),
+        ({"id": "someone"}, "invalid_spend_history"),
+        ({"scope": "team"}, "validation_error"),
+        ({"window": "week"}, "validation_error"),
+        ({"from": "2026-02-30"}, "validation_error"),
+    ],
+)
+async def test_a_spend_history_that_cannot_be_shown_is_a_422(
+    ada: httpx.AsyncClient, params: dict[str, str], error: str
+) -> None:
+    refused = await ada.get("/api/v1/ai/usage/history", params=params)
+
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["error"] == error
 
 
 # ---------------------------------------------------------------- configuration

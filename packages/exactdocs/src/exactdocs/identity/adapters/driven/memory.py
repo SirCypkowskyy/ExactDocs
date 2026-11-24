@@ -17,6 +17,7 @@ from exactdocs.identity.models import (
     FailedSignIns,
     LibraryGrant,
     LibraryRole,
+    Preferences,
     Role,
     Session,
     SignInAttempt,
@@ -24,7 +25,7 @@ from exactdocs.identity.models import (
     Username,
     known_sign_ins_prefix,
 )
-from exactdocs.identity.ports.driven import LinkOutcome
+from exactdocs.identity.ports.driven import AttachOutcome, LinkOutcome
 from exactdocs_kernel import Sort, SortValue, is_after
 
 
@@ -188,6 +189,18 @@ class InMemorySessionRepository:
             account_id: The account's id.
         """
         for token_hash in [h for h, s in self.sessions.items() if s.account_id == account_id]:
+            del self.sessions[token_hash]
+
+    async def delete_others(self, account_id: AccountId, *, keep: str | None) -> None:
+        """Remove every session of the account but the one with the token hash ``keep``.
+
+        Args:
+            account_id: The account's id.
+            keep: The hash of the session token that stays; ``None`` removes them all.
+        """
+        for token_hash in [
+            h for h, s in self.sessions.items() if s.account_id == account_id and h != keep
+        ]:
             del self.sessions[token_hash]
 
     async def delete_expired(self, *, idle_before: datetime, created_before: datetime) -> None:
@@ -485,15 +498,87 @@ class InMemoryExternalIdentityRepository:
         return self.links.get((issuer, subject))
 
     async def get_for_account(self, account_id: AccountId) -> ExternalIdentity | None:
-        """Return the link of this account, or ``None``.
+        """Return the account's origin, or ``None``.
 
         Args:
             account_id: The account's id.
 
         Returns:
-            The link, or ``None``.
+            The identity the account was created through, or ``None``.
         """
-        return next((ln for ln in self.links.values() if ln.account_id == account_id), None)
+        return next(
+            (ln for ln in self.links.values() if ln.account_id == account_id and ln.is_origin),
+            None,
+        )
+
+    async def list_for_account(self, account_id: AccountId) -> list[ExternalIdentity]:
+        """Return every identity linked to the account: its origin first, then by provider.
+
+        Args:
+            account_id: The account's id.
+
+        Returns:
+            The identities.
+        """
+        return sorted(
+            (ln for ln in self.links.values() if ln.account_id == account_id),
+            key=lambda ln: (not ln.is_origin, ln.provider),
+        )
+
+    async def link(self, identity: ExternalIdentity) -> AttachOutcome:
+        """Link an identity to an existing account, unless it or the provider is taken.
+
+        Args:
+            identity: The identity, its ``account_id`` the account's.
+
+        Returns:
+            ``linked``, ``identity_taken`` or ``provider_taken``.
+        """
+        if (identity.issuer, identity.subject) in self.links:
+            return "identity_taken"
+        if any(
+            ln.account_id == identity.account_id and ln.provider == identity.provider
+            for ln in self.links.values()
+        ):
+            return "provider_taken"
+        self.links[identity.issuer, identity.subject] = identity
+        return "linked"
+
+    async def unlink(self, account_id: AccountId, provider: str) -> bool:
+        """Remove the account's identity of a provider, never its origin.
+
+        Args:
+            account_id: The account.
+            provider: The provider's name.
+
+        Returns:
+            ``True`` when one was removed.
+        """
+        found = next(
+            (
+                key
+                for key, ln in self.links.items()
+                if ln.account_id == account_id and ln.provider == provider and not ln.is_origin
+            ),
+            None,
+        )
+        if found is None:
+            return False
+        del self.links[found]
+        return True
+
+    async def record_linked_sign_in(self, identity: ExternalIdentity, at: datetime) -> None:
+        """Note a sign-in through a linked identity (its times only).
+
+        Args:
+            identity: The identity.
+            at: When it signed in.
+        """
+        current = self.links.get((identity.issuer, identity.subject))
+        if current is not None and not current.is_origin:
+            self.links[identity.issuer, identity.subject] = replace(
+                current, signed_in_at=at, checked_at=at
+            )
 
     async def create_linked_account(
         self, account: Account, identity: ExternalIdentity, groups: frozenset[str]
@@ -598,7 +683,11 @@ class InMemoryExternalIdentityRepository:
             The claimed links, as they were before the lease.
         """
         due = sorted(
-            (ln for ln in self.links.values() if ln.sealed_tokens and ln.next_check_at <= now),
+            (
+                ln
+                for ln in self.links.values()
+                if ln.is_origin and ln.sealed_tokens and ln.next_check_at <= now
+            ),
             key=lambda ln: ln.next_check_at,
         )[:limit]
         for link in due:
@@ -606,14 +695,15 @@ class InMemoryExternalIdentityRepository:
         return due
 
     async def groups_by_account(self) -> Mapping[AccountId, tuple[str, list[str]]]:
-        """Return the provider and the groups of every linked account.
+        """Return the provider and the groups of every account created through a provider.
 
         Returns:
-            For each linked account: its provider's name and its groups, sorted.
+            For each account with an origin: the origin's provider name and its groups, sorted.
         """
         return {
             ln.account_id: (ln.provider, sorted(self.groups.get(ln.account_id, ())))
             for ln in self.links.values()
+            if ln.is_origin
         }
 
     async def groups_of(self, account_id: AccountId) -> frozenset[str]:
@@ -842,6 +932,49 @@ class InMemoryAccessLog:
             How many there are.
         """
         return len(self._matching(where))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryPreferencesRepository:
+    """Implements ``ports.driven.PreferencesRepository``. For tests."""
+
+    preferences: dict[AccountId, Preferences] = field(default_factory=dict)
+    """The saved preferences, by account."""
+
+    async def get(self, account_id: AccountId) -> Preferences | None:
+        """Return the preferences an account saved, or ``None`` when it never saved any.
+
+        Args:
+            account_id: The account.
+
+        Returns:
+            Its preferences, or ``None``.
+        """
+        return self.preferences.get(account_id)
+
+    async def put(self, account_id: AccountId, preferences: Preferences) -> None:
+        """Save an account's preferences, replacing the ones it had.
+
+        Args:
+            account_id: The account.
+            preferences: Its new preferences.
+        """
+        self.preferences[account_id] = preferences
+
+    async def opted_in(self, account_ids: Collection[AccountId]) -> frozenset[AccountId]:
+        """Return the accounts among these that agreed to be on the people leaderboard.
+
+        Args:
+            account_ids: The accounts to ask about.
+
+        Returns:
+            Those that opted in.
+        """
+        return frozenset(
+            account_id
+            for account_id in account_ids
+            if (saved := self.preferences.get(account_id)) is not None and saved.leaderboard_opt_in
+        )
 
 
 def _revision(link: ExternalIdentity) -> tuple[object, ...]:

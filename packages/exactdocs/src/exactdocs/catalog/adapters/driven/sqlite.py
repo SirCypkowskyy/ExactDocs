@@ -61,6 +61,7 @@ from exactdocs.catalog.models import (
     ImportedTags,
     Library,
     LibraryId,
+    LibraryLogo,
     LibrarySettings,
     Manifest,
     ManifestEntry,
@@ -222,6 +223,19 @@ manifest_images = Table(
     ),
     Column("path", Text, primary_key=True),
     Column("blob_sha", Text, ForeignKey("catalog_image_blobs.blob_sha"), nullable=False),
+)
+
+library_logos = Table(
+    "catalog_library_logos",
+    metadata,
+    Column(
+        "library_id", Text, ForeignKey("catalog_libraries.id", ondelete="CASCADE"), primary_key=True
+    ),
+    Column("digest", Text, nullable=False),  # `LibraryLogo.digest`, read into `Library.logo`
+    Column("content_type", Text, nullable=False),
+    Column("data", LargeBinary, nullable=False),
+    Column("path", Text, nullable=False),
+    Column("ref", Text, nullable=False),
 )
 
 _settings = TypeAdapter(LibrarySettings)  # settings are stored as one JSON document
@@ -449,8 +463,13 @@ class SqliteLibraryRepository:
             The libraries.
         """
         chosen = select(libraries.c.id).where(*where)
+        query = (
+            select(*_library_columns, library_logos.c.digest)
+            .select_from(libraries.outerjoin(library_logos))
+            .where(*where)
+        )
         async with self.engine.connect() as connection:
-            rows = (await connection.execute(select(*_library_columns).where(*where))).all()
+            rows = (await connection.execute(query)).all()
             version_rows = (
                 await connection.execute(
                     select(library_versions).where(library_versions.c.library_id.in_(chosen))
@@ -481,9 +500,78 @@ class SqliteLibraryRepository:
                 description_edited=row.description_edited,
                 pinned_version=VersionRef(row.pinned_version) if row.pinned_version else None,
                 rules=tuple(json.loads(row.rules)),
+                logo=row.digest,
             )
             for row in rows
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteLibraryLogos:
+    """Implements ``ports.driven.LibraryLogos``: one row per library, deleted with it (#504)."""
+
+    engine: AsyncEngine
+    """The database holding the catalog's tables (SQLite or PostgreSQL)."""
+
+    async def get(self, library_id: LibraryId) -> LibraryLogo | None:
+        """Return the library's logo.
+
+        Args:
+            library_id: The library.
+
+        Returns:
+            The logo, or ``None``.
+        """
+        query = select(library_logos).where(library_logos.c.library_id == library_id.value)
+        async with self.engine.connect() as connection:
+            row = (await connection.execute(query)).first()
+        if row is None:
+            return None
+        return LibraryLogo(
+            content_type=row.content_type,
+            data=bytes(row.data),
+            path=row.path,
+            ref=VersionRef(row.ref),
+        )
+
+    async def put(self, library_id: LibraryId, logo: LibraryLogo) -> None:
+        """Upsert the library's row; nothing is written when the library's row is gone.
+
+        Args:
+            library_id: The library.
+            logo: Its new logo.
+        """
+        values = {
+            "digest": logo.digest,
+            "content_type": logo.content_type,
+            "data": logo.data,
+            "path": logo.path,
+            "ref": logo.ref.value,
+        }
+        try:
+            # BEGIN IMMEDIATE, as in ``SqliteManifestRepository._write``: it reads, then writes.
+            async with self.engine.execution_options(begin_immediate=True).begin() as connection:
+                known = select(libraries.c.id).where(libraries.c.id == library_id.value)
+                if (await connection.execute(known)).first() is None:
+                    return
+                await connection.execute(
+                    _conflict_insert(connection, library_logos)
+                    .values(library_id=library_id.value, **values)
+                    .on_conflict_do_update(index_elements=[library_logos.c.library_id], set_=values)
+                )
+        except IntegrityError:  # the library was removed in between: nothing to keep it for
+            return
+
+    async def remove(self, library_id: LibraryId) -> None:
+        """Delete the library's row, if any.
+
+        Args:
+            library_id: The library.
+        """
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                delete(library_logos).where(library_logos.c.library_id == library_id.value)
+            )
 
 
 def _iso(moment: datetime) -> str:
@@ -1625,6 +1713,46 @@ class SqliteImportedTags:
                             .values(**_tag_columns(after))
                         )
         return touched
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteArticleCounts:
+    """Implements ``ports.driven.ArticleCounts`` with grouped counts of the manifest entries."""
+
+    engine: AsyncEngine
+    """The SQLite or PostgreSQL engine."""
+
+    async def count_articles(
+        self, versions: Sequence[tuple[LibraryId, VersionRef]]
+    ) -> Mapping[tuple[LibraryId, VersionRef], int]:
+        """Count the entries of these versions' active manifests: one query per 400 versions.
+
+        Args:
+            versions: The versions, as ``(library, ref)``.
+
+        Returns:
+            The number of entries of each version's active manifest.
+        """
+        found: dict[tuple[LibraryId, VersionRef], int] = {}
+        async with self.engine.connect() as connection:
+            for start in range(0, len(versions), 400):  # two bound variables per version
+                batch = [(lib.value, ref.value) for lib, ref in versions[start : start + 400]]
+                rows = await connection.execute(
+                    select(manifests.c.library_id, manifests.c.ref, func.count())
+                    .select_from(
+                        manifests.join(
+                            manifest_entries, manifest_entries.c.manifest_id == manifests.c.id
+                        )
+                    )
+                    .where(
+                        tuple_(manifests.c.library_id, manifests.c.ref).in_(batch),
+                        manifests.c.state == ManifestState.ACTIVE.value,
+                    )
+                    .group_by(manifests.c.library_id, manifests.c.ref)
+                )
+                for library, ref, count in rows:
+                    found[LibraryId(library), VersionRef(ref)] = count
+        return found
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

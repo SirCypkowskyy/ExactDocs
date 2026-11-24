@@ -11,7 +11,7 @@ import math
 import time
 from contextlib import ExitStack
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from http import HTTPStatus
 from typing import Any
 
@@ -330,3 +330,110 @@ def step_usage_shown(context: Context) -> None:
         0.0,
         True,
     ), budget
+
+
+HISTORY = "/api/v1/ai/usage/history"
+SPENT_ON = {date(2026, 11, 3): 1, date(2026, 11, 20): 2}
+"""Calls the instance made on each day it spent, at one US dollar and 1000 tokens each."""
+
+
+@given("the instance spent on November 3 and twice on November 20")
+def step_spent_on_days(context: Context) -> None:
+    serve_budgets(context, {})
+    ledger = SqliteSpendLedger(engine=context.container.engine)
+    for day, calls in SPENT_ON.items():
+        for _ in range(calls):  # each call counts to its day and its month, as a real one does
+            moment = datetime(day.year, day.month, day.day, 12, tzinfo=UTC)
+            entries = [
+                SpendEntry(
+                    scope_kind="instance",
+                    scope_id="",
+                    window=window,
+                    window_start=window.start(moment),
+                    input_tokens=600,
+                    output_tokens=400,
+                    requests=1,
+                    usd_micros=ONE_USD,
+                )
+                for window in SpendWindow
+            ]
+            context.client.portal.call(ledger.add, entries)
+
+
+def _history(context: Context, params: dict[str, str]) -> None:
+    """Ask for a spend history; the response is kept in ``context.response``.
+
+    Args:
+        context: The behave context.
+        params: The query.
+    """
+    context.response = context.client.get(HISTORY, params=params)
+
+
+@when("the admin reads the instance's daily spend history from November 1 to November 23")
+def step_read_daily_history(context: Context) -> None:
+    params = {"scope": "instance", "window": "day", "from": "2026-11-01", "to": "2026-11-23"}
+    _history(context, params)
+
+
+@when("the admin reads the instance's monthly spend history from September to November")
+def step_read_monthly_history(context: Context) -> None:
+    params = {"scope": "instance", "window": "month", "from": "2026-09-01", "to": "2026-11-30"}
+    _history(context, params)
+
+
+@when("the admin reads the instance's daily spend history over {days:d} days")
+def step_read_long_history(context: Context, days: int) -> None:
+    last = date(2026, 11, 23)
+    first = date.fromordinal(last.toordinal() - days + 1)
+    params = {"window": "day", "from": first.isoformat(), "to": last.isoformat()}
+    _history(context, params)
+
+
+def _entries(context: Context) -> list[dict[str, Any]]:
+    """Read the entries of the spend history asked for.
+
+    Args:
+        context: The behave context.
+
+    Returns:
+        One entry per window, oldest first.
+    """
+    assert context.response.status_code == HTTPStatus.OK, context.response.text
+    return context.response.json()["entries"]
+
+
+@then("there is one entry per day with tokens, calls and US dollars")
+def step_one_entry_per_day(context: Context) -> None:
+    entries = _entries(context)
+    assert [e["window_start"] for e in entries] == [
+        date(2026, 11, day).isoformat() for day in range(1, 24)
+    ], entries
+    spent = {e["window_start"]: (e["tokens"], e["requests"], e["usd"]) for e in entries}
+    assert spent["2026-11-03"] == (1000, 1, 1.0), spent
+    assert spent["2026-11-20"] == (2000, 2, 2.0), spent
+
+
+@then("the days without spend show nothing spent")
+def step_zero_filled(context: Context) -> None:
+    entries = _entries(context)
+    quiet = [e for e in entries if date.fromisoformat(e["window_start"]) not in SPENT_ON]
+    assert len(quiet) == len(entries) - len(SPENT_ON), quiet
+    assert all((e["tokens"], e["requests"], e["usd"]) == (0, 0, 0) for e in quiet), quiet
+
+
+@then("November shows the month's spend and the earlier months nothing")
+def step_monthly(context: Context) -> None:
+    entries = _entries(context)
+    assert [(e["window_start"], e["tokens"], e["requests"], e["usd"]) for e in entries] == [
+        ("2026-09-01", 0, 0, 0),
+        ("2026-10-01", 0, 0, 0),
+        ("2026-11-01", 3000, 3, 3.0),
+    ], entries
+
+
+@then("the request is refused as an invalid spend history")
+def step_refused(context: Context) -> None:
+    response = context.response
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_CONTENT, response.text
+    assert response.json()["error"] == "invalid_spend_history", response.text

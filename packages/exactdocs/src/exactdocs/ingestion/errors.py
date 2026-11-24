@@ -813,3 +813,17 @@ class LibraryCreationDeniedError(ForbiddenError):
     def __init__(self) -> None:
         """Report missing instance creation permission."""
         super().__init__("library creation is not permitted")
+
+
+class InvalidStatsRangeError(ValidationError):
+    """The days asked for job statistics are out of order or too many."""
+
+    code = "invalid_range"
+
+    def __init__(self, reason: str) -> None:
+        """Say what is wrong with the range.
+
+        Args:
+            reason: Why the range is refused, for people.
+        """
+        super().__init__(reason)
