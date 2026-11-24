@@ -3,7 +3,7 @@
 Kept up to date by the overnight session that continues `HANDOFF.md`. Newest state first in each
 section. Read `HANDOFF.md` for the plan, the owner's decisions and the rules.
 
-_Last updated: 2026-11-24 10:40 UTC._
+_Last updated: 2026-11-24 13:30 UTC._
 
 ## Frontend (`feature/486-design-system`)
 
@@ -82,12 +82,20 @@ develop -> main and release v0.6.0.
 - **CI:** GitHub-hosted runners stopped starting jobs at 07:41 (likely the Actions spending
   limit); `RUNNER_MODE=self-hosted` moves every job to the two GB10 runners. #537 (owner) would
   move everything back to hosted runners.
-- **This branch** has develop merged (`7928bcc`): backend identical to develop, one Alembic head.
-  Section C done: #504 logos, #505 own password, #509 offset paging, #513 counts. In progress
-  (three agents): #506 linked providers + brand sign-in buttons + #487 cast + #510 opt-in;
-  Overview and Leaderboard (#510-#513, Recharts lazy); table filters (#512 jobs/libraries,
-  #514 access log, #515 users and all tokens).
-- Then: #486 PR (ready) and #531, release dry run, develop -> main, `v0.6.0`.
+- **This branch is done** (`7d55548`): backend identical to develop; only web/, e2e/ and plans differ.
+  Section C complete: #504 logos, #505 own password, #509 offset paging, #513 counts, #506 linked
+  providers + brand sign-in buttons, #487 cast removed, #510 opt-in, Overview and Leaderboard
+  (#510-#513, Recharts in its own lazy chunk), table filters (#512 jobs/libraries, #514 access
+  log, #515 users and all tokens), the library combobox and tag chips (chunk 10), the instance
+  banner (chunk 11).
+- **QA:** e2e `5 passed`; axe 0 violations on 22 routes × EN/PL × light/dark/more-contrast ×
+  1440/390 (336 runs, plus open menus); fixed a missing focus ring (undefined `--selection`),
+  tabular-figure punctuation in tables, sideways scroll on sharing at 390 px, modal menus hiding
+  focusable content. Web checks: 76 files / 1077 tests, build green.
+- **Left for later:** Radix NavigationMenu's own focus-redirect span trips axe with Tools/Admin
+  open (harmless; needs a Radix change); "Last active" shows the hour (backend rounds it);
+  Playground still lists the first 50 libraries.
+- Next: #486 PR (ready), #531 out of draft, release dry run, develop -> main, `v0.6.0`.
 
 ## Backend: every issue has a draft PR
 
