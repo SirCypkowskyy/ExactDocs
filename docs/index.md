@@ -118,10 +118,10 @@ and its headings.</figcaption>
 
 <figure class="xd-shot" markdown>
 
-![The libraries page: Acme Payments with versions v1.4.0, v1.3.0 and next, and Acme Store with v2.1.0.](assets/screenshots/libraries-light.webp#only-light){ loading=lazy }
-![The libraries page: Acme Payments with versions v1.4.0, v1.3.0 and next, and Acme Store with v2.1.0.](assets/screenshots/libraries-dark.webp#only-dark){ loading=lazy }
+![The libraries page: Acme Payments, default version v1.4.0 at commit 3fb0656, 3 versions and 15 articles, and Acme Store, v2.1.0 at 7bd0779, 1 version and 5 articles, each with its project mark, when it was last imported and whether it syncs.](assets/screenshots/libraries-light.webp#only-light){ loading=lazy }
+![The libraries page: Acme Payments, default version v1.4.0 at commit 3fb0656, 3 versions and 15 articles, and Acme Store, v2.1.0 at 7bd0779, 1 version and 5 articles, each with its project mark, when it was last imported and whether it syncs.](assets/screenshots/libraries-dark.webp#only-dark){ loading=lazy }
 
-<figcaption>Each library with its imported versions; the default one shows its commit.</figcaption>
+<figcaption>Each library with its default version and commit, and how many versions and articles it has.</figcaption>
 
 </figure>
 

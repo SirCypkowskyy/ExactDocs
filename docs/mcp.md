@@ -54,8 +54,8 @@ token, so a leaked token cannot mint successors.
 
 <figure class="xd-shot" markdown>
 
-![The Account page: two API tokens, Claude Code for every library the account can read and Cursor for /acme/payments only, expiring in 90 days; below them, the MCP client config to paste, with the URL http://localhost:3000/mcp and a placeholder where the token goes.](assets/screenshots/connect-light.webp#only-light){ loading=lazy }
-![The Account page: two API tokens, Claude Code for every library the account can read and Cursor for /acme/payments only, expiring in 90 days; below them, the MCP client config to paste, with the URL http://localhost:3000/mcp and a placeholder where the token goes.](assets/screenshots/connect-dark.webp#only-dark){ loading=lazy }
+![The Account page on its API tokens tab: Claude Code for every library the account can read and Cursor for /acme/payments only, which expires in 2 months, each with the start of its token; below them, the MCP client config to paste, with the URL http://localhost:3000/mcp and a placeholder where the token goes.](assets/screenshots/connect-light.webp#only-light){ loading=lazy }
+![The Account page on its API tokens tab: Claude Code for every library the account can read and Cursor for /acme/payments only, which expires in 2 months, each with the start of its token; below them, the MCP client config to paste, with the URL http://localhost:3000/mcp and a placeholder where the token goes.](assets/screenshots/connect-dark.webp#only-dark){ loading=lazy }
 
 <figcaption>The <strong>Account</strong> page: the tokens, and the config for this server with a
 placeholder for the token.</figcaption>

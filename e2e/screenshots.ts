@@ -219,7 +219,18 @@ const SHOTS: {
     open: async (page) => {
       await page.goto("/playground");
       await page.getByLabel("Query", { exact: true }).fill("how do I retry failed calls");
-      await page.getByRole("checkbox", { name: "/acme/payments" }).check();
+      // A checkbox per library (#427 UI) or a library combobox (#486 UI).
+      const box = page.getByRole("checkbox", { name: "/acme/payments" });
+      const combobox = page.getByRole("button", { name: /^Libraries/ });
+      await expect(box.or(combobox).first()).toBeVisible();
+      if (await box.isVisible()) {
+        await box.check();
+      } else {
+        await combobox.click();
+        await page.getByRole("option", { name: /\/acme\/payments/ }).click();
+        await page.keyboard.press("Escape");
+        await expect(combobox).toHaveAttribute("aria-expanded", "false");
+      }
       await page.getByLabel("Mode", { exact: true }).selectOption("hybrid");
       await page.getByRole("checkbox", { name: "Compare two modes side by side" }).check();
       await page.getByLabel("Compare with", { exact: true }).selectOption("bm25");
