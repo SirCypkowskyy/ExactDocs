@@ -1,4 +1,4 @@
-@postgres
+@integration @postgres
 Feature: A warning when PostgreSQL looks like it is behind a transaction-mode pooler
   As the operator of an ExactDocs instance on PostgreSQL
   I want to be told at start when my connection is not a session

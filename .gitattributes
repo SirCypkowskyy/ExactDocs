@@ -6,3 +6,6 @@
 web/src/routeTree.gen.ts linguist-generated=true
 uv.lock linguist-generated=true
 web/pnpm-lock.yaml linguist-generated=true
+# Recorded test times for CI shards (#507): refreshed by `just test-durations` / `just bdd-durations`.
+.test_durations linguist-generated=true
+.behave_durations linguist-generated=true

@@ -13,11 +13,13 @@ Every suite that takes a backend is parametrised over ``SEARCH_BACKEND_CASES`` /
 An adapter PR adds one ``BackendCase`` to ``EXTERNAL_BACKENDS``: a name and an async context
 manager per index it can hold, yielding a fresh, empty, opened backend and cleaning it up after.
 A backend that needs a server reads its URL from an ``EXACTDOCS_TEST_<NAME>_URL`` variable and
-is left out when the variable is unset (as ``databases.py`` does for PostgreSQL), so the suites
-still run everywhere; CI sets the variable. An embedded backend (LanceDB, DuckDB, Chroma's and
-Milvus Lite's local modes, a libSQL file) or a fake (Azure AI Search) needs no server: it runs on
-a temporary directory, or in process, wherever its extra is installed (the dev environment has
-them).
+carries that variable's integration marker (``marks``, #507): its cases are always collected,
+deselected unless the run includes the integration tests (``--integration``), and skipped then
+when the variable is unset (as ``databases.py`` does for PostgreSQL); CI's integration job sets
+it. The suites parametrize with ``params``, so the marker comes with the case. An embedded
+backend (LanceDB, DuckDB, Chroma's and Milvus Lite's local modes, a libSQL file) or a fake (Azure
+AI Search) needs no server: it runs on a temporary directory, or in process, wherever its extra
+is installed (the dev environment has them), in every run.
 """
 
 import asyncio
@@ -27,13 +29,18 @@ import os
 import secrets
 import tempfile
 import uuid
-from collections.abc import AsyncGenerator, Callable, Collection, Sequence
+from collections.abc import AsyncGenerator, Callable, Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
+import pytest
+from _pytest.mark import ParameterSet
+
+import integration
 import libsql_backends
 from exactdocs.retrieval.adapters.driven.elastic_index import (
     ElasticSearchBackend,
@@ -72,6 +79,40 @@ class BackendCase:
     """Deleted entries still count in its term statistics until its garbage collector runs
     (Redis' Query Engine) or its segments merge (Lucene: Elasticsearch, OpenSearch): a rebuild
     finds the same hits, with other scores."""
+    marks: pytest.MarkDecorator | None = None
+    """A backend on a server: the integration marker naming its variable (``integration.QDRANT``
+    ...), so its cases run only with ``--integration``. ``None``: embedded or a fake, every run."""
+
+
+def params(cases: Mapping[str, BackendCase], prefix: str = "") -> list[ParameterSet]:
+    """The cases as a suite's parameters (``prefix`` + name), a server's with its marker.
+
+    Args:
+        cases: ``SEARCH_BACKEND_CASES`` or ``VECTOR_BACKEND_CASES``.
+        prefix: Put before each name (``external:`` where the suite has other parameters too).
+
+    Returns:
+        One ``pytest.param`` per case.
+    """
+    return [pytest.param(f"{prefix}{name}", marks=case.marks or ()) for name, case in cases.items()]
+
+
+def _lazy(module: str, factory: str) -> Callable[[], Any]:
+    """A server module's backend factory, imported when a case runs (its extra's client)."""
+
+    def build() -> Any:
+        return getattr(importlib.import_module(module), factory)()
+
+    return build
+
+
+def _required(name: str) -> None:
+    """``EXACTDOCS_REQUIRE_<NAME>=1`` (CI's integration job) without the server's URL: an error."""
+    if os.environ.get(f"EXACTDOCS_REQUIRE_{name}") == "1" and not os.environ.get(
+        f"EXACTDOCS_TEST_{name}_URL"
+    ):
+        message = f"EXACTDOCS_REQUIRE_{name}=1 but EXACTDOCS_TEST_{name}_URL is not set"
+        raise RuntimeError(message)
 
 
 @asynccontextmanager
@@ -95,17 +136,17 @@ async def _memory_vectors() -> AsyncGenerator[VectorBackend]:
 
 
 def _qdrant_cases() -> list[BackendCase]:
-    """Qdrant (#355), with and without native hybrid, when ``EXACTDOCS_TEST_QDRANT_URL`` is set."""
-    if not os.environ.get("EXACTDOCS_TEST_QDRANT_URL"):
-        if os.environ.get("EXACTDOCS_REQUIRE_QDRANT") == "1":  # CI: never skipped there
-            message = "EXACTDOCS_REQUIRE_QDRANT=1 but EXACTDOCS_TEST_QDRANT_URL is not set"
-            raise RuntimeError(message)
-        return []
-    import qdrant_server  # ruff: ignore[import-outside-top-level] -- the extra, only with a server
-
+    """Qdrant (#355), with and without native hybrid, on ``EXACTDOCS_TEST_QDRANT_URL``."""
+    _required("QDRANT")  # CI: never skipped there
     return [
-        BackendCase(name="qdrant", vectors=qdrant_server.plain),
-        BackendCase(name="qdrant_hybrid", vectors=qdrant_server.hybrid),
+        BackendCase(
+            name="qdrant", vectors=_lazy("qdrant_server", "plain"), marks=integration.QDRANT
+        ),
+        BackendCase(
+            name="qdrant_hybrid",
+            vectors=_lazy("qdrant_server", "hybrid"),
+            marks=integration.QDRANT,
+        ),
     ]
 
 
@@ -243,84 +284,78 @@ async def _duckdb_vectors() -> AsyncGenerator[VectorBackend]:
 
 
 def _chroma_cases() -> list[BackendCase]:
-    """Chroma (#361): embedded always, over HTTP when ``EXACTDOCS_TEST_CHROMA_URL`` is set."""
+    """Chroma (#361): embedded always, over HTTP on ``EXACTDOCS_TEST_CHROMA_URL``'s server."""
     import chroma_server  # ruff: ignore[import-outside-top-level] -- the extra, only here
 
-    cases = [BackendCase(name="chroma_local", vectors=chroma_server.local)]
-    if chroma_server.CHROMA_URL:
-        cases.append(BackendCase(name="chroma", vectors=chroma_server.http))
-    elif os.environ.get("EXACTDOCS_REQUIRE_CHROMA") == "1":  # CI: never skipped there
-        message = "EXACTDOCS_REQUIRE_CHROMA=1 but EXACTDOCS_TEST_CHROMA_URL is not set"
-        raise RuntimeError(message)
-    return cases
+    _required("CHROMA")  # CI: never skipped there
+    return [
+        BackendCase(name="chroma_local", vectors=chroma_server.local),
+        BackendCase(name="chroma", vectors=chroma_server.http, marks=integration.CHROMA),
+    ]
 
 
 def _redis_cases() -> list[BackendCase]:
-    """Redis (#364), search and vectors, and vectors with native hybrid, when
-    ``EXACTDOCS_TEST_REDIS_URL`` is set."""
-    if not os.environ.get("EXACTDOCS_TEST_REDIS_URL"):
-        if os.environ.get("EXACTDOCS_REQUIRE_REDIS") == "1":  # CI: never skipped there
-            message = "EXACTDOCS_REQUIRE_REDIS=1 but EXACTDOCS_TEST_REDIS_URL is not set"
-            raise RuntimeError(message)
-        return []
-    import redis_server  # ruff: ignore[import-outside-top-level] -- the extra, only with a server
-
+    """Redis (#364), search and vectors, and vectors with native hybrid, on
+    ``EXACTDOCS_TEST_REDIS_URL``'s server."""
+    _required("REDIS")  # CI: never skipped there
     return [
         BackendCase(
             name="redis",
-            search=redis_server.redis_search,
-            vectors=redis_server.plain_vectors,
+            search=_lazy("redis_server", "redis_search"),
+            vectors=_lazy("redis_server", "plain_vectors"),
             stale_statistics=True,
+            marks=integration.REDIS,
         ),
-        BackendCase(name="redis_hybrid", vectors=redis_server.hybrid_vectors),
+        BackendCase(
+            name="redis_hybrid",
+            vectors=_lazy("redis_server", "hybrid_vectors"),
+            marks=integration.REDIS,
+        ),
     ]
 
 
 def _milvus_cases() -> list[BackendCase]:
-    """Milvus (#360): Milvus Lite always, a server when ``EXACTDOCS_TEST_MILVUS_URL`` is set."""
+    """Milvus (#360): Milvus Lite always, a server on ``EXACTDOCS_TEST_MILVUS_URL``."""
     import milvus_server  # ruff: ignore[import-outside-top-level] -- the extra, only here
 
-    cases = [BackendCase(name="milvus_lite", vectors=milvus_server.lite)]
-    if milvus_server.MILVUS_URL:
-        cases.append(BackendCase(name="milvus", vectors=milvus_server.server))
-    elif os.environ.get("EXACTDOCS_REQUIRE_MILVUS") == "1":  # CI: never skipped there
-        message = "EXACTDOCS_REQUIRE_MILVUS=1 but EXACTDOCS_TEST_MILVUS_URL is not set"
-        raise RuntimeError(message)
-    return cases
+    _required("MILVUS")  # CI: never skipped there
+    return [
+        BackendCase(name="milvus_lite", vectors=milvus_server.lite),
+        BackendCase(name="milvus", vectors=milvus_server.server, marks=integration.MILVUS),
+    ]
 
 
 def _mongodb_cases() -> list[BackendCase]:
-    """MongoDB (#363), search and vectors, and vectors with native hybrid, when
-    ``EXACTDOCS_TEST_MONGODB_URL`` is set."""
-    if not os.environ.get("EXACTDOCS_TEST_MONGODB_URL"):
-        if os.environ.get("EXACTDOCS_REQUIRE_MONGODB") == "1":  # CI: never skipped there
-            message = "EXACTDOCS_REQUIRE_MONGODB=1 but EXACTDOCS_TEST_MONGODB_URL is not set"
-            raise RuntimeError(message)
-        return []
-    import mongodb_server  # ruff: ignore[import-outside-top-level] -- the extra, only with a server
-
+    """MongoDB (#363), search and vectors, and vectors with native hybrid, on
+    ``EXACTDOCS_TEST_MONGODB_URL``'s server."""
+    _required("MONGODB")  # CI: never skipped there
     return [
         BackendCase(
             name="mongodb",
-            search=mongodb_server.mongodb_search,
-            vectors=mongodb_server.plain_vectors,
+            search=_lazy("mongodb_server", "mongodb_search"),
+            vectors=_lazy("mongodb_server", "plain_vectors"),
+            marks=integration.MONGODB,
         ),
-        BackendCase(name="mongodb_hybrid", vectors=mongodb_server.hybrid_vectors),
+        BackendCase(
+            name="mongodb_hybrid",
+            vectors=_lazy("mongodb_server", "hybrid_vectors"),
+            marks=integration.MONGODB,
+        ),
     ]
 
 
 def _libsql_cases() -> list[BackendCase]:
-    """libSQL (#358): a server when ``EXACTDOCS_TEST_LIBSQL_URL`` is set, a local file when the
+    """libSQL (#358): a server on ``EXACTDOCS_TEST_LIBSQL_URL``, and a local file where the
     ``libsql`` package is installed (see ``libsql_backends.py``)."""
-    found = []
-    if libsql_backends.server_url() is not None:
-        found.append(
-            BackendCase(
-                name="libsql",
-                search=libsql_backends.server_search,
-                vectors=libsql_backends.server_vectors,
-            )
+    libsql_backends.server_url()  # EXACTDOCS_REQUIRE_LIBSQL=1 without the URL: an error
+    found = [
+        BackendCase(
+            name="libsql",
+            search=libsql_backends.server_search,
+            vectors=libsql_backends.server_vectors,
+            marks=integration.LIBSQL,
         )
+    ]
     if libsql_backends.HAS_DRIVER:
         found.append(
             BackendCase(
@@ -442,11 +477,16 @@ async def _pinecone_vectors() -> AsyncGenerator[VectorBackend]:
 
 def _azure_search_cases() -> list[BackendCase]:
     """Azure AI Search (#353): always on the in-process fake of its REST API (there is no
-    emulator), and on a real service too when ``EXACTDOCS_TEST_AZURE_SEARCH_URL`` is set."""
+    emulator), and on a real service (``EXACTDOCS_TEST_AZURE_SEARCH_URL``) as integration cases."""
     import azure_search_server  # ruff: ignore[import-outside-top-level] -- the extra's client
 
     return [
-        BackendCase(name=name, search=search, vectors=vectors)
+        BackendCase(
+            name=name,
+            search=search,
+            vectors=vectors,
+            marks=None if name.startswith("azure_search_fake") else integration.AZURE_SEARCH,
+        )
         for name, search, vectors in azure_search_server.cases()
     ]
 
@@ -460,9 +500,12 @@ EXTERNAL_BACKENDS: list[BackendCase] = [
             search=partial(_cluster_search, name),
             vectors=partial(_cluster_vectors, name),
             stale_statistics=True,
+            marks=marks,
         )
-        for name in ("elasticsearch", "opensearch")
-        if cluster_options(name) is not None
+        for name, marks in (
+            ("elasticsearch", integration.ELASTICSEARCH),
+            ("opensearch", integration.OPENSEARCH),
+        )
     ),
     *_lancedb_cases(),
     # Embedded: no server, so no EXACTDOCS_TEST_DUCKDB_URL; left out only without the extra
@@ -477,7 +520,7 @@ EXTERNAL_BACKENDS: list[BackendCase] = [
     *_milvus_cases(),
     *_mongodb_cases(),
     *_libsql_cases(),
-    *([BackendCase(name="pinecone", vectors=_pinecone_vectors)] if PINECONE_URL else []),
+    BackendCase(name="pinecone", vectors=_pinecone_vectors, marks=integration.PINECONE),
     *_azure_search_cases(),
 ]
 """Every external backend the suites run on here. Add yours (see the module docstring)."""

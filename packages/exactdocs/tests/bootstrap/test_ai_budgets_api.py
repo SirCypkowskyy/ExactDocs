@@ -20,8 +20,9 @@ from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import SecretStr
 from sqlalchemy import text
 
+import integration
 from app_lifespan import serving
-from databases import ADMIN_URL, TERMINATE_WAIT_MS
+from databases import TERMINATE_WAIT_MS
 from exactdocs.bootstrap.ai_models import budgets
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.database import StartupError, open_database
@@ -306,7 +307,7 @@ async def test_embedding_is_queued_after_each_midnight_with_jitter() -> None:
     assert len(queued) == 2
 
 
-@pytest.mark.skipif(ADMIN_URL is None, reason="needs a PostgreSQL server")
+@integration.POSTGRES
 async def test_only_one_process_requeues_on_postgresql(on_postgres: object) -> None:
     del on_postgres
     engines = [open_database(Settings()) for _ in range(3)]
@@ -426,7 +427,7 @@ async def test_stopping_the_loop_cancels_it_cleanly() -> None:
         await task
 
 
-@pytest.mark.skipif(ADMIN_URL is None, reason="needs a PostgreSQL server")
+@integration.POSTGRES
 async def test_the_leader_survives_its_session_being_terminated(on_postgres: object) -> None:
     del on_postgres
     engine, admin = open_database(Settings()), open_database(Settings())

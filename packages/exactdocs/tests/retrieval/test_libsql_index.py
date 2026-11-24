@@ -17,8 +17,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from _pytest.mark import ParameterSet
 from pydantic_settings import SettingsError
 
+import integration
 import libsql_backends
 from exactdocs.bootstrap.database import StartupError
 from exactdocs.bootstrap.index_backends import IndexBackends, build_index_backends
@@ -211,10 +213,9 @@ async def test_a_server_that_does_not_answer_stops_the_start() -> None:
 type Build = Callable[[dict[str, object]], dict[str, object]]
 
 
-def _locations() -> list[str]:
-    found = []
-    if libsql_backends.LIBSQL_URL is not None:
-        found.append("server")
+def _locations() -> list[str | ParameterSet]:
+    """The server, an integration case (#507); a local file, where the ``libsql`` package is."""
+    found: list[str | ParameterSet] = [pytest.param("server", marks=integration.LIBSQL)]
     if libsql_backends.HAS_DRIVER:
         found.append("file")
     return found
@@ -328,10 +329,7 @@ async def test_a_space_dropped_by_another_process_is_made_again_on_the_next_put(
     assert held == [HeldVersion(manifest_id="m1", library=LIB, entries=1)]
 
 
-@pytest.mark.skipif(
-    libsql_backends.LIBSQL_URL is None or libsql_backends.LIBSQL_TOKEN is None,
-    reason="needs a libSQL server that requires a token",
-)
+@integration.needs("EXACTDOCS_TEST_LIBSQL_URL", "EXACTDOCS_TEST_LIBSQL_AUTH_TOKEN")
 @pytest.mark.parametrize("token", [None, "not-a-jwt"])
 async def test_a_server_refuses_a_missing_or_wrong_token(token: str | None) -> None:
     assert libsql_backends.LIBSQL_URL is not None

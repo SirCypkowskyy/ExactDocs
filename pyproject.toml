@@ -42,6 +42,8 @@ dev = [
     "pytest>=9",
     "pytest-asyncio>=1.2",
     "pytest-cov>=7",
+    # CI shards the fast suite by recorded durations (.test_durations; #507).
+    "pytest-split>=0.11",
     "ruff>=0.14",
     "ty>=0.0.1",
 ]
@@ -142,6 +144,7 @@ ignore = [
 "packages/exactdocs/evals/run_retrieval_bench.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_agent_bench.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_bench_pages.py" = ["implicit-namespace-package"]
+"packages/exactdocs/evals/run_text_bench.py" = ["implicit-namespace-package"]
 "**/features/**" = ["assert", "D", "DOC", "ANN", "FBT", "implicit-namespace-package"]
 # Alembic revisions are generated from migrations/script.py.mako: no per-function docstrings.
 "**/migrations/versions/**" = ["D"]
@@ -159,12 +162,16 @@ ignore = [
 "deploy/check_sqlite_vec.py" = ["implicit-namespace-package"]
 # Runs inside the `-local` image (python - < file) to prove it searches with no network (#246).
 "deploy/smoke_local.py" = ["implicit-namespace-package"]
+# CI's behave shards (#507): a standalone stdlib script that prints a group's feature files.
+"deploy/behave_shards.py" = ["implicit-namespace-package", "print"]
 # The CI upgrade test is a standalone stdlib script that runs two releases and reports on stdout.
 "deploy/upgrade_check.py" = ["implicit-namespace-package", "suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path", "print", "undocumented-public-function", "undocumented-public-method"]
 # Runs the app in a fresh interpreter to see which modules it imports.
 "**/tests/bootstrap/test_model_free.py" = ["suspicious-subprocess-import", "subprocess-run-without-check", "subprocess-without-shell-equals-true"]
 # The browser CI regression runs a fixed repository script and local fake executables.
 "**/tests/ci/test_playwright_setup.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
+# Collects the suite in a fresh interpreter, as `uv run pytest` does (#507).
+"**/tests/ci/test_integration_tests.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
 # Runs its span test in a fresh interpreter: a process's tracer provider is set once.
 "**/tests/retrieval/test_agentic_search.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
 # Runs the app behind a socket guard in a fresh interpreter, with the SDKs' variables set.
@@ -220,9 +227,12 @@ pythonpath = [
 addopts = [
     "-ra", "--strict-markers", "--strict-config", "--import-mode=importlib",
     "-m", "not eval",  # docs/evals.md: the release runs them; `uv run pytest -m eval` locally
+    # The `integration` tests are deselected too, by tests/fixtures/integration.py (#507), unless
+    # `--integration` or EXACTDOCS_INTEGRATION=1 asks for them: the summary says how many.
 ]
 markers = [
     "eval: runs the retrieval eval suite end to end on the imported fixture (slow); skipped by default",
+    "integration(*variables): needs a container, a service, the network or a download, named by the variables (#507); deselected unless --integration or EXACTDOCS_INTEGRATION=1, skipped then while a variable is unset",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
