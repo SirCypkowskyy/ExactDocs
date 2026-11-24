@@ -16,6 +16,7 @@ const library = (n: number) => ({
   default_pinned: false,
   source_url: `https://github.com/acme/lib${n}.git`,
   version_count: 1,
+  article_count: 7,
   refs: [],
   tags: [],
   last_imported_at: "2026-11-01T10:00:00Z",

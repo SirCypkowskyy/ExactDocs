@@ -33,6 +33,7 @@ const library = {
   default_pinned: false,
   source_url: "https://github.com/acme/payments.git",
   version_count: 2,
+  article_count: 12345,
   refs: ["v1.4.0", "main"].map((ref) => ({
     ref,
     kind: ref === "main" ? "branch" : "tag",
@@ -105,13 +106,21 @@ describe("the libraries slice in Polish", () => {
     expect(screen.getByText("1 biblioteka")).toHaveAttribute("role", "status");
     expect(screen.getByLabelText("Znajdź bibliotekę")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Dodaj bibliotekę" })).toBeInTheDocument();
-    for (const header of ["Wersja domyślna", "Wersje", "Ostatni import", "Synchronizacja"]) {
+    for (const header of [
+      "Wersja domyślna",
+      "Wersje",
+      "Artykuły",
+      "Ostatni import",
+      "Synchronizacja",
+    ]) {
       expect(
         within(table).getByRole("columnheader", { name: new RegExp(header) }),
       ).toBeInTheDocument();
     }
     expect(screen.getByRole("button", { name: "Ostatni import" })).toBeInTheDocument();
     expect(within(row).getByText("3 dni temu")).toBeInTheDocument();
+    // Polish groups from five digits.
+    expect(within(row).getByText("12 345")).toBeInTheDocument();
     expect(await within(row).findByText("Zsynchronizowano, pominięto 2")).toBeInTheDocument();
     expect(screen.getByText("1–1 z 1")).toBeInTheDocument();
     await userEvent.click(
@@ -120,6 +129,45 @@ describe("the libraries slice in Polish", () => {
     const menu = await screen.findByRole("menu");
     expect(within(menu).getByRole("menuitem", { name: "Synchronizuj teraz" })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Pokaż jej zadania" })).toBeInTheDocument();
+  });
+
+  it("says the articles with the Polish plural on a phone card", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        matches: query === "(max-width: 47.99rem)",
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      })),
+    );
+    const counts = [1, 2, 5, 22, 1234];
+    serve((url) => {
+      if (url.includes("/v1/libraries?")) {
+        return {
+          libraries: counts.map((n) => ({
+            ...library,
+            id: `/acme/lib${n}`,
+            title: `Lib ${n}`,
+            article_count: n,
+          })),
+          next_cursor: null,
+          total: counts.length,
+        };
+      }
+      if (url.endsWith("/v1/jobs/latest")) return { jobs: [] };
+      return undefined;
+    });
+    renderWith(<TestRouter pages={{ "/": LibrariesPage }} />);
+    const cards = await screen.findByRole("list", { name: "Biblioteki" });
+    const texts = within(cards)
+      .getAllByRole("listitem")
+      .map((card) => card.textContent);
+    expect(texts[0]).toContain("Artykuły: 1 artykuł");
+    expect(texts[1]).toContain("Artykuły: 2 artykuły");
+    expect(texts[2]).toContain("Artykuły: 5 artykułów");
+    expect(texts[3]).toContain("Artykuły: 22 artykuły");
+    expect(texts[4]).toContain("Artykuły: 1234 artykuły");
   });
 
   it("shows a library's logo in the Polish list too, and its monogram with logos off", async () => {

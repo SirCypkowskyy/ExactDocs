@@ -17,6 +17,7 @@ export const listMessages = defineMessages(
       library: "Library",
       defaultVersion: "Default version",
       versions: "Versions",
+      articles: "Articles",
       lastImported: "Last imported",
       sync: "Sync",
     },
@@ -57,6 +58,8 @@ export const listMessages = defineMessages(
     row: {
       pinnedDefaultVersion: "Pinned default version",
       pinnedDefault: " (pinned default)",
+      /** The default version's articles in words, where no column header names them (a phone card). */
+      articles: (n: number) => plural.en(n, { one: "# article", other: "# articles" }),
     },
     actions: {
       open: "Open library",
@@ -146,6 +149,7 @@ export const listMessages = defineMessages(
       library: "Biblioteka",
       defaultVersion: "Wersja domyślna",
       versions: "Wersje",
+      articles: "Artykuły",
       lastImported: "Ostatni import",
       sync: "Synchronizacja",
     },
@@ -186,6 +190,7 @@ export const listMessages = defineMessages(
     row: {
       pinnedDefaultVersion: "Przypięta wersja domyślna",
       pinnedDefault: " (przypięta domyślna)",
+      articles: (n) => plural.pl(n, { one: "# artykuł", few: "# artykuły", many: "# artykułów" }),
     },
     actions: {
       open: "Otwórz bibliotekę",
