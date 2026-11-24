@@ -1227,6 +1227,7 @@ async def bench(
     Returns:
         The report.
     """
+    machine = environment()  # the commit the run starts from
     indexes = {p.id: SectionIndex.of_project(p, plan.repos[p.id]) for p in plan.projects}
     with tempfile.TemporaryDirectory(prefix="exactdocs-grounded-bench-") as tmp:
         started = time.perf_counter()
@@ -1263,7 +1264,7 @@ async def bench(
             "top_k": str(TOP_K),
             **tool.describe(),
         },
-        environment=environment(),
+        environment=machine,
         scorer=scorer_settings(),
         statistics=DEFAULT_STATS,
         baseline=Baseline(
