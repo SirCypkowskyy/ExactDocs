@@ -3,9 +3,11 @@ import { Pin, PinOff } from "lucide-react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 import { HttpError } from "@/shared/lib/http";
+import { common, useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { Spinner } from "@/shared/ui/spinner";
 import { pinDefault, refreshDefault, unpinDefault } from "../api/default-pin";
+import { messages } from "../messages";
 import { pinChoices, type Version } from "../model/browse";
 
 interface DefaultPinProps {
@@ -17,13 +19,14 @@ interface DefaultPinProps {
 }
 
 const ACTION =
-  "flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1 text-left text-body outline-none transition-colors duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-disabled:cursor-progress aria-disabled:opacity-60 lg:min-h-9 [@media(hover:hover)]:hover:bg-accent";
+  "flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1 text-left text-body outline-none transition-colors duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-disabled:cursor-progress aria-disabled:opacity-60 lg:min-h-9 can-hover:hover:bg-accent";
 
-function explain(error: unknown): string {
-  if (error instanceof HttpError && error.status === 404)
-    return "That version or library is no longer imported. Reload the page.";
-  if (error instanceof HttpError && error.status === 401) return "Sign in again to change this.";
-  return "The default could not be changed. Try again.";
+type Texts = (typeof messages)["en"]["versions"];
+
+function explain(error: unknown, t: Texts): string {
+  if (error instanceof HttpError && error.status === 404) return t.gone;
+  if (error instanceof HttpError && error.status === 401) return t.signIn;
+  return t.changeFailed;
 }
 
 interface PinActionProps {
@@ -57,31 +60,29 @@ function PinAction({ busy, working, icon: Icon, label, hint, onRun }: PinActionP
 
 /** Pin the shown version as the library's default, or unpin it (LIB-10). */
 export function DefaultPin({ owner, repo, current, pinned }: DefaultPinProps) {
+  const t = useMessages(messages).versions;
+  const c = useMessages(common);
   const queryClient = useQueryClient();
   const change = useMutation({
     mutationFn: (pin: boolean) =>
       pin ? pinDefault(owner, repo, current.ref) : unpinDefault(owner, repo),
     onSuccess: (_saved, pin) => {
       refreshDefault(queryClient);
-      toast.success(pin ? "Default version set" : "Default version unpinned", {
-        description: pin ? current.ref : "It follows the default-version rule again.",
+      toast.success(pin ? t.setToast : t.unpinnedToast, {
+        description: pin ? current.ref : t.followsRule,
       });
     },
     onError: (error, pin) =>
       // The inline line under the buttons says the same; the toast offers the retry.
-      toast.error(explain(error), {
-        action: { label: "Try again", onClick: () => change.mutate(pin) },
+      toast.error(explain(error, t), {
+        action: { label: c.retry, onClick: () => change.mutate(pin) },
       }),
   });
   const choices = pinChoices(current, pinned);
   const busy = change.isPending;
   const pinning = busy && change.variables === true;
   const unpinning = busy && change.variables === false;
-  const doneLine = change.isSuccess
-    ? change.variables
-      ? `Default version set to ${current.ref}.`
-      : "Default version unpinned."
-    : "";
+  const doneLine = change.isSuccess ? (change.variables ? t.setTo(current.ref) : t.unpinned) : "";
 
   return (
     <div className="border-t border-border p-1">
@@ -91,11 +92,7 @@ export function DefaultPin({ owner, repo, current, pinned }: DefaultPinProps) {
           working={pinning}
           icon={Pin}
           onRun={() => change.mutate(true)}
-          label={
-            <>
-              Pin <span className="font-mono font-medium">{current.ref}</span> as default
-            </>
-          }
+          label={t.pinAs(<span className="font-mono font-medium">{current.ref}</span>)}
         />
       )}
       {choices.unpin && (
@@ -104,8 +101,8 @@ export function DefaultPin({ owner, repo, current, pinned }: DefaultPinProps) {
           working={unpinning}
           icon={PinOff}
           onRun={() => change.mutate(false)}
-          label="Unpin default"
-          hint="back to automatic"
+          label={t.unpin}
+          hint={t.backToAutomatic}
         />
       )}
       <p
@@ -117,7 +114,7 @@ export function DefaultPin({ owner, repo, current, pinned }: DefaultPinProps) {
           !change.isError && doneLine && "py-1.5",
         )}
       >
-        {change.isError ? explain(change.error) : doneLine}
+        {change.isError ? explain(change.error, t) : doneLine}
       </p>
     </div>
   );

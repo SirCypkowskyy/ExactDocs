@@ -459,10 +459,21 @@ describe("add library flow", () => {
     await screen.findByRole("heading", { name: /^Imported \// }, { timeout: POLL_MS + 3000 });
     expect(live).toHaveTextContent("Import finished. 4 files imported, 2+ skipped.");
     expect(screen.getByRole("heading", { name: /Skipped files \(2\+\)/ })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /Binary files/ })).toBeInTheDocument();
-    expect(screen.getByText("docs/huge.md")).toBeInTheDocument();
+    const problems = screen.getByRole("table", { name: "Skipped files" });
+    const huge = within(problems).getByText("docs/huge.md").closest("tr") as HTMLElement;
+    expect(within(huge).getByText("too_large")).toBeInTheDocument();
+    expect(within(huge).getByText("3 MiB")).toBeInTheDocument();
+    expect(within(huge).getByText("Skipped")).toBeInTheDocument();
+    const odd = within(problems).getByText("docs/odd.md").closest("tr") as HTMLElement;
+    expect(within(odd).getByText("Imported with a note")).toBeInTheDocument();
     expect(screen.getByText(/Showing the first 2 skipped files/)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /Imported with a note/ })).toBeInTheDocument();
+
+    // Filtered in the browser, without touching the page's URL.
+    await userEvent.click(screen.getByRole("button", { name: "Result" }));
+    await userEvent.click(await screen.findByRole("option", { name: /Imported with a note/ }));
+    await userEvent.keyboard("{Escape}");
+    expect(within(problems).queryByText("docs/huge.md")).not.toBeInTheDocument();
+    expect(within(problems).getByText("docs/odd.md")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Back to libraries" })).toHaveAttribute("href", "/");
   });
 
@@ -762,7 +773,7 @@ describe("add library flow, review fixes", () => {
     expect(await screen.findByText("Something we have no word for")).toBeInTheDocument();
   });
 
-  it("says 30+ skipped files fold away and count honestly", async () => {
+  it("pages 30+ skipped files and counts them honestly", async () => {
     const problems = Array.from({ length: 40 }, (_, i) => ({
       path: `docs/b${i}.md`,
       code: "binary",
@@ -772,8 +783,11 @@ describe("add library flow, review fixes", () => {
     serve({ job: () => job({ problems }) });
     renderAdd();
     await addDefault();
-    expect(await screen.findByText(/Skipped files/, { selector: "summary" })).toBeInTheDocument();
-    expect(screen.getAllByText("(40)").length).toBeGreaterThan(0);
+    expect(await screen.findByRole("heading", { name: "Skipped files (40)" })).toBeInTheDocument();
+    expect(screen.getByText("1–20 of 40")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(screen.getByText("21–40 of 40")).toBeInTheDocument();
+    expect(screen.getByText("docs/b39.md")).toBeInTheDocument();
   });
 });
 

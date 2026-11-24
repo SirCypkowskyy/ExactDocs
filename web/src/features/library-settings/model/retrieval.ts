@@ -1,63 +1,38 @@
 import type { AiProvider, AiRole, ThinkingLevel } from "@/shared/lib/ai-queries";
 import type { components } from "@/shared/lib/api-schema";
+import { currentLanguage, type Language, messagesFor } from "@/shared/lib/i18n";
+import { retrievalMessages } from "../messages/retrieval";
 
 export type LibraryRetrieval = components["schemas"]["LibraryRetrievalOut"];
 export type LibraryRetrievalBody = components["schemas"]["LibraryRetrievalIn"];
 type Budgets = components["schemas"]["LibraryBudgets"];
-export type RetrievalMode = components["schemas"]["RetrievalMode"];
+type RetrievalMode = components["schemas"]["RetrievalMode"];
 type ModelRole = components["schemas"]["ModelRole"];
 type FallbackReason = components["schemas"]["FallbackReason"];
 export type RerankWith = components["schemas"]["RerankWith"];
 
-export const RERANK_WITH_LABEL: Record<RerankWith, string> = {
-  cross_encoder: "Cross-encoder (cheaper)",
-  judge: "LLM judge",
-};
+/** The ways a library's searches may be reranked; their labels are in `messages/retrieval`. */
+export const RERANK_WITH: readonly RerankWith[] = ["cross_encoder", "judge"];
 
 export type RepoGuidance = components["schemas"]["RepoGuidance"];
 
 /** What the repository's AGENTS.md / CLAUDE.md do for the agent, in the order of trust. */
-export const REPO_GUIDANCE: readonly { value: RepoGuidance; label: string; hint: string }[] = [
-  { value: "off", label: "Off", hint: "Imports keep no instruction file." },
-  {
-    value: "notes",
-    label: "Untrusted notes",
-    hint: "Each version keeps its AGENTS.md / CLAUDE.md files; the agent gets a folder's file as a note when it opens that folder, never as instructions.",
-  },
-  {
-    value: "trusted",
-    label: "Trusted instructions",
-    hint: "As notes, and the root file also becomes part of the agent's instructions. Only for a repository you trust as much as your own instructions.",
-  },
-];
+export const REPO_GUIDANCE: readonly RepoGuidance[] = ["off", "notes", "trusted"];
 
 /** The roles a library may override. Never the embedding model: one per instance. */
 export const OVERRIDABLE = ["llm", "judge", "reranker"] as const;
 export type OverridableRole = (typeof OVERRIDABLE)[number];
 
-export const MODE_LABEL: Record<RetrievalMode, string> = {
-  bm25: "BM25",
-  vector: "Vector",
-  hybrid: "Hybrid",
-  hybrid_hyde: "Hybrid with HyDE",
-  agentic: "Agentic",
-};
+type Words = (typeof retrievalMessages)[Language];
+type Step = Exclude<keyof Words["steps"], "reranker" | "judge">;
 
-/** What each mode does, in the order a search runs it. */
-const MODE_STEPS: Record<RetrievalMode, readonly string[]> = {
-  bm25: ["Keyword search (BM25)"],
-  vector: ["Vector search with the embedding model"],
-  hybrid: ["Keyword search (BM25)", "Vector search with the embedding model", "Results merged"],
-  hybrid_hyde: [
-    "The LLM writes a hypothetical answer (HyDE)",
-    "Keyword search (BM25)",
-    "Vector search with the embedding model",
-    "Results merged",
-  ],
-  agentic: [
-    "An LLM agent browses this version in a sandbox: outlines, articles, chunks and keyword search",
-    "Its picks are checked against this version, each with why it was picked",
-  ],
+/** What each mode does, in the order a search runs it; the words are in `messages/retrieval`. */
+const MODE_STEPS: Record<RetrievalMode, readonly Step[]> = {
+  bm25: ["keyword"],
+  vector: ["vector"],
+  hybrid: ["keyword", "vector", "merged"],
+  hybrid_hyde: ["hyde", "keyword", "vector", "merged"],
+  agentic: ["agentBrowses", "agentChecked"],
 };
 
 /** The model roles each mode's pipeline calls; the reranker is a stage of its own. */
@@ -69,44 +44,49 @@ const MODE_ROLES: Record<RetrievalMode, readonly ModelRole[]> = {
   agentic: ["llm"],
 };
 
-const FALLBACK_WORDS: Partial<Record<FallbackReason, string>> = {
-  agent_limit_reached: "The agent ran past its limits, so a cheaper mode answered.",
-  agent_failed: "The agent could not finish, so a cheaper mode answered.",
-  agent_loop_detected: "The agent kept repeating the same call, so a cheaper mode answered.",
-  mode_unavailable: "The mode set for it can't run now: a model role it needs is not configured.",
-  vector_store_unavailable: "The vector store can't be loaded, so the vector modes are off.",
-};
+/** The fallbacks said in words of their own; any other is named by its code. */
+const FALLBACKS: readonly FallbackReason[] = [
+  "agent_limit_reached",
+  "agent_failed",
+  "agent_loop_detected",
+  "mode_unavailable",
+  "vector_store_unavailable",
+];
+type WordedFallback = Exclude<keyof Words["fallback"], "other">;
+const worded = (reason: FallbackReason): reason is WordedFallback & FallbackReason =>
+  FALLBACKS.includes(reason);
 
 export const MAX_RERANK_TOP_N = 200;
 
 /** Where the effective mode comes from, in words. */
-export function modeSource(r: LibraryRetrieval): string {
+export function modeSource(r: LibraryRetrieval, language: Language = currentLanguage()): string {
+  const m = messagesFor(retrievalMessages, language);
   if (r.fallback_reason) {
-    return FALLBACK_WORDS[r.fallback_reason] ?? `It fell back (${r.fallback_reason}).`;
+    return worded(r.fallback_reason)
+      ? m.fallback[r.fallback_reason]
+      : m.fallback.other(r.fallback_reason);
   }
-  if (!r.ai_enabled) return "AI is off for this library.";
-  if (r.mode) return "Set for this library.";
-  if (r.instance_mode) return "The instance's default.";
-  return "The best mode the instance has configured.";
+  if (!r.ai_enabled) return m.source.aiOff;
+  if (r.mode) return m.source.library;
+  if (r.instance_mode) return m.source.instance;
+  return m.source.best;
 }
 
 /** The steps the effective pipeline runs, the reranker or the LLM judge last when one reranks. */
-export function pipelineSteps(r: LibraryRetrieval): string[] {
-  const steps = [...MODE_STEPS[r.effective_mode]];
+export function pipelineSteps(
+  r: LibraryRetrieval,
+  language: Language = currentLanguage(),
+): string[] {
+  const m = messagesFor(retrievalMessages, language).steps;
+  const steps = MODE_STEPS[r.effective_mode].map((step) => m[step]);
   if (r.effective_mode === "agentic" && r.repo_guidance !== "off") {
-    steps.splice(
-      1,
-      0,
-      r.repo_guidance === "trusted"
-        ? "The repository's root AGENTS.md / CLAUDE.md is part of its instructions; a folder's is a note when it opens it"
-        : "A folder's AGENTS.md / CLAUDE.md reaches it as an untrusted note when it opens the folder",
-    );
+    steps.splice(1, 0, r.repo_guidance === "trusted" ? m.guidanceTrusted : m.guidanceNotes);
   }
   const top = r.effective_rerank_top_n;
   if (r.effective_reranker === "cross_encoder") {
-    steps.push(`The reranker reorders the best ${top}`);
+    steps.push(m.reranker(top));
   } else if (r.effective_reranker === "judge") {
-    steps.push(`The LLM judge rates the best ${top} in one call and reorders them`);
+    steps.push(m.judge(top));
   }
   return steps;
 }
@@ -183,9 +163,11 @@ export function instanceThinking(
   role: "llm" | "judge",
   roles: readonly AiRole[] | undefined,
   label: (level: ThinkingLevel) => string,
+  language: Language = currentLanguage(),
 ): string {
+  const m = messagesFor(retrievalMessages, language);
   const level = roles?.find((x) => x.role === role)?.thinking;
-  return level ? `The instance's level (${label(level)})` : "The instance's level";
+  return level ? m.instanceLevelOf(label(level)) : m.instanceLevel;
 }
 
 const roleDraft = (ref: string | null): RoleDraft => {
@@ -249,12 +231,17 @@ export function sameDraft(a: RetrievalDraft, b: RetrievalDraft): boolean {
  * The modes the select offers. Only what can run: the server's list, or BM25 alone once AI is
  * switched off in the form. A stored mode that can no longer run stays visible, marked.
  */
-export function modeOptions(r: LibraryRetrieval, d: RetrievalDraft) {
+export function modeOptions(
+  r: LibraryRetrieval,
+  d: RetrievalDraft,
+  language: Language = currentLanguage(),
+) {
+  const words = messagesFor(retrievalMessages, language);
   const available: readonly RetrievalMode[] = d.aiEnabled ? r.available_modes : ["bm25"];
-  const options = available.map((m) => ({ value: m, label: MODE_LABEL[m], disabled: false }));
+  const options = available.map((m) => ({ value: m, label: words.modes[m], disabled: false }));
   const stored = r.mode;
   if (stored && !available.includes(stored)) {
-    options.push({ value: stored, label: `${MODE_LABEL[stored]} (can't run now)`, disabled: true });
+    options.push({ value: stored, label: words.cantRunNow(words.modes[stored]), disabled: true });
   }
   return options;
 }
@@ -263,18 +250,25 @@ export function modeOptions(r: LibraryRetrieval, d: RetrievalDraft) {
  * The profiles an override may name: only those this server can call. A profile an override
  * still names that is gone or unsupported stays listed, marked, so the form shows the truth.
  */
-export function profileOptions(providers: readonly AiProvider[] | undefined, current: string) {
+export function profileOptions(
+  providers: readonly AiProvider[] | undefined,
+  current: string,
+  language: Language = currentLanguage(),
+) {
   // Not read yet (or not readable): offer the stored one as it is, never call it missing.
   if (providers === undefined) return current ? [{ value: current, note: "" }] : [];
   const usable = providers.filter((p) => !p.unsupported).map((p) => ({ value: p.name, note: "" }));
   if (current && !usable.some((p) => p.value === current)) {
-    usable.push({ value: current, note: " (not available)" });
+    usable.push({ value: current, note: messagesFor(retrievalMessages, language).notAvailable });
   }
   return usable;
 }
 
-const ceilingWord = (n: number | null | undefined, unit: string) =>
-  n === null || n === undefined ? undefined : `${n.toLocaleString("en-US")} ${unit}`;
+/** What a budget is counted in. */
+type BudgetUnit = "USD" | "tokens";
+
+const ceilingWord = (n: number | null | undefined, unit: BudgetUnit, m: Words) =>
+  n === null || n === undefined ? undefined : m.amount[unit](n);
 
 const over = (value: number | null | undefined, most: number | null | undefined) =>
   value !== null && value !== undefined && most !== null && most !== undefined && value > most;
@@ -286,14 +280,14 @@ const over = (value: number | null | undefined, most: number | null | undefined)
 export function ceilingHint(
   ceilings: Budgets | undefined,
   key: keyof Budgets,
-  unit: string,
+  unit: BudgetUnit,
   stored?: Budgets,
+  language: Language = currentLanguage(),
 ) {
-  const most = ceilingWord(ceilings?.[key], unit);
-  if (most && over(stored?.[key], ceilings?.[key])) {
-    return `Above the instance's limit of ${most}, which applies instead. It can be kept or lowered, not raised.`;
-  }
-  return most ? `At most ${most}, the instance's limit.` : "The instance sets no limit here.";
+  const m = messagesFor(retrievalMessages, language);
+  const most = ceilingWord(ceilings?.[key], unit, m);
+  if (most && over(stored?.[key], ceilings?.[key])) return m.ceilingAbove(most);
+  return most ? m.ceilingAtMost(most) : m.noCeiling;
 }
 
 const BUDGET_FIELDS = [
@@ -308,23 +302,23 @@ export function validateRetrieval(
   d: RetrievalDraft,
   ceilings: Budgets | undefined,
   stored?: Budgets,
+  language: Language = currentLanguage(),
 ): DraftErrors {
+  const m = messagesFor(retrievalMessages, language);
   const errors: DraftErrors = {};
   for (const role of OVERRIDABLE) {
-    if (d[role].profile && !d[role].model.trim()) errors[role] = "Name the model to use.";
+    if (d[role].profile && !d[role].model.trim()) errors[role] = m.nameModel;
   }
   const top = d.rerankTopN.trim();
   if (top && !(/^\d+$/.test(top) && Number(top) >= 1 && Number(top) <= MAX_RERANK_TOP_N)) {
-    errors.rerankTopN = `Enter a whole number from 1 to ${MAX_RERANK_TOP_N}, or leave it empty.`;
+    errors.rerankTopN = m.wholeTopN(MAX_RERANK_TOP_N);
   }
   for (const [field, key, unit, whole] of BUDGET_FIELDS) {
     const raw = d[field].trim();
     if (!raw) continue;
     const value = Number(raw);
     if (!Number.isFinite(value) || value <= 0 || (whole && !Number.isInteger(value))) {
-      errors[field] = whole
-        ? "Enter a whole number of tokens above 0, or leave it empty."
-        : "Enter an amount above 0, or leave it empty.";
+      errors[field] = whole ? m.wholeTokens : m.amountAbove;
       continue;
     }
     const most = ceilings?.[key];
@@ -332,7 +326,7 @@ export function validateRetrieval(
     const kept = stored?.[key];
     const allowed = kept !== null && kept !== undefined && value <= kept;
     if (over(value, most) && !allowed) {
-      errors[field] = `The instance allows a library at most ${ceilingWord(most, unit)}.`;
+      errors[field] = m.instanceAllows(ceilingWord(most, unit, m) ?? "");
     }
   }
   return errors;

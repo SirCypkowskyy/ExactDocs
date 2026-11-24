@@ -1,10 +1,15 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { LogIn } from "lucide-react";
 import { type FormEvent, useState } from "react";
+import { useMessages } from "@/shared/lib/i18n";
+import { ProviderMark } from "@/shared/ui/brand-marks";
 import { buttonVariants } from "@/shared/ui/button";
 import { Field } from "@/shared/ui/field";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { externalSignInHref, signIn } from "../api/session-query";
+import { messages } from "../messages";
 import { explainError, explainSignInRefusal, type FormProblem } from "../model/errors";
+import { brandsFirst } from "../model/providers";
 import { type SignInProvider, safeNext, validateSignIn } from "../model/session";
 import { AuthLayout } from "./auth-layout";
 import { focusField } from "./focus-field";
@@ -23,6 +28,7 @@ export function SignInPage({
   onSignedIn: (to: string) => void;
 }) {
   const queryClient = useQueryClient();
+  const t = useMessages(messages);
   const [pending, setPending] = useState(false);
   const [problem, setProblem] = useState<FormProblem>(() => {
     const message = explainSignInRefusal(error);
@@ -57,13 +63,13 @@ export function SignInPage({
   }
 
   return (
-    <AuthLayout title="Sign in" intro="Sign in to this ExactDocs server.">
+    <AuthLayout title={t.signIn.title} intro={t.signIn.intro}>
       <form onSubmit={submit} noValidate>
         <FormAlert id={FORM_ALERT_ID} message={problem.message} link={problem.link} />
         <div className="flex flex-col gap-4">
           <Field
             id="username"
-            label="Username"
+            label={t.signIn.username}
             autoComplete="username"
             autoCapitalize="none"
             spellCheck={false}
@@ -71,13 +77,18 @@ export function SignInPage({
           />
           <Field
             id="password"
-            label="Password"
+            label={t.signIn.password}
             type="password"
             autoComplete="current-password"
             error={problem.fields?.password}
             alertId={problem.message ? FORM_ALERT_ID : undefined}
           />
-          <SubmitButton pending={pending} idle="Sign in" busy="Signing in" />
+          <SubmitButton
+            pending={pending}
+            idle={t.signIn.submit}
+            busy={t.signIn.busy}
+            icon={<LogIn aria-hidden="true" data-icon-motion="forward" />}
+          />
         </div>
       </form>
       {providers.length > 0 && (
@@ -86,16 +97,19 @@ export function SignInPage({
             id="providers-heading"
             className="flex items-center gap-3 text-small text-muted-foreground before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border"
           >
-            or
+            {t.signIn.or}
           </h2>
+          {/* After the free shadcnblocks Social Button (`social-button`): outline, full width,
+              the provider's mark, brands first (#506). */}
           <ul className="mt-4 flex flex-col gap-2">
-            {providers.map((provider) => (
+            {brandsFirst(providers).map((provider) => (
               <li key={provider.name}>
                 <a
                   href={externalSignInHref(provider.name, safeNext(next))}
                   className={buttonVariants({ variant: "outline", className: "w-full" })}
                 >
-                  Sign in with {provider.display_name}
+                  <ProviderMark icon={provider.icon} iconUrl={provider.icon_url} />
+                  {t.signIn.withProvider(provider.display_name)}
                 </a>
               </li>
             ))}

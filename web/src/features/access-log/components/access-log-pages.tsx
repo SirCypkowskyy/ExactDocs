@@ -1,92 +1,117 @@
-import { useInfiniteQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
+import { ScrollText } from "lucide-react";
+import { useMessages } from "@/shared/lib/i18n";
+import { useNow } from "@/shared/lib/use-now";
 import { usePageTitle } from "@/shared/lib/use-page-title";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/shared/ui/breadcrumb";
+import { LibraryMark } from "@/shared/ui/library-mark";
 import { Page, PageHeader } from "@/shared/ui/page";
-import { accessLogQueryOptions, libraryAccessLogQueryOptions } from "../api/access-log-query";
-import type { AccessLogView } from "../model/access-log";
-import { AccessLogList } from "./access-log-list";
+import { accessLogSource, libraryAccessLogSource } from "../api/access-log-query";
+import { messages } from "../messages";
+import {
+  ACCESS_LOG_TABLE,
+  LIBRARY_ACCESS_LOG_TABLE,
+  parseAccessLogView,
+  parseLibraryAccessLogView,
+} from "../model/access-log";
+import { AccessLogTable } from "./access-log-list";
 
-const crumb =
-  "-ml-1 inline-flex min-h-11 items-center rounded px-1 outline-none transition-colors duration-(--dur-fast) hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-7";
+/** The URL's search, as the route validated it (or as typed, in a test). */
+const useRawSearch = () => useSearch({ strict: false }) as Record<string, unknown>;
 
-const NO_VIEW: AccessLogView = {};
-const ignore = () => {};
-
-interface ViewProps {
-  /** The filter, held in the URL by the route. */
-  view?: AccessLogView;
-  onView?: (view: AccessLogView) => void;
-}
-
-/** One library's access log, for its admins and the server's operators. */
+/**
+ * One library's access log, for its admins and the server's operators. `logo` is the library's
+ * (its version), when the route already knows it.
+ */
 export function LibraryAccessLogPage({
   owner,
   repo,
-  view = NO_VIEW,
-  onView = ignore,
-}: ViewProps & { owner: string; repo: string }) {
+  logo,
+}: {
+  owner: string;
+  repo: string;
+  logo?: string | null | undefined;
+}) {
   const id = `/${owner}/${repo}`;
-  const heading = usePageTitle(`${id} access log`);
-  const log = useInfiniteQuery(libraryAccessLogQueryOptions(owner, repo, view));
+  const t = useMessages(messages).pages;
+  const heading = usePageTitle(t.libraryTitle(id));
+  const view = parseLibraryAccessLogView(useRawSearch());
+  const now = useNow();
   return (
     <Page>
       <PageHeader
         headingRef={heading}
-        title="Access log"
-        description="Who created, shared, unshared or handed over this library, and when. Newest first."
+        mark={<LibraryMark id={id} logo={logo} size="lg" />}
+        title={t.title}
+        description={t.libraryDescription}
         above={
-          <nav aria-label="Breadcrumb" className="text-body text-muted-foreground">
-            <ol className="flex flex-wrap items-center gap-x-1.5">
-              <li>
-                <Link to="/" className={crumb}>
-                  Libraries
-                </Link>
-              </li>
-              <li aria-hidden="true">/</li>
-              <li>
-                <Link
-                  to="/libraries/$owner/$repo"
-                  params={{ owner, repo }}
-                  className={`${crumb} font-mono text-small`}
-                >
-                  {id}
-                </Link>
-              </li>
-              <li aria-hidden="true">/</li>
-              <li>
-                <Link
-                  to="/libraries/$owner/$repo/sharing"
-                  params={{ owner, repo }}
-                  className={crumb}
-                >
-                  Sharing
-                </Link>
-              </li>
-              <li aria-hidden="true">/</li>
-              <li aria-current="page" className="text-foreground">
-                Access log
-              </li>
-            </ol>
-          </nav>
+          <Breadcrumb>
+            <BreadcrumbList>
+              <BreadcrumbItem>
+                <BreadcrumbLink asChild>
+                  <Link to="/">{t.libraries}</Link>
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbLink asChild className="font-mono text-small">
+                  <Link to="/libraries/$owner/$repo" params={{ owner, repo }}>
+                    {id}
+                  </Link>
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbLink asChild>
+                  <Link to="/libraries/$owner/$repo/sharing" params={{ owner, repo }}>
+                    {t.sharing}
+                  </Link>
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage>{t.title}</BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
         }
       />
-      <AccessLogList log={log} view={{ change: view.change }} onView={onView} />
+      <AccessLogTable
+        view={view}
+        config={LIBRARY_ACCESS_LOG_TABLE}
+        source={libraryAccessLogSource(owner, repo, view, now)}
+      />
     </Page>
   );
 }
 
 /** Every library's access log, removed libraries included: the operators' page. */
-export function AccessLogPage({ view = NO_VIEW, onView = ignore }: ViewProps) {
-  const heading = usePageTitle("Access log");
-  const log = useInfiniteQuery(accessLogQueryOptions(view));
+export function AccessLogPage() {
+  const t = useMessages(messages).pages;
+  const heading = usePageTitle(t.title);
+  const view = parseAccessLogView(useRawSearch());
+  const now = useNow();
   return (
     <Page>
       <PageHeader
         headingRef={heading}
-        title="Access log"
-        description="Every library's creations, role changes, ownership transfers and removals, with who made them and when. Removed libraries keep their log here. Newest first."
+        icon={<ScrollText />}
+        title={t.title}
+        description={t.description}
       />
-      <AccessLogList log={log} view={view} onView={onView} everyLibrary />
+      <AccessLogTable
+        view={view}
+        config={ACCESS_LOG_TABLE}
+        source={accessLogSource(view, now)}
+        everyLibrary
+      />
     </Page>
   );
 }

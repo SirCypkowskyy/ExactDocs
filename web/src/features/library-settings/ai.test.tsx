@@ -2,11 +2,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { aiLabels } from "@/shared/lib/ai-queries";
 import { HttpError } from "@/shared/lib/http";
+import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { TestRouter } from "@/shared/lib/test-router";
 import { LibrarySettingsPage } from "./index";
 import {
   bodyOf,
+  ceilingHint,
   type LibraryRetrieval,
   modeOptions,
   modeSource,
@@ -608,5 +611,63 @@ describe("retrieval model", () => {
     expect(explainRetrievalSave(e("provider_unsupported")).message).toBe("the words");
     expect(explainRetrievalSave(e("thinking_unsupported")).message).toBe("the words");
     expect(explainRetrievalSave(new TypeError("offline")).message).toMatch(/Can't reach/);
+  });
+});
+
+describe("in Polish", () => {
+  afterEach(() => resetPreferences());
+
+  it("shows the effective pipeline and the form in Polish", async () => {
+    setPreferences({ language: "pl" });
+    serve(HYBRID);
+    renderPage();
+    const ai = within(
+      (await screen.findByRole("heading", { name: "Wyszukiwanie i AI" })).closest(
+        "section",
+      ) as HTMLElement,
+    );
+    expect(await ai.findByTestId("effective-mode")).toHaveTextContent("Hybrydowe");
+    expect(ai.getByText("Potok w użyciu")).toBeInTheDocument();
+    expect(ai.getByText("Najlepszy tryb skonfigurowany w instancji.")).toBeInTheDocument();
+    expect(ai.getByText("Wyszukiwanie wektorowe modelem embeddingów")).toBeInTheDocument();
+    const options = within(ai.getByLabelText("Tryb wyszukiwania"))
+      .getAllByRole("option")
+      .map((o) => o.textContent);
+    expect(options).toEqual(["Najlepszy dostępny tryb", "BM25", "Hybrydowe"]);
+    expect(ai.getByLabelText("Używaj dostawców AI w tej bibliotece")).toBeChecked();
+    expect(ai.getByText("Zaawansowane: modele, reranking i limity wydatków")).toBeInTheDocument();
+    expect(ai.getByRole("button", { name: "Zapisz ustawienia AI" })).toBeInTheDocument();
+    // The role names come from the shared AI labels, in the same language.
+    const { roles } = aiLabels.pl;
+    expect(await ai.findByText(roles.embedding)).toBeInTheDocument();
+    expect(ai.getByLabelText(`Poziom myślenia (${roles.judge})`)).toBeInTheDocument();
+    expect(ai.getByLabelText(`Profil (${roles.reranker})`)).toBeInTheDocument();
+  });
+
+  it("words limits, plurals and checks in Polish", () => {
+    const ceilings = { ...NO_BUDGETS, daily_usd: 2.5, daily_tokens: 1000, monthly_tokens: 22 };
+    expect(ceilingHint(ceilings, "daily_usd", "USD", undefined, "pl")).toBe(
+      "Najwyżej 2,5 USD – to limit instancji.",
+    );
+    expect(ceilingHint(ceilings, "daily_tokens", "tokens", undefined, "pl")).toBe(
+      "Najwyżej 1000 tokenów – to limit instancji.",
+    );
+    expect(ceilingHint(ceilings, "monthly_tokens", "tokens", undefined, "pl")).toBe(
+      "Najwyżej 22 tokeny – to limit instancji.",
+    );
+    const draft = { ...retrievalDraftOf(HYBRID), dailyUsd: "3", rerankTopN: "0" };
+    expect(validateRetrieval(draft, ceilings, undefined, "pl")).toEqual({
+      dailyUsd: "Instancja pozwala bibliotece na najwyżej 2,5 USD.",
+      rerankTopN: "Wpisz liczbę całkowitą od 1 do 200 albo zostaw puste pole.",
+    });
+    expect(
+      pipelineSteps(
+        { ...HYBRID, effective_reranker: "judge", effective_rerank_top_n: 32 },
+        "pl",
+      ).at(-1),
+    ).toBe("Sędzia LLM ocenia 32 najlepszych w jednym wywołaniu i zmienia ich kolejność");
+    expect(modeSource({ ...HYBRID, fallback_reason: "llm_rate_limited" }, "pl")).toBe(
+      "Użyto trybu zapasowego (llm_rate_limited).",
+    );
   });
 });
