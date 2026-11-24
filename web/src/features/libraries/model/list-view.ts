@@ -1,5 +1,6 @@
 import {
   parseChoice,
+  parseFacet,
   parseTableSearch,
   type TableConfig,
   type TableSearch,
@@ -14,6 +15,9 @@ export const VERSION_CHOICES = ["some", "none"] as const;
 /** Last imported within a period (`updated_after`), or longer ago than 30 days (`updated_before`). */
 export const IMPORTED_WITHIN = ["24h", "7d", "30d", "older"] as const;
 
+/** The state of a library's latest sync (its newest import or refresh job), `sync_state`. */
+export const SYNC_STATES = ["queued", "running", "succeeded", "failed", "cancelled"] as const;
+
 export type ImportedWithin = (typeof IMPORTED_WITHIN)[number];
 
 /** The libraries table (DataTable v2): sortable by the API's fields; the API sorts by ID unless told. */
@@ -26,6 +30,7 @@ export interface ListView extends TableSearch {
   ai?: (typeof AI_CHOICES)[number] | undefined;
   versions?: (typeof VERSION_CHOICES)[number] | undefined;
   imported?: ImportedWithin | undefined;
+  sync?: (typeof SYNC_STATES)[number][] | undefined;
 }
 
 /** Anything unknown in a shared or hand-edited URL is dropped, never sent to the API. */
@@ -35,6 +40,7 @@ export function parseListView(search: Record<string, unknown>): ListView {
     ai: parseChoice(search.ai, AI_CHOICES),
     versions: parseChoice(search.versions, VERSION_CHOICES),
     imported: parseChoice(search.imported, IMPORTED_WITHIN),
+    sync: parseFacet(search.sync, SYNC_STATES),
   };
 }
 
@@ -54,6 +60,7 @@ export interface ListFilters {
   has_versions?: boolean;
   updated_after?: string;
   updated_before?: string;
+  sync_state?: readonly string[];
 }
 
 /**
@@ -68,6 +75,7 @@ export function listFilters(view: ListView, now: number): ListFilters {
     ...(view.sort && { sort: view.sort }),
     ...(view.ai && { ai_enabled: view.ai === "on" }),
     ...(view.versions && { has_versions: view.versions === "some" }),
+    ...(view.sync && { sync_state: view.sync }),
     ...(since &&
       (view.imported === "older" ? { updated_before: since } : { updated_after: since })),
   };
@@ -87,6 +95,7 @@ export function listParams(
   if (filters.has_versions !== undefined) p.set("has_versions", String(filters.has_versions));
   if (filters.updated_after) p.set("updated_after", filters.updated_after);
   if (filters.updated_before) p.set("updated_before", filters.updated_before);
+  for (const state of filters.sync_state ?? []) p.append("sync_state", state);
   // A page by offset (0 to 10000) or after a cursor, never both (422 `cursor_with_offset`).
   if (offset !== undefined) p.set("offset", String(offset));
   else if (cursor) p.set("cursor", cursor);

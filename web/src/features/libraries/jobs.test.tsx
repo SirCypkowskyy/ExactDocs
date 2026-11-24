@@ -43,6 +43,9 @@ function serve(count = 45) {
     job(i + 1, {
       ...(i === 1 && { state: "failed", error: "unreachable", error_code: "repo_unreachable" }),
       ...(i === 2 && { state: "running", finished_at: null, cancellable: true, done: 2, total: 5 }),
+      // Job 1 was queued by alice; jobs 4 and 5 by the instance on its own.
+      ...(i === 0 && { created_by: { id: "u1", username: "alice" } }),
+      ...((i === 3 || i === 4) && { origin: "auto", created_by: null }),
     }),
   );
   const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
@@ -51,7 +54,12 @@ function serve(count = 45) {
       return Response.json({ ...all[2], cancelled_at: "2026-11-01T10:02:00Z", cancellable: false });
     }
     const states = url.searchParams.getAll("state");
-    const rows = states.length ? all.filter((j) => states.includes(j.state)) : all;
+    const origins = url.searchParams.getAll("origin");
+    const rows = all.filter(
+      (j) =>
+        (!states.length || states.includes(j.state)) &&
+        (!origins.length || origins.includes(j.origin)),
+    );
     const offset = url.searchParams.get("offset");
     const cursor = url.searchParams.get("cursor");
     if (offset !== null && cursor !== null) {
@@ -114,6 +122,7 @@ describe("the jobs table", () => {
       size: 50,
       state: ["queued", "failed"],
       kind: ["embed"],
+      origin: undefined,
       created: "7d",
       library: "/a/b",
       version: undefined,
@@ -134,6 +143,7 @@ describe("the jobs table", () => {
       size: undefined,
       state: undefined,
       kind: undefined,
+      origin: undefined,
       created: undefined,
       library: undefined,
       version: undefined,
@@ -283,6 +293,47 @@ describe("the jobs table", () => {
     await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(await screen.findByText("1–20 of 45")).toBeInTheDocument();
     expect(history.location.search).toBe("");
+  });
+
+  it("names who queued each job, the instance's own work as automatic", async () => {
+    serve();
+    renderPage();
+    const table = await screen.findByRole("table", { name: "Jobs" });
+    expect(within(table).getByRole("columnheader", { name: "Started by" })).toBeInTheDocument();
+    await within(table).findByRole("link", { name: "/acme/lib1" });
+    const rowOf = (library: string) =>
+      within(table).getByRole("link", { name: library }).closest("tr") as HTMLElement;
+    expect(within(rowOf("/acme/lib1")).getByText("alice")).toBeInTheDocument();
+    expect(within(rowOf("/acme/lib4")).getByText("Automatic")).toBeInTheDocument();
+    // A manual job without a person: the command line, or from before it was recorded.
+    expect(within(rowOf("/acme/lib2")).getByText("Not recorded")).toBeInTheDocument();
+  });
+
+  it("filters by origin on the server, in the URL", async () => {
+    const fetchMock = serve();
+    const history = renderPage();
+    await screen.findByText("1–20 of 45");
+
+    await userEvent.click(screen.getByRole("button", { name: "Origin" }));
+    await userEvent.click(await screen.findByRole("option", { name: "auto" }));
+    await userEvent.keyboard("{Escape}");
+
+    await waitFor(() =>
+      expect(urls(fetchMock)).toContain("/api/v1/jobs?limit=20&origin=auto&offset=0"),
+    );
+    expect(history.location.search).toContain("origin=auto");
+    expect(await screen.findByText("1–2 of 2")).toBeInTheDocument();
+    const chips = screen.getByRole("list", { name: "Active filters" });
+    expect(within(chips).getByText("auto")).toBeInTheDocument();
+  });
+
+  it("reads the origin from a link; both origins are no filter at all", async () => {
+    expect(parseJobsView({ origin: "auto,manual,robot" }).origin).toEqual(["manual", "auto"]);
+    expect(jobsFilters({ origin: ["manual", "auto"] }, 0)).toEqual({});
+    const fetchMock = serve();
+    renderPage("/jobs?origin=manual");
+    expect(await screen.findByText("1–20 of 43")).toBeInTheDocument();
+    expect(urls(fetchMock)[0]).toBe("/api/v1/jobs?limit=20&origin=manual&offset=0");
   });
 
   it("hides and shows a column", async () => {

@@ -129,6 +129,11 @@ describe("the libraries slice in Polish", () => {
     const menu = await screen.findByRole("menu");
     expect(within(menu).getByRole("menuitem", { name: "Synchronizuj teraz" })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Pokaż jej zadania" })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Synchronizacja" }));
+    expect(
+      await screen.findByRole("option", { name: "Synchronizacja nieudana" }),
+    ).toBeInTheDocument();
   });
 
   it("says the articles with the Polish plural on a phone card", async () => {
@@ -228,29 +233,38 @@ describe("the libraries slice in Polish", () => {
             jobs: [
               job({ id: "j1" }),
               job({ id: "j2", state: "failed", kind: "reprocess", version: null }),
+              job({ id: "j3", origin: "auto", created_by: null }),
+              job({ id: "j4", origin: "manual", created_by: { id: "u1", username: "alice" } }),
             ],
             next_cursor: null,
-            total: 2,
+            total: 4,
           }
         : undefined,
     );
     renderWith(<TestRouter pages={{ "/jobs": JobsPage }} start="/jobs" />);
 
     expect(await screen.findByRole("heading", { name: "Zadania" })).toBeInTheDocument();
-    expect(await screen.findByText("2 zadania")).toBeInTheDocument();
+    expect(await screen.findByText("4 zadania")).toBeInTheDocument();
     const table = screen.getByRole("table");
     expect(within(table).getByRole("columnheader", { name: /Stan/ })).toBeInTheDocument();
     expect(within(table).getByText("nieudane")).toBeInTheDocument();
     expect(within(table).getByText("ponowne przetwarzanie")).toBeInTheDocument();
     expect(within(table).getByText("wszystkie")).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: "Zlecone przez" })).toBeInTheDocument();
+    expect(within(table).getByText("Automatycznie")).toBeInTheDocument();
+    expect(within(table).getByText("alice")).toBeInTheDocument();
+    expect(within(table).getAllByText("Nie zapisano")).toHaveLength(2);
     // The pagination bar speaks Polish too.
     const pages = screen.getByRole("navigation", { name: "Stronicowanie" });
-    expect(within(pages).getByText("1–2 z 2")).toBeInTheDocument();
+    expect(within(pages).getByText("1–4 z 4")).toBeInTheDocument();
     expect(within(pages).getByText("Strona 1 z 1")).toBeInTheDocument();
     expect(within(pages).getByLabelText("Wierszy na stronie")).toHaveValue("20");
     expect(within(pages).getByRole("button", { name: "Następna strona" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Stan" }));
     expect(await screen.findByRole("option", { name: "w toku" })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Źródło" }));
+    expect(await screen.findByRole("option", { name: "automatyczne" })).toBeInTheDocument();
   });
 
   it("follows an import in Polish", async () => {

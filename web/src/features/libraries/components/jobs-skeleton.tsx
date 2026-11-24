@@ -20,7 +20,7 @@ export function JobsSkeleton() {
         {t.loading}
       </p>
       <DataTableSkeleton
-        filters={3}
+        filters={4}
         columns={[
           { id: "id", header: "#", shape: "mono", className: "max-lg:hidden" },
           { id: "library", header: c.library, shape: "avatar" },
@@ -29,6 +29,7 @@ export function JobsSkeleton() {
           { id: "state", header: c.state, shape: "pill" },
           { id: "progress", header: c.progress, shape: "meter", className: "max-md:hidden" },
           { id: "origin", header: c.origin, className: "max-xl:hidden" },
+          { id: "created_by", header: c.startedBy, shape: "avatar", className: "max-lg:hidden" },
           { id: "queued", header: c.queued },
           { id: "took", header: c.took, className: "max-md:hidden" },
         ]}

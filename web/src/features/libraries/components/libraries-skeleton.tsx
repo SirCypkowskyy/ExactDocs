@@ -21,7 +21,7 @@ export function LibrariesSkeleton() {
         {t.loading}
       </p>
       <DataTableSkeleton
-        filters={3}
+        filters={4}
         columns={[
           { id: "library", header: c.library, shape: "avatar" },
           { id: "default", header: c.defaultVersion, shape: "mono" },

@@ -1,12 +1,18 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { Pin } from "lucide-react";
 import { PHONE_QUERY, useMediaQuery } from "@/shared/lib/use-media-query";
-import { Count, LibraryCell, RelativeTime, VersionCell } from "@/shared/ui/data-table/cells";
+import {
+  Count,
+  LibraryCell,
+  RelativeTime,
+  STATE_LOOKS,
+  VersionCell,
+} from "@/shared/ui/data-table/cells";
 import type { TableFilter } from "@/shared/ui/data-table/use-data-table";
 import { Tooltip } from "@/shared/ui/tooltip";
 import type { listMessages } from "../messages/list";
 import type { Library } from "../model/library";
-import { AI_CHOICES, IMPORTED_WITHIN, VERSION_CHOICES } from "../model/list-view";
+import { AI_CHOICES, IMPORTED_WITHIN, SYNC_STATES, VERSION_CHOICES } from "../model/list-view";
 import { SyncCell } from "./sync-status";
 
 /** The libraries table's columns and filters (blocks-map §2.3, "Libraries"). */
@@ -117,5 +123,15 @@ export const filtersOf = (t: ListMessages): TableFilter[] => [
     title: t.columns.lastImported,
     single: true,
     options: IMPORTED_WITHIN.map((v) => ({ value: v, label: t.toolbar.within[v] })),
+  },
+  {
+    // The server's filter on each library's latest sync (`sync_state`); the badge shows the same.
+    id: "sync",
+    title: t.columns.sync,
+    options: SYNC_STATES.map((s) => ({
+      value: s,
+      label: t.toolbar.syncStates[s],
+      ...(STATE_LOOKS[s] && { icon: STATE_LOOKS[s].icon }),
+    })),
   },
 ];

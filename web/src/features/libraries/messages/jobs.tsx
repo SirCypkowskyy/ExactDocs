@@ -13,6 +13,7 @@ export const jobsMessages = defineMessages(
       state: "State",
       progress: "Progress",
       origin: "Origin",
+      startedBy: "Started by",
       queued: "Queued",
       took: "Took",
     },
@@ -42,6 +43,10 @@ export const jobsMessages = defineMessages(
       auto: "auto",
       manual: "manual",
     } as Readonly<Record<string, string>>,
+    /** Who queued a job, when no person did: the instance on its own, or nobody recorded. */
+    automatic: "Automatic",
+    notRecorded: "Not recorded",
+    notRecordedHint: "Queued from the server's command line, or before ExactDocs recorded who did.",
     within: {
       "24h": "Last 24 hours",
       "7d": "Last 7 days",
@@ -91,6 +96,7 @@ export const jobsMessages = defineMessages(
       state: "Stan",
       progress: "Postęp",
       origin: "Źródło",
+      startedBy: "Zlecone przez",
       queued: "Dodano",
       took: "Czas",
     },
@@ -120,6 +126,10 @@ export const jobsMessages = defineMessages(
       auto: "automatyczne",
       manual: "ręczne",
     },
+    automatic: "Automatycznie",
+    notRecorded: "Nie zapisano",
+    notRecordedHint:
+      "Zlecone z wiersza poleceń na serwerze albo zanim ExactDocs zaczął zapisywać, kto je zlecił.",
     within: {
       "24h": "Ostatnie 24 godziny",
       "7d": "Ostatnie 7 dni",
