@@ -16,7 +16,7 @@ from typing import Final
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_evals.reporting import EvaluationReport
 
-from agent_bench.arms import BASELINES, EXACTDOCS
+from agent_bench.arms import ARMS, BASELINES, EXACTDOCS
 from agent_bench.harness import (
     AgentRun,
     BenchInfo,
@@ -873,7 +873,12 @@ def _quality(report: BenchReport) -> list[str]:
     for c in report.cells:
         shares = c.intervals
         accuracy = _pct(c.accuracy) + _ci(shares.get("accuracy"))
-        read = _pct(c.grounded_share) + _ci(shares.get("grounded_share"))
+        arm = ARMS.get(c.arm)
+        read = (
+            "n/a (no tools)"
+            if arm is not None and arm.tool is None
+            else _pct(c.grounded_share) + _ci(shares.get("grounded_share"))
+        )
         wrong = _count_share(
             c.wrong_version, c.wrong_version_share, shares.get("wrong_version_share")
         )

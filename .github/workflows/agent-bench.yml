@@ -2,14 +2,17 @@ name: Agent benchmark (real providers)
 
 # Manual only: it calls hosted models with the repository's keys, so it never runs on a push or a
 # pull request. It runs the agent benchmark (docs/evals.md#the-agent-benchmark,
-# `just agent-bench run`): each agent model answers the golden set with only the ExactDocs MCP
-# tools, under each retrieval configuration, and an LLM judge grades the answers.
+# `just agent-bench run`): each agent model answers the golden set with each documentation arm
+# (`none`: no tools; `exactdocs`: only the ExactDocs MCP tools, under each retrieval
+# configuration), and an LLM judge, blind to the arm, grades the answers.
 #
-# Agent and judge models are pydantic-ai model names; their keys:
+# Agent and judge models are pydantic-ai model names (`ollama:<model>` for an Ollama server);
+# their keys:
 #
 #   repository secrets     AGENT_BENCH_OPENAI_API_KEY, AGENT_BENCH_ANTHROPIC_API_KEY,
-#                          AGENT_BENCH_GOOGLE_API_KEY (each optional)
-#   repository variable    AGENT_BENCH_OPENAI_BASE_URL (an OpenAI-compatible gateway; optional)
+#                          AGENT_BENCH_GOOGLE_API_KEY, AGENT_BENCH_OLLAMA_API_KEY (each optional)
+#   repository variables   AGENT_BENCH_OPENAI_BASE_URL (an OpenAI-compatible gateway; optional),
+#                          AGENT_BENCH_OLLAMA_BASE_URL (https://ollama.com/v1 for Ollama Cloud)
 #
 # The server's own models (an embedding model in a retrieval configuration, `eval:<model>`) use
 # the profile `eval` of the retrieval workflow (eval-providers.yml): the variables
@@ -25,6 +28,14 @@ on:
       judge_model:
         description: Judge model (e.g. openai:gpt-5)
         required: true
+      arms:
+        description: Documentation arms, comma-separated (none, exactdocs; context7 and grounded-docs are not built yet)
+        required: false
+        default: "none,exactdocs"
+      thinking:
+        description: The agents' thinking (on, off, low, medium, high; blank for each model's default)
+        required: false
+        default: ""
       retrieval:
         description: Retrieval configurations, separated by spaces (name:key=value,...)
         required: false
@@ -58,8 +69,11 @@ jobs:
       EXACTDOCS_AI__PROVIDERS__EVAL__BASE_URL: ${{ vars.EVAL_PROVIDER_BASE_URL }}
       EXACTDOCS_AI__PROVIDERS__EVAL__API_VERSION: ${{ vars.EVAL_PROVIDER_API_VERSION }}
       OPENAI_BASE_URL: ${{ vars.AGENT_BENCH_OPENAI_BASE_URL }}
+      OLLAMA_BASE_URL: ${{ vars.AGENT_BENCH_OLLAMA_BASE_URL }}
       AGENT_MODELS: ${{ inputs.agent_models }}
       JUDGE_MODEL: ${{ inputs.judge_model }}
+      ARMS: ${{ inputs.arms }}
+      THINKING: ${{ inputs.thinking }}
       RETRIEVAL: ${{ inputs.retrieval }}
       EXTRA_ARGS: ${{ inputs.args }}
     steps:
@@ -79,12 +93,15 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.AGENT_BENCH_OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.AGENT_BENCH_ANTHROPIC_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.AGENT_BENCH_GOOGLE_API_KEY }}
+          OLLAMA_API_KEY: ${{ secrets.AGENT_BENCH_OLLAMA_API_KEY }}
         run: |
           # A blank variable is unset: the provider SDKs would take an empty base URL or key.
-          for name in OPENAI_BASE_URL OPENAI_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY; do
+          for name in OPENAI_BASE_URL OPENAI_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY \
+            OLLAMA_BASE_URL OLLAMA_API_KEY; do
             if [ -z "${!name}" ]; then unset "$name"; fi
           done
-          args=(--judge-model "$JUDGE_MODEL")
+          args=(--judge-model "$JUDGE_MODEL" --arm "${ARMS:-none,exactdocs}")
+          if [ -n "$THINKING" ]; then args+=(--thinking "$THINKING"); fi
           IFS=',' read -ra models <<< "$AGENT_MODELS"
           for model in "${models[@]}"; do args+=(--agent-model "$model"); done
           read -ra configurations <<< "$RETRIEVAL"
