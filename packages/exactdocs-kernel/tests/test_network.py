@@ -1,10 +1,14 @@
 """#538: one resolution of the outbound settings, NO_PROXY matching, and redaction."""
 
+import ssl
+from pathlib import Path
+
 import pytest
 
 from exactdocs_kernel import (
     OUTBOUND_VARIABLES,
     OutboundNetwork,
+    proxy_failure,
     redact_url,
     resolve_outbound,
 )
@@ -284,3 +288,40 @@ def test_redact_hides_the_credentials_of_any_url_and_the_proxys_password() -> No
 )
 def test_redact_url(text: str, shown: str) -> None:
     assert redact_url(text) == shown
+
+
+# ----------------------------------------------------------------- errors that name the proxy
+
+
+@pytest.mark.parametrize(
+    ("detail", "says"),
+    [
+        ("407 Proxy Authentication Required", "wants credentials to reach github.com:443"),
+        ("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed", "TLS failed reaching"),
+        ("403 Forbidden", "refused the connection to github.com:443"),
+        ("CONNECT tunnel failed, HTTP 502", "refused the connection to github.com:443"),
+        ("[Errno 111] Connection refused", "could not reach github.com:443 through the proxy"),
+        ("", "could not reach github.com:443 through the proxy"),
+    ],
+)
+def test_a_failure_through_the_proxy_names_the_proxy_and_the_host(detail: str, says: str) -> None:
+    message = proxy_failure(SECRET_PROXY, "github.com:443", detail)
+
+    assert says in message
+    assert "http://***@proxy.corp.example:3128" in message
+    assert "s3cr" not in message
+
+
+def test_the_tls_context_trusts_the_bundle_and_always_verifies(tmp_path: Path) -> None:
+    assert OutboundNetwork().tls_context() is None  # the client's own default trust
+    bundle = tmp_path / "ca.pem"
+    system = ssl.get_default_verify_paths().cafile or ssl.get_default_verify_paths().openssl_cafile
+    if not Path(system).is_file():
+        pytest.skip("no system CA file to copy")
+    bundle.write_bytes(Path(system).read_bytes())
+
+    context = OutboundNetwork(ca_bundle=str(bundle)).tls_context()
+
+    assert context is not None
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname
