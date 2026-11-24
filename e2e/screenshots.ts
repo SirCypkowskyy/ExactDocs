@@ -79,6 +79,12 @@ async function shoot(page: Page, name: string, scheme: string, fullPage: boolean
   const { width, height } = page.viewportSize() ?? { width: WIDTH, height: 900 };
   await page.mouse.move(width - 2, height - 2); // off whatever was clicked
   await ready(page);
+  // What measured itself before the web fonts came in (a tab's underline) measures again: a
+  // narrower viewport, still above the `lg` breakpoint, resizes the page's column and back.
+  await page.setViewportSize({ width: 1040, height });
+  await ready(page);
+  await page.setViewportSize({ width, height });
+  await ready(page);
   const path = `${OUT}/${name}-${scheme}.png`;
   await page.screenshot({ path, fullPage, animations: "disabled" });
 }
