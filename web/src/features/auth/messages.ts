@@ -135,6 +135,58 @@ export const messages = defineMessages(
       unavailable: "Kept in this browser: this server does not store interface preferences yet.",
       error: "Couldn't save to your account. Your choices still apply in this browser.",
     },
+    password: {
+      title: "Password",
+      description:
+        "Change the password you sign in with. Your other sessions end; this one stays signed in, and your API tokens keep working.",
+      current: "Current password",
+      next: "New password",
+      confirm: "Repeat the new password",
+      hint: (min: number, max: number) =>
+        `${min} to ${max} characters. A short phrase of unrelated words works well.`,
+      show: {
+        current: "Show current password",
+        next: "Show new password",
+        confirm: "Show repeated password",
+      },
+      hide: {
+        current: "Hide current password",
+        next: "Hide new password",
+        confirm: "Hide repeated password",
+      },
+      submit: "Change password",
+      busy: "Changing password",
+      changed: "Password changed. Your other sessions were signed out.",
+      toast: "Password changed",
+      toastHint: "Your other sessions were signed out. Your API tokens keep working.",
+      enterCurrent: "Enter your current password.",
+      wait: {
+        seconds: (n: number) =>
+          `Try again in ${plural.en(n, { one: "# second", other: "# seconds" })}.`,
+        minutes: (n: number) =>
+          `Try again in ${plural.en(n, { one: "# minute", other: "# minutes" })}.`,
+        hours: (n: number) => `Try again in ${plural.en(n, { one: "# hour", other: "# hours" })}.`,
+      },
+      errors: {
+        wrongPassword: "That isn't your current password.",
+        tooMany: (when: string) => `Too many wrong passwords. ${when}`,
+        waitLittle: "Wait a little, then try again.",
+        external:
+          "This account signs in through an identity provider, so it has no password to change.",
+        sessionEnded: "Your session has ended.",
+        signIn: "Sign in again",
+        newRefused: (min: number, max: number) =>
+          `The server refused this password. Use ${min} to ${max} characters.`,
+      },
+      none: {
+        access:
+          "You sign in through Cloudflare Access, so there is no ExactDocs password to change here.",
+        provider: (name: string) =>
+          `You sign in with ${name}, so there is no ExactDocs password to change here.`,
+        providers:
+          "You sign in through an identity provider, so there is no ExactDocs password to change here.",
+      },
+    },
   },
   {
     nav: {
@@ -273,6 +325,56 @@ export const messages = defineMessages(
       unavailable:
         "Zapisane w tej przeglądarce: ten serwer nie przechowuje jeszcze ustawień interfejsu.",
       error: "Nie udało się zapisać na koncie. Twoje wybory nadal działają w tej przeglądarce.",
+    },
+    password: {
+      title: "Hasło",
+      description:
+        "Zmień hasło, którym się logujesz. Pozostałe sesje zostaną zakończone; ta pozostanie zalogowana, a Twoje tokeny API nadal będą działać.",
+      current: "Obecne hasło",
+      next: "Nowe hasło",
+      confirm: "Powtórz nowe hasło",
+      hint: (min, max) =>
+        `Od ${min} do ${max} znaków. Dobrze sprawdza się krótka fraza z niepowiązanych słów.`,
+      show: {
+        current: "Pokaż obecne hasło",
+        next: "Pokaż nowe hasło",
+        confirm: "Pokaż powtórzone hasło",
+      },
+      hide: {
+        current: "Ukryj obecne hasło",
+        next: "Ukryj nowe hasło",
+        confirm: "Ukryj powtórzone hasło",
+      },
+      submit: "Zmień hasło",
+      busy: "Zmienianie hasła",
+      changed: "Hasło zostało zmienione. Pozostałe sesje zostały wylogowane.",
+      toast: "Hasło zmienione",
+      toastHint: "Pozostałe sesje zostały wylogowane. Twoje tokeny API nadal działają.",
+      enterCurrent: "Wpisz obecne hasło.",
+      wait: {
+        seconds: (n) =>
+          `Spróbuj ponownie za ${plural.pl(n, { one: "# sekundę", few: "# sekundy", many: "# sekund" })}.`,
+        minutes: (n) =>
+          `Spróbuj ponownie za ${plural.pl(n, { one: "# minutę", few: "# minuty", many: "# minut" })}.`,
+        hours: (n) =>
+          `Spróbuj ponownie za ${plural.pl(n, { one: "# godzinę", few: "# godziny", many: "# godzin" })}.`,
+      },
+      errors: {
+        wrongPassword: "To nie jest Twoje obecne hasło.",
+        tooMany: (when) => `Zbyt wiele błędnych haseł. ${when}`,
+        waitLittle: "Odczekaj chwilę i spróbuj ponownie.",
+        external: "To konto loguje się przez dostawcę tożsamości, więc nie ma hasła do zmiany.",
+        sessionEnded: "Twoja sesja się zakończyła.",
+        signIn: "Zaloguj się ponownie",
+        newRefused: (min, max) => `Serwer odrzucił to hasło. Użyj od ${min} do ${max} znaków.`,
+      },
+      none: {
+        access: "Logujesz się przez Cloudflare Access, więc nie masz tu hasła ExactDocs do zmiany.",
+        provider: (name) =>
+          `Logujesz się przez ${name}, więc nie masz tu hasła ExactDocs do zmiany.`,
+        providers:
+          "Logujesz się przez dostawcę tożsamości, więc nie masz tu hasła ExactDocs do zmiany.",
+      },
     },
   },
 );
